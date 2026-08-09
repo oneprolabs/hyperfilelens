@@ -55,7 +55,17 @@ class License(models.Model):
     max_nodes = models.IntegerField(default=20)
     max_storage_gb = models.IntegerField(default=500)
     max_gateways = models.IntegerField(default=5)
-    ai_insights_quota = models.IntegerField(default=500)
+    # Instance count of Public (platform) Gateways — not org-split.
+    max_public_gateways = models.IntegerField(
+        default=DEFAULT_LIMITS["max_public_gateways"]
+    )
+    # Instance pool for org Public Gateway capacity allocations (GiB).
+    max_public_gateway_capacity_gb = models.IntegerField(
+        default=DEFAULT_LIMITS["max_public_gateway_capacity_gb"]
+    )
+    # Lifetime AI token budget (LensUsageLedger.total_tokens). Field name is legacy.
+    # Lifetime AI token budget (LensUsageLedger.total_tokens), not request count.
+    ai_insights_quota = models.IntegerField(default=50_000_000)
     max_tasks = models.IntegerField(default=50)
     max_alert_policies = models.IntegerField(default=50)
 
@@ -105,7 +115,10 @@ class License(models.Model):
             "max_nodes": self.max_nodes,
             "max_storage_gb": self.max_storage_gb,
             "max_gateways": self.max_gateways,
+            "max_public_gateways": self.max_public_gateways,
+            "max_public_gateway_capacity_gb": self.max_public_gateway_capacity_gb,
             "ai_insights_quota": self.ai_insights_quota,
+            "ai_tokens": self.ai_insights_quota,
             "max_tasks": self.max_tasks,
             "max_alert_policies": self.max_alert_policies,
         }
@@ -123,6 +136,8 @@ class License(models.Model):
             max_nodes=self.max_nodes,
             max_storage_gb=self.max_storage_gb,
             max_gateways=self.max_gateways,
+            max_public_gateways=self.max_public_gateways,
+            max_public_gateway_capacity_gb=self.max_public_gateway_capacity_gb,
             ai_insights_quota=self.ai_insights_quota,
             max_tasks=self.max_tasks,
             max_alert_policies=self.max_alert_policies,
@@ -167,6 +182,10 @@ class LicenseHistory(models.Model):
     max_nodes = models.IntegerField()
     max_storage_gb = models.IntegerField()
     max_gateways = models.IntegerField()
+    max_public_gateways = models.IntegerField(default=DEFAULT_LIMITS["max_public_gateways"])
+    max_public_gateway_capacity_gb = models.IntegerField(
+        default=DEFAULT_LIMITS["max_public_gateway_capacity_gb"]
+    )
     ai_insights_quota = models.IntegerField()
     max_tasks = models.IntegerField()
     max_alert_policies = models.IntegerField()

@@ -856,6 +856,12 @@ def _resolve_gateway_link_identity(
     )
     is_platform = desired_scope == LensGatewayLink.GatewayScope.PLATFORM
     if existing is None:
+        if is_platform:
+            from apps.subscription.services.internal.public_gateway_count import (
+                assert_public_gateway_count_available,
+            )
+
+            assert_public_gateway_count_available(additional=1)
         link, created = LensGatewayLink.objects.get_or_create(
             organization=org,
             gateway=gateway,
@@ -864,6 +870,7 @@ def _resolve_gateway_link_identity(
                 "owner_user": None if is_platform else owner_user,
                 "scope": desired_scope,
                 "origin": desired_origin,
+                # Infra capacity is set by Platform Ops; unlimited until configured.
                 "capacity_gb": -1,
             },
         )

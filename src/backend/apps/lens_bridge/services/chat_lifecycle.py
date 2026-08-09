@@ -157,6 +157,13 @@ def create_copilot_chat(
         raise ValidationError({"backup_source_snapshot_id": "Snapshot not found for this backup source."})
 
     normalized_scopes: list[dict[str, Any]] = []
+    scope_directories: list[BackupSourceSnapshotDirectory] = []
+    from apps.subscription.services.quota import (
+        assert_gateway_select_within_limits,
+        resolve_scope_entry,
+        summarize_gateway_select_scopes,
+    )
+
     for index, scope in enumerate(source_scopes):
         path = str(scope.get("source_path") or "").strip()
         directory_id = scope.get("backup_snapshot_directory_id")
@@ -167,15 +174,34 @@ def create_copilot_chat(
         ).first()
         if not path or directory is None:
             raise ValidationError({"source_scopes": {index: "Select a valid file or directory from this snapshot."}})
-        normalized_scopes.append(
-            {
-                "source_path": path,
-                "backup_snapshot_directory_id": directory.id,
-                "path_type": str(scope.get("path_type") or "unknown"),
-            }
+        trusted_type, size_bytes = resolve_scope_entry(
+            organization_id=org.id,
+            directory=directory,
+            source_path=path,
+            claimed_type=str(scope.get("path_type") or "unknown"),
         )
+        normalized = {
+            "source_path": path,
+            "backup_snapshot_directory_id": directory.id,
+            "path_type": trusted_type,
+        }
+        if size_bytes is not None:
+            normalized["size_bytes"] = int(size_bytes)
+        normalized_scopes.append(normalized)
+        scope_directories.append(directory)
     if not normalized_scopes:
         raise ValidationError({"source_scopes": "Select at least one file or folder."})
+
+    total_files, total_bytes, unknown_directory = summarize_gateway_select_scopes(
+        normalized_scopes,
+        scope_directories,
+    )
+    assert_gateway_select_within_limits(
+        organization=org,
+        file_count=total_files,
+        size_bytes=total_bytes,
+        unknown_directory=unknown_directory,
+    )
 
     if gateway_mode == LensSessionLink.GatewaySelectionMode.AUTO:
         gateway_link = platform_lens.resolve_auto_gateway_link_for_copilot(user=user)
@@ -194,7 +220,13 @@ def create_copilot_chat(
             }
         )
 
+    from apps.lens_bridge.models import LensGatewayLink
     from apps.lens_bridge.services.gateway_execution import context_for_gateway_link
+    from apps.lens_bridge.services.public_gateway_capacity import (
+        assert_public_gateway_capacity,
+        lock_public_gateway_capacity,
+    )
+    from apps.subscription.services.interface import enforce_license_quota
 
     context_for_gateway_link(
         tenant_organization=org,
@@ -223,23 +255,89 @@ def create_copilot_chat(
         source_name=source_display_name,
         source_scopes=normalized_scopes,
     )
-    link = LensSessionLink.objects.create(
-        organization=org,
-        hfl_user=user,
-        title=(title or "").strip() or default_title,
-        backup_config_id=config.id,
-        backup_source_snapshot_id=snapshot.id,
-        source_scopes_json=normalized_scopes,
-        gateway_link=gateway_link,
-        gateway_selection_mode=gateway_mode,
-        agent_model_ref=model_ref,
-        multimodal_model_ref=multimodal_model_ref,
-        status=LensSessionLink.Status.ACTIVE,
-        lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
-        provision_phase=LensSessionLink.ProvisionPhase.QUEUED,
-        provision_detail="Chat creation is queued.",
-        lifecycle_error="",
-    )
+
+    def _create_session_link() -> LensSessionLink:
+        return LensSessionLink.objects.create(
+            organization=org,
+            hfl_user=user,
+            title=(title or "").strip() or default_title,
+            backup_config_id=config.id,
+            backup_source_snapshot_id=snapshot.id,
+            source_scopes_json=normalized_scopes,
+            gateway_link=gateway_link,
+            gateway_selection_mode=gateway_mode,
+            agent_model_ref=model_ref,
+            multimodal_model_ref=multimodal_model_ref,
+            status=LensSessionLink.Status.ACTIVE,
+            lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+            provision_phase=LensSessionLink.ProvisionPhase.QUEUED,
+            provision_detail="Chat creation is queued.",
+            lifecycle_error="",
+        )
+
+    def _assert_org_public_capacity() -> None:
+        """Org pool share (GiB) across all Public Gateways."""
+        from common.errors import AppError
+        from common.extension_spi import get_quota_provider
+
+        provider = get_quota_provider()
+        if provider is None:
+            return
+        limits = provider.get_limits(org) or {}
+        # Missing key must not mean unlimited (fail closed).
+        if "max_public_gateway_capacity_gb" not in limits:
+            raise AppError(
+                code="SUBSCRIPTION.QUOTA_EXCEEDED",
+                status=403,
+                title=(
+                    "Organization public gateway capacity is unavailable. "
+                    "Contact your platform administrator."
+                ),
+                diagnostic="max_public_gateway_capacity_gb missing from quota limits",
+                meta={
+                    "quota_type": "max_public_gateway_capacity_gb",
+                    "scope": "organization",
+                },
+            )
+        limit = int(limits["max_public_gateway_capacity_gb"])
+        if limit < 0:
+            return
+        if unknown_directory:
+            raise AppError(
+                code="SUBSCRIPTION.QUOTA_EXCEEDED",
+                status=403,
+                title=(
+                    "Organization public gateway capacity cannot be proven for this "
+                    "selection. Contact your platform administrator."
+                ),
+                diagnostic="unknown public gateway selection size",
+                meta={
+                    "quota_type": "max_public_gateway_capacity_gb",
+                    "unknown_size": True,
+                    "limit": limit,
+                    "scope": "organization",
+                },
+            )
+        additional_gb = float(total_bytes) / float(1024**3)
+        enforce_license_quota(org, "max_public_gateway_capacity_gb", additional=additional_gb)
+
+    # Public Gateway: lock + infra/org capacity + PROVISIONING insert together so
+    # concurrent creates observe each other's reserved occupancy.
+    if gateway_link.scope == LensGatewayLink.GatewayScope.PLATFORM:
+        from apps.iam.models import Organization
+
+        # Serialize org capacity (layer 3) across different Public Gateways.
+        Organization.objects.select_for_update().get(pk=org.pk)
+        locked_gateway = lock_public_gateway_capacity(gateway_link=gateway_link)
+        assert_public_gateway_capacity(
+            gateway_link=locked_gateway,
+            additional_bytes=total_bytes,
+            unknown_size=unknown_directory,
+        )
+        _assert_org_public_capacity()
+        link = _create_session_link()
+    else:
+        link = _create_session_link()
 
     transaction.on_commit(lambda: _queue_provision_or_mark_failed(link.id))
     return link
@@ -1783,6 +1881,78 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             return locked
     elif locked.lifecycle_status != LensSessionLink.LifecycleStatus.FAILED:
         raise ValidationError({"lifecycle_status": "Session is not retryable."})
+
+    # FAILED → PROVISIONING re-reserves capacity only when this session is not
+    # already represented via a linked knowledge_source / binding.
+    was_failed = locked.lifecycle_status == LensSessionLink.LifecycleStatus.FAILED
+    if (
+        was_failed
+        and locked.knowledge_source_id is None
+        and locked.gateway_link is not None
+    ):
+        from apps.lens_bridge.models import LensGatewayLink
+        from apps.lens_bridge.services.public_gateway_capacity import (
+            assert_public_gateway_capacity,
+            lock_public_gateway_capacity,
+            session_scope_occupancy,
+        )
+        from apps.subscription.services.interface import enforce_license_quota
+
+        if locked.gateway_link.scope == LensGatewayLink.GatewayScope.PLATFORM:
+            from apps.iam.models import Organization
+            from common.errors import AppError
+            from common.extension_spi import get_quota_provider
+
+            Organization.objects.select_for_update().get(pk=locked.organization_id)
+            locked_gateway = lock_public_gateway_capacity(gateway_link=locked.gateway_link)
+            nbytes, unknown = session_scope_occupancy(session=locked)
+            assert_public_gateway_capacity(
+                gateway_link=locked_gateway,
+                additional_bytes=nbytes,
+                unknown_size=unknown,
+            )
+            # Align with create: fail closed on unknown size when org capacity is finite.
+            provider = get_quota_provider()
+            if provider is not None:
+                limits = provider.get_limits(locked.organization) or {}
+                if "max_public_gateway_capacity_gb" not in limits:
+                    raise AppError(
+                        code="SUBSCRIPTION.QUOTA_EXCEEDED",
+                        status=403,
+                        title=(
+                            "Organization public gateway capacity is unavailable. "
+                            "Contact your platform administrator."
+                        ),
+                        diagnostic="max_public_gateway_capacity_gb missing from quota limits",
+                        meta={
+                            "quota_type": "max_public_gateway_capacity_gb",
+                            "scope": "organization",
+                        },
+                    )
+                org_cap = int(limits["max_public_gateway_capacity_gb"])
+                if org_cap >= 0 and unknown:
+                    raise AppError(
+                        code="SUBSCRIPTION.QUOTA_EXCEEDED",
+                        status=403,
+                        title=(
+                            "Organization public gateway capacity cannot be proven for this "
+                            "selection. Contact your platform administrator."
+                        ),
+                        diagnostic="unknown public gateway selection size on retry",
+                        meta={
+                            "quota_type": "max_public_gateway_capacity_gb",
+                            "unknown_size": True,
+                            "limit": org_cap,
+                            "scope": "organization",
+                        },
+                    )
+                if org_cap >= 0 and not unknown:
+                    enforce_license_quota(
+                        locked.organization,
+                        "max_public_gateway_capacity_gb",
+                        additional=float(nbytes) / float(1024**3),
+                    )
+
     locked.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
     locked.provision_phase = LensSessionLink.ProvisionPhase.QUEUED
     locked.provision_detail = "Chat creation is queued."

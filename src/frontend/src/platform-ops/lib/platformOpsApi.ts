@@ -93,3 +93,33 @@ export async function patchPlatformIdentitySettings(body: Record<string, unknown
 export async function fetchPlatformEnvironment() {
   return get<PlatformEnvironmentSettings>('/api/v1/platform-ops/platform/settings/environment')
 }
+
+/** Per–Public Gateway infrastructure capacity (EE Platform Ops). */
+export type PlatformGatewayCapacity = {
+  gateway_link_id: number
+  gateway_id: number
+  gateway_name: string
+  capacity_gb: number
+  unlimited: boolean
+  used_bytes: number
+  used_gb: number
+  used_incomplete: boolean
+  limit_bytes: number | null
+}
+
+export async function fetchPublicGatewayCapacities(options?: { signal?: AbortSignal }) {
+  return get<{ results: PlatformGatewayCapacity[] }>(
+    '/api/v1/platform-ops/lens/gateways/capacity',
+    { signal: options?.signal },
+  )
+}
+
+export async function patchPublicGatewayCapacity(gatewayId: number, capacity_gb: number) {
+  return send<PlatformGatewayCapacity>(
+    `/api/v1/platform-ops/lens/gateways/${gatewayId}/capacity`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ capacity_gb }),
+    },
+  )
+}

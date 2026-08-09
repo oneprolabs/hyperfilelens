@@ -15,6 +15,9 @@ from apps.subscription.services.quota import (
     enforce_license_quota,
     enforce_node_role_quota,
     enforce_repository_type_quota,
+    normalize_scope_path,
+    resolve_scope_entry,
+    summarize_gateway_select_scopes,
     validate_quota,
 )
 
@@ -28,6 +31,9 @@ __all__ = [
     "get_active_license",
     "get_instance_active_license",
     "get_or_create_machine_code",
+    "normalize_scope_path",
     "resolve_instance_license_organization",
+    "resolve_scope_entry",
+    "summarize_gateway_select_scopes",
     "validate_quota",
 ]

@@ -55,6 +55,11 @@ def provision_registered_user_tenant(user: User) -> tuple[Organization, Membersh
 
     email = (user.email or "").strip().lower()
     local = email.split("@", 1)[0] if email else user.username
+    from apps.subscription.services.internal.organization_count import (
+        assert_organization_count_available,
+    )
+
+    assert_organization_count_available(additional=1)
     org = Organization.objects.create(
         key=unique_org_key_for_email(email or user.username),
         name=(email or local or user.username or "org")[:200],

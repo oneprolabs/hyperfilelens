@@ -24,3 +24,9 @@ def resolve_quota_enforcement_enabled() -> bool:
 
 
 HFL_QUOTA_ENFORCEMENT_ENABLED = resolve_quota_enforcement_enabled()
+
+# License asymmetric key placeholders (PEM text). Empty = HMAC HFL-ACT only.
+# Public key: runtime verify (future). Private key: offline issuer only — do not
+# ship in Community/EE control-plane images.
+HFL_LICENSE_PUBLIC_KEY_PEM = env_str("HFL_LICENSE_PUBLIC_KEY_PEM", "")
+HFL_LICENSE_PRIVATE_KEY_PEM = env_str("HFL_LICENSE_PRIVATE_KEY_PEM", "")

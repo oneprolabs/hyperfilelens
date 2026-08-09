@@ -6,6 +6,17 @@ from apps.iam.models import Membership, Organization
 from apps.subscription.constants import UNLIMITED
 
 
+def _org_public_gateway_capacity_used_gb(organization_id: int) -> float:
+    try:
+        from apps.lens_bridge.services.public_gateway_capacity import (
+            org_public_gateway_capacity_used_gb,
+        )
+
+        return float(org_public_gateway_capacity_used_gb(organization_id=organization_id))
+    except Exception:
+        return 0.0
+
+
 def collect_usage_stats(*, organization_id: int) -> dict:
     org = Organization.objects.filter(id=organization_id).first()
     if org is None:
@@ -22,7 +33,7 @@ def collect_usage_stats(*, organization_id: int) -> dict:
     standalone_disk_count = 0
     alert_policies_count = 0
     protected_sources_count = 0
-    ai_used = 0
+    ai_tokens_used = 0
     try:
         from apps.node.models import Node
         from apps.node.models.base import NodeRole
@@ -76,18 +87,18 @@ def collect_usage_stats(*, organization_id: int) -> dict:
     except Exception:
         pass
     try:
-        from apps.lens_bridge.models import LensUsageCounter
+        from django.db.models import Sum
 
-        # Best-effort; missing table/app → 0
-        row = (
-            LensUsageCounter.objects.filter(organization_id=organization_id)
-            .order_by("-id")
-            .first()
+        from apps.lens_bridge.models import LensUsageLedger
+
+        ai_tokens_used = int(
+            LensUsageLedger.objects.filter(organization_id=organization_id)
+            .aggregate(total=Sum("total_tokens"))
+            .get("total")
+            or 0
         )
-        if row is not None:
-            ai_used = int(getattr(row, "requests_used", 0) or getattr(row, "value", 0) or 0)
     except Exception:
-        pass
+        ai_tokens_used = 0
 
     try:
         from django.db.models import Sum, Value
@@ -128,9 +139,13 @@ def collect_usage_stats(*, organization_id: int) -> dict:
         "standalone_disk_count": standalone_disk_count,
         "protected_sources_count": protected_sources_count,
         "storage_used_gb": storage_used_gb,
-        "ai_insights_used": ai_used,
-        "ai_requests_used": ai_used,
-        "tasks_count": 0,
+        "public_gateway_capacity_used_gb": _org_public_gateway_capacity_used_gb(
+            organization_id
+        ),
+        "ai_tokens_used": ai_tokens_used,
+        # Legacy aliases (same lifetime token total).
+        "ai_insights_used": ai_tokens_used,
+        "ai_requests_used": ai_tokens_used,
         "alert_policies_count": alert_policies_count,
     }
 
@@ -149,9 +164,10 @@ def _empty_usage() -> dict:
         "standalone_disk_count": 0,
         "protected_sources_count": 0,
         "storage_used_gb": 0.0,
+        "public_gateway_capacity_used_gb": 0.0,
+        "ai_tokens_used": 0,
         "ai_insights_used": 0,
         "ai_requests_used": 0,
-        "tasks_count": 0,
         "alert_policies_count": 0,
     }
 
@@ -161,3 +177,53 @@ def check_quota_available(*, limit: int, current: int, additional: int = 1) -> b
     if limit == UNLIMITED or limit < 0:
         return True
     return (current + additional) <= limit
+
+
+def collect_instance_meter_usage(*, usage_key: str) -> float:
+    """
+    Sum a usage meter across all customer organizations (excludes platform org).
+
+    Used for shared instance-pool enforcement when an org has no explicit Quota row.
+    """
+    try:
+        from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
+    except Exception:  # pragma: no cover
+        PLATFORM_ORG_KEY = "__platform_lens__"
+
+    if usage_key in ("ai_tokens_used", "ai_requests_used", "ai_insights_used"):
+        try:
+            from django.db.models import Sum
+
+            from apps.lens_bridge.models import LensUsageLedger
+
+            return float(
+                LensUsageLedger.objects.exclude(organization__key=PLATFORM_ORG_KEY)
+                .aggregate(total=Sum("total_tokens"))
+                .get("total")
+                or 0
+            )
+        except Exception:
+            return 0.0
+
+    total = 0.0
+    org_ids = Organization.objects.exclude(key=PLATFORM_ORG_KEY).values_list("id", flat=True)
+    for org_id in org_ids:
+        stats = collect_usage_stats(organization_id=int(org_id))
+        total += float(stats.get(usage_key, 0) or 0)
+    return total
+
+
+def collect_instance_node_pool_usage() -> int:
+    """Sum agents + proxies across customer orgs (shared max_nodes pool)."""
+    try:
+        from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
+        from apps.node.models import Node
+        from apps.node.models.base import NodeRole
+
+        return int(
+            Node.objects.exclude(organization__key=PLATFORM_ORG_KEY)
+            .filter(role__in=(NodeRole.AGENT, NodeRole.PROXY))
+            .count()
+        )
+    except Exception:
+        return 0

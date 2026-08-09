@@ -35,6 +35,11 @@ describe('Admin Console finalization contracts', () => {
     expect(gateways).toContain('<PlatformOpsPagination')
     expect(gateways).toContain('v-if="!isPlatformEngine" label="OS"')
     expect(gateways).toContain('v-if="!isPlatformEngine" :label="t(\'protection.sourceResources.colCapacity\')"')
+    expect(gateways).toContain("t('platformOps.engineGateway.colCapacity')")
+    expect(gateways).toContain('fetchPublicGatewayCapacities')
+    expect(gateways).toContain('patchPublicGatewayCapacity')
+    expect(gateways).toContain('capacityHasKnownTotal')
+    expect(gateways).toContain(':known-total="capacityHasKnownTotal(capacityFor(row))"')
     expect(gateways).toContain('fixed="right"')
   })
 

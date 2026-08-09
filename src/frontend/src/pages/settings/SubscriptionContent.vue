@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw } from 'lucide-vue-next'
-import { ElMessage } from 'element-plus'
+import { ElAlert, ElMessage } from 'element-plus'
 import HflTablePanel from '../../components/HflTablePanel.vue'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import {
@@ -29,6 +29,7 @@ const { t, te } = useI18n()
 const loading = ref(false)
 const currentLicense = ref<LicenseRecord | null>(null)
 const instanceShared = ref(false)
+const enforcementEnabled = ref(false)
 const usage = ref<LicenseUsage>({})
 const limits = ref<Record<string, number>>({ ...FALLBACK_LIMITS })
 const machineCode = ref('')
@@ -38,6 +39,11 @@ const activating = ref(false)
 
 const hasActiveLicense = computed(() => Boolean(currentLicense.value?.is_valid))
 const canActivateHere = computed(() => !instanceShared.value)
+const pageSubtitle = computed(() =>
+  enforcementEnabled.value
+    ? t('settings.subscription.subtitleEnforced')
+    : t('settings.subscription.subtitleInformational'),
+)
 
 const limitItems = computed(() =>
   quotaDefsForSubscription().map((def) => ({
@@ -146,6 +152,7 @@ async function loadAll() {
     machineCode.value = current.machine_code || ''
     limits.value = { ...FALLBACK_LIMITS, ...(current.limits || {}) }
     instanceShared.value = Boolean(current.instance_shared)
+    enforcementEnabled.value = Boolean(current.enforcement_enabled)
     if (current.is_valid && current.license) {
       currentLicense.value = current.license
       if (current.license.machine_code && !current.instance_shared) {
@@ -176,6 +183,7 @@ async function loadAll() {
     ElMessage.error({ message: msg || t('settings.subscription.activateFailed'), grouping: true })
     currentLicense.value = null
     instanceShared.value = false
+    enforcementEnabled.value = false
     licenseHistory.value = []
     limits.value = { ...FALLBACK_LIMITS }
   } finally {
@@ -215,6 +223,16 @@ onMounted(loadAll)
 
 <template>
   <div v-loading="loading" class="subscription-page">
+    <p class="subscription-page__lead">{{ pageSubtitle }}</p>
+    <ElAlert
+      class="subscription-page__enforcement"
+      :type="enforcementEnabled ? 'success' : 'info'"
+      show-icon
+      :closable="false"
+      :title="enforcementEnabled
+        ? t('settings.subscription.enforcementActiveHint')
+        : t('settings.subscription.devNoEnforcement')"
+    />
     <section class="subscription-section">
       <header class="subscription-section__header">
         <h2 class="subscription-section__title">{{ t('settings.subscription.overviewTitle') }}</h2>
@@ -253,6 +271,7 @@ onMounted(loadAll)
       <header class="subscription-section__header">
         <h2 class="subscription-section__title">{{ t('settings.subscription.limitsAndUsage') }}</h2>
       </header>
+      <p class="subscription-quota-lifetime-hint">{{ t('settings.subscription.aiTokensLifetimeHint') }}</p>
       <div class="subscription-quota-grid">
         <div v-for="item in limitItems" :key="item.key" class="subscription-quota-item">
           <span class="subscription-quota-item__label">{{ item.label }}</span>
@@ -370,6 +389,17 @@ onMounted(loadAll)
   font-weight: 400;
 }
 
+.subscription-page__lead {
+  margin: 0 0 12px;
+  color: var(--color-text-secondary, #6b6b78);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.subscription-page__enforcement {
+  margin-bottom: 20px;
+}
+
 .subscription-section {
   padding-bottom: 24px;
 }
@@ -432,6 +462,13 @@ onMounted(loadAll)
   font-size: 14px;
   color: var(--color-text-primary, #303133);
   word-break: break-word;
+}
+
+.subscription-quota-lifetime-hint {
+  margin: 0 0 12px;
+  color: var(--color-text-secondary, #64748b);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .subscription-quota-grid {

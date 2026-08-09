@@ -50,3 +50,31 @@ class UsageStatsTests(TestCase):
         self.assertEqual(usage["agents_count"], 1)
         self.assertEqual(usage["proxies_count"], 1)
         self.assertEqual(usage["gateways_count"], 1)
+
+    def test_collect_usage_sums_ai_tokens_from_ledger(self):
+        import uuid
+
+        from django.utils import timezone
+
+        from apps.lens_bridge.models import LensUsageLedger
+
+        LensUsageLedger.objects.create(
+            organization=self.org,
+            hfl_user=self.user,
+            sl_user_id=1,
+            sl_run_uuid=uuid.uuid4(),
+            total_tokens=1200,
+            occurred_at=timezone.now(),
+        )
+        LensUsageLedger.objects.create(
+            organization=self.org,
+            hfl_user=self.user,
+            sl_user_id=1,
+            sl_run_uuid=uuid.uuid4(),
+            total_tokens=800,
+            occurred_at=timezone.now(),
+        )
+
+        usage = collect_usage_stats(organization_id=self.org.id)
+        self.assertEqual(usage["ai_tokens_used"], 2000)
+        self.assertEqual(usage["ai_requests_used"], 2000)

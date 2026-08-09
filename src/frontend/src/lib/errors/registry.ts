@@ -52,6 +52,80 @@ export const ERROR_CODE_FALLBACK_EN: Record<string, string> = {
   'RESTORE.ALREADY_RUNNING': 'A restore task is already running for this source.',
 }
 
+/** Canonical quota_type → English meter label (fallback when i18n is unavailable). */
+export const QUOTA_TYPE_METER_FALLBACK_EN: Record<string, string> = {
+  max_users: 'Users',
+  users: 'Users',
+  max_organizations: 'Organizations',
+  max_storage_gb: 'Storage',
+  storage: 'Storage',
+  max_gateways: 'Private Data Gateways',
+  gateways: 'Private Data Gateways',
+  max_public_gateways: 'Public Data Gateways',
+  max_alert_policies: 'Alert Policies',
+  alert_policies: 'Alert Policies',
+  max_public_gateway_capacity_gb: 'Public Gateway Capacity',
+  public_gateway_capacity: 'Public Gateway Capacity',
+  'gateway.public_capacity_gb': 'Public Gateway workspace',
+  max_nodes: 'Nodes',
+  max_source_hosts: 'Source Hosts',
+  hosts: 'Source Hosts',
+  agents: 'Source Hosts',
+  nodes: 'Source Hosts',
+  max_proxies: 'Source Agents',
+  proxies: 'Source Agents',
+  max_source_nas: 'Source NAS',
+  source_nas: 'Source NAS',
+  max_object_storage: 'Object Storage',
+  object_storage: 'Object Storage',
+  max_target_nas: 'Target NAS',
+  target_nas: 'Target NAS',
+  max_standalone_disk: 'Local Disk',
+  standalone_disk: 'Local Disk',
+  max_protected_sources: 'Protected Sources',
+  protected_sources: 'Protected Sources',
+  ai_tokens: 'AI Tokens (lifetime)',
+  ai_requests: 'AI Tokens (lifetime)',
+  ai: 'AI Tokens (lifetime)',
+  ai_insights: 'AI Tokens (lifetime)',
+  ai_insights_quota: 'AI Tokens (lifetime)',
+  gateway_select_max_files: 'Gateway Select file count',
+  gateway_select_max_bytes: 'Gateway Select size',
+}
+
+/** Caller aliases → canonical quota / pool keys used in APIs and licenseQuota.* */
+const QUOTA_TYPE_ALIASES: Record<string, string> = {
+  users: 'max_users',
+  storage: 'max_storage_gb',
+  gateways: 'max_gateways',
+  public_gateway_capacity: 'max_public_gateway_capacity_gb',
+  'gateway.public_capacity_gb': 'max_public_gateway_capacity_gb',
+  hosts: 'max_source_hosts',
+  agents: 'max_source_hosts',
+  nodes: 'max_source_hosts',
+  proxies: 'max_proxies',
+  source_nas: 'max_source_nas',
+  object_storage: 'max_object_storage',
+  target_nas: 'max_target_nas',
+  standalone_disk: 'max_standalone_disk',
+  protected_sources: 'max_protected_sources',
+  ai: 'ai_tokens',
+  ai_tokens: 'ai_tokens',
+  ai_requests: 'ai_tokens',
+  ai_insights: 'ai_tokens',
+  ai_insights_quota: 'ai_tokens',
+}
+
+export function canonicalizeQuotaType(quotaType: unknown): string {
+  const key = String(quotaType || '').trim().toLowerCase()
+  return QUOTA_TYPE_ALIASES[key] || key
+}
+
+export function quotaTypeMeterLabel(quotaType: unknown): string {
+  const key = canonicalizeQuotaType(quotaType)
+  return QUOTA_TYPE_METER_FALLBACK_EN[key] || QUOTA_TYPE_METER_FALLBACK_EN[String(quotaType || '').trim().toLowerCase()] || ''
+}
+
 const BROWSER_NETWORK_PATTERNS = [
   'failed to fetch',
   'networkerror when attempting to fetch resource',
