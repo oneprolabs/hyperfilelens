@@ -32,11 +32,17 @@ describe('backup wizard step 3 More Actions refresh', () => {
     const directoriesStart = wizard.indexOf(":label=\"t('protection.backupsPage.labelBackupDirs')\"")
     const directoriesOpeningTagEnd = wizard.indexOf('>', directoriesStart)
     const directoriesEnd = wizard.indexOf('</el-table-column>', directoriesStart)
+    const sourceColumnStart = wizard.lastIndexOf(":label=\"t('protection.backupsPage.colBackupSource')\"", directoriesStart)
+    const sourceColumnEnd = wizard.indexOf('>', sourceColumnStart)
 
     expect(directoriesStart).toBeGreaterThan(-1)
+    expect(wizard.slice(sourceColumnStart, sourceColumnEnd)).toContain('min-width="162"')
+    expect(wizard.slice(directoriesStart, directoriesOpeningTagEnd)).toContain('min-width="198"')
     expect(wizard.slice(directoriesStart, directoriesOpeningTagEnd)).toContain('class-name="hfl-table-no-tooltip"')
-    expect(wizard.slice(directoriesStart, directoriesEnd)).toContain('create-source-dir-preview hfl-table-no-tooltip')
+    expect(wizard.slice(directoriesStart, directoriesEnd)).toContain('create-source-dir-preview--single-line-paths')
+    expect(wizard.slice(directoriesStart, directoriesEnd)).toContain('hfl-table-no-tooltip')
     expect(wizard.slice(directoriesStart, directoriesEnd)).toContain('placement="bottom-start"')
+    expect(wizard).toMatch(/\.create-source-dir-preview--single-line-paths \.create-source-dir-preview__path \{[\s\S]*?text-overflow: ellipsis;[\s\S]*?white-space: nowrap;/)
   })
 
   it('excludes policy, file-filter, and compression cells from generic overflow tooltips', () => {

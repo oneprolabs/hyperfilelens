@@ -3,7 +3,7 @@ from rest_framework.test import APIRequestFactory
 
 from apps.iam.models import Organization
 from apps.node.api.views.node import NodeViewSet
-from apps.node.api.serializers.node import NodeSerializer
+from apps.node.api.serializers.node import NodeHeartbeatSerializer, NodeSerializer
 from apps.node.models import Node, NodeCredential, NodeToken
 from apps.node.models.base import NodeRole
 from common.http.client_ip import client_ip_from_meta, client_ip_from_scope
@@ -161,3 +161,7 @@ class NodeHeartbeatClientIpTests(TestCase):
         self.assertTrue(NodeSerializer().fields["ip_address"].read_only)
         self.assertTrue(NodeSerializer().fields["availability"].read_only)
         self.assertTrue(NodeSerializer().fields["availability_updated_at"].read_only)
+        self.assertNotIn(
+            "repository_server_address",
+            NodeHeartbeatSerializer().fields,
+        )

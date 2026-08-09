@@ -1237,6 +1237,12 @@ export const en = {
     renamePlaceholder: 'Enter new name',
     renameSuccess: 'Name updated successfully',
     renameFailed: 'Failed to update name',
+    repositoryServerAddress: 'Repository Server Address',
+    repositoryServerAddressAuto: 'Auto',
+    repositoryServerAddressCustom: 'Custom',
+    repositoryServerAddressAutoPlaceholder: 'Automatic: {ip}',
+    repositoryServerAddressHint:
+      'Backup sources use this address to reach the temporary Repository Server on this Proxy. Leave it blank to use the Agent-reported Host IP automatically. Configure an IP address or DNS name for multi-network, NAT, or routed environments.',
     renameSelectedCount: '{n} item(s) selected',
     deleteSelectedConfirm: 'Delete the selected {n} node(s)? This cannot be undone.',
     proxyDeleteTitle: 'Delete Proxy Host',

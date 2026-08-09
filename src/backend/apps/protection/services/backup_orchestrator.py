@@ -43,7 +43,10 @@ from apps.protection.services.progress.orchestrated_progress import (
     BACKUP_TRANSFER_END,
 )
 from apps.storage.repositories.models import Repository
-from apps.storage.services.internal.repository_access import resolve_repository_reader
+from apps.storage.services.internal.repository_access import (
+    explicit_repository_server_host,
+    resolve_repository_reader,
+)
 from apps.storage.services.internal.repository_usage import enqueue_repository_usage_refresh
 from apps.task.models import Task, TaskEvent, TaskStep
 from apps.task.services.interface import append_task_step_event, complete_task, start_task
@@ -335,53 +338,8 @@ def _repository_probe_state(task: Task) -> dict[str, Any] | None:
     return state if isinstance(state, dict) else None
 
 
-def _metadata_proxy_repository_host(node: Node) -> tuple[str, str]:
-    metadata = node.metadata if isinstance(node.metadata, dict) else {}
-    inventory = metadata.get("inventory") if isinstance(metadata.get("inventory"), dict) else {}
-    for source in (metadata, inventory):
-        for key in (
-            "proxy_repository_server_host",
-            "repository_server_host",
-            "advertised_host",
-            "advertise_host",
-        ):
-            value = str(source.get(key) or "").strip()
-            if value:
-                return value, f"node.metadata.{key}"
-    for source in (metadata, inventory):
-        for key in ("primary_ip_address", "primary_ip", "lan_ip_address", "lan_ip", "ip_address"):
-            value = str(source.get(key) or "").strip()
-            if value:
-                return value, f"node.metadata.{key}"
-        for key in ("ip_addresses", "ipv4_addresses", "addresses"):
-            values = source.get(key)
-            if not isinstance(values, list):
-                continue
-            for raw in values:
-                value = str(raw or "").strip()
-                if value:
-                    return value, f"node.metadata.{key}"
-    return "", ""
-
-
 def _repository_public_host(*, repository: Repository, node: Node) -> tuple[str, str]:
-    config = repository.config if isinstance(repository.config, dict) else {}
-    for key in (
-        "proxy_repository_server_host",
-        "repository_server_host",
-        "advertised_host",
-        "advertise_host",
-    ):
-        value = str(config.get(key) or "").strip()
-        if value:
-            return value, f"repository.config.{key}"
-    metadata_host, metadata_host_source = _metadata_proxy_repository_host(node)
-    if metadata_host:
-        return metadata_host, metadata_host_source
-    host = str(getattr(node, "ip_address", "") or "").strip()
-    if host:
-        return host, "node.ip_address"
-    return str(getattr(node, "name", "") or "").strip(), "node.name"
+    return explicit_repository_server_host(repository=repository, node=node)
 
 
 def _repository_server_username(*, task: Task, repository_node: Node) -> str:

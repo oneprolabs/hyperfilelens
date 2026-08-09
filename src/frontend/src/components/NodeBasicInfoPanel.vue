@@ -41,6 +41,7 @@ const props = defineProps<{
   source?: SourceResource | null
   useUnifiedCapacity?: boolean
   resolveDisplayStatus?: (node: ApiNode) => NodeDisplayStatus
+  showRepositoryServerAddress?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -57,6 +58,14 @@ const externalId = computed(() => nodeExternalId(props.node))
 const hostname = computed(() => nodeHostname(props.node))
 const installDirs = computed(() => nodeInstallDirs(props.node))
 const hostIp = computed(() => props.node.ip_address?.trim() || DETAIL_EMPTY)
+const repositoryServerAddress = computed(() =>
+  props.node.effective_repository_server_address?.trim() || DETAIL_EMPTY,
+)
+const repositoryServerAddressSource = computed(() =>
+  props.node.repository_server_address_source === 'proxy_override'
+    ? t('nodesPage.repositoryServerAddressCustom')
+    : t('nodesPage.repositoryServerAddressAuto'),
+)
 const osName = computed(() => formatNodeOsName(props.node))
 const arch = computed(() => nodeArch(props.node) || DETAIL_EMPTY)
 const cpuText = computed(() => {
@@ -259,6 +268,19 @@ function detailValueClass(text: string, monoWhenPresent = false) {
             >
               <Copy :size="13" />
             </ElButton>
+          </span>
+        </div>
+        <div v-if="showRepositoryServerAddress" class="hfl-detail-row">
+          <span class="hfl-detail-row__label">{{ t('nodesPage.repositoryServerAddress') }}</span>
+          <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
+            <span class="hfl-detail-row__text">{{ repositoryServerAddress }}</span>
+            <ElTag
+              v-if="!isDetailEmpty(repositoryServerAddress)"
+              size="small"
+              :type="node.repository_server_address_source === 'proxy_override' ? 'warning' : 'info'"
+            >
+              {{ repositoryServerAddressSource }}
+            </ElTag>
           </span>
         </div>
         <div class="hfl-detail-row">

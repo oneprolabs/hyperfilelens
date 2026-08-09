@@ -50,8 +50,13 @@ describe('protectionBackupTargetValidationApi', () => {
         results: [{
           key: 'agent:12',
           status: 'failed',
-          code: 'S3_CONNECTION_FAILED',
-          message: 'Access denied.',
+          code: 'PROXY_REPOSITORY_SERVER_UNREACHABLE',
+          message: 'dial tcp: i/o timeout',
+          details: {
+            stage: 'source_probe',
+            proxy_address: '192.168.10.33',
+            port_range: '51515-52014',
+          },
         }],
       },
     })
@@ -67,8 +72,12 @@ describe('protectionBackupTargetValidationApi', () => {
     })
 
     expect(result.results[0]).toMatchObject({
-      code: 'S3_CONNECTION_FAILED',
-      message: 'Access denied.',
+      code: 'PROXY_REPOSITORY_SERVER_UNREACHABLE',
+      details: {
+        stage: 'source_probe',
+        proxy_address: '192.168.10.33',
+        port_range: '51515-52014',
+      },
     })
   })
 })

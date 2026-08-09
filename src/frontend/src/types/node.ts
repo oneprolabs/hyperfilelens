@@ -22,6 +22,9 @@ export type ApiNode = {
   version?: string
   os_name?: string
   ip_address?: string | null
+  repository_server_address?: string
+  effective_repository_server_address?: string | null
+  repository_server_address_source?: 'proxy_override' | 'agent_reported' | 'unavailable'
   status: NodeStatus
   availability?: Availability
   availability_updated_at?: string | null
@@ -59,6 +62,7 @@ export type CreateNodeTokenBody = {
 export type UpdateNodeBody = {
   name?: string
   ip_address?: string | null
+  repository_server_address?: string
   version?: string
   os_name?: string
   metadata?: Record<string, unknown>

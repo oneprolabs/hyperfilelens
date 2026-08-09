@@ -33,14 +33,12 @@ const name = ref('')
 const quotaGb = ref(0)
 const quotaAlertEnabled = ref(false)
 const quotaAlertThreshold = ref<number>(80)
-const repositoryServerHost = ref('')
 
 /* read-only mirrors for change detection */
 const originName = ref('')
 const originQuotaGb = ref(0)
 const originQuotaAlertEnabled = ref(false)
 const originQuotaAlertThreshold = ref(80)
-const originRepositoryServerHost = ref('')
 
 const fallbackNode = ref<{ name: string; ip: string } | null>(null)
 
@@ -95,7 +93,6 @@ const dirty = computed(() => {
   if (Number(quotaGb.value || 0) !== originQuotaGb.value) return true
   if (Boolean(quotaAlertEnabled.value) !== originQuotaAlertEnabled.value) return true
   if (quotaAlertEnabled.value && Number(quotaAlertThreshold.value || 0) !== originQuotaAlertThreshold.value) return true
-  if (repositoryServerHost.value.trim() !== originRepositoryServerHost.value) return true
   return false
 })
 
@@ -155,12 +152,10 @@ function hydrate(data: StorageRepository) {
   quotaGb.value = Number(cfg.quota_gb || 0)
   quotaAlertEnabled.value = Boolean(cfg.quota_alert_enabled)
   quotaAlertThreshold.value = Number(cfg.quota_alert_threshold || 80)
-  repositoryServerHost.value = String(cfg.proxy_repository_server_host || '').trim()
   originName.value = name.value
   originQuotaGb.value = quotaGb.value
   originQuotaAlertEnabled.value = quotaAlertEnabled.value
   originQuotaAlertThreshold.value = quotaAlertThreshold.value
-  originRepositoryServerHost.value = repositoryServerHost.value
 }
 
 /* ---------- save ---------- */
@@ -171,7 +166,6 @@ function buildPayload() {
     quota_alert_threshold: quotaAlertEnabled.value
       ? Number(quotaAlertThreshold.value || 0)
       : 0,
-    proxy_repository_server_host: repositoryServerHost.value.trim(),
   }
   Object.keys(config).forEach((k) => {
     if (config[k] === undefined) delete config[k]
@@ -287,16 +281,6 @@ watch(repositoryId, (id) => {
                   readonly
                   disabled
                 />
-              </ElFormItem>
-
-              <ElFormItem :label="t('repositoriesPage.fieldRepositoryServerHost')">
-                <ElInput
-                  v-model="repositoryServerHost"
-                  :placeholder="t('repositoriesPage.phRepositoryServerHost')"
-                />
-                <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">
-                  {{ t('repositoriesPage.hintRepositoryServerHost') }}
-                </div>
               </ElFormItem>
 
               <ElFormItem>
