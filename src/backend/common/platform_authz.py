@@ -127,6 +127,25 @@ def get_platform_role(user: Any) -> str | None:
     return None
 
 
+def ensure_platform_role(
+    user: Any, role: str = ROLE_PLATFORM_ADMIN
+) -> None:
+    """Assign a platform role when EE AuthZ is loaded (seed / bootstrap).
+
+    Community (no AuthzProvider): no-op; bare ``is_staff`` remains sufficient.
+    Enterprise: requires an explicit ``PlatformStaffRole`` row for Console access.
+    """
+    if not user or not getattr(user, "is_staff", False):
+        return
+    provider = get_authz_provider()
+    if provider is None:
+        return
+    ensurer = getattr(provider, "ensure_platform_role", None)
+    if not callable(ensurer):
+        return
+    ensurer(user, role)
+
+
 def authorize_platform(user: Any, action: str) -> None:
     """Raise AppError when the user lacks ``action``."""
     if has_platform_permission(user, action):

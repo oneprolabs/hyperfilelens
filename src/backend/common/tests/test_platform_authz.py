@@ -18,6 +18,7 @@ from common.platform_authz import (
     ROLE_INFRA_OPERATOR,
     ROLE_PLATFORM_ADMIN,
     authorize_platform,
+    ensure_platform_role,
     has_platform_permission,
     list_platform_permissions,
     permissions_for_role,
@@ -91,3 +92,25 @@ class PlatformAuthzFacadeTest(TestCase):
         from common.platform_authz import get_platform_role
 
         self.assertIsNone(get_platform_role(self.staff))
+
+    def test_ensure_platform_role_delegates_to_provider(self):
+        seen: list[tuple[int, str]] = []
+
+        class _Stub:
+            def has_platform_permission(self, user, action):
+                return False
+
+            def list_platform_permissions(self, user):
+                return []
+
+            def get_platform_role(self, user):
+                return None
+
+            def ensure_platform_role(self, user, role):
+                seen.append((user.pk, role))
+
+        register_authz_provider(_Stub())
+        ensure_platform_role(self.staff, ROLE_PLATFORM_ADMIN)
+        self.assertEqual(seen, [(self.staff.pk, ROLE_PLATFORM_ADMIN)])
+        ensure_platform_role(self.user, ROLE_PLATFORM_ADMIN)
+        self.assertEqual(seen, [(self.staff.pk, ROLE_PLATFORM_ADMIN)])

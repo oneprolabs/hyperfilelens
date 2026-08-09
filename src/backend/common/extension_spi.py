@@ -56,6 +56,10 @@ class AuthzProvider(Protocol):
         """Actions granted to ``user`` for deploy-profile / UI gating."""
         ...
 
+    def ensure_platform_role(self, user: Any, role: str) -> None:
+        """Idempotently assign a platform role (bootstrap / seed paths)."""
+        ...
+
 
 class QuotaProvider(Protocol):
     """Quota enforcement and EffectiveQuota surface (commercial plugin).
