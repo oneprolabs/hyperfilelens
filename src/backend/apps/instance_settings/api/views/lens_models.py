@@ -15,10 +15,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.iam.models import Organization
-from apps.instance_settings.permissions import IsInstanceSettingsStaff
+from apps.instance_settings.permissions import HasPlatformPermission
 from apps.lens_bridge.api.serializers import LensOrgSettingsSerializer
 from apps.lens_bridge.models import LensOrgModelLink
 from apps.lens_bridge.services import org_models, platform_lens, provisioning, sl_client
+from common.platform_authz import INFRA_AI_MODELS_MANAGE
 
 
 def _platform_org() -> Organization:
@@ -61,7 +62,7 @@ def _set_platform_default_model_ref(
 class PlatformOpsLensSettingsView(APIView):
     """Read and update platform-wide Agent and multimodal defaults."""
 
-    permission_classes = [IsInstanceSettingsStaff]
+    permission_classes = [HasPlatformPermission.for_actions(INFRA_AI_MODELS_MANAGE)]
 
     def get(self, request):
         link = provisioning.get_or_create_org_link(_platform_org())
@@ -101,7 +102,7 @@ class PlatformOpsLensSettingsView(APIView):
 class PlatformOpsLensModelProxyView(APIView):
     """Admin Console: SL admin LLM config for the platform organization."""
 
-    permission_classes = [IsInstanceSettingsStaff]
+    permission_classes = [HasPlatformPermission.for_actions(INFRA_AI_MODELS_MANAGE)]
 
     def get(self, request, config_uuid=None):
         org = _platform_org()

@@ -27,6 +27,13 @@ class DeployProfileViewTest(TestCase):
             password="Pass1234",
             is_staff=True,
         )
+        # EE AuthZ requires an explicit platform role for Console entry.
+        try:
+            from apps.membership.testing import ensure_platform_role
+
+            ensure_platform_role(self.staff)
+        except Exception:
+            pass
 
     def test_anonymous_profile(self):
         response = self.client.get(

@@ -32,6 +32,28 @@ def platform_ops_landing_path() -> str:
     return PLATFORM_OPS_LANDING_PATH_COMMUNITY
 
 
+def platform_ops_landing_path_for_user(user) -> str:
+    """Role-aware Admin Console landing (Platform AuthZ).
+
+    Billing → Quota Usage; Infra → AI Models; Admin / unknown → default.
+    """
+    try:
+        from common.platform_authz import (
+            ROLE_BILLING_OPERATOR,
+            ROLE_INFRA_OPERATOR,
+            get_platform_role,
+        )
+
+        role = get_platform_role(user)
+        if role == ROLE_BILLING_OPERATOR:
+            return "/platform-ops/platform/quota-usage"
+        if role == ROLE_INFRA_OPERATOR:
+            return "/platform-ops/engine/ai-settings"
+    except Exception:  # pragma: no cover
+        pass
+    return platform_ops_landing_path()
+
+
 def resolve_site_role(request: HttpRequest) -> str:
     """Return ``tenant`` or ``ops`` from the edge-controlled request header."""
     role = str(request.META.get("HTTP_X_HFL_SITE_ROLE") or "").strip().lower()
@@ -71,11 +93,15 @@ def platform_ops_api_allowed(request: HttpRequest) -> bool:
         platform_ops_allowed_cidrs,
         platform_ops_enabled,
     )
+    from common.platform_authz import get_platform_role
 
     if not platform_ops_enabled():
         return False
     user = request.user
     if not user or not user.is_authenticated or not user.is_staff:
+        return False
+    # EE: require explicit platform role. Community (no AuthzProvider): staff OK.
+    if get_platform_role(user) is None:
         return False
 
     if resolve_site_role(request) != "ops":
@@ -90,11 +116,14 @@ def platform_ops_api_allowed(request: HttpRequest) -> bool:
 def platform_ops_access_allowed(request: HttpRequest) -> bool:
     """Whether the current operations-site user may open Platform Ops."""
     from apps.configuration.services.runtime_settings import platform_ops_enabled
+    from common.platform_authz import get_platform_role
 
     if not platform_ops_enabled():
         return False
     user = request.user
     if not user or not user.is_authenticated or not user.is_staff:
+        return False
+    if get_platform_role(user) is None:
         return False
 
     return resolve_site_role(request) == "ops"
@@ -103,6 +132,7 @@ def platform_ops_access_allowed(request: HttpRequest) -> bool:
 def admin_console_entry_visible(request: HttpRequest) -> bool:
     """Whether the tenant shell should show the Admin Console entry."""
     from apps.configuration.services.runtime_settings import platform_ops_enabled
+    from common.platform_authz import get_platform_role
 
     user = request.user
     return bool(
@@ -111,6 +141,7 @@ def admin_console_entry_visible(request: HttpRequest) -> bool:
         and user
         and user.is_authenticated
         and user.is_staff
+        and get_platform_role(user) is not None
     )
 
 
@@ -148,5 +179,8 @@ def admin_console_public_url(request: HttpRequest) -> str:
 def default_landing_path(request: HttpRequest) -> str:
     site = resolve_site_role(request)
     if site == "ops" and platform_ops_access_allowed(request):
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "is_authenticated", False):
+            return platform_ops_landing_path_for_user(user)
         return platform_ops_landing_path()
     return "/"

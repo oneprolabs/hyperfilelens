@@ -13,6 +13,7 @@ from common.deploy.site import (
     default_landing_path,
     platform_ops_access_allowed,
     platform_ops_landing_path,
+    platform_ops_landing_path_for_user,
     resolve_site_role,
     tenant_public_url,
 )
@@ -69,6 +70,21 @@ class DeployProfileView(APIView):
             payload["platform_ops_access_allowed"] = platform_ops_access_allowed(
                 request,
             )
+            from common.platform_authz import (
+                get_platform_role,
+                list_platform_permissions,
+            )
+
+            payload["platform_role"] = get_platform_role(request.user)
+            payload["platform_permissions"] = list_platform_permissions(request.user)
+            # Staff deep-link / ops post-login use role-aware landing.
+            payload["admin_console_landing_path"] = platform_ops_landing_path_for_user(
+                request.user,
+            )
+            if payload["platform_ops_access_allowed"]:
+                payload["landing_path"] = platform_ops_landing_path_for_user(
+                    request.user,
+                )
             from apps.iam.constants import SUPPORT_SESSION_KEY
 
             support_key = request.session.get(SUPPORT_SESSION_KEY)
@@ -78,6 +94,8 @@ class DeployProfileView(APIView):
                 payload["support_org_key"] = None
         else:
             payload["is_staff"] = False
+            payload["platform_role"] = None
+            payload["platform_permissions"] = []
             payload["support_org_key"] = None
 
         return Response(payload)

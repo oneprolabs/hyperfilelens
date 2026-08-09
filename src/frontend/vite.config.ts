@@ -136,11 +136,14 @@ export default defineConfig(() => ({
     alias: extResolveAlias,
   },
   test: {
-    // Host tests plus tenant/ops extension tests when HFL_EXTENSIONS is set.
-    // Limit to ops/ so platform-ops EE suites are not pulled into community CI.
+    // Host tests plus extension tests when HFL_EXTENSIONS is set (ops + platform-ops).
+    // Community CI has empty HFL_EXTENSIONS so only Host ``src/**`` runs.
     include: [
       'src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}',
-      ...extensionFrontendSrcs.map((e) => `${e.src}/ops/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}`),
+      ...extensionFrontendSrcs.flatMap((e) => [
+        `${e.src}/ops/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}`,
+        `${e.src}/platform-ops/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}`,
+      ]),
     ],
   },
   plugins: [

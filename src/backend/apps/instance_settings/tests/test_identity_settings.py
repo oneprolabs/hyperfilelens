@@ -12,12 +12,19 @@ from apps.configuration.services.runtime_settings import (
     get_source,
     invalidate_runtime_settings_cache,
 )
+from apps.instance_settings.tests.helpers import (
+    ensure_ops_staff_role,
+    skip_if_extensions_loaded,
+)
 
 
 class PlatformIdentitySettingsCommunityTests(TestCase):
+    """Empty-socket identity behavior (skipped when EE is mounted)."""
+
     path = "/api/v1/instance-settings/identity"
 
     def setUp(self):
+        skip_if_extensions_loaded()
         invalidate_runtime_settings_cache()
         self.client = APIClient()
         self.staff = User.objects.create_user(
@@ -26,6 +33,7 @@ class PlatformIdentitySettingsCommunityTests(TestCase):
             password="Pass1234",
             is_staff=True,
         )
+        ensure_ops_staff_role(self.staff)
         self.client.force_authenticate(user=self.staff)
 
     def tearDown(self):
@@ -114,6 +122,7 @@ class PlatformIdentitySettingsEnterpriseTests(TestCase):
             password="Pass1234",
             is_staff=True,
         )
+        ensure_ops_staff_role(self.staff)
         self.client.force_authenticate(user=self.staff)
         patcher = patch(
             "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
@@ -142,6 +151,7 @@ class PlatformEmailSettingsCommunityTests(TestCase):
     path = "/api/v1/instance-settings/email"
 
     def setUp(self):
+        skip_if_extensions_loaded()
         invalidate_runtime_settings_cache()
         self.client = APIClient()
         self.staff = User.objects.create_user(
@@ -150,6 +160,7 @@ class PlatformEmailSettingsCommunityTests(TestCase):
             password="Pass1234",
             is_staff=True,
         )
+        ensure_ops_staff_role(self.staff)
         self.client.force_authenticate(user=self.staff)
 
     def tearDown(self):
@@ -191,6 +202,7 @@ class PlatformEnvironmentSettingsCommunityTests(TestCase):
     path = "/api/v1/instance-settings/environment"
 
     def setUp(self):
+        skip_if_extensions_loaded()
         invalidate_runtime_settings_cache()
         self.client = APIClient()
         self.staff = User.objects.create_user(
@@ -199,6 +211,7 @@ class PlatformEnvironmentSettingsCommunityTests(TestCase):
             password="Pass1234",
             is_staff=True,
         )
+        ensure_ops_staff_role(self.staff)
         self.client.force_authenticate(user=self.staff)
 
     def tearDown(self):
