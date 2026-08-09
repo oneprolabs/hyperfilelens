@@ -11,6 +11,7 @@ from apps.iam.models import Membership, Organization
 from apps.iam.profile_models import Profile
 from apps.iam.services.registration_service import unique_org_key_for_email
 from apps.storage.config import seed_global_config
+from common.platform_authz import ensure_platform_role
 from common.platform_staff import apply_platform_staff
 
 
@@ -53,6 +54,8 @@ class Command(BaseCommand):
         if created:
             user.set_password(admin_password)
         user.save()
+        # EE AuthZ: bare is_staff is not enough for Admin Console / smoke verify.
+        ensure_platform_role(user)
 
         Profile.objects.update_or_create(
             user=user,

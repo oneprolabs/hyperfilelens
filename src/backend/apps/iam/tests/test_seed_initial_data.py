@@ -38,6 +38,18 @@ class SeedInitialDataCommandTests(TestCase):
         profile = Profile.objects.get(user=user)
         self.assertTrue(profile.registration_completed)
 
+        # EE AuthZ (when loaded): seed must attach PlatformStaffRole for Console.
+        try:
+            from apps.membership.models import PlatformStaffRole
+            from common.platform_authz import ROLE_PLATFORM_ADMIN
+
+            self.assertEqual(
+                PlatformStaffRole.objects.get(user=user).role,
+                ROLE_PLATFORM_ADMIN,
+            )
+        except ImportError:
+            pass
+
     def test_rerun_is_idempotent_when_org_exists(self):
         call_command(
             "seed_initial_data",
