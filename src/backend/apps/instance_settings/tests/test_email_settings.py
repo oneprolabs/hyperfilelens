@@ -10,6 +10,7 @@ from apps.configuration.services.runtime_settings import (
     SMTP_EMAIL_BACKEND,
     invalidate_runtime_settings_cache,
 )
+from apps.instance_settings.tests.helpers import ensure_ops_staff_role
 
 
 @override_settings(
@@ -31,6 +32,7 @@ class PlatformEmailSettingsTests(TestCase):
             password="Pass1234",
             is_staff=True,
         )
+        ensure_ops_staff_role(self.staff)
         self.client.force_authenticate(user=self.staff)
         patcher = patch(
             "apps.configuration.services.runtime_settings.enterprise_identity_enabled",

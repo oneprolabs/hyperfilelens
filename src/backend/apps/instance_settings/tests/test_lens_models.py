@@ -9,6 +9,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.iam.models import Organization
+from apps.instance_settings.tests.helpers import ensure_ops_staff_role
 from apps.lens_bridge.models import LensOrgModelLink
 from apps.lens_bridge.services import deployment_ai_model, platform_lens
 
@@ -29,6 +30,7 @@ class HostPlatformLensModelTests(TestCase):
             password="Pass1234",
             is_staff=True,
         )
+        ensure_ops_staff_role(self.staff)
         self.client.force_authenticate(user=self.staff)
         self.client.defaults["HTTP_X_HFL_SITE_ROLE"] = "ops"
         self.platform_org = platform_lens.get_or_create_platform_org()

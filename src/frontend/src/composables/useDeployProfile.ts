@@ -13,6 +13,10 @@ export interface DeployProfile {
   admin_console_entry_visible: boolean
   platform_ops_access_allowed: boolean
   is_staff?: boolean
+  /** Platform Console role when authenticated (EE AuthZ); null when anonymous. */
+  platform_role?: string | null
+  /** Granted platform action keys for nav / UI gating. */
+  platform_permissions?: string[]
   support_org_key?: string | null
 }
 

@@ -10,7 +10,7 @@ from typing import Any, Protocol, Sequence
 
 
 class AuthzProvider(Protocol):
-    """Org authorization / role authority (typically one commercial plugin)."""
+    """Org + platform authorization (typically one commercial plugin)."""
 
     def is_org_member(self, user: Any, org_key: str) -> bool: ...
 
@@ -42,6 +42,18 @@ class AuthzProvider(Protocol):
         self, *, user_id: int, organization_id: int
     ) -> str | None:
         """Return stored plugin role even when affiliation is inactive (display)."""
+        ...
+
+    def get_platform_role(self, user: Any) -> str | None:
+        """Platform Console role key, or None when user has no platform access."""
+        ...
+
+    def has_platform_permission(self, user: Any, action: str) -> bool:
+        """True when ``user`` may perform platform action ``action``."""
+        ...
+
+    def list_platform_permissions(self, user: Any) -> Sequence[str]:
+        """Actions granted to ``user`` for deploy-profile / UI gating."""
         ...
 
 

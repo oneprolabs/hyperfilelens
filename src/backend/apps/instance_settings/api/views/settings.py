@@ -22,8 +22,9 @@ from apps.iam.config import (
     get_registration_verification_code_minutes,
 )
 from apps.insight import conf as insight_conf
-from apps.instance_settings.permissions import IsInstanceSettingsStaff
+from apps.instance_settings.permissions import HasPlatformPermission
 from common.platform_audit import write_platform_audit_log
+from common.platform_authz import ADMIN_USERS_MANAGE, INFRA_AI_MODELS_MANAGE
 from apps.configuration.services import runtime_settings as runtime_settings_svc
 from apps.configuration.services.runtime_settings import (
     KEY_AI_AZURE_BASE,
@@ -109,7 +110,7 @@ def _google_redirect_uri() -> str:
 
 
 class PlatformOpsSettingsEmailView(APIView):
-    permission_classes = [IsInstanceSettingsStaff]
+    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
 
     def get(self, request):
         cfg = email_connection_kwargs()
@@ -204,7 +205,7 @@ class PlatformOpsSettingsEmailView(APIView):
 
 
 class PlatformOpsSettingsEmailTestView(APIView):
-    permission_classes = [IsInstanceSettingsStaff]
+    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
 
     def post(self, request):
         if not runtime_settings_svc.enterprise_identity_enabled():
@@ -294,7 +295,7 @@ def _identity_patch_requires_extension(data: dict) -> bool:
 
 
 class PlatformOpsSettingsIdentityView(APIView):
-    permission_classes = [IsInstanceSettingsStaff]
+    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
 
     def get(self, request):
         identity_enabled = runtime_settings_svc.enterprise_identity_enabled()
@@ -453,7 +454,7 @@ class PlatformOpsSettingsIdentityView(APIView):
 
 
 class PlatformOpsSettingsAiView(APIView):
-    permission_classes = [IsInstanceSettingsStaff]
+    permission_classes = [HasPlatformPermission.for_actions(INFRA_AI_MODELS_MANAGE)]
 
     def get(self, request):
         return Response(
@@ -543,7 +544,7 @@ class PlatformOpsSettingsAiView(APIView):
 
 
 class PlatformOpsSettingsAiTestView(APIView):
-    permission_classes = [IsInstanceSettingsStaff]
+    permission_classes = [HasPlatformPermission.for_actions(INFRA_AI_MODELS_MANAGE)]
 
     def post(self, request):
         key = openai_api_key() or runtime_azure_key() or gemini_api_key()
@@ -553,7 +554,7 @@ class PlatformOpsSettingsAiTestView(APIView):
 
 
 class PlatformOpsSettingsDefaultsView(APIView):
-    permission_classes = [IsInstanceSettingsStaff]
+    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
 
     def get(self, request):
         retention_default = get_config(storage_conf.CONFIG_KEY_RETENTION, default={})
@@ -614,7 +615,7 @@ class PlatformOpsSettingsDefaultsView(APIView):
 
 
 class PlatformOpsSettingsEnvironmentView(APIView):
-    permission_classes = [IsInstanceSettingsStaff]
+    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
 
     def get(self, request):
         from apps.instance_settings.services.environment_payload import (
