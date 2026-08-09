@@ -12,6 +12,11 @@ const props = withDefaults(
     showPercent?: boolean
     usedOnly?: boolean
     unlimitedTotalLabel?: string
+    /**
+     * When set, overrides the default "totalBytes > 0 means known".
+     * Use true for hard-empty pools (totalBytes === 0) such as capacity_gb=0.
+     */
+    knownTotal?: boolean | null
   }>(),
   {
     variant: 'compact',
@@ -19,6 +24,7 @@ const props = withDefaults(
     showBar: true,
     showPercent: true,
     usedOnly: false,
+    knownTotal: null,
   },
 )
 
@@ -26,7 +32,9 @@ const variantClass = computed(() =>
   props.variant === 'detail' ? 'repo-usage-cell--detail' : 'repo-usage-cell--compact',
 )
 
-const hasKnownTotal = computed(() => props.totalBytes > 0)
+const hasKnownTotal = computed(() =>
+  props.knownTotal == null ? props.totalBytes > 0 : Boolean(props.knownTotal),
+)
 
 const showFullCapacity = computed(() => hasKnownTotal.value)
 
@@ -37,7 +45,9 @@ const showUnlimited = computed(
 )
 
 const percent = computed(() => {
-  if (!props.totalBytes) return 0
+  if (!hasKnownTotal.value) return 0
+  // Hard-empty total (0 bytes) is fully allocated / blocked.
+  if (props.totalBytes <= 0) return 100
   return Math.min(100, Math.round((props.usedBytes / props.totalBytes) * 100))
 })
 </script>

@@ -11,7 +11,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-vue-next'
-import { ElCheckbox, ElMessage, type ElTable } from 'element-plus'
+import { ElCheckbox, ElInputNumber, ElMessage, type ElTable } from 'element-plus'
 import NodeVersionCell from '../../components/node-lifecycle/NodeVersionCell.vue'
 import NodeLifecycleBanner from '../../components/node-lifecycle/NodeLifecycleBanner.vue'
 import NodeLifecycleUpgradeConfirmDialog from '../../components/NodeLifecycleUpgradeConfirmDialog.vue'
@@ -52,7 +52,14 @@ import {
 import InsightGatewayDetailDrawer from './InsightGatewayDetailDrawer.vue'
 import GatewayCompositeStatusCell from './GatewayCompositeStatusCell.vue'
 import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
+import {
+  fetchPublicGatewayCapacities,
+  patchPublicGatewayCapacity,
+  type PlatformGatewayCapacity,
+} from '../../platform-ops/lib/platformOpsApi'
 import type { ApiNode } from '../../types/node'
+
+const GIB = 1024 ** 3
 
 export type InsightGatewayRow = ApiNode & LensGatewayInsight
 
@@ -88,6 +95,12 @@ const detailNodeId = ref<number | null>(null)
 const renameDialogOpen = ref(false)
 const renameInput = ref('')
 const renameTarget = ref<InsightGatewayRow | null>(null)
+const capacityByGatewayId = ref<Map<number, PlatformGatewayCapacity>>(new Map())
+const capacityDialogOpen = ref(false)
+const capacitySaving = ref(false)
+const capacityTarget = ref<InsightGatewayRow | null>(null)
+const capacityUnlimited = ref(false)
+const capacityGbDraft = ref(100)
 const offlinePendingDeleteCount = computed(
   () => pendingDelete.value.filter((row) => row.routable === false || !row.hfl_agent_online).length,
 )
@@ -261,6 +274,73 @@ async function loadLatestVersion(signal?: AbortSignal) {
   }
 }
 
+async function loadCapacities(signal?: AbortSignal) {
+  if (!isPlatformEngine.value) {
+    capacityByGatewayId.value = new Map()
+    return
+  }
+  try {
+    const payload = await fetchPublicGatewayCapacities({ signal })
+    capacityByGatewayId.value = new Map(
+      (payload.results || []).map((row) => [row.gateway_id, row]),
+    )
+  } catch (e) {
+    if (pageRequests.isAbortError(e)) return
+    // List still usable; capacity column shows empty marks until retry.
+  }
+}
+
+function capacityFor(row: InsightGatewayRow): PlatformGatewayCapacity | undefined {
+  return capacityByGatewayId.value.get(row.id)
+}
+
+function capacityTotalBytes(cap: PlatformGatewayCapacity | undefined): number {
+  if (!cap || cap.unlimited || cap.capacity_gb < 0) return 0
+  if (cap.limit_bytes != null) return Number(cap.limit_bytes)
+  return Number(cap.capacity_gb) * GIB
+}
+
+/** Finite capacity including hard-empty (0 GiB); false for unlimited / unknown. */
+function capacityHasKnownTotal(cap: PlatformGatewayCapacity | undefined): boolean {
+  return Boolean(cap && !cap.unlimited && cap.capacity_gb >= 0)
+}
+
+function openCapacityDialog(row: InsightGatewayRow) {
+  if (!canManageGateway(row)) return
+  const cap = capacityFor(row)
+  capacityTarget.value = row
+  capacityUnlimited.value = Boolean(cap?.unlimited || (cap != null && cap.capacity_gb < 0))
+  const gb = cap != null && cap.capacity_gb >= 0 ? Number(cap.capacity_gb) : 100
+  capacityGbDraft.value = Number.isFinite(gb) ? gb : 100
+  capacityDialogOpen.value = true
+}
+
+async function submitCapacity() {
+  const row = capacityTarget.value
+  if (!row || capacitySaving.value) return
+  const next = capacityUnlimited.value ? -1 : Math.trunc(Number(capacityGbDraft.value))
+  if (!capacityUnlimited.value && (!Number.isFinite(next) || next < 0)) {
+    ElMessage.warning({ message: t('platformOps.engineGateway.capacitySaveFailed'), grouping: true })
+    return
+  }
+  capacitySaving.value = true
+  try {
+    const updated = await patchPublicGatewayCapacity(row.id, next)
+    const nextMap = new Map(capacityByGatewayId.value)
+    nextMap.set(row.id, updated)
+    capacityByGatewayId.value = nextMap
+    capacityDialogOpen.value = false
+    ElMessage.success({ message: t('platformOps.engineGateway.capacitySaved'), grouping: true })
+  } catch (error) {
+    ElMessage.error({
+      message: apiErrorMessage(error, t('platformOps.engineGateway.capacitySaveFailed')),
+      grouping: true,
+    })
+  } finally {
+    capacitySaving.value = false
+  }
+}
+
 async function load() {
   const signal = pageRequests.nextSignal('dg-list')
   busy.value = true
@@ -326,7 +406,7 @@ async function load() {
       )
     })
     applyGatewayRows(next, filtered.length)
-    await loadLatestVersion(signal)
+    await Promise.all([loadLatestVersion(signal), loadCapacities(signal)])
   } catch (e) {
     if (pageRequests.isAbortError(e)) return
     if (rows.value.length === 0) {
@@ -686,6 +766,45 @@ onUnmounted(() => {
           <el-table-column :label="t('protection.sourceResources.colHostIp')" min-width="140">
             <template #default="{ row }">{{ ipLine(row) }}</template>
           </el-table-column>
+          <el-table-column
+            v-if="isPlatformEngine"
+            :label="t('platformOps.engineGateway.colCapacity')"
+            min-width="220"
+          >
+            <template #default="{ row }">
+              <div class="dg-capacity-cell">
+                <HflCapacityCell
+                  v-if="capacityFor(row)"
+                  :used-bytes="capacityFor(row)!.used_bytes"
+                  :total-bytes="capacityTotalBytes(capacityFor(row))"
+                  :known-total="capacityHasKnownTotal(capacityFor(row))"
+                  variant="compact"
+                  :format-bytes="formatNodeBytes"
+                  :unlimited-total-label="
+                    capacityFor(row)!.unlimited || capacityFor(row)!.capacity_gb < 0
+                      ? t('platformOps.engineGateway.capacityUnlimited')
+                      : undefined
+                  "
+                />
+                <span v-else class="hfl-empty-mark">—</span>
+                <span
+                  v-if="capacityFor(row)?.used_incomplete"
+                  class="dg-capacity-cell__incomplete"
+                >
+                  {{ t('platformOps.engineGateway.capacityUsedIncomplete') }}
+                </span>
+                <ElButton
+                  v-if="canManageGateway(row)"
+                  link
+                  type="primary"
+                  class="dg-capacity-cell__edit"
+                  @click="openCapacityDialog(row)"
+                >
+                  {{ t('platformOps.engineGateway.editCapacity') }}
+                </ElButton>
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column v-if="!isPlatformEngine" label="OS" min-width="120">
             <template #default="{ row }">
               <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
@@ -831,6 +950,45 @@ onUnmounted(() => {
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="capacityDialogOpen"
+      class="source-action-dialog"
+      :title="t('platformOps.engineGateway.capacityDialogTitle')"
+      width="480px"
+      align-center
+      destroy-on-close
+    >
+      <p class="dg-capacity-dialog__hint">{{ t('platformOps.engineGateway.capacityDialogHint') }}</p>
+      <p
+        v-if="capacityTarget && capacityFor(capacityTarget)?.used_incomplete"
+        class="dg-capacity-dialog__warn"
+      >
+        {{ t('platformOps.engineGateway.capacityUsedIncomplete') }}
+      </p>
+      <ElForm label-position="top" class="source-action-dialog__form" @submit.prevent="submitCapacity">
+        <ElFormItem>
+          <ElCheckbox v-model="capacityUnlimited">
+            {{ t('platformOps.engineGateway.capacityUnlimited') }}
+          </ElCheckbox>
+        </ElFormItem>
+        <ElFormItem
+          v-if="!capacityUnlimited"
+          :label="t('platformOps.engineGateway.capacityLabel')"
+          required
+        >
+          <ElInputNumber v-model="capacityGbDraft" class="w-full" :min="0" :step="1" :precision="0" />
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <el-button :disabled="capacitySaving" @click="capacityDialogOpen = false">
+          {{ t('common.cancel') }}
+        </el-button>
+        <el-button type="primary" :loading="capacitySaving" @click="submitCapacity">
+          {{ t('common.save') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
     <InsightGatewayDetailDrawer
       v-model="detailOpen"
       :node-id="detailNodeId"
@@ -891,5 +1049,39 @@ onUnmounted(() => {
 
 .dg-muted {
   color: var(--color-text-tertiary, #999);
+}
+
+.dg-capacity-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dg-capacity-cell__edit {
+  padding: 0;
+  height: auto;
+  font-size: 12px;
+}
+
+.dg-capacity-cell__incomplete {
+  color: var(--el-color-warning);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.dg-capacity-dialog__hint {
+  margin: 0 0 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.dg-capacity-dialog__warn {
+  margin: 0 0 12px;
+  color: var(--el-color-warning);
+  font-size: 12px;
+  line-height: 1.4;
 }
 </style>

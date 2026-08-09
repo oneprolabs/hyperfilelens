@@ -1,13 +1,68 @@
 import {
   ERROR_CODE_FALLBACK_EN,
   ERROR_CODE_I18N_KEYS,
+  canonicalizeQuotaType,
   isBrowserNetworkMessage,
   isRegistryCode,
+  quotaTypeMeterLabel,
 } from './registry'
 import { normalizeThrownError } from './normalizer'
 import type { AppErrorShape } from './types'
+import { quotaMeterLabelKey } from '../licenseQuotaDisplay'
 
 export type TranslateFn = (key: string, params?: Record<string, unknown>) => string
+
+function resolveQuotaMeterLabel(quotaType: unknown, t?: TranslateFn): string {
+  const fallback = quotaTypeMeterLabel(quotaType)
+  const labelKey = quotaMeterLabelKey(canonicalizeQuotaType(quotaType))
+  if (t && labelKey) {
+    const translated = t(labelKey)
+    if (translated && translated !== labelKey) return translated
+  }
+  return fallback || 'resource'
+}
+
+function resolveSubscriptionQuotaMessage(
+  meta: Record<string, unknown> | undefined,
+  t?: TranslateFn,
+): string {
+  const scope = String(meta?.scope || 'organization').toLowerCase()
+  const meter = resolveQuotaMeterLabel(meta?.quota_type, t)
+  const hasMeter = Boolean(quotaTypeMeterLabel(meta?.quota_type))
+
+  if (scope === 'gateway') {
+    return t
+      ? t('errors.codes.subscriptionQuotaExceededGateway')
+      : 'This Public Data Gateway is at capacity. Contact your platform administrator to raise the workspace limit on this gateway.'
+  }
+
+  if (scope === 'instance') {
+    if (hasMeter) {
+      return t
+        ? interpolate(t('errors.codes.subscriptionQuotaExceededInstanceMeter', { meter }), { meter })
+        : interpolate(
+            'Shared instance {meter} capacity is full. Contact your platform administrator to raise the deployment grant or free capacity from other organizations.',
+            { meter },
+          )
+    }
+    return t
+      ? t('errors.codes.subscriptionQuotaExceededInstance')
+      : 'Shared instance capacity is full. Contact your platform administrator to raise the deployment grant or free capacity from other organizations.'
+  }
+
+  if (hasMeter) {
+    return t
+      ? interpolate(t('errors.codes.subscriptionQuotaExceededMeter', { meter }), { meter })
+      : interpolate(
+          '{meter} quota is full for this organization. Contact your platform administrator to raise limits.',
+          { meter },
+        )
+  }
+
+  return t
+    ? t(ERROR_CODE_I18N_KEYS['SUBSCRIPTION.QUOTA_EXCEEDED'])
+    : ERROR_CODE_FALLBACK_EN['SUBSCRIPTION.QUOTA_EXCEEDED']
+}
 
 function interpolate(template: string, params?: Record<string, unknown>): string {
   if (!params) return template
@@ -53,6 +108,10 @@ export function resolveErrorMessage(
   if (code === 'VALIDATION.FAILED') {
     const fieldMessage = firstFieldError(normalized.fields)
     if (fieldMessage) return fieldMessage
+  }
+
+  if (code === 'SUBSCRIPTION.QUOTA_EXCEEDED') {
+    return resolveSubscriptionQuotaMessage(meta, t)
   }
 
   if (t && isRegistryCode(code)) {

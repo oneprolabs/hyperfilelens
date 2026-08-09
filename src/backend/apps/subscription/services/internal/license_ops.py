@@ -26,11 +26,16 @@ def _map_limits(raw: dict) -> dict:
         "max_nodes": raw.get("max_nodes", raw.get("max_proxies", DEFAULT_LIMITS["max_nodes"])),
         "max_storage_gb": raw.get("max_storage_gb", DEFAULT_LIMITS["max_storage_gb"]),
         "max_gateways": raw.get("max_gateways", DEFAULT_LIMITS["max_gateways"]),
-        "ai_insights_quota": raw.get("ai_insights_quota", DEFAULT_LIMITS["ai_insights_quota"]),
-        "max_tasks": raw.get(
-            "max_tasks",
-            raw.get("max_backup_tasks", DEFAULT_LIMITS["max_tasks"]),
+        "max_public_gateways": raw.get(
+            "max_public_gateways", DEFAULT_LIMITS["max_public_gateways"]
         ),
+        "max_public_gateway_capacity_gb": raw.get(
+            "max_public_gateway_capacity_gb",
+            DEFAULT_LIMITS["max_public_gateway_capacity_gb"],
+        ),
+        "ai_insights_quota": raw.get("ai_insights_quota", DEFAULT_LIMITS["ai_insights_quota"]),
+        # Legacy License column only — Tasks are not enforced as a quota meter.
+        "max_tasks": int(raw.get("max_tasks", raw.get("max_backup_tasks", 0)) or 0),
         "max_alert_policies": raw.get(
             "max_alert_policies",
             raw.get("max_policies", DEFAULT_LIMITS["max_alert_policies"]),
@@ -39,7 +44,10 @@ def _map_limits(raw: dict) -> dict:
 
 
 def _dev_unlimited_limits() -> dict:
-    return {k: UNLIMITED for k in DEFAULT_LIMITS}
+    limits = {k: UNLIMITED for k in DEFAULT_LIMITS}
+    # Keep License.max_tasks writable for DEV codes; still not a quota meter.
+    limits["max_tasks"] = UNLIMITED
+    return limits
 
 
 def get_or_create_machine_code(*, organization: Organization, user, force: bool = False) -> str:
@@ -123,20 +131,16 @@ def build_current_payload(*, organization: Organization, user) -> dict:
     usage = collect_usage_stats(organization_id=organization.id)
     from common.extension_spi import get_quota_provider
 
-    # Mirror LedgerQuotaProvider: enforcement only when provider is live and
-    # an instance license exists (pre-activation soft-skips hard checks).
+    # EE QuotaProvider always hard-enforces EffectiveQuota (unsigned default pool
+    # or signed license). Community (no provider) stays informational.
     instance_lic = get_instance_active_license()
     provider = get_quota_provider()
-    enforcement_enabled = provider is not None and instance_lic is not None
+    enforcement_enabled = provider is not None
 
     def _limits_for(org: Organization, fallback_lic: License | None) -> dict:
-        # When enforcement is live, UI must match EffectiveQuota hard checks.
-        # Pre-activation (no instance license): show community defaults, not empty EE rows.
-        if (
-            provider is not None
-            and instance_lic is not None
-            and hasattr(provider, "get_limits")
-        ):
+        # When a provider is registered, UI must match EffectiveQuota (shared
+        # instance pool caps when no org Quota row; hard ceiling when persisted).
+        if provider is not None:
             return dict(provider.get_limits(org) or {})
         if fallback_lic is not None:
             return fallback_lic.get_limits()
@@ -178,7 +182,7 @@ def build_current_payload(*, organization: Organization, user) -> dict:
         "usage": usage,
         "limits": _limits_for(organization, None),
         "organization_name": organization.name,
-        "enforcement_enabled": False,
+        "enforcement_enabled": enforcement_enabled,
     }
 
 
@@ -331,5 +335,5 @@ def _notify_license_activated(*, organization: Organization, license_obj: Licens
     from common.extension_spi import get_quota_provider
 
     provider = get_quota_provider()
-    if provider is not None and hasattr(provider, "on_license_activated"):
+    if provider is not None:
         provider.on_license_activated(organization, license_obj)

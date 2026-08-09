@@ -46,9 +46,31 @@ class AuthzProvider(Protocol):
 
 
 class QuotaProvider(Protocol):
-    """Quota enforcement; Host keeps community defaults when unset."""
+    """Quota enforcement and EffectiveQuota surface (commercial plugin).
 
-    def check_quota(self, organization: Any, resource_type: str, additional: int = 1) -> Any: ...
+    Community (no provider): Host facade is a no-op / informational defaults.
+    Enterprise: hard checks + limits/validate/activate hooks.
+    """
+
+    def check_quota(
+        self, organization: Any, resource_type: str, additional: int = 1
+    ) -> Any:
+        """Deny path for new consumption when over quota (may raise AppError)."""
+        ...
+
+    def get_limits(self, organization: Any) -> dict[str, int]:
+        """Authoritative org limits map for UI / gateway select caps."""
+        ...
+
+    def validate_quota(
+        self, organization: Any, quota_type: str, amount: int = 1
+    ) -> dict:
+        """Soft preview: is_valid, limit/used, enforcement_enabled, message."""
+        ...
+
+    def on_license_activated(self, organization: Any, license_obj: Any) -> None:
+        """After activate: ensure policy knobs; keep resource meters shared; validate pool."""
+        ...
 
 
 _authz_provider: AuthzProvider | None = None

@@ -47,6 +47,8 @@ class LicenseApiTests(TestCase):
         return {"HTTP_X_ORG_KEY": self.org.key}
 
     def test_current_without_license(self):
+        from common.extension_spi import get_quota_provider
+
         resp = self.client.get(
             "/api/v1/subscription/licenses/current/",
             **self._headers(),
@@ -56,8 +58,17 @@ class LicenseApiTests(TestCase):
         self.assertIn("machine_code", resp.data)
         self.assertIn("limits", resp.data)
         self.assertIn("usage", resp.data)
-        self.assertEqual(resp.data["limits"]["max_users"], 50)
-        self.assertFalse(resp.data.get("enforcement_enabled", True))
+        provider = get_quota_provider()
+        if provider is None:
+            # Community: informational DEFAULT_LIMITS, no hard enforcement.
+            self.assertEqual(resp.data["limits"]["max_users"], 500)
+            self.assertFalse(resp.data.get("enforcement_enabled", True))
+        else:
+            # EE: missing org Quota → share instance default pool + hard enforce.
+            from apps.subscription.constants import DEFAULT_LIMITS
+
+            self.assertEqual(resp.data["limits"]["max_users"], DEFAULT_LIMITS["max_users"])
+            self.assertTrue(resp.data.get("enforcement_enabled"))
 
     @override_settings(DEBUG=True)
     def test_activate_dev_license(self):
@@ -155,11 +166,8 @@ class LicenseApiTests(TestCase):
         if provider is None:
             self.assertTrue(payload["is_valid"])
             return
-        # Plugin present but no instance license → create-path enforcement skipped.
-        if not payload.get("enforcement_enabled"):
-            self.assertTrue(payload["is_valid"])
-            return
-        # With an active instance grant + EffectiveQuota, hard limits apply.
+        # EE always enforces EffectiveQuota (unsigned default pool or signed license).
+        # Unallocated org meters are 0 → large request is denied.
         self.assertFalse(payload["is_valid"])
         self.assertTrue(payload.get("enforcement_enabled"))
 

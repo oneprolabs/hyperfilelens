@@ -957,6 +957,11 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         self._require_ready_session(link)
         body = LensRunCreateSerializer(data=request.data)
         body.is_valid(raise_exception=True)
+        from apps.subscription.services.interface import enforce_license_quota
+
+        # Block new runs when the lifetime AI token budget is already exhausted
+        # (additional=0: deny at/over limit without reserving an estimated run cost).
+        enforce_license_quota(link.organization, "ai_tokens", additional=0)
         payload = {"question": body.validated_data.get("question") or ""}
         if body.validated_data.get("idempotency_key"):
             payload["idempotency_key"] = body.validated_data["idempotency_key"]
