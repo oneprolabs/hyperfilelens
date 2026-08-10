@@ -11,6 +11,13 @@ mkdir -p "${tmp}/bin"
 cat >"${tmp}/bin/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == "--retry-connrefused" && "${2:-}" == "--version" ]]; then
+	if [[ "${HFL_TEST_CURL_SUPPORT_RETRY_CONNREFUSED:-0}" == "1" ]]; then
+		exit 0
+	fi
+	printf 'curl: option --retry-connrefused: is unknown\n' >&2
+	exit 2
+fi
 output=""
 while (($#)); do
 	printf '%s\n' "$1" >>"${HFL_TEST_CURL_LOG}"
@@ -36,6 +43,7 @@ source <(sed -n '/^hfl_now()/,/^hfl_build_enroll_args()/p' "${bootstrap}" | sed 
 CURL_TLS=()
 PATH="${tmp}/bin:${PATH}"
 export PATH HFL_TEST_CURL_LOG="${tmp}/curl.log"
+export HFL_TEST_CURL_SUPPORT_RETRY_CONNREFUSED=1
 
 destination="${tmp}/hfl-enroll"
 output="$(hfl_download "HyperFileLens enrollment helper" https://example.invalid/helper "${destination}" 2>&1)"
@@ -44,6 +52,21 @@ grep -F '[ OK  ] HyperFileLens enrollment helper downloaded (' <<<"${output}" >/
 grep -Fx -- '--progress-bar' "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx -- '--retry' "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx -- '--retry-connrefused' "${HFL_TEST_CURL_LOG}" >/dev/null
+grep -Fx 'bootstrap-download-fixture' "${destination}" >/dev/null
+[[ ! -e "${destination}.part" ]]
+
+# curl 7.29 (CentOS 7) must download without the unsupported optional flag.
+rm -f "${destination}"
+: >"${HFL_TEST_CURL_LOG}"
+export HFL_TEST_CURL_SUPPORT_RETRY_CONNREFUSED=0
+output="$(hfl_download "HyperFileLens enrollment helper" https://example.invalid/helper "${destination}" 2>&1)"
+grep -F '[ OK  ] HyperFileLens enrollment helper downloaded (' <<<"${output}" >/dev/null
+grep -Fx -- '--retry' "${HFL_TEST_CURL_LOG}" >/dev/null
+grep -Fx -- '--retry-delay' "${HFL_TEST_CURL_LOG}" >/dev/null
+if grep -Fx -- '--retry-connrefused' "${HFL_TEST_CURL_LOG}" >/dev/null; then
+	printf 'ERROR: unsupported --retry-connrefused was passed to a legacy curl\n' >&2
+	exit 1
+fi
 grep -Fx 'bootstrap-download-fixture' "${destination}" >/dev/null
 [[ ! -e "${destination}.part" ]]
 

@@ -925,13 +925,15 @@ grep -F 'launchd is required to install the agent service on macOS' "${agent_boo
 grep -F 'Windows ARM64 is not supported by this release' "${agent_bootstrap_windows}" >/dev/null
 for bootstrap in "${agent_bootstrap_linux}" "${agent_bootstrap_macos}"; do
 	grep -F -- '--fail --show-error --location --progress-bar' "${bootstrap}" >/dev/null
-	grep -F -- '--retry 3 --retry-connrefused --retry-delay 2' "${bootstrap}" >/dev/null
+	grep -F 'curl --retry-connrefused --version' "${bootstrap}" >/dev/null
+	grep -F -- '--retry 3 ${retry_connrefused[@]+"${retry_connrefused[@]}"} --retry-delay 2' "${bootstrap}" >/dev/null
 	grep -F 'HyperFileLens enrollment helper' "${bootstrap}" >/dev/null
 	grep -F 'partial="${destination}.part"' "${bootstrap}" >/dev/null
 done
 for bootstrap in "${gateway_bootstrap_linux}" "${gateway_docker_installer}"; do
 	grep -F -- '--fail --show-error --location --progress-bar' "${bootstrap}" >/dev/null
-	grep -F -- '--retry 3 --retry-connrefused --retry-delay 2' "${bootstrap}" >/dev/null
+	grep -F 'curl --retry-connrefused --version' "${bootstrap}" >/dev/null
+	grep -F -- '--retry 3 ${retry_connrefused[@]+"${retry_connrefused[@]}"} --retry-delay 2' "${bootstrap}" >/dev/null
 	grep -F 'partial="${destination}.part"' "${bootstrap}" >/dev/null
 done
 # CentOS 7 / Bash < 4.4: empty CURL_TLS + set -u requires ${arr[@]+"${arr[@]}"} (not "${arr[@]}").
