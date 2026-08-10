@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { listBackupSelectableSources } from './sourceApi'
+import { listBackupSelectableSources, productionSourceSummary } from './sourceApi'
 
 
 afterEach(() => {
@@ -73,5 +73,30 @@ describe('listBackupSelectableSources', () => {
     const url = new URL(String(fetchMock.mock.calls[0][0]), window.location.origin)
     expect(Object.fromEntries(url.searchParams)).toEqual({ page: '1' })
     expect(fetchMock.mock.calls[0][1]?.signal).toBe(controller.signal)
+  })
+})
+
+describe('productionSourceSummary', () => {
+  it('loads the canonical Agent and NAS summary', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      total: 4,
+      available: 3,
+      unavailable: 1,
+      hosts: { total: 2, available: 1, unavailable: 1 },
+      nas: { total: 2, available: 2, unavailable: 0 },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(productionSourceSummary()).resolves.toMatchObject({
+      total: 4,
+      available: 3,
+      unavailable: 1,
+    })
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]), window.location.origin)
+    expect(url.pathname).toBe('/api/v1/source/resources/production-summary/')
   })
 })

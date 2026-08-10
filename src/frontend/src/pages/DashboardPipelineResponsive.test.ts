@@ -25,4 +25,11 @@ describe('Dashboard pipeline responsive layout', () => {
     expect(appShell).toContain('margin: 32px 0 0')
     expect(appShell).toContain('height: 38px')
   })
+
+  it('uses the canonical production-source availability summary', () => {
+    expect(dashboard).toContain('overview?.productionSources.total')
+    expect(dashboard).toContain('overview?.productionSources.available')
+    expect(dashboard).toContain('overview?.productionSources.unavailable')
+    expect(dashboard).not.toContain('overview?.sourceActive')
+  })
 })

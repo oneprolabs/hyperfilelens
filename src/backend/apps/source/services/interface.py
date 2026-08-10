@@ -12,6 +12,7 @@ from apps.audit.services.interface import write_audit_log
 from apps.iam.models import Organization
 from apps.node import agent_paths
 from apps.node.models import Node
+from apps.node.models.base import NodeRole
 from apps.source.constants import (
     ConnectionTestStatus,
     MountStatus,
@@ -483,6 +484,41 @@ def resource_statistics(*, organization_id: int) -> dict:
         "by_type": by_type,
         "total_size": int(agg["total_size"] or 0),
         "total_files": int(agg["total_files"] or 0),
+    }
+
+
+def production_source_summary(*, organization_id: int) -> dict:
+    """Return the Dashboard's canonical Agent + Source NAS inventory summary."""
+    agent_qs = Node.objects.filter(
+        organization_id=organization_id,
+        role=NodeRole.AGENT,
+    )
+    nas_qs = SourceResource.objects.filter(
+        organization_id=organization_id,
+        resource_type=ResourceType.NAS,
+    )
+
+    hosts_total = agent_qs.count()
+    hosts_available = agent_qs.filter(availability="online").count()
+    nas_total = nas_qs.count()
+    nas_available = nas_qs.filter(availability="online").count()
+    total = hosts_total + nas_total
+    available = hosts_available + nas_available
+
+    return {
+        "total": total,
+        "available": available,
+        "unavailable": total - available,
+        "hosts": {
+            "total": hosts_total,
+            "available": hosts_available,
+            "unavailable": hosts_total - hosts_available,
+        },
+        "nas": {
+            "total": nas_total,
+            "available": nas_available,
+            "unavailable": nas_total - nas_available,
+        },
     }
 
 

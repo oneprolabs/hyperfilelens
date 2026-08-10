@@ -171,17 +171,17 @@ const capacityPlanUnavailableLabel = computed(() => {
   return t('dashboard.capacityPlanner.notAvailable')
 })
 
-const sourceHealthPct = computed(() => {
-  const total = overview.value?.sourceTotal ?? 0
+const sourceAvailabilityPct = computed(() => {
+  const total = overview.value?.productionSources.total ?? 0
   if (!total) return 0
-  const active = overview.value?.sourceActive ?? 0
-  return Math.min(100, Math.round((active / total) * 1000) / 10)
+  const available = overview.value?.productionSources.available ?? 0
+  return Math.min(100, Math.round((available / total) * 1000) / 10)
 })
 
 const infraSourceMainValue = computed(() => {
-  const active = overview.value?.sourceActive ?? 0
-  if (active > 0) return t('dashboard.ribbon.sourceProtected', { n: active })
-  return t('dashboard.ribbon.sourceProtectedEmpty')
+  const available = overview.value?.productionSources.available ?? 0
+  if (available > 0) return t('dashboard.ribbon.sourceAvailable', { n: available })
+  return t('dashboard.ribbon.sourceAvailableEmpty')
 })
 
 const storageTotalCapacityLabel = computed(() => {
@@ -245,7 +245,7 @@ function formatRelativeTime(iso?: string) {
 }
 
 const pipelineStep1Chip = computed(() => {
-  const n = overview.value?.sourceActive ?? 0
+  const n = overview.value?.productionSources.total ?? 0
   if (n > 0) return t('dashboard.pipeline.step1Chip', { n })
   return t('dashboard.pipeline.step1ChipEmpty')
 })
@@ -546,7 +546,7 @@ onMounted(refresh)
             </div>
           </div>
           <div class="ribbon-card__value-row">
-            <span class="ribbon-card__value">{{ sourceHealthPct }}%</span>
+            <span class="ribbon-card__value">{{ sourceAvailabilityPct }}%</span>
           </div>
         </div>
         <div class="ribbon-card__progress-block">
@@ -554,23 +554,23 @@ onMounted(refresh)
             <span>{{ infraSourceMainValue }}</span>
           </div>
           <div class="ribbon-track">
-            <div class="ribbon-fill ribbon-fill--indigo" :style="{ width: `${sourceHealthPct}%` }" />
+            <div class="ribbon-fill ribbon-fill--indigo" :style="{ width: `${sourceAvailabilityPct}%` }" />
           </div>
         </div>
         <div class="ribbon-card__stats">
           <div>
             <span>{{ t('dashboard.ribbon.sourceTotal') }}</span>
-            <strong>{{ overview?.sourceTotal ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}</strong>
+            <strong>{{ overview?.productionSources.total ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}</strong>
           </div>
           <div>
-            <span>{{ t('dashboard.ribbon.sourceNormal') }}</span>
-            <strong class="text-emerald-600">{{ overview?.sourceActive ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}</strong>
+            <span>{{ t('dashboard.ribbon.sourceAvailableLabel') }}</span>
+            <strong class="text-emerald-600">{{ overview?.productionSources.available ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}</strong>
           </div>
           <div>
-            <span>{{ t('dashboard.ribbon.sourceError') }}</span>
-            <strong :class="(overview?.sourceError ?? 0) > 0 ? 'ribbon-stat--danger' : 'ribbon-stat--muted'">
-              <span class="ribbon-stat-dot" :class="(overview?.sourceError ?? 0) > 0 ? 'ribbon-stat-dot--danger' : 'ribbon-stat-dot--muted'" />
-              {{ overview?.sourceError ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
+            <span>{{ t('dashboard.ribbon.sourceUnavailableLabel') }}</span>
+            <strong :class="(overview?.productionSources.unavailable ?? 0) > 0 ? 'ribbon-stat--danger' : 'ribbon-stat--muted'">
+              <span class="ribbon-stat-dot" :class="(overview?.productionSources.unavailable ?? 0) > 0 ? 'ribbon-stat-dot--danger' : 'ribbon-stat-dot--muted'" />
+              {{ overview?.productionSources.unavailable ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
             </strong>
           </div>
         </div>

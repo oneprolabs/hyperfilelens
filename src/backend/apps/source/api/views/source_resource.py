@@ -143,6 +143,11 @@ class SourceResourceViewSet(viewsets.ModelViewSet):
         sync_agent_source_hosts_for_org(organization_id=org.id)
         return Response(services.resource_statistics(organization_id=org.id))
 
+    @action(detail=False, methods=["get"], url_path="production-summary")
+    def production_summary(self, request):
+        org = require_org(request)
+        return Response(services.production_source_summary(organization_id=org.id))
+
     @action(detail=True, methods=["post"], url_path="test-connection")
     def test_connection(self, request, pk=None):
         resource = self.get_object()

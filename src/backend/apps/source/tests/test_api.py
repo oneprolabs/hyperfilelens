@@ -189,6 +189,73 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data["total"], 0)
 
+    def test_production_summary_counts_only_agents_and_nas(self):
+        Node.objects.create(
+            organization=self.org,
+            name="online-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        Node.objects.create(
+            organization=self.org,
+            name="offline-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+        SourceResource.objects.create(
+            organization=self.org,
+            name="online-nas",
+            resource_type="nas",
+            bound_node=self.node,
+            availability="online",
+        )
+        SourceResource.objects.create(
+            organization=self.org,
+            name="offline-nas",
+            resource_type="nas",
+            bound_node=self.node,
+            availability="offline",
+        )
+        SourceResource.objects.create(
+            organization=self.org,
+            name="legacy-nfs",
+            resource_type="nfs",
+            bound_node=self.node,
+            availability="online",
+        )
+        unbound_local = SourceResource.objects.create(
+            organization=self.org,
+            name="unbound-local",
+            resource_type="local",
+            availability="online",
+        )
+        unbound_local.soft_delete()
+
+        other_org = Organization.objects.create(key="other-summary-org", name="Other Summary Org")
+        Node.objects.create(
+            organization=other_org,
+            name="other-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+
+        response = self.client.get(
+            "/api/v1/source/resources/production-summary/",
+            secure=True,
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, {
+            "total": 4,
+            "available": 2,
+            "unavailable": 2,
+            "hosts": {"total": 2, "available": 1, "unavailable": 1},
+            "nas": {"total": 2, "available": 1, "unavailable": 1},
+        })
     def test_test_connection(self):
         agent = Node.objects.create(
             organization=self.org,
