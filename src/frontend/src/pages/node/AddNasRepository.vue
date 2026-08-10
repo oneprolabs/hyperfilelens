@@ -11,10 +11,12 @@ import {
   createStorageRepository,
   storageRepositoryCreateErrorMessage,
   type StorageRepository,
+  type StorageRepositoryCreatePayload,
 } from '../../lib/storageRepositoryApi'
 import { listAllNodes } from '../../lib/nodeApi'
 import { SMB_MOUNT_OPTION_EXAMPLES } from '../../lib/nasMountTroubleshooting'
 import { defaultNasMountOptions } from '../../lib/nasMountOptions'
+import { preflightNasRepositoryCreate, showNasDraftPreflightGuidance } from '../../lib/nasDraftPreflight'
 import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
 import type { ApiNode } from '../../types/node'
 import NasProxyTopology from './NasProxyTopology.vue'
@@ -155,7 +157,9 @@ async function onSubmit() {
   if (!validateForm()) return
   busy.value = true
   try {
-    const created = await createStorageRepository(buildCreatePayload())
+    const payload = buildCreatePayload()
+    await preflightNasRepositoryCreate(payload)
+    const created = await createStorageRepository(payload)
     const accepted = String(created.status || '').toLowerCase() === 'creating'
     ElMessage.success({
       message: t(accepted ? 'repositoriesPage.msgCreateAccepted' : 'repositoriesPage.msgCreated'),
@@ -178,13 +182,14 @@ async function onSubmit() {
       })
     }
   } catch (err) {
+    if (await showNasDraftPreflightGuidance(err, t, selectedProxyNodeName.value)) return
     ElMessage.error({ message: storageRepositoryCreateErrorMessage(err, t), grouping: true })
   } finally {
     busy.value = false
   }
 }
 
-function buildCreatePayload() {
+function buildCreatePayload(): StorageRepositoryCreatePayload {
   const bindNodeId = proxyNodeId.value && proxyNodeId.value > 0 ? proxyNodeId.value : undefined
   const config: Record<string, unknown> = {
     server_address: protocol.value === 'smb' ? smbHost.value.trim() : nfsHost.value.trim(),
@@ -195,7 +200,7 @@ function buildCreatePayload() {
     quota_alert_threshold: enableQuotaAlert.value ? Number(quotaAlertThreshold.value || 0) : 0,
   }
 
-  const payload: Record<string, unknown> = {
+  const payload: StorageRepositoryCreatePayload = {
     name: repoName.value.trim(),
     repo_type: 'nas',
     nas_protocol: protocol.value,

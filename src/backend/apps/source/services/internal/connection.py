@@ -36,6 +36,41 @@ from apps.source.services.internal.availability import (
 
 logger = logging.getLogger(__name__)
 
+SMB_CHARSET_UNAVAILABLE = "SMB_CHARSET_UNAVAILABLE"
+
+
+def _uses_utf8_iocharset(options: object) -> bool:
+    for item in str(options or "").split(","):
+        key, separator, value = item.partition("=")
+        if (
+            separator
+            and key.strip().lower() == "iocharset"
+            and value.strip().lower() == "utf8"
+        ):
+            return True
+    return False
+
+
+def _is_unstructured_smb_charset_failure(*, payload: dict, message: str) -> bool:
+    if str(payload.get("protocol") or "").strip().lower() != "smb":
+        return False
+    if not _uses_utf8_iocharset(payload.get("options")):
+        return False
+
+    normalized = str(message or "").strip().lower()
+    return any(
+        signature in normalized
+        for signature in (
+            "mount error(79)",
+            "needed shared library",
+            "unable to load nls charset",
+        )
+    ) or (
+        "iocharset" in normalized
+        and "utf8" in normalized
+        and "not found" in normalized
+    )
+
 
 def _requires_nas_agent(resource_type: str) -> bool:
     return resource_type in ResourceType.REQUIRES_MOUNT
@@ -48,6 +83,8 @@ def run_connection_test(
     resource_type: str = "",
     config: dict | None = None,
     credentials: dict | None = None,
+    mount_point_override: str = "",
+    cleanup_after_test: bool = False,
 ) -> dict:
     node = bound_node or (resource.bound_node if resource else None)
     rtype = resource_type or (resource.resource_type if resource else "")
@@ -77,6 +114,11 @@ def run_connection_test(
         config=config,
         credentials=credentials,
     )
+
+    if mount_point_override:
+        payload["mount_point"] = mount_point_override
+    if cleanup_after_test:
+        payload["cleanup_after_test"] = True
     logger.info(
         "source connection test start node_id=%s resource_id=%s protocol=%s server=%s",
         node.id,
@@ -111,12 +153,24 @@ def run_connection_test(
             resource.id if resource else payload.get("resource_id"),
             message[:500],
         )
+        result = outcome.result if isinstance(outcome.result, dict) else {}
+        details = {"storage_type": rtype, "protocol": payload.get("protocol")}
+        for key in ("charset", "kernel", "cleanup_status", "mount_status"):
+            if key in result:
+                details[key] = result[key]
         failure = {
             "success": False,
             "message": message,
-            "details": {"storage_type": rtype, "protocol": payload.get("protocol")},
+            "details": details,
         }
-        if error_code := task_error_code(outcome):
+        error_code = task_error_code(outcome)
+        if not error_code and _is_unstructured_smb_charset_failure(
+            payload=payload,
+            message=message,
+        ):
+            error_code = SMB_CHARSET_UNAVAILABLE
+            details["charset"] = "utf8"
+        if error_code:
             failure["error_code"] = error_code
         if confirmed_agent_failure(outcome):
             return result_with_availability_observation(failure, "offline")

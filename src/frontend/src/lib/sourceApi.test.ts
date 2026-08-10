@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { listBackupSelectableSources, productionSourceSummary } from './sourceApi'
+import { listBackupSelectableSources, productionSourceSummary, testSourceDraft } from './sourceApi'
 
 
 afterEach(() => {
@@ -98,5 +98,46 @@ describe('productionSourceSummary', () => {
 
     const url = new URL(String(fetchMock.mock.calls[0][0]), window.location.origin)
     expect(url.pathname).toBe('/api/v1/source/resources/production-summary/')
+  })
+})
+
+describe('testSourceDraft', () => {
+  it('preserves a structured charset failure from a 400 response envelope', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 400,
+      message: 'mount error(79)',
+      data: {
+        success: false,
+        message: 'mount error(79)',
+        error_code: 'SMB_CHARSET_UNAVAILABLE',
+        details: {
+          storage_type: 'nas',
+          protocol: 'smb',
+          charset: 'utf8',
+          cleanup_status: 'success',
+        },
+      },
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    const result = await testSourceDraft({
+      resource_type: 'nas',
+      bound_node_id: 13,
+      config: { protocol: 'smb', options: 'rw,iocharset=utf8' },
+    })
+
+    expect(result).toEqual({
+      success: false,
+      message: 'mount error(79)',
+      error_code: 'SMB_CHARSET_UNAVAILABLE',
+      details: {
+        storage_type: 'nas',
+        protocol: 'smb',
+        charset: 'utf8',
+        cleanup_status: 'success',
+      },
+    })
   })
 })

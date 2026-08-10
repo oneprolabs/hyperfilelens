@@ -207,6 +207,106 @@
   --hfl-message-box-accent-soft: var(--color-warning-light);
 }
 
+/* Match the Deregister Backup Source dialog shell for detailed SMB guidance. */
+.el-message-box.smb-utf8-preflight-dialog {
+  --el-messagebox-width: min(760px, calc(100vw - 32px));
+}
+
+.el-message-box.smb-utf8-preflight-dialog .el-message-box__content {
+  padding: 6px 20px 4px;
+}
+
+.el-message-box.smb-utf8-preflight-dialog .el-message-box__message {
+  width: 100%;
+  padding-top: 0;
+}
+
+.el-message-box.smb-utf8-preflight-dialog .el-message-box__btns {
+  padding: 10px 20px;
+}
+
+.smb-utf8-preflight-dialog__alert.el-alert {
+  width: 100%;
+  border: 1px solid var(--color-warning-border) !important;
+  border-radius: 6px !important;
+  background: var(--color-warning-light) !important;
+  color: var(--color-warning) !important;
+}
+
+.smb-utf8-preflight-dialog__alert.el-alert .el-alert__content {
+  min-width: 0;
+  padding: 0 4px;
+}
+
+.smb-utf8-preflight-dialog__alert-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.smb-utf8-preflight-dialog__alert-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.smb-utf8-preflight-dialog__alert-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-warning-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--color-warning);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.smb-utf8-preflight-dialog__alert-text {
+  min-width: 0;
+  color: rgb(120 75 12);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.smb-utf8-preflight-dialog__kernel {
+  font-weight: 600;
+}
+
+.smb-utf8-preflight-dialog__commands {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 128px;
+  padding: 10px 12px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--el-border-color, rgb(203 213 225));
+  border-radius: 8px;
+  background: var(--el-fill-color-light, rgb(248 250 252));
+  color: var(--el-text-color-primary, rgb(15 23 42));
+  font-family: var(--el-font-family-monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.smb-utf8-preflight-dialog__section-hint {
+  margin: 0;
+}
+
+.smb-utf8-preflight-dialog__section-hint {
+  color: var(--el-text-color-secondary, rgb(100 116 139));
+  font-size: 13px;
+  line-height: 20px;
+}
+
 html.dark .el-message-box,
 html[data-theme='dark'] .el-message-box,
 html[data-theme='hybrid'] .el-message-box {
@@ -270,5 +370,13 @@ html[data-theme='hybrid'] .el-message-box__status.el-message-box-icon--primary {
 
   .el-message-box__btns {
     padding: 12px 16px;
+  }
+
+  .el-message-box.smb-utf8-preflight-dialog .el-message-box__content {
+    padding: 6px 16px 4px;
+  }
+
+  .el-message-box.smb-utf8-preflight-dialog .el-message-box__btns {
+    padding: 10px 16px;
   }
 }

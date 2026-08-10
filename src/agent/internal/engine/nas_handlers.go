@@ -167,13 +167,8 @@ func (e *Engine) runNasMount(ctx context.Context, p Payload) (string, map[string
 	info, err := nas.NewService().Mount(ctx, spec)
 	if err != nil {
 		logNasTask(ctx, "mount_failed", "", spec, "err", err.Error())
-		var charsetErr *nas.SMBCharsetUnavailableError
-		if errors.As(err, &charsetErr) {
-			return "failed", map[string]any{
-				"error_code": "SMB_CHARSET_UNAVAILABLE",
-				"charset":    charsetErr.Charset,
-				"kernel":     charsetErr.Kernel,
-			}, err.Error()
+		if result := smbCharsetFailureResult(err); result != nil {
+			return "failed", result, err.Error()
 		}
 		return "failed", nil, err.Error()
 	}
@@ -248,6 +243,9 @@ func runNasTestWithService(ctx context.Context, p Payload, service nasTestServic
 			"server":       spec.Server,
 			"mount_point":  spec.MountPoint,
 		}
+		for key, value := range smbCharsetFailureResult(testErr) {
+			result[key] = value
+		}
 		if cleanupAfterTest {
 			result["cleanup_status"] = "success"
 			result["mount_status"] = "unmounted"
@@ -272,4 +270,16 @@ func runNasTestWithService(ctx context.Context, p Payload, service nasTestServic
 	}
 	logNasTask(ctx, "test_ok", "", spec, "total_bytes", info.TotalBytes)
 	return "success", result, ""
+}
+
+func smbCharsetFailureResult(err error) map[string]any {
+	var charsetErr *nas.SMBCharsetUnavailableError
+	if !errors.As(err, &charsetErr) {
+		return nil
+	}
+	return map[string]any{
+		"error_code": "SMB_CHARSET_UNAVAILABLE",
+		"charset":    charsetErr.Charset,
+		"kernel":     charsetErr.Kernel,
+	}
 }

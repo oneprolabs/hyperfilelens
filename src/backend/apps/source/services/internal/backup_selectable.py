@@ -179,6 +179,7 @@ def _nas_item(resource: SourceResource) -> dict[str, Any]:
         "status": str(resource.status or Availability.OFFLINE),
         "availability": str(resource.availability or Availability.OFFLINE),
         "protocol": _nas_protocol(cfg),
+        "mount_options": str(cfg.get("options") or "").strip(),
         "connection_uri": nas_mount_source_uri(resource_type=resource.resource_type, config=cfg),
         "bound_node_id": node.id if node else None,
         "mount_status": resource.mount_status,

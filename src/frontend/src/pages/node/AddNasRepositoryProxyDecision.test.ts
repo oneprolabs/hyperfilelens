@@ -19,6 +19,8 @@ import AddNasRepository from './AddNasRepository.vue'
 
 const mocks = vi.hoisted(() => ({
   createStorageRepository: vi.fn(),
+  preflightNasRepositoryCreate: vi.fn(),
+  showNasDraftPreflightGuidance: vi.fn(),
   listAllNodes: vi.fn(),
   routerPush: vi.fn(),
 }))
@@ -30,6 +32,11 @@ vi.mock('../../lib/storageRepositoryApi', () => ({
 
 vi.mock('../../lib/nodeApi', () => ({
   listAllNodes: mocks.listAllNodes,
+}))
+
+vi.mock('../../lib/nasDraftPreflight', () => ({
+  preflightNasRepositoryCreate: mocks.preflightNasRepositoryCreate,
+  showNasDraftPreflightGuidance: mocks.showNasDraftPreflightGuidance,
 }))
 
 vi.mock('vue-router', async (importOriginal) => ({
@@ -83,6 +90,15 @@ async function fillRequiredNfsFields(wrapper: VueWrapper) {
   await nextTick()
 }
 
+async function fillRequiredSmbFields(wrapper: VueWrapper) {
+  fieldInput(wrapper, en.addNasRepo.fieldSmbHost).vm.$emit('update:modelValue', '192.168.8.82')
+  fieldInput(wrapper, en.addNasRepo.fieldSmbShare).vm.$emit('update:modelValue', 'smb-share')
+  fieldInput(wrapper, en.repositoriesPage.fieldSmbUsername).vm.$emit('update:modelValue', 'backup')
+  fieldInput(wrapper, en.repositoriesPage.fieldSmbPassword).vm.$emit('update:modelValue', 'secret')
+  fieldInput(wrapper, en.repositoriesPage.fieldRepoName).vm.$emit('update:modelValue', 'Primary SMB')
+  await nextTick()
+}
+
 function previewValue(wrapper: VueWrapper, label: string) {
   const row = wrapper
     .findAll('.add-form-preview-row')
@@ -104,6 +120,8 @@ describe('AddNasRepository Proxy decision', () => {
     vi.clearAllMocks()
     mocks.listAllNodes.mockResolvedValue(proxyNodes)
     mocks.createStorageRepository.mockResolvedValue({ id: 41, name: 'Primary NAS' })
+    mocks.preflightNasRepositoryCreate.mockResolvedValue(undefined)
+    mocks.showNasDraftPreflightGuidance.mockResolvedValue(false)
   })
 
   it('starts undecided with a required Proxy-oriented preview and direct access last', async () => {
@@ -200,5 +218,26 @@ describe('AddNasRepository Proxy decision', () => {
     expect(serializedPayload).not.toHaveProperty('bind_node_type')
     expect(serializedPayload).not.toHaveProperty('bind_node_id')
     expect(serializedPayload.config).not.toHaveProperty('proxy_repository_server_host')
+  })
+
+  it('blocks Repository creation when the Proxy SMB preflight fails', async () => {
+    const preflightError = new Error('SMB UTF-8 support is unavailable')
+    mocks.preflightNasRepositoryCreate.mockRejectedValue(preflightError)
+    mocks.showNasDraftPreflightGuidance.mockResolvedValue(true)
+    const wrapper = await mountForm({ embedded: true })
+    await fillRequiredSmbFields(wrapper)
+    proxySelect(wrapper).vm.$emit('update:modelValue', 17)
+    await nextTick()
+
+    await submitButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(mocks.preflightNasRepositoryCreate).toHaveBeenCalledOnce()
+    expect(mocks.createStorageRepository).not.toHaveBeenCalled()
+    expect(mocks.showNasDraftPreflightGuidance).toHaveBeenCalledWith(
+      preflightError,
+      expect.any(Function),
+      'proxy-alpha',
+    )
   })
 })

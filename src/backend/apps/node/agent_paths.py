@@ -56,6 +56,23 @@ def validation_mount_point(
     )
 
 
+def source_validation_mount_point(
+    validation_id: str,
+    node_id: int,
+    *,
+    data_dir: str | None = None,
+) -> str:
+    safe_validation_id = str(validation_id or "").strip().lower()
+    if not safe_validation_id or any(
+        char not in "0123456789abcdef-" for char in safe_validation_id
+    ):
+        raise ValueError("validation id is invalid")
+    return (
+        f"{agent_mounts_dir(data_dir)}/{MOUNT_VALIDATIONS_DIR}/"
+        f"{safe_validation_id}/source-draft-node-{int(node_id)}"
+    )
+
+
 def require_agent_mount_path(path: str, *, data_dir: str | None = None) -> str:
     cleaned = str(path or "").strip().rstrip("/")
     if not cleaned:

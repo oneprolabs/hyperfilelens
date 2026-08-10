@@ -2,9 +2,65 @@ import { describe, expect, it } from 'vitest'
 
 import type { BackupSourceDirectoryEntry } from './sourceApi'
 import {
+  isLikelySmbFilenameEncodingIssue,
+  isLikelySmbFilenamePathNotFound,
   selectBackupSourceDirectoryTreeEntries,
   shouldAutoExpandRefreshedDirectory,
 } from './backupSourceDirectoryTree'
+
+describe('SMB filename encoding issue detection', () => {
+  const smbWithoutCharset = { type: 'nas' as const, protocol: 'smb' as const, mount_options: 'rw' }
+
+  it.each(['????', 'album??2026'])('flags repeated question marks in %s', (label) => {
+    expect(isLikelySmbFilenameEncodingIssue({
+      source: smbWithoutCharset,
+      label,
+      path: `/zh/${label}`,
+    })).toBe(true)
+  })
+
+  it('does not flag a configured UTF-8 SMB mount', () => {
+    expect(isLikelySmbFilenameEncodingIssue({
+      source: { ...smbWithoutCharset, mount_options: 'rw, IOCHARSET = UTF8' },
+      label: '????',
+      path: '/zh/????',
+    })).toBe(false)
+  })
+
+  it.each([
+    { source: smbWithoutCharset, label: 'file?.txt' },
+    { source: { type: 'nas' as const, protocol: 'nfs' as const, mount_options: '' }, label: '????' },
+    { source: { type: 'host' as const, platform: 'linux' as const }, label: '????' },
+    { source: smbWithoutCharset, label: 'test.sh' },
+  ])('does not flag non-matching entry %#', ({ source, label }) => {
+    expect(isLikelySmbFilenameEncodingIssue({ source, label, path: `/zh/${label}` })).toBe(false)
+  })
+
+  it('recognizes the contextual Explorer path-not-found failure', () => {
+    expect(isLikelySmbFilenamePathNotFound({
+      source: smbWithoutCharset,
+      path: '/zh/????',
+      error: {
+        status: 502,
+        message: 'Agent Explorer List Failed',
+        errorCode: 'AGENT.EXPLORER_LIST_FAILED',
+        meta: { diagnostic: 'path not found' },
+      },
+    })).toBe(true)
+  })
+
+  it.each([
+    { path: '/zh/normal', errorCode: 'AGENT.EXPLORER_LIST_FAILED', diagnostic: 'path not found' },
+    { path: '/zh/????', errorCode: 'AGENT.TIMEOUT', diagnostic: 'path not found' },
+    { path: '/zh/????', errorCode: 'AGENT.EXPLORER_LIST_FAILED', diagnostic: 'permission denied' },
+  ])('keeps unrelated browse failures generic %#', ({ path, errorCode, diagnostic }) => {
+    expect(isLikelySmbFilenamePathNotFound({
+      source: smbWithoutCharset,
+      path,
+      error: { status: 502, message: 'failed', errorCode, meta: { diagnostic } },
+    })).toBe(false)
+  })
+})
 
 const root: BackupSourceDirectoryEntry = {
   label: '/',
