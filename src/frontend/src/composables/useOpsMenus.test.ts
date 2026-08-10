@@ -24,6 +24,8 @@ function mountMenus() {
           nav: {
             groupObserve: 'MONITORING',
             monitor: 'Monitor',
+            groupAttention: 'ATTENTION',
+            attention: 'Attention',
             groupAlerts: 'ALERT CENTER',
             groupEvents: 'AUDIT CENTER',
             alertIncidents: 'Incidents',
@@ -66,6 +68,7 @@ describe('useOpsMenus', () => {
 
     expect(menus.value.some((group) => group.label === 'MONITORING')).toBe(false)
     expect(paths).not.toContain('/ops/host-monitor')
+    expect(paths).toContain('/ops/attention')
     expect(paths).toContain('/ops/alerts/incidents')
     expect(paths).toContain('/ops/task')
   })

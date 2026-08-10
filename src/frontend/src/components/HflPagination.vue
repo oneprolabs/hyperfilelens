@@ -21,7 +21,7 @@ const props = withDefaults(
     responsive?: boolean
   }>(),
   {
-    pageSizes: () => [10, 30, 50, 100],
+    pageSizes: () => [10, 20, 30, 50, 100],
     size: 'small',
     popperClass: '',
     responsive: true,

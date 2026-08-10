@@ -1,17 +1,13 @@
 import { api } from './api'
 import { unwrapApiPayload, asList } from './parse'
 import { getEffectiveOrgKey } from '../composables/useAuth'
-import { listRecords, listPolicies as listAlertPolicies, type AlertRecord } from './alertApi'
+import { listRecords, listPolicies as listAlertPolicies } from './alertApi'
 import { auditStatistics } from './auditApi'
 import { taskStatistics, listTasks, type TaskRow } from './taskApi'
 import { listAllNodes } from './nodeApi'
 import { fetchCurrentLicense } from './subscriptionApi'
 import { buildQuotaRows, type QuotaUsageRow } from './licenseQuotaDisplay'
-import {
-  listSourceResources,
-  productionSourceSummary,
-  type ProductionSourceSummary,
-} from './sourceApi'
+import { productionSourceSummary, type ProductionSourceSummary } from './sourceApi'
 import { listBackupConfigs } from './protectionBackupConfigApi'
 import { listRestorePlans } from './restoreApi'
 import type { ApiNode } from '../types/node'
@@ -125,8 +121,24 @@ export type DashboardOverview = {
   storage: StorageSummary
   topRepos: RepoUsageRow[]
   notificationFailed: number
+  attentionCount: number
   attention: DashboardAttentionItem[]
   isEmpty: boolean
+}
+
+type AttentionPage = {
+  count: number
+  results: DashboardAttentionItem[]
+}
+
+async function loadAttentionPage(): Promise<AttentionPage> {
+  const data = unwrapApiPayload<Record<string, unknown>>(
+    await api<unknown>('/api/v1/monitors/attention/?page=1&page_size=10&preview=diverse'),
+  )
+  return {
+    count: Number(data.count) || 0,
+    results: asList<DashboardAttentionItem>(data),
+  }
 }
 
 export type StorageRepositoryUsageRefreshResult = {
@@ -341,67 +353,6 @@ function countNodesByRole(nodes: ApiNode[]): Record<string, number> {
   return out
 }
 
-function buildAttention(params: {
-  failedTasks: TaskRow[]
-  firingAlerts: AlertRecord[]
-  offlineNodes: ApiNode[]
-  errorSources: { id: number; name: string }[]
-  auditFailures: number
-  t: (key: string, p?: Record<string, unknown>) => string
-}): DashboardAttentionItem[] {
-  const items: DashboardAttentionItem[] = []
-  for (const task of params.failedTasks.slice(0, 4)) {
-    items.push({
-      id: `task-${task.id}`,
-      kind: 'task',
-      title: params.t('dashboard.attentionTaskFail', {
-        name: (task.display_name || task.task_type || '').trim() || `#${task.id}`,
-      }),
-      detail: (task.error_message || '').slice(0, 120),
-      to: `/ops/task?taskUuid=${task.task_uuid}`,
-      at: task.finished_at || task.created_at,
-    })
-  }
-  for (const a of params.firingAlerts.slice(0, 4)) {
-    items.push({
-      id: `alert-${a.id}`,
-      kind: 'alert',
-      title: a.title,
-      detail: (a.message || '').slice(0, 120),
-      to: '/ops/alerts/incidents',
-      at: a.last_triggered_at || a.lastTriggeredAt || a.created_at || a.createdAt,
-    })
-  }
-  for (const n of params.offlineNodes.slice(0, 3)) {
-    items.push({
-      id: `node-${n.id}`,
-      kind: 'node',
-      title: params.t('dashboard.attentionNodeOffline', { name: n.name }),
-      detail: n.role ? params.t('dashboard.nodeRoleHint', { role: n.role }) : '',
-      to: nodeAttentionLinkForRole(n.role, n.id),
-    })
-  }
-  for (const s of params.errorSources.slice(0, 3)) {
-    items.push({
-      id: `source-${s.id}`,
-      kind: 'source',
-      title: params.t('dashboard.attentionSourceError', { name: s.name }),
-      detail: '',
-      to: '/protection/backup-sources?tab=host',
-    })
-  }
-  if (params.auditFailures > 0) {
-    items.push({
-      id: 'audit-failures',
-      kind: 'audit',
-      title: params.t('dashboard.attentionAuditFail', { n: params.auditFailures }),
-      detail: '',
-      to: '/ops/audit?result=failure',
-    })
-  }
-  return items.slice(0, 10)
-}
-
 export async function loadDashboardOverview(
   t: (key: string, p?: Record<string, unknown>) => string,
 ): Promise<DashboardOverview> {
@@ -414,19 +365,18 @@ export async function loadDashboardOverview(
     tasks7dPage,
     runningTasksPage,
     productionSources,
-    sourcesErrorPage,
     nodes,
     reposRaw,
     alertsFiringPage,
     alertsAckPage,
     alertPoliciesPage,
-    failedTasksPage,
     auditStats,
     protectionPoliciesRaw,
     notifyStats,
     backupConfigsPage,
     restorePlansEnabledPage,
     restoreTasksPage,
+    attentionPage,
   ] = await Promise.all([
     fetchCurrentLicense().catch(() => ({
       is_valid: false,
@@ -454,13 +404,11 @@ export async function loadDashboardOverview(
       hosts: { total: 0, available: 0, unavailable: 0 },
       nas: { total: 0, available: 0, unavailable: 0 },
     })),
-    listSourceResources({ status: 'error', page_size: 10 }).catch(() => ({ count: 0, results: [] })),
     listAllNodes().catch(() => []),
     api<unknown>('/api/v1/storage/repositories/').then((raw) => asList<ApiRepository>(raw)).catch(() => []),
     listRecords({ status: 'firing', page_size: 10 }).catch(() => ({ count: 0, results: [] })),
     listRecords({ status: 'acknowledged', page_size: 1 }).catch(() => ({ count: 0, results: [] })),
     listAlertPolicies({ page_size: 1 }).catch(() => ({ count: 0, results: [] })),
-    listTasks({ status: 'failed', time_range: '24h', page_size: 10 }).catch(() => ({ count: 0, results: [] })),
     auditStatistics().catch(() => ({
       total_count: 0,
       today_count: 0,
@@ -475,12 +423,11 @@ export async function loadDashboardOverview(
     listBackupConfigs({ page_size: 200 }).catch(() => ({ count: 0, results: [] })),
     listRestorePlans({ enabled: true, page_size: 1 }).catch(() => ({ count: 0, results: [] })),
     listTasks({ task_type: 'restore', page_size: 30 }).catch(() => ({ count: 0, results: [] })),
+    loadAttentionPage().catch(() => ({ count: 0, results: [] })),
   ])
 
   const nodesOnline = nodes.filter((n) => n.status === 'online').length
   const nodesTotal = nodes.length
-  const offlineNodes = nodes.filter((n) => n.status !== 'online')
-
   const orgName =
     license.organization_name ||
     license.license?.organization_name ||
@@ -521,17 +468,6 @@ export async function loadDashboardOverview(
   } catch {
     alertPoliciesEnabled = alertPoliciesCount
   }
-
-  const errorSources = sourcesErrorPage.results.map((r) => ({ id: r.id, name: r.name }))
-
-  const attention = buildAttention({
-    failedTasks: failedTasksPage.results,
-    firingAlerts: alertsFiringPage.results,
-    offlineNodes,
-    errorSources,
-    auditFailures: auditStats.failure_count,
-    t,
-  })
 
   const isEmpty =
     nodesTotal === 0 &&
@@ -582,7 +518,8 @@ export async function loadDashboardOverview(
     storage: summarizeStorage(reposRaw),
     topRepos: topRepos(reposRaw),
     notificationFailed: Number(notifyStats.failed) || 0,
-    attention,
+    attentionCount: attentionPage.count,
+    attention: attentionPage.results,
     isEmpty,
   }
 }
