@@ -53,6 +53,53 @@ class ProxyBindingsTests(TestCase):
             return inner["bound"]
         return {}
 
+    def test_proxy_repository_server_address_defaults_to_host_ip_and_can_be_overridden(self):
+        response = self.client.get(
+            f"/api/v1/node/nodes/{self.proxy.id}/", **self._headers()
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(response.data["effective_repository_server_address"], "10.0.0.50")
+        self.assertEqual(response.data["repository_server_address_source"], "agent_reported")
+
+        response = self.client.patch(
+            f"/api/v1/node/nodes/{self.proxy.id}/",
+            {"repository_server_address": "Repo-Proxy.Example.Test."},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(response.data["repository_server_address"], "repo-proxy.example.test")
+        self.assertEqual(
+            response.data["effective_repository_server_address"],
+            "repo-proxy.example.test",
+        )
+        self.assertEqual(response.data["repository_server_address_source"], "proxy_override")
+
+    def test_repository_server_address_rejects_urls_and_non_proxy_nodes(self):
+        invalid = self.client.patch(
+            f"/api/v1/node/nodes/{self.proxy.id}/",
+            {"repository_server_address": "https://proxy.example.test:51515"},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(invalid.status_code, status.HTTP_400_BAD_REQUEST)
+
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-1",
+            role=NodeRole.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.60",
+        )
+        non_proxy = self.client.patch(
+            f"/api/v1/node/nodes/{agent.id}/",
+            {"repository_server_address": "10.0.0.61"},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(non_proxy.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_offline_proxy_with_no_bindings_requires_force_cleanup(self):
         response = self.client.post(
             f"/api/v1/node/nodes/{self.proxy.id}/operations/",

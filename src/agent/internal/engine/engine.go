@@ -23,9 +23,11 @@ import (
 
 // Engine runs backup, browse, and maintenance workloads for WebSocket and CLI entrypoints.
 type Engine struct {
-	provider   config.Provider
-	activeMu   sync.Mutex
-	activeKill func()
+	provider              config.Provider
+	activeMu              sync.Mutex
+	activeKill            func()
+	repositoryServerMu    sync.Mutex
+	repositoryServerPorts map[int]struct{}
 }
 
 // New returns an engine that reads config from provider on each command.

@@ -1,0 +1,163 @@
+import { describe, expect, it } from 'vitest'
+import type { ComposerTranslation } from 'vue-i18n'
+
+import {
+  backupTargetValidationFailureDetails,
+  backupTargetValidationFailureSummary,
+} from './protectionBackupTargetValidationDetails'
+import type { BackupTargetValidationResult } from './protectionBackupTargetValidationApi'
+
+const messages: Record<string, string> = {
+  'protection.backupsPage.targetValidationFailedSummary': 'Connection validation failed.',
+  'protection.backupsPage.targetValidationFailedFallback': 'No diagnostic was returned.',
+  'protection.backupsPage.targetValidationFailedTitle': 'Backup target validation failed',
+  'protection.backupsPage.targetValidationGenericResolution': 'Check settings on {source}.',
+  'protection.backupsPage.targetValidationClockSkewSummary': 'Source host time is out of sync.',
+  'protection.backupsPage.targetValidationClockSkewTitle': 'Source host time differs from S3.',
+  'protection.backupsPage.targetValidationClockSkewIssue': '{source} differs too much from S3.',
+  'protection.backupsPage.targetValidationClockSkewReason': 'S3 rejected the signed request timestamp.',
+  'protection.backupsPage.targetValidationClockSkewCorrectTime': 'Correct date, time, and time zone on {source}.',
+  'protection.backupsPage.targetValidationClockSkewSynchronize': 'Synchronize {source} with NTP or Windows Time.',
+  'protection.backupsPage.targetValidationProxySummary': 'Proxy validation failed for {source}.',
+  'protection.backupsPage.targetValidationProxyTitle': 'Proxy Repository Server connection failed',
+  'protection.backupsPage.targetValidationProxyFallback': 'the selected Proxy Host',
+  'protection.backupsPage.targetValidationProxyAddressMissingIssue': '{proxy} has no reachable address.',
+  'protection.backupsPage.targetValidationProxyUnreachableIssue': '{source} could not connect to {endpoint}.',
+  'protection.backupsPage.targetValidationProxyAddressMissingReason': 'No automatic or custom address is available.',
+  'protection.backupsPage.targetValidationProxyPortExhaustedReason': 'No port is free in {portRange}.',
+  'protection.backupsPage.targetValidationProxyNetworkReason': '{endpoint} is unreachable.',
+  'protection.backupsPage.targetValidationProxyCheckAddress': 'Check the address for {proxy}.',
+  'protection.backupsPage.targetValidationProxyEditAddress': 'Edit the address for {proxy}.',
+  'protection.backupsPage.targetValidationProxyCheckNetwork': 'Test {source} to {endpoint}.',
+  'protection.backupsPage.targetValidationProxyAllowPorts': 'Allow {portRange}.',
+  'protection.backupsPage.targetValidationRetryStep': 'Retry validation.',
+}
+
+const t = ((key: string, params?: Record<string, unknown>) => {
+  let value = messages[key] || key
+  for (const [name, replacement] of Object.entries(params || {})) {
+    value = value.replaceAll(`{${name}}`, String(replacement))
+  }
+  return value
+}) as ComposerTranslation
+
+describe('backup target validation failure details', () => {
+  it('explains S3 clock skew and how to synchronize the source host', () => {
+    const result: BackupTargetValidationResult = {
+      key: 'host:agent:52',
+      status: 'failed',
+      code: 'S3_CLOCK_SKEW',
+      message: 'Safe backend clock-skew guidance.',
+      details: {
+        stage: 'repository_connect',
+        remediation: 'synchronize_source_time',
+      },
+    }
+
+    expect(backupTargetValidationFailureSummary({
+      result,
+      sourceName: 'cnw2016stdx64',
+      t,
+    })).toBe('Source host time is out of sync.')
+
+    const details = backupTargetValidationFailureDetails({
+      result,
+      sourceName: 'cnw2016stdx64',
+      t,
+    })
+    expect(details.title).toBe('Source host time differs from S3.')
+    expect(details.issue).toBe('cnw2016stdx64 differs too much from S3.')
+    expect(details.reasons).toEqual(['S3 rejected the signed request timestamp.'])
+    expect(details.resolutions).toContain('Correct date, time, and time zone on cnw2016stdx64.')
+    expect(details.resolutions).toContain('Synchronize cnw2016stdx64 with NTP or Windows Time.')
+    expect(details.rawDetail).toMatchObject({
+      source: 'cnw2016stdx64',
+      error_code: 'S3_CLOCK_SKEW',
+      stage: 'repository_connect',
+      remediation: 'synchronize_source_time',
+    })
+  })
+
+  it('explains a missing Proxy Repository Server address and how to configure it', () => {
+    const result: BackupTargetValidationResult = {
+      key: 'host:agent:52',
+      status: 'failed',
+      code: 'PROXY_REPOSITORY_SERVER_ADDRESS_MISSING',
+      message: 'No address is available.',
+      details: {
+        proxy_name: 'proxy-ubuntu-33',
+        address_source: 'unavailable',
+        port_range: '51515-52014',
+      },
+    }
+
+    expect(backupTargetValidationFailureSummary({ result, sourceName: 'cnw2016stdx64', t }))
+      .toBe('Proxy validation failed for cnw2016stdx64.')
+
+    const details = backupTargetValidationFailureDetails({
+      result,
+      sourceName: 'cnw2016stdx64',
+      t,
+    })
+    expect(details.errorCode).toBe('PROXY_REPOSITORY_SERVER_ADDRESS_MISSING')
+    expect(details.issue).toContain('proxy-ubuntu-33')
+    expect(details.reasons).toEqual(['No automatic or custom address is available.'])
+    expect(details.resolutions).toContain('Edit the address for proxy-ubuntu-33.')
+    expect(details.resolutions).toContain('Allow 51515-52014.')
+    expect(details.rawDetail).toMatchObject({
+      source: 'cnw2016stdx64',
+      proxy_name: 'proxy-ubuntu-33',
+      address_source: 'unavailable',
+    })
+  })
+
+  it('distinguishes source-to-Proxy network failures from TLS or authentication failures', () => {
+    const unreachable: BackupTargetValidationResult = {
+      key: 'host:agent:52',
+      status: 'failed',
+      code: 'PROXY_REPOSITORY_SERVER_UNREACHABLE',
+      message: 'dial tcp: i/o timeout',
+      details: {
+        proxy_name: 'proxy-ubuntu-33',
+        endpoint: 'https://192.168.10.33:51515',
+        port_range: '51515-52014',
+      },
+    }
+    const connection = {
+      ...unreachable,
+      code: 'PROXY_REPOSITORY_SERVER_CONNECTION_FAILED',
+      message: 'TLS certificate fingerprint mismatch',
+    } satisfies BackupTargetValidationResult
+
+    const networkDetails = backupTargetValidationFailureDetails({
+      result: unreachable,
+      sourceName: 'cnw2016stdx64',
+      t,
+    })
+    expect(networkDetails.issue).toContain('https://192.168.10.33:51515')
+    expect(networkDetails.reasons).toEqual(['https://192.168.10.33:51515 is unreachable.'])
+
+    const connectionDetails = backupTargetValidationFailureDetails({
+      result: connection,
+      sourceName: 'cnw2016stdx64',
+      t,
+    })
+    expect(connectionDetails.issue).toBe('TLS certificate fingerprint mismatch')
+    expect(connectionDetails.reasons).toEqual(['TLS certificate fingerprint mismatch'])
+  })
+
+  it('keeps the Agent diagnostic for unrelated validation failures', () => {
+    const result: BackupTargetValidationResult = {
+      key: 'host:agent:11',
+      status: 'failed',
+      code: 'NAS_MOUNT_FAILED',
+      message: 'mount share: permission denied',
+    }
+
+    const details = backupTargetValidationFailureDetails({ result, sourceName: 'host-a', t })
+    expect(details.summary).toBe('Connection validation failed.')
+    expect(details.issue).toBe(result.message)
+    expect(details.reasons).toEqual([result.message])
+    expect(details.resolutions).toContain('Check settings on host-a.')
+  })
+})

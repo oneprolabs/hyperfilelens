@@ -46,6 +46,14 @@ class Node(OrganizationScopedModel):
         null=True,
         help_text="Agent-reported primary host address.",
     )
+    repository_server_address = models.CharField(
+        max_length=253,
+        blank=True,
+        default="",
+        help_text=(
+            "Optional source-reachable address advertised by a Proxy Repository Server."
+        ),
+    )
     connection_ip_address = models.GenericIPAddressField(
         blank=True,
         null=True,

@@ -155,22 +155,18 @@ describe('AddNasRepository Proxy decision', () => {
     await nextTick()
     expect(wrapper.find('.nas-proxy-topology--direct').exists()).toBe(false)
     expect(previewValue(wrapper, en.addNasRepo.fieldSourceProxyNode)).toBe('proxy-alpha')
-    expect(fieldInput(wrapper, en.repositoriesPage.fieldRepositoryServerHost).exists()).toBe(true)
-    fieldInput(wrapper, en.repositoriesPage.fieldRepositoryServerHost).vm.$emit(
-      'update:modelValue',
-      'repo-proxy.example.internal',
-    )
-    await nextTick()
+    expect(wrapper.findAllComponents(ElFormItem).some(
+      component => component.props('label') === en.repositoriesPage.fieldRepositoryServerHost,
+    )).toBe(false)
 
     await submitButton(wrapper).trigger('click')
     await flushPromises()
     expect(mocks.createStorageRepository).toHaveBeenCalledWith(expect.objectContaining({
       bind_node_type: 'proxy',
       bind_node_id: 17,
-      config: expect.objectContaining({
-        proxy_repository_server_host: 'repo-proxy.example.internal',
-      }),
     }))
+    expect(mocks.createStorageRepository.mock.calls[0][0].config)
+      .not.toHaveProperty('proxy_repository_server_host')
 
     select.vm.$emit('clear')
     await nextTick()

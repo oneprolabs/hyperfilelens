@@ -18,6 +18,16 @@ export type BackupTargetValidationResult = {
   status: 'success' | 'failed'
   code: string | null
   message: string
+  details?: {
+    stage?: string
+    source_name?: string
+    source_address?: string
+    proxy_name?: string
+    proxy_address?: string
+    endpoint?: string
+    address_source?: string
+    port_range?: string
+  }
 }
 
 export type BackupTargetValidationResponse = {

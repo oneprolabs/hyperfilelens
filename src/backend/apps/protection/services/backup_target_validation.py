@@ -51,6 +51,17 @@ TARGET_VALIDATION_MAX_WORKERS = 4
 TARGET_VALIDATION_AGENT_SECONDS = 60
 TARGET_VALIDATION_SERVER_START_SECONDS = 25
 TARGET_VALIDATION_CORRELATION_TYPE = "protection.target_validation"
+S3_CLOCK_SKEW_CODE = "S3_CLOCK_SKEW"
+S3_CLOCK_SKEW_MESSAGE = (
+    "The source host clock differs too much from the S3 server, so the signed "
+    "request was rejected. Synchronize the source host date, time, and time zone "
+    "with a trusted NTP source, verify time synchronization, then retry validation."
+)
+_S3_CLOCK_SKEW_MARKERS = (
+    "requesttimetooskewed",
+    "the difference between the request time and the server's time is too large",
+    "request time is too skewed",
+)
 
 
 @dataclass(frozen=True)
@@ -67,6 +78,7 @@ class TargetValidationResult:
     status: str
     code: str | None = None
     message: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -253,6 +265,7 @@ def validate_backup_targets(
             "status": results[item.key].status,
             "code": results[item.key].code,
             "message": results[item.key].message,
+            "details": results[item.key].details,
         }
         for item in inputs
     ]
@@ -373,9 +386,8 @@ def _validate_s3_route(
             deadline=validation_deadline,
             max_wait_seconds=TARGET_VALIDATION_AGENT_SECONDS,
         )
-        return _outcome_result(
+        return _s3_outcome_result(
             outcome,
-            failure_code="S3_CONNECTION_FAILED",
             repository=assignment.repository,
         )
     except Exception as exc:
@@ -528,8 +540,18 @@ def _validate_proxy_repository_group(
     if not host:
         failure = TargetValidationResult(
             status="failed",
-            code="PROXY_REPOSITORY_SERVER_FAILED",
-            message="The repository Proxy has no configured cross-node server address.",
+            code="PROXY_REPOSITORY_SERVER_ADDRESS_MISSING",
+            message=(
+                "The Proxy Host has no source-reachable Repository Server Address. "
+                "Edit the Proxy Host and configure an address that backup sources can reach."
+            ),
+            details={
+                "stage": "address_resolution",
+                "proxy_name": repository_access.node.name,
+                "proxy_address": "",
+                "address_source": "unavailable",
+                "port_range": "51515-52014",
+            },
         )
         results.update({assignment.route_key: failure for assignment in cross})
         return results
@@ -559,10 +581,28 @@ def _validate_proxy_repository_group(
             max_wait_seconds=TARGET_VALIDATION_SERVER_START_SECONDS,
         )
         if not start_outcome.ok:
-            server_result = _outcome_result(
-                start_outcome,
-                failure_code="PROXY_REPOSITORY_SERVER_FAILED",
-                repository=repository,
+            port_exhausted = "no available repository server port" in str(
+                start_outcome.message or ""
+            ).lower()
+            server_result = TargetValidationResult(
+                status="failed",
+                code=(
+                    "PROXY_REPOSITORY_SERVER_PORT_EXHAUSTED"
+                    if port_exhausted
+                    else "PROXY_REPOSITORY_SERVER_START_FAILED"
+                ),
+                message=_sanitize_message(
+                    start_outcome.message
+                    or "The temporary Repository Server could not start on the Proxy Host.",
+                    repository=repository,
+                ),
+                details={
+                    "stage": "server_start",
+                    "proxy_name": repository_access.node.name,
+                    "proxy_address": host,
+                    "address_source": _host_source,
+                    "port_range": "51515-52014",
+                },
             )
             results.update(
                 {assignment.route_key: server_result for assignment in cross}
@@ -590,8 +630,15 @@ def _validate_proxy_repository_group(
         if not server_payload["url"] or not server_payload["server_cert_fingerprint"]:
             failure = TargetValidationResult(
                 status="failed",
-                code="PROXY_REPOSITORY_SERVER_FAILED",
+                code="PROXY_REPOSITORY_SERVER_START_FAILED",
                 message="The repository Proxy returned incomplete server connection information.",
+                details={
+                    "stage": "server_start",
+                    "proxy_name": repository_access.node.name,
+                    "proxy_address": host,
+                    "address_source": _host_source,
+                    "port_range": "51515-52014",
+                },
             )
             results.update({assignment.route_key: failure for assignment in cross})
             return results
@@ -612,11 +659,39 @@ def _validate_proxy_repository_group(
                     deadline=validation_deadline,
                     max_wait_seconds=TARGET_VALIDATION_AGENT_SECONDS,
                 )
-                results[assignment.route_key] = _outcome_result(
-                    probe,
-                    failure_code="TARGET_CONNECTION_FAILED",
-                    repository=repository,
-                )
+                if probe.ok:
+                    results[assignment.route_key] = TargetValidationResult(
+                        status="success"
+                    )
+                else:
+                    network_failure = _is_proxy_repository_network_failure(
+                        probe.message
+                    )
+                    results[assignment.route_key] = TargetValidationResult(
+                        status="failed",
+                        code=(
+                            "PROXY_REPOSITORY_SERVER_UNREACHABLE"
+                            if network_failure
+                            else "PROXY_REPOSITORY_SERVER_CONNECTION_FAILED"
+                        ),
+                        message=_sanitize_message(
+                            probe.message
+                            or "The backup source could not connect to the Proxy Repository Server.",
+                            repository=repository,
+                        ),
+                        details={
+                            "stage": "source_probe",
+                            "source_name": assignment.target.node.name,
+                            "source_address": str(
+                                assignment.target.node.ip_address or ""
+                            ),
+                            "proxy_name": repository_access.node.name,
+                            "proxy_address": host,
+                            "endpoint": server_payload["url"],
+                            "address_source": _host_source,
+                            "port_range": "51515-52014",
+                        },
+                    )
             except Exception as exc:
                 results[assignment.route_key] = _validation_exception_result(
                     exc,
@@ -656,6 +731,29 @@ def _validate_proxy_repository_group(
                         resource_label="temporary Kopia server",
                     )
     return results
+
+
+def _is_proxy_repository_network_failure(message: object) -> bool:
+    lower_message = str(message or "").lower()
+    return any(
+        token in lower_message
+        for token in (
+            "connection refused",
+            "actively refused",
+            "connection reset",
+            "connection timed out",
+            "context deadline exceeded",
+            "i/o timeout",
+            "no route to host",
+            "network is unreachable",
+            "name resolution",
+            "no such host",
+            "temporary failure in name resolution",
+            "timeout awaiting response headers",
+            "dial tcp",
+            "connectex",
+        )
+    )
 
 
 def _execute_agent_task(
@@ -840,6 +938,47 @@ def _outcome_result(
     )
 
 
+def _s3_outcome_result(
+    outcome: _AgentOutcome,
+    *,
+    repository: Repository,
+) -> TargetValidationResult:
+    if not outcome.ok and not outcome.timed_out and _is_s3_clock_skew_failure(outcome):
+        return TargetValidationResult(
+            status="failed",
+            code=S3_CLOCK_SKEW_CODE,
+            message=S3_CLOCK_SKEW_MESSAGE,
+            details={
+                "stage": "repository_connect",
+                "remediation": "synchronize_source_time",
+            },
+        )
+    return _outcome_result(
+        outcome,
+        failure_code="S3_CONNECTION_FAILED",
+        repository=repository,
+    )
+
+
+def _is_s3_clock_skew_failure(outcome: _AgentOutcome) -> bool:
+    candidates = [outcome.message]
+    repository_connect = outcome.result.get("repository_connect")
+    if isinstance(repository_connect, dict):
+        candidates.extend(
+            repository_connect.get(key)
+            for key in ("stderr", "stderr_tail", "stdout", "stdout_tail")
+        )
+    candidates.extend(
+        outcome.result.get(key)
+        for key in ("stderr", "stderr_tail", "stdout", "stdout_tail")
+    )
+    return any(
+        marker in str(candidate or "").lower()
+        for candidate in candidates
+        for marker in _S3_CLOCK_SKEW_MARKERS
+    )
+
+
 def _merge_cleanup_failure(
     current: TargetValidationResult,
     cleanup: _AgentOutcome,
@@ -862,6 +1001,7 @@ def _merge_cleanup_failure(
         status="failed",
         code=current.code or "TARGET_CONNECTION_FAILED",
         message=f"{message} Cleanup also failed: {cleanup_message}"[:1000],
+        details=current.details,
     )
 
 

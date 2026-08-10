@@ -21,7 +21,10 @@ describe('backup Target connection validation flow', () => {
 
   it('shows row-level failures and invalidates stale results after assignment changes', () => {
     expect(wizard).toContain("classes.push('target-group-row--connection-failed')")
-    expect(wizard).toContain('targetConnectionResult(group.key)?.message')
+    expect(wizard).toContain('targetConnectionFailureSummary(group)')
+    expect(wizard).toContain('@click.stop="showTargetConnectionFailureDetails(group)"')
+    expect(wizard).toContain("t('feedback.toast.viewDetails')")
+    expect(wizard).toMatch(/\.target-connection-result__summary \{[\s\S]*?text-overflow: ellipsis;[\s\S]*?white-space: nowrap;/)
     expect(wizard).toContain('targetGroupIssue(group)')
     expect(wizard).toContain("t('protection.backupsPage.targetEndpointMissingInline')")
     expect(wizard).toContain('clearTargetConnectionResults()')

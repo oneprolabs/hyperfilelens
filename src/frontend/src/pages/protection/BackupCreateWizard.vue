@@ -55,6 +55,7 @@ import {
 import { getEffectiveOrgKey } from '../../composables/useAuth'
 import { apiErrorMessage, apiErrorMessageI18n, isAbortError } from '../../lib/api'
 import { normalizeThrownError } from '../../lib/errors'
+import { openErrorDetails } from '../../lib/errors/details'
 import { notifyError } from '../../lib/notify'
 import { logger } from '../../lib/logger'
 import {
@@ -76,6 +77,10 @@ import {
   validateProtectionBackupTargets,
   type BackupTargetValidationResult,
 } from '../../lib/protectionBackupTargetValidationApi'
+import {
+  backupTargetValidationFailureDetails,
+  backupTargetValidationFailureSummary,
+} from '../../lib/protectionBackupTargetValidationDetails'
 import {
   createSourceResource,
   listBackupSourceDirectories,
@@ -130,7 +135,6 @@ import { issueEnrollmentInstall, listAllNodes, type EnrollmentOs } from '../../l
 import { formatOfflineBackupPlanMessage } from './lib/offlineBackupPlanMessage'
 import {
   isBackupTargetCompatible,
-  requiresCrossProxyRepositoryServerHost,
 } from './lib/backupTargetCompatibility'
 import {
   createEmptyPolicyForm,
@@ -1192,7 +1196,6 @@ const addTargetNasPassword = ref('')
 const addTargetNasMountOptions = ref('')
 const addTargetNasProxyNodeId = ref<number | undefined>(undefined)
 const addTargetProxyNodeId = ref<number | undefined>(undefined)
-const addTargetRepositoryServerHost = ref('')
 const addTargetProxyDir = ref('')
 const addTargetProxyUseTree = ref(true)
 const addTargetProxyDirTreeRef = ref<InstanceType<typeof ElTree>>()
@@ -2678,7 +2681,6 @@ function resetAddTargetForm(kind: AddTargetRepoKind = addTargetKind.value) {
   addTargetNasMountOptions.value = ''
   addTargetNasProxyNodeId.value = undefined
   addTargetProxyNodeId.value = undefined
-  addTargetRepositoryServerHost.value = ''
   addTargetProxyDir.value = ''
   addTargetProxyUseTree.value = true
   addTargetQuota.value = 0
@@ -2779,10 +2781,6 @@ function validateAddTargetNasStep(step: 0 | 1 | 2) {
     return true
   }
   if (step === 1) {
-    if (addTargetRequiresRepositoryServerHost.value && !addTargetRepositoryServerHost.value.trim()) {
-      ElMessage.warning({ message: t('repositoriesPage.errRepositoryServerHost'), grouping: true })
-      return false
-    }
     return true
   }
   if (!addTargetRepoName.value.trim()) {
@@ -2809,10 +2807,6 @@ function validateAddTargetForm() {
   }
   if (!addTargetProxyDir.value.trim()) {
     ElMessage.warning({ message: t('repositoriesPage.errProxyNodeDir'), grouping: true })
-    return false
-  }
-  if (addTargetRequiresRepositoryServerHost.value && !addTargetRepositoryServerHost.value.trim()) {
-    ElMessage.warning({ message: t('repositoriesPage.errRepositoryServerHost'), grouping: true })
     return false
   }
   return true
@@ -2886,9 +2880,6 @@ function buildAddTargetPayload() {
         smb_username: addTargetNasProtocol.value === 'smb' ? addTargetNasUsername.value.trim() : undefined,
         smb_password: addTargetNasProtocol.value === 'smb' ? addTargetNasPassword.value : undefined,
         mount_options: addTargetNasMountOptions.value.trim() || undefined,
-        proxy_repository_server_host: addTargetNasProxyNodeId.value
-          ? addTargetRepositoryServerHost.value.trim() || undefined
-          : undefined,
       },
     } as const
   }
@@ -2899,7 +2890,6 @@ function buildAddTargetPayload() {
     bind_node_id: addTargetProxyNodeId.value,
     config: {
       proxy_node_dir: addTargetProxyDir.value.trim(),
-      proxy_repository_server_host: addTargetRepositoryServerHost.value.trim() || undefined,
     },
   } as const
 }
@@ -4579,22 +4569,6 @@ const checkedTargetGroups = computed(() =>
   wizardSourceGroups.value.filter((group) => isTargetGroupChecked(group.key)),
 )
 
-const addTargetRequiresRepositoryServerHost = computed(() => {
-  const bindNodeId = addTargetKind.value === 'nas'
-    ? addTargetNasProxyNodeId.value
-    : addTargetProxyNodeId.value
-  const groups = checkedTargetGroups.value.length > 0
-    ? checkedTargetGroups.value
-    : wizardSourceGroups.value
-  return requiresCrossProxyRepositoryServerHost(
-    groups.map((group) => ({
-      sourceType: group.sourceType,
-      boundNodeId: realSourceById.value.get(group.sourceId)?.boundNodeId,
-    })),
-    bindNodeId,
-  )
-})
-
 function isTargetGroupMissing(group: WizardSourceGroup) {
   const targetId = sourceTargetMap.value[group.key]
   const target = getRealTarget(targetId)
@@ -4645,6 +4619,26 @@ function cancelTargetValidation() {
 
 function targetConnectionResult(groupKey: string) {
   return targetConnectionResults.value[groupKey]
+}
+
+function targetConnectionFailureSummary(group: WizardSourceGroup) {
+  const result = targetConnectionResult(group.key)
+  if (!result || result.status !== 'failed') return ''
+  return backupTargetValidationFailureSummary({
+    result,
+    sourceName: group.sourceName,
+    t,
+  })
+}
+
+function showTargetConnectionFailureDetails(group: WizardSourceGroup) {
+  const result = targetConnectionResult(group.key)
+  if (!result || result.status !== 'failed') return
+  openErrorDetails(backupTargetValidationFailureDetails({
+    result,
+    sourceName: group.sourceName,
+    t,
+  }))
 }
 
 async function focusFirstFailedTargetGroup(results: Record<string, BackupTargetValidationResult>) {
@@ -6468,7 +6462,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                 @selection-change="onFilterPolicyGroupSelectionChange"
               >
                 <el-table-column type="selection" width="35" fixed="left" reserve-selection />
-                <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="180" fixed="left">
+                <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="162" fixed="left">
                   <template #default="{ row: group }">
                     <div class="backup-source-cell">
                       <div class="backup-source-cell__body">
@@ -6487,7 +6481,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                 </el-table-column>
                 <el-table-column
                   :label="t('protection.backupsPage.labelBackupDirs')"
-                  min-width="180"
+                  min-width="198"
                   class-name="hfl-table-no-tooltip"
                 >
                   <template #default="{ row: group }">
@@ -6498,7 +6492,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                       :disabled="configSelectMenuOpen"
                     >
                       <template #reference>
-                        <div class="create-source-dir-preview hfl-table-no-tooltip">
+                        <div class="create-source-dir-preview create-source-dir-preview--single-line-paths hfl-table-no-tooltip">
                           <div class="create-source-dir-preview__count">
                             {{ t('protection.backupsPage.addedDirTotal', { n: group.entries.length }) }}
                           </div>
@@ -7261,11 +7255,19 @@ function preserveShallowestPathOrder(paths: string[]) {
                         :size="14"
                         class="target-connection-result__icon"
                       />
-                      <span>
+                      <span class="target-connection-result__summary">
                         {{ targetConnectionResult(group.key)?.status === 'success'
                           ? t('protection.backupsPage.targetValidationSucceeded')
-                          : targetConnectionResult(group.key)?.message }}
+                          : targetConnectionFailureSummary(group) }}
                       </span>
+                      <button
+                        v-if="targetConnectionResult(group.key)?.status === 'failed'"
+                        type="button"
+                        class="target-connection-result__details"
+                        @click.stop="showTargetConnectionFailureDetails(group)"
+                      >
+                        {{ t('feedback.toast.viewDetails') }}
+                      </button>
                     </div>
                   </div>
                 </template>
@@ -8795,19 +8797,6 @@ function preserveShallowestPathOrder(paths: string[]) {
                               {{ addTargetNasProxyNodeId ? t('addNasRepo.hintProxySelected') : t('addNasRepo.hintProxySkipped') }}
                             </div>
                           </ElFormItem>
-                          <ElFormItem
-                            v-if="addTargetNasProxyNodeId"
-                            :label="t('repositoriesPage.fieldRepositoryServerHost')"
-                            :required="addTargetRequiresRepositoryServerHost"
-                          >
-                            <ElInput
-                              v-model="addTargetRepositoryServerHost"
-                              :placeholder="t('repositoriesPage.phRepositoryServerHost')"
-                            />
-                            <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">
-                              {{ t('repositoriesPage.hintRepositoryServerHost') }}
-                            </div>
-                          </ElFormItem>
                         </ElForm>
 
                         <div class="add-nas-proxy-benefits">
@@ -8904,18 +8893,6 @@ function preserveShallowestPathOrder(paths: string[]) {
                             :value="node.id"
                           />
                         </ElSelect>
-                      </ElFormItem>
-                      <ElFormItem
-                        :label="t('repositoriesPage.fieldRepositoryServerHost')"
-                        :required="addTargetRequiresRepositoryServerHost"
-                      >
-                        <ElInput
-                          v-model="addTargetRepositoryServerHost"
-                          :placeholder="t('repositoriesPage.phRepositoryServerHost')"
-                        />
-                        <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">
-                          {{ t('repositoriesPage.hintRepositoryServerHost') }}
-                        </div>
                       </ElFormItem>
                       <ElFormItem :label="t('repositoriesPage.fieldProxyNodeDir')" required>
                         <div class="repository-dir-selector">
@@ -9709,6 +9686,18 @@ function preserveShallowestPathOrder(paths: string[]) {
   white-space: normal;
   word-break: break-word;
   overflow-wrap: break-word;
+}
+
+.create-source-dir-preview--single-line-paths .create-source-dir-preview__item {
+  align-items: center;
+}
+
+.create-source-dir-preview--single-line-paths .create-source-dir-preview__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 .create-source-dir-preview__more {
@@ -12372,6 +12361,37 @@ function preserveShallowestPathOrder(paths: string[]) {
 .target-connection-result__icon {
   flex: 0 0 auto;
   margin-top: 1px;
+}
+
+.target-connection-result__summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-connection-result__details {
+  flex: 0 0 auto;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.target-connection-result__details:hover {
+  color: var(--color-error);
+}
+
+.target-connection-result__details:focus-visible {
+  outline: 2px solid currentcolor;
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 .target-connection-result--success {

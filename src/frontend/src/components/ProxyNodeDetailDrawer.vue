@@ -189,6 +189,7 @@ onUnmounted(() => {
               :node="node"
               :source-type-label="t('protection.sourceResources.tabSourceProxy')"
               use-unified-capacity
+              show-repository-server-address
               @node-updated="onNodeUpdated"
             />
           </ElTabPane>

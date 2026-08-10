@@ -415,6 +415,7 @@ const selectedNodes = ref<ApiNode[]>([])
 const moreActionsOpen = ref(false)
 const renameDialogOpen = ref(false)
 const renameInput = ref('')
+const repositoryServerAddressInput = ref('')
 const renameTarget = ref<ApiNode | null>(null)
 
 function onSelectionChange(selection: ApiNode[]) {
@@ -437,6 +438,7 @@ function openRenameDialog() {
   if (!node) return
   renameTarget.value = node
   renameInput.value = node.name
+  repositoryServerAddressInput.value = node.repository_server_address || ''
   renameDialogOpen.value = true
 }
 
@@ -446,7 +448,12 @@ function closeRenameDialog() {
 }
 
 async function renameNode(node: ApiNode, name: string) {
-  await updateNode(node.id, { name })
+  await updateNode(node.id, {
+    name,
+    ...(node.role === 'proxy'
+      ? { repository_server_address: repositoryServerAddressInput.value.trim() }
+      : {}),
+  })
 }
 
 const proxyDeleteBlockedOpen = ref(false)
@@ -896,13 +903,13 @@ async function submitRename() {
       v-model="renameDialogOpen"
       class="source-action-dialog"
       :title="t('nodesPage.renameTitle')"
-      width="480px"
+      width="min(520px, calc(100vw - 32px))"
       align-center
       destroy-on-close
     >
       <ElForm
         label-position="top"
-        class="source-action-dialog__form"
+        class="source-action-dialog__form proxy-host-edit-form"
         @submit.prevent="submitRename"
       >
         <ElFormItem :label="t('nodesPage.renameLabel')" required>
@@ -912,6 +919,18 @@ async function submitRename() {
             maxlength="128"
             show-word-limit
           />
+        </ElFormItem>
+        <ElFormItem
+          v-if="renameTarget?.role === 'proxy'"
+          :label="t('nodesPage.repositoryServerAddress')"
+        >
+          <ElInput
+            v-model="repositoryServerAddressInput"
+            :placeholder="t('nodesPage.repositoryServerAddressAutoPlaceholder', { ip: renameTarget?.ip_address || '—' })"
+          />
+          <p class="proxy-host-edit-form__hint">
+            {{ t('nodesPage.repositoryServerAddressHint') }}
+          </p>
         </ElFormItem>
       </ElForm>
       <template #footer>
@@ -984,6 +1003,19 @@ async function submitRename() {
   margin: 4px 0 0 24px;
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+
+.proxy-host-edit-form {
+  display: grid;
+  gap: 20px;
+}
+
+.proxy-host-edit-form__hint {
+  width: 100%;
+  margin: 6px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 </style>

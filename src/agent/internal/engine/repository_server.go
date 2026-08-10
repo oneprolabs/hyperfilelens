@@ -24,6 +24,11 @@ import (
 
 const repositoryServerStartupTimeout = 15 * time.Second
 
+const (
+	repositoryServerPortMin = 51515
+	repositoryServerPortMax = 52014
+)
+
 type repositoryServerSession struct {
 	SessionID string `json:"session_id"`
 	PID       int    `json:"pid"`
@@ -62,15 +67,10 @@ func (e *Engine) runRepositoryServerStart(
 		}
 	}
 	port := 0
+	automaticPort := true
 	if value, ok := payloadIntValue(p.Extra["port"]); ok {
 		port = value
-	}
-	if port <= 0 {
-		free, err := freeTCPPort(listenHost)
-		if err != nil {
-			return "failed", nil, err.Error()
-		}
-		port = free
+		automaticPort = port <= 0
 	}
 
 	configFile, env, result, _, prepErr := e.prepareManagedRepository(ctx, rep, taskID, p, repositoryPrepareConnect)
@@ -95,6 +95,14 @@ func (e *Engine) runRepositoryServerStart(
 	certFile := filepath.Join(sessionDir, "server.crt")
 	keyFile := filepath.Join(sessionDir, "server.key")
 	logFile := filepath.Join(sessionDir, "server.log")
+	if automaticPort {
+		free, err := e.reserveRepositoryServerPort(listenHost)
+		if err != nil {
+			return "failed", result, err.Error()
+		}
+		port = free
+		defer e.releaseRepositoryServerPort(port)
+	}
 	address := net.JoinHostPort(listenHost, strconv.Itoa(port))
 	args := []string{
 		"server", "start",
@@ -153,6 +161,9 @@ func (e *Engine) runRepositoryServerStart(
 	result["server_cert_fingerprint"] = fingerprint
 	result["pid"] = cmd.Process.Pid
 	result["log_file"] = logFile
+	result["port"] = port
+	result["port_range_min"] = repositoryServerPortMin
+	result["port_range_max"] = repositoryServerPortMax
 	return "success", result, ""
 }
 
@@ -304,21 +315,60 @@ func readRepositoryServerSession(path string) (repositoryServerSession, error) {
 	return session, nil
 }
 
-func freeTCPPort(host string) (int, error) {
+func (e *Engine) reserveRepositoryServerPort(host string) (int, error) {
+	return e.reserveRepositoryServerPortWithProbe(host, repositoryServerPortAvailable)
+}
+
+func (e *Engine) reserveRepositoryServerPortWithProbe(
+	host string,
+	available func(host string, port int) bool,
+) (int, error) {
+	e.repositoryServerMu.Lock()
+	defer e.repositoryServerMu.Unlock()
+	if e.repositoryServerPorts == nil {
+		e.repositoryServerPorts = make(map[int]struct{})
+	}
+
 	bindHost := strings.TrimSpace(host)
 	if bindHost == "" || bindHost == "0.0.0.0" || bindHost == "::" {
 		bindHost = ""
 	}
-	listener, err := net.Listen("tcp", net.JoinHostPort(bindHost, "0"))
-	if err != nil {
-		return 0, err
+	count := repositoryServerPortMax - repositoryServerPortMin + 1
+	start := 0
+	if random, err := rand.Int(rand.Reader, big.NewInt(int64(count))); err == nil {
+		start = int(random.Int64())
 	}
-	defer listener.Close()
-	_, port, err := net.SplitHostPort(listener.Addr().String())
-	if err != nil {
-		return 0, err
+	for offset := 0; offset < count; offset++ {
+		port := repositoryServerPortMin + (start+offset)%count
+		if _, reserved := e.repositoryServerPorts[port]; reserved {
+			continue
+		}
+		if !available(bindHost, port) {
+			continue
+		}
+		e.repositoryServerPorts[port] = struct{}{}
+		return port, nil
 	}
-	return strconv.Atoi(port)
+	return 0, fmt.Errorf(
+		"no available Repository Server port in TCP range %d-%d",
+		repositoryServerPortMin,
+		repositoryServerPortMax,
+	)
+}
+
+func repositoryServerPortAvailable(host string, port int) bool {
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	_ = listener.Close()
+	return true
+}
+
+func (e *Engine) releaseRepositoryServerPort(port int) {
+	e.repositoryServerMu.Lock()
+	defer e.repositoryServerMu.Unlock()
+	delete(e.repositoryServerPorts, port)
 }
 
 func randomToken(length int) string {

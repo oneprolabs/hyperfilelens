@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import ipaddress
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +7,9 @@ from django.core.exceptions import ValidationError
 
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
+from apps.node.services.internal.repository_server import (
+    normalize_repository_server_host,
+)
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.repository_secrets import build_repository_runtime_payload
 
@@ -19,28 +20,6 @@ EXPLICIT_REPOSITORY_SERVER_HOST_KEYS = (
     "advertised_host",
     "advertise_host",
 )
-
-_DNS_HOST_RE = re.compile(
-    r"^(?=.{1,253}\.?$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*"
-    r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.?$"
-)
-
-
-def normalize_repository_server_host(value: object) -> str:
-    host = str(value or "").strip()
-    if not host:
-        return ""
-    if "://" in host or "/" in host or any(char.isspace() for char in host):
-        raise ValueError("Enter an IPv4, IPv6, or DNS host without a scheme, path, or port.")
-    unbracketed = host[1:-1] if host.startswith("[") and host.endswith("]") else host
-    try:
-        return ipaddress.ip_address(unbracketed).compressed
-    except ValueError:
-        pass
-    if ":" in host or not _DNS_HOST_RE.fullmatch(host):
-        raise ValueError("Enter a valid IPv4, IPv6, or DNS host without a port.")
-    return host.rstrip(".").lower()
-
 
 @dataclass(frozen=True)
 class RepositoryExecutionTarget:
@@ -148,12 +127,7 @@ def repository_uses_bound_proxy(repository: Repository) -> bool:
 
 
 def explicit_repository_server_host(*, repository: Repository, node: Node) -> tuple[str, str]:
-    """Return an explicitly advertised cross-node repository server host.
-
-    Generic inventory addresses and node names are intentionally excluded:
-    they frequently contain control-plane, NAT, or container bridge addresses
-    that are not reachable from another backup node.
-    """
+    """Resolve the source-reachable cross-node Repository Server host."""
 
     config = repository.config if isinstance(repository.config, dict) else {}
     for key in EXPLICIT_REPOSITORY_SERVER_HOST_KEYS:
@@ -163,6 +137,15 @@ def explicit_repository_server_host(*, repository: Repository, node: Node) -> tu
             return "", f"repository.config.{key}"
         if value:
             return value, f"repository.config.{key}"
+
+    try:
+        proxy_override = normalize_repository_server_host(
+            getattr(node, "repository_server_address", "")
+        )
+    except ValueError:
+        proxy_override = ""
+    if proxy_override:
+        return proxy_override, "node.repository_server_address"
 
     metadata = node.metadata if isinstance(node.metadata, dict) else {}
     inventory = metadata.get("inventory") if isinstance(metadata.get("inventory"), dict) else {}
@@ -174,6 +157,33 @@ def explicit_repository_server_host(*, repository: Repository, node: Node) -> tu
                 return "", f"node.{source_name}.{key}"
             if value:
                 return value, f"node.{source_name}.{key}"
+
+    for source_name, source in (("metadata", metadata), ("metadata.inventory", inventory)):
+        for key in ("primary_ip_address", "primary_ip", "lan_ip_address", "lan_ip", "ip_address"):
+            try:
+                value = normalize_repository_server_host(source.get(key))
+            except ValueError:
+                value = ""
+            if value:
+                return value, f"node.{source_name}.{key}"
+        for key in ("ip_addresses", "ipv4_addresses", "addresses"):
+            values = source.get(key)
+            if not isinstance(values, list):
+                continue
+            for raw in values:
+                try:
+                    value = normalize_repository_server_host(raw)
+                except ValueError:
+                    value = ""
+                if value:
+                    return value, f"node.{source_name}.{key}"
+
+    try:
+        node_ip = normalize_repository_server_host(getattr(node, "ip_address", ""))
+    except ValueError:
+        node_ip = ""
+    if node_ip:
+        return node_ip, "node.ip_address"
     return "", ""
 
 

@@ -151,6 +151,75 @@ class BackupTargetValidationApiTests(TransactionTestCase):
     @mock.patch(
         "apps.protection.services.backup_target_validation._execute_agent_task"
     )
+    def test_s3_clock_skew_reports_actionable_error_before_generic_status(self, execute):
+        clock_skew_messages = (
+            "The difference between the request time and the server's time is too large.",
+            "RequestTimeTooSkewed",
+            "request time is too skewed",
+        )
+        for diagnostic in clock_skew_messages:
+            with self.subTest(diagnostic=diagnostic):
+                execute.return_value = _AgentOutcome(
+                    ok=False,
+                    status="failed",
+                    message=(
+                        "open repository: repository is not connected. "
+                        "See https://kopia.io/docs/repositories/"
+                    ),
+                    result={
+                        "repository_connect": {
+                            "stderr": f"{diagnostic} test-secret-key",
+                        },
+                        "repository_status": {
+                            "stderr": "open repository: repository is not connected",
+                        },
+                    },
+                )
+
+                result = validate_backup_targets(
+                    organization_id=self.org.id,
+                    sources=[self._source()],
+                )
+
+                row = result["results"][0]
+                self.assertEqual(row["code"], "S3_CLOCK_SKEW")
+                self.assertIn("source host clock", row["message"].lower())
+                self.assertIn("trusted NTP", row["message"])
+                self.assertEqual(row["details"]["stage"], "repository_connect")
+                self.assertEqual(
+                    row["details"]["remediation"],
+                    "synchronize_source_time",
+                )
+                self.assertNotIn("test-secret-key", json.dumps(row))
+                self.assertNotIn("repository is not connected", row["message"])
+
+    @mock.patch(
+        "apps.protection.services.backup_target_validation._execute_agent_task"
+    )
+    def test_s3_non_clock_failure_keeps_existing_connection_error(self, execute):
+        execute.return_value = _AgentOutcome(
+            ok=False,
+            status="failed",
+            message="error connecting to repository: access denied",
+            result={
+                "repository_connect": {
+                    "stderr": "error connecting to repository: access denied",
+                }
+            },
+        )
+
+        result = validate_backup_targets(
+            organization_id=self.org.id,
+            sources=[self._source()],
+        )
+
+        row = result["results"][0]
+        self.assertEqual(row["code"], "S3_CONNECTION_FAILED")
+        self.assertEqual(row["message"], "error connecting to repository: access denied")
+
+    @mock.patch(
+        "apps.protection.services.backup_target_validation._execute_agent_task"
+    )
     def test_direct_nas_only_tests_isolated_mount_and_unmounts(self, execute):
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -330,7 +399,6 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             bind_node_id=proxy.id,
             config={
                 "proxy_node_dir": "/srv/backups",
-                "proxy_repository_server_host": "10.0.0.40",
                 "kopia_password": "proxy-kopia-password",
             },
         )
@@ -381,6 +449,16 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertEqual(kinds.count("repository.server.start"), 1)
         self.assertEqual(kinds.count("repository.server.stop"), 1)
         self.assertEqual(kinds.count("repo.status"), 2)
+        start_call = next(
+            call
+            for call in execute.call_args_list
+            if call.kwargs["kind"] == "repository.server.start"
+        )
+        self.assertEqual(start_call.kwargs["payload"]["public_host"], "10.0.0.40")
+        self.assertEqual(
+            start_call.kwargs["payload"]["public_host_source"],
+            "node.ip_address",
+        )
         probe_calls = [
             call
             for call in execute.call_args_list
@@ -389,6 +467,155 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertTrue(
             all(call.kwargs["payload"]["health_only"] for call in probe_calls)
         )
+
+    @mock.patch(
+        "apps.protection.services.backup_target_validation._execute_agent_task"
+    )
+    def test_cross_node_proxy_repository_reports_actionable_failure_codes(self, execute):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="repository-proxy-errors",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.45",
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="proxy-fs-errors",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+            config={
+                "proxy_node_dir": "/srv/backups",
+                "kopia_password": "proxy-kopia-password",
+            },
+        )
+        source = {
+            "key": "proxy-error-row",
+            "source_type": "agent",
+            "source_ref_id": self.agent.id,
+            "repository_id": repository.id,
+            "repository_endpoint_type": "external",
+        }
+
+        cases = (
+            (
+                "no available Repository Server port in TCP range 51515-52014",
+                None,
+                "PROXY_REPOSITORY_SERVER_PORT_EXHAUSTED",
+                "server_start",
+            ),
+            (
+                "kopia server failed to start",
+                None,
+                "PROXY_REPOSITORY_SERVER_START_FAILED",
+                "server_start",
+            ),
+            (
+                None,
+                "dial tcp 10.0.0.45:51515: i/o timeout",
+                "PROXY_REPOSITORY_SERVER_UNREACHABLE",
+                "source_probe",
+            ),
+            (
+                None,
+                "TLS certificate fingerprint mismatch",
+                "PROXY_REPOSITORY_SERVER_CONNECTION_FAILED",
+                "source_probe",
+            ),
+        )
+        for start_message, probe_message, expected_code, expected_stage in cases:
+            with self.subTest(code=expected_code):
+                execute.reset_mock()
+
+                def outcome(**kwargs):
+                    kind = kwargs["kind"]
+                    if kind == "repository.server.start" and start_message:
+                        return _AgentOutcome(
+                            ok=False,
+                            status="failed",
+                            message=start_message,
+                            result={},
+                        )
+                    if kind == "repository.server.start":
+                        return _AgentOutcome(
+                            ok=True,
+                            status="success",
+                            message="",
+                            result={
+                                "server_url": "https://10.0.0.45:51515",
+                                "server_cert_fingerprint": "ABC123",
+                            },
+                        )
+                    if kind == "repo.status":
+                        return _AgentOutcome(
+                            ok=False,
+                            status="failed",
+                            message=str(probe_message or ""),
+                            result={},
+                        )
+                    return _AgentOutcome(
+                        ok=True,
+                        status="success",
+                        message="",
+                        result={},
+                    )
+
+                execute.side_effect = outcome
+                result = validate_backup_targets(
+                    organization_id=self.org.id,
+                    sources=[source],
+                )
+
+                row = result["results"][0]
+                self.assertEqual(row["code"], expected_code, row)
+                self.assertEqual(row["details"]["stage"], expected_stage)
+                self.assertEqual(row["details"]["proxy_address"], "10.0.0.45")
+                self.assertEqual(row["details"]["port_range"], "51515-52014")
+                self.assertNotIn("proxy-kopia-password", json.dumps(row))
+
+    @mock.patch(
+        "apps.protection.services.backup_target_validation._execute_agent_task"
+    )
+    def test_cross_node_proxy_repository_reports_missing_address_without_dispatch(self, execute):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="repository-proxy-no-address",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="proxy-fs-no-address",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+            config={"proxy_node_dir": "/srv/backups"},
+        )
+
+        result = validate_backup_targets(
+            organization_id=self.org.id,
+            sources=[
+                {
+                    "key": "missing-address-row",
+                    "source_type": "agent",
+                    "source_ref_id": self.agent.id,
+                    "repository_id": repository.id,
+                    "repository_endpoint_type": "external",
+                }
+            ],
+        )
+
+        row = result["results"][0]
+        self.assertEqual(row["code"], "PROXY_REPOSITORY_SERVER_ADDRESS_MISSING")
+        self.assertEqual(row["details"]["stage"], "address_resolution")
+        execute.assert_not_called()
 
     @mock.patch(
         "apps.protection.services.backup_target_validation._execute_agent_task"

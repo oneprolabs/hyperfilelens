@@ -4,6 +4,9 @@ from rest_framework import serializers
 
 from apps.node.models import Node
 from apps.node.services.internal.node_registry import agent_ws_routable
+from apps.node.services.internal.repository_server import (
+    normalize_repository_server_host,
+)
 
 
 class NodeSerializer(serializers.ModelSerializer):
@@ -13,6 +16,12 @@ class NodeSerializer(serializers.ModelSerializer):
     routable = serializers.SerializerMethodField()
     lifecycle = serializers.SerializerMethodField(read_only=True)
     workload = serializers.SerializerMethodField(read_only=True)
+    effective_repository_server_address = serializers.SerializerMethodField(
+        read_only=True
+    )
+    repository_server_address_source = serializers.SerializerMethodField(
+        read_only=True
+    )
 
     class Meta:
         model = Node
@@ -24,6 +33,9 @@ class NodeSerializer(serializers.ModelSerializer):
             "version",
             "os_name",
             "ip_address",
+            "repository_server_address",
+            "effective_repository_server_address",
+            "repository_server_address_source",
             "status",
             "availability",
             "availability_updated_at",
@@ -41,6 +53,8 @@ class NodeSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id",
             "ip_address",
+            "effective_repository_server_address",
+            "repository_server_address_source",
             "availability",
             "availability_updated_at",
             "created_at",
@@ -75,6 +89,38 @@ class NodeSerializer(serializers.ModelSerializer):
         if isinstance(row, dict):
             return row.get("workload")
         return None
+
+    @staticmethod
+    def get_effective_repository_server_address(obj: Node) -> str | None:
+        override = str(obj.repository_server_address or "").strip()
+        return override or (str(obj.ip_address) if obj.ip_address else None)
+
+    @staticmethod
+    def get_repository_server_address_source(obj: Node) -> str:
+        if str(obj.repository_server_address or "").strip():
+            return "proxy_override"
+        if obj.ip_address:
+            return "agent_reported"
+        return "unavailable"
+
+    def validate_repository_server_address(self, value: object) -> str:
+        try:
+            return normalize_repository_server_host(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+    def validate(self, attrs):
+        instance = self.instance
+        role = attrs.get("role", getattr(instance, "role", None))
+        if "repository_server_address" in attrs and role != Node.Role.PROXY:
+            raise serializers.ValidationError(
+                {
+                    "repository_server_address": (
+                        "Repository Server Address can only be configured for a Proxy Host."
+                    )
+                }
+            )
+        return attrs
 
 
 class NodeHeartbeatSerializer(serializers.Serializer):
