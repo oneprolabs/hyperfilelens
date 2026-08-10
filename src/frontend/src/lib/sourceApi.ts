@@ -99,6 +99,17 @@ export type SourceStats = {
   total_files: number
 }
 
+export type ProductionSourceSummaryPart = {
+  total: number
+  available: number
+  unavailable: number
+}
+
+export type ProductionSourceSummary = ProductionSourceSummaryPart & {
+  hosts: ProductionSourceSummaryPart
+  nas: ProductionSourceSummaryPart
+}
+
 /** Unified backup wizard catalog item (agent + NAS). */
 export type BackupSelectableSource = {
   id: string
@@ -493,6 +504,12 @@ export async function deleteSourceResource(id: number, force = false): Promise<S
 export async function sourceStatistics(init?: RequestInit) {
   return unwrapApiPayload<SourceStats>(
     await api<unknown>(`${base}/statistics/`, { ...init, headers: orgHeaders() }),
+  )
+}
+
+export async function productionSourceSummary(init?: RequestInit) {
+  return unwrapApiPayload<ProductionSourceSummary>(
+    await api<unknown>(`${base}/production-summary/`, { ...init, headers: orgHeaders() }),
   )
 }
 

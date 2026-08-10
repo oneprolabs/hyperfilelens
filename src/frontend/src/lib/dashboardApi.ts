@@ -7,7 +7,11 @@ import { taskStatistics, listTasks, type TaskRow } from './taskApi'
 import { listAllNodes } from './nodeApi'
 import { fetchCurrentLicense } from './subscriptionApi'
 import { buildQuotaRows, type QuotaUsageRow } from './licenseQuotaDisplay'
-import { listSourceResources, sourceStatistics } from './sourceApi'
+import {
+  listSourceResources,
+  productionSourceSummary,
+  type ProductionSourceSummary,
+} from './sourceApi'
 import { listBackupConfigs } from './protectionBackupConfigApi'
 import { listRestorePlans } from './restoreApi'
 import type { ApiNode } from '../types/node'
@@ -66,8 +70,6 @@ export type TaskDayBucket = {
   cancel: number
 }
 
-export type NamedCount = { name: string; value: number }
-
 export type RecoveryLastRestore = {
   status: string
   at?: string
@@ -116,13 +118,7 @@ export type DashboardOverview = {
   nodesTotal: number
   nodesOffline: number
   nodesByRole: Record<string, number>
-  sourceTotal: number
-  sourceActive: number
-  sourceInactive: number
-  sourceError: number
-  sourceMounted: number
-  sourceByType: NamedCount[]
-  sourceTotalSize: number
+  productionSources: ProductionSourceSummary
   protectionPolicies: number
   protectionPoliciesEnabled: number
   recovery: RecoverySummary
@@ -345,13 +341,6 @@ function countNodesByRole(nodes: ApiNode[]): Record<string, number> {
   return out
 }
 
-function sourceTypeCounts(byType: Record<string, number>): NamedCount[] {
-  return Object.entries(byType)
-    .filter(([, v]) => v > 0)
-    .map(([name, value]) => ({ name, value }))
-    .sort((a, b) => b.value - a.value)
-}
-
 function buildAttention(params: {
   failedTasks: TaskRow[]
   firingAlerts: AlertRecord[]
@@ -424,7 +413,7 @@ export async function loadDashboardOverview(
     tasks24hPage,
     tasks7dPage,
     runningTasksPage,
-    sourceStats,
+    productionSources,
     sourcesErrorPage,
     nodes,
     reposRaw,
@@ -458,15 +447,12 @@ export async function loadDashboardOverview(
     listTasks({ time_range: '24h', page_size: 500 }).catch(() => ({ count: 0, results: [] })),
     listTasks({ time_range: '7d', page_size: 500 }).catch(() => ({ count: 0, results: [] })),
     listTasks({ status: 'running', page_size: 8 }).catch(() => ({ count: 0, results: [] })),
-    sourceStatistics().catch(() => ({
+    productionSourceSummary().catch(() => ({
       total: 0,
-      active: 0,
-      error: 0,
-      inactive: 0,
-      mounted: 0,
-      by_type: {},
-      total_size: 0,
-      total_files: 0,
+      available: 0,
+      unavailable: 0,
+      hosts: { total: 0, available: 0, unavailable: 0 },
+      nas: { total: 0, available: 0, unavailable: 0 },
     })),
     listSourceResources({ status: 'error', page_size: 10 }).catch(() => ({ count: 0, results: [] })),
     listAllNodes().catch(() => []),
@@ -549,7 +535,7 @@ export async function loadDashboardOverview(
 
   const isEmpty =
     nodesTotal === 0 &&
-    sourceStats.total === 0 &&
+    productionSources.total === 0 &&
     taskStats.total === 0 &&
     protectionPolicies === 0 &&
     reposRaw.length === 0
@@ -589,13 +575,7 @@ export async function loadDashboardOverview(
     nodesTotal,
     nodesOffline: nodesTotal - nodesOnline,
     nodesByRole: countNodesByRole(nodes),
-    sourceTotal: sourceStats.total,
-    sourceActive: sourceStats.active,
-    sourceInactive: sourceStats.inactive,
-    sourceError: sourceStats.error,
-    sourceMounted: sourceStats.mounted,
-    sourceByType: sourceTypeCounts(sourceStats.by_type || {}),
-    sourceTotalSize: sourceStats.total_size,
+    productionSources,
     protectionPolicies,
     protectionPoliciesEnabled,
     recovery,
