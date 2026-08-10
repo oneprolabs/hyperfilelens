@@ -50,12 +50,17 @@ hfl_download() {
 	local destination="$3"
 	local partial="${destination}.part"
 	local started=${SECONDS} elapsed bytes rate
+	local -a retry_connrefused=()
 	rm -f "${partial}"
 	hfl_step "Downloading ${label}."
+	# Older system curl builds may predate --retry-connrefused.
+	if curl --retry-connrefused --version >/dev/null 2>&1; then
+		retry_connrefused=(--retry-connrefused)
+	fi
 	# ${arr[@]+...} keeps empty CURL_TLS safe under `set -u` on Bash < 4.4.
 	if ! curl ${CURL_TLS[@]+"${CURL_TLS[@]}"} \
 		--fail --show-error --location --progress-bar \
-		--retry 3 --retry-connrefused --retry-delay 2 \
+		--retry 3 ${retry_connrefused[@]+"${retry_connrefused[@]}"} --retry-delay 2 \
 		"${url}" -o "${partial}"; then
 		rm -f "${partial}"
 		hfl_fail "Failed to download ${label}." 3

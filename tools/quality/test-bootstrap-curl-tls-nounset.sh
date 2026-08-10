@@ -72,6 +72,13 @@ curl_args=(${CURL_TLS[@]+"${CURL_TLS[@]}"})
 CURL_TLS=(-k)
 curl_args=(${CURL_TLS[@]+"${CURL_TLS[@]}"})
 [[ "${#curl_args[@]}" -eq 1 && "${curl_args[0]}" == "-k" ]]
+# The optional retry flag uses the same safe expansion on Bash 4.2.
+retry_connrefused=()
+curl_args=(${retry_connrefused[@]+"${retry_connrefused[@]}"})
+[[ "${#curl_args[@]}" -eq 0 ]]
+retry_connrefused=(--retry-connrefused)
+curl_args=(${retry_connrefused[@]+"${retry_connrefused[@]}"})
+[[ "${#curl_args[@]}" -eq 1 && "${curl_args[0]}" == "--retry-connrefused" ]]
 printf 'ok\n'
 SH
 	docker run --rm -v "${tmp}/probe.sh:/probe.sh:ro" bash:4.2 \
