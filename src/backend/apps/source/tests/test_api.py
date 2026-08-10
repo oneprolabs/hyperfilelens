@@ -282,6 +282,154 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertTrue(resp.data["success"])
 
+    @patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_smb_draft_test_uses_validation_mount_and_reports_charset_error(
+        self,
+        mock_dispatch,
+    ):
+        mock_dispatch.return_value = SimpleNamespace(
+            ok=False,
+            timed_out=False,
+            task=SimpleNamespace(
+                status="failed",
+                accepted_at=timezone.now(),
+                last_error="SMB filename charset utf8 is unavailable.",
+            ),
+            result={
+                "error_code": "SMB_CHARSET_UNAVAILABLE",
+                "charset": "utf8",
+                "kernel": "6.8.0-test-generic",
+                "cleanup_status": "success",
+                "mount_status": "unmounted",
+            },
+            stream_message=None,
+        )
+
+        response = self.client.post(
+            "/api/v1/source/resources/test-draft/",
+            {
+                "resource_type": "nas",
+                "bound_node_id": self.node.id,
+                "config": {
+                    "protocol": "smb",
+                    "server": "192.168.1.100",
+                    "share": "media",
+                    "path": custom_mount("final-path-must-not-be-used"),
+                    "options": "rw,iocharset=utf8",
+                },
+                "credentials": {"username": "nas_user", "password": "secret"},
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error_code"], "SMB_CHARSET_UNAVAILABLE")
+        self.assertEqual(response.data["details"]["charset"], "utf8")
+        self.assertEqual(response.data["details"]["kernel"], "6.8.0-test-generic")
+        payload = mock_dispatch.call_args.kwargs["payload"]
+        self.assertTrue(payload["cleanup_after_test"])
+        self.assertIn("/mounts/validations/", payload["mount_point"])
+        self.assertIn(f"source-draft-node-{self.node.id}", payload["mount_point"])
+        self.assertNotEqual(payload["mount_point"], custom_mount("final-path-must-not-be-used"))
+
+    @patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_smb_draft_test_normalizes_unstructured_charset_error(
+        self,
+        mock_dispatch,
+    ):
+        mock_dispatch.return_value = SimpleNamespace(
+            ok=False,
+            timed_out=False,
+            task=SimpleNamespace(
+                status="failed",
+                accepted_at=timezone.now(),
+                last_error=(
+                    "mount SMB share: mount error(79): "
+                    "Can not access a needed shared library"
+                ),
+            ),
+            result={
+                "cleanup_status": "success",
+                "mount_status": "unmounted",
+            },
+            stream_message=None,
+        )
+
+        response = self.client.post(
+            "/api/v1/source/resources/test-draft/",
+            {
+                "resource_type": "nas",
+                "bound_node_id": self.node.id,
+                "config": {
+                    "protocol": "smb",
+                    "server": "192.168.1.100",
+                    "share": "media",
+                    "options": "rw,iocharset=utf8",
+                },
+                "credentials": {"username": "nas_user", "password": "secret"},
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error_code"], "SMB_CHARSET_UNAVAILABLE")
+        self.assertEqual(response.data["details"]["charset"], "utf8")
+        self.assertEqual(response.data["details"]["cleanup_status"], "success")
+
+    @patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_draft_test_does_not_misclassify_unrelated_mount_errors(
+        self,
+        mock_dispatch,
+    ):
+        mock_dispatch.return_value = SimpleNamespace(
+            ok=False,
+            timed_out=False,
+            task=SimpleNamespace(
+                status="failed",
+                accepted_at=timezone.now(),
+                last_error="mount SMB share: permission denied",
+            ),
+            result={"cleanup_status": "success", "mount_status": "unmounted"},
+            stream_message=None,
+        )
+
+        cases = (
+            ("smb", "rw,iocharset=utf8", "permission denied"),
+            ("smb", "rw", "mount error(79)"),
+            ("nfs", "iocharset=utf8", "mount error(79)"),
+        )
+        for protocol, options, error in cases:
+            with self.subTest(protocol=protocol, options=options, error=error):
+                mock_dispatch.return_value.task.last_error = error
+                config = {
+                    "protocol": protocol,
+                    "server": "192.168.1.100",
+                    "options": options,
+                }
+                if protocol == "smb":
+                    config["share"] = "media"
+                else:
+                    config["export_path"] = "/media"
+                response = self.client.post(
+                    "/api/v1/source/resources/test-draft/",
+                    {
+                        "resource_type": "nas",
+                        "bound_node_id": self.node.id,
+                        "config": config,
+                        "credentials": {
+                            "username": "nas_user",
+                            "password": "secret",
+                        },
+                    },
+                    format="json",
+                    **self._headers(),
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertNotIn("error_code", response.data)
+
     def test_create_nas_smb_and_nfs(self):
         smb = self.client.post(
             "/api/v1/source/resources/",
@@ -583,6 +731,7 @@ class SourceResourceApiTests(TestCase):
                     "server": "192.168.1.50",
                     "export_path": "/export/data",
                     "path": custom_mount("nas-data"),
+                    "options": "rw,hard",
                 },
                 "bound_node_id": self.node.id,
             },
@@ -621,6 +770,8 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(agent_row["memory_total_bytes"], 16_000_000_000)
         self.assertEqual(agent_row["disk_count"], 2)
         self.assertEqual(nas_row["connection_uri"], "192.168.1.50:/export/data")
+        self.assertEqual(nas_row["mount_options"], "rw,hard")
+        self.assertNotIn("credentials", nas_row)
         self.assertNotIn("cpu_cores", nas_row)
         self.assertNotIn("memory_total_bytes", nas_row)
         self.assertNotIn("disk_count", nas_row)

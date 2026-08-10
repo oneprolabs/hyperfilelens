@@ -201,6 +201,43 @@ func TestRunNASTestReportsProbeAndCleanupFailures(t *testing.T) {
 	}
 }
 
+func TestRunNASTestReportsSMBCharsetUnavailable(t *testing.T) {
+	service := &fakeNASTestService{
+		testErr: &nas.SMBCharsetUnavailableError{
+			Charset: "utf8",
+			Kernel:  "6.8.0-test-generic",
+			Cause:   "iocharset utf8 not found",
+		},
+	}
+	payload := nasValidationTestPayload(t, true)
+	nasPayload := payload.Extra["nas"].(map[string]any)
+	nasPayload["protocol"] = "smb"
+	nasPayload["share"] = "media"
+	nasPayload["options"] = "rw,iocharset=utf8"
+	nasPayload["username"] = "backup"
+	nasPayload["password"] = "secret"
+	delete(nasPayload, "export_path")
+
+	status, result, message := runNasTestWithService(
+		context.Background(),
+		payload,
+		service,
+	)
+
+	if status != "failed" || message == "" {
+		t.Fatalf("status=%q message=%q", status, message)
+	}
+	if result["error_code"] != "SMB_CHARSET_UNAVAILABLE" {
+		t.Fatalf("error code=%#v", result["error_code"])
+	}
+	if result["charset"] != "utf8" || result["kernel"] != "6.8.0-test-generic" {
+		t.Fatalf("unexpected charset details: %#v", result)
+	}
+	if service.unmountCalls != 1 || result["cleanup_status"] != "success" {
+		t.Fatalf("cleanup result=%#v calls=%d", result, service.unmountCalls)
+	}
+}
+
 func TestRunNASTestCleanupIgnoresCanceledProbeContext(t *testing.T) {
 	service := &fakeNASTestService{testErr: context.Canceled}
 	ctx, cancel := context.WithCancel(context.Background())

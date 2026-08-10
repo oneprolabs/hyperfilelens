@@ -123,6 +123,7 @@ export type BackupSelectableSource = {
   status: 'active' | 'inactive' | 'error' | 'probing' | 'removing' | 'remove_failed' | 'removed' | 'upgrading' | 'restarting' | 'verifying' | 'verification_pending' | 'cleaning_up' | 'failed' | 'upgrade_failed' | 'deregistration_failed'
   availability?: BackupSelectableAvailability
   protocol?: 'nfs' | 'smb'
+  mount_options?: string
   platform?: 'linux' | 'windows' | 'macos'
   connection_uri?: string
   bound_node_id?: number | null
@@ -520,7 +521,8 @@ export const SOURCE_CONNECTION_TEST_RESULT_TOAST_MS = 6000
 export type SourceConnectionTestResult = {
   success: boolean
   message?: string
-  details?: unknown
+  error_code?: string
+  details?: Record<string, unknown>
   gatewayTimeout?: boolean
 }
 
@@ -536,7 +538,10 @@ function parseConnectionTestResult(data: unknown): SourceConnectionTestResult | 
   return {
     success: row.success,
     message: typeof row.message === 'string' ? row.message : undefined,
-    details: row.details,
+    error_code: typeof row.error_code === 'string' ? row.error_code : undefined,
+    details: row.details && typeof row.details === 'object'
+      ? row.details as Record<string, unknown>
+      : undefined,
   }
 }
 
@@ -576,14 +581,22 @@ export async function testSourceConnection(id: number, init?: RequestInit): Prom
   }
 }
 
-export async function testSourceDraft(payload: Record<string, unknown>) {
-  return unwrapApiPayload<{ success: boolean; message?: string }>(
-    await api<unknown>(`${base}/test-draft/`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-      headers: orgHeaders(),
-    }),
-  )
+export async function testSourceDraft(payload: Record<string, unknown>): Promise<SourceConnectionTestResult> {
+  try {
+    const parsed = parseConnectionTestResult(
+      await api<unknown>(`${base}/test-draft/`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: orgHeaders(),
+      }),
+    )
+    if (parsed) return parsed
+    return { success: false, message: 'Invalid connection test response.' }
+  } catch (err) {
+    const fromError = connectionTestResultFromThrown(err)
+    if (fromError) return fromError
+    throw err
+  }
 }
 
 export async function mountSource(id: number) {

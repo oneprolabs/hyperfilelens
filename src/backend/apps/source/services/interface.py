@@ -388,11 +388,17 @@ def test_draft_connection(
         validate_bound_node_role(resource_type=resource_type, node=node)
     except ValueError as exc:
         return {"success": False, "message": str(exc)}
+    validation_mount_point = agent_paths.source_validation_mount_point(
+        str(uuid4()),
+        node.id,
+    )
     return public_connection_result(run_connection_test(
         bound_node=node,
         resource_type=resource_type,
         config=config,
         credentials=credentials,
+        mount_point_override=validation_mount_point,
+        cleanup_after_test=True,
     ))
 
 

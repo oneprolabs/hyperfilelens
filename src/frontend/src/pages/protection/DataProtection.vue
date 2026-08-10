@@ -91,6 +91,7 @@ import {
 } from '../../lib/sourceApi'
 import { buildNasSourceCreatePayload } from '../../lib/nasSourceCreate'
 import { defaultNasMountOptions } from '../../lib/nasMountOptions'
+import { preflightSourceNasCreate, showNasDraftPreflightGuidance } from '../../lib/nasDraftPreflight'
 import { resolveNasSubmitName } from '../../lib/nasSourceNaming'
 import {
   selectBackupSourceDirectoryTreeEntries,
@@ -2347,34 +2348,36 @@ async function nasSubmit() {
   if (!validateNasForm()) return
   nasBusy.value = true
   try {
-    await createSourceResource(
-      buildNasSourceCreatePayload({
-        name: nasName.value.trim(),
-        protocol: nasProtocol.value,
-        mountPath: nasDir.value.trim(),
-        boundNodeId: nasBindNodeId.value ?? null,
-        smb: nasProtocol.value === 'smb'
-          ? {
-              server: nasSmbServer.value,
-              share: nasSmbShare.value,
-              username: nasSmbUsername.value,
-              password: nasSmbPassword.value,
-              domain: nasSmbDomain.value,
-              options: nasNfsOptions.value,
-            }
-          : undefined,
-        nfs: nasProtocol.value === 'nfs'
-          ? {
-              server: nasNfsHost.value,
-              exportPath: nasNfsExport.value,
-              options: nasNfsOptions.value,
-            }
-          : undefined,
-      }),
-    )
+    const payload = buildNasSourceCreatePayload({
+      name: nasName.value.trim(),
+      protocol: nasProtocol.value,
+      mountPath: nasDir.value.trim(),
+      boundNodeId: nasBindNodeId.value ?? null,
+      smb: nasProtocol.value === 'smb'
+        ? {
+            server: nasSmbServer.value,
+            share: nasSmbShare.value,
+            username: nasSmbUsername.value,
+            password: nasSmbPassword.value,
+            domain: nasSmbDomain.value,
+            options: nasNfsOptions.value,
+          }
+        : undefined,
+      nfs: nasProtocol.value === 'nfs'
+        ? {
+            server: nasNfsHost.value,
+            exportPath: nasNfsExport.value,
+            options: nasNfsOptions.value,
+          }
+        : undefined,
+    })
+    await preflightSourceNasCreate(payload)
+    await createSourceResource(payload)
     ElMessage.success({ message: t('protection.sourceResources.nasCreated'), grouping: true })
     addSourceOpen.value = false
   } catch (e) {
+    const proxyName = proxyNodes.value.find((node) => node.id === nasBindNodeId.value)?.name || ''
+    if (await showNasDraftPreflightGuidance(e, t, proxyName)) return
     ElMessage.error({
       message: apiErrorMessage(e, t('protection.sourceResources.nasCreateFailed')),
       grouping: true,

@@ -94,8 +94,11 @@ import {
   backupSelectableNasId,
   buildNasSourceCreatePayload,
 } from '../../lib/nasSourceCreate'
+import { preflightSourceNasCreate, showNasDraftPreflightGuidance } from '../../lib/nasDraftPreflight'
 import { resolveNasSubmitName } from '../../lib/nasSourceNaming'
 import {
+  isLikelySmbFilenameEncodingIssue,
+  isLikelySmbFilenamePathNotFound,
   selectBackupSourceDirectoryTreeEntries,
   shouldAutoExpandRefreshedDirectory,
 } from '../../lib/backupSourceDirectoryTree'
@@ -603,6 +606,7 @@ type SourceTreeItem = DemoDirTreeItem & {
   parentPath?: string
   nextCursor?: string
   loading?: boolean
+  filenameEncodingSuspected?: boolean
 }
 
 type CreateSourceRow = {
@@ -894,31 +898,31 @@ async function nasSubmit() {
   if (!validateNasForm()) return
   nasBusy.value = true
   try {
-    const created = await createSourceResource(
-      buildNasSourceCreatePayload({
-        name: nasName.value.trim(),
-        protocol: nasProtocol.value,
-        mountPath: nasDir.value.trim(),
-        boundNodeId: nasBindNodeId.value ?? null,
-        smb: nasProtocol.value === 'smb'
-          ? {
-              server: nasSmbServer.value,
-              share: nasSmbShare.value,
-              username: nasSmbUsername.value,
-              password: nasSmbPassword.value,
-              domain: nasSmbDomain.value,
-              options: nasNfsOptions.value,
-            }
-          : undefined,
-        nfs: nasProtocol.value === 'nfs'
-          ? {
-              server: nasNfsHost.value,
-              exportPath: nasNfsExport.value,
-              options: nasNfsOptions.value,
-            }
-          : undefined,
-      }),
-    )
+    const payload = buildNasSourceCreatePayload({
+      name: nasName.value.trim(),
+      protocol: nasProtocol.value,
+      mountPath: nasDir.value.trim(),
+      boundNodeId: nasBindNodeId.value ?? null,
+      smb: nasProtocol.value === 'smb'
+        ? {
+            server: nasSmbServer.value,
+            share: nasSmbShare.value,
+            username: nasSmbUsername.value,
+            password: nasSmbPassword.value,
+            domain: nasSmbDomain.value,
+            options: nasNfsOptions.value,
+          }
+        : undefined,
+      nfs: nasProtocol.value === 'nfs'
+        ? {
+            server: nasNfsHost.value,
+            exportPath: nasNfsExport.value,
+            options: nasNfsOptions.value,
+          }
+        : undefined,
+    })
+    await preflightSourceNasCreate(payload)
+    const created = await createSourceResource(payload)
     const selectableId = backupSelectableNasId(created.id)
     await loadWizardSources([selectableId])
     if (!realSourceById.value.has(selectableId)) {
@@ -944,6 +948,8 @@ async function nasSubmit() {
     ElMessage.success({ message: t('protection.sourceResources.nasCreated'), grouping: true })
     addSourceOpen.value = false
   } catch (e) {
+    const proxyName = proxyNodes.value.find((node) => node.id === nasBindNodeId.value)?.name || ''
+    if (await showNasDraftPreflightGuidance(e, t, proxyName)) return
     ElMessage.error({
       message: apiErrorMessage(e, t('protection.sourceResources.nasCreateFailed')),
       grouping: true,
@@ -3720,7 +3726,10 @@ function sourceDirPreviewEntries(entries: BackupDirEntry[]): BackupDirEntry[] {
     .slice(0, 3)
 }
 
-function mapSourceDirectoryEntry(entry: BackupSourceDirectoryEntry): SourceTreeItem {
+function mapSourceDirectoryEntry(
+  entry: BackupSourceDirectoryEntry,
+  source: BackupSelectableSource | null | undefined,
+): SourceTreeItem {
   const pathType = backupPathTypeForEntry(entry)
   return {
     label: entry.label || entry.path.split('/').filter(Boolean).pop() || entry.path || '/',
@@ -3728,7 +3737,28 @@ function mapSourceDirectoryEntry(entry: BackupSourceDirectoryEntry): SourceTreeI
     isLeaf: pathType === 'file' || Boolean(entry.isLeaf),
     is_dir: pathType === 'directory',
     path_type: pathType,
+    filenameEncodingSuspected: isLikelySmbFilenameEncodingIssue({
+      source,
+      label: entry.label,
+      path: entry.path,
+    }),
   }
+}
+
+function showSourceTreeFilenamePathError(sourceId: string, path: string, err: unknown) {
+  if (!isLikelySmbFilenamePathNotFound({
+    source: sourceRecord(sourceId),
+    path,
+    error: err,
+  })) return false
+
+  notifyError({
+    title: t('protection.backupsPage.dirTreeFilenameEncodingErrorTitle'),
+    message: t('protection.backupsPage.dirTreeFilenameEncodingErrorMessage'),
+    duration: 12000,
+    dedupeKey: `smb-filename-path-not-found:${sourceId}:${path}`,
+  })
+  return true
 }
 
 const SOURCE_TREE_ROOT_LIMIT = 100
@@ -3795,15 +3825,16 @@ async function listRealSourceDirChildren(
     },
     options.forceRefresh ? { cache: 'no-store' } : undefined,
   )
+  const source = sourceRecord(sourceId)
   const entries = selectBackupSourceDirectoryTreeEntries({
-    source: sourceRecord(sourceId),
+    source,
     parentPath,
     result,
   })
   const mapped = entries
     .filter((entry) => options.includeFiles || entry.is_dir !== false)
     .map((entry) => {
-      const item = mapSourceDirectoryEntry(entry)
+      const item = mapSourceDirectoryEntry(entry, source)
       setSourcePathType(sourceId, item.path, item.path_type ?? 'unknown')
       return item
     })
@@ -3881,9 +3912,13 @@ async function loadSourceTreeNode(
       syncCreateSourceTreeCheckedKeys(sourceId)
     })
   } catch (err) {
-    const message = apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed'))
-    createSourceTreeErrorBySource[sourceId] = message
-    ElMessage.error({ message: message, grouping: true })
+    if (showSourceTreeFilenamePathError(sourceId, parentPath, err)) {
+      createSourceTreeErrorBySource[sourceId] = ''
+    } else {
+      const message = apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed'))
+      createSourceTreeErrorBySource[sourceId] = message
+      ElMessage.error({ message: message, grouping: true })
+    }
     if (node.level === 0) {
       noSourceTreeRootsBySource[sourceId] = false
     }
@@ -3973,10 +4008,12 @@ async function refreshCreateSourceDirectory(sourceId: string, data: SourceTreeIt
       })
     }
   } catch (err) {
-    ElMessage.error({
-      message: apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed')),
-      grouping: true,
-    })
+    if (!showSourceTreeFilenamePathError(sourceId, data.path, err)) {
+      ElMessage.error({
+        message: apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed')),
+        grouping: true,
+      })
+    }
   } finally {
     delete refreshingSourceDirectoryByKey[refreshKey]
   }
@@ -4019,9 +4056,13 @@ async function loadMoreSourceTreeChildren(item: SourceTreeItem) {
       syncCreateSourceTreeCheckedKeys(sourceId)
     })
   } catch (err) {
-    const message = apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed'))
-    createSourceTreeErrorBySource[sourceId] = message
-    ElMessage.error({ message: message, grouping: true })
+    if (showSourceTreeFilenamePathError(sourceId, parentPath, err)) {
+      createSourceTreeErrorBySource[sourceId] = ''
+    } else {
+      const message = apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed'))
+      createSourceTreeErrorBySource[sourceId] = message
+      ElMessage.error({ message: message, grouping: true })
+    }
   } finally {
     item.loading = false
     setDirectoryLoading(loadingKey, false)
@@ -5975,45 +6016,81 @@ function preserveShallowestPathOrder(paths: string[]) {
                           </ElButton>
                           <span class="create-dir-row__path">{{ t('protection.backupsPage.dirTreeHasMoreHint') }}</span>
                         </div>
-                        <div
+                        <ElTooltip
                           v-else
-                          class="create-dir-row create-dir-row--tree"
-                          :class="{ 'create-dir-row--disabled': Boolean(addedDirTreeDisableReason(row.id, data.path)) }"
-                          :data-source-path="data.path"
-                          @click="(event) => onSourceTreeRowClick(row.id, data, event)"
+                          :disabled="!data.filenameEncodingSuspected"
+                          effect="light"
+                          placement="top-start"
+                          popper-class="smb-filename-encoding-tooltip"
+                          :show-after="250"
                         >
-                          <component
-                            :is="data.path_type === 'file' ? FileIcon : Folder"
-                            :size="15"
-                            class="create-dir-row__icon"
-                            :class="data.path_type === 'file' ? 'create-dir-row__icon--file' : 'create-dir-row__icon--folder'"
-                          />
-                          <div class="create-dir-row__body">
-                            <span class="create-dir-row__label">{{ data.label }}</span>
-                            <span class="create-dir-row__path">{{ data.path }}</span>
-                          </div>
-                          <button
-                            v-if="data.path_type === 'directory'"
-                            type="button"
-                            class="hfl-dir-tree-node__refresh"
-                            :class="{ 'is-refreshing': isSourceDirectoryRefreshing(row.id, data.path) }"
-                            :disabled="isSourceDirectoryRefreshing(row.id, data.path)"
-                            :aria-label="t('protection.backupsPage.ariaRefreshDirectory', { path: data.path })"
-                            :title="t('protection.backupsPage.ariaRefreshDirectory', { path: data.path })"
-                            @click.stop="refreshCreateSourceDirectory(row.id, data)"
+                          <template #content>
+                            <div class="smb-filename-encoding-tooltip__content">
+                              <div class="smb-filename-encoding-tooltip__title">
+                                {{ t('protection.backupsPage.dirTreeFilenameEncodingWarningTitle') }}
+                              </div>
+                              <div class="smb-filename-encoding-tooltip__section">
+                                <span class="smb-filename-encoding-tooltip__label">
+                                  {{ t('protection.backupsPage.dirTreeFilenameEncodingWarningReasonLabel') }}:
+                                </span>
+                                <span>{{ t('protection.backupsPage.dirTreeFilenameEncodingWarningReason') }}</span>
+                              </div>
+                              <div class="smb-filename-encoding-tooltip__section">
+                                <span class="smb-filename-encoding-tooltip__label">
+                                  {{ t('protection.backupsPage.dirTreeFilenameEncodingWarningSolutionLabel') }}:
+                                </span>
+                                <span>{{ t('protection.backupsPage.dirTreeFilenameEncodingWarningSolution') }}</span>
+                              </div>
+                            </div>
+                          </template>
+                          <div
+                            class="create-dir-row create-dir-row--tree"
+                            :class="{
+                              'create-dir-row--disabled': Boolean(addedDirTreeDisableReason(row.id, data.path)),
+                              'create-dir-row--filename-encoding-warning': Boolean(data.filenameEncodingSuspected),
+                            }"
+                            :data-source-path="data.path"
+                            @click="(event) => onSourceTreeRowClick(row.id, data, event)"
                           >
-                            <RefreshCw
-                              :size="14"
-                              :class="{ 'is-spinning': isSourceDirectoryRefreshing(row.id, data.path) }"
+                            <component
+                              :is="data.path_type === 'file' ? FileIcon : Folder"
+                              :size="15"
+                              class="create-dir-row__icon"
+                              :class="data.path_type === 'file' ? 'create-dir-row__icon--file' : 'create-dir-row__icon--folder'"
                             />
-                          </button>
-                          <HflHelpTip
-                            v-if="addedDirTreeDisableReason(row.id, data.path)"
-                            :content="addedDirTreeDisableReason(row.id, data.path)"
-                            trigger-class="create-dir-row__disabled-icon"
-                            :aria-label="addedDirTreeDisableReason(row.id, data.path) || undefined"
-                          />
-                        </div>
+                            <div class="create-dir-row__body">
+                              <span class="create-dir-row__label">{{ data.label }}</span>
+                              <span class="create-dir-row__path">{{ data.path }}</span>
+                            </div>
+                            <ShieldAlert
+                              v-if="data.filenameEncodingSuspected"
+                              :size="15"
+                              class="create-dir-row__filename-encoding-icon"
+                              aria-hidden="true"
+                            />
+                            <button
+                              v-if="data.path_type === 'directory'"
+                              type="button"
+                              class="hfl-dir-tree-node__refresh"
+                              :class="{ 'is-refreshing': isSourceDirectoryRefreshing(row.id, data.path) }"
+                              :disabled="isSourceDirectoryRefreshing(row.id, data.path)"
+                              :aria-label="t('protection.backupsPage.ariaRefreshDirectory', { path: data.path })"
+                              :title="t('protection.backupsPage.ariaRefreshDirectory', { path: data.path })"
+                              @click.stop="refreshCreateSourceDirectory(row.id, data)"
+                            >
+                              <RefreshCw
+                                :size="14"
+                                :class="{ 'is-spinning': isSourceDirectoryRefreshing(row.id, data.path) }"
+                              />
+                            </button>
+                            <HflHelpTip
+                              v-if="addedDirTreeDisableReason(row.id, data.path)"
+                              :content="addedDirTreeDisableReason(row.id, data.path)"
+                              trigger-class="create-dir-row__disabled-icon"
+                              :aria-label="addedDirTreeDisableReason(row.id, data.path) || undefined"
+                            />
+                          </div>
+                        </ElTooltip>
                       </template>
                     </el-tree>
                   </section>
@@ -11570,6 +11647,58 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 .source-dir-tree :deep(.el-tree-node.is-checked > .el-tree-node__content) .create-dir-row--tree {
   background: color-mix(in srgb, var(--color-primary) 14%, #fff);
+}
+
+.source-dir-tree :deep(.el-tree-node__content) .create-dir-row--filename-encoding-warning {
+  border: 1px solid var(--color-warning-border, #f2dba8);
+  background: var(--color-warning-light, #fcf3e1);
+}
+
+.source-dir-tree :deep(.el-tree-node__content:hover) .create-dir-row--filename-encoding-warning,
+.source-dir-tree :deep(.el-tree-node.is-checked > .el-tree-node__content) .create-dir-row--filename-encoding-warning {
+  background: color-mix(in srgb, var(--color-warning-light, #fcf3e1) 86%, #fff);
+}
+
+.create-dir-row--filename-encoding-warning .create-dir-row__label,
+.create-dir-row--filename-encoding-warning .create-dir-row__path,
+.create-dir-row__filename-encoding-icon {
+  color: rgb(146 89 8);
+}
+
+.create-dir-row__filename-encoding-icon {
+  flex: 0 0 auto;
+}
+
+:global(.smb-filename-encoding-tooltip) {
+  width: min(420px, calc(100vw - 32px));
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 12px 14px !important;
+  border-color: var(--color-warning-border, #f2dba8) !important;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+}
+
+:global(.smb-filename-encoding-tooltip__content) {
+  display: grid;
+  gap: 10px;
+  color: rgb(51 65 85);
+  white-space: normal;
+  line-height: 1.5;
+}
+
+:global(.smb-filename-encoding-tooltip__title) {
+  color: rgb(146 89 8);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+:global(.smb-filename-encoding-tooltip__section) {
+  display: grid;
+  gap: 3px;
+}
+
+:global(.smb-filename-encoding-tooltip__label) {
+  color: rgb(30 41 59);
+  font-weight: 600;
 }
 
 .source-dir-tree :deep(.el-tree-node.is-disabled > .el-tree-node__content) {

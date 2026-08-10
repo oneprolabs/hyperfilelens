@@ -3,8 +3,47 @@ import type {
   BackupSourceDirectoryEntry,
   BackupSourceDirectoryList,
 } from './sourceApi'
+import { normalizeThrownError } from './errors'
+import { usesUtf8Iocharset } from './nasMountOptions'
 
-export type BackupSourceDirectoryTreeSource = Pick<BackupSelectableSource, 'type' | 'platform'>
+export type BackupSourceDirectoryTreeSource = Pick<
+  BackupSelectableSource,
+  'type' | 'platform' | 'protocol' | 'mount_options'
+>
+
+function pathBasename(path: string) {
+  return String(path || '').split(/[\\/]/).filter(Boolean).pop() || ''
+}
+
+function containsRepeatedQuestionMarks(value: unknown) {
+  return /\?{2,}/.test(String(value || ''))
+}
+
+export function isLikelySmbFilenameEncodingIssue(params: {
+  source: BackupSourceDirectoryTreeSource | null | undefined
+  label?: unknown
+  path?: unknown
+}) {
+  const { source } = params
+  if (source?.type !== 'nas' || source.protocol !== 'smb') return false
+  if (usesUtf8Iocharset(source.mount_options)) return false
+  return containsRepeatedQuestionMarks(params.label)
+    || containsRepeatedQuestionMarks(pathBasename(String(params.path || '')))
+}
+
+export function isLikelySmbFilenamePathNotFound(params: {
+  source: BackupSourceDirectoryTreeSource | null | undefined
+  path: string
+  error: unknown
+}) {
+  if (!isLikelySmbFilenameEncodingIssue({ source: params.source, path: params.path })) {
+    return false
+  }
+  const normalized = normalizeThrownError(params.error)
+  const diagnostic = String(normalized.meta?.diagnostic || '').trim().toLowerCase()
+  return normalized.errorCode === 'AGENT.EXPLORER_LIST_FAILED'
+    && diagnostic.includes('path not found')
+}
 
 export function shouldUseSingleDirectoryRoot(
   source: BackupSourceDirectoryTreeSource | null | undefined,
