@@ -1204,7 +1204,7 @@ watch(
           <ElButton @click="cancelAdvancedFilter">{{ t('ops.task.cancelFilter') }}</ElButton>
           <div class="el-drawer__footer-actions">
             <ElButton @click="resetAdvancedFilterDraft">{{ t('ops.task.resetFilter') }}</ElButton>
-            <ElButton type="primary" @click="applyAdvancedFilters">{{ t('ops.task.applyFilter') }}</ElButton>
+            <ElButton type="primary" :disabled="loading" @click="applyAdvancedFilters">{{ t('ops.task.applyFilter') }}</ElButton>
           </div>
         </div>
       </template>
