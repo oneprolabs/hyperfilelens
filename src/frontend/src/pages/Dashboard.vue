@@ -12,7 +12,6 @@ import {
   History,
   Server,
   ShieldCheck,
-  X,
 } from 'lucide-vue-next'
 import DashboardIdleGearIllustration from '../components/dashboard/DashboardIdleGearIllustration.vue'
 import DashboardIdleShieldIllustration from '../components/dashboard/DashboardIdleShieldIllustration.vue'
@@ -43,7 +42,7 @@ const routes = {
   policies: '/protection/policies',
   repositories: '/node/repositories',
   tasks: '/ops/task',
-  alerts: '/ops/alerts/incidents',
+  attention: '/ops/attention',
   audit: '/ops/audit',
   subscription: '/node/subscription',
 } as const
@@ -695,10 +694,10 @@ onMounted(refresh)
                 <AlertTriangle :size="14" />
               </span>
               <h3 class="panel-title">{{ t('dashboard.attentionTitle') }}</h3>
-              <span v-if="overview?.attention.length" class="attention-count">{{ overview.attention.length }}</span>
+              <span v-if="overview?.attentionCount" class="attention-count">{{ overview.attentionCount }}</span>
             </div>
-            <RouterLink :to="routes.alerts" class="panel-link">
-              {{ t('dashboard.viewAllAlerts') }}
+            <RouterLink :to="routes.attention" class="panel-link">
+              {{ t('dashboard.viewAllAttention') }}
               <ArrowUpRight class="panel-link__arrow" />
             </RouterLink>
           </div>
@@ -730,13 +729,16 @@ onMounted(refresh)
                 </div>
                 <div class="attention-item__actions">
                   <RouterLink :to="item.to" class="attention-item__solve">
-                    {{ t('dashboard.resolveAction') }}
-                  </RouterLink>
-                  <RouterLink :to="item.to" class="attention-item__dismiss">
-                    <X class="w-3.5 h-3.5" />
+                    {{ t('dashboard.openAttentionItem') }}
                   </RouterLink>
                 </div>
               </div>
+            </div>
+            <div
+              v-if="overview && overview.attention.length < overview.attentionCount"
+              class="attention-list__summary"
+            >
+              <span>{{ t('dashboard.attentionPreview', { shown: overview.attention.length, total: overview.attentionCount }) }}</span>
             </div>
           </div>
         </section>
@@ -2205,6 +2207,13 @@ onMounted(refresh)
   overflow-y: auto;
 }
 
+.attention-list__summary {
+  flex-shrink: 0;
+  padding-top: 0.625rem;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
 .attention-item {
   display: flex;
   align-items: center;
@@ -2290,19 +2299,6 @@ onMounted(refresh)
 
 .attention-item__solve:hover {
   background: #f9fafb;
-}
-
-.attention-item__dismiss {
-  padding: 0.25rem;
-  border-radius: 9999px;
-  color: #9ca3af;
-  text-decoration: none;
-  display: flex;
-}
-
-.attention-item__dismiss:hover {
-  background: rgba(243, 244, 246, 0.5);
-  color: #374151;
 }
 
 /* ---- Storage ---- */

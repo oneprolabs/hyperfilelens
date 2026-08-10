@@ -47,6 +47,7 @@ const EditProxyFsRepositoryPage = lazyRoute(() => import('../pages/node/EditProx
 const NodesDeployPage = lazyRoute(() => import('../pages/node/NodesDeploy.vue'))
 const AssetsSnapshotsPage = lazyRoute(() => import('../pages/node/Snapshots.vue'))
 const OpsTasksPage = lazyRoute(() => import('../pages/ops/Tasks.vue'))
+const OpsAttentionPage = lazyRoute(() => import('../pages/ops/Attention.vue'))
 const OpsAlertPoliciesPage = lazyRoute(() => import('../pages/ops/AlertPolicies.vue'))
 const OpsAlertPolicyEditorPage = lazyRoute(() => import('../pages/ops/AlertPolicyEditorPage.vue'))
 const OpsAlertIncidentsPage = lazyRoute(() => import('../pages/ops/AlertIncidents.vue'))
@@ -147,6 +148,7 @@ export const router = createRouter({
         { path: 'node/snapshots', component: AssetsSnapshotsPage },
         { path: 'ops', redirect: '/ops/alerts/incidents' },
         ...tenantOpsRoutes,
+        { path: 'ops/attention', component: OpsAttentionPage },
         { path: 'ops/task', component: OpsTasksPage },
         { path: 'ops/alerts', redirect: '/ops/alerts/incidents' },
         { path: 'ops/alerts/incidents', component: OpsAlertIncidentsPage },

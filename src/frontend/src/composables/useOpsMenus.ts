@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, BellRing, Radio, FileText, History, ScrollText } from 'lucide-vue-next'
+import { AlertTriangle, BellRing, CircleAlert, Radio, FileText, History, ScrollText } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 import { tenantOpsObserveMenus } from '@ext/platform/ops/menus'
 
@@ -16,6 +16,12 @@ export function useOpsMenus() {
       })
     }
     menus.push(
+      {
+        label: t('ops.nav.groupAttention'),
+        children: [
+          { label: t('ops.nav.attention'), to: '/ops/attention', icon: CircleAlert },
+        ],
+      },
       {
         label: t('ops.nav.groupAlerts'),
         children: [

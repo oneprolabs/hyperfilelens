@@ -1,12 +1,13 @@
 from django.urls import path
 
-from apps.monitor.api.views import SystemMonitorView
+from apps.monitor.api.views import AttentionView, SystemMonitorView
 from apps.monitor.api.views.platform_monitor import PlatformMonitorView
 from apps.monitor.api.views.resource_monitor import ResourceMonitorView
 from common.extension_loader import extensions_enabled
 
 urlpatterns = [
     path("system/", SystemMonitorView.as_view(), name="monitor-system"),
+    path("attention/", AttentionView.as_view(), name="monitor-attention"),
     path("resources/", ResourceMonitorView.as_view(), name="monitor-resources"),
     path("platform/", PlatformMonitorView.as_view(), name="monitor-platform"),
 ]
