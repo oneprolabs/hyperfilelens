@@ -110,6 +110,27 @@ const unverifiedReason = computed(() =>
       </span>
     </div>
 
+    <ElAlert
+      v-if="target.disabledReason"
+      type="warning"
+      :closable="false"
+      class="target-repository-detail__disabled-alert"
+      :aria-label="target.disabledReason"
+    >
+      <ol class="target-repository-detail__disabled-list">
+        <li
+          v-for="(item, index) in target.disabledReasonItems?.length
+            ? target.disabledReasonItems
+            : [target.disabledReason]"
+          :key="item"
+          class="target-repository-detail__disabled-item"
+        >
+          <span class="target-repository-detail__disabled-index">{{ index + 1 }}</span>
+          <span class="target-repository-detail__disabled-text">{{ item }}</span>
+        </li>
+      </ol>
+    </ElAlert>
+
     <div class="target-repository-detail__sections">
       <section class="target-repository-detail__section target-repository-detail__section--line">
         <span class="target-repository-detail__section-title">Status:</span>
@@ -209,6 +230,54 @@ const unverifiedReason = computed(() =>
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
+}
+
+.target-repository-detail__disabled-alert {
+  border-color: var(--color-warning-border) !important;
+  border-radius: 6px !important;
+  background: var(--color-warning-light) !important;
+}
+
+.target-repository-detail__disabled-alert :deep(.el-alert__content) {
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.target-repository-detail__disabled-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.target-repository-detail__disabled-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.target-repository-detail__disabled-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-warning-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--color-warning);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.target-repository-detail__disabled-text {
+  min-width: 0;
+  color: rgb(120 75 12);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .target-repository-detail__sections {

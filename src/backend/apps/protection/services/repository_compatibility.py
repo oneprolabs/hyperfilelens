@@ -29,7 +29,12 @@ def validate_backup_repository_compatible(
     if repository is None:
         raise ValidationError({"repository_id": "Repository not found."})
 
-    if source_type == "nas" and repository.repo_type == Repository.Type.PROXY_FS:
+    if source_type == "agent" and _is_direct_nas_repository(repository):
+        _validate_direct_nas_agent_platform(
+            organization_id=organization_id,
+            source_ref_id=source_ref_id,
+        )
+    elif source_type == "nas" and repository.repo_type == Repository.Type.PROXY_FS:
         _validate_proxy_bound_repository(
             organization_id=organization_id,
             source_ref_id=source_ref_id,
@@ -48,6 +53,59 @@ def validate_backup_repository_compatible(
         )
 
     return repository
+
+
+def _is_direct_nas_repository(repository: Repository) -> bool:
+    return (
+        repository.repo_type == Repository.Type.NAS
+        and not (
+            repository.bind_node_type == Repository.BindNodeType.PROXY
+            and repository.bind_node_id
+        )
+    )
+
+
+def _validate_direct_nas_agent_platform(
+    *,
+    organization_id: int,
+    source_ref_id: int,
+) -> None:
+    node = Node.objects.filter(
+        organization_id=organization_id,
+        id=source_ref_id,
+        role=NodeRole.AGENT,
+        is_deleted=False,
+    ).first()
+    if node is None:
+        raise ValidationError({"source_ref_id": "Backup source not found."})
+    if _direct_nas_agent_platform(node) == "linux":
+        return
+    raise ValidationError({
+        "repository_id": (
+            "Direct NAS repositories are compatible only with Linux Host sources. "
+            "Bind the NAS repository to a Proxy node for Windows, macOS, or "
+            "unidentified Host platforms."
+        )
+    })
+
+
+def _direct_nas_agent_platform(node: Node) -> str | None:
+    metadata = node.metadata if isinstance(node.metadata, dict) else {}
+    inventory = metadata.get("inventory")
+    merged = {
+        **metadata,
+        **(inventory if isinstance(inventory, dict) else {}),
+    }
+    raw = str(
+        merged.get("os") or merged.get("platform") or node.os_name or ""
+    ).strip().lower()
+    if "darwin" in raw or "mac" in raw:
+        return "macos"
+    if "windows" in raw or raw in {"win32", "win64"} or raw.startswith("win "):
+        return "windows"
+    if "linux" in raw:
+        return "linux"
+    return None
 
 
 def _validate_proxy_bound_repository(

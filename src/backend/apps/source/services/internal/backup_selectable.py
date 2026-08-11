@@ -111,14 +111,16 @@ def _sort_key(item: dict[str, Any]) -> datetime:
     return parsed
 
 
-def _agent_platform(node: Node) -> str:
+def _agent_platform(node: Node) -> str | None:
     inv = _merged_inventory(node)
     raw = str(inv.get("os") or inv.get("platform") or node.os_name or "").strip().lower()
     if "darwin" in raw or "mac" in raw:
         return "macos"
     if "windows" in raw or raw in {"win32", "win64"} or raw.startswith("win "):
         return "windows"
-    return "linux"
+    if "linux" in raw:
+        return "linux"
+    return None
 
 
 def _inventory_int(inv: dict[str, Any], *keys: str) -> int | None:
@@ -149,9 +151,11 @@ def _agent_item(node: Node) -> dict[str, Any]:
         "node_ip": str(node.ip_address or "").strip(),
         "status": str(node.status or Node.Status.ACTIVE),
         "availability": str(node.availability or Node.Availability.OFFLINE),
-        "platform": _agent_platform(node),
         "registered_at": node.created_at.isoformat() if node.created_at else None,
     }
+    platform = _agent_platform(node)
+    if platform:
+        item["platform"] = platform
     cpu_cores = _inventory_int(inv, "cpu_cores", "cpu_logical_cores", "logical_cores")
     memory_total_bytes = _inventory_int(inv, "memory_total_bytes")
     disk_count = _inventory_int(inv, "disk_count")

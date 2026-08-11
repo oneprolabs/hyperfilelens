@@ -778,6 +778,25 @@ class SourceResourceApiTests(TestCase):
         for row in by_ids.data["results"]:
             self.assertEqual(row["pipeline_step"], 1)
 
+    def test_backup_selectable_omits_unknown_agent_platform(self):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="unknown-platform-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.22",
+        )
+
+        response = self.client.get(
+            f"/api/v1/source/backup-selectable/?ids=agent:{agent.id}",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertNotIn("platform", response.data["results"][0])
+
     @override_settings(SOURCE_BACKUP_SELECTABLE_QUERY_MODE="pipeline")
     def test_backup_selectable_pipeline_query_contract(self):
         agent = Node.objects.create(

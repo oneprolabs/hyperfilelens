@@ -28,7 +28,13 @@ const router = useRouter()
 const bindProxyLeadItems = computed(() => [
   t('addNasRepo.bindProxyLeadItemRecommend'),
   t('addNasRepo.bindProxyLeadItemAfterBinding'),
-  t('addNasRepo.bindProxyLeadItemSkip'),
+  t('addNasRepo.bindProxyLeadItemDirectLinuxOnly'),
+])
+const directAccessRiskItems = computed(() => [
+  t('addNasRepo.directAccessRiskLinuxOnly'),
+  t('addNasRepo.directAccessRiskDependencies'),
+  t('addNasRepo.directAccessRiskDifferences'),
+  t('addNasRepo.directAccessRiskBindProxy'),
 ])
 const props = withDefaults(defineProps<{
   embedded?: boolean
@@ -479,8 +485,18 @@ watch(enableQuotaAlert, (enabled) => {
                           :closable="false"
                           show-icon
                           class="add-nas-direct-warning"
-                          :title="t('addNasRepo.directAccessRisk')"
-                        />
+                        >
+                          <ol class="add-nas-proxy-alert__list add-nas-direct-warning__list">
+                            <li
+                              v-for="(item, index) in directAccessRiskItems"
+                              :key="item"
+                              class="add-nas-proxy-alert__item"
+                            >
+                              <span class="add-nas-proxy-alert__index">{{ index + 1 }}</span>
+                              <span class="add-nas-proxy-alert__text">{{ item }}</span>
+                            </li>
+                          </ol>
+                        </ElAlert>
                       </ElFormItem>
                     </ElForm>
 
@@ -751,6 +767,14 @@ watch(enableQuotaAlert, (enabled) => {
 
 .add-nas-direct-warning :deep(.el-alert__title) {
   line-height: 1.5;
+}
+
+.add-nas-direct-warning :deep(.el-alert__content) {
+  min-width: 0;
+}
+
+.add-nas-direct-warning__list {
+  width: 100%;
 }
 
 .add-nas-select-row {
