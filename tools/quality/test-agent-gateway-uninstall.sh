@@ -13,6 +13,8 @@ source <(sed '/^case "$CMD" in/,$d' "${installer}")
 
 INSTALL_DIR="${tmp}/opt/hyperfilelens-agent"
 DEFAULT_DATA="${tmp}/var/lib/hyperfilelens-agent"
+install_parent="$(dirname "${INSTALL_DIR}")"
+data_parent="$(dirname "${DEFAULT_DATA}")"
 INSTALLED_VERSION_FILE="${INSTALL_DIR}/INSTALLED_VERSION"
 GATEWAY_LIFECYCLE_SCRIPT="${INSTALL_DIR}/libexec/gateway-lifecycle.sh"
 UNIT_DST="${tmp}/hyperfilelens-agent.service"
@@ -60,6 +62,8 @@ cmd_uninstall --purge-all
 [[ -f "${stop_marker}" ]]
 [[ ! -e "${INSTALL_DIR}" ]]
 [[ ! -e "${DEFAULT_DATA}" ]]
+[[ -d "${install_parent}" ]]
+[[ -d "${data_parent}" ]]
 
 fake_bin="${tmp}/fake-bin"
 docker_state="${tmp}/docker-state"

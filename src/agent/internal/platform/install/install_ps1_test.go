@@ -23,6 +23,18 @@ func TestInstallPs1PurgeDoesNotRecreateDataLogDirectory(t *testing.T) {
 	}
 }
 
+func TestInstallPs1DoesNotRemoveInstallParent(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	for _, forbidden := range []string{
+		"`$parent = Split-Path -Parent `$target",
+		"removed empty parent directory `$parent",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("install.ps1 must not remove the shared install parent: found %q", forbidden)
+		}
+	}
+}
+
 func TestInstallPs1SafeDataPathRequiresHyperFileLensDescendant(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	for _, want := range []string{
