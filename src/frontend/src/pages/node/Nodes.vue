@@ -484,9 +484,7 @@ function nodeDeleteDialogItem(row: ApiNode) {
     ? t('nodesPage.statusOnline')
     : status === 'reconnecting'
       ? t('nodesPage.statusReconnecting')
-      : row.last_seen_at
-        ? t('nodesPage.statusOfflineWithLastSeen', { time: formatNodeDate(row.last_seen_at) })
-        : t('nodesPage.statusOffline')
+      : t('nodesPage.statusOffline')
   return {
     key: row.id,
     name: row.name,
@@ -494,7 +492,10 @@ function nodeDeleteDialogItem(row: ApiNode) {
       label,
       tone: statusTagType(status),
     },
-    description: pendingDeleteUpgradeRequired.value.has(row.id)
+    description: status === 'offline' && row.last_seen_at
+      ? t('nodesPage.lastSeenDetail', { time: formatNodeDate(row.last_seen_at) })
+      : undefined,
+    warning: pendingDeleteUpgradeRequired.value.has(row.id)
       ? t('nodesPage.deleteUpgradeRequired')
       : undefined,
   }
