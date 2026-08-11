@@ -3,8 +3,9 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import NodeBasicInfoPanel from '../../components/NodeBasicInfoPanel.vue'
 import NodePerfSettingsPanel from '../../components/NodePerfSettingsPanel.vue'
+import NodeMaintenancePanel from '../../components/NodeMaintenancePanel.vue'
 import HflDetailDrawerFooter from '../../components/HflDetailDrawerFooter.vue'
-import { getNode } from '../../lib/nodeApi'
+import { getGatewayNode } from '../../lib/nodeApi'
 import { fetchGatewayAiStatus, type GatewayAiStatus } from '../../lib/lensApi'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
@@ -14,6 +15,8 @@ import type { ApiNode } from '../../types/node'
 const props = defineProps<{
   modelValue: boolean
   nodeId: number | null
+  gatewayScope?: 'user' | 'platform'
+  initialTab?: 'basic' | 'performance' | 'maintenance'
 }>()
 
 const emit = defineEmits<{
@@ -34,7 +37,7 @@ const gatewayAi = ref<GatewayAiStatus | null>(null)
 const busy = ref(false)
 const saving = ref(false)
 const savedInSession = ref(false)
-const drawerTab = ref<'basic' | 'performance'>('basic')
+const drawerTab = ref<'basic' | 'performance' | 'maintenance'>('basic')
 const basicPanelRef = ref<InstanceType<typeof NodeBasicInfoPanel> | null>(null)
 const perfPanelRef = ref<InstanceType<typeof NodePerfSettingsPanel> | null>(null)
 const { drawerSize, updateDrawerWidth, bindDrawerResize, unbindDrawerResize } = useResponsiveDrawerWidth()
@@ -103,7 +106,7 @@ async function refresh() {
   busy.value = true
   try {
     const [nodeRow, aiRow] = await Promise.all([
-      getNode(id, { signal }),
+      getGatewayNode(id, props.gatewayScope === 'platform' ? 'platform' : 'tenant', { signal }),
       fetchGatewayAiStatus(id).catch(() => null),
     ])
     node.value = nodeRow
@@ -122,7 +125,7 @@ watch(
   () => [open.value, props.nodeId] as const,
   ([isOpen, id]) => {
     if (isOpen && id != null) {
-      drawerTab.value = 'basic'
+      drawerTab.value = props.initialTab ?? 'basic'
       savedInSession.value = false
       void refresh()
     }
@@ -197,6 +200,7 @@ onUnmounted(() => {
             <NodeBasicInfoPanel
               ref="basicPanelRef"
               :node="node"
+              :node-scope="gatewayScope === 'platform' ? 'platform' : 'tenant'"
               :source-type-label="t('ops.monitorPage.sourceTypeGateway')"
               use-unified-capacity
               @node-updated="onNodeUpdated"
@@ -213,6 +217,16 @@ onUnmounted(() => {
               hide-actions
               :active="perfTabActive"
               :node="node"
+              :node-scope="gatewayScope === 'platform' ? 'platform' : 'tenant'"
+            />
+          </ElTabPane>
+
+          <ElTabPane :label="t('nodeLifecycle.maintenance')" name="maintenance" lazy>
+            <NodeMaintenancePanel
+              :node="node"
+              :gateway-scope="gatewayScope ?? 'user'"
+              :refreshing="busy"
+              @refresh="refresh()"
             />
           </ElTabPane>
         </ElTabs>

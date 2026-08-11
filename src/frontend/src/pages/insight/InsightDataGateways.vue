@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  Wrench,
 } from 'lucide-vue-next'
 import { ElCheckbox, ElInputNumber, ElMessage, type ElTable } from 'element-plus'
 import NodeVersionCell from '../../components/node-lifecycle/NodeVersionCell.vue'
@@ -92,6 +93,7 @@ const pendingDelete = ref<InsightGatewayRow[]>([])
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
 const detailNodeId = ref<number | null>(null)
+const detailInitialTab = ref<'basic' | 'performance' | 'maintenance'>('basic')
 const renameDialogOpen = ref(false)
 const renameInput = ref('')
 const renameTarget = ref<InsightGatewayRow | null>(null)
@@ -426,6 +428,15 @@ async function load() {
 function openDetail(row: InsightGatewayRow) {
   if (row.managed_by_hfl === false) return
   detailNodeId.value = row.id
+  detailInitialTab.value = 'basic'
+  detailOpen.value = true
+}
+
+function openSelectedMaintenance() {
+  const row = singleSelected.value
+  if (!row || !canManageGateway(row)) return
+  detailNodeId.value = row.id
+  detailInitialTab.value = 'maintenance'
   detailOpen.value = true
 }
 
@@ -465,11 +476,12 @@ function clearSelection() {
   tableRef.value?.clearSelection()
 }
 
-type MoreAction = 'rename' | 'upgrade' | 'remove'
+type MoreAction = 'rename' | 'upgrade' | 'maintenance' | 'remove'
 
 async function handleMoreAction(command: MoreAction) {
   if (command === 'rename') openRenameDialog()
   else if (command === 'upgrade') await onUpgradeSelected()
+  else if (command === 'maintenance') openSelectedMaintenance()
   else if (command === 'remove') await deleteSelected()
 }
 
@@ -490,7 +502,7 @@ async function submitRename() {
     return
   }
   try {
-    await updateNode(node.id, { name })
+    await updateNode(node.id, { name }, isPlatformEngine.value ? 'platform' : 'tenant')
     ElMessage.success({ message: t('nodesPage.renameSuccess'), grouping: true })
     renameDialogOpen.value = false
     clearSelection()
@@ -671,6 +683,12 @@ onUnmounted(() => {
                   <span class="el-dropdown-menu__item-content">
                     <ArrowUpCircle :size="14" class="shrink-0" />
                     <span>{{ t('nodesPage.actionUpgrade') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem command="maintenance" :disabled="batchRenameDisabled">
+                  <span class="el-dropdown-menu__item-content">
+                    <Wrench :size="14" class="shrink-0" />
+                    <span>{{ t('nodeLifecycle.maintenanceCommands') }}</span>
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem command="remove" divided class="el-dropdown-menu__item--danger" :disabled="batchDisabled">
@@ -992,6 +1010,8 @@ onUnmounted(() => {
     <InsightGatewayDetailDrawer
       v-model="detailOpen"
       :node-id="detailNodeId"
+      :initial-tab="detailInitialTab"
+      :gateway-scope="isPlatformEngine ? 'platform' : 'user'"
       @saved="load"
     />
     <NodeLifecycleUpgradeConfirmDialog

@@ -28,6 +28,24 @@ export function linuxInstallScriptPath() {
   return `${LINUX_INSTALL_DIR}/install.sh`
 }
 
+export function enrollmentHelperDownloadUrl(
+  apiBase: string,
+  arch: 'amd64' | 'arm64' = 'amd64',
+): string {
+  return `${apiBase.replace(/\/$/, '')}/media/enroll-bootstrap/hfl-enroll-linux-${arch}`
+}
+
+function inferredEnrollmentHelperUrl(
+  downloadUrl: string,
+  arch: 'amd64' | 'arm64',
+): string {
+  try {
+    return enrollmentHelperDownloadUrl(new URL(downloadUrl).origin, arch)
+  } catch {
+    return ''
+  }
+}
+
 export function buildLocalUpgradeCommand(
   os: EnrollmentOs,
   packagePath: string,
@@ -35,14 +53,19 @@ export function buildLocalUpgradeCommand(
   downloadUrl = '',
   role?: NodeRole,
   tlsVerify = true,
+  helperDownloadUrl = '',
+  arch: 'amd64' | 'arm64' = 'amd64',
 ) {
   const pkg = packagePath.trim() || '/path/to/hfl-agent-*.tar.gz'
   if (role === 'gateway' && os === 'linux') {
     const archive = pkg.endsWith('.tar.gz') ? pkg : '/tmp/hfl-agent.tar.gz'
     if (withDownload && downloadUrl) {
-      return `curl ${curlDownloadOptions(tlsVerify)} -o ${archive} '${downloadUrl}'\nsudo hfl-enroll gateway-upgrade --from ${archive}`
+      const helperUrl = helperDownloadUrl || inferredEnrollmentHelperUrl(downloadUrl, arch)
+      if (!helperUrl) return ''
+      const curlOptions = curlDownloadOptions(tlsVerify)
+      return `(\nset -e\nHFL_ENROLL_HELPER="$(mktemp /tmp/hfl-enroll.XXXXXX)"\ntrap 'rm -f "$HFL_ENROLL_HELPER"' EXIT\ncurl ${curlOptions} -o "$HFL_ENROLL_HELPER" '${helperUrl}'\nchmod +x "$HFL_ENROLL_HELPER"\ncurl ${curlOptions} -o ${archive} '${downloadUrl}'\nsudo "$HFL_ENROLL_HELPER" gateway-upgrade --from ${archive}\n)`
     }
-    return `sudo hfl-enroll gateway-upgrade --from ${archive}`
+    return ''
   }
   if (os === 'windows') {
     const zip = pkg.endsWith('.zip') ? pkg : 'C:\\path\\to\\hfl-agent-*.zip'
@@ -62,8 +85,8 @@ export function buildLocalUpgradeCommand(
 export function buildLocalUninstallCommand(os: EnrollmentOs, purgeAll = true, role?: NodeRole) {
   if (role === 'gateway' && os === 'linux') {
     return purgeAll
-      ? 'sudo hfl-enroll gateway-uninstall'
-      : 'sudo hfl-enroll gateway-uninstall --keep-data'
+      ? `sudo ${linuxInstallScriptPath()} uninstall --purge-all`
+      : `sudo ${linuxInstallScriptPath()} uninstall`
   }
   if (os === 'windows') {
     return purgeAll
@@ -75,7 +98,19 @@ export function buildLocalUninstallCommand(os: EnrollmentOs, purgeAll = true, ro
     : `sudo ${linuxInstallScriptPath()} uninstall`
 }
 
-export function buildLocalServiceCommand(os: EnrollmentOs, action: 'status' | 'start' | 'stop' | 'restart') {
+export function buildLocalServiceCommand(
+  os: EnrollmentOs,
+  action: 'status' | 'start' | 'stop' | 'restart',
+  role?: NodeRole,
+) {
+  if (role === 'gateway' && os === 'linux') {
+    const agent = `sudo ${linuxInstallScriptPath()} ${action}`
+    const sidecar = 'sudo docker compose -p hyperfilelens-gateway -f /etc/hyperfilelens/lensnode/docker-compose.yml'
+    if (action === 'status') return `${agent}\n${sidecar} ps`
+    if (action === 'start') return `${agent}\n${sidecar} up -d`
+    if (action === 'stop') return `${sidecar} stop\n${agent}`
+    return `${agent}\n${sidecar} up -d`
+  }
   if (os === 'windows') {
     if (action === 'status') return `${WIN_INSTALL_CMD} status`
     if (action === 'start') return 'Start-Service HyperFileLensAgent'
@@ -96,18 +131,22 @@ export function roleDeployNotes(role: NodeRole): string[] {
   }
 }
 
-export function defaultPackagePath(os: EnrollmentOs, version?: string) {
+export function defaultPackagePath(
+  os: EnrollmentOs,
+  version?: string,
+  arch: 'amd64' | 'arm64' = 'amd64',
+) {
   const ver = version?.trim() || '1.0.0'
   if (os === 'windows') {
-    return `C:\\Users\\Administrator\\Downloads\\hfl-agent-${ver}-windows-amd64.zip`
+    return `C:\\Users\\Administrator\\Downloads\\hfl-agent-${ver}-windows-${arch}.zip`
   }
   if (os === 'macos') {
-    return `/tmp/hfl-agent-${ver}-darwin-arm64.tar.gz`
+    return `/tmp/hfl-agent-${ver}-darwin-${arch}.tar.gz`
   }
-  return `/tmp/hfl-agent-${ver}-linux-amd64.tar.gz`
+  return `/tmp/hfl-agent-${ver}-linux-${arch}.tar.gz`
 }
 
-export function installPathsSummary(os: EnrollmentOs) {
+export function installPathsSummary(os: EnrollmentOs, role?: NodeRole) {
   if (os === 'windows') {
     return {
       installDir: 'C:\\Program Files\\HyperFileLens\\Agent',
@@ -120,6 +159,13 @@ export function installPathsSummary(os: EnrollmentOs) {
       installDir: LINUX_INSTALL_DIR,
       dataDir: LINUX_DATA_DIR,
       service: `${MAC_LAUNCHD_LABEL} (LaunchDaemon)`,
+    }
+  }
+  if (role === 'gateway') {
+    return {
+      installDir: `${LINUX_INSTALL_DIR} · /etc/hyperfilelens/lensnode`,
+      dataDir: `${LINUX_DATA_DIR} · Data Gateway workspace`,
+      service: 'hyperfilelens-agent.service · LensNode container',
     }
   }
   return {

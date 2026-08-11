@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import NodeBasicInfoPanel from './NodeBasicInfoPanel.vue'
 import NodePerfSettingsPanel from './NodePerfSettingsPanel.vue'
+import NodeMaintenancePanel from './NodeMaintenancePanel.vue'
 import ProxyBoundNasSourcesPanel from './ProxyBoundNasSourcesPanel.vue'
 import HflDetailDrawerFooter from './HflDetailDrawerFooter.vue'
 import { getNode } from '../lib/nodeApi'
@@ -13,6 +14,7 @@ import type { ApiNode } from '../types/node'
 const props = defineProps<{
   modelValue: boolean
   nodeId: number | null
+  initialTab?: 'basic' | 'performance' | 'nas' | 'maintenance'
 }>()
 
 const emit = defineEmits<{
@@ -32,7 +34,7 @@ const node = ref<ApiNode | null>(null)
 const busy = ref(false)
 const saving = ref(false)
 const savedInSession = ref(false)
-const drawerTab = ref<'basic' | 'performance' | 'nas'>('basic')
+const drawerTab = ref<'basic' | 'performance' | 'nas' | 'maintenance'>('basic')
 const basicPanelRef = ref<InstanceType<typeof NodeBasicInfoPanel> | null>(null)
 const perfPanelRef = ref<InstanceType<typeof NodePerfSettingsPanel> | null>(null)
 const { drawerSize, updateDrawerWidth, bindDrawerResize, unbindDrawerResize } = useResponsiveDrawerWidth()
@@ -113,7 +115,7 @@ watch(
   () => [open.value, props.nodeId] as const,
   ([isOpen, id]) => {
     if (isOpen && id != null) {
-      drawerTab.value = 'basic'
+      drawerTab.value = props.initialTab ?? 'basic'
       savedInSession.value = false
       void refresh()
     }
@@ -208,6 +210,14 @@ onUnmounted(() => {
               v-if="nodeId != null"
               :node-id="nodeId"
               :active="nasTabActive"
+            />
+          </ElTabPane>
+
+          <ElTabPane :label="t('nodeLifecycle.maintenance')" name="maintenance" lazy>
+            <NodeMaintenancePanel
+              :node="node"
+              :refreshing="busy"
+              @refresh="refresh()"
             />
           </ElTabPane>
         </ElTabs>

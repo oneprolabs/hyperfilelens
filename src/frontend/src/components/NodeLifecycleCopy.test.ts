@@ -39,8 +39,8 @@ describe('Node lifecycle copy', () => {
     expect(wizard).toContain('void revokeIssuedEnrollment(staleTokenId, staleTokenIsPlatform)')
     expect(wizard).toContain('enrollmentTokenIsPlatform.value')
     expect(wizard).toContain('await revokeEnrollmentToken(tokenId).catch(() => undefined)')
-    expect(wizard).toContain('await revokeEnrollmentToken(issuedTokenId).catch(() => undefined)')
-    expect(wizard).toContain('release.expires_in ?? 600')
+    expect(wizard).toContain('fetchNodeMaintenanceRelease')
+    expect(wizard).not.toContain('createNodeToken({ role: props.role')
     expect(wizard).not.toContain('installError.value')
   })
 

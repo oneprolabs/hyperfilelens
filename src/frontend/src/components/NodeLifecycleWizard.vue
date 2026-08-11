@@ -16,8 +16,7 @@ import {
   type NodeLifecycleTab,
 } from '../lib/nodeInstallCommands'
 import {
-  createNodeToken,
-  fetchAgentRelease,
+  fetchNodeMaintenanceRelease,
   issueEnrollmentInstall,
   issueGatewayEnrollmentInstall,
   issuePlatformGatewayEnrollmentInstall,
@@ -31,6 +30,7 @@ import type { NodeRole } from '../types/node'
 const props = withDefaults(
   defineProps<{
     orgKey: string
+    nodeId?: number | null
     role: NodeRole
     os: EnrollmentOs
     roleLocked?: boolean
@@ -39,15 +39,21 @@ const props = withDefaults(
     initialTab?: NodeLifecycleTab
     /** Hide upgrade/uninstall/service tabs (install-only embed). */
     installOnly?: boolean
+    /** Show host-side recovery commands only (upgrade/uninstall/service). */
+    maintenanceOnly?: boolean
+    initialServiceAction?: 'status' | 'start' | 'stop' | 'restart'
     /** Require an explicit operator action before issuing an enrollment token. */
     generateOnDemand?: boolean
   }>(),
   {
+    nodeId: null,
     roleLocked: false,
     showRolePicker: false,
     gatewayScope: 'user',
     initialTab: 'install',
     installOnly: false,
+    maintenanceOnly: false,
+    initialServiceAction: 'status',
     generateOnDemand: false,
   },
 )
@@ -61,17 +67,20 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const activeTab = ref<NodeLifecycleTab>(props.initialTab)
+const activeTab = ref<NodeLifecycleTab>(
+  props.maintenanceOnly && props.initialTab === 'install' ? 'upgrade' : props.initialTab,
+)
 const installCommand = ref('')
 const upgradeCommand = ref('')
 const uninstallCommand = ref('')
 const serviceCommand = ref('')
 const loading = ref(false)
 const releaseVersion = ref('')
+const upgradeError = ref('')
 const copied = ref(false)
 const installGenerated = ref(false)
-const purgeAll = ref(true)
-const serviceAction = ref<'status' | 'start' | 'stop' | 'restart'>('status')
+const purgeAll = ref(false)
+const serviceAction = ref<'status' | 'start' | 'stop' | 'restart'>(props.initialServiceAction)
 const supportOpen = ref(false)
 const enrollmentTokenId = ref<number | null>(null)
 const enrollmentTokenIsPlatform = ref(false)
@@ -85,9 +94,11 @@ const LINUX_DISTROS = {
   cloud: ['Amazon Linux', 'Oracle Linux', 'Arch Linux'],
 } as const
 
-const visibleTabs = computed((): NodeLifecycleTab[] =>
-  props.installOnly ? ['install'] : ['install', 'upgrade', 'uninstall', 'service'],
-)
+const visibleTabs = computed((): NodeLifecycleTab[] => {
+  if (props.installOnly) return ['install']
+  if (props.maintenanceOnly) return ['upgrade', 'uninstall', 'service']
+  return ['install', 'upgrade', 'uninstall', 'service']
+})
 
 const tokenIsUsable = computed(() => {
   if (!installGenerated.value) return false
@@ -176,12 +187,12 @@ const roleLabel = computed(() => {
   return t('nodesPage.roleAgent')
 })
 
-const paths = computed(() => installPathsSummary(props.os))
+const paths = computed(() => installPathsSummary(props.os, props.role))
 
 const displayCommand = computed(() => {
   switch (activeTab.value) {
     case 'upgrade':
-      return upgradeCommand.value || t('nodeLifecycle.upgradeLoading')
+      return upgradeCommand.value || (loading.value ? t('nodeLifecycle.upgradeLoading') : '')
     case 'uninstall':
       return uninstallCommand.value
     case 'service':
@@ -194,7 +205,19 @@ const displayCommand = computed(() => {
   }
 })
 
-const tabHint = computed(() => t(`nodeLifecycle.tabHint.${activeTab.value}`))
+const tabHint = computed(() => {
+  if (props.role === 'gateway' && activeTab.value !== 'install') {
+    return t(`nodeLifecycle.gatewayTabHint.${activeTab.value}`)
+  }
+  return t(`nodeLifecycle.tabHint.${activeTab.value}`)
+})
+
+const footnote = computed(() => {
+  if (props.role === 'gateway' && activeTab.value !== 'install') {
+    return t(`nodeLifecycle.gatewayFootnote.${activeTab.value}`)
+  }
+  return t(`nodeLifecycle.footnote.${activeTab.value}`)
+})
 
 const osPickerOptions = computed(() => [
   { value: 'linux' as EnrollmentOs, label: t('nodesDeploy.osLinux'), meta: t('nodeLifecycle.osMetaLinux') },
@@ -307,57 +330,42 @@ async function revokeIssuedEnrollment(tokenId: number, platformEnrollment: boole
 }
 
 async function refreshUpgradeCommand(gen: number) {
-  if (!props.orgKey) {
+  const platformGateway = props.role === 'gateway' && props.gatewayScope === 'platform'
+  if (props.nodeId == null) {
     upgradeCommand.value = ''
+    upgradeError.value = t('nodeLifecycle.upgradeCommandUnavailable')
     return
   }
   loading.value = true
   upgradeCommand.value = ''
-  let issuedTokenId: number | null = null
+  upgradeError.value = ''
   try {
-    // Upgrade only needs a short-lived enrollment token for the signed release URL.
-    // Do not depend on minimal installer metadata used by fresh install commands.
-    const issued = await createNodeToken({
-      role: props.role,
-      note: `upgrade:${props.role}`,
+    const release = await fetchNodeMaintenanceRelease({
+      nodeId: props.nodeId,
+      scope: platformGateway ? 'platform' : 'tenant',
     })
-    issuedTokenId = issued.id
-    const release = await fetchAgentRelease({
-      role: props.role,
-      token: issued.token,
-      os: props.os,
-    })
-    if (gen !== generation) {
-      await revokeEnrollmentToken(issued.id).catch(() => undefined)
-      return
-    }
+    if (gen !== generation) return
     releaseVersion.value = release.version
-    const pkg = defaultPackagePath(props.os, release.version)
     upgradeCommand.value = buildLocalUpgradeCommand(
       props.os,
-      pkg,
+      defaultPackagePath(
+        props.os,
+        release.version,
+        release.arch === 'arm64' ? 'arm64' : 'amd64',
+      ),
       true,
       release.download_url,
       props.role,
-      issued.tls_verify,
+      release.tls_verify !== false,
+      '',
+      release.arch === 'arm64' ? 'arm64' : 'amd64',
     )
-    const cleanupDelayMs = (Math.max(1, release.expires_in ?? 600) + 5) * 1000
-    setTimeout(() => {
-      void revokeEnrollmentToken(issued.id).catch(() => undefined)
-    }, cleanupDelayMs)
-  } catch {
-    if (issuedTokenId) {
-      await revokeEnrollmentToken(issuedTokenId).catch(() => undefined)
-    }
+    if (!upgradeCommand.value) throw new Error(t('nodeLifecycle.upgradeCommandUnavailable'))
+  } catch (error) {
     if (gen === generation) {
       releaseVersion.value = ''
-      upgradeCommand.value = buildLocalUpgradeCommand(
-        props.os,
-        defaultPackagePath(props.os),
-        false,
-        '',
-        props.role,
-      )
+      upgradeCommand.value = ''
+      upgradeError.value = apiErrorMessage(error, t('nodeLifecycle.upgradeCommandUnavailable'))
     }
   } finally {
     if (gen === generation) loading.value = false
@@ -366,7 +374,7 @@ async function refreshUpgradeCommand(gen: number) {
 
 function refreshStaticCommands() {
   uninstallCommand.value = buildLocalUninstallCommand(props.os, purgeAll.value, props.role)
-  serviceCommand.value = buildLocalServiceCommand(props.os, serviceAction.value)
+  serviceCommand.value = buildLocalServiceCommand(props.os, serviceAction.value, props.role)
 }
 
 function refreshAll() {
@@ -380,7 +388,7 @@ function refreshAll() {
 }
 
 watch(
-  () => [props.orgKey, props.role, props.os, props.gatewayScope] as const,
+  () => [props.orgKey, props.nodeId, props.role, props.os, props.gatewayScope] as const,
   () => {
     if (isLinuxOnlyRole(props.role) && props.os !== 'linux') {
       emit('update:os', 'linux')
@@ -399,7 +407,14 @@ watch(
 watch(
   () => props.initialTab,
   (tab) => {
-    if (tab) activeTab.value = tab
+    if (tab) activeTab.value = props.maintenanceOnly && tab === 'install' ? 'upgrade' : tab
+  },
+)
+
+watch(
+  () => props.initialServiceAction,
+  (action) => {
+    serviceAction.value = action
   },
 )
 
@@ -473,7 +488,7 @@ defineExpose({ clearInstallCommand })
     }"
   >
     <ElAlert
-      v-if="!orgKey"
+      v-if="!orgKey && gatewayScope !== 'platform'"
       type="warning"
       :closable="false"
       show-icon
@@ -508,6 +523,7 @@ defineExpose({ clearInstallCommand })
       </div>
 
       <div
+        v-if="!maintenanceOnly"
         class="fullscreen-form-card"
         :class="{ 'agent-install-wizard__platform-card': installOnly }"
       >
@@ -785,6 +801,14 @@ defineExpose({ clearInstallCommand })
             <div class="agent-install-wizard__command-col">
               <p class="fullscreen-form-field__hint agent-install-wizard__command-lead">{{ tabHint }}</p>
 
+              <ElAlert
+                v-if="activeTab === 'upgrade' && upgradeError"
+                type="error"
+                :closable="false"
+                show-icon
+                :title="upgradeError"
+              />
+
               <div v-if="activeTab === 'uninstall'" class="node-lifecycle-wizard__options">
                 <ElCheckbox v-model="purgeAll">{{ t('nodeLifecycle.purgeAll') }}</ElCheckbox>
               </div>
@@ -825,7 +849,7 @@ defineExpose({ clearInstallCommand })
                       {{ t('nodeLifecycle.installCommandReusable') }}
                     </template>
                     <template v-else>
-                      {{ t(`nodeLifecycle.footnote.${activeTab}`) }}
+                      {{ footnote }}
                     </template>
                   </span>
                   <button
