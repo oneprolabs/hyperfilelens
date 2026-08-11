@@ -137,7 +137,9 @@ import {
 import { issueEnrollmentInstall, listAllNodes, type EnrollmentOs } from '../../lib/nodeApi'
 import { formatOfflineBackupPlanMessage } from './lib/offlineBackupPlanMessage'
 import {
-  isBackupTargetCompatible,
+  backupTargetIncompatibilityReason,
+  backupTargetIncompatibilityReasonForSources,
+  type BackupTargetIncompatibilityReason,
 } from './lib/backupTargetCompatibility'
 import {
   createEmptyPolicyForm,
@@ -1565,35 +1567,70 @@ const filteredTargetGroups = computed(() =>
   wizardSourceGroups.value.filter((group) => sourceGroupMatchesSearch(group, appliedTargetSourceSearch.value)),
 )
 
-function isTargetCompatibleWithGroup(target: WizardTarget | null | undefined, group: WizardSourceGroup | null | undefined) {
-  if (!target || !group) return false
-  const source = realSourceById.value.get(group.sourceId)
-  return isBackupTargetCompatible(
-    { sourceType: group.sourceType, boundNodeId: source?.boundNodeId },
+function targetIncompatibilityReasonForGroup(
+  target: WizardTarget | null | undefined,
+  group: WizardSourceGroup | null | undefined,
+): BackupTargetIncompatibilityReason | null {
+  if (!target || !group) return null
+  return backupTargetIncompatibilityReason(
+    targetCompatibilitySourceForGroup(group),
     target,
   )
 }
 
+function targetCompatibilitySourceForGroup(group: WizardSourceGroup) {
+  const source = realSourceById.value.get(group.sourceId)
+  return {
+    sourceType: group.sourceType,
+    boundNodeId: source?.boundNodeId,
+    platform: source?.platform ?? group.platform,
+  }
+}
+
+function targetIncompatibilityMessage(reason: BackupTargetIncompatibilityReason) {
+  return reason === 'direct_nas_linux_only'
+    ? t('protection.backupsPage.targetDirectNasLinuxOnly')
+    : t('protection.backupsPage.targetCrossProxyUnavailable')
+}
+
+function targetIncompatibilityMessageItems(reason: BackupTargetIncompatibilityReason) {
+  const prefix = reason === 'direct_nas_linux_only'
+    ? 'targetDirectNasLinuxOnlyItem'
+    : 'targetCrossProxyUnavailableItem'
+  return [1, 2, 3].map((index) => t(`protection.backupsPage.${prefix}${index}`))
+}
+
 function targetOptionsForGroup(group: WizardSourceGroup | null | undefined) {
   return filterTargetsByCriteria(batchTargetPicker.search, batchTargetPicker.repoType)
-    .map((target) => ({
-      ...target,
-      disabled: !isTargetCompatibleWithGroup(target, group),
-      disabledReason: isTargetCompatibleWithGroup(target, group)
-        ? null
-        : t('protection.backupsPage.targetCrossProxyUnavailable'),
-    }))
+    .map((target) => {
+      const reason = targetIncompatibilityReasonForGroup(target, group)
+      return {
+        ...target,
+        disabled: Boolean(reason),
+        disabledReason: reason ? targetIncompatibilityMessage(reason) : null,
+        disabledReasonItems: reason ? targetIncompatibilityMessageItems(reason) : [],
+      }
+    })
 }
 
 function targetOptionsForCheckedGroups() {
   const groups = checkedTargetGroups.value
   return filterTargetsByCriteria(batchTargetPicker.search, batchTargetPicker.repoType)
     .map((target) => {
-      const compatible = groups.length > 0 && groups.every((group) => isTargetCompatibleWithGroup(target, group))
+      const reason = backupTargetIncompatibilityReasonForSources(
+        groups.map(targetCompatibilitySourceForGroup),
+        target,
+      )
+      const compatible = groups.length > 0 && !reason
       return {
         ...target,
         disabled: !compatible,
-        disabledReason: compatible ? null : t('protection.backupsPage.targetCrossProxyUnavailable'),
+        disabledReason: compatible
+          ? null
+          : targetIncompatibilityMessage(reason ?? 'cross_proxy_unavailable'),
+        disabledReasonItems: compatible
+          ? []
+          : targetIncompatibilityMessageItems(reason ?? 'cross_proxy_unavailable'),
       }
     })
 }
@@ -2927,7 +2964,8 @@ function prepareNewTargetAssignment(target: WizardTarget) {
   const selectedGroups = checkedTargetGroups.value.length > 0
     ? checkedTargetGroups.value
     : wizardSourceGroups.value.filter((group) => (
-        !sourceTargetMap.value[group.key] && isTargetCompatibleWithGroup(target, group)
+        !sourceTargetMap.value[group.key]
+        && targetIncompatibilityReasonForGroup(target, group) === null
       ))
   targetAssignmentCheckedGroupKeys.value = selectedGroups.map((group) => group.key)
   targetAssignDialogMode.value = 'batch'
@@ -4582,7 +4620,8 @@ async function openSingleTargetDialog(group: WizardSourceGroup) {
   targetAssignActiveGroupKey.value = group.key
   const currentTargetId = sourceTargetMap.value[group.key] || ''
   const currentTarget = getRealTarget(currentTargetId)
-  const initialTargetId = isSelectableTarget(currentTarget) && isTargetCompatibleWithGroup(currentTarget, group)
+  const initialTargetId = isSelectableTarget(currentTarget)
+    && targetIncompatibilityReasonForGroup(currentTarget, group) === null
     ? currentTargetId
     : ''
   const targetDerivedMode = inferNasModeForTarget(currentTarget)
@@ -5216,7 +5255,7 @@ function applyBatchTarget() {
     ElMessage.warning({ message: t('addS3Repo.hintEndpointType'), grouping: true })
     return
   }
-  if (checkedGroups.some((group) => !isTargetCompatibleWithGroup(target, group))) {
+  if (checkedGroups.some((group) => targetIncompatibilityReasonForGroup(target, group) !== null)) {
     ElMessage.warning({ message: t('protection.backupsPage.msgPickBatchTarget'), grouping: true })
     return
   }
@@ -5250,7 +5289,7 @@ function applySingleTarget() {
     ElMessage.warning({ message: t('addS3Repo.hintEndpointType'), grouping: true })
     return
   }
-  if (!group || !isTargetCompatibleWithGroup(target, group)) {
+  if (!group || targetIncompatibilityReasonForGroup(target, group) !== null) {
     ElMessage.warning({ message: t('protection.backupsPage.msgPickBatchTarget'), grouping: true })
     return
   }

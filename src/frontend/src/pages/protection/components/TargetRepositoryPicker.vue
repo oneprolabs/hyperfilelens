@@ -32,6 +32,7 @@ export type TargetRepositoryItem = {
   capacityBytes?: number
   disabled?: boolean
   disabledReason?: string | null
+  disabledReasonItems?: string[]
 }
 
 const props = withDefaults(defineProps<{
@@ -323,7 +324,11 @@ function nasProtocolLabel(protocol?: string | null): string {
                 :disabled="!target.repoType"
               >
                 <template #reference>
-                  <div class="target-repository-picker-option" @pointerdown.capture="hideOptionPopovers">
+                  <div
+                    class="target-repository-picker-option"
+                    :class="{ 'is-disabled': target.disabled }"
+                    @pointerdown.capture="hideOptionPopovers"
+                  >
                     <div class="target-repository-picker-option__head">
                       <span class="target-repository-picker-option__name">{{ target.name }}</span>
                       <span class="target-repository-picker-option__tags">
@@ -352,9 +357,6 @@ function nasProtocolLabel(protocol?: string | null): string {
                       </span>
                     </div>
                     <span class="target-repository-picker-option__location">{{ target.location }}</span>
-                    <span v-if="target.disabledReason" class="target-repository-picker-option__disabled-reason">
-                      {{ target.disabledReason }}
-                    </span>
                   </div>
                 </template>
                 <TargetRepositoryDetailCard :target="target" />
@@ -375,13 +377,10 @@ function nasProtocolLabel(protocol?: string | null): string {
   gap: 16px;
 }
 
-.target-repository-picker-option__disabled-reason {
-  display: block;
-  margin-top: 2px;
-  color: var(--el-color-danger, #dc2626);
-  font-size: 11px;
-  line-height: 16px;
-  white-space: normal;
+.target-repository-picker-option.is-disabled {
+  cursor: not-allowed;
+  filter: grayscale(1);
+  opacity: 0.52;
 }
 
 .target-repository-picker--compact {

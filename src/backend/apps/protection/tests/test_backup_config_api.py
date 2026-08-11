@@ -49,6 +49,7 @@ class ProtectionBackupConfigApiTests(TestCase):
             role=Node.Role.AGENT,
             status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.41",
+            os_name="linux",
         )
         self.repository = Repository.objects.create(
             organization_id=self.org.id,

@@ -199,10 +199,19 @@ describe('AddNasRepository Proxy decision', () => {
     await fillRequiredNfsFields(wrapper)
     const select = proxySelect(wrapper)
 
+    expect(wrapper.find('.add-nas-proxy-alert').text())
+      .toContain(en.addNasRepo.bindProxyLeadItemDirectLinuxOnly)
+
     select.vm.$emit('update:modelValue', 0)
     await nextTick()
     expect(wrapper.find('.nas-proxy-topology--direct').exists()).toBe(true)
-    expect(wrapper.find('.add-nas-direct-warning').text()).toContain(en.addNasRepo.directAccessRisk)
+    const warning = wrapper.find('.add-nas-direct-warning')
+    expect(warning.findAll('li').map(item => item.text())).toEqual([
+      `1${en.addNasRepo.directAccessRiskLinuxOnly}`,
+      `2${en.addNasRepo.directAccessRiskDependencies}`,
+      `3${en.addNasRepo.directAccessRiskDifferences}`,
+      `4${en.addNasRepo.directAccessRiskBindProxy}`,
+    ])
     expect(previewValue(wrapper, en.addNasRepo.fieldSourceProxyNode)).toBe(en.addNasRepo.notBoundProxy)
     expect(previewValue(wrapper, en.repositoriesPage.fieldAccessPath)).toBe(en.addNasRepo.accessPathDirect)
     expect(submitButton(wrapper).text()).toContain('Save configuration')

@@ -46,6 +46,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             role=Node.Role.AGENT,
             status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.20",
+            os_name="linux",
         )
         self.s3_repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -263,6 +264,54 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertTrue(test_payload["cleanup_after_test"])
         self.assertIn("/mounts/validations/", test_payload["mount_point"])
         self.assertNotIn("repository", test_payload)
+
+    @mock.patch(
+        "apps.protection.services.backup_target_validation._execute_agent_task"
+    )
+    def test_non_linux_agent_direct_nas_fails_before_task_dispatch(self, execute):
+        windows_agent = Node.objects.create(
+            organization=self.org,
+            name="validation-windows-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.21",
+            os_name="Windows Server 2022",
+        )
+
+        for protocol in (Repository.NasProtocol.NFS, Repository.NasProtocol.SMB):
+            with self.subTest(protocol=protocol):
+                repository = Repository.objects.create(
+                    organization_id=self.org.id,
+                    name=f"direct-{protocol}-windows",
+                    repo_type=Repository.Type.NAS,
+                    nas_protocol=protocol,
+                    status=Repository.Status.CREATED,
+                    health=Repository.Health.UNVERIFIED,
+                    config={
+                        "server_address": "10.0.0.32",
+                        "share_path": "/backup",
+                        "kopia_password": "direct-kopia-password",
+                    },
+                )
+
+                result = validate_backup_targets(
+                    organization_id=self.org.id,
+                    sources=[{
+                        "key": f"direct-{protocol}-windows-row",
+                        "source_type": "agent",
+                        "source_ref_id": windows_agent.id,
+                        "repository_id": repository.id,
+                        "repository_endpoint_type": "external",
+                    }],
+                )
+
+                self.assertEqual(result["status"], "failed", result)
+                row = result["results"][0]
+                self.assertEqual(row["code"], "REPOSITORY_INCOMPATIBLE")
+                self.assertIn("only with Linux Host sources", row["message"])
+
+        execute.assert_not_called()
 
     @mock.patch(
         "apps.protection.services.backup_target_validation._execute_agent_task"
