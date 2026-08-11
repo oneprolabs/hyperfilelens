@@ -2708,6 +2708,7 @@ export const en = {
         creating: 'Creating',
         success: 'Succeeded',
         failed: 'Failed',
+        failedTimedOut: 'Failed / Timed out',
         cancelled: 'Cancelled',
         timeout: 'Timed out',
         partial: 'Partial',
