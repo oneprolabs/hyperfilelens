@@ -4707,6 +4707,19 @@ function targetConnectionResult(groupKey: string) {
   return targetConnectionResults.value[groupKey]
 }
 
+const targetValidationCounts = computed(() => {
+  let succeeded = 0
+  let failed = 0
+  for (const group of wizardSourceGroups.value) {
+    const result = targetConnectionResult(group.key)
+    if (result?.status === 'success') succeeded += 1
+    if (result?.status === 'failed') failed += 1
+  }
+  return { succeeded, failed }
+})
+
+const targetValidationHasFailures = computed(() => targetValidationCounts.value.failed > 0)
+
 function targetConnectionFailureSummary(group: WizardSourceGroup) {
   const result = targetConnectionResult(group.key)
   if (!result || result.status !== 'failed') return ''
@@ -5894,7 +5907,6 @@ function preserveShallowestPathOrder(paths: string[]) {
       :waiting-text="editorWaitingText"
       :bootstrapping="createBootstrapping"
       :busy="targetValidationInProgress"
-      :busy-text="t('protection.backupsPage.targetValidationInProgress')"
       :animated="!embedded"
       :result-title="t('protection.backupsPage.resultCreateTitle')"
       :result-subtitle="t('protection.backupsPage.resultCreateSub')"
@@ -7130,7 +7142,11 @@ function preserveShallowestPathOrder(paths: string[]) {
           </template>
         </el-dialog>
 
-        <div v-if="createStep === 2" class="dp-wizard-pane">
+        <div
+          v-if="createStep === 2"
+          class="dp-wizard-pane"
+          :aria-busy="targetValidationInProgress"
+        >
           <div v-if="!wizardDirEntries.length" class="text-sm text-slate-400 py-8 text-center border border-dashed border-slate-200 rounded-md">
             {{ t('protection.backupsPage.addedEmpty') }}
           </div>
@@ -7140,14 +7156,19 @@ function preserveShallowestPathOrder(paths: string[]) {
                 {{ t('protection.backupsPage.selectedSourceCount', { selected: checkedTargetGroups.length, total: wizardSourceGroups.length }) }}
               </div>
               <div class="create-source-config-toolbar__divider"></div>
-              <ElButton type="primary" class="hfl-btn-with-icon dp-create-action-btn" @click="goToStorageRepositoryPage">
+              <ElButton
+                type="primary"
+                class="hfl-btn-with-icon dp-create-action-btn"
+                :disabled="targetValidationInProgress"
+                @click="goToStorageRepositoryPage"
+              >
                 <Plus :size="16" stroke-width="2" class="shrink-0" />
                 <span>{{ t('protection.backupsPage.btnAddTarget') }}</span>
               </ElButton>
               <ElButton
                 type="primary"
                 class="hfl-btn-with-icon dp-create-action-btn"
-                :disabled="checkedTargetGroups.length === 0"
+                :disabled="targetValidationInProgress || checkedTargetGroups.length === 0"
                 @click="openBatchTargetDialog"
               >
                 <Database :size="16" stroke-width="2" class="shrink-0" />
@@ -7167,6 +7188,35 @@ function preserveShallowestPathOrder(paths: string[]) {
                   </template>
                 </ElInput>
               </div>
+            </div>
+
+            <div
+              v-if="targetValidationInProgress || targetValidationHasFailures"
+              class="target-validation-status"
+              :class="targetValidationInProgress
+                ? 'target-validation-status--pending'
+                : 'target-validation-status--failed'"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              <RefreshCw
+                v-if="targetValidationInProgress"
+                :size="16"
+                class="target-validation-status__icon target-validation-status__spinner"
+                aria-hidden="true"
+              />
+              <ShieldAlert
+                v-else
+                :size="16"
+                class="target-validation-status__icon"
+                aria-hidden="true"
+              />
+              <span class="target-validation-status__text">
+                {{ targetValidationInProgress
+                  ? t('protection.backupsPage.targetValidationInProgress')
+                  : t('protection.backupsPage.targetValidationFailedStatus', targetValidationCounts) }}
+              </span>
             </div>
 
             <el-dialog
@@ -7373,7 +7423,20 @@ function preserveShallowestPathOrder(paths: string[]) {
                       <span>{{ targetGroupIssue(group) }}</span>
                     </div>
                     <div
-                      v-if="targetConnectionResult(group.key)"
+                      v-if="targetValidationInProgress"
+                      class="target-connection-result target-connection-result--pending"
+                      aria-hidden="true"
+                    >
+                      <RefreshCw
+                        :size="14"
+                        class="target-connection-result__icon target-connection-result__spinner"
+                      />
+                      <span class="target-connection-result__summary">
+                        {{ t('protection.backupsPage.targetValidationRowInProgress') }}
+                      </span>
+                    </div>
+                    <div
+                      v-else-if="targetConnectionResult(group.key)"
                       class="target-connection-result"
                       :class="`target-connection-result--${targetConnectionResult(group.key)?.status}`"
                       role="status"
@@ -12528,6 +12591,47 @@ function preserveShallowestPathOrder(paths: string[]) {
   overflow: visible;
 }
 
+.target-validation-status {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 8px;
+  box-sizing: border-box;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.target-validation-status--pending {
+  border-color: color-mix(in srgb, var(--color-primary) 24%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 7%, #fff);
+  color: color-mix(in srgb, var(--color-primary) 78%, rgb(15 23 42));
+}
+
+.target-validation-status--failed {
+  border-color: color-mix(in srgb, var(--color-error) 24%, transparent);
+  background: var(--color-error-light);
+  color: var(--color-error-text);
+}
+
+.target-validation-status__icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.target-validation-status__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.target-validation-status__spinner,
+.target-connection-result__spinner {
+  animation: hfl-refresh-spin 0.85s linear infinite;
+}
+
 .target-connection-result {
   display: flex;
   flex: 0 0 100%;
@@ -12576,6 +12680,10 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 .target-connection-result--success {
   color: rgb(21 128 61);
+}
+
+.target-connection-result--pending {
+  color: var(--color-primary);
 }
 
 .target-connection-result--failed {
@@ -14281,7 +14389,9 @@ function preserveShallowestPathOrder(paths: string[]) {
 @media (prefers-reduced-motion: reduce) {
   .dp-flow-steps-connector__rail-pulse,
   .dp-flow-steps-connector__badge-ring,
-  .dp-flow-steps-connector__icon {
+  .dp-flow-steps-connector__icon,
+  .target-validation-status__spinner,
+  .target-connection-result__spinner {
     animation: none;
   }
 }

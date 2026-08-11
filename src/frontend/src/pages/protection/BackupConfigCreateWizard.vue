@@ -34,12 +34,10 @@ const props = withDefaults(defineProps<{
   goToStartBackupLabel: string
   bootstrapping?: boolean
   busy?: boolean
-  busyText?: string
   animated?: boolean
   showSteps?: boolean
 }>(), {
   animated: true,
-  busyText: '',
   showSteps: true,
 })
 
@@ -133,8 +131,6 @@ watch(
 
             <div
               v-else-if="phase === 'form'"
-              v-loading="busy"
-              :element-loading-text="busyText"
               class="create-backup-step-body dp-process-page"
             >
               <slot name="form" />

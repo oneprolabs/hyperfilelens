@@ -46,12 +46,18 @@ describe('backup Target connection validation flow', () => {
     expect(wizard).toContain('create-recovery-plan-tooltip__issue')
   })
 
-  it('locks navigation behind a visible bounded loading state', () => {
+  it('keeps the Target table readable behind a visible bounded loading state', () => {
     expect(wizard).toContain(':busy="targetValidationInProgress"')
     expect(wizard).toContain('const TARGET_VALIDATION_CLIENT_TIMEOUT_MS = 125_000')
     expect(wizard).toContain("t('protection.backupsPage.targetValidationTimedOut')")
     expect(wizard).toContain('if (targetValidationController === controller) {')
-    expect(shell).toContain('v-loading="busy"')
+    expect(shell).not.toContain('v-loading="busy"')
+    expect(wizard).toContain(':aria-busy="targetValidationInProgress"')
+    expect(wizard).toContain('class="target-validation-status"')
+    expect(wizard).toContain('target-validation-status--pending')
+    expect(wizard).toContain('targetValidationFailedStatus')
+    expect(wizard).toContain('targetValidationRowInProgress')
+    expect(wizard).toContain(':disabled="targetValidationInProgress"')
     expect(shell).toContain(':disabled="bootstrapping || busy"')
   })
 })
