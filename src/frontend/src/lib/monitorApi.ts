@@ -1,6 +1,6 @@
 import { api } from './api'
 import { unwrapApiPayload } from './parse'
-import type { NodeRole } from '../types/node'
+import type { Availability, NodeRole } from '../types/node'
 
 export type SystemMetricSample = {
   timestamp: string
@@ -50,6 +50,7 @@ export type MonitorNodeItem = {
   name: string
   role: NodeRole
   status: string
+  availability: Availability
   hostname: string
   platform: string
   resourceType?: string
