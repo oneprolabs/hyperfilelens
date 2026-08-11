@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { updateNode } from '../lib/nodeApi'
+import { updateNode, type NodeApiScope } from '../lib/nodeApi'
 import { nodeCpuCores, nodeMemoryTotalBytes } from '../lib/nodeInventoryDisplay'
 import {
   buildDefaultNodePerfSettings,
@@ -18,8 +18,9 @@ const props = withDefaults(
     active?: boolean
     hideActions?: boolean
     node?: ApiNode | null
+    nodeScope?: NodeApiScope
   }>(),
-  { active: true, hideActions: false, node: null },
+  { active: true, hideActions: false, node: null, nodeScope: 'tenant' },
 )
 
 const { t } = useI18n()
@@ -123,9 +124,11 @@ async function savePerfSettings(node: ApiNode): Promise<ApiNode | null> {
   clampPerfValues()
   const settings = capturePerfSnapshot()
   try {
-    const updated = await updateNode(node.id, {
-      metadata: mergeNodeMetadataWithPerfSettings(node, settings),
-    })
+    const updated = await updateNode(
+      node.id,
+      { metadata: mergeNodeMetadataWithPerfSettings(node, settings) },
+      props.nodeScope,
+    )
     perfSnapshot.value = capturePerfSnapshot()
     ElMessage.success({ message: t('nodesDetail.saveSuccess'), grouping: true })
     return updated

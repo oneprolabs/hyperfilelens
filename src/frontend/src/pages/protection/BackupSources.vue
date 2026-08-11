@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, toRef, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Plus, RefreshCw, Search, ChevronDown, Pencil, Trash2, TriangleAlert, ArrowUpCircle, Link2 } from 'lucide-vue-next'
+import { ArrowLeft, Plus, RefreshCw, Search, ChevronDown, Pencil, Trash2, TriangleAlert, ArrowUpCircle, Link2, Wrench } from 'lucide-vue-next'
 import { ElMessage, type ElTable } from 'element-plus'
 import ModulePage from '../../components/ModulePage.vue'
 import BackupSourceDeleteDialog from '../../components/BackupSourceDeleteDialog.vue'
@@ -220,6 +220,7 @@ const detail = ref<SourceResource | null>(null)
 const hostDetailOpen = ref(false)
 const hostDetailNodeId = ref<number | null>(null)
 const hostDetailSource = ref<SourceResource | null>(null)
+const hostDetailInitialTab = ref<'basic' | 'performance' | 'maintenance'>('basic')
 const formBusy = ref(false)
 
 const form = reactive({
@@ -753,6 +754,16 @@ function agentOnlineTagType(node: ApiNode): 'success' | 'info' | 'danger' {
 function openHostRowDetail(node: ApiNode) {
   hostDetailNodeId.value = node.id
   hostDetailSource.value = localSourceByNodeId.value.get(node.id) ?? null
+  hostDetailInitialTab.value = 'basic'
+  hostDetailOpen.value = true
+}
+
+function openSelectedHostMaintenance() {
+  const node = selectedHostAgents.value[0]
+  if (!node || selectedHostAgents.value.length !== 1) return
+  hostDetailNodeId.value = node.id
+  hostDetailSource.value = localSourceByNodeId.value.get(node.id) ?? null
+  hostDetailInitialTab.value = 'maintenance'
   hostDetailOpen.value = true
 }
 
@@ -780,6 +791,7 @@ function tryOpenHostFromQuery() {
   if (activeTab.value !== 'hostFileSystem') activeTab.value = 'hostFileSystem'
   hostDetailNodeId.value = id
   hostDetailSource.value = localSourceByNodeId.value.get(id) ?? null
+  hostDetailInitialTab.value = 'basic'
   hostDetailOpen.value = true
 }
 
@@ -1985,6 +1997,12 @@ onUnmounted(() => {
                       <span>{{ t('nodesPage.actionUpgrade') }}</span>
                     </span>
                   </ElDropdownItem>
+                  <ElDropdownItem :disabled="hostRenameDisabled" @click="openSelectedHostMaintenance">
+                    <span class="el-dropdown-menu__item-content">
+                      <Wrench :size="14" class="shrink-0" />
+                      <span>{{ t('nodeLifecycle.maintenanceCommands') }}</span>
+                    </span>
+                  </ElDropdownItem>
                   <ElDropdownItem
                     divided
                     class="el-dropdown-menu__item--danger"
@@ -2494,6 +2512,7 @@ onUnmounted(() => {
         :model-value="hostDetailOpen"
         :node-id="hostDetailNodeId"
         :source="hostDetailSource"
+        :initial-tab="hostDetailInitialTab"
         :resolve-display-status="lifecycleOps.resolveDisplayStatus"
         @update:model-value="onHostDetailDrawerClose"
         @saved="onHostDetailDrawerSaved"

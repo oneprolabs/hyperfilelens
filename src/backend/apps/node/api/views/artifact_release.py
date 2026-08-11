@@ -105,9 +105,19 @@ def _get_agent_artifact(
     )
 
 
-def _build_download_url(request, artifact: AgentArtifact, signed: str) -> str:
+def _build_download_url(
+    request,
+    artifact: AgentArtifact,
+    signed: str,
+    *,
+    api_base: str = "",
+) -> str:
     """Prefer client ``api_base`` (console origin) over internal request host."""
-    api_base = str(request.query_params.get("api_base") or "").strip().rstrip("/")
+    api_base = (
+        str(api_base or request.query_params.get("api_base") or "")
+        .strip()
+        .rstrip("/")
+    )
     if api_base:
         return f"{api_base}{artifact.artifact_path}?t={quote(signed, safe='')}"
 
@@ -128,6 +138,67 @@ def _build_download_url(request, artifact: AgentArtifact, signed: str) -> str:
     download_url = request.build_absolute_uri(artifact.artifact_path)
     sep = "&" if "?" in download_url else "?"
     return f"{download_url}{sep}t={quote(signed, safe='')}"
+
+
+def issue_node_maintenance_release(
+    *,
+    request,
+    node: Node,
+    api_base: str = "",
+) -> dict:
+    """Issue a short-lived release URL for an existing, authorized node.
+
+    The signed URL is bound to the existing node record instead of an enrollment
+    token. This keeps maintenance downloads independent from install quotas and
+    avoids exposing a reusable enrollment credential to the browser.
+    """
+    from apps.node.services.internal.agent_upgrade import (
+        node_os_version,
+        node_platform_arch,
+    )
+    from common.deploy.site import enrollment_tls_verify
+
+    platform, arch = node_platform_arch(node)
+    artifact = _get_agent_artifact(
+        node.role,
+        platform=platform,
+        arch=arch,
+        os_version=node_os_version(node),
+    )
+    if not artifact.local_path.is_file():
+        raise FileNotFoundError("agent release artifact is unavailable")
+
+    ttl = int(os.getenv("AGENT_RELEASE_URL_TTL_SECONDS", "600"))
+    signed = _make_release_token(
+        {
+            "p": artifact.artifact_path,
+            "org": node.organization.key,
+            "role": node.role,
+            "maintenance_node_id": node.id,
+        },
+        ttl_seconds=ttl,
+    )
+    try:
+        download_size = artifact.local_path.stat().st_size
+    except OSError:
+        download_size = 0
+
+    return {
+        "version": artifact.version,
+        "platform": artifact.platform,
+        "arch": artifact.arch,
+        "path": artifact.artifact_path,
+        "download_url": _build_download_url(
+            request,
+            artifact,
+            signed,
+            api_base=api_base,
+        ),
+        "expires_in": ttl,
+        "download_size": download_size,
+        "required_space": max(500 * 1024 * 1024, download_size * 4),
+        "tls_verify": enrollment_tls_verify(),
+    }
 
 
 def _make_release_token(payload: dict, ttl_seconds: int) -> str:
@@ -467,13 +538,22 @@ class AgentReleasesAuthView(APIView):
             session_id = int(raw_session_id) if raw_session_id is not None else None
             credential_id = int(payload.get("credential_id") or 0)
             node_id = int(payload.get("node_id") or 0)
+            maintenance_node_id = int(payload.get("maintenance_node_id") or 0)
         except (TypeError, ValueError):
             token_id = 0
             session_id = None
             credential_id = 0
             node_id = 0
+            maintenance_node_id = 0
 
-        if credential_id > 0:
+        if maintenance_node_id > 0:
+            authorization_valid = Node.objects.filter(
+                pk=maintenance_node_id,
+                organization=org,
+                role=role,
+            ).exists()
+            slot_id = f"maintenance:{maintenance_node_id}"
+        elif credential_id > 0:
             authorization_valid = _release_credential_is_valid(
                 org=org,
                 role=role,

@@ -6,12 +6,15 @@ import {
   buildEnrollmentInstallCommand,
   auditPlatformGatewayEnrollmentCopy,
   fetchLifecycleWatch,
+  getGatewayNode,
+  fetchNodeMaintenanceRelease,
   issueGatewayEnrollmentInstall,
   issuePlatformGatewayEnrollmentInstall,
   previewNodeOperationsBatch,
   revokePlatformGatewayEnrollment,
   startNodeOperation,
   startNodeOperationsBatch,
+  updateNode,
   fetchMinimalInstallerManifest,
 } from './nodeApi'
 
@@ -80,6 +83,48 @@ describe('Minimal installer metadata', () => {
 })
 
 describe('Data Gateway enrollment', () => {
+  it('loads Public Gateway details from the platform-scoped endpoint', async () => {
+    vi.mocked(api).mockResolvedValue({ id: 42, role: 'gateway' })
+
+    await expect(getGatewayNode(42, 'platform')).resolves.toMatchObject({ id: 42 })
+    expect(vi.mocked(api)).toHaveBeenCalledWith(
+      '/api/v1/platform-ops/lens/gateways/42',
+      undefined,
+    )
+  })
+
+  it('updates Public Gateway settings through the platform-scoped endpoint', async () => {
+    vi.mocked(api).mockResolvedValue({ id: 42, role: 'gateway', name: 'gateway-b' })
+
+    await expect(updateNode(42, { name: 'gateway-b' }, 'platform')).resolves.toMatchObject({
+      name: 'gateway-b',
+    })
+    expect(vi.mocked(api)).toHaveBeenCalledWith(
+      '/api/v1/platform-ops/lens/gateways/42',
+      { method: 'PATCH', body: JSON.stringify({ name: 'gateway-b' }) },
+    )
+  })
+
+  it('uses an existing-node maintenance endpoint for signed release downloads', async () => {
+    vi.mocked(api).mockResolvedValue({
+      version: '1.0.1',
+      platform: 'linux',
+      arch: 'amd64',
+      download_url: 'https://console.example/media/agent-releases/1.0.1/agent.tar.gz?t=signed',
+      expires_in: 600,
+      tls_verify: true,
+    })
+
+    await expect(fetchNodeMaintenanceRelease({ nodeId: 42, scope: 'platform' })).resolves.toMatchObject({
+      version: '1.0.1',
+      tls_verify: true,
+    })
+    expect(vi.mocked(api)).toHaveBeenCalledWith(
+      '/api/v1/platform-ops/lens/gateways/42/maintenance-release',
+      { method: 'POST', body: JSON.stringify({}) },
+    )
+  })
+
   it('uses a short bootstrap one-liner with strict TLS for tenant Gateways', async () => {
     vi.stubGlobal('window', {
       location: { origin: 'https://hyperfilelens.com' },
@@ -126,6 +171,8 @@ describe('Data Gateway enrollment', () => {
     expect(result.command).not.toContain('curl -k')
     expect(result.tlsVerify).toBe(true)
     expect(result.expiresAt).toBe('2026-07-28T06:00:00Z')
+    expect(result.orgKey).toBe('__platform_lens__')
+    expect(result.apiBase).toBe('https://console.example.com:11443')
     expect(result.command).not.toContain('11444')
     expect(vi.mocked(api)).toHaveBeenCalledWith(
       '/api/v1/platform-ops/lens/gateways/enrollment',

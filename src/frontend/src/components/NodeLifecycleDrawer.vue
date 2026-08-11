@@ -64,6 +64,7 @@ async function copyCommand(text: string) {
     <NodeLifecycleWizard
       v-if="node"
       :org-key="orgKey"
+      :node-id="node.id"
       :role="role"
       :os="os"
       :initial-tab="initialTab ?? 'upgrade'"

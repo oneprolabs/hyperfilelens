@@ -86,6 +86,11 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 node_permissions.IsAuthenticated(),
                 node_permissions.IsOrgOperator(),
             ]
+        if self.action == "maintenance_release":
+            return [
+                node_permissions.IsAuthenticated(),
+                node_permissions.IsOrgOperator(),
+            ]
         if self.action == "heartbeat":
             return [node_permissions.AllowAny()]
         if self.action == "operations":
@@ -272,6 +277,43 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 proxy_id=node.id,
             ).to_payload()
         )
+
+    @action(detail=True, methods=["post"], url_path="maintenance-release")
+    def maintenance_release(self, request, pk=None):
+        """Return a signed package URL for manual maintenance of this node."""
+        from apps.node.api.views.artifact_release import (
+            issue_node_maintenance_release,
+        )
+        from common.deploy.site import tenant_public_url
+
+        node = self.get_object()
+        try:
+            payload = issue_node_maintenance_release(
+                request=request,
+                node=node,
+                api_base=tenant_public_url(),
+            )
+        except FileNotFoundError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        write_audit_log(
+            organization=self.org,
+            user=request.user,
+            action="node.maintenance.release.generate",
+            target_type="node",
+            target_id=str(node.id),
+            ip_address=request.META.get("REMOTE_ADDR"),
+            user_agent=str(request.META.get("HTTP_USER_AGENT", "") or ""),
+            metadata={
+                "role": node.role,
+                "version": payload["version"],
+                "expires_in": payload["expires_in"],
+            },
+        )
+        return Response(payload)
 
     @action(
         detail=False,

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildLocalUpgradeCommand } from './nodeInstallCommands'
+import {
+  buildLocalServiceCommand,
+  buildLocalUninstallCommand,
+  buildLocalUpgradeCommand,
+  defaultPackagePath,
+} from './nodeInstallCommands'
 
 describe('node upgrade download TLS policy', () => {
   it('uses strict TLS for SaaS Gateway upgrades', () => {
@@ -42,5 +47,51 @@ describe('node upgrade download TLS policy', () => {
 
     expect(command).toContain('curl.exe -fL')
     expect(command).not.toContain('curl.exe -k')
+  })
+})
+
+describe('manual node maintenance commands', () => {
+  it('uses the node architecture in the downloaded package path', () => {
+    expect(defaultPackagePath('linux', '1.0.1', 'arm64')).toContain('linux-arm64')
+    expect(defaultPackagePath('macos', '1.0.1', 'amd64')).toContain('darwin-amd64')
+  })
+
+  it('restarts both Data Gateway services', () => {
+    const command = buildLocalServiceCommand('linux', 'restart', 'gateway')
+
+    expect(command).toContain('/opt/hyperfilelens-agent/install.sh restart')
+    expect(command).toContain('docker compose -p hyperfilelens-gateway')
+    expect(command).toContain('up -d')
+  })
+
+  it('downloads a current helper before upgrading a Data Gateway', () => {
+    const command = buildLocalUpgradeCommand(
+      'linux',
+      '/tmp/hfl-agent.tar.gz',
+      true,
+      'https://console.example/media/agent-releases/1.0.1/agent.tar.gz?t=signed',
+      'gateway',
+      true,
+      '',
+      'arm64',
+    )
+
+    expect(command).toContain('/media/enroll-bootstrap/hfl-enroll-linux-arm64')
+    expect(command).toContain('mktemp /tmp/hfl-enroll.')
+    expect(command).toContain('gateway-upgrade --from /tmp/hfl-agent.tar.gz')
+    expect(command).not.toContain('sudo hfl-enroll')
+  })
+
+  it('stops the LensNode sidecar before the Gateway Agent', () => {
+    const command = buildLocalServiceCommand('linux', 'stop', 'gateway')
+
+    expect(command.indexOf('docker compose')).toBeLessThan(command.indexOf('install.sh stop'))
+  })
+
+  it('preserves local data unless purge is explicitly selected', () => {
+    expect(buildLocalUninstallCommand('linux', false, 'agent')).not.toContain('--purge-all')
+    expect(buildLocalUninstallCommand('linux', false, 'gateway')).toBe(
+      'sudo /opt/hyperfilelens-agent/install.sh uninstall',
+    )
   })
 })

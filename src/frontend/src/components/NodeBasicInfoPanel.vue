@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Copy, Pencil, X } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
-import { updateNode } from '../lib/nodeApi'
+import { updateNode, type NodeApiScope } from '../lib/nodeApi'
 import { copyTextToClipboard } from '../lib/clipboard'
 import {
   DETAIL_EMPTY,
@@ -42,6 +42,7 @@ const props = defineProps<{
   useUnifiedCapacity?: boolean
   resolveDisplayStatus?: (node: ApiNode) => NodeDisplayStatus
   showRepositoryServerAddress?: boolean
+  nodeScope?: NodeApiScope
 }>()
 
 const emit = defineEmits<{
@@ -183,7 +184,7 @@ async function saveName(): Promise<boolean> {
   }
   savingName.value = true
   try {
-    const updated = await updateNode(props.node.id, { name })
+    const updated = await updateNode(props.node.id, { name }, props.nodeScope)
     emit('node-updated', updated)
     ElMessage.success({ message: t('protection.sourceResources.renameSuccess'), grouping: true })
     discardNameEdit()

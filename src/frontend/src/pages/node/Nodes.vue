@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowUpCircle, Plus, RefreshCw, Pencil, ChevronDown, Trash2, TriangleAlert, Search } from 'lucide-vue-next'
+import { ArrowUpCircle, Plus, RefreshCw, Pencil, ChevronDown, Trash2, TriangleAlert, Search, Wrench } from 'lucide-vue-next'
 import { ElCheckbox, ElMessage, type ElTable } from 'element-plus'
 import NodeLifecycleStatusCell from '../../components/node-lifecycle/NodeLifecycleStatusCell.vue'
 import NodeVersionCell from '../../components/node-lifecycle/NodeVersionCell.vue'
@@ -10,7 +10,6 @@ import NodeLifecycleBanner from '../../components/node-lifecycle/NodeLifecycleBa
 import { useNodeLifecycleOps } from '../../composables/useNodeLifecycleOps'
 import { debouncedNodeStatus } from '../../composables/useNodeConnectionDisplay'
 import ModulePage from '../../components/ModulePage.vue'
-import NodeLifecycleDrawer from '../../components/NodeLifecycleDrawer.vue'
 import ProxyNodeDetailDrawer from '../../components/ProxyNodeDetailDrawer.vue'
 import ProxyHostDeleteBlockedDialog from '../../components/ProxyHostDeleteBlockedDialog.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
@@ -333,7 +332,7 @@ function statusLabel(_status: NodeStatus, row: ApiNode) {
   return t('nodesPage.statusOffline')
 }
 
-type NodeMoreAction = 'rename' | 'upgrade' | 'remove'
+type NodeMoreAction = 'rename' | 'upgrade' | 'maintenance' | 'remove'
 
 async function handleNodeMoreAction(command: NodeMoreAction) {
   if (command === 'rename') {
@@ -342,6 +341,10 @@ async function handleNodeMoreAction(command: NodeMoreAction) {
   }
   if (command === 'upgrade') {
     await onUpgradeSelected()
+    return
+  }
+  if (command === 'maintenance') {
+    openSelectedNodeMaintenance()
     return
   }
   if (command === 'remove') {
@@ -366,13 +369,9 @@ async function onUpgradeSelected() {
   if (started) clearNodeTableSelection()
 }
 
-const lifecycleDrawerOpen = ref(false)
-const lifecycleDrawerNode = ref<ApiNode | null>(null)
-const lifecycleDrawerTab = ref<'install' | 'upgrade' | 'uninstall' | 'service'>('upgrade')
-
-
 const proxyDetailOpen = ref(false)
 const proxyDetailId = ref<number | null>(null)
+const proxyDetailInitialTab = ref<'basic' | 'performance' | 'nas' | 'maintenance'>('basic')
 
 function clearOpenNodeQuery() {
   if (route.query.openNode == null) return
@@ -383,6 +382,15 @@ function clearOpenNodeQuery() {
 
 function openNodeDetailDrawer(row: ApiNode) {
   proxyDetailId.value = row.id
+  proxyDetailInitialTab.value = 'basic'
+  proxyDetailOpen.value = true
+}
+
+function openSelectedNodeMaintenance() {
+  const node = selectedNodes.value[0]
+  if (!node || selectedNodes.value.length !== 1) return
+  proxyDetailId.value = node.id
+  proxyDetailInitialTab.value = 'maintenance'
   proxyDetailOpen.value = true
 }
 
@@ -401,6 +409,7 @@ function tryOpenNodeFromQuery() {
   const id = Number(raw)
   if (!Number.isFinite(id)) return
   proxyDetailId.value = id
+  proxyDetailInitialTab.value = 'basic'
   proxyDetailOpen.value = true
 }
 
@@ -633,6 +642,12 @@ async function submitRename() {
                     <span class="el-dropdown-menu__item-content">
                       <ArrowUpCircle :size="14" class="shrink-0" />
                       <span>{{ t('nodesPage.actionUpgrade') }}</span>
+                    </span>
+                  </ElDropdownItem>
+                  <ElDropdownItem command="maintenance" :disabled="batchRenameDisabled">
+                    <span class="el-dropdown-menu__item-content">
+                      <Wrench :size="14" class="shrink-0" />
+                      <span>{{ t('nodeLifecycle.maintenanceCommands') }}</span>
                     </span>
                   </ElDropdownItem>
                   <ElDropdownItem
@@ -942,10 +957,10 @@ async function submitRename() {
     <ProxyNodeDetailDrawer
       :model-value="proxyDetailOpen"
       :node-id="proxyDetailId"
+      :initial-tab="proxyDetailInitialTab"
       @update:model-value="onNodeDetailDrawerClose"
       @saved="onNodeDetailDrawerSaved"
     />
-    <NodeLifecycleDrawer v-model="lifecycleDrawerOpen" :node="lifecycleDrawerNode" :initial-tab="lifecycleDrawerTab" />
     <ProxyHostDeleteBlockedDialog
       v-model="proxyDeleteBlockedOpen"
       :proxy-name="proxyDeleteBlockedName"

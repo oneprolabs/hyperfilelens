@@ -90,6 +90,18 @@ export async function getNode(nodeId: number, init?: RequestInit): Promise<ApiNo
   return unwrapApiPayload<ApiNode>(raw)
 }
 
+export type NodeApiScope = 'tenant' | 'platform'
+
+export async function getGatewayNode(
+  nodeId: number,
+  scope: NodeApiScope,
+  init?: RequestInit,
+): Promise<ApiNode> {
+  if (scope === 'tenant') return getNode(nodeId, init)
+  const raw = await api<unknown>(`/api/v1/platform-ops/lens/gateways/${nodeId}`, init)
+  return unwrapApiPayload<ApiNode>(raw)
+}
+
 
 export type NodeBindingsRepository = {
   id: number
@@ -129,8 +141,15 @@ export async function getNodeBindings(nodeId: number, init?: RequestInit): Promi
   return unwrapApiPayload<NodeBindings>(raw)
 }
 
-export async function updateNode(nodeId: number, body: UpdateNodeBody): Promise<ApiNode> {
-  const raw = await api<unknown>(`/api/v1/node/nodes/${nodeId}/`, {
+export async function updateNode(
+  nodeId: number,
+  body: UpdateNodeBody,
+  scope: NodeApiScope = 'tenant',
+): Promise<ApiNode> {
+  const path = scope === 'platform'
+    ? `/api/v1/platform-ops/lens/gateways/${nodeId}`
+    : `/api/v1/node/nodes/${nodeId}/`
+  const raw = await api<unknown>(path, {
     method: 'PATCH',
     body: JSON.stringify(body),
   })
@@ -494,6 +513,8 @@ export async function issuePlatformGatewayEnrollmentInstall(params?: {
   command: string
   tlsVerify: boolean
   expiresAt: string | null
+  orgKey: string
+  apiBase: string
 }> {
   const raw = await api<unknown>('/api/v1/platform-ops/lens/gateways/enrollment', {
     method: 'POST',
@@ -529,6 +550,8 @@ export async function issuePlatformGatewayEnrollmentInstall(params?: {
       }),
       tlsVerify: payload.tls_verify,
       expiresAt: payload.expires_at ?? null,
+      orgKey: payload.org_key,
+      apiBase: payload.api_base,
     }
   } catch (error) {
     if (Number.isInteger(payload.token_id) && payload.token_id > 0) {
@@ -637,6 +660,21 @@ export interface AgentReleaseInfo {
   arch: string
   download_url: string
   expires_in?: number
+  tls_verify?: boolean
+}
+
+/** Resolve a signed package URL for an existing node without minting install credentials. */
+export async function fetchNodeMaintenanceRelease(params: {
+  nodeId: number
+  scope?: NodeLifecycleScope
+}): Promise<AgentReleaseInfo> {
+  const path = params.scope === 'platform'
+    ? `/api/v1/platform-ops/lens/gateways/${params.nodeId}/maintenance-release`
+    : `/api/v1/node/nodes/${params.nodeId}/maintenance-release/`
+  const raw = await api<unknown>(path, { method: 'POST', body: JSON.stringify({}) })
+  const data = unwrapApiPayload<AgentReleaseInfo>(raw)
+  if (!data.download_url) throw new Error('Release download_url missing in API response')
+  return data
 }
 
 /** Resolve signed agent package download URL (enrollment token required). */
@@ -645,8 +683,10 @@ export async function fetchAgentRelease(params: {
   token: string
   os: EnrollmentOs
   arch?: 'amd64' | 'arm64'
+  orgKey?: string
+  apiBase?: string
 }): Promise<AgentReleaseInfo> {
-  const org = orgKey()
+  const org = params.orgKey || orgKey()
   if (!org) throw new Error('Missing organization key')
   const arch = params.arch ?? 'amd64'
   const platform = params.os === 'windows' ? 'windows' : params.os === 'macos' ? 'darwin' : 'linux'
@@ -656,7 +696,7 @@ export async function fetchAgentRelease(params: {
     token: params.token,
     platform,
     arch,
-    api_base: publicApiBase(),
+    api_base: params.apiBase || publicApiBase(),
   })
   const raw = await api<unknown>(`/api/v1/node/enrollment/agent/release?${qs.toString()}`)
   const data = unwrapApiPayload<AgentReleaseInfo>(raw)
