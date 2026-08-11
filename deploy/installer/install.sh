@@ -1526,6 +1526,21 @@ wait_for_hfl_health() {
 	return 1
 }
 
+sourcelens_web_service() {
+	local services
+	services="$(sourcelens_compose config --services 2>/dev/null || true)"
+	if grep -Fxq web <<<"${services}"; then
+		printf 'web\n'
+	elif grep -Fxq ui <<<"${services}"; then
+		# HFL-only upgrades may intentionally retain an older SourceLens runtime.
+		printf 'ui\n'
+	else
+		# New bundles use Web; keep that as the safe default for partial fixtures
+		# and for failures that are reported by the normal health loop below.
+		printf 'web\n'
+	fi
+}
+
 wait_for_sourcelens_health() {
 	[[ "$(configured_sourcelens_mode)" == "bundled" ]] || return 0
 	if ! sourcelens_installed; then
@@ -1538,7 +1553,9 @@ wait_for_sourcelens_health() {
 	local port
 	port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
 	[[ -n "${port}" ]] || port=11445
-	local -a services=(api ui worker scheduler postgres redis nginx)
+	local web_service
+	web_service="$(sourcelens_web_service)"
+	local -a services=(api "${web_service}" worker scheduler postgres redis nginx)
 	step "Waiting for bundled SourceLens service and HTTPS health (timeout ${timeout_seconds}s) ..."
 	local deadline=$((SECONDS + timeout_seconds))
 	while ((SECONDS < deadline)); do
@@ -2801,7 +2818,7 @@ sourcelens_runtime_matches_bundle() {
 	local bundle_root=$1 version service container_id image
 	version="$(sourcelens_bundle_version "${bundle_root}" 2>/dev/null || true)"
 	[[ -n "${version}" ]] || return 1
-	for service in api worker scheduler ui; do
+	for service in api worker scheduler web; do
 		# Inspect stopped/restarting containers too. A transient process state is
 		# handled by health/recovery gates and is not itself an identity drift.
 		container_id="$(sourcelens_compose ps --all -q "${service}" 2>/dev/null | head -1)"
@@ -2820,7 +2837,7 @@ sourcelens_runtime_matches_recorded() {
 	path="$(sourcelens_installed_runtime_path)"
 	[[ -f "${path}" ]] || return 1
 	while IFS=$'\t' read -r service expected_image; do
-		case "${service}" in api | worker | scheduler | ui) ;; *) return 1 ;; esac
+		case "${service}" in api | worker | scheduler | web) ;; *) return 1 ;; esac
 		[[ -n "${expected_image}" && "${seen}" != *" ${service} "* ]] || return 1
 		seen+="${service} "
 		count=$((count + 1))
@@ -2844,7 +2861,7 @@ record_sourcelens_installed_bundle() {
 	mkdir -p "${directory}"
 	fingerprint_tmp="$(mktemp "${directory}/.installed-bundle-fingerprint.XXXXXX")"
 	runtime_tmp="$(mktemp "${directory}/.installed-runtime-images.XXXXXX")"
-	for service in api worker scheduler ui; do
+	for service in api worker scheduler web; do
 		container_id="$(sourcelens_compose ps --all -q "${service}" 2>/dev/null | head -1)"
 		image_id="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
 		if [[ -z "${container_id}" || ! "${image_id}" =~ ^sha256:[0-9a-f]{64}$ ]]; then

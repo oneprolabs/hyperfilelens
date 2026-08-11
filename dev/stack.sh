@@ -123,7 +123,7 @@ Extensions (optional overlay; community default = empty socket):
                                      Private HTTPS uses --github-token or
                                      HFL_EXTENSION_GIT_TOKEN (SSH uses your agent).
   stack.sh materializes sources → build/docker-compose.extensions.yml.
-  Runtime containers see HFL_EXTENSIONS paths only (never git clone in api/ui).
+  Runtime containers see HFL_EXTENSIONS paths only (never git clone in api/web).
 
 Mirror options (Kopia fetch + Agent publishing + SourceLens git clone; env fallback):
   --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
@@ -521,10 +521,10 @@ prepare_website_static() {
 		sh "${WEBSITE_OUTPUT}/runtime-config.sh"
 }
 
-refresh_website_nginx_mount() {
+refresh_website_web_mount() {
 	[[ "${WEBSITE_ARTIFACT_REBUILT}" -eq 1 ]] || return 0
-	log "Website artifact directory replaced; recreating Nginx to refresh its bind mount"
-	compose up -d --no-deps --no-build --pull never --force-recreate nginx
+	log "Website artifact directory replaced; recreating Web to refresh its bind mount"
+	compose up -d --no-deps --no-build --pull never --force-recreate web
 }
 
 build_dev_images() {
@@ -538,6 +538,7 @@ build_dev_images() {
 		"kopia_mode=${KOPIA_ARTIFACT_MODE}" "base=${HFL_BACKEND_BASE_IMAGE}")"
 	frontend_fingerprint="$(cache_fingerprint \
 		.dockerignore deploy/docker/frontend.Dockerfile deploy/docker/frontend-dev-entrypoint.sh \
+		deploy/nginx/development-web.conf \
 		src/frontend/package.json \
 		src/frontend/package-lock.json -- "npm=${OPT_NPM_REGISTRY}" \
 		"node_base=${HFL_FRONTEND_NODE_BASE_IMAGE}" \
@@ -564,9 +565,9 @@ build_dev_images() {
 			|| die "frontend development image is missing or stale in offline mode"
 		log "Building frontend development dependency image"
 		if [[ "${force}" -eq 1 ]]; then
-			compose build --no-cache ui
+			compose build --no-cache web
 		else
-			compose build ui
+			compose build web
 		fi
 		cache_update frontend-image "${frontend_fingerprint}"
 	else
@@ -1096,7 +1097,7 @@ cmd_up() {
 	prepare_dev 0
 	log "Starting hot-reload HFL stack from explicitly prepared images"
 	compose up -d --no-build --pull never --remove-orphans
-	refresh_website_nginx_mount
+	refresh_website_web_mount
 	sync_optional_identity_settings
 	ensure_local_platform_gateway_dev
 	print_urls
@@ -1130,7 +1131,7 @@ cmd_restart() {
 	else
 		log "Restarting only services whose image or configuration changed"
 		compose up -d --no-build --pull never --remove-orphans
-		refresh_website_nginx_mount
+		refresh_website_web_mount
 	fi
 	sync_optional_identity_settings
 	ensure_local_platform_gateway_dev

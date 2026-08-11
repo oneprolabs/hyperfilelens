@@ -191,10 +191,15 @@ sourcelens_present=1
 missing_service=""
 unhealthy_service=""
 health_endpoint_ok=1
+frontend_service=web
 SOURCELENS_HEALTH_TIMEOUT_SECONDS=1
 configured_sourcelens_mode() { printf 'bundled'; }
 read_env_value() { [[ "$1" == "SOURCELENS_CONSOLE_PORT" ]] && printf '11445'; }
 sourcelens_compose() {
+	if [[ "${1:-}" == "config" && "${2:-}" == "--services" ]]; then
+		printf '%s\n' api "${frontend_service}" worker scheduler postgres redis nginx
+		return 0
+	fi
 	if [[ "${1:-}" == "ps" && "${2:-}" == "-q" ]]; then
 		local service="${3:-}"
 		[[ "${service}" == "${missing_service}" ]] || printf '%s-cid\n' "${service}"
@@ -214,12 +219,19 @@ curl() { [[ "${health_endpoint_ok}" == "1" ]]; }
 sleep() { SECONDS=$((SECONDS + 5)); }
 
 wait_for_sourcelens_health
-for missing_service in api ui worker scheduler postgres redis nginx; do
+for missing_service in api web worker scheduler postgres redis nginx; do
 	if wait_for_sourcelens_health; then
 		printf 'ERROR: missing SourceLens service passed health: %s\n' "${missing_service}" >&2
 		exit 1
 	fi
 done
+frontend_service=ui
+missing_service=ui
+if wait_for_sourcelens_health; then
+	printf 'ERROR: missing legacy SourceLens UI service passed health\n' >&2
+	exit 1
+fi
+frontend_service=web
 missing_service=""
 unhealthy_service=worker
 if wait_for_sourcelens_health; then
