@@ -1207,6 +1207,7 @@ export const en = {
     statusReconnecting: 'Reconnecting',
     statusOffline: 'Offline',
     statusOfflineWithLastSeen: 'Offline · last seen {time}',
+    lastSeenDetail: 'Last seen {time}',
     actionUpgradeNow: 'Upgrade Now',
     actionUpgrade: 'Upgrade',
     actionManage: 'Manage',

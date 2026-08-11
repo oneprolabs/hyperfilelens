@@ -20,6 +20,7 @@ export interface DangerConfirmItem {
   description?: string
   status?: { label: string; tone?: DangerConfirmStatusTone }
   hint?: string
+  warning?: string
 }
 
 const props = withDefaults(
@@ -60,7 +61,7 @@ const props = withDefaults(
     confirmKeyword: 'DELETE',
     irreversibleTone: 'danger',
     loading: false,
-    width: '480px',
+    width: undefined,
   },
 )
 
@@ -89,6 +90,13 @@ const shownItems = computed(() => {
   return props.items
 })
 const hasItems = computed(() => shownItems.value.length > 0)
+const usesItemLayout = computed(() => props.items !== undefined)
+const dialogWidth = computed(() => (
+  props.width
+  ?? (usesItemLayout.value
+    ? 'min(600px, calc(100vw - 32px))'
+    : 'min(480px, calc(100vw - 32px))')
+))
 const needsKeyword = computed(() => props.confirmMode === 'keyword')
 const keywordMatched = computed(() => (
   !needsKeyword.value
@@ -149,7 +157,7 @@ async function onDialogBeforeClose(done: () => void) {
 <template>
   <ElDialog
     v-model="visible"
-    :width="width"
+    :width="dialogWidth"
     :close-on-click-modal="false"
     :close-on-press-escape="!loading"
     :show-close="false"
@@ -223,22 +231,48 @@ async function onDialogBeforeClose(done: () => void) {
                   v-for="(item, idx) in shownItems"
                   :key="item.key ?? idx"
                 >
-                  <td>
+                  <td
+                    class="hfl-danger-confirm__item-name-cell"
+                    :class="{ 'hfl-danger-confirm__item-name-cell--full': !item.status }"
+                  >
                     <span class="hfl-danger-confirm__item-name" :title="item.name">{{ item.name }}</span>
                   </td>
-                  <td>
+                  <td class="hfl-danger-confirm__item-status-cell">
                     <span
                       v-if="item.status"
                       class="hfl-danger-confirm__status"
                       :class="statusClass(item.status.tone)"
+                      :title="item.status.label"
                     >{{ item.status.label }}</span>
                   </td>
-                  <td>
-                    <span
-                      class="hfl-danger-confirm__item-desc"
-                      :class="{ 'hfl-empty-mark': !item.description && !item.hint }"
-                      :title="item.description || item.hint || '—'"
-                    >{{ item.description || item.hint || '—' }}</span>
+                  <td
+                    class="hfl-danger-confirm__item-details-cell"
+                    :class="{
+                      'hfl-danger-confirm__item-details-cell--empty':
+                        !item.description && !item.hint && !item.warning,
+                    }"
+                  >
+                    <div class="hfl-danger-confirm__item-details">
+                      <span
+                        v-if="item.description || item.hint"
+                        class="hfl-danger-confirm__item-desc"
+                        :title="item.description || item.hint"
+                      >{{ item.description || item.hint }}</span>
+                      <span
+                        v-if="item.warning"
+                        class="hfl-danger-confirm__item-warning"
+                      >
+                        <AlertTriangle
+                          :size="12"
+                          aria-hidden="true"
+                        />
+                        <span>{{ item.warning }}</span>
+                      </span>
+                      <span
+                        v-if="!item.description && !item.hint && !item.warning"
+                        class="hfl-danger-confirm__item-desc hfl-empty-mark"
+                      >—</span>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -487,6 +521,7 @@ async function onDialogBeforeClose(done: () => void) {
 }
 .hfl-danger-confirm__item-table {
   table-layout: fixed;
+  min-width: 440px;
 }
 .hfl-danger-confirm__item-table th {
   position: sticky;
@@ -498,8 +533,13 @@ async function onDialogBeforeClose(done: () => void) {
   padding-right: 12px;
   padding-left: 12px;
 }
+.hfl-danger-confirm__item-table td {
+  min-width: 0;
+  overflow: hidden;
+  vertical-align: top;
+}
 .hfl-danger-confirm__item-col-name {
-  width: 44%;
+  width: 36%;
 }
 .hfl-danger-confirm__item-col-status {
   width: 110px;
@@ -525,12 +565,42 @@ async function onDialogBeforeClose(done: () => void) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.hfl-danger-confirm__item-details {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.hfl-danger-confirm__item-warning {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  min-width: 0;
+  align-items: flex-start;
+  gap: 4px;
+  color: var(--color-warning-text, var(--color-warning));
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.hfl-danger-confirm__item-warning :deep(svg) {
+  flex: 0 0 12px;
+  margin-top: 2px;
+}
+.hfl-danger-confirm__item-warning > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .hfl-danger-confirm__status {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: hidden;
   font-size: 11px;
   line-height: 1;
   padding: 3px 8px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.05);
+  text-overflow: ellipsis;
+  vertical-align: middle;
   white-space: nowrap;
 }
 .hfl-danger-confirm__status--success { background: var(--color-success-light); color: var(--color-success); }
@@ -538,6 +608,93 @@ async function onDialogBeforeClose(done: () => void) {
 .hfl-danger-confirm__status--danger  { background: var(--color-error-light); color: var(--color-error); }
 .hfl-danger-confirm__status--info    { background: var(--color-info-light); color: var(--color-info); }
 .hfl-danger-confirm__status--neutral { background: #f3f4f6; color: #4b5563; }
+
+@media (max-width: 560px) {
+  .hfl-danger-confirm__item-table-scroll {
+    overflow-x: hidden;
+  }
+
+  .hfl-danger-confirm__item-table {
+    min-width: 0;
+    table-layout: auto;
+  }
+
+  .hfl-danger-confirm__item-table colgroup {
+    display: none;
+  }
+
+  .hfl-danger-confirm__item-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .hfl-danger-confirm__item-table tbody {
+    display: block;
+  }
+
+  .hfl-danger-confirm__item-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(88px, 42%);
+    gap: 8px 12px;
+    padding: 12px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--el-fill-color-blank, #fff);
+  }
+
+  .hfl-danger-confirm__item-table tr:last-child {
+    border-bottom: 0;
+  }
+
+  .hfl-danger-confirm__item-table td,
+  .hfl-danger-confirm__item-table tr:hover td {
+    display: block;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .hfl-danger-confirm__item-status-cell {
+    max-width: 100%;
+    justify-self: end;
+  }
+
+  .hfl-danger-confirm__item-name-cell--full {
+    grid-column: 1 / -1;
+  }
+
+  .hfl-danger-confirm__item-name,
+  .hfl-danger-confirm__status {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .hfl-danger-confirm__status {
+    line-height: 1.3;
+    text-align: right;
+  }
+
+  .hfl-danger-confirm__item-details-cell {
+    grid-column: 1 / -1;
+  }
+
+  .hfl-danger-confirm__item-warning {
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .hfl-danger-confirm__item-details-cell--empty {
+    display: none !important;
+  }
+}
 
 .hfl-danger-confirm__irreversible {
   margin: 4px 0 0;
