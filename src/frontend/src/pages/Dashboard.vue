@@ -41,7 +41,7 @@ const routes = {
   sources: '/protection/backup-sources?tab=host',
   policies: '/protection/policies',
   repositories: '/node/repositories',
-  tasks: '/ops/task',
+  tasks: '/ops/task?task_type=restore&time_mode=24h',
   attention: '/ops/attention',
   audit: '/ops/audit',
   subscription: '/node/subscription',
@@ -310,10 +310,10 @@ const storageUsedProgressLabel = computed(() => {
 const slaRibbonBadge = computed(() => {
   const firing = overview.value?.alertFiring ?? 0
   if (firing > 0) return t('dashboard.ribbon.slaAlerts', { n: firing })
-  const success = overview.value?.tasks24h?.success ?? 0
-  const failed = overview.value?.tasks24h?.failed ?? 0
+  const success = overview.value?.recoveryDrill24h?.success ?? 0
+  const failed = overview.value?.recoveryDrill24h?.failed ?? 0
   if (success + failed === 0) return ''
-  const rate = overview.value?.tasks24h?.successRate
+  const rate = overview.value?.recoveryDrill24h?.successRate
   if (rate != null && rate < 90) return t('dashboard.ribbon.slaAtRisk')
   return ''
 })
@@ -636,7 +636,7 @@ onMounted(refresh)
           </div>
           <div class="ribbon-card__value-row">
             <span class="ribbon-card__value">
-              {{ overview?.tasks24h?.successRate != null ? `${overview.tasks24h.successRate}%` : '0%' }}
+              {{ overview?.recoveryDrill24h?.successRate != null ? `${overview.recoveryDrill24h.successRate}%` : '—' }}
             </span>
             <span v-if="slaRibbonBadgeVisible" class="ribbon-card__badge" :class="slaRibbonBadgeClass">
               {{ slaRibbonBadge }}
@@ -650,7 +650,7 @@ onMounted(refresh)
           <div class="ribbon-track">
             <div
               class="ribbon-fill ribbon-fill--indigo"
-              :style="{ width: `${overview?.tasks24h?.successRate ?? 0}%` }"
+              :style="{ width: `${overview?.recoveryDrill24h?.successRate ?? 0}%` }"
             />
           </div>
         </div>
@@ -659,7 +659,7 @@ onMounted(refresh)
             <span>{{ t('dashboard.ribbon.succeeded') }}</span>
             <strong class="text-emerald-600">
               <span class="ribbon-stat-dot ribbon-stat-dot--success" />
-              {{ overview?.tasks24h?.success ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
+              {{ overview?.recoveryDrill24h?.success ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
             </strong>
           </div>
           <div>
@@ -669,14 +669,14 @@ onMounted(refresh)
                 <span class="ribbon-stat-pulse__ring" />
                 <span class="ribbon-stat-pulse__dot" />
               </span>
-              {{ overview?.taskStats.running ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
+              {{ overview?.recoveryDrill24h?.running ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
             </strong>
           </div>
           <div>
             <span>{{ t('dashboard.ribbon.failed') }}</span>
-            <strong :class="(overview?.tasks24h?.failed ?? 0) > 0 ? 'ribbon-stat--danger' : 'ribbon-stat--muted'">
-              <span class="ribbon-stat-dot" :class="(overview?.tasks24h?.failed ?? 0) > 0 ? 'ribbon-stat-dot--danger ribbon-stat-dot--pulse' : 'ribbon-stat-dot--muted'" />
-              {{ overview?.tasks24h?.failed ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
+            <strong :class="(overview?.recoveryDrill24h?.failed ?? 0) > 0 ? 'ribbon-stat--danger' : 'ribbon-stat--muted'">
+              <span class="ribbon-stat-dot" :class="(overview?.recoveryDrill24h?.failed ?? 0) > 0 ? 'ribbon-stat-dot--danger ribbon-stat-dot--pulse' : 'ribbon-stat-dot--muted'" />
+              {{ overview?.recoveryDrill24h?.failed ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
             </strong>
           </div>
         </div>

@@ -107,7 +107,12 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="statistics")
     def statistics(self, request):
-        return Response(task_statistics(organization_id=self._organization_id()))
+        return Response(
+            task_statistics(
+                organization_id=self._organization_id(),
+                queryset=self.get_queryset(),
+            )
+        )
 
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, task_uuid=None):

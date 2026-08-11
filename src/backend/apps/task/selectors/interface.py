@@ -98,18 +98,15 @@ def list_task_events(*, task: Task, level: str | None = None, after_seq: int | N
     return queryset
 
 
-def task_statistics(*, organization_id: int) -> dict:
+def task_statistics(*, organization_id: int, queryset: QuerySet[Task] | None = None) -> dict:
+    queryset = queryset if queryset is not None else Task.objects.filter(organization_id=organization_id)
     counts = {
         row["status"]: row["count"]
-        for row in Task.objects.filter(organization_id=organization_id)
-        .values("status")
-        .annotate(count=Count("id"))
+        for row in queryset.order_by().values("status").annotate(count=Count("id"))
     }
     by_type = {
         row["task_type"]: row["count"]
-        for row in Task.objects.filter(organization_id=organization_id)
-        .values("task_type")
-        .annotate(count=Count("id"))
+        for row in queryset.order_by().values("task_type").annotate(count=Count("id"))
     }
     return {
         "total": sum(counts.values()),
