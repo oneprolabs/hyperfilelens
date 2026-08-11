@@ -42,7 +42,7 @@ def classify_kopia_snapshot_delete_results(
     for item in item_results:
         if not isinstance(item, dict):
             continue
-        snapshot_id = str(item.get("kopia_snapshot_id") or "").strip()
+        snapshot_id = normalize_kopia_snapshot_id(item.get("kopia_snapshot_id"))
         if not snapshot_id:
             continue
         status = str(item.get("status") or "").strip().lower()

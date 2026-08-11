@@ -189,6 +189,62 @@ class SnapshotBrowserApiTests(TestCase):
         self.assertEqual(payload["repository"]["subdir"], f"hp-repos/storage-{self.repository.id}")
 
     @patch("apps.protection.services.snapshot_browser.run_agent_task_sync")
+    def test_browse_proxy_filesystem_snapshot_uses_original_proxy(
+        self,
+        mock_run_agent_task_sync,
+    ):
+        original_proxy = Node.objects.create(
+            organization=self.org,
+            name="snapshot-browser-original-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        replacement_proxy = Node.objects.create(
+            organization=self.org,
+            name="snapshot-browser-replacement-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        self.repository.repo_type = Repository.Type.PROXY_FS
+        self.repository.s3_bucket = ""
+        self.repository.bind_node_type = Repository.BindNodeType.PROXY
+        self.repository.bind_node_id = replacement_proxy.id
+        self.repository.config = {
+            "proxy_node_dir": "/srv/hfl-repository",
+            "kopia_password": "repo-pass",
+        }
+        self.repository.save()
+        self.directory.repository_locator = {
+            "version": 1,
+            "repository_id": self.repository.id,
+            "repository_type": Repository.Type.PROXY_FS,
+            "repository_subdir": "",
+            "writer_node_id": self.agent.id,
+            "access_node_id": original_proxy.id,
+        }
+        self.directory.save(update_fields=["repository_locator", "updated_at"])
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            ok=True,
+            timed_out=False,
+            result={"entries": []},
+            task=SimpleNamespace(last_error=""),
+        )
+
+        response = self.client.get(
+            f"/api/v1/protection/backup-source-snapshot-directories/"
+            f"{self.directory.id}/browse/",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(
+            mock_run_agent_task_sync.call_args.kwargs["node_id"],
+            original_proxy.id,
+        )
+
+    @patch("apps.protection.services.snapshot_browser.run_agent_task_sync")
     def test_browse_snapshot_directory_normalizes_kopia_directory_type(self, mock_run_agent_task_sync):
         mock_run_agent_task_sync.return_value = SimpleNamespace(
             ok=True,

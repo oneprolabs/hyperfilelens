@@ -278,16 +278,37 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                 locked_errors["s3_bucket_mode"] = "S3 bucket mode cannot be modified."
             incoming_config = attrs.get("config") or {}
             if isinstance(incoming_config, dict):
-                for field in (
-                    "endpoint",
-                    "endpoint_type",
-                    "external_endpoint",
-                    "internal_endpoint",
+                if instance.repo_type == Repository.Type.S3:
+                    for field in (
+                        "endpoint",
+                        "endpoint_type",
+                        "external_endpoint",
+                        "internal_endpoint",
+                        "region",
+                    ):
+                        if field in incoming_config:
+                            locked_errors[f"config.{field}"] = (
+                                "S3 repository location cannot be modified."
+                            )
+                    if "prefix" in incoming_config:
+                        locked_errors["config.prefix"] = (
+                            "S3 object prefix cannot be modified."
+                        )
+                elif instance.repo_type == Repository.Type.NAS:
+                    for field in ("server_address", "share_path"):
+                        if field in incoming_config:
+                            locked_errors[f"config.{field}"] = (
+                                "NAS repository location cannot be modified."
+                            )
+                elif (
+                    instance.repo_type == Repository.Type.PROXY_FS
+                    and "proxy_node_dir" in incoming_config
                 ):
-                    if field in incoming_config:
-                        locked_errors[f"config.{field}"] = "S3 endpoint cannot be modified."
-                if "prefix" in incoming_config:
-                    locked_errors["config.prefix"] = "S3 object prefix cannot be modified."
+                    locked_errors["config.proxy_node_dir"] = (
+                        "Proxy filesystem repository path cannot be modified."
+                    )
+            if instance.repo_type == Repository.Type.NAS and "nas_protocol" in attrs:
+                locked_errors["nas_protocol"] = "NAS protocol cannot be modified."
             if locked_errors:
                 raise serializers.ValidationError(locked_errors)
 

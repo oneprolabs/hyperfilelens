@@ -606,9 +606,14 @@ func TestRepositoryConfigPathSeparatesKopiaServerSessions(t *testing.T) {
 		t.Fatalf("expected different server sessions to use different config files: %q", got)
 	}
 
-	direct := engine.repositoryConfigPath(repositorySpec{ID: 50, Type: "nas"})
-	if filepath.Base(direct) != "repo-50.config" {
-		t.Fatalf("expected direct repository config path to stay stable, got %q", direct)
+	direct := engine.repositoryConfigPath(repositorySpec{ID: 50, Type: "nas", Subdir: "hp-repos/agent-22"})
+	if !strings.HasPrefix(filepath.Base(direct), "repo-50-nas-") {
+		t.Fatalf("expected NAS repository config path to include its namespace, got %q", direct)
+	}
+
+	otherShard := engine.repositoryConfigPath(repositorySpec{ID: 50, Type: "nas", Subdir: "hp-repos/agent-53"})
+	if otherShard == direct {
+		t.Fatalf("expected different NAS shards to use different config files: %q", direct)
 	}
 }
 

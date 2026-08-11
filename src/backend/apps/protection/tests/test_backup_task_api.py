@@ -1558,7 +1558,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         host, source = _repository_public_host(repository=repository, node=proxy)
 
         self.assertEqual(host, "10.0.0.65")
-        self.assertEqual(source, "node.metadata.ip_addresses")
+        self.assertEqual(source, "node.metadata.inventory.ip_addresses")
 
     @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
@@ -1707,6 +1707,17 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.AVAILABLE)
         self.assertEqual(task.status, Task.Status.SUCCESS)
         self.assertEqual(directory.kopia_snapshot_id, "proxy-nas-snap-1")
+        self.assertEqual(
+            directory.repository_locator,
+            {
+                "version": 1,
+                "repository_id": repository.id,
+                "repository_type": Repository.Type.NAS,
+                "repository_subdir": f"hp-repos/storage-{repository.id}",
+                "writer_node_id": self.agent.id,
+                "access_node_id": proxy.id,
+            },
+        )
         backup_calls = [
             call.kwargs
             for call in mock_run_agent_task_async.call_args_list

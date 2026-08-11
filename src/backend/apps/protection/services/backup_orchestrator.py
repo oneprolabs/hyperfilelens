@@ -42,6 +42,9 @@ from apps.protection.services.progress.orchestrated_progress import (
     BACKUP_PREPARE_END,
     BACKUP_TRANSFER_END,
 )
+from apps.protection.services.snapshot_repository_locator import (
+    ensure_snapshot_repository_locator,
+)
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.repository_access import (
     explicit_repository_server_host,
@@ -858,6 +861,11 @@ def _dispatch_directory_backup(
         node_id=execution_target.node.id,
     )
     if existing is not None and existing.status == NodeTask.Status.SUCCESS:
+        ensure_snapshot_repository_locator(
+            directory=directory_row,
+            repository=repository,
+            writer_node_id=existing.node_id,
+        )
         snapshot_id, size_bytes, file_count, dir_count, stats = bt._extract_snapshot_metrics(
             existing.result if isinstance(existing.result, dict) else {}
         )
@@ -897,6 +905,11 @@ def _dispatch_directory_backup(
         directory_row.save(update_fields=["status", "node_task_id", "updated_at"])
         return
     if existing is not None and existing.status not in _NODE_TASK_TERMINAL:
+        ensure_snapshot_repository_locator(
+            directory=directory_row,
+            repository=repository,
+            writer_node_id=existing.node_id,
+        )
         directory_row.status = (
             BackupSourceSnapshotDirectory.Status.RUNNING
             if existing.status == NodeTask.Status.RUNNING
@@ -912,6 +925,11 @@ def _dispatch_directory_backup(
             deliver_agent_task(task=existing)
         return
 
+    ensure_snapshot_repository_locator(
+        directory=directory_row,
+        repository=repository,
+        writer_node_id=execution_target.node.id,
+    )
     handle = run_agent_task_async(
         organization_id=task.organization_id,
         node_id=execution_target.node.id,
@@ -1010,6 +1028,16 @@ def _maybe_adopt_late_success(
     )
     if not snapshot_id:
         return False
+    repository = Repository.objects.filter(
+        organization_id=directory_row.organization_id,
+        id=directory_row.repository_id,
+    ).first()
+    if repository is not None:
+        ensure_snapshot_repository_locator(
+            directory=directory_row,
+            repository=repository,
+            writer_node_id=node_task.node_id,
+        )
     record_source_snapshot_directory_result(
         source_snapshot=source_snapshot,
         backup_config_dir_id=directory_row.backup_config_dir_id,
@@ -2683,6 +2711,16 @@ def project_backup_node_task_result(*, node_task_id) -> dict[str, Any]:
         return {"status": "ignored", "reason": "kopia_snapshot_id_missing"}
 
     previous_error_code = directory.error_code
+    repository = Repository.objects.filter(
+        organization_id=directory.organization_id,
+        id=directory.repository_id,
+    ).first()
+    if repository is not None:
+        ensure_snapshot_repository_locator(
+            directory=directory,
+            repository=repository,
+            writer_node_id=node_task.node_id,
+        )
     projected_directory = record_source_snapshot_directory_result(
         source_snapshot=source_snapshot,
         backup_config_dir_id=directory.backup_config_dir_id,

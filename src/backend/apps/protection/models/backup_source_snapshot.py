@@ -127,6 +127,7 @@ class BackupSourceSnapshotDirectory(models.Model):
     )
     display_name = models.CharField(max_length=300, blank=True, default="")
     repository_id = models.BigIntegerField(db_index=True)
+    repository_locator = models.JSONField(default=dict, blank=True)
     kopia_snapshot_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
     node_task_id = models.UUIDField(blank=True, null=True, db_index=True)
     retry_count = models.IntegerField(default=0)

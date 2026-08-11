@@ -17,12 +17,14 @@ from apps.protection.services.backup_task import (
 )
 from apps.protection.services.kopia_snapshot_delete import (
     classify_kopia_snapshot_delete_results,
+    normalize_kopia_snapshot_id,
 )
 from apps.protection.services.repository_compatibility import validate_backup_repository_compatible
-from apps.storage.services.internal.repository_access import (
-    repository_uses_bound_proxy,
-    resolve_repository_reader,
+from apps.protection.services.snapshot_repository_locator import (
+    group_snapshot_directories_by_repository_locator,
+    resolve_snapshot_repository_reader,
 )
+from apps.storage.services.internal.repository_access import repository_uses_bound_proxy
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import (
     append_task_step_event,
@@ -98,7 +100,7 @@ def _kopia_snapshot_ids(rows: list[BackupSourceSnapshotDirectory]) -> list[str]:
     seen: set[str] = set()
     ids: list[str] = []
     for row in rows:
-        snapshot_id = str(row.kopia_snapshot_id or "").strip()
+        snapshot_id = normalize_kopia_snapshot_id(row.kopia_snapshot_id)
         if not snapshot_id or snapshot_id in seen:
             continue
         seen.add(snapshot_id)
@@ -120,7 +122,7 @@ def _kopia_snapshot_display(snapshot_id: str, directories: list[str]) -> str:
 def _kopia_snapshot_directories_by_id(rows: list[BackupSourceSnapshotDirectory]) -> dict[str, list[str]]:
     directories_by_id: dict[str, list[str]] = {}
     for row in rows:
-        snapshot_id = str(row.kopia_snapshot_id or "").strip()
+        snapshot_id = normalize_kopia_snapshot_id(row.kopia_snapshot_id)
         if not snapshot_id:
             continue
         directory = _snapshot_directory_label(row)
@@ -522,7 +524,9 @@ def _run_snapshot_delete_task_locked(
     kopia_ids = _kopia_snapshot_ids(rows)
     kopia_directories_by_id = _kopia_snapshot_directories_by_id(rows)
     rows_without_physical_snapshot = [
-        row.id for row in rows if not str(row.kopia_snapshot_id or "").strip()
+        row.id
+        for row in rows
+        if not normalize_kopia_snapshot_id(row.kopia_snapshot_id)
     ]
 
     _set_step_status(
@@ -559,12 +563,6 @@ def _run_snapshot_delete_task_locked(
     fallback_target = None
     if not repository_uses_bound_proxy(repository):
         fallback_target = _resolve_execution_target(source_snapshot=source_snapshot)
-    repository_access = resolve_repository_reader(
-        repository=repository,
-        fallback_node=fallback_target.node if fallback_target is not None else None,
-        source_type=source_snapshot.source_type,
-        source_ref_id=source_snapshot.source_ref_id,
-    )
     _set_step_status(
         task=task,
         step_name="delete_kopia_snapshots",
@@ -588,31 +586,76 @@ def _run_snapshot_delete_task_locked(
                 "object_names": directories,
             },
         )
-    outcome = run_agent_task_sync(
-        organization_id=organization_id,
-        node_id=repository_access.node.id,
-        kind="snapshot.delete",
-        payload={
-            "repository": repository_access.repository_payload,
-            "kopia_snapshot_ids": kopia_ids,
-        },
-        correlation_type="protection.snapshot_delete",
-        correlation_id=str(task.task_uuid),
-        wait_timeout_seconds=3600,
+    physical_rows = [
+        row for row in rows if normalize_kopia_snapshot_id(row.kopia_snapshot_id)
+    ]
+    groups = group_snapshot_directories_by_repository_locator(
+        directories=physical_rows,
+        repository=repository,
     )
-    result = outcome.result if isinstance(outcome.result, dict) else {}
-    item_results = result.get("results") if isinstance(result.get("results"), list) else []
-    deleted_ids, already_absent_ids, hard_failures = classify_kopia_snapshot_delete_results(
-        [item for item in item_results if isinstance(item, dict)],
-    )
-    reconciled_ids = deleted_ids | already_absent_ids
-    hard_failed = bool(outcome.timed_out or hard_failures or (not outcome.ok and not reconciled_ids))
+    item_results: list[dict[str, Any]] = []
+    already_absent_ids: set[str] = set()
+    hard_failed = False
+    failure_messages: list[str] = []
     now = timezone.now()
-    if reconciled_ids:
-        BackupSourceSnapshotDirectory.objects.filter(
-            source_snapshot=source_snapshot,
-            kopia_snapshot_id__in=list(reconciled_ids),
-        ).update(status=BackupSourceSnapshotDirectory.Status.DELETED, updated_at=now)
+    for group in groups:
+        group_kopia_ids = _kopia_snapshot_ids(group)
+        repository_access = resolve_snapshot_repository_reader(
+            directory=group[0],
+            repository=repository,
+            fallback_node=(
+                fallback_target.node if fallback_target is not None else None
+            ),
+            source_type=source_snapshot.source_type,
+            source_ref_id=source_snapshot.source_ref_id,
+        )
+        outcome = run_agent_task_sync(
+            organization_id=organization_id,
+            node_id=repository_access.node.id,
+            kind="snapshot.delete",
+            payload={
+                "repository": repository_access.repository_payload,
+                "kopia_snapshot_ids": group_kopia_ids,
+            },
+            correlation_type="protection.snapshot_delete",
+            correlation_id=str(task.task_uuid),
+            wait_timeout_seconds=3600,
+        )
+        result = outcome.result if isinstance(outcome.result, dict) else {}
+        group_results = (
+            result.get("results") if isinstance(result.get("results"), list) else []
+        )
+        normalized_results = [
+            item for item in group_results if isinstance(item, dict)
+        ]
+        item_results.extend(normalized_results)
+        deleted_ids, group_absent_ids, hard_failures = (
+            classify_kopia_snapshot_delete_results(normalized_results)
+        )
+        already_absent_ids.update(group_absent_ids)
+        reconciled_ids = deleted_ids | group_absent_ids
+        if reconciled_ids:
+            BackupSourceSnapshotDirectory.objects.filter(
+                source_snapshot=source_snapshot,
+                id__in=[row.id for row in group],
+                kopia_snapshot_id__in=list(reconciled_ids),
+            ).update(
+                status=BackupSourceSnapshotDirectory.Status.DELETED,
+                updated_at=now,
+            )
+        group_failed = bool(
+            outcome.timed_out
+            or hard_failures
+            or (not outcome.ok and not reconciled_ids)
+        )
+        hard_failed = hard_failed or group_failed
+        if group_failed:
+            failure_messages.append(
+                str(
+                    getattr(outcome.task, "last_error", "")
+                    or "One or more physical snapshots failed to delete."
+                )[:2000]
+            )
     if not hard_failed:
         BackupSourceSnapshotDirectory.objects.filter(
             source_snapshot=source_snapshot,
@@ -669,10 +712,11 @@ def _run_snapshot_delete_task_locked(
         _queue_source_unregister_followup_on_commit(task=task)
         return task_result
 
-    error_message = str(
-        getattr(outcome.task, "last_error", "")
-        or "One or more physical snapshots failed to delete."
-    )[:2000]
+    error_message = (
+        failure_messages[0]
+        if failure_messages
+        else "One or more physical snapshots failed to delete."
+    )
     return fail_snapshot_delete_task(
         task=task,
         source_snapshot=source_snapshot,

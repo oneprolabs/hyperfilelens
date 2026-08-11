@@ -26,6 +26,9 @@ from apps.protection.services.progress.orchestrated_progress import (
     RESTORE_FINALIZE_START,
     RESTORE_PREPARE_END,
 )
+from apps.protection.services.snapshot_repository_locator import (
+    resolve_snapshot_repository_reader,
+)
 from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
@@ -44,7 +47,6 @@ from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.repository_access import (
     explicit_repository_server_host,
-    resolve_repository_reader,
 )
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import append_task_step_event, cancel_task, complete_task, create_task, start_task
@@ -1531,7 +1533,12 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
                 if snapshot_directory is not None
                 else BackupSourceSnapshotDirectory.PathType.UNKNOWN
             )
-            repository_access = resolve_repository_reader(
+            if snapshot_directory is None:
+                raise ValidationError(
+                    {"source_snapshot_directory_id": "Snapshot directory not found."}
+                )
+            repository_access = resolve_snapshot_repository_reader(
+                directory=snapshot_directory,
                 repository=repository,
                 fallback_node=node,
                 source_type=record.target_type,

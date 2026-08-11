@@ -43,6 +43,8 @@ def resolve_repository_reader(
     source_ref_id: int | None = None,
     repository_endpoint_type: object = "external",
     repository_endpoint: object = None,
+    repository_subdir: str = "",
+    repository_access_node_id: int | None = None,
 ) -> RepositoryAccess:
     """Resolve the node that is allowed to read/write the repository.
 
@@ -52,7 +54,11 @@ def resolve_repository_reader(
     """
 
     if repository.repo_type == Repository.Type.NAS and repository.bind_node_type == Repository.BindNodeType.PROXY:
-        node = _bound_proxy(repository=repository, message_prefix="NAS repository")
+        node = _bound_proxy(
+            repository=repository,
+            message_prefix="NAS repository",
+            node_id=repository_access_node_id,
+        )
         return _access(
             repository=repository,
             node=node,
@@ -61,10 +67,16 @@ def resolve_repository_reader(
             mode="bound_proxy",
             repository_endpoint_type=repository_endpoint_type,
             repository_endpoint=repository_endpoint,
+            repository_subdir=repository_subdir,
+            repository_access_node_id=repository_access_node_id,
         )
 
     if repository.repo_type == Repository.Type.PROXY_FS:
-        node = _bound_proxy(repository=repository, message_prefix="Proxy filesystem repository")
+        node = _bound_proxy(
+            repository=repository,
+            message_prefix="Proxy filesystem repository",
+            node_id=repository_access_node_id,
+        )
         return _access(
             repository=repository,
             node=node,
@@ -73,6 +85,8 @@ def resolve_repository_reader(
             mode="bound_proxy",
             repository_endpoint_type=repository_endpoint_type,
             repository_endpoint=repository_endpoint,
+            repository_subdir=repository_subdir,
+            repository_access_node_id=repository_access_node_id,
         )
 
     if fallback_node is None:
@@ -85,6 +99,7 @@ def resolve_repository_reader(
         mode="fallback_node",
         repository_endpoint_type=repository_endpoint_type,
         repository_endpoint=repository_endpoint,
+        repository_subdir=repository_subdir,
     )
 
 
@@ -96,6 +111,7 @@ def repository_payload_for_node(
     source_ref_id: int | None = None,
     repository_endpoint_type: object = "external",
     repository_endpoint: object = None,
+    authorized_bind_node_id: int | None = None,
 ) -> dict[str, Any]:
     """Build a repository payload for a specific execution node.
 
@@ -113,6 +129,7 @@ def repository_payload_for_node(
         execution_target=target,
         repository_endpoint_type=repository_endpoint_type,
         repository_endpoint=repository_endpoint,
+        authorized_bind_node_id=authorized_bind_node_id,
     )
 
 
@@ -196,26 +213,45 @@ def _access(
     mode: str,
     repository_endpoint_type: object = "external",
     repository_endpoint: object = None,
+    repository_subdir: str = "",
+    repository_access_node_id: int | None = None,
 ) -> RepositoryAccess:
+    repository_payload = repository_payload_for_node(
+        repository=repository,
+        node=node,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+        repository_endpoint_type=repository_endpoint_type,
+        repository_endpoint=repository_endpoint,
+        authorized_bind_node_id=repository_access_node_id,
+    )
+    normalized_subdir = str(repository_subdir or "").strip()
+    if normalized_subdir:
+        if repository.repo_type != Repository.Type.NAS:
+            raise ValidationError(
+                {
+                    "repository_id": "Only NAS repositories support snapshot subdirectories."
+                }
+            )
+        repository_payload["subdir"] = normalized_subdir
     return RepositoryAccess(
         node=node,
-        repository_payload=repository_payload_for_node(
-            repository=repository,
-            node=node,
-            source_type=source_type,
-            source_ref_id=source_ref_id,
-            repository_endpoint_type=repository_endpoint_type,
-            repository_endpoint=repository_endpoint,
-        ),
+        repository_payload=repository_payload,
         mode=mode,
     )
 
 
-def _bound_proxy(*, repository: Repository, message_prefix: str) -> Node:
-    if repository.bind_node_type != Repository.BindNodeType.PROXY or not repository.bind_node_id:
+def _bound_proxy(
+    *,
+    repository: Repository,
+    message_prefix: str,
+    node_id: int | None = None,
+) -> Node:
+    resolved_node_id = node_id or repository.bind_node_id
+    if repository.bind_node_type != Repository.BindNodeType.PROXY or not resolved_node_id:
         raise ValidationError({"repository_id": f"{message_prefix} is not bound to a proxy node."})
     node = Node.objects.filter(
-        id=repository.bind_node_id,
+        id=resolved_node_id,
         organization_id=repository.organization_id,
         role=NodeRole.PROXY,
         is_deleted=False,

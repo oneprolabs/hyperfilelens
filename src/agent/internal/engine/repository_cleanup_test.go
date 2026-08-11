@@ -85,6 +85,25 @@ func TestRemoveRepositoryLocalStateReturnsCountWithoutPaths(t *testing.T) {
 	}
 }
 
+func TestRepositoryCleanupConfigPathsIncludesLegacyNASConfig(t *testing.T) {
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{DataDir: t.TempDir()}})
+	paths := engine.repositoryCleanupConfigPaths(repositorySpec{
+		ID:     50,
+		Type:   "nas",
+		Subdir: "hp-repos/agent-22",
+	})
+
+	if len(paths) != 2 {
+		t.Fatalf("cleanup config paths = %v, want current and legacy paths", paths)
+	}
+	if filepath.Base(paths[0]) == filepath.Base(paths[1]) {
+		t.Fatalf("cleanup paths must be distinct: %v", paths)
+	}
+	if filepath.Base(paths[1]) != "repo-50.config" {
+		t.Fatalf("legacy config path = %q, want repo-50.config", paths[1])
+	}
+}
+
 func TestManagedRepositoryCleanupRemovesOnlyOwnedCache(t *testing.T) {
 	dataDir := t.TempDir()
 	engine := New(staticConfigProvider{cfg: &model.AgentConfig{DataDir: dataDir}})

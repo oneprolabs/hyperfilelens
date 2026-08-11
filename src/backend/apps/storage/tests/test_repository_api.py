@@ -548,6 +548,33 @@ class StorageRepositoryApiTests(TestCase):
             response.data["data"]["errors"],
         )
 
+    def test_s3_repository_cannot_change_region(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="immutable-s3-location",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.AWS,
+            s3_bucket="immutable-bucket",
+            config={
+                "region": "us-east-1",
+                "endpoint": "s3.amazonaws.com",
+                "prefix": "hfl/repository",
+            },
+        )
+
+        response = self.client.patch(
+            f"/api/v1/storage/repositories/{repository.id}/",
+            {"config": {"region": "us-east-1"}},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        repository.refresh_from_db()
+        self.assertEqual(repository.config["region"], "us-east-1")
+
     def test_associated_sources_lists_direct_nas_agent_health(self):
         agent = Node.objects.create(
             organization=self.org,
