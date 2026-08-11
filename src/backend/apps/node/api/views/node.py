@@ -47,7 +47,10 @@ from apps.node.services.internal.local_platform_gateway import registration_meta
 from apps.node.services.internal.node_registry import record_node_available
 from apps.node.exceptions import NodeLifecycleError
 from apps.node.services.internal.agent_uninstall import ProxyHasBoundResources
-from apps.node.services.internal.bindings import collect_proxy_bindings
+from apps.node.services.internal.bindings import (
+    collect_proxy_bindings,
+    count_proxy_repository_bindings,
+)
 from apps.node.services.internal.client_ip import resolve_agent_client_ip
 from apps.node.services.internal.enrollment_auth import (
     EnrollmentAuthorization,
@@ -117,6 +120,14 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 org=self.org,
                 node=node,
                 user=self.request.user,
+            )
+        repository_counts = count_proxy_repository_bindings(
+            organization_id=self.org.id,
+            proxy_ids=[node.id for node in nodes if node.role == NodeRole.PROXY],
+        )
+        for node in nodes:
+            enrichments[node.id]["associated_repository_count"] = repository_counts.get(
+                node.id, 0
             )
         return enrichments
 

@@ -63,6 +63,9 @@ class RepositoryUsageProbeResult:
     mount_point: str = ""
     usage_error: str = ""
     capacity_error: str = ""
+    storage_used_bytes: int | None = None
+    storage_available_bytes: int | None = None
+    storage_pool_key: str = ""
 
 
 def capacity_bytes_from_config(config: dict | None) -> int:
@@ -306,10 +309,36 @@ def _repo_status_mount_point(result: dict[str, Any], *, repository_subdir: str =
 
     space = result.get("space_info")
     if isinstance(space, dict):
+        mount_point = str(space.get("mount_point") or "").strip()
+        if mount_point:
+            return mount_point.rstrip("/")
         stripped = _strip_repository_subdir(str(space.get("path") or ""), repository_subdir)
         if stripped:
             return stripped
     return ""
+
+
+def _parse_agent_storage_info(
+    result: dict[str, Any],
+    *,
+    repository_subdir: str = "",
+) -> tuple[int | None, int | None, int | None, str, str]:
+    space = result.get("space_info")
+    space = space if isinstance(space, dict) else {}
+
+    def non_negative_int(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
+    total = non_negative_int(space.get("total_bytes"))
+    used = non_negative_int(space.get("used_bytes"))
+    available = non_negative_int(space.get("free_bytes"))
+    pool_key = str(space.get("pool_key") or "").strip()
+    mount_point = _repo_status_mount_point(result, repository_subdir=repository_subdir)
+    return total, used, available, pool_key, mount_point
 
 
 def _parse_agent_repo_status_result(
@@ -347,7 +376,10 @@ def _parse_agent_repo_status_result(
         if packed > 0:
             estimated = kopia_estimated_usage_from_packed(packed)
 
-    fs_total: int | None = None
+    fs_total, fs_used, _fs_available, _pool_key, mount_point = _parse_agent_storage_info(
+        result,
+        repository_subdir=repository_subdir,
+    )
     if isinstance(capacity_probe, dict) and str(capacity_probe.get("status") or "").lower() == "failed":
         capacity_error = str(capacity_probe.get("error") or "Unable to read filesystem capacity.")[:1000]
     elif isinstance(capacity_probe, dict) and "total_bytes" in capacity_probe:
@@ -359,24 +391,9 @@ def _parse_agent_repo_status_result(
                 capacity_error = "Unable to read filesystem capacity."
         except (TypeError, ValueError):
             capacity_error = "Unable to read filesystem capacity."
-    fs_used: int | None = None
-    space = result.get("space_info")
-    if isinstance(space, dict):
-        try:
-            total = int(space.get("total_bytes") or 0)
-            if total > 0:
-                fs_total = total
-        except (TypeError, ValueError):
-            fs_total = None
-        try:
-            used = int(space.get("used_bytes") or 0)
-            if used >= 0:
-                fs_used = used
-        except (TypeError, ValueError):
-            fs_used = None
     if estimated is None and not usage_error and not isinstance(usage_probe, dict) and fs_used is not None:
         estimated = fs_used
-    return estimated, fs_total, _repo_status_mount_point(result, repository_subdir=repository_subdir), usage_error, capacity_error
+    return estimated, fs_total, mount_point, usage_error, capacity_error
 
 
 def _run_repository_usage_probe(
@@ -441,12 +458,19 @@ def _run_repository_usage_probe(
         result,
         repository_subdir=repository_subdir,
     )
+    _total, storage_used, storage_available, storage_pool_key, _storage_mount = _parse_agent_storage_info(
+        result,
+        repository_subdir=repository_subdir,
+    )
     return RepositoryUsageProbeResult(
         estimated,
         capacity,
         mount_point=mount_point,
         usage_error=usage_error,
         capacity_error=capacity_error,
+        storage_used_bytes=storage_used,
+        storage_available_bytes=storage_available,
+        storage_pool_key=storage_pool_key,
     )
 
 
@@ -704,8 +728,8 @@ def proxy_fs_filesystem_capacity_bytes(repository: Repository) -> int | None:
     return stats[1]
 
 
-def collect_usage_candidates(repository: Repository) -> tuple[int | None, int | None, str, str]:
-    """Return usage, capacity, and independent probe errors."""
+def collect_usage_candidates(repository: Repository) -> RepositoryUsageProbeResult:
+    """Return repository usage and independent backing-storage metrics."""
     fs_capacity: int | None = None
     estimated_usage_bytes: int | None = None
     usage_error = ""
@@ -720,11 +744,11 @@ def collect_usage_candidates(repository: Repository) -> tuple[int | None, int | 
 
     if _is_unbound_nas_repository(repository):
         estimated, capacity = _sync_direct_nas_agent_usage_shards(repository)
-        return (
+        return RepositoryUsageProbeResult(
             estimated,
             capacity,
-            "" if estimated is not None else "Unable to read repository usage.",
-            "" if capacity is not None else "Unable to read filesystem capacity.",
+            usage_error="" if estimated is not None else "Unable to read repository usage.",
+            capacity_error="" if capacity is not None else "Unable to read filesystem capacity.",
         )
 
     if repository.repo_type in (Repository.Type.NAS, Repository.Type.PROXY_FS):
@@ -746,7 +770,45 @@ def collect_usage_candidates(repository: Repository) -> tuple[int | None, int | 
                 fs_capacity = total
                 capacity_error = ""
 
-    return estimated_usage_bytes, fs_capacity, usage_error, capacity_error
+        return RepositoryUsageProbeResult(
+            estimated_usage_bytes,
+            fs_capacity,
+            error=probe.error,
+            mount_point=probe.mount_point,
+            usage_error=usage_error,
+            capacity_error=capacity_error,
+            storage_used_bytes=probe.storage_used_bytes,
+            storage_available_bytes=probe.storage_available_bytes,
+            storage_pool_key=probe.storage_pool_key,
+        )
+
+    return RepositoryUsageProbeResult(
+        estimated_usage_bytes,
+        fs_capacity,
+        usage_error=usage_error,
+        capacity_error=capacity_error,
+    )
+
+
+def _repository_storage_pool_key(
+    repository: Repository,
+    probe: RepositoryUsageProbeResult,
+) -> str:
+    config = repository.config if isinstance(repository.config, dict) else {}
+    if repository.repo_type == Repository.Type.PROXY_FS:
+        identity = probe.storage_pool_key or probe.mount_point
+        if identity:
+            return f"proxy:{int(repository.bind_node_id or 0)}:{identity}"[:500]
+    if repository.repo_type == Repository.Type.NAS:
+        protocol = str(repository.nas_protocol or config.get("protocol") or "nas").strip().lower()
+        server = str(config.get("server_address") or config.get("nfs_host") or config.get("smb_server") or "").strip().lower()
+        share = str(config.get("share_path") or config.get("nfs_export") or "").strip().rstrip("/").lower()
+        if server or share:
+            return f"nas:{protocol}:{server}:{share}"[:500]
+        identity = probe.storage_pool_key or probe.mount_point
+        if identity:
+            return f"nas-proxy:{int(repository.bind_node_id or 0)}:{identity}"[:500]
+    return ""
 
 
 def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Repository:
@@ -755,7 +817,11 @@ def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Re
     if config_capacity > 0 and int(repository.capacity_bytes or 0) != config_capacity:
         repository.capacity_bytes = config_capacity
         capacity_changed = True
-    estimated_usage_bytes, fs_capacity, usage_error, capacity_error = collect_usage_candidates(repository)
+    probe = collect_usage_candidates(repository)
+    estimated_usage_bytes = probe.estimated_usage_bytes
+    fs_capacity = probe.capacity_bytes
+    usage_error = probe.usage_error or probe.error
+    capacity_error = probe.capacity_error or probe.error
     capacity_bytes = int(repository.capacity_bytes or 0)
     if config_capacity <= 0 and fs_capacity and fs_capacity > 0 and capacity_bytes != fs_capacity:
         capacity_bytes = fs_capacity
@@ -769,6 +835,23 @@ def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Re
         repository.capacity_bytes = capacity_bytes
     if usage_changed:
         repository.estimated_usage_bytes = estimated_usage_bytes
+    storage_metric_fields: list[str] = []
+    if fs_capacity is not None and fs_capacity > 0 and repository.storage_total_bytes != fs_capacity:
+        repository.storage_total_bytes = fs_capacity
+        storage_metric_fields.append("storage_total_bytes")
+    if probe.storage_used_bytes is not None and repository.storage_used_bytes != probe.storage_used_bytes:
+        repository.storage_used_bytes = probe.storage_used_bytes
+        storage_metric_fields.append("storage_used_bytes")
+    if probe.storage_available_bytes is not None and repository.storage_available_bytes != probe.storage_available_bytes:
+        repository.storage_available_bytes = probe.storage_available_bytes
+        storage_metric_fields.append("storage_available_bytes")
+    storage_pool_key = _repository_storage_pool_key(repository, probe)
+    if storage_pool_key and repository.storage_pool_key != storage_pool_key:
+        repository.storage_pool_key = storage_pool_key
+        storage_metric_fields.append("storage_pool_key")
+    if probe.mount_point and repository.storage_mount_point != probe.mount_point:
+        repository.storage_mount_point = probe.mount_point
+        storage_metric_fields.append("storage_mount_point")
     checked_at = timezone.now()
     repository.last_checked_at = checked_at
     repository.metrics_last_attempt_at = checked_at
@@ -777,6 +860,7 @@ def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Re
         update_fields.append("capacity_bytes")
     if usage_changed:
         update_fields.append("estimated_usage_bytes")
+    update_fields.extend(storage_metric_fields)
     if repository.repo_type in (Repository.Type.NAS, Repository.Type.PROXY_FS):
         if estimated_usage_bytes is not None:
             repository.usage_probe_status = Repository.MetricProbeStatus.SUCCESS
@@ -785,7 +869,7 @@ def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Re
         else:
             repository.usage_probe_status = Repository.MetricProbeStatus.FAILED
             repository.usage_last_error = str(usage_error or "Unable to read repository usage.")[:1000]
-        if config_capacity > 0 or (fs_capacity is not None and fs_capacity > 0):
+        if fs_capacity is not None and fs_capacity > 0:
             repository.capacity_probe_status = Repository.MetricProbeStatus.SUCCESS
             repository.capacity_last_success_at = checked_at
             repository.capacity_last_error = ""

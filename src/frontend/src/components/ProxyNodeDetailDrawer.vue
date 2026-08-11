@@ -5,6 +5,7 @@ import NodeBasicInfoPanel from './NodeBasicInfoPanel.vue'
 import NodePerfSettingsPanel from './NodePerfSettingsPanel.vue'
 import NodeMaintenancePanel from './NodeMaintenancePanel.vue'
 import ProxyBoundNasSourcesPanel from './ProxyBoundNasSourcesPanel.vue'
+import ProxyStorageRepositoriesPanel from './ProxyStorageRepositoriesPanel.vue'
 import HflDetailDrawerFooter from './HflDetailDrawerFooter.vue'
 import { getNode } from '../lib/nodeApi'
 import { useResponsiveDrawerWidth } from '../composables/useResponsiveDrawerWidth'
@@ -14,7 +15,7 @@ import type { ApiNode } from '../types/node'
 const props = defineProps<{
   modelValue: boolean
   nodeId: number | null
-  initialTab?: 'basic' | 'performance' | 'nas' | 'maintenance'
+  initialTab?: 'basic' | 'performance' | 'storage' | 'nas' | 'maintenance'
 }>()
 
 const emit = defineEmits<{
@@ -34,13 +35,14 @@ const node = ref<ApiNode | null>(null)
 const busy = ref(false)
 const saving = ref(false)
 const savedInSession = ref(false)
-const drawerTab = ref<'basic' | 'performance' | 'nas' | 'maintenance'>('basic')
+const drawerTab = ref<'basic' | 'performance' | 'storage' | 'nas' | 'maintenance'>('basic')
 const basicPanelRef = ref<InstanceType<typeof NodeBasicInfoPanel> | null>(null)
 const perfPanelRef = ref<InstanceType<typeof NodePerfSettingsPanel> | null>(null)
 const { drawerSize, updateDrawerWidth, bindDrawerResize, unbindDrawerResize } = useResponsiveDrawerWidth()
 
 const perfTabActive = computed(() => open.value && drawerTab.value === 'performance')
 const nasTabActive = computed(() => open.value && drawerTab.value === 'nas' && props.nodeId != null)
+const storageTabActive = computed(() => open.value && drawerTab.value === 'storage' && props.nodeId != null)
 
 const hasDrawerChanges = computed(() => {
   const perfChanged = perfPanelRef.value?.hasPerfChanges ?? false
@@ -202,6 +204,14 @@ onUnmounted(() => {
               hide-actions
               :active="perfTabActive"
               :node="node"
+            />
+          </ElTabPane>
+
+          <ElTabPane :label="t('protection.sourceResources.detailTabStorage')" name="storage">
+            <ProxyStorageRepositoriesPanel
+              v-if="nodeId != null"
+              :node-id="nodeId"
+              :active="storageTabActive"
             />
           </ElTabPane>
 

@@ -127,6 +127,11 @@ class Repository(models.Model):
     capacity_bytes = models.BigIntegerField(default=0)
     estimated_usage_bytes = models.BigIntegerField(default=0)
     physical_usage_bytes = models.BigIntegerField(blank=True, null=True)
+    storage_total_bytes = models.BigIntegerField(default=0)
+    storage_used_bytes = models.BigIntegerField(default=0)
+    storage_available_bytes = models.BigIntegerField(default=0)
+    storage_pool_key = models.CharField(max_length=500, blank=True, default="")
+    storage_mount_point = models.CharField(max_length=1000, blank=True, default="")
     last_checked_at = models.DateTimeField(blank=True, null=True, db_index=True)
     metrics_last_attempt_at = models.DateTimeField(blank=True, null=True, db_index=True)
     usage_probe_status = models.CharField(

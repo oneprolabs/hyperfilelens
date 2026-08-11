@@ -1,0 +1,172 @@
+.chunk-load-error {
+  position: relative;
+  box-sizing: border-box;
+  display: grid;
+  width: 100%;
+  min-height: calc(var(--app-viewport-height, 100vh) - var(--topnav-height, 0px));
+  place-items: center;
+  overflow: hidden;
+  padding: clamp(28px, 7vh, 72px) clamp(20px, 5vw, 64px);
+  background:
+    radial-gradient(circle at 50% 22%, color-mix(in srgb, var(--color-primary, #6d5ef6) 8%, transparent), transparent 34%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--content-bg, var(--color-content-bg, #f4f4f7)) 94%, #fff) 0%,
+      var(--content-bg, var(--color-content-bg, #f4f4f7)) 100%
+    );
+  color: var(--color-text-title, #1d2129);
+  font-family: var(--font-sans, Inter, ui-sans-serif, system-ui, sans-serif);
+}
+
+.chunk-load-error__halo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(680px, 78vw);
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in srgb, var(--color-primary, #6d5ef6) 9%, transparent);
+  border-radius: 50%;
+  opacity: 0.65;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.chunk-load-error__card {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  width: min(520px, 100%);
+  flex-direction: column;
+  align-items: center;
+  padding: clamp(30px, 5vw, 44px);
+  border: 1px solid var(--color-border, #e1e4eb);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-card-bg, #fff) 96%, transparent);
+  box-shadow:
+    0 24px 70px rgb(15 23 42 / 8%),
+    0 3px 12px rgb(15 23 42 / 4%);
+  text-align: center;
+}
+
+.chunk-load-error__icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  margin-bottom: 18px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-primary, #6d5ef6) 18%, var(--color-card-bg, #fff));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--color-primary, #6d5ef6) 9%, var(--color-card-bg, #fff));
+  color: var(--color-primary, #6d5ef6);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--color-primary, #6d5ef6) 12%, transparent);
+}
+
+.chunk-load-error__icon-svg {
+  width: 28px;
+  height: 28px;
+}
+
+.chunk-load-error__eyebrow {
+  margin: 0 0 8px;
+  color: var(--color-primary, #6d5ef6);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.chunk-load-error__title {
+  margin: 0;
+  color: var(--color-text-title, #1f2329);
+  font-size: clamp(23px, 3vw, 28px);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+}
+
+.chunk-load-error__message {
+  max-width: 410px;
+  margin: 13px 0 0;
+  color: var(--color-text-secondary, #646a73);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.chunk-load-error__action {
+  display: inline-flex;
+  min-width: 150px;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 24px;
+  padding: 9px 20px;
+  border: 1px solid var(--color-primary, #6d5ef6);
+  border-radius: 7px;
+  background: linear-gradient(
+    135deg,
+    var(--color-primary-gradient-start, #7e6cef),
+    var(--color-primary-gradient-end, #6d5ef6)
+  );
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--color-primary, #6d5ef6) 20%, transparent);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+
+.chunk-load-error__action:hover {
+  box-shadow: 0 9px 22px color-mix(in srgb, var(--color-primary, #6d5ef6) 28%, transparent);
+  transform: translateY(-1px);
+}
+
+.chunk-load-error__action:active {
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-primary, #6d5ef6) 20%, transparent);
+  transform: translateY(0);
+}
+
+.chunk-load-error__action:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-primary, #6d5ef6) 25%, transparent);
+  outline-offset: 3px;
+}
+
+.chunk-load-error__action-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.chunk-load-error__note {
+  margin: 15px 0 0;
+  color: var(--color-text-tertiary, #8f959e);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+@media (max-width: 520px) {
+  .chunk-load-error {
+    align-items: start;
+    padding-top: 44px;
+  }
+
+  .chunk-load-error__halo {
+    width: 120vw;
+  }
+
+  .chunk-load-error__card {
+    padding: 30px 22px;
+    border-radius: 12px;
+  }
+
+  .chunk-load-error__action {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chunk-load-error__action {
+    transition: none;
+  }
+}

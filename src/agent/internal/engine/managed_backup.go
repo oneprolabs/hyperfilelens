@@ -823,7 +823,7 @@ func appendRepositoryUsageMetrics(
 	if spacePath == "" || (spec.Type != "nas" && spec.Type != "proxy_fs") {
 		return
 	}
-	total, used, free, err := agentdisk.Usage(spacePath)
+	storage, err := agentdisk.Inspect(spacePath)
 	if err != nil {
 		result["capacity_probe"] = map[string]any{
 			"status": "failed", "error": "Unable to read filesystem capacity.",
@@ -831,13 +831,15 @@ func appendRepositoryUsageMetrics(
 		return
 	}
 	result["capacity_probe"] = map[string]any{
-		"status": "success", "total_bytes": total,
+		"status": "success", "total_bytes": storage.Total,
 	}
 	result["space_info"] = map[string]any{
 		"path":        spacePath,
-		"total_bytes": total,
-		"used_bytes":  used,
-		"free_bytes":  free,
+		"mount_point": storage.MountPoint,
+		"pool_key":    storage.PoolKey,
+		"total_bytes": storage.Total,
+		"used_bytes":  storage.Used,
+		"free_bytes":  storage.Free,
 	}
 }
 

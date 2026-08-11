@@ -371,7 +371,7 @@ async function onUpgradeSelected() {
 
 const proxyDetailOpen = ref(false)
 const proxyDetailId = ref<number | null>(null)
-const proxyDetailInitialTab = ref<'basic' | 'performance' | 'nas' | 'maintenance'>('basic')
+const proxyDetailInitialTab = ref<'basic' | 'performance' | 'storage' | 'nas' | 'maintenance'>('basic')
 
 function clearOpenNodeQuery() {
   if (route.query.openNode == null) return
@@ -801,6 +801,11 @@ async function submitRename() {
                   variant="compact"
                   :format-bytes="formatNodeBytes"
                 />
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('protection.sourceResources.colRepositories')" min-width="105" align="center" header-align="center">
+              <template #default="{ row }">
+                <span>{{ row.associated_repository_count ?? 0 }}</span>
               </template>
             </el-table-column>
             <el-table-column :label="t('protection.sourceResources.colAvailability')" min-width="110" align="center" header-align="center">

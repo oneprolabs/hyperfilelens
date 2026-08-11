@@ -315,6 +315,9 @@ type WizardTarget = {
   disabledReason?: string | null
   usedBytes?: number
   capacityBytes?: number
+  storageTotalBytes?: number
+  storageUsedBytes?: number
+  storageAvailableBytes?: number
 }
 
 type RepositoryEndpointType = 'external' | 'internal'
@@ -408,7 +411,10 @@ function mapRepository(repo: StorageRepository): WizardTarget {
     crossProxyReady: repo.cross_proxy_access?.ready === true,
     crossProxyReason: repo.cross_proxy_access?.reason ?? null,
     usedBytes: Number(repo.estimated_usage_bytes || 0),
-    capacityBytes: Number(repo.capacity_bytes || 0),
+    capacityBytes: Math.max(0, Number(repo.config?.quota_gb || 0)) * 1024 ** 3,
+    storageTotalBytes: Number(repo.storage_total_bytes || 0),
+    storageUsedBytes: Number(repo.storage_used_bytes || 0),
+    storageAvailableBytes: Number(repo.storage_available_bytes || 0),
   }
 }
 
@@ -5282,12 +5288,18 @@ function groupHasNasTarget(group: WizardSourceGroup) {
 
 function targetCapacityLabel(group: WizardSourceGroup) {
   const target = getRealTarget(sourceTargetMap.value[group.key])
-  if (!target?.capacityBytes) return '—'
-  const freeBytes = Math.max(target.capacityBytes - (target.usedBytes ?? 0), 0)
-  return t('protection.backupsPage.targetCapacityValue', {
-    free: formatBytes(freeBytes),
-    total: formatBytes(target.capacityBytes),
+  if (!target) return '—'
+  const usage = t('protection.backupsPage.targetRepositoryUsageValue', {
+    used: formatBytes(target.usedBytes ?? 0),
+    limit: target.capacityBytes
+      ? formatBytes(target.capacityBytes)
+      : t('protection.backupsPage.targetNoConfiguredLimit'),
   })
+  if (!target.storageTotalBytes) return usage
+  return `${usage} · ${t('protection.backupsPage.targetBackingStorageValue', {
+    available: formatBytes(target.storageAvailableBytes ?? 0),
+    total: formatBytes(target.storageTotalBytes),
+  })}`
 }
 
 

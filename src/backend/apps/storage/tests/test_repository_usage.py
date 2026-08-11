@@ -103,9 +103,23 @@ class RepositoryUsageTests(TestCase):
 
         self.assertEqual(mount_point, "/mnt/hfl/storage-repositories/repo-34-node-43")
 
+    def test_parse_agent_repo_status_result_prefers_reported_storage_mount_point(self):
+        _estimated, _total, mount_point, _usage_error, _capacity_error = _parse_agent_repo_status_result(
+            {
+                "space_info": {
+                    "path": "/data/repository-a",
+                    "mount_point": "/data",
+                    "total_bytes": 1000,
+                    "used_bytes": 300,
+                },
+            },
+        )
+
+        self.assertEqual(mount_point, "/data")
+
     @mock.patch(
         "apps.storage.services.internal.repository_usage.collect_usage_candidates",
-        return_value=(0, None, "", ""),
+        return_value=RepositoryUsageProbeResult(0, None),
     )
     def test_sync_applies_quota_capacity(self, _collect):
         repo = Repository.objects.create(
@@ -124,7 +138,14 @@ class RepositoryUsageTests(TestCase):
 
     @mock.patch(
         "apps.storage.services.internal.repository_usage.agent_repository_usage_probe",
-        return_value=RepositoryUsageProbeResult(5 * 1024**3, 100 * 1024**3),
+        return_value=RepositoryUsageProbeResult(
+            5 * 1024**3,
+            100 * 1024**3,
+            mount_point="/",
+            storage_used_bytes=10 * 1024**3,
+            storage_available_bytes=90 * 1024**3,
+            storage_pool_key="/dev/sda1|/",
+        ),
     )
     def test_proxy_fs_sync_uses_agent_kopia_usage_and_mount_capacity(self, _probe):
         repo = Repository.objects.create(
@@ -144,6 +165,11 @@ class RepositoryUsageTests(TestCase):
         repo.refresh_from_db()
         self.assertEqual(repo.estimated_usage_bytes, 5 * 1024**3)
         self.assertEqual(repo.capacity_bytes, 100 * 1024**3)
+        self.assertEqual(repo.storage_total_bytes, 100 * 1024**3)
+        self.assertEqual(repo.storage_used_bytes, 10 * 1024**3)
+        self.assertEqual(repo.storage_available_bytes, 90 * 1024**3)
+        self.assertEqual(repo.storage_pool_key, "proxy:9:/dev/sda1|/")
+        self.assertEqual(repo.storage_mount_point, "/")
         self.assertEqual(repo.usage_probe_status, Repository.MetricProbeStatus.SUCCESS)
         self.assertEqual(repo.capacity_probe_status, Repository.MetricProbeStatus.SUCCESS)
 
@@ -184,13 +210,20 @@ class RepositoryUsageTests(TestCase):
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=9,
         )
-        mock_probe.return_value = RepositoryUsageProbeResult(3 * 1024**3, 100 * 1024**3)
+        mock_probe.return_value = RepositoryUsageProbeResult(
+            3 * 1024**3,
+            100 * 1024**3,
+            storage_used_bytes=5 * 1024**3,
+            storage_available_bytes=95 * 1024**3,
+        )
 
         sync_repository_usage(repo)
 
         repo.refresh_from_db()
         self.assertEqual(repo.estimated_usage_bytes, 3 * 1024**3)
         self.assertEqual(repo.capacity_bytes, 2 * 1024**3)
+        self.assertEqual(repo.storage_total_bytes, 100 * 1024**3)
+        self.assertEqual(repo.storage_available_bytes, 95 * 1024**3)
 
     @mock.patch(
         "apps.storage.services.internal.repository_usage.agent_repository_usage_probe",
@@ -213,6 +246,8 @@ class RepositoryUsageTests(TestCase):
         repo.refresh_from_db()
         self.assertEqual(repo.estimated_usage_bytes, 2 * 1024**3)
         self.assertEqual(repo.capacity_bytes, 50 * 1024**3)
+        self.assertEqual(repo.storage_total_bytes, 50 * 1024**3)
+        self.assertEqual(repo.storage_pool_key, "nas:nas:192.168.1.10:/export/data")
 
     @mock.patch(
         "apps.storage.services.internal.repository_usage.kopia_repository_estimated_usage_bytes",

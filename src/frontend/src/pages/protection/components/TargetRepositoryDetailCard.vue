@@ -64,7 +64,8 @@ function locationForTarget(target: TargetRepositoryItem): string {
 }
 
 function formatBytes(value: number | null | undefined): string {
-  if (!value || value <= 0) return '—'
+  if (value == null || value < 0) return '—'
+  if (value === 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
   let v = value
   let i = 0
@@ -164,12 +165,26 @@ const unverifiedReason = computed(() =>
         v-if="!props.hideCapacity"
         class="target-repository-detail__section target-repository-detail__section--line"
       >
-        <span class="target-repository-detail__section-title">{{ t('protection.backupsPage.targetDetailCapacity') }}:</span>
+        <span class="target-repository-detail__section-title">{{ t('protection.backupsPage.targetDetailRepositoryUsage') }}:</span>
         <span class="target-repository-detail__value">
-          {{ formatBytes(target.usedBytes) }} / {{ formatBytes(target.capacityBytes) }}
+          {{ formatBytes(target.usedBytes) }} {{ t('protection.backupsPage.targetUsed') }} ·
+          {{ target.capacityBytes ? t('protection.backupsPage.targetLimitValue', { limit: formatBytes(target.capacityBytes) }) : t('protection.backupsPage.targetNoConfiguredLimit') }}
           <span v-if="usagePercent(target) !== null" class="target-repository-detail__usage">
             ({{ usagePercent(target) }}%)
           </span>
+        </span>
+      </section>
+
+      <section
+        v-if="!props.hideCapacity && target.storageTotalBytes"
+        class="target-repository-detail__section target-repository-detail__section--line"
+      >
+        <span class="target-repository-detail__section-title">{{ t('protection.backupsPage.targetDetailBackingStorage') }}:</span>
+        <span class="target-repository-detail__value">
+          {{ t('protection.backupsPage.targetBackingStorageValue', {
+            available: formatBytes(target.storageAvailableBytes),
+            total: formatBytes(target.storageTotalBytes),
+          }) }}
         </span>
       </section>
     </div>
