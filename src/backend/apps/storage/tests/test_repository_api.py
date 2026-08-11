@@ -909,6 +909,65 @@ class StorageRepositoryApiTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
 
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    def test_create_proxy_fs_uses_managed_child_directory(self, apply_async):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="managed-local-disk-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                "/api/v1/storage/repositories/",
+                {
+                    "name": "managed-local-disk",
+                    "repo_type": "proxy_fs",
+                    "bind_node_type": "proxy",
+                    "bind_node_id": proxy.id,
+                    "config": {"proxy_node_base_dir": "/data/backups/"},
+                },
+                format="json",
+                **self._headers(),
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        repository = Repository.objects.get(name="managed-local-disk")
+        self.assertEqual(repository.config["proxy_node_base_dir"], "/data/backups")
+        self.assertEqual(
+            repository.config["proxy_node_dir"],
+            f"/data/backups/hfl-repo-{repository.id}",
+        )
+        self.assertEqual(repository.config["proxy_fs_layout"], "managed_subdir_v1")
+        apply_async.assert_called_once()
+
+    def test_create_proxy_fs_rejects_filesystem_root_as_base_directory(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="root-local-disk-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            {
+                "name": "root-local-disk",
+                "repo_type": "proxy_fs",
+                "bind_node_type": "proxy",
+                "bind_node_id": proxy.id,
+                "config": {"proxy_node_base_dir": "/"},
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
+        self.assertFalse(Repository.objects.filter(name="root-local-disk").exists())
+
     @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
     def test_create_s3_repository_keeps_row_when_initializer_fails(self, initialize):
         initialize.side_effect = RepositoryInitializationError("S3 init failed")

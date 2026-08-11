@@ -11,6 +11,7 @@ implementation of the ``repo.status`` task for ``proxy_fs`` repositories.
 from __future__ import annotations
 
 import logging
+import posixpath
 from typing import Any
 
 from django.core.exceptions import ValidationError
@@ -30,9 +31,55 @@ from apps.storage.services.internal.repository_secrets import resolve_repository
 
 logger = logging.getLogger(__name__)
 
+PROXY_FS_LAYOUT_MANAGED_SUBDIR_V1 = "managed_subdir_v1"
+PROXY_FS_MANAGED_DIRECTORY_PREFIX = "hfl-repo-"
+
 
 class ProxyFSRepositoryError(RuntimeError):
     pass
+
+
+def normalize_proxy_fs_base_dir(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw or "\x00" in raw or not raw.startswith("/"):
+        raise ValidationError("Proxy filesystem base directory must be an absolute path.")
+    normalized = posixpath.normpath(raw)
+    if normalized == "/":
+        raise ValidationError("Proxy filesystem base directory cannot be the filesystem root.")
+    return normalized
+
+
+def configure_managed_proxy_fs_path(repository: Repository) -> bool:
+    """Persist the HFL-owned child path for a newly created proxy_fs row."""
+    if repository.repo_type != Repository.Type.PROXY_FS:
+        return False
+    config = dict(repository.config or {})
+    base_dir = normalize_proxy_fs_base_dir(
+        config.get("proxy_node_base_dir") or config.get("proxy_node_dir")
+    )
+    repository_dir = posixpath.join(
+        base_dir,
+        f"{PROXY_FS_MANAGED_DIRECTORY_PREFIX}{int(repository.id)}",
+    )
+    config.update(
+        {
+            "proxy_node_base_dir": base_dir,
+            "proxy_node_dir": repository_dir,
+            "proxy_fs_layout": PROXY_FS_LAYOUT_MANAGED_SUBDIR_V1,
+        }
+    )
+    if repository.config == config:
+        return False
+    repository.config = config
+    return True
+
+
+def proxy_fs_uses_managed_subdir(repository: Repository) -> bool:
+    config = repository.config if isinstance(repository.config, dict) else {}
+    return (
+        repository.repo_type == Repository.Type.PROXY_FS
+        and config.get("proxy_fs_layout") == PROXY_FS_LAYOUT_MANAGED_SUBDIR_V1
+    )
 
 
 def validate_proxy_for_proxy_fs(repository: Repository) -> Node:
@@ -58,12 +105,20 @@ def proxy_fs_repository_payload(repository: Repository) -> dict[str, Any]:
     """Build the agent-side ``repository`` payload for a proxy_fs repository."""
     config = repository.config if isinstance(repository.config, dict) else {}
     secrets_payload = resolve_repository_secrets(repository)
-    return {
+    payload = {
         "id": repository.id,
         "type": Repository.Type.PROXY_FS,
         "path": str(config.get("proxy_node_dir") or "").strip(),
         "kopia_password": str(secrets_payload.get("kopia_password") or "").strip(),
     }
+    if proxy_fs_uses_managed_subdir(repository):
+        payload.update(
+            {
+                "base_path": str(config.get("proxy_node_base_dir") or "").strip(),
+                "layout": PROXY_FS_LAYOUT_MANAGED_SUBDIR_V1,
+            }
+        )
+    return payload
 
 
 def initialize_proxy_fs_repository(repository: Repository):

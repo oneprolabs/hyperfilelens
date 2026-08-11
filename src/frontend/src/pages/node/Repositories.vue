@@ -123,6 +123,8 @@ export type RepositoryConfig = {
   proxy_node_name?: string
   proxy_node_ip?: string
   proxy_node_dir?: string
+  proxy_node_base_dir?: string
+  proxy_fs_layout?: string
   quota_gb?: number
   quota_alert_enabled?: boolean
   quota_alert_threshold?: number
@@ -353,6 +355,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
   const proxyNodeId = configNumber(config, 'proxy_node_id') ?? r.proxy_node_id
   const proxyNodeName = configString(config, 'proxy_node_name') || r.proxy_node_name || ''
   const proxyNodeDir = configString(config, 'proxy_node_dir')
+  const proxyNodeBaseDir = configString(config, 'proxy_node_base_dir')
   const proxyMountPath = configString(config, 'proxy_mount_path')
   const repoScope = (configString(config, 'repo_scope') || r.repo_scope || '') as RepoScope | ''
   const loc =
@@ -450,6 +453,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
         proxy_node_name: proxyNodeName || sourceNode.name,
         proxy_node_ip: proxyNodeIp || sourceNode.ip_address,
         proxy_node_dir: proxyNodeDir || loc,
+        proxy_node_base_dir: proxyNodeBaseDir,
+        proxy_fs_layout: configString(config, 'proxy_fs_layout'),
         proxy_repository_server_host: configString(config, 'proxy_repository_server_host'),
         quota_gb: configNumber(config, 'quota_gb') ?? 0,
         quota_alert_enabled: configBoolean(config, 'quota_alert_enabled') ?? false,
@@ -1590,6 +1595,11 @@ function nasProxyAccessPathLabel(row: RepositoryRow) {
 function localDiskRepositoryPath(row: RepositoryRow) {
   if (row.kind !== 'proxy_fs') return DETAIL_EMPTY
   return row.config.proxy_node_dir || row.location || DETAIL_EMPTY
+}
+
+function localDiskBaseDirectory(row: RepositoryRow) {
+  if (row.kind !== 'proxy_fs') return DETAIL_EMPTY
+  return row.config.proxy_node_base_dir || DETAIL_EMPTY
 }
 
 function localDiskHostingProxyNode(row: RepositoryRow) {
@@ -3020,6 +3030,10 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldProxyNodeDir') }}</span>
                     <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="detailEmptyValueClass(localDiskRepositoryPath(detailRow))">{{ localDiskRepositoryPath(detailRow) }}</span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldProxyNodeBaseDir') }}</span>
+                    <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="detailEmptyValueClass(localDiskBaseDirectory(detailRow))">{{ localDiskBaseDirectory(detailRow) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldRepositoryServerHost') }}</span>

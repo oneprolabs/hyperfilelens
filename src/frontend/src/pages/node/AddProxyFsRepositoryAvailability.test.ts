@@ -18,4 +18,10 @@ describe('Add Local Disk Repository proxy availability', () => {
     expect(page).toContain("t('repositoriesPage.fieldRepositoryServerHost')")
     expect(page).toContain("repositoryServerHost || t('repositoriesPage.repositoryServerHostNotConfigured')")
   })
+
+  it('submits a base directory and previews the managed child path', () => {
+    expect(page).toContain('proxy_node_base_dir: proxyNodeDir.value.trim()')
+    expect(page).toContain('hfl-repo-<repository-id>')
+    expect(page).not.toContain('proxy_node_dir: proxyNodeDir.value.trim()')
+  })
 })

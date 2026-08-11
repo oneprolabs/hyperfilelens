@@ -49,7 +49,7 @@ export type StorageRepository = {
   physical_usage_bytes?: number | null
   last_checked_at?: string | null
   removed_at?: string | null
-  cleanup_result?: 'deleted' | 'force_skipped' | string
+  cleanup_result?: 'deleted' | 'force_skipped' | 'preserved' | string
   created_at?: string | null
   updated_at?: string | null
   nas_protocol?: StorageRepositoryNasProtocol | string | null

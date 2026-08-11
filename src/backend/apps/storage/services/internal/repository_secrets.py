@@ -196,12 +196,20 @@ def build_repository_runtime_payload(
         proxy_dir = str(config.get("proxy_node_dir") or "").strip()
         if not proxy_dir:
             raise ValidationError({"repository_id": "Proxy filesystem repository path is empty."})
-        return {
+        payload = {
             "id": repository.id,
             "type": Repository.Type.PROXY_FS,
             "path": proxy_dir,
             "kopia_password": kopia_password,
         }
+        if str(config.get("proxy_fs_layout") or "") == "managed_subdir_v1":
+            payload.update(
+                {
+                    "base_path": str(config.get("proxy_node_base_dir") or "").strip(),
+                    "layout": "managed_subdir_v1",
+                }
+            )
+        return payload
     if repository.repo_type == Repository.Type.NAS:
         if repository.bind_node_type == Repository.BindNodeType.PROXY:
             if execution_target is None:
