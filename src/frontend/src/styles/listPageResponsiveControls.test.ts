@@ -34,6 +34,8 @@ describe('responsive list toolbar controls', () => {
     expect(tablePanel).toContain("$slots['toolbar-utility']")
     expect(tablePanel).toContain("<slot name=\"toolbar-utility\" />")
     expect(tablePanel).toContain("'hfl-list-toolbar__right--mobile-split': $slots['toolbar-actions'] && $slots['toolbar-utility']")
+    expect(tablePanel).toContain("'hfl-list-toolbar__right--solo': !$slots.toolbar && $slots['toolbar-actions']")
+    expect(styles).toMatch(/\.hfl-list-toolbar__right--solo\s*{[^}]*width:\s*100%;[^}]*justify-content:\s*flex-end;/s)
     expect(tablePanel).toContain("'hfl-list-toolbar--mobile-primary-utility': $slots.toolbar && $slots['toolbar-actions'] && $slots['toolbar-utility']")
     expect(styles).toContain('.hfl-list-toolbar--mobile-primary-utility > .hfl-list-toolbar__primary')
     expect(styles).toContain('grid-template-columns: minmax(0, 1fr) auto')

@@ -14,9 +14,9 @@ describe('Dashboard recovery drill metrics', () => {
   })
 
   it('opens the task list with the matching recovery drill filters', () => {
-    expect(dashboard).toContain("tasks: '/ops/task?task_type=restore&time_mode=24h'")
+    expect(dashboard).toContain("recoveryDrillTasks: '/ops/task?task_type=restore&time_mode=24h'")
     expect(tasks).toContain("task_type: textQueryValue(route.query.task_type)")
-    expect(tasks).toContain("time_mode: textQueryValue(route.query.time_mode) === '24h' ? '24h' : '7d'")
+    expect(tasks).toContain('time_mode: routeTimeModeFromQuery()')
     expect(tasks).toContain('stats.value = await taskStatistics(filterParams, { signal })')
   })
 })

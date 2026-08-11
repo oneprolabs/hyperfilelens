@@ -62,6 +62,8 @@ export type DashboardAttentionItem = {
 
 export type TaskDayBucket = {
   label: string
+  finishedAfter: string
+  finishedBefore: string
   success: number
   fail: number
   cancel: number
@@ -222,31 +224,43 @@ function dayKey(d: Date): string {
   return `${m}/${day}`
 }
 
-function buildTasks7dBuckets(tasks: TaskRow[]): TaskDayBucket[] {
-  const buckets: TaskDayBucket[] = []
-  const map = new Map<string, TaskDayBucket>()
+type TaskOutcomeDayRange = {
+  label: string
+  finishedAfter: string
+  finishedBefore: string
+}
+
+function taskOutcomeDayRanges(): TaskOutcomeDayRange[] {
+  const ranges: TaskOutcomeDayRange[] = []
   const now = new Date()
   for (let i = 6; i >= 0; i--) {
     const d = new Date(now)
     d.setDate(d.getDate() - i)
-    const label = dayKey(d)
-    const b = { label, success: 0, fail: 0, cancel: 0 }
-    map.set(label, b)
-    buckets.push(b)
+    d.setHours(0, 0, 0, 0)
+    const nextDay = new Date(d)
+    nextDay.setDate(nextDay.getDate() + 1)
+    ranges.push({
+      label: dayKey(d),
+      finishedAfter: d.toISOString(),
+      finishedBefore: new Date(nextDay.getTime() - 1).toISOString(),
+    })
   }
-  for (const task of tasks) {
-    const iso = task.finished_at || task.created_at
-    if (!iso) continue
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) continue
-    const label = dayKey(d)
-    const b = map.get(label)
-    if (!b) continue
-    if (task.status === 'success') b.success += 1
-    else if (task.status === 'failed' || task.status === 'timeout') b.fail += 1
-    else if (task.status === 'cancelled') b.cancel += 1
-  }
-  return buckets
+  return ranges
+}
+
+function buildTasks7dBuckets(
+  ranges: TaskOutcomeDayRange[],
+  statistics: TaskStatistics[],
+): TaskDayBucket[] {
+  return ranges.map((range, index) => {
+    const stats = statistics[index]
+    return {
+      ...range,
+      success: stats?.success || 0,
+      fail: (stats?.failed || 0) + (stats?.timeout || 0),
+      cancel: stats?.cancelled || 0,
+    }
+  })
 }
 
 function summarizeRecoveryDrill24h(stats: TaskStatistics) {
@@ -354,12 +368,22 @@ export async function loadDashboardOverview(
 ): Promise<DashboardOverview> {
   const orgKey = getEffectiveOrgKey()
   const recoveryDrillStartedAfter = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const taskOutcomeRanges = taskOutcomeDayRanges()
+  const emptyTaskStatistics: TaskStatistics = {
+    total: 0,
+    running: 0,
+    success: 0,
+    failed: 0,
+    cancelled: 0,
+    timeout: 0,
+    by_task_type: {},
+  }
 
   const [
     license,
     taskStats,
     recoveryDrill24hStats,
-    tasks7dPage,
+    tasks7dStatistics,
     runningTasksPage,
     productionSources,
     nodes,
@@ -382,25 +406,13 @@ export async function loadDashboardOverview(
       limits: {},
       usage: {},
     })),
-    taskStatistics().catch(() => ({
-      total: 0,
-      running: 0,
-      success: 0,
-      failed: 0,
-      cancelled: 0,
-      timeout: 0,
-      by_task_type: {},
-    })),
-    taskStatistics({ task_type: 'restore', created_after: recoveryDrillStartedAfter }).catch(() => ({
-      total: 0,
-      running: 0,
-      success: 0,
-      failed: 0,
-      cancelled: 0,
-      timeout: 0,
-      by_task_type: {},
-    })),
-    listTasks({ time_range: '7d', page_size: 500 }).catch(() => ({ count: 0, results: [] })),
+    taskStatistics().catch(() => emptyTaskStatistics),
+    taskStatistics({ task_type: 'restore', created_after: recoveryDrillStartedAfter }).catch(() => emptyTaskStatistics),
+    Promise.all(taskOutcomeRanges.map((range) => taskStatistics({
+      finished_after: range.finishedAfter,
+      finished_before: range.finishedBefore,
+      terminal_only: 'true',
+    }).catch(() => emptyTaskStatistics))),
     listTasks({ status: 'running', page_size: 8 }).catch(() => ({ count: 0, results: [] })),
     productionSourceSummary().catch(() => ({
       total: 0,
@@ -500,7 +512,7 @@ export async function loadDashboardOverview(
       byTaskType: taskStats.by_task_type || {},
     },
     recoveryDrill24h: summarizeRecoveryDrill24h(recoveryDrill24hStats),
-    tasks7dBuckets: buildTasks7dBuckets(tasks7dPage.results),
+    tasks7dBuckets: buildTasks7dBuckets(taskOutcomeRanges, tasks7dStatistics),
     runningTasks: runningTasksPage.results,
     alertFiring: alertsFiringPage.count || alertsFiringPage.results.length,
     alertAcknowledged: alertsAckPage.count || 0,

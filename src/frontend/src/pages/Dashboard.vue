@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   AlertCircle,
@@ -27,6 +27,7 @@ import {
 import type { TaskRow } from '../lib/taskApi'
 
 const { t, te, locale } = useI18n()
+const router = useRouter()
 
 const loading = ref(false)
 const loadError = ref<unknown>(null)
@@ -41,11 +42,27 @@ const routes = {
   sources: '/protection/backup-sources?tab=host',
   policies: '/protection/policies',
   repositories: '/node/repositories',
-  tasks: '/ops/task?task_type=restore&time_mode=24h',
+  taskList: '/ops/task',
+  recoveryDrillTasks: '/ops/task?task_type=restore&time_mode=24h',
   attention: '/ops/attention',
   audit: '/ops/audit',
   subscription: '/node/subscription',
 } as const
+
+function taskOutcomesPath(day: TaskDayBucket): string {
+  const params = new URLSearchParams({
+    time_field: 'finished',
+    time_mode: 'range',
+    finished_after: day.finishedAfter,
+    finished_before: day.finishedBefore,
+    terminal_only: 'true',
+  })
+  return `${routes.taskList}?${params.toString()}`
+}
+
+function openTaskOutcomes(day: TaskDayBucket) {
+  router.push(taskOutcomesPath(day))
+}
 
 function formatBytes(bytes: number): string {
   if (!bytes) return '0 B'
@@ -623,7 +640,7 @@ onMounted(refresh)
       </RouterLink>
 
       <!-- Recovery drill -->
-      <RouterLink :to="routes.tasks" class="ribbon-card ribbon-card--indigo">
+      <RouterLink :to="routes.recoveryDrillTasks" class="ribbon-card ribbon-card--indigo">
         <div class="ribbon-card__glow ribbon-card__glow--indigo" />
         <div>
           <div class="ribbon-card__head">
@@ -926,7 +943,7 @@ onMounted(refresh)
               </span>
               <h4 class="panel-title panel-title--sm">{{ t('dashboard.runningTasksTitle') }}</h4>
             </div>
-            <RouterLink :to="routes.tasks" class="panel-link">
+            <RouterLink :to="routes.taskList" class="panel-link">
               {{ t('dashboard.linkTasks') }}
               <ArrowUpRight class="panel-link__arrow" />
             </RouterLink>
@@ -966,31 +983,10 @@ onMounted(refresh)
               </span>
               <h3 class="panel-title">{{ t('dashboard.chartTasks7d') }}</h3>
             </div>
-            <div class="chart-status">
-              <div v-if="chartHoveredIdx !== null && chartBuckets[chartHoveredIdx]" class="chart-inline-tip">
-                <span class="chart-inline-tip__date">{{ chartBuckets[chartHoveredIdx].label }}:</span>
-                <span class="chart-inline-tip__success">
-                  {{ t('dashboard.chartSuccess') }} {{ chartBuckets[chartHoveredIdx].success }}
-                </span>
-                <span class="chart-inline-tip__sep" aria-hidden="true">|</span>
-                <span class="chart-inline-tip__fail">
-                  {{ t('dashboard.chartFailed') }} {{ chartBuckets[chartHoveredIdx].fail }}
-                </span>
-                <template v-if="chartBuckets[chartHoveredIdx].cancel > 0">
-                  <span class="chart-inline-tip__sep" aria-hidden="true">|</span>
-                  <span class="chart-inline-tip__cancel">
-                    {{ t('dashboard.chartCancelled') }} {{ chartBuckets[chartHoveredIdx].cancel }}
-                  </span>
-                </template>
-                <span class="chart-inline-tip__rate">
-                  {{ t('dashboard.chartSuccessRate') }} {{ daySuccessRate(chartBuckets[chartHoveredIdx]) }}
-                </span>
-              </div>
-              <RouterLink v-else :to="routes.tasks" class="panel-link">
-                {{ t('dashboard.linkTasks') }}
-                <ArrowUpRight class="panel-link__arrow" />
-              </RouterLink>
-            </div>
+            <RouterLink :to="routes.taskList" class="panel-link">
+              {{ t('dashboard.linkTasks') }}
+              <ArrowUpRight class="panel-link__arrow" />
+            </RouterLink>
           </div>
 
           <div class="chart-area">
@@ -1005,41 +1001,81 @@ onMounted(refresh)
                 <div class="chart-y-line" />
               </div>
               <div class="chart-bars">
-                <div
+                <HflPopover
                   v-for="(day, idx) in chartBuckets"
                   :key="day.label"
-                  class="chart-col"
-                  @mouseenter="chartHoveredIdx = idx"
-                  @mouseleave="chartHoveredIdx = null"
+                  trigger="hover"
+                  placement="top"
+                  :show-after="0"
+                  :width="280"
+                  :fallback-placements="['bottom']"
+                  popper-class="dashboard-chart-outcome-popper"
                 >
-                  <div class="chart-col__pillar" :style="{ height: `${dayHeightPercent(day)}%` }">
+                  <template #reference>
                     <div
-                      v-if="dayTotal(day) > 0"
-                      class="chart-pillar"
-                      :class="{ 'chart-pillar--hover': chartHoveredIdx === idx }"
+                      class="chart-col"
+                      role="link"
+                      tabindex="0"
+                      :aria-label="t('dashboard.goTo', { target: `${day.label} ${t('dashboard.linkTasks')}` })"
+                      @click="openTaskOutcomes(day)"
+                      @mouseenter="chartHoveredIdx = idx"
+                      @mouseleave="chartHoveredIdx = null"
+                      @keydown.enter.prevent="openTaskOutcomes(day)"
+                      @keydown.space.prevent="openTaskOutcomes(day)"
                     >
-                      <div
-                        v-if="day.cancel > 0"
-                        class="chart-seg chart-seg--cancel"
-                        :style="{ height: `${(day.cancel / dayTotal(day)) * 100}%` }"
-                      />
-                      <div
-                        v-if="day.fail > 0"
-                        class="chart-seg chart-seg--fail"
-                        :style="{ height: `${(day.fail / dayTotal(day)) * 100}%` }"
-                      />
-                      <div
-                        v-if="day.success > 0"
-                        class="chart-seg chart-seg--success"
-                        :style="{ height: `${(day.success / dayTotal(day)) * 100}%` }"
-                      />
+                      <div class="chart-col__pillar" :style="{ height: `${dayHeightPercent(day)}%` }">
+                        <div
+                          v-if="dayTotal(day) > 0"
+                          class="chart-pillar"
+                          :class="{ 'chart-pillar--hover': chartHoveredIdx === idx }"
+                        >
+                          <div
+                            v-if="day.cancel > 0"
+                            class="chart-seg chart-seg--cancel"
+                            :style="{ height: `${(day.cancel / dayTotal(day)) * 100}%` }"
+                          />
+                          <div
+                            v-if="day.fail > 0"
+                            class="chart-seg chart-seg--fail"
+                            :style="{ height: `${(day.fail / dayTotal(day)) * 100}%` }"
+                          />
+                          <div
+                            v-if="day.success > 0"
+                            class="chart-seg chart-seg--success"
+                            :style="{ height: `${(day.success / dayTotal(day)) * 100}%` }"
+                          />
+                        </div>
+                        <div v-else class="chart-zero" />
+                      </div>
+                      <span class="chart-x-label" :class="{ 'chart-x-label--active': chartHoveredIdx === idx }">
+                        {{ day.label }}
+                      </span>
                     </div>
-                    <div v-else class="chart-zero" />
+                  </template>
+                  <div class="chart-inline-tip">
+                    <div class="chart-inline-tip__head">
+                      <span class="chart-inline-tip__date">{{ day.label }}</span>
+                      <span class="chart-inline-tip__rate">
+                        <span class="chart-inline-tip__rate-label">{{ t('dashboard.chartSuccessRate') }}</span>
+                        {{ daySuccessRate(day) }}
+                      </span>
+                    </div>
+                    <div class="chart-inline-tip__metrics">
+                      <div class="chart-inline-tip__metric chart-inline-tip__metric--success">
+                        <span>{{ t('dashboard.chartSuccess') }}</span>
+                        <strong>{{ day.success }}</strong>
+                      </div>
+                      <div class="chart-inline-tip__metric chart-inline-tip__metric--fail">
+                        <span>{{ t('dashboard.chartFailed') }}</span>
+                        <strong>{{ day.fail }}</strong>
+                      </div>
+                      <div class="chart-inline-tip__metric chart-inline-tip__metric--cancel">
+                        <span>{{ t('dashboard.chartCancelled') }}</span>
+                        <strong>{{ day.cancel }}</strong>
+                      </div>
+                    </div>
                   </div>
-                  <span class="chart-x-label" :class="{ 'chart-x-label--active': chartHoveredIdx === idx }">
-                    {{ day.label }}
-                  </span>
-                </div>
+                </HflPopover>
               </div>
             </div>
           </div>
@@ -2902,64 +2938,105 @@ onMounted(refresh)
 }
 
 /* ---- Chart ---- */
-.chart-status {
-  min-height: 1.5rem;
-  display: flex;
-  align-items: center;
-}
-
 .chart-inline-tip {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 12px;
-  background: #f8fafc;
-  border: 1px solid rgba(226, 232, 240, 0.6);
-  padding: 0.25rem 0.625rem;
-  border-radius: 0.375rem;
+  flex-direction: column;
+  gap: 0.625rem;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
 
-@media (min-width: 768px) {
-  .chart-inline-tip {
-    font-size: 13px;
-  }
+:global(.dashboard-chart-outcome-popper.el-popper) {
+  --dashboard-primary: var(--color-primary, #5c5cff);
+  --dashboard-primary-strong: color-mix(in srgb, var(--dashboard-primary) 86%, #000);
+  --dashboard-primary-soft: color-mix(in srgb, var(--dashboard-primary) 10%, #fff);
+  --dashboard-primary-border: color-mix(in srgb, var(--dashboard-primary) 20%, #fff);
+  --dashboard-success: var(--color-success);
+  --dashboard-error: var(--color-error);
+  padding: 0;
+  border: 1px solid var(--dashboard-primary-border);
+  border-radius: 0.625rem;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+:global(.dashboard-chart-outcome-popper.el-popper .el-popper__arrow::before) {
+  border-color: var(--dashboard-primary-border);
+  background: #fff;
+}
+
+.chart-inline-tip__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--dashboard-primary-border);
 }
 
 .chart-inline-tip__date {
-  color: #86909c;
+  color: var(--dashboard-primary-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.chart-inline-tip__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.375rem;
+  width: 100%;
+}
+
+.chart-inline-tip__metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  padding: 0.25rem 0.5rem;
+  font-size: 11px;
   font-weight: 600;
 }
 
-.chart-inline-tip__success {
+.chart-inline-tip__metric strong {
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.chart-inline-tip__metric--success {
   color: var(--dashboard-success);
-  font-weight: 600;
 }
 
-.chart-inline-tip__fail {
+.chart-inline-tip__metric--fail {
   color: var(--dashboard-error);
-  font-weight: 600;
 }
 
-.chart-inline-tip__sep {
-  color: #c9cdd4;
-  font-weight: 500;
-  user-select: none;
+.chart-inline-tip__metric--cancel {
+  color: #64748b;
 }
 
-.chart-inline-tip__cancel {
-  color: #86909c;
-  font-weight: 600;
+.chart-inline-tip__metric--success strong,
+.chart-inline-tip__metric--fail strong,
+.chart-inline-tip__metric--cancel strong {
+  font-weight: 800;
 }
 
 .chart-inline-tip__rate {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
   background: var(--dashboard-primary-soft);
   color: var(--dashboard-primary-strong);
   border: 1px solid var(--dashboard-primary-border);
-  padding: 0.125rem 0.375rem;
-  border-radius: 4px;
-  font-size: 12px;
+  padding: 0.1875rem 0.4375rem;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chart-inline-tip__rate-label {
   font-weight: 600;
 }
 
@@ -3022,6 +3099,11 @@ onMounted(refresh)
   height: 100%;
   justify-content: flex-end;
   cursor: pointer;
+}
+
+.chart-col:focus-visible {
+  outline: 2px solid var(--dashboard-primary);
+  outline-offset: 2px;
 }
 
 .chart-col__pillar {

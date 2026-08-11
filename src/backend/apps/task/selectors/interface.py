@@ -22,6 +22,9 @@ def list_tasks(
     search_field: str | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    finished_after: datetime | None = None,
+    finished_before: datetime | None = None,
+    terminal_only: bool = False,
 ) -> QuerySet[Task]:
     queryset = (
         Task.objects.filter(organization_id=organization_id)
@@ -68,6 +71,19 @@ def list_tasks(
         queryset = queryset.filter(created_at__gte=created_after)
     if created_before:
         queryset = queryset.filter(created_at__lte=created_before)
+    if finished_after:
+        queryset = queryset.filter(finished_at__gte=finished_after)
+    if finished_before:
+        queryset = queryset.filter(finished_at__lte=finished_before)
+    if terminal_only:
+        queryset = queryset.filter(
+            status__in=[
+                Task.Status.SUCCESS,
+                Task.Status.FAILED,
+                Task.Status.CANCELLED,
+                Task.Status.TIMEOUT,
+            ]
+        )
     return queryset
 
 
