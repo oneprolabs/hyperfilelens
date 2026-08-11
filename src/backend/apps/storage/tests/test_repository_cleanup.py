@@ -1,6 +1,7 @@
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -13,6 +14,7 @@ from apps.storage.repositories.models import (
     RepositoryUsageShard,
 )
 from apps.storage.services.internal.repository_cleanup import (
+    _execute_physical_cleanup,
     create_direct_nas_target_cleanup_task,
     create_repository_cleanup_task,
     direct_nas_cleanup_target_ids,
@@ -41,6 +43,130 @@ class RepositoryCleanupTests(TestCase):
             s3_bucket="cleanup-bucket",
             config={"prefix": "managed/repository/", "access_key_id": "test-key"},
         )
+
+    def test_legacy_local_disk_preflight_warns_that_physical_data_is_preserved(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="legacy-local-disk",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"proxy_node_dir": "/data/legacy-mixed-directory"},
+        )
+
+        preflight = repository_cleanup_preflight(repository=repository)
+
+        warning = next(
+            item
+            for item in preflight["warnings"]
+            if item["code"] == "legacy_local_disk_preserved"
+        )
+        self.assertIn("/data/legacy-mixed-directory", warning["detail"])
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+        return_value={
+            "physical_cleanup": "preserved_legacy_directory",
+            "cleanup_complete": True,
+            "retained_resources": ["legacy_local_disk_directory"],
+        },
+    )
+    def test_legacy_local_disk_cleanup_records_preserved_result(self, _execute_cleanup):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="legacy-cleanup-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="legacy-local-disk-cleanup",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"proxy_node_dir": "/data/legacy-repository"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        repository.refresh_from_db()
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["outcome"], "cleanup_success_data_preserved")
+        self.assertEqual(result["retained_resources"], ["legacy_local_disk_directory"])
+        self.assertEqual(repository.status, Repository.Status.REMOVED)
+        self.assertEqual(repository.cleanup_result, Repository.CleanupResult.PRESERVED)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
+    )
+    def test_legacy_local_disk_on_v1_agent_is_preserved_without_dispatch(self, dispatch):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="legacy-v1-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="legacy-v1-local-disk",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"proxy_node_dir": "/data/mixed"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = _execute_physical_cleanup(repository_task)
+
+        self.assertEqual(result["physical_cleanup"], "preserved_legacy_directory")
+        dispatch.assert_not_called()
+
+    def test_managed_local_disk_requires_cleanup_v2(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="managed-v1-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="managed-v1-local-disk",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={
+                "proxy_node_base_dir": "/data",
+                "proxy_node_dir": "/data/hfl-repo-123",
+                "proxy_fs_layout": "managed_subdir_v1",
+            },
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        repository.config["proxy_node_dir"] = f"/data/hfl-repo-{repository.id}"
+        repository.save(update_fields=["config", "updated_at"])
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        with self.assertRaisesMessage(ValidationError, "repository_cleanup_v2"):
+            _execute_physical_cleanup(repository_task)
 
     @mock.patch(
         "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",

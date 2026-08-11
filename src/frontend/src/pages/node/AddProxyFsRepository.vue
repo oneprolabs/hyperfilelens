@@ -51,6 +51,10 @@ const selectedProxyNodeName = computed(() =>
 const dirSelectModeLabel = computed(() =>
   useTreeSelect.value ? t('repositoriesPage.dirSelectTree') : t('repositoriesPage.dirSelectInput'),
 )
+const managedRepositoryPathPreview = computed(() => {
+  const base = proxyNodeDir.value.trim().replace(/\/+$/, '')
+  return base ? `${base}/hfl-repo-<repository-id>` : ''
+})
 const validQuotaAlertThreshold = computed(() => {
   const value = Number(quotaAlertThreshold.value || 0)
   return value >= 1 && value <= 100
@@ -468,7 +472,7 @@ function buildCreatePayload() {
     bind_node_type: 'proxy',
     bind_node_id: proxyNodeId.value,
     config: {
-      proxy_node_dir: proxyNodeDir.value.trim(),
+      proxy_node_base_dir: proxyNodeDir.value.trim(),
       quota_gb: quota.value || 0,
       quota_alert_enabled: enableQuotaAlert.value,
       quota_alert_threshold: enableQuotaAlert.value ? Number(quotaAlertThreshold.value || 0) : 0,
@@ -663,7 +667,7 @@ watch(enableQuotaAlert, (enabled) => {
                   </div>
                 </ElFormItem>
 
-                <ElFormItem :label="t('repositoriesPage.fieldProxyNodeDir')" required class="fullscreen-form-item--in-card">
+                <ElFormItem :label="t('repositoriesPage.fieldProxyNodeBaseDir')" required class="fullscreen-form-item--in-card">
                   <div class="dir-selector-container">
                     <div class="dir-selector-toggle">
                       <button
@@ -936,9 +940,15 @@ watch(enableQuotaAlert, (enabled) => {
                   </span>
                 </div>
                 <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldProxyNodeDir') }}</span>
+                  <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldProxyNodeBaseDir') }}</span>
                   <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !proxyNodeDir }">
                     {{ proxyNodeDir || '—' }}
+                  </span>
+                </div>
+                <div class="add-form-preview-row">
+                  <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldManagedRepoPath') }}</span>
+                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !managedRepositoryPathPreview }">
+                    {{ managedRepositoryPathPreview || '—' }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">

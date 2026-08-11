@@ -39,8 +39,10 @@ func (e *Engine) runManagedRepositoryCleanup(
 		"operation_type":  operationType,
 		"repository_type": spec.Type,
 	}
+	cleanupScope := strings.ToLower(strings.TrimSpace(payloadStringValue(p.Extra["cleanup_scope"])))
 	var repositoryPath string
 	var allowedRoot string
+	preservePhysicalRepository := false
 	if spec.Type == "nas" {
 		nassvc.LogSpec("repository_cleanup_mount_begin", *spec.TargetNAS, "task_id", taskID)
 		if err := nassvc.NewService().EnsureMounted(ctx, *spec.TargetNAS); err != nil {
@@ -56,7 +58,14 @@ func (e *Engine) runManagedRepositoryCleanup(
 			return "failed", result, err.Error()
 		}
 	} else if spec.Type == "proxy_fs" {
-		repositoryPath = spec.Path
+		if cleanupScope == "local_state_only" {
+			preservePhysicalRepository = true
+		} else {
+			repositoryPath, allowedRoot, err = validateManagedProxyFSRepositoryPath(spec)
+			if err != nil {
+				return "failed", result, err.Error()
+			}
+		}
 	} else {
 		return "failed", result, fmt.Sprintf("unsupported repository cleanup type %q", spec.Type)
 	}
@@ -65,14 +74,21 @@ func (e *Engine) runManagedRepositoryCleanup(
 		"phase":          "repository_cleanup",
 		"operation_type": operationType,
 	})
-	_, existed, err := deleteManagedRepositoryPath(ctx, repositoryPath, allowedRoot)
-	if err != nil {
-		return "failed", result, redactRepositoryCleanupPaths(err.Error(), repositoryPath, allowedRoot)
-	}
-	result["repository_existed"] = existed
-	result["physical_cleanup"] = "deleted"
-	if !existed {
-		result["physical_cleanup"] = "already_absent"
+	if preservePhysicalRepository {
+		result["repository_existed"] = true
+		result["physical_cleanup"] = "preserved_legacy_directory"
+		result["scope"] = "legacy_local_disk"
+		result["retained_resources"] = []string{"legacy_local_disk_directory"}
+	} else {
+		_, existed, err := deleteManagedRepositoryPath(ctx, repositoryPath, allowedRoot)
+		if err != nil {
+			return "failed", result, redactRepositoryCleanupPaths(err.Error(), repositoryPath, allowedRoot)
+		}
+		result["repository_existed"] = existed
+		result["physical_cleanup"] = "deleted"
+		if !existed {
+			result["physical_cleanup"] = "already_absent"
+		}
 	}
 
 	configFiles := e.repositoryCleanupConfigPaths(spec)
@@ -110,6 +126,29 @@ func (e *Engine) runManagedRepositoryCleanup(
 		return "failed", result, "canceled"
 	}
 	return "success", result, ""
+}
+
+func validateManagedProxyFSRepositoryPath(spec repositorySpec) (string, string, error) {
+	if spec.Layout != "managed_subdir_v1" {
+		return "", "", fmt.Errorf("refusing to delete an unmanaged proxy filesystem repository")
+	}
+	if spec.ID <= 0 {
+		return "", "", fmt.Errorf("managed proxy filesystem repository id is required")
+	}
+	base := filepath.Clean(strings.TrimSpace(spec.BasePath))
+	if !filepath.IsAbs(base) || filepath.Dir(base) == base {
+		return "", "", fmt.Errorf("managed proxy filesystem base path is invalid")
+	}
+	expected := filepath.Join(base, fmt.Sprintf("hfl-repo-%d", spec.ID))
+	path := filepath.Clean(strings.TrimSpace(spec.Path))
+	if path != expected || filepath.Dir(path) != base {
+		return "", "", fmt.Errorf("managed proxy filesystem repository path does not match its owner")
+	}
+	validated, err := validateRepositoryCleanupPath(path, base)
+	if err != nil {
+		return "", "", err
+	}
+	return validated, base, nil
 }
 
 func (e *Engine) repositoryCleanupConfigPaths(spec repositorySpec) []string {

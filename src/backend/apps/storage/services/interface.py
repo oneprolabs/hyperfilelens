@@ -19,6 +19,7 @@ from apps.storage.services.internal.nas_repository import (
 from apps.storage.services.internal.proxy_fs_repository import (
     ProxyFSRepositoryError,
     check_proxy_fs_repository,
+    configure_managed_proxy_fs_path,
 )
 from apps.storage.services.internal.repository_create import (
     enqueue_repository_create_task,
@@ -293,6 +294,8 @@ def create_repository(
 
     if repository.repo_type == Repository.Type.PROXY_FS:
         try:
+            if configure_managed_proxy_fs_path(repository):
+                repository.save(update_fields=["config", "updated_at"])
             preflight_bound_proxy(repository=repository)
         except ValidationError as exc:
             repository.delete()

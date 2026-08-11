@@ -23,6 +23,9 @@ from apps.storage.repositories.models import (
     RepositoryUsageShard,
 )
 from apps.storage.services.internal.repository_access import repository_payload_for_node
+from apps.storage.services.internal.proxy_fs_repository import (
+    proxy_fs_uses_managed_subdir,
+)
 from apps.storage.services.internal.repository_agent_operation import (
     RepositoryAgentOperationResult,
     RepositoryAgentOperationStateUnknown,
@@ -185,6 +188,22 @@ def repository_cleanup_preflight(
                 "count": len(active_targets),
                 }
             )
+
+    if (
+        repository.repo_type == Repository.Type.PROXY_FS
+        and not proxy_fs_uses_managed_subdir(repository)
+    ):
+        config = repository.config if isinstance(repository.config, dict) else {}
+        warnings.append(
+            {
+                "code": "legacy_local_disk_preserved",
+                "detail": (
+                    "This Local Disk predates managed repository directories. "
+                    f'Its physical data at "{str(config.get("proxy_node_dir") or "").strip()}" '
+                    "will be preserved when the repository registration is removed."
+                ),
+            }
+        )
 
     blockers.extend(
         repository_active_task_blockers(
@@ -546,13 +565,24 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
                 )
             )
         if physical_cleanup_complete:
+            physical_data_preserved = (
+                result.get("physical_cleanup") == "preserved_legacy_directory"
+            )
             result = {
                 **result,
                 "force": bool(repository_task.force),
-                "outcome": "cleanup_success",
+                "outcome": (
+                    "cleanup_success_data_preserved"
+                    if physical_data_preserved
+                    else "cleanup_success"
+                ),
                 "cleanup_complete": True,
                 "cleanup_failures": [],
-                "retained_resources": [],
+                "retained_resources": (
+                    result.get("retained_resources") or []
+                    if physical_data_preserved
+                    else []
+                ),
             }
         else:
             result = {
@@ -582,6 +612,11 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
             _apply_cleanup_success(
                 repository_task_id=repository_task.id,
                 cleanup_complete=physical_cleanup_complete,
+                cleanup_result=(
+                    Repository.CleanupResult.PRESERVED
+                    if result.get("physical_cleanup") == "preserved_legacy_directory"
+                    else None
+                ),
             )
             _set_cleanup_step(task, "finalize_cleanup_metadata", TaskStep.Status.SUCCESS, 100)
             complete_task(
@@ -1134,7 +1169,24 @@ def _execute_physical_cleanup(
         raise ValidationError("Repository owner node was not found.")
     inventory = (node.metadata or {}).get("inventory") if isinstance(node.metadata, dict) else {}
     capabilities = inventory.get("capabilities") if isinstance(inventory, dict) else []
-    if "repository_cleanup_v1" not in (capabilities if isinstance(capabilities, list) else []):
+    capabilities = capabilities if isinstance(capabilities, list) else []
+    cleanup_scope = "managed_repository"
+    if repository.repo_type == Repository.Type.PROXY_FS:
+        if not proxy_fs_uses_managed_subdir(repository):
+            if "repository_cleanup_v2" not in capabilities:
+                return {
+                    "physical_cleanup": "preserved_legacy_directory",
+                    "scope": "legacy_local_disk",
+                    "local_state_cleanup": "agent_upgrade_required",
+                    "cleanup_complete": True,
+                    "retained_resources": ["legacy_local_disk_directory"],
+                }
+            cleanup_scope = "local_state_only"
+        elif "repository_cleanup_v2" not in capabilities:
+            raise ValidationError(
+                "Repository owner does not advertise repository_cleanup_v2. Upgrade the Proxy before deleting this Local Disk."
+            )
+    elif "repository_cleanup_v1" not in capabilities:
         raise ValidationError("Repository owner does not advertise repository_cleanup_v1.")
     repository_payload = repository_payload_for_node(
         repository=repository,
@@ -1149,6 +1201,7 @@ def _execute_physical_cleanup(
         node=node,
         payload={
             "operation_type": repository_task.operation_type,
+            "cleanup_scope": cleanup_scope,
             "repository": repository_payload,
         },
         correlation_type="repository_cleanup",
@@ -1232,6 +1285,7 @@ def _apply_cleanup_success(
     *,
     repository_task_id: int,
     cleanup_complete: bool,
+    cleanup_result: str | None = None,
 ) -> None:
     with transaction.atomic():
         repository_task = RepositoryTask.objects.select_for_update().select_related(
@@ -1259,6 +1313,7 @@ def _apply_cleanup_success(
             _tombstone_repository(
                 repository=repository,
                 cleanup_complete=cleanup_complete,
+                cleanup_result=cleanup_result,
             )
 
 
@@ -1363,12 +1418,13 @@ def _tombstone_repository(
     *,
     repository: Repository,
     cleanup_complete: bool,
+    cleanup_result: str | None = None,
 ) -> None:
     credential_id = repository.credential_id
     repository.status = Repository.Status.REMOVED
     repository.health = Repository.Health.OFFLINE
     repository.removed_at = timezone.now()
-    repository.cleanup_result = (
+    repository.cleanup_result = cleanup_result or (
         Repository.CleanupResult.DELETED
         if cleanup_complete
         else Repository.CleanupResult.FORCE_SKIPPED

@@ -46,6 +46,7 @@ func SendInventory(ctx context.Context, sink wire.Sender, provider config.Provid
 			"task_command_ack_v1",
 			"repository_operation_v1",
 			"repository_cleanup_v1",
+			"repository_cleanup_v2",
 			"backup_prepared_snapshot_v1",
 			"network_inventory_v1",
 			"repository_server_port_range_v1",

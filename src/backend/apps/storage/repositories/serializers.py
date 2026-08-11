@@ -302,11 +302,16 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                             )
                 elif (
                     instance.repo_type == Repository.Type.PROXY_FS
-                    and "proxy_node_dir" in incoming_config
                 ):
-                    locked_errors["config.proxy_node_dir"] = (
-                        "Proxy filesystem repository path cannot be modified."
-                    )
+                    for field in (
+                        "proxy_node_base_dir",
+                        "proxy_node_dir",
+                        "proxy_fs_layout",
+                    ):
+                        if field in incoming_config:
+                            locked_errors[f"config.{field}"] = (
+                                "Proxy filesystem repository path cannot be modified."
+                            )
             if instance.repo_type == Repository.Type.NAS and "nas_protocol" in attrs:
                 locked_errors["nas_protocol"] = "NAS protocol cannot be modified."
             if locked_errors:
@@ -519,8 +524,15 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
         if bind_node_type and bind_node_type != Repository.BindNodeType.PROXY:
             raise serializers.ValidationError({"bind_node_type": "Proxy filesystem must bind a proxy node."})
         self._validate_proxy_node_target(bind_node_id, instance=instance)
-        if not str(config.get("proxy_node_dir") or "").strip():
-            raise serializers.ValidationError({"config.proxy_node_dir": "Proxy node directory is required."})
+        base_dir = str(
+            config.get("proxy_node_base_dir") or config.get("proxy_node_dir") or ""
+        ).strip()
+        if not base_dir:
+            raise serializers.ValidationError(
+                {"config.proxy_node_base_dir": "Proxy node base directory is required."}
+            )
+        if self.instance is None:
+            config["proxy_node_base_dir"] = base_dir
 
     def _validate_proxy_node_target(self, bind_node_id, *, instance) -> None:
         organization_id = self.context.get("organization_id")

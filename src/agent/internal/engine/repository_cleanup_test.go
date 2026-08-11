@@ -111,8 +111,14 @@ func TestManagedRepositoryCleanupRemovesOnlyOwnedCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstSpec := repositorySpec{ID: 71, Type: "proxy_fs", Path: filepath.Join(physicalRoot, "repo-71")}
-	secondSpec := repositorySpec{ID: 72, Type: "proxy_fs", Path: filepath.Join(physicalRoot, "repo-72")}
+	firstSpec := repositorySpec{
+		ID: 71, Type: "proxy_fs", BasePath: physicalRoot,
+		Path: filepath.Join(physicalRoot, "hfl-repo-71"), Layout: "managed_subdir_v1",
+	}
+	secondSpec := repositorySpec{
+		ID: 72, Type: "proxy_fs", BasePath: physicalRoot,
+		Path: filepath.Join(physicalRoot, "hfl-repo-72"), Layout: "managed_subdir_v1",
+	}
 	for _, spec := range []repositorySpec{firstSpec, secondSpec} {
 		if err := os.MkdirAll(spec.Path, 0o755); err != nil {
 			t.Fatal(err)
@@ -132,9 +138,11 @@ func TestManagedRepositoryCleanupRemovesOnlyOwnedCache(t *testing.T) {
 	payload := ParsePayload(map[string]any{
 		"operation_type": "cleanup.repository",
 		"repository": map[string]any{
-			"id":   firstSpec.ID,
-			"type": firstSpec.Type,
-			"path": firstSpec.Path,
+			"id":        firstSpec.ID,
+			"type":      firstSpec.Type,
+			"path":      firstSpec.Path,
+			"base_path": firstSpec.BasePath,
+			"layout":    firstSpec.Layout,
 		},
 	})
 	status, result, message := engine.runManagedRepositoryCleanup(
@@ -153,6 +161,92 @@ func TestManagedRepositoryCleanupRemovesOnlyOwnedCache(t *testing.T) {
 	secondCache := managedRepositoryCacheDir(engine.current(), engine.repositoryConfigPath(secondSpec))
 	if _, err := os.Stat(secondCache); err != nil {
 		t.Fatalf("other repository cache was removed: %v", err)
+	}
+}
+
+func TestManagedProxyFSCleanupPreservesBaseDirectorySiblings(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "hfl-repo-81")
+	sibling := filepath.Join(base, "important-user-file")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sibling, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := deleteManagedRepositoryPath(context.Background(), target, base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sibling); err != nil {
+		t.Fatalf("base directory sibling was removed: %v", err)
+	}
+	if _, err := os.Stat(base); err != nil {
+		t.Fatalf("base directory was removed: %v", err)
+	}
+}
+
+func TestValidateManagedProxyFSRepositoryPathRejectsOwnershipMismatch(t *testing.T) {
+	base := t.TempDir()
+	for _, spec := range []repositorySpec{
+		{ID: 91, Type: "proxy_fs", BasePath: base, Path: filepath.Join(base, "user-data")},
+		{ID: 91, Type: "proxy_fs", BasePath: base, Path: filepath.Join(base, "hfl-repo-92"), Layout: "managed_subdir_v1"},
+	} {
+		if _, _, err := validateManagedProxyFSRepositoryPath(spec); err == nil {
+			t.Fatalf("expected ownership validation failure for %#v", spec)
+		}
+	}
+}
+
+func TestManagedProxyFSCreatePathMustNotAlreadyExist(t *testing.T) {
+	base := t.TempDir()
+	spec := repositorySpec{
+		ID: 92, Type: "proxy_fs", BasePath: base,
+		Path: filepath.Join(base, "hfl-repo-92"), Layout: "managed_subdir_v1",
+	}
+
+	exists, err := managedProxyFSCreatePathExists(spec)
+	if err != nil || exists {
+		t.Fatalf("absent managed path exists=%v err=%v", exists, err)
+	}
+	if err := os.Mkdir(spec.Path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = managedProxyFSCreatePathExists(spec)
+	if err != nil || !exists {
+		t.Fatalf("existing managed path exists=%v err=%v", exists, err)
+	}
+}
+
+func TestManagedRepositoryCleanupPreservesLegacyProxyFSDirectory(t *testing.T) {
+	dataDir := t.TempDir()
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{DataDir: dataDir}})
+	legacyPath := filepath.Join(t.TempDir(), "legacy-repository")
+	if err := os.MkdirAll(legacyPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyPath, "important"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := ParsePayload(map[string]any{
+		"operation_type": "cleanup.repository",
+		"cleanup_scope":  "local_state_only",
+		"repository": map[string]any{
+			"id": 93, "type": "proxy_fs", "path": legacyPath,
+		},
+	})
+	status, result, message := engine.runManagedRepositoryCleanup(
+		context.Background(), ReporterSink{}, "cleanup-legacy", payload,
+	)
+	if status != "success" {
+		t.Fatalf("cleanup status=%q message=%q result=%#v", status, message, result)
+	}
+	if result["physical_cleanup"] != "preserved_legacy_directory" {
+		t.Fatalf("unexpected physical cleanup result: %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(legacyPath, "important")); err != nil {
+		t.Fatalf("legacy repository data was removed: %v", err)
 	}
 }
 

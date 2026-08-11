@@ -105,6 +105,7 @@ class Repository(models.Model):
     class CleanupResult(models.TextChoices):
         DELETED = "deleted", "Physical repository deleted"
         FORCE_SKIPPED = "force_skipped", "Physical repository retained"
+        PRESERVED = "preserved", "Legacy physical repository preserved"
 
     organization_id = models.BigIntegerField(db_index=True)
     name = models.CharField(max_length=200)

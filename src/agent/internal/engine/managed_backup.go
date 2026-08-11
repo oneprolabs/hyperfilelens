@@ -45,6 +45,8 @@ type repositorySpec struct {
 	ID              int64
 	Type            string
 	Path            string
+	BasePath        string
+	Layout          string
 	Bucket          string
 	Region          string
 	Endpoint        string
@@ -77,6 +79,8 @@ func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
 	spec := repositorySpec{
 		Type:            strings.ToLower(strings.TrimSpace(stringValue(data["type"]))),
 		Path:            strings.TrimSpace(stringValue(data["path"])),
+		BasePath:        strings.TrimSpace(stringValue(data["base_path"])),
+		Layout:          strings.ToLower(strings.TrimSpace(stringValue(data["layout"]))),
 		Bucket:          strings.TrimSpace(stringValue(data["bucket"])),
 		Region:          strings.TrimSpace(stringValue(data["region"])),
 		Endpoint:        strings.TrimSpace(stringValue(data["endpoint"])),
@@ -127,6 +131,11 @@ func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
 	case "proxy_fs":
 		if spec.Path == "" {
 			return repositorySpec{}, false, fmt.Errorf("repository.path is required for proxy_fs repositories")
+		}
+		if spec.Layout != "" {
+			if _, _, err := validateManagedProxyFSRepositoryPath(spec); err != nil {
+				return repositorySpec{}, false, err
+			}
 		}
 	case "nas":
 		if spec.Subdir == "" {
@@ -508,6 +517,17 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		nassvc.LogSpec("repository_mkdir_ok", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath)
 		spec.Path = repoPath
 	}
+	if mode == repositoryPrepareInitialize && spec.Type == "proxy_fs" && spec.Layout == "managed_subdir_v1" {
+		exists, pathErr := managedProxyFSCreatePathExists(spec)
+		if pathErr != nil {
+			return "", nil, nil, repositorySpec{}, pathErr.Error()
+		}
+		if exists {
+			return "", nil, map[string]any{
+				"error_code": repositoryAlreadyExistsCode,
+			}, spec, repositoryAlreadyExistsMessage
+		}
+	}
 
 	_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
 		"repository_prepare",
@@ -623,6 +643,21 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		map[string]any{"config_file": configFile},
 	))
 	return configFile, env, result, spec, ""
+}
+
+func managedProxyFSCreatePathExists(spec repositorySpec) (bool, error) {
+	path, _, err := validateManagedProxyFSRepositoryPath(spec)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (e *Engine) runManagedRepositoryStatus(
