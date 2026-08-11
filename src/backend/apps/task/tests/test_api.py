@@ -103,6 +103,37 @@ class TaskApiTests(TestCase):
         self.assertEqual(response.data["failed"], 1)
         self.assertEqual(response.data["by_task_type"], {Task.Type.RESTORE: 2})
 
+    def test_statistics_reports_all_task_statuses(self):
+        for task_status in (
+            Task.Status.PENDING,
+            Task.Status.RUNNING,
+            Task.Status.SUCCESS,
+            Task.Status.FAILED,
+            Task.Status.CANCELLED,
+            Task.Status.TIMEOUT,
+        ):
+            Task.objects.create(
+                organization_id=self.org.id,
+                task_type=Task.Type.BACKUP,
+                display_name=f"{task_status} task",
+                status=task_status,
+            )
+
+        response = self.client.get(
+            "/api/v1/tasks/statistics/",
+            follow=True,
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(response.data["total"], 6)
+        self.assertEqual(response.data["running"], 1)
+        self.assertEqual(response.data["success"], 1)
+        self.assertEqual(response.data["failed"], 1)
+        self.assertEqual(response.data["cancelled"], 1)
+        self.assertEqual(response.data["timeout"], 1)
+        self.assertEqual(response.data["by_status"][Task.Status.PENDING], 1)
+
     def test_create_task_persists_after_listing_refresh(self):
         response = self.client.post(
             "/api/v1/tasks/",
