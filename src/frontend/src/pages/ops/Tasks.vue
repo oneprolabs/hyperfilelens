@@ -962,7 +962,7 @@ watch(
 <template>
   <ModulePage :title="t('ops.task.title')" :menus="opsMenus" body-fill>
     <div class="hfl-ops-page hfl-ops-page--fill">
-      <div class="hfl-ops-stats-grid hfl-ops-stats-grid--4">
+      <div class="hfl-ops-stats-grid hfl-ops-stats-grid--5">
         <OpsStatCard
           :label="t('ops.task.status.running')"
           :value="stats.running"
@@ -973,6 +973,16 @@ watch(
         >
           <template #icon>
             <Clock3 :size="17" />
+          </template>
+        </OpsStatCard>
+        <OpsStatCard
+          :label="t('ops.task.status.pending')"
+          :value="stats.by_status?.pending ?? 0"
+          accent="gray"
+          accent-side="left"
+        >
+          <template #icon>
+            <Circle :size="15" />
           </template>
         </OpsStatCard>
         <OpsStatCard
@@ -987,8 +997,8 @@ watch(
           </template>
         </OpsStatCard>
         <OpsStatCard
-          :label="t('ops.task.status.failed')"
-          :value="stats.failed"
+          :label="t('ops.task.status.failedTimedOut')"
+          :value="stats.failed + stats.timeout"
           accent="red"
           accent-side="left"
           value-class="text-red-600"
@@ -998,13 +1008,13 @@ watch(
           </template>
         </OpsStatCard>
         <OpsStatCard
-          :label="t('ops.task.status.pending')"
-          :value="stats.by_status?.pending ?? 0"
+          :label="t('ops.task.status.cancelled')"
+          :value="stats.cancelled"
           accent="gray"
           accent-side="left"
         >
           <template #icon>
-            <Circle :size="15" />
+            <CircleStop :size="16" />
           </template>
         </OpsStatCard>
       </div>

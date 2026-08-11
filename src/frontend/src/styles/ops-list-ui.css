@@ -45,6 +45,16 @@
   .hfl-ops-stats-grid--4 {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+
+  .hfl-ops-stats-grid--5 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .hfl-ops-stats-grid--5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 767.98px) {
@@ -58,11 +68,13 @@
 
   .hfl-ops-stats-grid--2,
   .hfl-ops-stats-grid--3,
-  .hfl-ops-stats-grid--4 {
+  .hfl-ops-stats-grid--4,
+  .hfl-ops-stats-grid--5 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .hfl-ops-stats-grid--3 > :last-child:nth-child(odd) {
+  .hfl-ops-stats-grid--3 > :last-child:nth-child(odd),
+  .hfl-ops-stats-grid--5 > :last-child:nth-child(odd) {
     grid-column: 1 / -1;
   }
 

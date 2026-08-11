@@ -12,8 +12,10 @@ describe('operations statistics responsive layout', () => {
     expect(styles).toMatch(/\.hfl-ops-page\s*{[^}]*gap:\s*24px;/s)
     expect(styles).not.toContain('@media (min-width: 768px) and (max-width: 1279.98px)')
     expect(styles).toMatch(/@media \(max-width: 767\.98px\)[\s\S]*?\.hfl-ops-page\s*{[^}]*gap:\s*12px;/)
-    expect(styles).toMatch(/@media \(max-width: 767\.98px\)[\s\S]*?\.hfl-ops-stats-grid--2,[\s\S]*?\.hfl-ops-stats-grid--4\s*{[^}]*grid-template-columns:\s*repeat\(2,/)
+    expect(styles).toMatch(/@media \(max-width: 767\.98px\)[\s\S]*?\.hfl-ops-stats-grid--2,[\s\S]*?\.hfl-ops-stats-grid--5\s*{[^}]*grid-template-columns:\s*repeat\(2,/)
     expect(styles).toContain('.hfl-ops-stats-grid--3 > :last-child:nth-child(odd)')
+    expect(styles).toContain('.hfl-ops-stats-grid--5 > :last-child:nth-child(odd)')
+    expect(styles).toMatch(/@media \(min-width: 1024px\)[\s\S]*?\.hfl-ops-stats-grid--5\s*{[^}]*grid-template-columns:\s*repeat\(5,/)
   })
 
   it('lets the incidents page scroll naturally on phones', () => {
