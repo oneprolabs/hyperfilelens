@@ -61,6 +61,7 @@ import {
   getTask,
   listTaskEvents,
   listTasks,
+  recheckTask,
   taskStatistics,
   type TaskEventRow,
   type TaskRow,
@@ -169,7 +170,7 @@ type ResourceDetailRow = {
   flowSource?: Awaited<ReturnType<typeof resolveTaskBackupSourceResource>>['flowSource']
 }
 
-const statusOptions = ['pending', 'running', 'success', 'failed', 'cancelled', 'timeout']
+const statusOptions = ['pending', 'waiting', 'blocked', 'running', 'success', 'failed', 'cancelled', 'timeout']
 const taskTypeOptions = ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'backup_config_reset', 'source_unregister', 'node_lifecycle', 'repository_operation']
 const DEFAULT_TRIGGER_TYPE_OPTIONS = ['manual', 'system']
 const triggerTypeOptions = computed(() => Array.from(new Set([
@@ -240,13 +241,27 @@ const taskAdvancedRangeLabel = computed(() => {
 })
 
 const canCancel = computed(() => {
-  if (activeTask.value?.task_type === 'source_unregister' || activeTask.value?.task_type === 'node_lifecycle') return false
+  if (activeTask.value?.actions) return activeTask.value.actions.can_cancel
+  if (activeTask.value?.task_type === 'source_unregister') {
+    return activeTask.value.status === 'waiting' || activeTask.value.status === 'blocked'
+  }
+  if (activeTask.value?.task_type === 'node_lifecycle') return false
   if (activeTask.value?.task_type === 'repository_operation') {
     return canCancelRepositoryTask(activeTask.value)
   }
   const status = activeTask.value?.status
-  return status === 'pending' || status === 'running'
+  return status === 'pending' || status === 'waiting' || status === 'running'
 })
+const canRecheck = computed(() => Boolean(
+  activeTask.value?.actions?.can_recheck
+  ?? (
+    activeTask.value?.task_type === 'source_unregister'
+    && ['waiting', 'blocked'].includes(activeTask.value?.status || '')
+  ),
+))
+const activeDependencies = computed(() =>
+  (activeTask.value?.dependencies || []).filter((dependency) => dependency.is_active),
+)
 const {
   pending: repositoryCancellationPending,
   stop: stopRepositoryCancellation,
@@ -962,6 +977,23 @@ async function cancelActiveTask() {
   }
 }
 
+async function recheckActiveTask() {
+  if (!activeTask.value || !canRecheck.value) return
+  actionBusy.value = true
+  try {
+    const updated = await recheckTask(activeTask.value.task_uuid)
+    syncTask(updated)
+    const eventPage = await listTaskEvents(updated.task_uuid, { page_size: 50 })
+    detailEvents.value = eventPage.results
+    initExpandedSteps(updated)
+    ElMessage.success(t('ops.task.recheckComplete'))
+  } catch (err) {
+    ElMessage.error({ message: apiErrorMessageI18n(err, t), grouping: true })
+  } finally {
+    actionBusy.value = false
+  }
+}
+
 async function refreshActiveTask() {
   if (!activeTask.value) return
   await openTaskDetail(activeTask.value.task_uuid)
@@ -1300,6 +1332,15 @@ watch(
           <h2 v-else class="hfl-task-drawer__header-title">{{ t('ops.task.detailTitle') }}</h2>
           <div class="hfl-task-drawer__header-actions">
             <ElButton
+              v-if="canRecheck"
+              :loading="actionBusy"
+              :disabled="actionBusy || detailRefreshing"
+              @click="recheckActiveTask"
+            >
+              <RefreshCw :size="15" />
+              <span>{{ t('ops.task.btnRecheck') }}</span>
+            </ElButton>
+            <ElButton
               v-if="canCancel"
               class="hfl-task-drawer__cancel-button"
               :loading="actionBusy"
@@ -1386,6 +1427,29 @@ watch(
             </div>
           </div>
         </section>
+
+        <ElAlert
+          v-if="['waiting', 'blocked'].includes(activeTask.status) && activeDependencies.length"
+          :title="activeTask.status === 'blocked' ? t('ops.task.blockedTitle') : t('ops.task.waitingTitle')"
+          type="warning"
+          :closable="false"
+          show-icon
+        >
+          <p>{{ activeTask.status === 'blocked' ? t('ops.task.blockedDescription') : t('ops.task.waitingDescription') }}</p>
+          <ul>
+            <li v-for="dependency in activeDependencies" :key="dependency.id">
+              <span>{{ dependency.detail }}</span>
+              <ElButton
+                v-if="dependency.blocking_task_uuid"
+                link
+                type="primary"
+                @click="openTaskDetail(dependency.blocking_task_uuid)"
+              >
+                {{ t('ops.task.viewBlockingTask') }}
+              </ElButton>
+            </li>
+          </ul>
+        </ElAlert>
 
         <section v-if="showCleanupOutcome" class="hfl-task-drawer__cleanup-outcome" aria-live="polite">
           <div class="hfl-task-drawer__cleanup-outcome-head">

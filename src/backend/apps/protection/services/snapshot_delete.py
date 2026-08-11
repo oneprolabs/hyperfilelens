@@ -619,6 +619,7 @@ def _run_snapshot_delete_task_locked(
             },
             correlation_type="protection.snapshot_delete",
             correlation_id=str(task.task_uuid),
+            parent_task=task,
             wait_timeout_seconds=3600,
         )
         result = outcome.result if isinstance(outcome.result, dict) else {}

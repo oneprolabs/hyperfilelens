@@ -94,6 +94,8 @@ def _acquire_source_unregister_lease(
             task_id=int(task.id),
             terminal=True,
         ), task
+    if task.status in {Task.Status.WAITING, Task.Status.BLOCKED}:
+        return SourceUnregisterLease(acquired=False, task_id=int(task.id)), task
 
     payload = dict(task.request_payload or {})
     expires_at = _lease_expires_at(payload)
@@ -196,6 +198,12 @@ def execute_source_unregister_task(self, *, task_id: int) -> dict:
             "idempotent": True,
         }
     if not lease.acquired:
+        if task.status in {"waiting", "blocked"}:
+            return {
+                "status": str(task.status),
+                "task_id": int(task.id),
+                "idempotent": True,
+            }
         queue_source_unregister_task(
             task_id=int(task.id),
             countdown_seconds=_SOURCE_UNREGISTER_CONFLICT_RETRY_SECONDS,
@@ -250,3 +258,15 @@ def reconcile_stuck_source_unregister_tasks_task(self, *, limit: int = 50) -> di
     if summary.get("redispatched"):
         logger.info("reconcile_stuck_source_unregister_tasks complete %s", summary)
     return summary
+
+
+@shared_task(
+    name="apps.source.tasks.source_unregister.reevaluate_source_unregister_task_task",
+)
+def reevaluate_source_unregister_task_task(*, task_id: int) -> dict:
+    """Reevaluate one deferred deregistration after a dependency state change."""
+    from apps.source.services.internal.backup_source_delete import (
+        reevaluate_source_unregister_task,
+    )
+
+    return reevaluate_source_unregister_task(task_id=int(task_id))

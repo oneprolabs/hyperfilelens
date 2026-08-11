@@ -12,7 +12,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.db import transaction
 
@@ -30,6 +30,9 @@ from apps.node.services.internal.task import (
     dispatch_task,
     protect_task_delivery_payload,
 )
+
+if TYPE_CHECKING:
+    from apps.task.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +112,7 @@ def run_agent_task_async(
     correlation_type: str = "",
     correlation_id: str = "",
     requesting_organization_id: int | None = None,
+    parent_task: Task | None = None,
 ) -> AgentTaskHandle:
     """
     Long-running work: dispatch and return immediately; caller polls status.
@@ -139,6 +143,7 @@ def run_agent_task_async(
         correlation_type=correlation_type,
         correlation_id=correlation_id,
         requesting_organization_id=requesting_organization_id,
+        parent_task=parent_task,
     )
     return AgentTaskHandle(task_id=str(task.id), task=task)
 
@@ -234,6 +239,7 @@ def run_agent_task_sync(
     correlation_type: str = "",
     correlation_id: str = "",
     requesting_organization_id: int | None = None,
+    parent_task: Task | None = None,
     wait_timeout_seconds: int | None = None,
     on_stream_message: Callable[[dict[str, Any]], None] | None = None,
 ) -> AgentTaskSyncResult:
@@ -262,6 +268,7 @@ def run_agent_task_sync(
             correlation_type=correlation_type,
             correlation_id=correlation_id,
             requesting_organization_id=requesting_organization_id,
+            parent_task=parent_task,
         )
         task_id = task.id
 

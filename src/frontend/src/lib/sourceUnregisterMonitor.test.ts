@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  sourceUnregisterPendingKind,
   sourceUnregisterTaskBindings,
   sourceUnregisterTaskOutcome,
 } from './sourceUnregisterMonitor'
@@ -26,7 +27,27 @@ describe('sourceUnregisterTaskBindings', () => {
   })
 })
 
+describe('sourceUnregisterPendingKind', () => {
+  it('keeps waiting and blocked distinct from active cleanup', () => {
+    expect(sourceUnregisterPendingKind('waiting')).toBe('delete_waiting')
+    expect(sourceUnregisterPendingKind('blocked')).toBe('delete_blocked')
+    expect(sourceUnregisterPendingKind('running')).toBe('deleting')
+  })
+})
+
 describe('sourceUnregisterTaskOutcome', () => {
+  it('keeps blocked deregistration non-terminal while it awaits attention', () => {
+    const outcome = sourceUnregisterTaskOutcome({
+      status: 'blocked',
+      error_code: 'SOURCE_UNREGISTER_BLOCKED',
+      result_payload: {},
+    } as never)
+
+    expect(outcome.terminal).toBe(false)
+    expect(outcome.success).toBe(false)
+    expect(outcome.status).toBe('blocked')
+  })
+
   it('exposes terminal failure details immediately', () => {
     expect(sourceUnregisterTaskOutcome({
       status: 'failed',

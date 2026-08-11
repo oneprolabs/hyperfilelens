@@ -9,7 +9,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
+from apps.task.models import Task, TaskDependency, TaskEvent, TaskResource, TaskStep
 from apps.task.signals import (
     task_cancelled,
     task_failed,
@@ -134,6 +134,8 @@ def create_task(
     steps: list[dict[str, Any] | str] | None = None,
     normalize_trigger_type: bool = True,
     replaces_task: Task | None = None,
+    group_uuid: UUID | str | None = None,
+    idempotency_key: str | None = None,
 ) -> Task:
     if task_type not in {value for value, _label in Task.Type.choices}:
         raise ValidationError({"task_type": "Unsupported task type."})
@@ -185,6 +187,8 @@ def create_task(
         current_step=str(first_step) if first_step else None,
         replaces_task=replaces_task,
         recovery_attempt=(int(replaces_task.recovery_attempt) + 1 if replaces_task else 0),
+        group_uuid=group_uuid,
+        idempotency_key=(idempotency_key.strip() if idempotency_key else None),
     )
 
     for resource in resource_defs:
@@ -289,7 +293,10 @@ def cancel_task(*, task_uuid: UUID | str, organization_id: int, reason: str = ""
         raise Task.DoesNotExist
     if task.status in TERMINAL_STATUSES:
         raise ValidationError("Finished tasks cannot be cancelled.")
-    if task.task_type == Task.Type.SOURCE_UNREGISTER:
+    if task.task_type == Task.Type.SOURCE_UNREGISTER and task.status not in {
+        Task.Status.WAITING,
+        Task.Status.BLOCKED,
+    }:
         raise ValidationError(
             "Source deregistration tasks cannot be cancelled after cleanup starts."
         )
@@ -315,6 +322,10 @@ def cancel_task(*, task_uuid: UUID | str, organization_id: int, reason: str = ""
         task=task,
         status__in=[TaskStep.Status.PENDING, TaskStep.Status.RUNNING],
     ).update(status=TaskStep.Status.SKIPPED)
+    TaskDependency.objects.filter(task=task, is_active=True).update(
+        is_active=False,
+        resolved_at=task.finished_at,
+    )
     append_task_event(
         task=task,
         step=_current_task_step(task),
@@ -417,6 +428,49 @@ def start_task(*, task_uuid: UUID | str, organization_id: int) -> Task:
     task.started_at = timezone.now()
     task.save(update_fields=["status", "started_at", "updated_at"])
     append_task_event(task=task, step=_current_task_step(task), message="Task started")
+    task_updated.send(
+        sender=Task,
+        task_uuid=str(task.task_uuid),
+        organization_id=task.organization_id,
+        status=task.status,
+        progress=float(task.progress),
+    )
+    return task
+
+
+@transaction.atomic
+def resume_waiting_task(*, task_uuid: UUID | str, organization_id: int) -> Task:
+    """Move a dependency-free waiting task into execution."""
+    task = (
+        Task.objects.select_for_update()
+        .filter(task_uuid=task_uuid, organization_id=organization_id)
+        .first()
+    )
+    if task is None:
+        raise Task.DoesNotExist
+    if task.status not in {Task.Status.WAITING, Task.Status.BLOCKED}:
+        raise ValidationError("Only waiting or blocked tasks can be resumed.")
+    if task.dependencies.filter(is_active=True).exists():
+        raise ValidationError("Waiting task still has active dependencies.")
+    task.status = Task.Status.RUNNING
+    if task.started_at is None:
+        task.started_at = timezone.now()
+    task.error_code = None
+    task.error_message = None
+    task.save(
+        update_fields=[
+            "status",
+            "started_at",
+            "error_code",
+            "error_message",
+            "updated_at",
+        ]
+    )
+    append_task_event(
+        task=task,
+        step=_current_task_step(task),
+        message="Task dependencies resolved; execution started",
+    )
     task_updated.send(
         sender=Task,
         task_uuid=str(task.task_uuid),

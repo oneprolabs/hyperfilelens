@@ -52,6 +52,10 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
     switch (op.kind) {
       case 'deleting':
         return t('protection.backupsPage.sourcePendingDeleting')
+      case 'delete_waiting':
+        return t('protection.backupsPage.sourcePendingDeleteWaiting')
+      case 'delete_blocked':
+        return t('protection.backupsPage.sourcePendingDeleteBlocked')
       case 'delete_failed':
         return t('protection.backupsPage.sourcePendingDeleteFailed')
       case 'reverting':
@@ -73,7 +77,7 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
 
   function pendingDeleteTasks() {
     return [...ops.value.entries()].flatMap(([sourceId, op]) =>
-      op.kind === 'deleting' && op.taskUuid
+      ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind) && op.taskUuid
         ? [{ sourceId, taskUuid: op.taskUuid, startedAt: op.startedAt }]
         : [],
     )
@@ -85,12 +89,12 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
 
   function rowPendingSpinning(sourceId: string) {
     const op = getOp(sourceId)
-    return !!op && op.kind !== 'removing' && op.kind !== 'delete_failed'
+    return !!op && ['deleting', 'delete_waiting', 'reverting'].includes(op.kind)
   }
 
   function isRowSelectable(sourceId: string) {
     const op = getOp(sourceId)
-    if (op?.kind === 'delete_failed') return true
+    if (op?.kind === 'delete_failed' || op?.kind === 'delete_blocked') return true
     return !isPending(sourceId)
   }
 

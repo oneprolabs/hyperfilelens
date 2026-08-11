@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { en } from '../locales/en'
 import BackupSourceDeleteDialog from './BackupSourceDeleteDialog.vue'
 import BackupSourceStep3DeleteDialog from './BackupSourceStep3DeleteDialog.vue'
+import type { BackupSourceDeletePreflight } from '../lib/sourceApi'
 
 const { preflightDeleteBackupSources, bulkDeleteBackupSources } = vi.hoisted(() => ({
   preflightDeleteBackupSources: vi.fn(),
@@ -105,7 +106,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-const successfulPreflight = {
+const successfulPreflight: BackupSourceDeletePreflight = {
   risks: [],
   blocking: [],
   strict_may_fail: false,
@@ -128,7 +129,7 @@ describe.each([
     await nextTick()
 
     expect(preflightDeleteBackupSources).toHaveBeenCalledOnce()
-    expect(preflightDeleteBackupSources).toHaveBeenCalledWith(['agent:25'])
+    expect(preflightDeleteBackupSources).toHaveBeenCalledWith(['agent:25'], false)
     expect(wrapper.get('[data-test="preflight-loading"]').text()).toBe('true')
     expect(wrapper.get('[data-test="confirm-delete"]').attributes('disabled')).toBeDefined()
 
@@ -178,7 +179,7 @@ describe.each([
     })
     await flushPromises()
     expect(wrapper.get('[data-test="preflight-disabled"]').text()).toBe('false')
-    expect(preflightDeleteBackupSources).toHaveBeenNthCalledWith(2, ['nas:31'])
+    expect(preflightDeleteBackupSources).toHaveBeenNthCalledWith(2, ['nas:31'], false)
     wrapper.unmount()
   })
 
@@ -207,6 +208,7 @@ describe.each([
       ['agent:25'],
       true,
       'FORCE DEREGISTER',
+      expect.stringMatching(/^source-unregister:/),
     )
     wrapper.unmount()
   })
@@ -224,6 +226,7 @@ describe.each([
     await nextTick()
 
     expect(wrapper.get('[data-test="dialog-source-count"]').text()).toBe('1')
+    expect(wrapper.emitted('started')).toBeUndefined()
     request.resolve({
       result: 'pending',
       warnings: [],
@@ -254,7 +257,7 @@ describe.each([
   it('does not let Force bypass a blocking preflight', async () => {
     preflightDeleteBackupSources.mockResolvedValue({
       risks: [],
-      blocking: [{ code: 'running_tasks', detail: 'Backup is running.' }],
+      blocking: [{ code: 'source_not_found', detail: 'Source does not exist.' }],
       strict_may_fail: false,
       delete_disabled: true,
     })
@@ -267,6 +270,43 @@ describe.each([
     expect(wrapper.get('[data-test="confirm-delete"]').attributes('disabled')).toBeDefined()
     await wrapper.get('[data-test="confirm-delete"]').trigger('click')
     expect(bulkDeleteBackupSources).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('allows a waiting request without emitting a local failure state', async () => {
+    preflightDeleteBackupSources.mockResolvedValue({
+      risks: [],
+      waiting: [{ code: 'running_tasks', detail: 'Backup is running.' }],
+      blocking: [],
+      strict_may_fail: false,
+      delete_disabled: false,
+    })
+    bulkDeleteBackupSources.mockResolvedValue({
+      result: 'pending',
+      warnings: [],
+      pending_removals: [],
+      deleted: [],
+      ok: true,
+      accepted: true,
+      status: 'waiting',
+      rejected: [{
+        source_id: 'nas:999',
+        reasons: [{ code: 'source_not_found', detail: 'Source does not exist.' }],
+      }],
+    })
+    const wrapper = mountDialog(component)
+    await flushPromises()
+
+    await wrapper.get('[data-test="strict-confirmation"]').trigger('click')
+    await wrapper.get('[data-test="confirm-delete"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('started')).toBeUndefined()
+    expect(wrapper.emitted('failed')).toBeUndefined()
+    expect(wrapper.emitted('deleted')).toHaveLength(1)
+    expect(wrapper.emitted('deleted')?.[0]?.[0]).toMatchObject({
+      rejected: [{ source_id: 'nas:999' }],
+    })
     wrapper.unmount()
   })
 })

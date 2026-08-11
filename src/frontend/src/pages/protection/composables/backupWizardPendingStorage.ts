@@ -1,7 +1,13 @@
 import type { ErrorDetailsPayload } from '../../../lib/errors/details'
 import type { FlowSourceRow } from './useFlowSourceAggregate'
 
-export type SourcePendingKind = 'deleting' | 'reverting' | 'removing' | 'delete_failed'
+export type SourcePendingKind =
+  | 'deleting'
+  | 'delete_waiting'
+  | 'delete_blocked'
+  | 'reverting'
+  | 'removing'
+  | 'delete_failed'
 
 export type SourcePendingOp = {
   kind: SourcePendingKind

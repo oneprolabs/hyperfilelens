@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -12,7 +13,7 @@ from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
 from apps.node import agent_paths
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
@@ -27,7 +28,11 @@ from apps.source.services.internal.agent_host_sync import sync_agent_source_host
 from apps.source.services.internal.source_credentials import resolve_source_credentials
 from apps.source.tasks.connection_probe import run_source_resource_capacity_probe
 from apps.storage.repositories.models import Repository
-from apps.task.models import Task, TaskResource, TaskStep
+from apps.task.models import Task, TaskDependency, TaskResource, TaskStep
+from apps.task.services.interface import complete_task
+from apps.source.services.internal.backup_source_delete import (
+    reconcile_stuck_source_unregister_tasks,
+)
 
 MOUNTS_ROOT = agent_paths.agent_mounts_dir()
 
@@ -1925,7 +1930,13 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["strict_may_fail"])
-        self.assertTrue(any(row["code"] == "agent_offline" for row in response.data["risks"]))
+        self.assertFalse(response.data["delete_disabled"])
+        self.assertTrue(
+            any(
+                row["code"] == "agent_offline"
+                for row in response.data["requires_attention"]
+            )
+        )
 
     def test_delete_preflight_flags_proxy_unbound_for_needs_proxy_nas(self):
         resource = SourceResource.objects.create(
@@ -1976,7 +1987,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
 
-    def test_bulk_delete_strict_fails_for_offline_agent(self):
+    def test_bulk_delete_strict_accepts_offline_agent_as_blocked(self):
         agent_key = f"agent:{self.agent.id}"
         response = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
@@ -1984,11 +1995,328 @@ class BackupSourceBulkDeleteTests(TestCase):
             format="json",
             **self._headers(),
         )
-        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
-        self.assertIn("reasons", response.data)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
+        self.assertEqual(unregister_task.status, Task.Status.BLOCKED)
+        dependency = unregister_task.dependencies.get(is_active=True)
+        self.assertEqual(dependency.code, "agent_offline")
+        self.assertFalse(dependency.auto_resumable)
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
-        self.assertEqual(Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).count(), 0)
+
+    def test_bulk_delete_idempotency_returns_the_same_task(self):
+        agent_key = f"agent:{self.agent.id}"
+        payload = {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"}
+        headers = {**self._headers(), "HTTP_IDEMPOTENCY_KEY": "unregister-request-1"}
+
+        first = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            payload,
+            format="json",
+            **headers,
+        )
+        second = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            payload,
+            format="json",
+            **headers,
+        )
+
+        self.assertEqual(first.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(second.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(second.data["task_uuid"], first.data["task_uuid"])
+        self.assertEqual(second.data["group_uuid"], first.data["group_uuid"])
+        self.assertEqual(
+            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).count(),
+            1,
+        )
+
+    def test_completed_idempotent_replay_returns_terminal_result(self):
+        agent_key = f"agent:{self.agent.id}"
+        payload = {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"}
+        headers = {**self._headers(), "HTTP_IDEMPOTENCY_KEY": "completed-replay"}
+        submitted = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            payload,
+            format="json",
+            **headers,
+        )
+        task = Task.objects.get(task_uuid=submitted.data["task_uuid"])
+        complete_task(
+            task_uuid=task.task_uuid,
+            organization_id=self.org.id,
+            result_payload={
+                "result": "success",
+                "deleted": [agent_key],
+                "warnings": [],
+            },
+        )
+
+        replay = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            payload,
+            format="json",
+            **headers,
+        )
+
+        self.assertEqual(replay.status_code, status.HTTP_202_ACCEPTED)
+        self.assertFalse(replay.data["accepted"])
+        self.assertEqual(replay.data["result"], "completed")
+        self.assertEqual(replay.data["status"], Task.Status.SUCCESS)
+        self.assertEqual(replay.data["deleted"], [agent_key])
+        self.assertEqual(replay.data["task_uuid"], str(task.task_uuid))
+
+    def test_partial_cleanup_result_survives_idempotent_replay(self):
+        agent_key = f"agent:{self.agent.id}"
+        payload = {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"}
+        headers = {**self._headers(), "HTTP_IDEMPOTENCY_KEY": "partial-replay"}
+        submitted = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            payload,
+            format="json",
+            **headers,
+        )
+        task = Task.objects.get(task_uuid=submitted.data["task_uuid"])
+        warning = {"code": "cleanup_required", "detail": "Manual cleanup remains."}
+        complete_task(
+            task_uuid=task.task_uuid,
+            organization_id=self.org.id,
+            result_payload={
+                "result": "partial_success",
+                "deleted": [agent_key],
+                "warnings": [warning],
+                "cleanup_complete": False,
+            },
+        )
+
+        replay = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            payload,
+            format="json",
+            **headers,
+        )
+
+        self.assertEqual(replay.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(replay.data["result"], "partial_success")
+        self.assertEqual(replay.data["warnings"], [warning])
+
+    def test_mixed_existing_and_new_tasks_keep_individual_groups(self):
+        first_key = f"agent:{self.agent.id}"
+        first = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {"ids": [first_key], "force": False, "confirmation": "DEREGISTER"},
+            format="json",
+            **self._headers(),
+        )
+        second_agent = Node.objects.create(
+            organization=self.org,
+            name="agent-offline-mixed-group",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+        second_key = f"agent:{second_agent.id}"
+
+        mixed = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {
+                "ids": [first_key, second_key],
+                "force": False,
+                "confirmation": "DEREGISTER",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(mixed.status_code, status.HTTP_202_ACCEPTED)
+        self.assertIsNone(mixed.data["group_uuid"])
+        tasks_by_source = {item["source_id"]: item for item in mixed.data["tasks"]}
+        self.assertEqual(tasks_by_source[first_key]["task_uuid"], first.data["task_uuid"])
+        self.assertNotEqual(
+            tasks_by_source[first_key]["group_uuid"],
+            tasks_by_source[second_key]["group_uuid"],
+        )
+
+    def test_bulk_delete_groups_one_task_per_accepted_source(self):
+        second_agent = Node.objects.create(
+            organization=self.org,
+            name="agent-offline-2",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {
+                "ids": [f"agent:{self.agent.id}", f"agent:{second_agent.id}"],
+                "force": False,
+                "confirmation": "DEREGISTER",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        tasks = list(Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER))
+        self.assertEqual(len(tasks), 2)
+        self.assertTrue(all(task.status == Task.Status.BLOCKED for task in tasks))
+        self.assertEqual({str(task.group_uuid) for task in tasks}, {response.data["group_uuid"]})
+
+    def test_bulk_delete_accepts_valid_sources_independently(self):
+        accepted_key = f"agent:{self.agent.id}"
+        missing_key = "agent:999999999"
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {
+                "ids": [accepted_key, missing_key],
+                "force": False,
+                "confirmation": "DEREGISTER",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(response.data["source_ids"], [accepted_key])
+        self.assertEqual(response.data["rejected"][0]["source_id"], missing_key)
+        self.assertEqual(response.data["rejected"][0]["reasons"][0]["code"], "source_not_found")
+        self.assertEqual(len(response.data["tasks"]), 1)
+
+    def test_blocked_unregister_can_be_rechecked_after_attention_is_resolved(self):
+        agent_key = f"agent:{self.agent.id}"
+        submitted = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"},
+            format="json",
+            **self._headers(),
+        )
+        task = Task.objects.get(task_uuid=submitted.data["task_uuid"])
+        self.agent.availability = Node.Availability.ONLINE
+        self.agent.last_seen_at = timezone.now()
+        self.agent.save(
+            update_fields=["availability", "last_seen_at", "updated_at"]
+        )
+
+        response = self.client.post(
+            f"/api/v1/tasks/{task.task_uuid}/recheck/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.RUNNING)
+        self.assertFalse(task.dependencies.filter(is_active=True).exists())
+
+    def test_failed_unregister_retry_returns_to_waiting_when_backup_is_active(self):
+        source_id = f"agent:{self.agent.id}"
+        unregister_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Deregister source",
+            status=Task.Status.FAILED,
+            request_payload={"source_ids": [source_id], "force": False},
+        )
+        TaskStep.objects.create(
+            task=unregister_task,
+            step_index=0,
+            step_name="prepare_source_unregister",
+        )
+        TaskResource.objects.create(
+            task=unregister_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Long backup",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=backup_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        response = self.client.post(
+            f"/api/v1/tasks/{unregister_task.task_uuid}/retry/",
+            {"reason": "retry cleanup"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        unregister_task.refresh_from_db()
+        self.assertEqual(unregister_task.status, Task.Status.WAITING)
+        dependency = unregister_task.dependencies.get(is_active=True)
+        self.assertEqual(dependency.blocking_task, backup_task)
+        self.assertEqual(dependency.code, "running_tasks")
+
+    @patch(
+        "apps.source.services.internal.backup_source_delete."
+        "reevaluate_source_unregister_task",
+        return_value={"status": Task.Status.WAITING},
+    )
+    def test_waiting_reconcile_rotates_past_first_batch(self, mock_reevaluate):
+        due_at = timezone.now() - timedelta(minutes=1)
+        waiting_tasks: list[Task] = []
+        for index in range(51):
+            task = Task.objects.create(
+                organization_id=self.org.id,
+                task_type=Task.Type.SOURCE_UNREGISTER,
+                display_name=f"Waiting deregistration {index}",
+                status=Task.Status.WAITING,
+            )
+            TaskDependency.objects.create(
+                task=task,
+                code="source_operation_in_progress",
+                detail="Source operation is active.",
+                auto_resumable=True,
+                next_check_at=due_at,
+            )
+            waiting_tasks.append(task)
+
+        reconcile_stuck_source_unregister_tasks(limit=50)
+        first_batch_ids = {
+            call.kwargs["task_id"] for call in mock_reevaluate.call_args_list
+        }
+        self.assertEqual(len(first_batch_ids), 50)
+        self.assertNotIn(waiting_tasks[-1].id, first_batch_ids)
+
+        TaskDependency.objects.filter(task_id__in=first_batch_ids).update(
+            next_check_at=timezone.now() + timedelta(minutes=1)
+        )
+        mock_reevaluate.reset_mock()
+        reconcile_stuck_source_unregister_tasks(limit=1)
+
+        mock_reevaluate.assert_called_once_with(task_id=waiting_tasks[-1].id)
+
+    @patch(
+        "apps.source.tasks.source_unregister."
+        "execute_source_unregister_task.delay"
+    )
+    def test_reconcile_redispatches_task_stuck_before_cleanup(self, mock_delay):
+        unregister_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Deregister source",
+            status=Task.Status.RUNNING,
+            current_step="prepare_source_unregister",
+        )
+        Task.objects.filter(pk=unregister_task.id).update(
+            updated_at=timezone.now() - timedelta(minutes=2)
+        )
+
+        summary = reconcile_stuck_source_unregister_tasks(stale_seconds=30)
+
+        self.assertEqual(summary["redispatched"], 1)
+        mock_delay.assert_called_once_with(task_id=unregister_task.id)
 
     def test_bulk_delete_force_does_not_bypass_running_backup(self):
         backup_task = Task.objects.create(
@@ -2013,7 +2341,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
         self.assertEqual(preflight.status_code, status.HTTP_200_OK)
         self.assertEqual(
-            [item["code"] for item in preflight.data["blocking"]],
+            [item["code"] for item in preflight.data["waiting"]],
             ["running_tasks"],
         )
 
@@ -2028,16 +2356,106 @@ class BackupSourceBulkDeleteTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            response.content,
-        )
-        self.assertFalse(
-            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).exists()
-        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
+        self.assertEqual(unregister_task.status, Task.Status.WAITING)
+        dependency = TaskDependency.objects.get(task=unregister_task, is_active=True)
+        self.assertEqual(dependency.blocking_task, backup_task)
+        self.assertEqual(dependency.code, "running_tasks")
+        self.assertEqual(response.data["task_uuid"], str(unregister_task.task_uuid))
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
+
+        complete_task(
+            task_uuid=backup_task.task_uuid,
+            organization_id=self.org.id,
+            status=Task.Status.SUCCESS,
+        )
+        dependency.next_check_at = timezone.now() - timedelta(seconds=1)
+        dependency.save(update_fields=["next_check_at"])
+        summary = reconcile_stuck_source_unregister_tasks()
+        unregister_task.refresh_from_db()
+        dependency.refresh_from_db()
+        self.assertEqual(summary["resumed"], 1)
+        self.assertEqual(unregister_task.status, Task.Status.RUNNING)
+        self.assertFalse(dependency.is_active)
+
+    def test_snapshot_delete_blocks_with_linked_waiting_task(self):
+        snapshot_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SNAPSHOT_DELETE,
+            display_name="Remove snapshot",
+            status=Task.Status.RUNNING,
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.agent,
+            kind="snapshot.delete",
+            correlation_type="protection.snapshot_delete",
+            correlation_id=str(snapshot_task.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timedelta(minutes=5),
+        )
+
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {
+                "ids": [f"agent:{self.agent.id}"],
+                "force": True,
+                "confirmation": "FORCE DEREGISTER",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
+        dependency = TaskDependency.objects.get(task=unregister_task, is_active=True)
+        self.assertEqual(unregister_task.status, Task.Status.WAITING)
+        self.assertEqual(dependency.reference_type, TaskDependency.ReferenceType.TASK)
+        self.assertEqual(dependency.blocking_task, snapshot_task)
+        self.assertEqual(dependency.reference_task_type, "snapshot.delete")
+
+    @patch("apps.source.signals._queue_unregister_rechecks")
+    def test_terminal_node_task_wakes_exact_parent_task_dependency(self, mock_queue):
+        snapshot_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SNAPSHOT_DELETE,
+            display_name="Remove snapshot",
+            status=Task.Status.RUNNING,
+        )
+        unregister_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Deregister source",
+            status=Task.Status.WAITING,
+        )
+        TaskDependency.objects.create(
+            task=unregister_task,
+            blocking_task=snapshot_task,
+            reference_type=TaskDependency.ReferenceType.TASK,
+            reference_id=str(snapshot_task.task_uuid),
+            code="running_tasks",
+            detail="Snapshot removal is active.",
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.agent,
+            parent_task=snapshot_task,
+            kind="snapshot.delete",
+            correlation_type="protection.snapshot_delete",
+            correlation_id=str(snapshot_task.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timedelta(minutes=5),
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            node_task.status = NodeTask.Status.SUCCESS
+            node_task.save(update_fields=["status", "updated_at"])
+
+        mock_queue.assert_called_once_with((unregister_task.id,))
 
     def test_bulk_delete_force_does_not_bypass_source_nas_probe(self):
         proxy = Node.objects.create(
@@ -2068,9 +2486,9 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
 
         self.assertEqual(preflight.status_code, status.HTTP_200_OK)
-        self.assertTrue(preflight.data["delete_disabled"])
+        self.assertFalse(preflight.data["delete_disabled"])
         self.assertEqual(
-            [item["code"] for item in preflight.data["blocking"]],
+            [item["code"] for item in preflight.data["waiting"]],
             ["source_operation_in_progress"],
         )
 
@@ -2085,19 +2503,17 @@ class BackupSourceBulkDeleteTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            response.content,
-        )
-        self.assertFalse(
-            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).exists()
-        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
+        self.assertEqual(unregister_task.status, Task.Status.WAITING)
+        dependency = TaskDependency.objects.get(task=unregister_task, is_active=True)
+        self.assertEqual(dependency.code, "source_operation_in_progress")
         resource.refresh_from_db()
         self.assertFalse(resource.is_deleted)
+        self.assertNotEqual(resource.status, "removing")
 
     def test_bulk_delete_422_wraps_reasons_in_problem_meta(self):
-        agent_key = f"agent:{self.agent.id}"
+        agent_key = "agent:999999999"
         response = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
             {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"},
@@ -2145,16 +2561,13 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertTrue(response.data["ok"])
         self.assertEqual(response.data["task_uuid"], str(Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER).task_uuid))
         self.assertEqual(response.data["task_uuids"], [response.data["task_uuid"]])
-        self.assertEqual(
-            response.data["tasks"],
-            [
-                {
-                    "source_id": agent_key,
-                    "task_id": response.data["task_id"],
-                    "task_uuid": response.data["task_uuid"],
-                }
-            ],
-        )
+        self.assertEqual(len(response.data["tasks"]), 1)
+        task_result = response.data["tasks"][0]
+        self.assertEqual(task_result["source_id"], agent_key)
+        self.assertEqual(task_result["task_id"], response.data["task_id"])
+        self.assertEqual(task_result["task_uuid"], response.data["task_uuid"])
+        self.assertEqual(task_result["status"], Task.Status.SUCCESS)
+        self.assertEqual(task_result["group_uuid"], response.data["group_uuid"])
         task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
         self.assertEqual(task.display_name, "Deregister backup source")
         self.assertTrue(task.resources.get().is_primary)

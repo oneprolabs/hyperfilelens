@@ -81,9 +81,9 @@ class DirectNasCleanupUnregisterTests(TestCase):
             ids=[f"agent:{self.agent.id}"],
         )
 
-        self.assertTrue(preflight["delete_disabled"])
+        self.assertFalse(preflight["delete_disabled"])
         self.assertEqual(
-            [reason["code"] for reason in preflight["blocking"]],
+            [reason["code"] for reason in preflight["waiting"]],
             ["repository_cleanup_blocked"],
         )
         with self.assertRaises(BackupSourceDeleteFailed) as raised:
@@ -131,9 +131,9 @@ class DirectNasCleanupUnregisterTests(TestCase):
             ids=[f"agent:{self.agent.id}"],
         )
 
-        self.assertTrue(preflight["delete_disabled"])
+        self.assertFalse(preflight["delete_disabled"])
         self.assertEqual(
-            [reason["code"] for reason in preflight["blocking"]],
+            [reason["code"] for reason in preflight["waiting"]],
             ["repository_cleanup_blocked"],
         )
         with self.assertRaises(BackupSourceDeleteFailed):
@@ -1211,15 +1211,18 @@ class DirectNasCleanupUnregisterTests(TestCase):
         )
         client = APIClient()
         client.force_authenticate(user)
-        with mock.patch("apps.task.api.views.task.current_app.send_task") as queue_unregister:
-            retry_response = client.post(
-                f"/api/v1/tasks/{cleanup_task.triggered_by_task.task_uuid}/retry/",
-                {},
-                format="json",
-                HTTP_X_ORG_KEY=self.org.key,
-            )
+        with mock.patch(
+            "apps.source.tasks.source_unregister."
+            "execute_source_unregister_task.delay"
+        ) as queue_unregister:
+            with self.captureOnCommitCallbacks(execute=True):
+                retry_response = client.post(
+                    f"/api/v1/tasks/{cleanup_task.triggered_by_task.task_uuid}/retry/",
+                    {},
+                    format="json",
+                    HTTP_X_ORG_KEY=self.org.key,
+                )
         self.assertEqual(retry_response.status_code, 200, retry_response.content)
         queue_unregister.assert_called_once_with(
-            "apps.source.tasks.source_unregister.execute_source_unregister_task",
-            kwargs={"task_id": cleanup_task.triggered_by_task_id},
+            task_id=cleanup_task.triggered_by_task_id
         )

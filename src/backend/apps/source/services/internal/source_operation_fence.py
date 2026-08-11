@@ -11,7 +11,12 @@ from apps.source.models import SourceResource
 from apps.task.models import Task, TaskResource
 
 
-_ACTIVE_STATUSES = {Task.Status.PENDING, Task.Status.RUNNING}
+_ACTIVE_STATUSES = {
+    Task.Status.PENDING,
+    Task.Status.WAITING,
+    Task.Status.BLOCKED,
+    Task.Status.RUNNING,
+}
 _SOURCE_CONTROL_TASK_TYPES = {
     Task.Type.BACKUP_CONFIG_RESET,
     Task.Type.SOURCE_UNREGISTER,

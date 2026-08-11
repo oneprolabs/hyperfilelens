@@ -41,6 +41,7 @@ import { openErrorDetails, type ErrorDetailsPayload } from '../../lib/errors/det
 import { notifyInfo, notifySuccess } from '../../lib/notify'
 import { getTask } from '../../lib/taskApi'
 import {
+  sourceUnregisterPendingKind,
   sourceUnregisterTaskBindings,
   sourceUnregisterTaskOutcome,
 } from '../../lib/sourceUnregisterMonitor'
@@ -73,6 +74,7 @@ import {
   SOURCE_CONNECTION_TEST_MIN_FEEDBACK_MS,
   SOURCE_CONNECTION_TEST_RESULT_TOAST_MS,
   updateSourceResource,
+  type BackupSourceDeleteResult,
   type SourceResource,
   type SourceStats,
 } from '../../lib/sourceApi'
@@ -943,6 +945,7 @@ const backupSourceDeleteDialogOpen = ref(false)
 const backupSourceDeleteIds = ref<string[]>([])
 const pendingSourceOps = ref(new Map<string, SourcePendingOp>())
 const SOURCE_DELETE_TASK_POLL_MS = 2000
+const SOURCE_DELETE_BLOCKED_TASK_POLL_MS = 30_000
 const SOURCE_DELETE_TASK_TIMEOUT_MS = 15 * 60 * 1000
 let sourceDeleteTaskPollTimer: number | null = null
 let sourceDeleteTaskPollInFlight = false
@@ -961,7 +964,7 @@ function stopPendingSourceDeletePoll() {
 function schedulePendingSourceDeletePoll(delay = SOURCE_DELETE_TASK_POLL_MS) {
   stopPendingSourceDeletePoll()
   const hasPendingTask = [...pendingSourceOps.value.values()].some(
-    (op) => op.kind === 'deleting' && Boolean(op.taskUuid),
+    (op) => ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind) && Boolean(op.taskUuid),
   )
   if (!hasPendingTask) return
   sourceDeleteTaskPollTimer = window.setTimeout(() => {
@@ -997,7 +1000,12 @@ function markSourceDeleteFailed(
 
 function openSourcePendingFailureDetails(sourceId: string) {
   const op = pendingSourceOps.value.get(sourceId)
-  if (op?.kind !== 'delete_failed') return
+  if (op?.kind !== 'delete_failed') {
+    if (op?.taskUuid) {
+      void router.push({ path: '/ops/task', query: { taskUuid: op.taskUuid } })
+    }
+    return
+  }
   if (op.failureDetails) {
     openUnregisterFailureDetails(op.failureDetails)
     return
@@ -1014,7 +1022,9 @@ async function reconcilePendingSourceDeleteTasks() {
   if (sourceDeleteTaskPollInFlight) return
   refreshPendingSourceOps()
   const pending = [...pendingSourceOps.value.entries()].flatMap(([sourceId, op]) =>
-    op.kind === 'deleting' && op.taskUuid ? [{ sourceId, op }] : [],
+    ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind) && op.taskUuid
+      ? [{ sourceId, op }]
+      : [],
   )
   if (!pending.length) return
   sourceDeleteTaskPollInFlight = true
@@ -1042,7 +1052,16 @@ async function reconcilePendingSourceDeleteTasks() {
         return
       }
       const outcome = sourceUnregisterTaskOutcome(settled.value)
-      if (outcome.success) {
+      if (['pending', 'running', 'waiting', 'blocked'].includes(outcome.status)) {
+        const nextKind = sourceUnregisterPendingKind(outcome.status)
+        if (op.kind !== nextKind) {
+          markWizardPendingBySourceIds([sourceId], { ...op, kind: nextKind })
+          changed = true
+        }
+      } else if (outcome.status === 'cancelled') {
+        clearWizardPendingBySourceIds([sourceId])
+        changed = true
+      } else if (outcome.success) {
         if (outcome.partialSuccess) {
           cleanupNotices.push({
             sourceId,
@@ -1086,7 +1105,15 @@ async function reconcilePendingSourceDeleteTasks() {
     if (changed) await load()
   } finally {
     sourceDeleteTaskPollInFlight = false
-    schedulePendingSourceDeletePoll()
+    refreshPendingSourceOps()
+    const trackedDeleteOps = [...pendingSourceOps.value.values()].filter(
+      (op) => ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind) && op.taskUuid,
+    )
+    const onlyBlocked = trackedDeleteOps.length > 0
+      && trackedDeleteOps.every((op) => op.kind === 'delete_blocked')
+    schedulePendingSourceDeletePoll(
+      onlyBlocked ? SOURCE_DELETE_BLOCKED_TASK_POLL_MS : SOURCE_DELETE_TASK_POLL_MS,
+    )
   }
 }
 
@@ -1105,6 +1132,21 @@ function resolveSourcePendingStatus(selectableId: string): SourcePendingDisplayS
       label: t('protection.backupsPage.sourcePendingDeleting'),
       tag: 'info',
       spinning: true,
+    }
+  }
+  if (op.kind === 'delete_waiting') {
+    return {
+      label: t('protection.backupsPage.sourcePendingDeleteWaiting'),
+      tag: 'warning',
+      spinning: true,
+      clickable: true,
+    }
+  }
+  if (op.kind === 'delete_blocked') {
+    return {
+      label: t('protection.backupsPage.sourcePendingDeleteBlocked'),
+      tag: 'warning',
+      clickable: true,
     }
   }
   if (op.kind === 'delete_failed') {
@@ -1200,31 +1242,6 @@ function goToStartBackupForUnregister() {
 }
 
 
-function onBackupSourcesDeleteStarted(payload: { sourceIds: string[] }) {
-  markWizardPendingBySourceIds(payload.sourceIds, { kind: 'deleting' })
-  refreshPendingSourceOps()
-}
-
-function onBackupSourcesDeleteFailed(payload: {
-  sourceIds: string[]
-  failureDetails?: ErrorDetailsPayload
-  failuresBySource?: Record<string, ErrorDetailsPayload>
-  errorMessage?: string
-}) {
-  payload.sourceIds.forEach((sourceId) => {
-    const details = payload.failuresBySource?.[sourceId] || payload.failureDetails
-    markWizardPendingBySourceIds([sourceId], {
-      kind: 'delete_failed',
-      errorMessage: unregisterFailureSummaryLine(details)
-        || payload.errorMessage
-        || t('protection.backupsPage.msgDeleteSourceFailed'),
-      failureDetails: details,
-    })
-  })
-  refreshPendingSourceOps()
-  backupSourceDeleteRows.value = []
-}
-
 async function openHostDeleteDialog(nodes: ApiNode[]) {
   if (!nodes.length) return
   if (nodes.some((node) => sourceDeleteInFlight(hostSelectableId(node)))) return
@@ -1250,17 +1267,24 @@ async function onBackupSourcesDeleted(payload: {
   task_ids?: number[]
   task_uuids?: string[]
   tasks?: Array<{ source_id: string; task_id: number; task_uuid: string }>
+  rejected?: BackupSourceDeleteResult['rejected']
   accepted?: boolean
 }) {
   const deletingIds = new Set(backupSourceDeleteIds.value)
   backupSourceDeleteRows.value = []
-  if (payload.accepted && payload.result === 'pending') {
+  if (
+    (payload.accepted && payload.result === 'pending')
+    || ['failed', 'partial_failure'].includes(payload.result)
+  ) {
     const sourceIds = [...deletingIds]
     const bindings = sourceUnregisterTaskBindings(sourceIds, payload)
     const boundSourceIds = new Set(bindings.map((binding) => binding.sourceId))
+    const rejectedBySourceId = new Map(
+      (payload.rejected || []).map((item) => [item.source_id, item]),
+    )
     bindings.forEach((binding) => {
       markWizardPendingBySourceIds([binding.sourceId], {
-        kind: 'deleting',
+        kind: sourceUnregisterPendingKind(binding.status),
         taskId: binding.taskId,
         taskUuid: binding.taskUuid,
         startedAt: Date.now(),
@@ -1271,10 +1295,14 @@ async function onBackupSourcesDeleted(payload: {
       .filter((sourceId) => !boundSourceIds.has(sourceId))
       .forEach((sourceId) => {
         const sourceName = sourcePendingDisplayName(sourceId)
+        const rejection = rejectedBySourceId.get(sourceId)
         const details = unregisterFailureToErrorDetails({
           t,
           sourceId,
           sourceName,
+          apiError: rejection
+            ? { message: t('protection.backupsPage.msgDeleteSourceFailed'), reasons: rejection.reasons }
+            : undefined,
           fallbackMessage: t('protection.backupsPage.msgDeleteSourceFailed'),
         })
         markSourceDeleteFailed(sourceId, { kind: 'delete_failed' }, details)
@@ -1289,10 +1317,36 @@ async function onBackupSourcesDeleted(payload: {
     schedulePendingSourceDeletePoll(0)
     backupSourceDeleteIds.value = []
     await load()
-    ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })
+    if (payload.result === 'pending') {
+      ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })
+    }
     return
   }
-  clearWizardPendingBySourceIds([...deletingIds])
+  const rejectedBySourceId = new Map(
+    (payload.rejected || []).map((item) => [item.source_id, item]),
+  )
+  const rejectedNotices = [...rejectedBySourceId].map(([sourceId, rejection]) => {
+    const sourceName = sourcePendingDisplayName(sourceId)
+    const details = unregisterFailureToErrorDetails({
+      t,
+      sourceId,
+      sourceName,
+      apiError: {
+        message: t('protection.backupsPage.msgDeleteSourceFailed'),
+        reasons: rejection.reasons,
+      },
+    })
+    markSourceDeleteFailed(sourceId, { kind: 'delete_failed' }, details)
+    return { sourceId, sourceName, details }
+  })
+  clearWizardPendingBySourceIds(
+    [...deletingIds].filter((sourceId) => !rejectedBySourceId.has(sourceId)),
+  )
+  notifyUnregisterFailureBatch({
+    t,
+    items: rejectedNotices,
+    dedupeKey: `unregister-rejected-batch:${rejectedNotices.map((item) => item.sourceId).join(',')}`,
+  })
   refreshPendingSourceOps()
   const hadHosts = backupSourceDeleteIds.value.some((id) => id.startsWith('agent:'))
   const hadNas = backupSourceDeleteIds.value.some((id) => id.startsWith('nas:'))
@@ -1313,8 +1367,8 @@ async function onBackupSourcesDeleted(payload: {
   await load()
   if (payload.pending_removals?.length) {
     ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })
-  } else if (payload.result === 'partial_success') {
-    const sourceIds = [...deletingIds]
+  } else if (payload.result === 'partial_success' && payload.warnings.length) {
+    const sourceIds = [...deletingIds].filter((sourceId) => !rejectedBySourceId.has(sourceId))
     const items = sourceIds.map((sourceId) => {
       const sourceName = sourcePendingDisplayName(sourceId)
       return {
@@ -1342,7 +1396,7 @@ async function onBackupSourcesDeleted(payload: {
         dedupeKey: `unregister-sync-cleanup-warning:${sourceIds.join(',')}`,
       })
     }
-  } else {
+  } else if (!rejectedNotices.length) {
     ElMessage.success({ message: t('protection.backupsPage.msgDeleteSourceSuccess'), grouping: true })
   }
 }
@@ -2716,8 +2770,6 @@ onUnmounted(() => {
       :source-ids="backupSourceDeleteIds"
       :sources="backupSourceDeleteRows"
       :previous-failure-details="backupSourceDeletePreviousFailure"
-      @started="onBackupSourcesDeleteStarted"
-      @failed="onBackupSourcesDeleteFailed"
       @deleted="onBackupSourcesDeleted"
     />
     <NodeLifecycleUpgradeConfirmDialog
