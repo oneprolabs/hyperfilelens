@@ -722,9 +722,11 @@ class ProtectionBackupConfigApiTests(TestCase):
 
         self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
 
-    def test_create_backup_config_rejects_cross_proxy_repository_without_explicit_host(self):
+    def test_create_backup_config_rejects_cross_proxy_repository_without_reachable_host(self):
         source_proxy = self._proxy(name="source-proxy-no-host")
         repository_proxy = self._proxy(name="repository-proxy-no-host")
+        repository_proxy.ip_address = ""
+        repository_proxy.save(update_fields=["ip_address", "updated_at"])
         source = self._nas_source(proxy=source_proxy, name="nas-source-no-host")
         repository = self._proxy_bound_nas_repository(proxy=repository_proxy, name="repo-no-host")
 

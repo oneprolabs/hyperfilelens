@@ -150,6 +150,7 @@ def build_repository_runtime_payload(
     execution_target: Any | None = None,
     repository_endpoint_type: object = "external",
     repository_endpoint: object = None,
+    authorized_bind_node_id: int | None = None,
 ) -> dict[str, Any]:
     from apps.storage.services.internal.nas_repository import (
         nas_agent_repository_subdir,
@@ -189,7 +190,8 @@ def build_repository_runtime_payload(
             raise ValidationError(
                 {"repository_id": "Proxy filesystem repository must be accessed through its bound proxy node."}
             )
-        if int(repository.bind_node_id or 0) != execution_target.node.id:
+        expected_node_id = authorized_bind_node_id or repository.bind_node_id
+        if int(expected_node_id or 0) != execution_target.node.id:
             raise ValidationError({"repository_id": "Proxy filesystem repository is bound to a different proxy node."})
         proxy_dir = str(config.get("proxy_node_dir") or "").strip()
         if not proxy_dir:
@@ -208,7 +210,8 @@ def build_repository_runtime_payload(
                 raise ValidationError(
                     {"repository_id": "NAS repository must be accessed through its bound proxy node."}
                 )
-            if int(repository.bind_node_id or 0) != execution_target.node.id:
+            expected_node_id = authorized_bind_node_id or repository.bind_node_id
+            if int(expected_node_id or 0) != execution_target.node.id:
                 raise ValidationError({"repository_id": "NAS repository is bound to a different proxy node."})
             subdir = nas_proxy_repository_subdir(repository)
             node_id = execution_target.node.id

@@ -21,7 +21,9 @@ from apps.protection.services.snapshot_browser import (
     _parent_path,
     _repository_for_directory,
 )
-from apps.storage.services.internal.repository_access import resolve_repository_reader
+from apps.protection.services.snapshot_repository_locator import (
+    resolve_snapshot_repository_reader,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,8 @@ def browse_snapshot_directory_from_target(
     row = _get_directory(organization_id=organization_id, directory_id=directory_id)
     node = _target_node(organization_id=organization_id, target_node_id=target_node_id)
     repository = _repository_for_directory(row)
-    repository_access = resolve_repository_reader(
+    repository_access = resolve_snapshot_repository_reader(
+        directory=row,
         repository=repository,
         fallback_node=node,
         source_type="agent",

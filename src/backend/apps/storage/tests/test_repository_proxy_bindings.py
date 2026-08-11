@@ -74,6 +74,29 @@ class StorageRepositoryProxyBindingTests(TestCase):
         repo.refresh_from_db()
         self.assertEqual(repo.bind_node_id, self.proxy_a.id)
 
+    def test_proxy_fs_cannot_change_physical_directory(self):
+        repo = Repository.objects.create(
+            organization_id=self.org.id,
+            name="disk-immutable-path",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=self.proxy_a.id,
+            config={"proxy_node_dir": "/data/repo"},
+        )
+
+        response = self.client.patch(
+            f"/api/v1/storage/repositories/{repo.id}/",
+            {"config": {"proxy_node_dir": "/data/other-repo"}},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        repo.refresh_from_db()
+        self.assertEqual(repo.config["proxy_node_dir"], "/data/repo")
+
     @mock.patch("apps.storage.services.interface.enqueue_repository_usage_refresh")
     def test_proxy_fs_can_replace_proxy(self, enqueue_usage):
         repo = Repository.objects.create(
@@ -171,6 +194,36 @@ class StorageRepositoryProxyBindingTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         repo.refresh_from_db()
         self.assertEqual(repo.bind_node_id, self.proxy_a.id)
+
+    def test_nas_cannot_change_physical_location_or_protocol(self):
+        repo = Repository.objects.create(
+            organization_id=self.org.id,
+            name="target-nas-immutable-location",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "10.0.0.10", "share_path": "/backup"},
+        )
+
+        response = self.client.patch(
+            f"/api/v1/storage/repositories/{repo.id}/",
+            {
+                "nas_protocol": Repository.NasProtocol.SMB,
+                "config": {
+                    "server_address": "10.0.0.11",
+                    "share_path": "/other-backup",
+                },
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        repo.refresh_from_db()
+        self.assertEqual(repo.nas_protocol, Repository.NasProtocol.NFS)
+        self.assertEqual(repo.config["server_address"], "10.0.0.10")
+        self.assertEqual(repo.config["share_path"], "/backup")
 
     @mock.patch("apps.storage.services.internal.nas_repository.run_agent_task_sync")
     def test_target_nas_initializer_persists_agent_mount_point(self, run_agent_task_sync):

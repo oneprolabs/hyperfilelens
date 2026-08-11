@@ -75,16 +75,24 @@ func (e *Engine) runManagedRepositoryCleanup(
 		result["physical_cleanup"] = "already_absent"
 	}
 
-	configFile := e.repositoryConfigPath(spec)
-	removedConfigCount, err := removeRepositoryLocalState(configFile)
-	if err != nil {
-		return "failed", result, redactRepositoryCleanupPaths(err.Error(), filepath.Dir(configFile))
+	configFiles := e.repositoryCleanupConfigPaths(spec)
+	removedConfigCount := 0
+	for _, configFile := range configFiles {
+		removed, err := removeRepositoryLocalState(configFile)
+		if err != nil {
+			return "failed", result, redactRepositoryCleanupPaths(err.Error(), filepath.Dir(configFile))
+		}
+		removedConfigCount += removed
 	}
 	result["removed_config_file_count"] = removedConfigCount
-	cacheDir := managedRepositoryCacheDir(e.current(), configFile)
-	_, cacheExisted, err := deleteManagedRepositoryPath(ctx, cacheDir, managedRepositoryCacheRoot(e.current()))
-	if err != nil {
-		return "failed", result, redactRepositoryCleanupPaths(err.Error(), cacheDir)
+	cacheExisted := false
+	for _, configFile := range configFiles {
+		cacheDir := managedRepositoryCacheDir(e.current(), configFile)
+		_, existed, err := deleteManagedRepositoryPath(ctx, cacheDir, managedRepositoryCacheRoot(e.current()))
+		if err != nil {
+			return "failed", result, redactRepositoryCleanupPaths(err.Error(), cacheDir)
+		}
+		cacheExisted = cacheExisted || existed
 	}
 	result["repository_cache_existed"] = cacheExisted
 	if spec.Type == "nas" {
@@ -102,6 +110,22 @@ func (e *Engine) runManagedRepositoryCleanup(
 		return "failed", result, "canceled"
 	}
 	return "success", result, ""
+}
+
+func (e *Engine) repositoryCleanupConfigPaths(spec repositorySpec) []string {
+	primary := e.repositoryConfigPath(spec)
+	paths := []string{primary}
+	if spec.Type != "nas" || spec.ID <= 0 || strings.TrimSpace(spec.Subdir) == "" {
+		return paths
+	}
+	legacy := filepath.Join(
+		filepath.Dir(primary),
+		fmt.Sprintf("repo-%d.config", spec.ID),
+	)
+	if legacy != primary {
+		paths = append(paths, legacy)
+	}
+	return paths
 }
 
 func deleteManagedRepositoryPath(ctx context.Context, path string, allowedRoot string) (string, bool, error) {

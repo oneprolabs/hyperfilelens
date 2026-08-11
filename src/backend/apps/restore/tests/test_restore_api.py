@@ -171,6 +171,71 @@ class RestoreApiTests(TestCase):
         binding.save(update_fields=["state", "identity_status", "updated_at"])
         return binding
 
+    def _bound_repository_lens_restore(self, *, repository_type: str):
+        private_gateway = Node.objects.create(
+            organization=self.org,
+            name=f"private-{repository_type}-lens-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+        )
+        repository_proxy = Node.objects.create(
+            organization=self.org,
+            name=f"chat-{repository_type}-repository-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.65",
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.org,
+            gateway=private_gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+        )
+        workspace_binding = self._workspace_binding(gateway_link)
+        self.repository.repo_type = repository_type
+        self.repository.s3_bucket = ""
+        self.repository.nas_protocol = (
+            Repository.NasProtocol.NFS
+            if repository_type == Repository.Type.NAS
+            else None
+        )
+        self.repository.bind_node_type = Repository.BindNodeType.PROXY
+        self.repository.bind_node_id = repository_proxy.id
+        self.repository.config = (
+            {
+                "server_address": "10.0.0.20",
+                "share_path": "/volume1/backup",
+                "kopia_password": "repo-pass",
+                "proxy_repository_server_host": "10.0.0.65",
+            }
+            if repository_type == Repository.Type.NAS
+            else {
+                "proxy_node_dir": "/srv/hfl-repository",
+                "kopia_password": "repo-pass",
+                "proxy_repository_server_host": "10.0.0.65",
+            }
+        )
+        self.repository.save()
+        payload = self._manual_restore_payload()
+        payload.update(
+            {
+                "target_ref_id": private_gateway.id,
+                "target_path": workspace_binding.resolved_path(),
+                "idempotency_key": f"lens-workspace:{repository_type}:1",
+            }
+        )
+        record = restore_service.create_lens_workspace_restore_record(
+            organization_id=self.org.id,
+            workspace_binding_id=workspace_binding.id,
+            data=payload,
+        )
+        server_task = NodeTask.objects.get(
+            kind="repository.server.start",
+            correlation_id=str(record.task_uuid),
+        )
+        return record, server_task, repository_proxy
+
     @patch("apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway")
     def test_lens_workspace_restore_uses_platform_execution_identity(self, _ready):
         platform_org = platform_lens.get_or_create_platform_org()
@@ -339,6 +404,121 @@ class RestoreApiTests(TestCase):
         )
         self.assertEqual(node_task.organization_id, self.org.id)
         self.assertEqual(node_task.requesting_organization_id, self.org.id)
+
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
+    def test_lens_workspace_restore_from_direct_nas_preserves_backup_shard(
+        self, _ready
+    ):
+        private_gateway = Node.objects.create(
+            organization=self.org,
+            name="private-nas-lens-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.org,
+            gateway=private_gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+        )
+        workspace_binding = self._workspace_binding(gateway_link)
+        backup_node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.run",
+            correlation_type="protection.backup",
+            correlation_id="chat-direct-nas-backup",
+            status=NodeTask.Status.SUCCESS,
+            payload={},
+            result={},
+            watchdog_deadline_at=timezone.now(),
+        )
+        self.snapshot_dir.node_task_id = backup_node_task.id
+        self.snapshot_dir.save(update_fields=["node_task_id", "updated_at"])
+        self.repository.repo_type = Repository.Type.NAS
+        self.repository.nas_protocol = Repository.NasProtocol.NFS
+        self.repository.s3_bucket = ""
+        self.repository.config = {
+            "server_address": "10.0.0.20",
+            "share_path": "/volume1/backup",
+            "kopia_password": "repo-pass",
+        }
+        self.repository.save(
+            update_fields=["repo_type", "nas_protocol", "s3_bucket", "config"]
+        )
+        payload = self._manual_restore_payload()
+        payload.update(
+            {
+                "target_ref_id": private_gateway.id,
+                "target_path": workspace_binding.resolved_path(),
+                "idempotency_key": "lens-workspace:direct-nas:1",
+            }
+        )
+
+        record = restore_service.create_lens_workspace_restore_record(
+            organization_id=self.org.id,
+            workspace_binding_id=workspace_binding.id,
+            data=payload,
+        )
+
+        node_task = NodeTask.objects.get(
+            kind="restore.run",
+            correlation_id=str(record.task_uuid),
+        )
+        self.assertEqual(node_task.node_id, private_gateway.id)
+        self.assertEqual(node_task.payload["repository"]["type"], Repository.Type.NAS)
+        self.assertEqual(
+            node_task.payload["repository"]["subdir"],
+            f"hp-repos/agent-{self.agent.id}",
+        )
+        self.assertNotEqual(
+            node_task.payload["repository"]["subdir"],
+            f"hp-repos/agent-{private_gateway.id}",
+        )
+
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
+    def test_lens_workspace_restore_from_proxy_bound_nas_starts_server(self, _ready):
+        record, server_task, repository_proxy = self._bound_repository_lens_restore(
+            repository_type=Repository.Type.NAS
+        )
+
+        self.assertEqual(server_task.node_id, repository_proxy.id)
+        self.assertEqual(server_task.payload["repository"]["type"], Repository.Type.NAS)
+        self.assertEqual(
+            server_task.payload["repository"]["subdir"],
+            f"hp-repos/storage-{self.repository.id}",
+        )
+        self.assertFalse(
+            NodeTask.objects.filter(
+                kind="restore.run",
+                correlation_id=str(record.task_uuid),
+            ).exists()
+        )
+
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
+    def test_lens_workspace_restore_from_proxy_fs_starts_server(self, _ready):
+        record, server_task, repository_proxy = self._bound_repository_lens_restore(
+            repository_type=Repository.Type.PROXY_FS
+        )
+
+        self.assertEqual(server_task.node_id, repository_proxy.id)
+        self.assertEqual(
+            server_task.payload["repository"]["type"],
+            Repository.Type.PROXY_FS,
+        )
+        self.assertFalse(
+            NodeTask.objects.filter(
+                kind="restore.run",
+                correlation_id=str(record.task_uuid),
+            ).exists()
+        )
 
     def test_nas_restore_dispatches_mount_payload_and_execution_path(self):
         proxy = Node.objects.create(
@@ -2023,7 +2203,7 @@ class RestoreApiTests(TestCase):
                         "type": "file",
                         "is_dir": False,
                         "size_bytes": 12,
-                    }
+                    },
                 ]
             },
             task=SimpleNamespace(last_error=""),
@@ -2048,7 +2228,63 @@ class RestoreApiTests(TestCase):
         self.assertEqual(payload["path"], "docs")
 
     @patch("apps.restore.services.snapshot_browser.run_agent_task_sync")
-    def test_browse_restore_snapshot_directory_rejects_offline_target(self, mock_run_agent_task_sync):
+    def test_browse_direct_nas_snapshot_uses_target_node_and_backup_shard(
+        self, mock_run_agent_task_sync
+    ):
+        backup_node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.run",
+            correlation_type="protection.backup",
+            correlation_id="browse-direct-nas-backup",
+            status=NodeTask.Status.SUCCESS,
+            payload={},
+            result={},
+            watchdog_deadline_at=timezone.now(),
+        )
+        self.snapshot_dir.node_task_id = backup_node_task.id
+        self.snapshot_dir.save(update_fields=["node_task_id", "updated_at"])
+        self.repository.repo_type = Repository.Type.NAS
+        self.repository.nas_protocol = Repository.NasProtocol.NFS
+        self.repository.s3_bucket = ""
+        self.repository.config = {
+            "server_address": "10.0.0.20",
+            "share_path": "/volume1/backup",
+            "kopia_password": "repo-pass",
+        }
+        self.repository.save(
+            update_fields=["repo_type", "nas_protocol", "s3_bucket", "config"]
+        )
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            ok=True,
+            timed_out=False,
+            result={"entries": []},
+            task=SimpleNamespace(last_error=""),
+        )
+
+        response = self.client.get(
+            f"/api/v1/restore/snapshot-directories/{self.snapshot_dir.id}/browse/"
+            f"?target_node_id={self.target.id}",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(
+            mock_run_agent_task_sync.call_args.kwargs["node_id"],
+            self.target.id,
+        )
+        repository_payload = mock_run_agent_task_sync.call_args.kwargs["payload"][
+            "repository"
+        ]
+        self.assertEqual(
+            repository_payload["subdir"],
+            f"hp-repos/agent-{self.agent.id}",
+        )
+
+    @patch("apps.restore.services.snapshot_browser.run_agent_task_sync")
+    def test_browse_restore_snapshot_directory_rejects_offline_target(
+        self, mock_run_agent_task_sync
+    ):
         self.target.availability = Node.Availability.OFFLINE
         self.target.save(update_fields=["availability"])
 

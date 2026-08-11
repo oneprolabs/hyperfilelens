@@ -11,16 +11,19 @@ from django.utils import timezone
 from apps.protection.models import BackupConfig, BackupSourceSnapshot, BackupSourceSnapshotDirectory
 from apps.protection.services.kopia_snapshot_delete import (
     classify_kopia_snapshot_delete_results,
+    normalize_kopia_snapshot_id,
 )
 from apps.protection.services.backup_task import (
     _resolve_execution_target,
     _set_step_status,
 )
 from apps.protection.services.repository_compatibility import validate_backup_repository_compatible
-from apps.storage.services.internal.repository_access import (
-    repository_uses_bound_proxy,
-    resolve_repository_reader,
+from apps.protection.services.snapshot_repository_locator import (
+    group_snapshot_directories_by_repository_locator,
+    resolve_snapshot_repository_reader,
 )
+from apps.storage.repositories.models import Repository
+from apps.storage.services.internal.repository_access import repository_uses_bound_proxy
 from apps.source.constants import PipelineStep
 from apps.source.services.internal.selectable_ids import parse_selectable_id
 from apps.source.services.internal.source_pipeline import force_set_pipeline_steps
@@ -97,7 +100,7 @@ def _kopia_snapshot_ids(rows: list[BackupSourceSnapshotDirectory]) -> list[str]:
     seen: set[str] = set()
     ids: list[str] = []
     for row in rows:
-        snapshot_id = str(row.kopia_snapshot_id or "").strip()
+        snapshot_id = normalize_kopia_snapshot_id(row.kopia_snapshot_id)
         if not snapshot_id or snapshot_id in seen:
             continue
         seen.add(snapshot_id)
@@ -609,52 +612,95 @@ def _delete_physical_snapshots(*, task: Task, organization_id: int, config_ids: 
                 "kopia_snapshot_ids": kopia_ids,
             },
         )
-        outcome = _run_kopia_snapshot_delete(
+        repository = validate_backup_repository_compatible(
             organization_id=organization_id,
-            task=task,
-            source_snapshot=snapshot,
-            kopia_ids=kopia_ids,
+            source_type=snapshot.source_type,
+            source_ref_id=snapshot.source_ref_id,
+            repository_id=snapshot.repository_id,
         )
-        result = outcome.result if isinstance(outcome.result, dict) else {}
-        item_results = result.get("results") if isinstance(result.get("results"), list) else []
-        deleted_ids, already_absent_ids, hard_failures = classify_kopia_snapshot_delete_results(
-            [item for item in item_results if isinstance(item, dict)],
+        physical_rows = [
+            row
+            for row in rows
+            if normalize_kopia_snapshot_id(row.kopia_snapshot_id)
+        ]
+        groups = group_snapshot_directories_by_repository_locator(
+            directories=physical_rows,
+            repository=repository,
         )
-        reconciled_ids = deleted_ids | already_absent_ids
-        if already_absent_ids:
-            append_task_step_event(
+        for group in groups:
+            group_kopia_ids = _kopia_snapshot_ids(group)
+            outcome = _run_kopia_snapshot_delete(
+                organization_id=organization_id,
                 task=task,
-                step_name="delete_kopia_snapshots",
-                level=TaskEvent.Level.WARN,
-                message="Kopia snapshot already absent; continuing reset cleanup",
-                metadata={
-                    "source_snapshot_id": snapshot.id,
-                    "kopia_snapshot_ids": sorted(already_absent_ids),
-                },
-            )
-        if reconciled_ids:
-            BackupSourceSnapshotDirectory.objects.filter(
                 source_snapshot=snapshot,
-                kopia_snapshot_id__in=list(reconciled_ids),
-            ).update(status=BackupSourceSnapshotDirectory.Status.DELETED)
-        if outcome.timed_out or hard_failures:
-            failed_count += max(len(hard_failures), 1 if outcome.timed_out else 0)
-            detail = str(getattr(outcome.task, "last_error", "") or "").strip()
-            if not detail and hard_failures:
-                first = hard_failures[0]
-                detail = str(first.get("error_message") or "")
-                delete = first.get("delete")
-                if isinstance(delete, dict):
-                    detail = str(delete.get("stderr_tail") or delete.get("stderr") or detail)
-            raise ValidationError({
-                "detail": detail or "One or more Kopia snapshots failed to delete.",
-            })
-        if not outcome.ok and not reconciled_ids:
-            failed_count += int(result.get("failed_count") or 1)
-            raise ValidationError({
-                "detail": str(getattr(outcome.task, "last_error", "") or "One or more Kopia snapshots failed to delete.")
-            })
-        deleted_count += len(reconciled_ids)
+                directory=group[0],
+                repository=repository,
+                kopia_ids=group_kopia_ids,
+            )
+            result = outcome.result if isinstance(outcome.result, dict) else {}
+            item_results = (
+                result.get("results")
+                if isinstance(result.get("results"), list)
+                else []
+            )
+            deleted_ids, already_absent_ids, hard_failures = (
+                classify_kopia_snapshot_delete_results(
+                    [item for item in item_results if isinstance(item, dict)],
+                )
+            )
+            reconciled_ids = deleted_ids | already_absent_ids
+            if already_absent_ids:
+                append_task_step_event(
+                    task=task,
+                    step_name="delete_kopia_snapshots",
+                    level=TaskEvent.Level.WARN,
+                    message="Kopia snapshot already absent; continuing reset cleanup",
+                    metadata={
+                        "source_snapshot_id": snapshot.id,
+                        "kopia_snapshot_ids": sorted(already_absent_ids),
+                    },
+                )
+            if reconciled_ids:
+                BackupSourceSnapshotDirectory.objects.filter(
+                    source_snapshot=snapshot,
+                    id__in=[row.id for row in group],
+                    kopia_snapshot_id__in=list(reconciled_ids),
+                ).update(status=BackupSourceSnapshotDirectory.Status.DELETED)
+            if outcome.timed_out or hard_failures:
+                failed_count += max(
+                    len(hard_failures),
+                    1 if outcome.timed_out else 0,
+                )
+                detail = str(
+                    getattr(outcome.task, "last_error", "") or ""
+                ).strip()
+                if not detail and hard_failures:
+                    first = hard_failures[0]
+                    detail = str(first.get("error_message") or "")
+                    delete = first.get("delete")
+                    if isinstance(delete, dict):
+                        detail = str(
+                            delete.get("stderr_tail")
+                            or delete.get("stderr")
+                            or detail
+                        )
+                raise ValidationError(
+                    {
+                        "detail": detail
+                        or "One or more Kopia snapshots failed to delete."
+                    }
+                )
+            if not outcome.ok and not reconciled_ids:
+                failed_count += int(result.get("failed_count") or 1)
+                raise ValidationError(
+                    {
+                        "detail": str(
+                            getattr(outcome.task, "last_error", "")
+                            or "One or more Kopia snapshots failed to delete."
+                        )
+                    }
+                )
+            deleted_count += len(reconciled_ids)
         _mark_snapshot_rows_deleted(snapshot)
         _update_delete_progress(task=task, index=index, total=total)
 
@@ -673,20 +719,17 @@ def _run_kopia_snapshot_delete(
     organization_id: int,
     task: Task,
     source_snapshot: BackupSourceSnapshot,
+    directory: BackupSourceSnapshotDirectory,
+    repository: Repository,
     kopia_ids: list[str],
 ):
     from apps.node.services.interface import run_agent_task_sync
 
-    repository = validate_backup_repository_compatible(
-        organization_id=organization_id,
-        source_type=source_snapshot.source_type,
-        source_ref_id=source_snapshot.source_ref_id,
-        repository_id=source_snapshot.repository_id,
-    )
     fallback_target = None
     if not repository_uses_bound_proxy(repository):
         fallback_target = _resolve_execution_target(source_snapshot=source_snapshot)
-    repository_access = resolve_repository_reader(
+    repository_access = resolve_snapshot_repository_reader(
+        directory=directory,
         repository=repository,
         fallback_node=fallback_target.node if fallback_target is not None else None,
         source_type=source_snapshot.source_type,

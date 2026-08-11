@@ -173,6 +173,112 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(events[1].metadata["object_names"], ["/data/b"])
 
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_snapshot_delete_groups_by_locator_and_preserves_partial_results(
+        self,
+        mock_run_agent_task_sync,
+    ):
+        original_proxy = Node.objects.create(
+            organization=self.org,
+            name="snapshot-delete-original-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        replacement_proxy = Node.objects.create(
+            organization=self.org,
+            name="snapshot-delete-replacement-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        self.repository.repo_type = Repository.Type.PROXY_FS
+        self.repository.s3_bucket = ""
+        self.repository.bind_node_type = Repository.BindNodeType.PROXY
+        self.repository.bind_node_id = replacement_proxy.id
+        self.repository.config = {
+            "proxy_node_dir": "/srv/hfl-repository",
+            "kopia_password": "repo-pass",
+        }
+        self.repository.save()
+        rows = list(
+            BackupSourceSnapshotDirectory.objects.filter(
+                source_snapshot=self.snapshot,
+            ).order_by("id")
+        )
+        for row, access_node in zip(
+            rows,
+            (original_proxy, replacement_proxy),
+            strict=True,
+        ):
+            row.repository_locator = {
+                "version": 1,
+                "repository_id": self.repository.id,
+                "repository_type": Repository.Type.PROXY_FS,
+                "repository_subdir": "",
+                "writer_node_id": self.agent.id,
+                "access_node_id": access_node.id,
+            }
+            row.save(update_fields=["repository_locator", "updated_at"])
+
+        def _delete_group(**kwargs):
+            snapshot_ids = kwargs["payload"]["kopia_snapshot_ids"]
+            failed = kwargs["node_id"] == replacement_proxy.id
+            return SimpleNamespace(
+                task=SimpleNamespace(
+                    id="node-delete-group",
+                    status="failed" if failed else "success",
+                    last_error="delete failed" if failed else "",
+                ),
+                result={
+                    "deleted_count": 0 if failed else len(snapshot_ids),
+                    "failed_count": len(snapshot_ids) if failed else 0,
+                    "results": [
+                        {
+                            "kopia_snapshot_id": snapshot_id,
+                            "status": "failed" if failed else "success",
+                            **({"error_message": "boom"} if failed else {}),
+                        }
+                        for snapshot_id in snapshot_ids
+                    ],
+                },
+                ok=not failed,
+                timed_out=False,
+            )
+
+        mock_run_agent_task_sync.side_effect = _delete_group
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        result = run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        task.refresh_from_db()
+        self.snapshot.refresh_from_db()
+        rows = list(
+            BackupSourceSnapshotDirectory.objects.filter(
+                source_snapshot=self.snapshot,
+            ).order_by("id")
+        )
+        self.assertEqual(result["deleted_count"], 1)
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(
+            self.snapshot.status,
+            BackupSourceSnapshot.Status.DELETE_FAILED,
+        )
+        self.assertEqual(rows[0].status, BackupSourceSnapshotDirectory.Status.DELETED)
+        self.assertEqual(rows[1].status, BackupSourceSnapshotDirectory.Status.AVAILABLE)
+        self.assertEqual(mock_run_agent_task_sync.call_count, 2)
+        self.assertEqual(
+            {
+                call.kwargs["node_id"]
+                for call in mock_run_agent_task_sync.call_args_list
+            },
+            {original_proxy.id, replacement_proxy.id},
+        )
+
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
     def test_run_snapshot_delete_task_keeps_logical_snapshot_when_partial_delete_fails(self, mock_run_agent_task_sync):
         task = create_snapshot_delete_task(source_snapshot=self.snapshot)
         mock_run_agent_task_sync.return_value = SimpleNamespace(
@@ -244,6 +350,40 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETED)
         self.assertEqual(task.status, Task.Status.SUCCESS)
         self.assertEqual(result["already_absent_count"], 2)
+
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_legacy_sentinel_row_is_not_dispatched(self, mock_run_agent_task_sync):
+        BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot=self.snapshot,
+            backup_config_dir_id=self.dir_b.id,
+        ).update(kopia_snapshot_id="None")
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            task=SimpleNamespace(id="node-delete-sentinel", status="success", last_error=""),
+            result={
+                "deleted_count": 1,
+                "failed_count": 0,
+                "results": [
+                    {"kopia_snapshot_id": "kopia-a", "status": "success"},
+                ],
+            },
+            ok=True,
+            timed_out=False,
+        )
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        result = run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertEqual(result["deleted_count"], 2)
+        self.assertEqual(
+            mock_run_agent_task_sync.call_args.kwargs["payload"]["kopia_snapshot_ids"],
+            ["kopia-a"],
+        )
 
     def test_retry_delay_sequence_caps_at_two_hours(self):
         self.assertEqual(

@@ -380,10 +380,17 @@ func (e *Engine) repositoryConfigPath(spec repositorySpec) string {
 		} else {
 			filename = fmt.Sprintf("server-%s.config", token)
 		}
+	} else if spec.Type == "nas" && spec.ID > 0 && strings.TrimSpace(spec.Subdir) != "" {
+		filename = fmt.Sprintf("repo-%d-nas-%s.config", spec.ID, repositoryNamespaceToken(spec.Subdir))
 	} else if spec.ID > 0 {
 		filename = fmt.Sprintf("repo-%d.config", spec.ID)
 	}
 	return filepath.Join(base, "kopia", "repositories", filename)
+}
+
+func repositoryNamespaceToken(namespace string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(namespace)))
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 func repositoryServerConfigToken(spec repositorySpec) string {

@@ -13,11 +13,11 @@ from apps.node.services.internal.agent_log import task_log_context
 from apps.node.services.interface import run_agent_task_sync
 from apps.protection.models import BackupSourceSnapshot, BackupSourceSnapshotDirectory
 from apps.protection.services.backup_task import _resolve_execution_target
-from apps.storage.repositories.models import Repository
-from apps.storage.services.internal.repository_access import (
-    repository_uses_bound_proxy,
-    resolve_repository_reader,
+from apps.protection.services.snapshot_repository_locator import (
+    resolve_snapshot_repository_reader,
 )
+from apps.storage.repositories.models import Repository
+from apps.storage.services.internal.repository_access import repository_uses_bound_proxy
 
 DEFAULT_SNAPSHOT_BROWSE_LIMIT = 200
 DEFAULT_SNAPSHOT_BROWSER_TIMEOUT_SECONDS = 120
@@ -157,7 +157,8 @@ def _run_snapshot_agent_task(
     fallback_target = None
     if not repository_uses_bound_proxy(repository):
         fallback_target = _resolve_execution_target(source_snapshot=snapshot)
-    repository_access = resolve_repository_reader(
+    repository_access = resolve_snapshot_repository_reader(
+        directory=row,
         repository=repository,
         fallback_node=fallback_target.node if fallback_target is not None else None,
         source_type=snapshot.source_type,
