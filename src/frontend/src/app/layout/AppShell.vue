@@ -1325,7 +1325,7 @@ function applyThemeVars(t: string) {
   min-height: 0;
   gap: 1.5rem;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-template-rows: 282px 250px;
+  grid-template-rows: 352px 250px;
 }
 
 .app-route-dashboard-skeleton__panel {

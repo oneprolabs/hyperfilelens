@@ -17,6 +17,7 @@ import DashboardIdleGearIllustration from '../components/dashboard/DashboardIdle
 import DashboardIdleShieldIllustration from '../components/dashboard/DashboardIdleShieldIllustration.vue'
 import { ElInputNumber, ElOption, ElSelect, ElTooltip } from 'element-plus'
 import ErrorState from '../components/errors/ErrorState.vue'
+import { planRepositoryCapacity } from '../lib/capacityPlanner'
 import { formatLocalDateTime } from '../lib/dateTime'
 import {
   loadDashboardOverview,
@@ -36,7 +37,7 @@ const chartHoveredIdx = ref<number | null>(null)
 const capacityPlanAmount = ref(1)
 const capacityPlanUnit = ref<'GB' | 'TB'>('TB')
 const capacityPlanFactor = ref(1)
-const capacityPlanScope = ref('all')
+const capacityPlanRepositoryId = ref<number>()
 const capacityPlanSafePct = 80
 
 const routes = {
@@ -86,11 +87,11 @@ function formatPct(value: number): string {
   return `${Math.min(999, Math.max(0, Math.round(value * 10) / 10))}%`
 }
 
-function repoUsageLimitLabel(repo: RepoUsageRow) {
-  if (repo.capacityMode === 'known') {
-    return t('dashboard.repositoryLimit', { size: formatBytes(repo.capacityBytes) })
-  }
-  return t('dashboard.noConfiguredLimit')
+function repoCapacityLabel(repo: RepoUsageRow) {
+  if (repo.capacityMode === 'known') return formatBytes(repo.capacityBytes)
+  if (repo.capacityMode === 'pending') return t('dashboard.ribbon.usagePending')
+  if (repo.capacityMode === 'unavailable') return t('repositoriesPage.capacityUnavailable')
+  return t('dashboard.unlimited')
 }
 
 function repoHealthKind(repo: RepoUsageRow): 'online' | 'offline' | 'unverified' {
@@ -133,22 +134,7 @@ function quotaPct(used: number, limit: number) {
 const storagePct = computed(() => {
   const s = overview.value?.storage
   if (!s?.capacityBytes) return null
-  return Math.min(100, Math.round((s.storageUsedBytes / s.capacityBytes) * 1000) / 10)
-})
-
-const selectedCapacityPool = computed(() => {
-  if (capacityPlanScope.value === 'all') return null
-  return overview.value?.storage.pools.find((pool) => pool.key === capacityPlanScope.value) ?? null
-})
-
-const capacityPlanBase = computed(() => {
-  const pool = selectedCapacityPool.value
-  if (pool) return { capacityBytes: pool.capacityBytes, usedBytes: pool.usedBytes }
-  const storage = overview.value?.storage
-  return {
-    capacityBytes: storage?.capacityBytes ?? 0,
-    usedBytes: storage?.storageUsedBytes ?? 0,
-  }
+  return Math.min(100, Math.round((s.usedBytes / s.capacityBytes) * 1000) / 10)
 })
 
 const capacityPlanInputBytes = computed(() => {
@@ -158,53 +144,46 @@ const capacityPlanInputBytes = computed(() => {
   return Math.max(0, amount) * unitBytes * Math.max(0, factor)
 })
 
+const capacityPlanRepositories = computed(() => overview.value?.repositories ?? [])
+
+const selectedCapacityPlanRepo = computed(() => {
+  const repositoryId = capacityPlanRepositoryId.value
+  if (repositoryId == null) return undefined
+  return capacityPlanRepositories.value.find((repo) => repo.id === repositoryId)
+})
+
+const capacityPlan = computed(() => {
+  const repository = selectedCapacityPlanRepo.value
+  if (!repository) return null
+  return planRepositoryCapacity(repository, capacityPlanInputBytes.value, capacityPlanSafePct)
+})
+
 const capacityPlanProjectedBytes = computed(() => {
-  return capacityPlanBase.value.usedBytes + capacityPlanInputBytes.value
+  return capacityPlan.value?.projectedBytes ?? 0
 })
 
 const capacityPlanPct = computed(() => {
-  const total = capacityPlanBase.value.capacityBytes
-  if (!total) return null
-  return (capacityPlanProjectedBytes.value / total) * 100
+  return capacityPlan.value?.projectedPct ?? null
 })
 
 const capacityPlanRemainingBytes = computed(() => {
-  const total = capacityPlanBase.value.capacityBytes
-  if (!total) return null
-  return total - capacityPlanProjectedBytes.value
+  return capacityPlan.value?.remainingBytes ?? null
 })
 
 const capacityPlanStatus = computed((): 'ok' | 'warning' | 'danger' | 'neutral' => {
-  const s = overview.value?.storage
-  if (!s || s.capacityMode !== 'known') return 'neutral'
-  if (capacityPlanScope.value === 'all' && s.coveredRepoCount < s.capacityRepoCount) return 'neutral'
-  const pct = capacityPlanPct.value ?? 0
-  if (pct >= 100) return 'danger'
-  if (pct >= capacityPlanSafePct) return 'warning'
-  return 'ok'
+  return capacityPlan.value?.status ?? 'neutral'
 })
 
 const capacityPlanStatusLabel = computed(() => {
-  const s = overview.value?.storage
-  if (!s || s.capacityMode === 'empty') return t('dashboard.capacityPlanner.statusNoCapacity')
-  if (s.capacityMode === 'pending') return t('dashboard.capacityPlanner.statusPending')
-  if (s.capacityMode === 'unlimited') return t('dashboard.capacityPlanner.statusUnlimited')
-  if (
-    capacityPlanScope.value === 'all'
-    && s.coveredRepoCount < s.capacityRepoCount
-  ) return t('dashboard.capacityPlanner.statusPartial')
+  const repository = selectedCapacityPlanRepo.value
+  if (!repository) return t('dashboard.capacityPlanner.statusSelectRepository')
+  if (repository.capacityMode === 'pending') return t('dashboard.capacityPlanner.statusPending')
+  if (repository.capacityMode === 'unavailable') return t('dashboard.capacityPlanner.statusUnavailable')
+  if (repository.capacityMode === 'unlimited') return t('dashboard.capacityPlanner.statusUnlimited')
   const pct = capacityPlanPct.value ?? 0
   if (pct >= 100) return t('dashboard.capacityPlanner.statusOver')
   if (pct >= capacityPlanSafePct) return t('dashboard.capacityPlanner.statusNear')
   return t('dashboard.capacityPlanner.statusReady')
-})
-
-const capacityPlanUnavailableLabel = computed(() => {
-  const mode = overview.value?.storage.capacityMode
-  if (mode === 'empty') return t('dashboard.capacityPlanner.noCapacity')
-  if (mode === 'pending') return t('dashboard.capacityPlanner.pendingShort')
-  if (mode === 'unlimited') return t('dashboard.capacityPlanner.notEvaluated')
-  return t('dashboard.capacityPlanner.notAvailable')
 })
 
 const sourceAvailabilityPct = computed(() => {
@@ -220,18 +199,26 @@ const infraSourceMainValue = computed(() => {
   return t('dashboard.ribbon.sourceAvailableEmpty')
 })
 
-const storageCoverageLabel = computed(() => {
-  const storage = overview.value?.storage
-  if (!storage?.capacityRepoCount) return '—'
-  return `${storage.coveredRepoCount} / ${storage.capacityRepoCount}`
+const storageTotalCapacityLabel = computed(() => {
+  const s = overview.value?.storage
+  if (!s || s.capacityMode === 'empty') return '—'
+  if (s.capacityMode === 'known') return formatGB(s.capacityBytes)
+  if (s.capacityMode === 'unlimited') return t('dashboard.unlimited')
+  return t('dashboard.ribbon.usagePending')
 })
 
 const capacityPlanPrimaryMetric = computed(() => {
-  const mode = overview.value?.storage.capacityMode
-  if (mode === 'known') {
+  const repository = selectedCapacityPlanRepo.value
+  if (repository?.capacityMode === 'known') {
     return {
       label: t('dashboard.capacityPlanner.projectedRate'),
-      value: capacityPlanPct.value == null ? capacityPlanUnavailableLabel.value : formatPct(capacityPlanPct.value),
+      value: capacityPlanPct.value == null ? t('dashboard.capacityPlanner.notAvailable') : formatPct(capacityPlanPct.value),
+    }
+  }
+  if (repository?.capacityMode === 'unlimited') {
+    return {
+      label: t('dashboard.capacityPlanner.projectedUsage'),
+      value: formatBytes(capacityPlanProjectedBytes.value),
     }
   }
   return {
@@ -241,24 +228,26 @@ const capacityPlanPrimaryMetric = computed(() => {
 })
 
 const capacityPlanSecondaryMetric = computed(() => {
-  const mode = overview.value?.storage.capacityMode
-  if (mode === 'known') {
+  const repository = selectedCapacityPlanRepo.value
+  if (repository?.capacityMode === 'known') {
     return {
       label: t('dashboard.capacityPlanner.remaining'),
       value: capacityPlanRemainingBytes.value == null
-        ? capacityPlanUnavailableLabel.value
+        ? t('dashboard.capacityPlanner.notAvailable')
         : formatBytes(Math.max(0, capacityPlanRemainingBytes.value)),
     }
   }
-  if (mode === 'unlimited') {
+  if (repository?.capacityMode === 'unlimited') {
     return {
-      label: t('dashboard.capacityPlanner.projectedUsage'),
+      label: t('dashboard.capacityPlanner.capacity'),
       value: t('dashboard.unlimited'),
     }
   }
   return {
-    label: t('dashboard.capacityPlanner.projectedUsage'),
-    value: capacityPlanUnavailableLabel.value,
+    label: t('dashboard.capacityPlanner.capacity'),
+    value: repository?.capacityMode === 'pending'
+      ? t('dashboard.capacityPlanner.pendingShort')
+      : t('dashboard.capacityPlanner.notAvailable'),
   }
 })
 
@@ -325,7 +314,6 @@ const storageRibbonBadge = computed(() => {
   const s = overview.value?.storage
   if (!s?.repoCount) return t('dashboard.ribbon.storageEmpty')
   if (storagePct.value !== null && storagePct.value >= 80) return t('dashboard.ribbon.capacityAlert')
-  if (s.coveredRepoCount < s.capacityRepoCount) return t('dashboard.ribbon.partialCoverage')
   return ''
 })
 
@@ -339,8 +327,8 @@ const storageRibbonBadgeClass = computed(() => {
 
 const storageUsedProgressLabel = computed(() => {
   const s = overview.value?.storage
-  const used = formatBytes(s?.storageUsedBytes ?? 0)
-  return `${t('dashboard.ribbon.knownStorageUsed')} ${used}`
+  const used = formatBytes(s?.usedBytes ?? 0)
+  return `${t('dashboard.ribbon.usedOccupied')} ${used}`
 })
 
 const slaRibbonBadge = computed(() => {
@@ -652,8 +640,8 @@ onMounted(refresh)
             <strong class="text-emerald-600">{{ formatGB(overview?.storage.usedBytes ?? 0) }}</strong>
           </div>
           <div>
-            <span>{{ t('dashboard.ribbon.capacityCoverage') }}</span>
-            <strong :class="{ 'hfl-empty-mark': storageCoverageLabel === '—' }">{{ storageCoverageLabel }}</strong>
+            <span>{{ t('dashboard.ribbon.capacityTotal') }}</span>
+            <strong :class="{ 'hfl-empty-mark': storageTotalCapacityLabel === '—' }">{{ storageTotalCapacityLabel }}</strong>
           </div>
         </div>
       </RouterLink>
@@ -819,8 +807,8 @@ onMounted(refresh)
 	                      class="storage-item__bytes"
 	                      :class="{ 'storage-item__bytes--unlimited': repo.capacityMode !== 'known' }"
 	                    >
-	                      <span class="storage-item__used">{{ formatBytes(repo.usedBytes) }} {{ t('dashboard.used') }}</span>
-                      <span class="storage-item__capacity"> · {{ repoUsageLimitLabel(repo) }}</span>
+	                      <span class="storage-item__used">{{ formatBytes(repo.usedBytes) }}</span>
+                      <span class="storage-item__capacity" :class="{ 'hfl-empty-mark': repoCapacityLabel(repo) === '—' }">{{ repoCapacityLabel(repo) === '—' ? '—' : `/ ${repoCapacityLabel(repo)}` }}</span>
 	                      <span v-if="repo.capacityMode === 'known' && repo.pct !== null" class="storage-item__pct">
 	                        {{ repo.pct }}%
 	                      </span>
@@ -842,99 +830,108 @@ onMounted(refresh)
                   <Calculator :size="13" />
                   <span>{{ t('dashboard.capacityPlanner.title') }}</span>
                 </span>
-                <span class="capacity-planner__status-chip" :class="`capacity-planner__status-chip--${capacityPlanStatus}`">
+                <span
+                  v-if="selectedCapacityPlanRepo"
+                  class="capacity-planner__status-chip"
+                  :class="`capacity-planner__status-chip--${capacityPlanStatus}`"
+                >
                   {{ capacityPlanStatusLabel }}
                 </span>
               </div>
-              <div class="capacity-planner__form">
-                <div class="capacity-planner__field capacity-planner__field--scope">
-                  <label class="capacity-planner__label" for="dashboard-capacity-plan-scope">
-                    {{ t('dashboard.capacityPlanner.scope') }}
+              <div v-if="!capacityPlanRepositories.length" class="capacity-planner__empty">
+                <span>{{ t('dashboard.capacityPlanner.empty') }}</span>
+                <RouterLink :to="routes.repositories">{{ t('dashboard.capacityPlanner.createRepository') }}</RouterLink>
+              </div>
+              <div v-else class="capacity-planner__body">
+                <div class="capacity-planner__field">
+                  <label
+                    class="capacity-planner__label"
+                    for="dashboard-capacity-plan-repository"
+                  >
+                    {{ t('dashboard.capacityPlanner.repository') }}
                   </label>
                   <ElSelect
-                    id="dashboard-capacity-plan-scope"
-                    v-model="capacityPlanScope"
-                    class="capacity-planner__scope"
-                    :aria-label="t('dashboard.capacityPlanner.scope')"
+                    id="dashboard-capacity-plan-repository"
+                    v-model="capacityPlanRepositoryId"
+                    class="capacity-planner__repository"
+                    :aria-label="t('dashboard.capacityPlanner.repository')"
+                    :placeholder="t('dashboard.capacityPlanner.selectRepository')"
                     :teleported="false"
                   >
-                    <ElOption :label="t('dashboard.capacityPlanner.allKnownPools')" value="all" />
                     <ElOption
-                      v-for="pool in overview?.storage.pools ?? []"
-                      :key="pool.key"
-                      :label="pool.label"
-                      :value="pool.key"
+                      v-for="repo in capacityPlanRepositories"
+                      :key="repo.id"
+                      :label="repo.name"
+                      :value="repo.id"
                     />
                   </ElSelect>
                 </div>
-                <div class="capacity-planner__field">
-                  <label
-                    class="capacity-planner__label"
-                    for="dashboard-capacity-plan-amount"
-                  >
-                    {{ t('dashboard.capacityPlanner.plannedAdd') }}
-                  </label>
-                  <div class="capacity-planner__controls">
-                    <ElInputNumber
-                      id="dashboard-capacity-plan-amount"
-                      v-model="capacityPlanAmount"
-                      class="capacity-planner__amount"
-                      name="dashboard_capacity_plan_amount"
-                      :aria-label="t('dashboard.capacityPlanner.plannedAdd')"
-                      :min="0"
-                      :step="0.1"
-                      :precision="1"
-                      controls-position="right"
-                    />
-                    <ElSelect
-                      v-model="capacityPlanUnit"
-                      class="capacity-planner__unit"
-                      :aria-label="t('dashboard.capacityPlanner.unit')"
-                      :teleported="false"
-                    >
-                      <ElOption label="GB" value="GB" />
-                      <ElOption label="TB" value="TB" />
-                    </ElSelect>
+                <template v-if="selectedCapacityPlanRepo">
+                  <div class="capacity-planner__form">
+                    <div class="capacity-planner__field">
+                      <label
+                        class="capacity-planner__label"
+                        for="dashboard-capacity-plan-amount"
+                      >
+                        {{ t('dashboard.capacityPlanner.plannedAdd') }}
+                      </label>
+                      <div class="capacity-planner__controls">
+                        <ElInputNumber
+                          id="dashboard-capacity-plan-amount"
+                          v-model="capacityPlanAmount"
+                          class="capacity-planner__amount"
+                          name="dashboard_capacity_plan_amount"
+                          :aria-label="t('dashboard.capacityPlanner.plannedAdd')"
+                          :min="0"
+                          :step="0.1"
+                          :precision="1"
+                          controls-position="right"
+                        />
+                        <ElSelect
+                          v-model="capacityPlanUnit"
+                          class="capacity-planner__unit"
+                          :aria-label="t('dashboard.capacityPlanner.unit')"
+                          :teleported="false"
+                        >
+                          <ElOption label="GB" value="GB" />
+                          <ElOption label="TB" value="TB" />
+                        </ElSelect>
+                      </div>
+                    </div>
+                    <div class="capacity-planner__field">
+                      <label
+                        class="capacity-planner__label"
+                        for="dashboard-capacity-plan-factor"
+                      >
+                        {{ t('dashboard.capacityPlanner.factor') }}
+                      </label>
+                      <ElInputNumber
+                        id="dashboard-capacity-plan-factor"
+                        v-model="capacityPlanFactor"
+                        class="capacity-planner__factor"
+                        name="dashboard_capacity_plan_factor"
+                        :aria-label="t('dashboard.capacityPlanner.factor')"
+                        :min="0"
+                        :step="0.1"
+                        :precision="1"
+                        controls-position="right"
+                      />
+                    </div>
                   </div>
-                </div>
-
-                <div class="capacity-planner__field">
-                  <label
-                    class="capacity-planner__label"
-                    for="dashboard-capacity-plan-factor"
-                  >
-                    {{ t('dashboard.capacityPlanner.factor') }}
-                  </label>
-                  <ElInputNumber
-                    id="dashboard-capacity-plan-factor"
-                    v-model="capacityPlanFactor"
-                    class="capacity-planner__factor"
-                    name="dashboard_capacity_plan_factor"
-                    :aria-label="t('dashboard.capacityPlanner.factor')"
-                    :min="0"
-                    :step="0.1"
-                    :precision="1"
-                    controls-position="right"
-                  />
-                </div>
-              </div>
-
-              <p
-                v-if="capacityPlanScope === 'all' && overview && overview.storage.coveredRepoCount < overview.storage.capacityRepoCount"
-                class="capacity-planner__scope-note"
-              >
-                {{ t('dashboard.capacityPlanner.partialCoverage', { covered: overview.storage.coveredRepoCount, total: overview.storage.capacityRepoCount }) }}
-              </p>
-
-              <div class="capacity-planner__metrics">
-                <div class="capacity-planner__metric">
-                  <span>{{ capacityPlanPrimaryMetric.label }}</span>
-                  <strong>{{ capacityPlanPrimaryMetric.value }}</strong>
-                </div>
-                <div class="capacity-planner__metric">
-                  <span>{{ capacityPlanSecondaryMetric.label }}</span>
-                  <strong>{{ capacityPlanSecondaryMetric.value }}</strong>
-                </div>
+                  <div class="capacity-planner__metrics">
+                    <div class="capacity-planner__metric">
+                      <span>{{ capacityPlanPrimaryMetric.label }}</span>
+                      <strong>{{ capacityPlanPrimaryMetric.value }}</strong>
+                    </div>
+                    <div class="capacity-planner__metric">
+                      <span>{{ capacityPlanSecondaryMetric.label }}</span>
+                      <strong>{{ capacityPlanSecondaryMetric.value }}</strong>
+                    </div>
+                  </div>
+                </template>
+                <p v-else class="capacity-planner__select-hint">
+                  {{ t('dashboard.capacityPlanner.selectRepositoryHint') }}
+                </p>
               </div>
             </section>
           </div>
@@ -2066,7 +2063,7 @@ onMounted(refresh)
 @media (min-width: 1024px) {
   .cockpit-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-rows: 282px 250px;
+    grid-template-rows: 352px 250px;
   }
 
   .cockpit-stack {
@@ -2134,8 +2131,8 @@ onMounted(refresh)
   }
 
   .panel--storage-capacity {
-    min-height: 282px;
-    height: 282px;
+    min-height: 352px;
+    height: 352px;
   }
 
   .cockpit-attention {
@@ -2144,8 +2141,8 @@ onMounted(refresh)
   }
 
   .cockpit-running {
-    min-height: 282px;
-    height: 282px;
+    min-height: 352px;
+    height: 352px;
   }
 }
 
@@ -2688,10 +2685,6 @@ onMounted(refresh)
   gap: 0.625rem;
 }
 
-.capacity-planner__field--scope {
-  grid-column: 1 / -1;
-}
-
 .capacity-planner__field {
   min-width: 0;
 }
@@ -2725,31 +2718,41 @@ onMounted(refresh)
 .capacity-planner__amount,
 .capacity-planner__unit,
 .capacity-planner__factor,
-.capacity-planner__scope {
+.capacity-planner__repository {
   width: 100%;
 }
 
 .capacity-planner__amount :deep(.el-input__wrapper),
 .capacity-planner__unit :deep(.el-select__wrapper),
-.capacity-planner__factor :deep(.el-input__wrapper) {
+.capacity-planner__factor :deep(.el-input__wrapper),
+.capacity-planner__repository :deep(.el-select__wrapper) {
   min-height: 30px;
-}
-
-.capacity-planner__scope :deep(.el-select__wrapper) {
-  min-height: 28px;
-}
-
-.capacity-planner__scope-note {
-  margin: -0.125rem 0 0;
-  color: #86909c;
-  font-size: 10px;
-  line-height: 1.3;
 }
 
 .panel--storage-capacity .capacity-planner__amount :deep(.el-input__wrapper),
 .panel--storage-capacity .capacity-planner__unit :deep(.el-select__wrapper),
-.panel--storage-capacity .capacity-planner__factor :deep(.el-input__wrapper) {
+.panel--storage-capacity .capacity-planner__factor :deep(.el-input__wrapper),
+.panel--storage-capacity .capacity-planner__repository :deep(.el-select__wrapper) {
   min-height: 28px;
+}
+
+.capacity-planner__empty,
+.capacity-planner__select-hint {
+  margin: 0;
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.capacity-planner__empty {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+}
+
+.capacity-planner__empty a {
+  color: var(--dashboard-primary);
+  font-weight: 600;
 }
 
 .capacity-planner__summary {
