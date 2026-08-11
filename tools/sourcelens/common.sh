@@ -1421,8 +1421,9 @@ if maintenance_include not in text:
 sources = (
     "set $ui_upstream http://frontend:80;",
     "set $ui_upstream http://sourcelens-ui:80;",
+    "set $ui_upstream http://ui:80;",
 )
-target = "set $ui_upstream http://ui:80;"
+target = "set $ui_upstream http://web:80;"
 if target not in text and not any(source in text for source in sources):
     raise SystemExit(f"SourceLens UI upstream declaration not found in {path}")
 for source in sources:

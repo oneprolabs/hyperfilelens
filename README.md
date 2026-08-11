@@ -298,9 +298,9 @@ docker compose exec worker python manage.py test
 ### Frontend
 
 ```bash
-docker compose exec ui npm run lint
-docker compose exec ui npm run test
-docker compose exec ui npm run build
+docker compose exec web npm run lint
+docker compose exec web npm run test
+docker compose exec web npm run build
 ```
 
 `package-lock.json` is generated from the official npm registry and committed

@@ -84,7 +84,9 @@ sourcelens_patch_runtime_nginx "${tmp}/nginx.conf"
 sourcelens_patch_runtime_nginx "${tmp}/nginx.conf"
 grep -F '/etc/nginx/certs/tls.crt' "${tmp}/nginx.conf" >/dev/null
 grep -F '/etc/nginx/certs/tls.key' "${tmp}/nginx.conf" >/dev/null
-grep -F 'set $ui_upstream http://ui:80;' "${tmp}/nginx.conf" >/dev/null
+grep -F 'set $ui_upstream http://web:80;' "${tmp}/nginx.conf" >/dev/null
+grep -F 'sourcelens_web_service()' "${ROOT}/deploy/installer/install.sh" >/dev/null
+grep -F 'grep -Fxq ui' "${ROOT}/deploy/installer/install.sh" >/dev/null
 [[ "$(grep -Fc 'include /etc/nginx/hfl-maintenance/run-creation-gate.conf;' "${tmp}/nginx.conf")" -eq 1 ]]
 [[ "$(grep -Fc 'if ($hfl_sourcelens_run_creation_blocked)' "${tmp}/nginx.conf")" -eq 1 ]]
 
@@ -1260,8 +1262,16 @@ for compose_file in "${ROOT}/docker-compose.yml" "${ROOT}/deploy/docker-compose.
 	grep -F '${HFL_TENANT_PORT:-11443}:11443' "${compose_file}" >/dev/null
 	grep -F '${HFL_ADMIN_PORT:-11444}:11444' "${compose_file}" >/dev/null
 done
+dev_web_block="$(sed -n '/^  web:/,/^  nginx:/p' "${ROOT}/docker-compose.yml")"
 dev_nginx_block="$(sed -n '/^  nginx:/,/^networks:/p' "${ROOT}/docker-compose.yml")"
-grep -F './build/website/public:/usr/share/nginx/website:ro' <<<"${dev_nginx_block}" >/dev/null
+grep -F './build/website/public:/usr/share/nginx/website:ro' <<<"${dev_web_block}" >/dev/null
+if grep -F './build/website/public:/usr/share/nginx/website:ro' <<<"${dev_nginx_block}" >/dev/null; then
+	printf 'ERROR: development gateway must reach Website through Web, not a direct bind mount\n' >&2
+	exit 1
+fi
+for upstream in 'web:8080' 'web:8081' 'web:8082'; do
+	grep -F "${upstream}" "${ROOT}/deploy/nginx/development-upstreams.conf" >/dev/null
+done
 if grep -Eq '^  website:|website-node-modules|development-website-locations' \
 	"${ROOT}/docker-compose.yml"; then
 	printf 'ERROR: development Website must be a static Nginx artifact, not a service\n' >&2

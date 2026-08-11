@@ -42,7 +42,7 @@ sourcelens_compose() {
 docker() {
 	if [[ "${1:-}" == "inspect" ]]; then
 		local container_id="${*: -1}" component=backend
-		[[ "${container_id}" == ui-cid ]] && component=frontend
+		[[ "${container_id}" == web-cid ]] && component=frontend
 		if [[ "$*" == *'{{.Config.Image}}'* ]]; then
 			printf 'hyperfilelens-sourcelens-%s:main-fixture-sl%s\n' \
 				"${component}" "${runtime_version}"

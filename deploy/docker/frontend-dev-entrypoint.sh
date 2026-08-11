@@ -12,4 +12,6 @@ if [ "${lock_sha}" != "${installed_sha}" ]; then
   printf '%s\n' "${lock_sha}" > node_modules/.hfl-package-lock.sha
 fi
 
+nginx
+
 exec npm run dev -- --host 0.0.0.0

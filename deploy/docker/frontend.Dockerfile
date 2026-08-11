@@ -21,10 +21,13 @@ RUN npm ci \
 
 FROM frontend-dependencies AS frontend-development
 
+RUN apk add --no-cache nginx
+
 COPY deploy/docker/frontend-dev-entrypoint.sh /usr/local/bin/hfl-frontend-dev
+COPY deploy/nginx/development-web.conf /etc/nginx/nginx.conf
 RUN chmod 0755 /usr/local/bin/hfl-frontend-dev
 
-EXPOSE 5173
+EXPOSE 8080 8081 8082
 
 ENTRYPOINT ["/usr/local/bin/hfl-frontend-dev"]
 

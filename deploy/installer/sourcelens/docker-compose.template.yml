@@ -98,7 +98,7 @@ services:
     mem_limit: 256m
     cpus: 0.25
 
-  ui:
+  web:
     image: __SOURCELENS_FRONTEND_IMAGE__
     pull_policy: never
     restart: unless-stopped
@@ -167,7 +167,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
-      ui:
+      web:
         condition: service_started
     mem_limit: 128m
     cpus: 0.125

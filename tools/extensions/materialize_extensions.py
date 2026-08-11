@@ -2,7 +2,7 @@
 """Materialize HFL_EXTENSION_SOURCES for stack.dev and release image bake.
 
 Prepare stage only: local paths or git URL[+ref]. Runtime reads ``HFL_EXTENSIONS``
-(container/local directories). Never clones inside api/ui processes.
+(container/local directories). Never clones inside api/web processes.
 
 Modes:
   * compose overlay (``stack.sh``): mount host roots into containers
@@ -250,7 +250,7 @@ def write_compose(out: Path, mounts: list[tuple[str, Path]]) -> None:
     for svc in ("api", "worker", "scheduler"):
         lines.append(f"  {svc}:")
         lines.extend(block)
-    lines.append("  ui:")
+    lines.append("  web:")
     lines.extend(block)
     lines.append("")
     out.parent.mkdir(parents=True, exist_ok=True)
