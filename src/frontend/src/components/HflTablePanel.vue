@@ -77,6 +77,7 @@ onUnmounted(() => {
           'hfl-list-toolbar__right--mobile-split': $slots['toolbar-actions'] && $slots['toolbar-utility'],
           'hfl-list-toolbar__right--utility-only': !$slots['toolbar-actions'] && $slots['toolbar-utility'],
           'hfl-list-toolbar__right--full': !$slots.toolbar && $slots['toolbar-actions'],
+          'hfl-list-toolbar__right--solo': !$slots.toolbar && $slots['toolbar-actions'],
         }"
       >
         <slot name="toolbar-actions" />

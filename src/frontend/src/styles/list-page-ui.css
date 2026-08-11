@@ -142,6 +142,11 @@
   margin-left: 0;
 }
 
+.hfl-list-toolbar__right--solo {
+  width: 100%;
+  justify-content: flex-end;
+}
+
 .hfl-list-more__chev {
   margin-left: 4px;
   vertical-align: -2px;
