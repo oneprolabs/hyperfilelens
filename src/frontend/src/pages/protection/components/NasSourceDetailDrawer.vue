@@ -774,7 +774,7 @@ onUnmounted(() => {
               <h4 class="hfl-detail-section__title">{{ t('protection.sourceResources.detailSectionRuntime') }}</h4>
               <div class="hfl-detail-grid">
                 <div class="hfl-detail-row">
-                  <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldConnectionStatus') }}</span>
+                  <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colLifecycleStatus') }}</span>
                   <span class="hfl-detail-row__value">
                     <ElTag
                       v-bind="connectionStatusTagAttrs"
@@ -799,17 +799,17 @@ onUnmounted(() => {
                   </span>
                 </div>
                 <div class="hfl-detail-row">
-                  <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colAvailability') }}</span>
+                  <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colConnectivity') }}</span>
                   <span class="hfl-detail-row__value">
                     <ElTag :type="availabilityTagType" size="small">{{ availabilityLabel }}</ElTag>
                   </span>
                 </div>
                 <div class="hfl-detail-row">
-                  <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldAvailabilityUpdatedAt') }}</span>
+                  <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldConnectivityUpdatedAt') }}</span>
                   <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !row.availability_updated_at }">{{ formatNodeDate(row.availability_updated_at) }}</span>
                 </div>
                 <div class="hfl-detail-row">
-                  <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colRegistered') }}</span>
+                  <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colRegisteredAt') }}</span>
                   <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !row.created_at }">{{ formatNodeDate(row.created_at) }}</span>
                 </div>
                 <div class="hfl-detail-row">

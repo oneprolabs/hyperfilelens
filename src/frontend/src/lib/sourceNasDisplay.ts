@@ -34,7 +34,7 @@ const SOURCE_NAS_STATUS_PRESENTATIONS: Record<
   Omit<SourceNasStatusPresentation, 'status'>
 > = {
   active: {
-    labelKey: 'nodeLifecycle.state.active',
+    labelKey: 'protection.sourceResources.lifecycleRegistered',
     tone: 'success',
   },
   inactive: {

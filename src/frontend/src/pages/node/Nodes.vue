@@ -26,6 +26,7 @@ import { afterOverlayDismiss } from '../../lib/uiDefer'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import { listNodesPaged, listAllNodes, updateNode, fetchLatestAgentVersion, getNodeBindings, previewNodeOperationsBatch, type NodeBindings } from '../../lib/nodeApi'
 import { canRemoteAgentUpgrade, needsAgentUpgrade } from '../../lib/agentVersion'
+import { backupSourceLifecycleDisplay } from '../../lib/backupSourceLifecycleDisplay'
 import {
   formatNodeBytes,
   formatNodeDate,
@@ -148,6 +149,10 @@ const lifecycleOps = useNodeLifecycleOps({
 })
 const upgradeConfirmOpen = lifecycleOps.upgradeConfirmOpen
 const upgradeConfirmPreview = lifecycleOps.upgradeConfirmPreview
+
+function resolveBackupSourceLifecycleStatus(node: ApiNode) {
+  return backupSourceLifecycleDisplay(lifecycleOps.resolveDisplayStatus(node))
+}
 
 function nodeRoleForPath(path: string): ApiNode['role'] | null {
   if (path.startsWith('/node/agents')) return 'proxy'
@@ -754,12 +759,12 @@ async function submitRename() {
             </template>
           </el-table-column>
           <template v-if="isProxyNodesPage">
-            <el-table-column :label="t('protection.sourceResources.colStatus')" width="126" align="center" header-align="center">
+            <el-table-column :label="t('protection.sourceResources.colLifecycleStatus')" width="126" align="center" header-align="center">
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip">
                   <NodeLifecycleStatusCell
                     :node="row"
-                    :resolve-display-status="lifecycleOps.resolveDisplayStatus"
+                    :resolve-display-status="resolveBackupSourceLifecycleStatus"
                   />
                 </div>
               </template>
@@ -809,7 +814,7 @@ async function submitRename() {
                 <span>{{ row.associated_repository_count ?? 0 }}</span>
               </template>
             </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colAvailability')" min-width="110" align="center" header-align="center">
+            <el-table-column :label="t('protection.sourceResources.colConnectivity')" min-width="110" align="center" header-align="center">
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip">
                   <ElTag :type="availabilityTagType(row.availability)" size="small">
@@ -827,7 +832,7 @@ async function submitRename() {
                 />
               </template>
             </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="145">
+            <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" min-width="145">
               <template #default="{ row }">
                 <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatNodeDate(row.created_at) }}</span>
               </template>

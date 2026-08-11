@@ -66,6 +66,7 @@ import type { TargetRepositoryItem } from './components/TargetRepositoryPicker.v
 import { useBackupWizardSourcePendingOps } from './composables/useBackupWizardSourcePendingOps'
 import { useNodeLifecycleOps } from '../../composables/useNodeLifecycleOps'
 import { flowSourceReadyStatus } from '../../lib/flowSourceDisplay'
+import { backupSourceLifecycleDisplay } from '../../lib/backupSourceLifecycleDisplay'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { useRestoreTargetCatalog } from '../../composables/useRestoreTargetCatalog'
@@ -4620,19 +4621,16 @@ function resolveFlowSourceDisplayStatus(row: FlowSourceRow): FlowSourceDisplaySt
 
   const hostNode = flowRowToApiNode(row)
   if (hostNode) {
-    const lifecycle = lifecycleOps.resolveDisplayStatus(hostNode)
-    if (lifecycle.labelKey.startsWith('nodeLifecycle.state.')) {
-      return {
-        label: te(lifecycle.labelKey) ? t(lifecycle.labelKey) : lifecycle.labelKey,
-        tag: lifecycle.tagType,
-        spinning: lifecycle.spinning,
-      }
+    const lifecycle = backupSourceLifecycleDisplay(lifecycleOps.resolveDisplayStatus(hostNode))
+    return {
+      label: te(lifecycle.labelKey) ? t(lifecycle.labelKey) : lifecycle.labelKey,
+      tag: lifecycle.tagType,
+      spinning: lifecycle.spinning,
     }
   }
 
   const ready = flowSourceReadyStatus(row, {
-    online: t('protection.backupsPage.nodeStatusOnline'),
-    offline: t('protection.backupsPage.nodeStatusOffline'),
+    registered: t('protection.sourceResources.lifecycleRegistered'),
   })
   return { label: ready.label, tag: ready.tag }
 }
@@ -9477,14 +9475,14 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           </template>
         </el-table-column>
         <el-table-column
-          :label="t('protection.backupsPage.colStatus')"
+          :label="t('protection.sourceResources.colLifecycleStatus')"
           width="168"
           align="center"
           header-align="center"
         >
           <template #header>
             <span class="flow-filterable-header">
-              <span>{{ t('protection.backupsPage.colStatus') }}</span>
+              <span>{{ t('protection.sourceResources.colLifecycleStatus') }}</span>
               <HflPopover v-if="flowMainStep !== 2" v-model:visible="flowHeaderFilterOpen.sourceStatus" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
                 <template #reference>
                   <button type="button" class="flow-header-filter-trigger" :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('sourceStatus') }" @click.stop>
@@ -9546,7 +9544,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           </template>
         </el-table-column>
         <el-table-column
-          :label="t('protection.sourceResources.colAvailability')"
+          :label="t('protection.sourceResources.colConnectivity')"
           width="110"
           align="center"
           header-align="center"
@@ -9559,7 +9557,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             </div>
           </template>
         </el-table-column>
-        <el-table-column :label="t('protection.backupsPage.colRegistered')" width="154">
+        <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" width="154">
           <template #default="{ row }">
             <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt }">{{ flowSourceRegisteredAt(row.registeredAt) }}</span>
           </template>
@@ -9631,14 +9629,14 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           </template>
         </el-table-column>
         <el-table-column
-          :label="t('protection.backupsPage.colStatus')"
+          :label="t('protection.sourceResources.colLifecycleStatus')"
           width="168"
           align="center"
           header-align="center"
         >
           <template #header>
             <span class="flow-filterable-header">
-              <span>{{ t('protection.backupsPage.colStatus') }}</span>
+              <span>{{ t('protection.sourceResources.colLifecycleStatus') }}</span>
               <HflPopover v-if="flowMainStep !== 2" v-model:visible="flowHeaderFilterOpen.sourceStatus" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
                 <template #reference>
                   <button type="button" class="flow-header-filter-trigger" :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('sourceStatus') }" @click.stop>
@@ -9700,7 +9698,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           </template>
         </el-table-column>
         <el-table-column
-          :label="t('protection.sourceResources.colAvailability')"
+          :label="t('protection.sourceResources.colConnectivity')"
           width="110"
           align="center"
           header-align="center"
@@ -9713,7 +9711,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             </div>
           </template>
         </el-table-column>
-        <el-table-column :label="t('protection.backupsPage.colRegistered')" width="154">
+        <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" width="154">
           <template #default="{ row }">
             <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt }">{{ flowSourceRegisteredAt(row.registeredAt) }}</span>
           </template>
@@ -9815,14 +9813,14 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           </template>
         </el-table-column>
         <el-table-column
-          :label="t('protection.backupsPage.colStatus')"
+          :label="t('protection.sourceResources.colLifecycleStatus')"
           width="168"
           align="center"
           header-align="center"
         >
           <template #header>
             <span class="flow-filterable-header">
-              <span>{{ t('protection.backupsPage.colStatus') }}</span>
+              <span>{{ t('protection.sourceResources.colLifecycleStatus') }}</span>
               <HflPopover v-if="flowMainStep !== 2" v-model:visible="flowHeaderFilterOpen.sourceStatus" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
                 <template #reference>
                   <button type="button" class="flow-header-filter-trigger" :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('sourceStatus') }" @click.stop>
@@ -9969,7 +9967,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           </template>
         </el-table-column>
         <el-table-column
-          :label="t('protection.sourceResources.colAvailability')"
+          :label="t('protection.sourceResources.colConnectivity')"
           width="110"
           align="center"
           header-align="center"
@@ -10302,7 +10300,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             </span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('protection.backupsPage.colRegistered')" width="184">
+        <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" width="184">
           <template #default="{ row }">
             <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt }">{{ flowSourceRegisteredAt(row.registeredAt) }}</span>
           </template>

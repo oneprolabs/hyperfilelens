@@ -48,7 +48,7 @@ describe('FlowBackupSourceDetailDrawer task columns', () => {
 })
 
 describe('FlowBackupSourceDetailDrawer source status', () => {
-  it('uses availability for title and Backup Source tags, and lifecycle status for Source Status', () => {
+  it('uses explicit connectivity and lifecycle status terminology', () => {
     const sourceInfo = sourceBetween(
       "<h4 class=\"hfl-detail-section__title\">{{ t('protection.backupsPage.flowSourceDetailSectionMeta') }}</h4>",
       '<section class="hfl-detail-section dp-flow-config-section">',
@@ -57,6 +57,7 @@ describe('FlowBackupSourceDetailDrawer source status', () => {
     expect(drawer).toContain('availability: item.availability')
     expect(drawer).toContain('status: item.status')
     expect(sourceInfo).toContain("flowSourceDetailSourceStatus")
+    expect(sourceInfo).toContain("flowSourceDetailConnectivity")
     expect(sourceInfo).toContain('flowSourceStatusLabel(overviewSource.availability)')
     expect(sourceInfo).toContain('flowSourceLifecycleStatusLabel(overviewSource.status)')
     expect(drawer).toContain('flowSourceStatusLabel(source.availability)')
@@ -64,7 +65,8 @@ describe('FlowBackupSourceDetailDrawer source status', () => {
     expect(sourceInfo).toContain('flowSourceStatusLabel(overviewSource.availability)')
     expect(sourceInfo.indexOf('flowSourceDetailSourceStatus')).toBeLessThan(sourceInfo.indexOf('flowSourceSecondaryInfo(overviewSource).nameLabel'))
     expect(sourceInfo.indexOf('flowSourceSecondaryInfo(overviewSource).ipLabel')).toBeLessThan(sourceInfo.indexOf('flowSourceDetailRegistered'))
-    expect(enProtectionPages.backupsPage.flowSourceDetailSourceStatus).toBe('Source Status')
+    expect(enProtectionPages.backupsPage.flowSourceDetailSourceStatus).toBe('Lifecycle Status')
+    expect(enProtectionPages.backupsPage.flowSourceDetailConnectivity).toBe('Connectivity')
   })
 })
 

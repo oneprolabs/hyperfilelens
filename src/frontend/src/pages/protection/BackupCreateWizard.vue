@@ -6234,7 +6234,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                 </button>
               </template>
             </el-table-column>
-            <el-table-column :label="t('protection.backupsPage.labelSourceAvailability')" min-width="90">
+            <el-table-column :label="t('protection.sourceResources.colConnectivity')" min-width="110">
               <template #default="{ row }">
                 <el-tag size="small" :type="sourceAvailabilityTagType(row.id)" effect="plain">
                   {{ sourceAvailabilityLabel(row.id) }}

@@ -844,6 +844,7 @@ function flowSourceStatusTagType(status?: 'online' | 'offline') {
 }
 
 function flowSourceLifecycleStatusLabel(status: FlowSourceRow['status']) {
+  if (status === 'active') return t('protection.sourceResources.lifecycleRegistered')
   const labelKey = {
     inactive: 'protection.sourceResources.status.inactive',
     error: 'protection.sourceResources.status.error',
@@ -2592,6 +2593,11 @@ function onClosed() {
                           {{ flowSourceTypeParts(overviewSource).suffix }}
                         </span>
                       </span>
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailConnectivity') }}</span>
+                    <span class="hfl-detail-row__value">
                       <el-tag
                         size="small"
                         :type="flowSourceStatusTagType(overviewSource.availability)"
@@ -4324,7 +4330,7 @@ function onClosed() {
                 <span v-else class="hfl-empty-mark">—</span>
               </template>
             </el-table-column>
-            <el-table-column :label="selectedResourceType === 'backup_source' ? t('protection.backupsPage.colRegistered') : t('ops.task.updatedAt')" width="180">
+            <el-table-column :label="selectedResourceType === 'backup_source' ? t('protection.sourceResources.colRegisteredAt') : t('ops.task.updatedAt')" width="180">
               <template #default="{ row }">
                 <span
                   class="hfl-table-cell-time"
