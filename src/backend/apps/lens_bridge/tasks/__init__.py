@@ -16,6 +16,10 @@ from apps.lens_bridge.tasks.knowledge_source_sync import (
 from apps.lens_bridge.tasks.knowledge_source_teardown import (
     execute_knowledge_source_teardown_task,
 )
+from apps.lens_bridge.tasks.usage_reconciliation import (
+    execute_usage_ledger_reconciliation_task,
+    reconcile_usage_ledgers_task,
+)
 
 __all__ = [
     "execute_knowledge_source_sync_task",
@@ -28,4 +32,6 @@ __all__ = [
     "reconcile_copilot_chat_provisions_task",
     "reconcile_lens_resource_teardowns_task",
     "execute_knowledge_source_teardown_task",
+    "execute_usage_ledger_reconciliation_task",
+    "reconcile_usage_ledgers_task",
 ]

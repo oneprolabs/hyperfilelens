@@ -5,6 +5,17 @@ from common.scheduling.registry import TASK_REGISTRY
 
 def register_periodic_tasks() -> None:
     TASK_REGISTRY.add(
+        name="lens_bridge_reconcile_usage_ledgers",
+        task=(
+            "apps.lens_bridge.tasks.usage_reconciliation."
+            "reconcile_usage_ledgers_task"
+        ),
+        schedule=30,
+        kwargs={"limit": 100},
+        enabled=True,
+        expire_seconds=25,
+    )
+    TASK_REGISTRY.add(
         name="lens_bridge_reconcile_gateway_lensnode_provisions",
         task=(
             "apps.lens_bridge.tasks.gateway_provisioning."

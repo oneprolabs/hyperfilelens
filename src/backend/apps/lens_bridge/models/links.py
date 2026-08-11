@@ -741,7 +741,7 @@ class LensSessionLink(OrganizationScopedModel):
 
 
 class LensUsageLedger(OrganizationScopedModel):
-    """Immutable HFL-facing usage record for one SourceLens Q&A run."""
+    """Authoritative HFL-facing usage record for one SourceLens Q&A run."""
 
     hfl_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -783,6 +783,12 @@ class LensUsageLedger(OrganizationScopedModel):
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     occurred_at = models.DateTimeField(db_index=True)
+    source_synced_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    reconciliation_attempts = models.PositiveIntegerField(default=0)
+    reconciliation_claim_token = models.UUIDField(null=True, blank=True, unique=True)
+    reconciliation_claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    reconciliation_next_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    reconciliation_error = models.TextField(blank=True, default="")
 
     class Meta:
         db_table = "lens_bridge_usage_ledger"
@@ -795,5 +801,9 @@ class LensUsageLedger(OrganizationScopedModel):
             models.Index(
                 fields=["organization", "sl_user_id", "occurred_at"],
                 name="lens_busg_org_slusr_time_idx",
+            ),
+            models.Index(
+                fields=["run_status", "reconciliation_next_at"],
+                name="lens_busg_st_recon_idx",
             ),
         ]
