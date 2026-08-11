@@ -393,6 +393,8 @@ export const enProtectionPages = {
     targetMissingInline: 'Assign a target repository for this backup source.',
     targetEndpointMissingInline: 'Select external or internal Endpoint for this repository.',
     targetValidationInProgress: 'Validating backup target connections… This may take up to two minutes.',
+    targetValidationRowInProgress: 'Validating connection…',
+    targetValidationFailedStatus: 'Validation complete: {succeeded} connected, {failed} failed.',
     targetValidationSucceeded: 'Connection verified',
     targetValidationFailedSummary: 'Connection validation failed.',
     targetValidationFailedTitle: 'Backup target validation failed',
