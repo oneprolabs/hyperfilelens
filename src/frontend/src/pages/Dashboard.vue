@@ -152,6 +152,10 @@ const selectedCapacityPlanRepo = computed(() => {
   return capacityPlanRepositories.value.find((repo) => repo.id === repositoryId)
 })
 
+function selectCapacityPlanRepository(repositoryId: number) {
+  capacityPlanRepositoryId.value = repositoryId
+}
+
 const capacityPlan = computed(() => {
   const repository = selectedCapacityPlanRepo.value
   if (!repository) return null
@@ -251,11 +255,9 @@ const capacityPlanSecondaryMetric = computed(() => {
   }
 })
 
-const visibleStorageRepos = computed(() => overview.value?.topRepos.slice(0, 1) ?? [])
-
-const hiddenStorageRepoCount = computed(() => {
-  const total = overview.value?.storage.repoCount ?? 0
-  return Math.max(0, total - visibleStorageRepos.value.length)
+const visibleStorageRepos = computed(() => {
+  const limit = selectedCapacityPlanRepo.value ? 1 : 3
+  return overview.value?.topRepos.slice(0, limit) ?? []
 })
 
 function formatRelativeTime(iso?: string) {
@@ -780,19 +782,27 @@ onMounted(refresh)
             </div>
             <div class="storage-capacity-head__actions">
               <RouterLink :to="routes.repositories" class="panel-link">
-                {{ t('dashboard.viewRepos') }}
+                {{ t('dashboard.viewRepos') }} ({{ overview?.storage.repoCount ?? 0 }})
                 <ArrowUpRight class="panel-link__arrow" />
               </RouterLink>
             </div>
           </div>
 
           <div class="storage-capacity-body">
-            <section class="storage-capacity-repos">
+            <section
+              class="storage-capacity-repos"
+              :class="{ 'storage-capacity-repos--selecting': capacityPlanRepositories.length > 0 && !selectedCapacityPlanRepo }"
+            >
               <div v-if="!overview?.topRepos.length" class="storage-empty">
                 <p>{{ t('dashboard.noRepos') }}</p>
               </div>
 	              <div v-else class="storage-list">
-	                <div v-for="repo in visibleStorageRepos" :key="repo.id" class="storage-item">
+	                <div
+	                  v-for="repo in visibleStorageRepos"
+	                  :key="repo.id"
+	                  class="storage-item"
+	                  :class="{ 'storage-item--selected': selectedCapacityPlanRepo?.id === repo.id }"
+	                >
 	                  <div class="storage-item__head">
 	                    <div class="storage-item__name">
 	                      <span class="storage-item__name-main">
@@ -812,10 +822,17 @@ onMounted(refresh)
 	                      <span v-if="repo.capacityMode === 'known' && repo.pct !== null" class="storage-item__pct">
 	                        {{ repo.pct }}%
 	                      </span>
-	                      <RouterLink v-if="hiddenStorageRepoCount > 0" :to="routes.repositories" class="storage-more-inline">
-	                        +{{ hiddenStorageRepoCount }} repos
-	                      </RouterLink>
 	                    </span>
+	                    <button
+	                      type="button"
+	                      class="storage-item__plan"
+	                      :aria-pressed="selectedCapacityPlanRepo?.id === repo.id"
+	                      @click="selectCapacityPlanRepository(repo.id)"
+	                    >
+	                      {{ selectedCapacityPlanRepo?.id === repo.id
+	                        ? t('dashboard.capacityPlanner.planning')
+	                        : t('dashboard.capacityPlanner.plan') }}
+	                    </button>
 	                  </div>
 	                  <div v-if="repo.capacityMode === 'known'" class="storage-track">
                     <div class="storage-fill" :style="{ width: `${repo.pct ?? 0}%` }" />
@@ -824,7 +841,10 @@ onMounted(refresh)
               </div>
             </section>
 
-            <section class="storage-capacity-planner">
+            <section
+              class="storage-capacity-planner"
+              :class="{ 'storage-capacity-planner--selecting': capacityPlanRepositories.length > 0 && !selectedCapacityPlanRepo }"
+            >
               <div class="storage-capacity-planner__title">
                 <span class="storage-capacity-planner__title-main">
                   <Calculator :size="13" />
@@ -842,19 +862,27 @@ onMounted(refresh)
                 <span>{{ t('dashboard.capacityPlanner.empty') }}</span>
                 <RouterLink :to="routes.repositories">{{ t('dashboard.capacityPlanner.createRepository') }}</RouterLink>
               </div>
-              <div v-else class="capacity-planner__body">
+              <div
+                v-else
+                class="capacity-planner__body"
+                :class="{ 'capacity-planner__body--selecting': !selectedCapacityPlanRepo }"
+              >
                 <div class="capacity-planner__field">
                   <label
                     class="capacity-planner__label"
                     for="dashboard-capacity-plan-repository"
                   >
-                    {{ t('dashboard.capacityPlanner.repository') }}
+                    {{ selectedCapacityPlanRepo
+                      ? t('dashboard.capacityPlanner.repository')
+                      : t('dashboard.capacityPlanner.selectRepositoryTitle') }}
                   </label>
                   <ElSelect
                     id="dashboard-capacity-plan-repository"
                     v-model="capacityPlanRepositoryId"
                     class="capacity-planner__repository"
-                    :aria-label="t('dashboard.capacityPlanner.repository')"
+                    :aria-label="selectedCapacityPlanRepo
+                      ? t('dashboard.capacityPlanner.repository')
+                      : t('dashboard.capacityPlanner.selectRepositoryTitle')"
                     :placeholder="t('dashboard.capacityPlanner.selectRepository')"
                     :teleported="false"
                   >
@@ -866,6 +894,9 @@ onMounted(refresh)
                     />
                   </ElSelect>
                 </div>
+                <p v-if="!selectedCapacityPlanRepo" class="capacity-planner__select-hint">
+                  {{ t('dashboard.capacityPlanner.selectRepositoryHint') }}
+                </p>
                 <template v-if="selectedCapacityPlanRepo">
                   <div class="capacity-planner__form">
                     <div class="capacity-planner__field">
@@ -929,9 +960,6 @@ onMounted(refresh)
                     </div>
                   </div>
                 </template>
-                <p v-else class="capacity-planner__select-hint">
-                  {{ t('dashboard.capacityPlanner.selectRepositoryHint') }}
-                </p>
               </div>
             </section>
           </div>
@@ -2418,6 +2446,10 @@ onMounted(refresh)
   background: #fafbfc;
 }
 
+.storage-capacity-planner--selecting {
+  flex: 1;
+}
+
 .storage-capacity-planner__title {
   display: flex;
   min-width: 0;
@@ -2452,6 +2484,10 @@ onMounted(refresh)
   flex-direction: column;
 }
 
+.storage-capacity-repos--selecting {
+  flex: 0 0 auto;
+}
+
 .storage-empty {
   text-align: center;
   padding: 0.5rem 0;
@@ -2473,9 +2509,15 @@ onMounted(refresh)
   min-width: 0;
 }
 
+.storage-item--selected {
+  padding: 0.25rem 0.375rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--dashboard-primary-soft) 38%, transparent);
+}
+
 .storage-item__head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
   align-items: center;
   gap: 0.75rem;
   font-weight: 500;
@@ -2580,6 +2622,26 @@ onMounted(refresh)
   color: #64748b;
 }
 
+.storage-item__plan {
+  min-height: 28px;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--dashboard-primary);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dashboard-primary);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.storage-item__plan:hover,
+.storage-item__plan:focus-visible {
+  background: var(--dashboard-primary);
+  color: var(--el-bg-color);
+  outline: none;
+}
+
 .storage-item__pct {
   font-size: 12px;
   font-weight: 600;
@@ -2598,20 +2660,6 @@ onMounted(refresh)
   border-radius: 9999px;
   background: var(--dashboard-primary);
   transition: width 0.7s;
-}
-
-.storage-more-inline {
-  display: inline-flex;
-  align-items: baseline;
-  margin-left: 0.25rem;
-  color: var(--dashboard-primary);
-  font-size: 12px;
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.storage-more-inline:hover {
-  color: var(--dashboard-primary-hover);
 }
 
 /* ---- Capacity planner ---- */
@@ -2736,12 +2784,22 @@ onMounted(refresh)
   min-height: 28px;
 }
 
-.capacity-planner__empty,
-.capacity-planner__select-hint {
+.capacity-planner__empty {
   margin: 0;
   color: var(--el-text-color-regular);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.capacity-planner__body--selecting {
+  justify-content: center;
+}
+
+.capacity-planner__select-hint {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .capacity-planner__empty {
