@@ -2608,15 +2608,23 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <span class="hfl-detail-row__value repo-detail__inline-value">
                       <span class="repo-detail__name-summary">
                         <span class="hfl-detail-row__text">{{ detailRow.name }}</span>
-                        <span class="repo-detail__name-summary-tags">
-                          <ElTag :type="healthTagType(detailRow.health)" size="small">
-                            {{ repoHealthLabel(detailRow.health) }}
-                          </ElTag>
-                          <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
-                            {{ repoLifecycleLabel(detailRow.status) }}
-                          </ElTag>
-                        </span>
                       </span>
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.colStatus') }}</span>
+                    <span class="hfl-detail-row__value">
+                      <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
+                        {{ repoLifecycleLabel(detailRow.status) }}
+                      </ElTag>
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.colAvailability') }}</span>
+                    <span class="hfl-detail-row__value">
+                      <ElTag :type="healthTagType(detailRow.health)" size="small">
+                        {{ repoHealthLabel(detailRow.health) }}
+                      </ElTag>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
@@ -2801,15 +2809,23 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <span class="hfl-detail-row__value repo-detail__inline-value">
                       <span class="repo-detail__name-summary">
                         <span class="hfl-detail-row__text">{{ detailRow.name }}</span>
-                        <span class="repo-detail__name-summary-tags">
-                          <ElTag :type="healthTagType(detailRow.health)" size="small">
-                            {{ repoHealthLabel(detailRow.health) }}
-                          </ElTag>
-                          <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
-                            {{ repoLifecycleLabel(detailRow.status) }}
-                          </ElTag>
-                        </span>
                       </span>
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.colStatus') }}</span>
+                    <span class="hfl-detail-row__value">
+                      <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
+                        {{ repoLifecycleLabel(detailRow.status) }}
+                      </ElTag>
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.colAvailability') }}</span>
+                    <span class="hfl-detail-row__value">
+                      <ElTag :type="healthTagType(detailRow.health)" size="small">
+                        {{ repoHealthLabel(detailRow.health) }}
+                      </ElTag>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
@@ -2985,15 +3001,23 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <span class="hfl-detail-row__value repo-detail__inline-value">
                       <span class="repo-detail__name-summary">
                         <span class="hfl-detail-row__text">{{ detailRow.name }}</span>
-                        <span class="repo-detail__name-summary-tags">
-                          <ElTag :type="healthTagType(detailRow.health)" size="small">
-                            {{ repoHealthLabel(detailRow.health) }}
-                          </ElTag>
-                          <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
-                            {{ repoLifecycleLabel(detailRow.status) }}
-                          </ElTag>
-                        </span>
                       </span>
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.colStatus') }}</span>
+                    <span class="hfl-detail-row__value">
+                      <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
+                        {{ repoLifecycleLabel(detailRow.status) }}
+                      </ElTag>
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.colAvailability') }}</span>
+                    <span class="hfl-detail-row__value">
+                      <ElTag :type="healthTagType(detailRow.health)" size="small">
+                        {{ repoHealthLabel(detailRow.health) }}
+                      </ElTag>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
@@ -3257,7 +3281,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 </ElTableColumn>
                 <ElTableColumn
                   v-if="!isDirectNasAssociatedSources()"
-                  :label="t('repositoriesPage.colRegistered')"
+                  :label="t('protection.sourceResources.colRegisteredAt')"
                   min-width="170"
                 >
                   <template #default="{ row }">
@@ -3680,14 +3704,6 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
   flex: 1 1 180px;
   align-items: start;
   gap: 5px;
-}
-
-.repo-detail__name-summary-tags {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
 }
 
 .repo-detail__tag-group {

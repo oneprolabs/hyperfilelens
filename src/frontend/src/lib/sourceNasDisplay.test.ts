@@ -147,6 +147,14 @@ describe('nas list column helpers', () => {
 })
 
 describe('sourceNasStatusPresentation', () => {
+  it('maps the stable lifecycle state to backup-source terminology', () => {
+    expect(sourceNasStatusPresentation({ effective_status: 'active' }, 'offline')).toEqual({
+      status: 'active',
+      labelKey: 'protection.sourceResources.lifecycleRegistered',
+      tone: 'success',
+    })
+  })
+
   it('defines NAS error and Proxy labels in the active locale namespace', () => {
     expect(enProtectionPages.sourceResources.mountStatus.error).toBe('Mount Error')
     expect(enProtectionPages.sourceResources.proxyStatus).toBe('Proxy: {status}')

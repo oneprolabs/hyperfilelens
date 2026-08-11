@@ -1436,7 +1436,7 @@ function onMoreDisable() {
                   </ElTag>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.colRegistered')" min-width="170">
+              <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" min-width="170">
                 <template #default="{ row }">
                   <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !relatedSourceRegisteredAt(row) }">{{ relatedSourceRegisteredAt(row) || '—' }}</span>
                 </template>
@@ -1554,7 +1554,7 @@ function onMoreDisable() {
                   </ElTag>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.colRegistered')" min-width="170">
+              <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" min-width="170">
                 <template #default="{ row }">
                   <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !relatedSourceRegisteredAt(row) }">{{ relatedSourceRegisteredAt(row) || '—' }}</span>
                 </template>

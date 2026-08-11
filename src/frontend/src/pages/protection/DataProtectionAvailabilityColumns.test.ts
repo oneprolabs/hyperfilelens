@@ -24,23 +24,23 @@ function expectOrdered(text: string, markers: string[]) {
   }
 }
 
-describe('Backup Wizard availability columns', () => {
-  it.each([0, 1])('places Status after Endpoint and Availability before Registered in step %i', (step) => {
+describe('Backup Wizard connectivity columns', () => {
+  it.each([0, 1])('places Lifecycle Status after Endpoint and Connectivity before Registered At in step %i', (step) => {
     expectOrdered(tableForStep(step), [
       'colConnectionAddress',
-      'colStatus',
+      'colLifecycleStatus',
       'colCpu',
       'colMemory',
       'colDiskCount',
-      'colAvailability',
-      'colRegistered',
+      'colConnectivity',
+      'colRegisteredAt',
     ])
   })
 
   it('funds the first two wider Status columns from CPU, Memory, and Disks', () => {
     const connectionWidth = Number(page.match(/connection:\s*(\d+),/)?.[1])
     const statusWidths = [0, 1].map(step =>
-      Number(tableForStep(step).match(/colStatus'[\s\S]*?width="(\d+)"/)?.[1]),
+      Number(tableForStep(step).match(/colLifecycleStatus'[\s\S]*?width="(\d+)"/)?.[1]),
     )
     const pickWidths = page.match(/const FLOW_PICK_TABLE_COL_MIN = \{[\s\S]*?\} as const/)?.[0] ?? ''
     const cpuWidth = Number(pickWidths.match(/cpu:\s*(\d+),/)?.[1])
@@ -53,15 +53,15 @@ describe('Backup Wizard availability columns', () => {
     expect(cpuWidth + memoryWidth + diskWidth + statusWidths[0]).toBe(424)
   })
 
-  it('places Availability immediately after Restore Task in step 3', () => {
+  it('places Connectivity immediately after Restore Task in step 3', () => {
     const step3Table = tableForStep(2)
 
     expectOrdered(step3Table, [
       'flowBackupColRestoreTaskStatus',
-      'colAvailability',
+      'colConnectivity',
       'flowBackupColTargetRepo',
     ])
-    expect(Number(step3Table.match(/colStatus'[\s\S]*?width="(\d+)"/)?.[1])).toBe(168)
+    expect(Number(step3Table.match(/colLifecycleStatus'[\s\S]*?width="(\d+)"/)?.[1])).toBe(168)
     expect(page).toContain('const FLOW_START_BACKUP_TABLE_COL_MIN = {\n  connection: 220,\n  backupDirs: 260,\n  compression: 190,\n  targetRepo: 280,\n  binding: 210,\n}')
   })
 
@@ -101,8 +101,9 @@ describe('Backup Wizard availability columns', () => {
     expect(createWizard).not.toContain("item.status === 'online' || item.status === 'reconnecting' ? item.status : 'offline'")
   })
 
-  it('labels the Create Backup Configuration availability column accurately', () => {
-    expect(createWizard).toContain("labelSourceAvailability")
+  it('labels the Create Backup Configuration connectivity column consistently', () => {
+    expect(createWizard).toContain("protection.sourceResources.colConnectivity")
+    expect(createWizard).not.toContain("labelSourceAvailability")
     expect(createWizard).toContain('sourceAvailabilityLabel(row.id)')
     expect(createWizard).toContain('sourceAvailabilityTagType(row.id)')
     expect(createWizard).not.toContain('sourceStatusLabel(row.id)')

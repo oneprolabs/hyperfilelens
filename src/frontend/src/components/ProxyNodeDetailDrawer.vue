@@ -190,6 +190,7 @@ onUnmounted(() => {
               ref="basicPanelRef"
               :node="node"
               :source-type-label="t('protection.sourceResources.tabSourceProxy')"
+              use-backup-source-terminology
               use-unified-capacity
               show-repository-server-address
               @node-updated="onNodeUpdated"

@@ -19,6 +19,7 @@ export type FlowSourceDisplayLabels = {
   protocolNfs: string
   online: string
   offline: string
+  registered: string
   localAgent: string
 }
 
@@ -81,14 +82,14 @@ export function flowSourceNasAccessTitle(row: FlowSourceRow) {
 
 export function flowSourceReadyStatus(
   row: FlowSourceRow,
-  _labels: Pick<FlowSourceDisplayLabels, 'online' | 'offline'>,
+  labels: Pick<FlowSourceDisplayLabels, 'registered'>,
 ): FlowReadyStatus {
   const label = row.status
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
   return {
-    label: row.status === 'active' ? 'Active' : label,
+    label: row.status === 'active' ? labels.registered : label,
     tag: row.status === 'active'
       ? 'success'
       : row.status === 'failed' || row.status === 'upgrade_failed' || row.status === 'deregistration_failed' || row.status === 'error'

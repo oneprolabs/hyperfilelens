@@ -201,6 +201,7 @@ onUnmounted(() => {
               :source="source"
               :source-type-label="t('protection.sourceResources.tabHostFileSystem')"
               :resolve-display-status="resolveDisplayStatus"
+              use-backup-source-terminology
               use-unified-capacity
               @node-updated="onNodeUpdated"
             />

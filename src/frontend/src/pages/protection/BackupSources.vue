@@ -63,6 +63,7 @@ import { defaultNasMountOptions } from '../../lib/nasMountOptions'
 import { preflightSourceNasCreate, showNasDraftPreflightGuidance } from '../../lib/nasDraftPreflight'
 import { listNodes, listNodesPaged, updateNode, fetchLatestAgentVersion, type EnrollmentOs } from '../../lib/nodeApi'
 import { canRemoteAgentUpgrade } from '../../lib/agentVersion'
+import { backupSourceLifecycleDisplay } from '../../lib/backupSourceLifecycleDisplay'
 import type { ApiNode } from '../../types/node'
 import {
   createSourceResource,
@@ -469,6 +470,10 @@ const lifecycleOps = useNodeLifecycleOps({
 })
 const upgradeConfirmOpen = lifecycleOps.upgradeConfirmOpen
 const upgradeConfirmPreview = lifecycleOps.upgradeConfirmPreview
+
+function resolveBackupSourceLifecycleStatus(node: ApiNode) {
+  return backupSourceLifecycleDisplay(lifecycleOps.resolveDisplayStatus(node))
+}
 
 async function loadProxyNodes(signal?: AbortSignal) {
   try {
@@ -1198,10 +1203,8 @@ function sourceDeleteInFlight(selectableId: string): boolean {
 }
 
 function hostDeleteDisplayRow(node: ApiNode): BackupSourceDeleteDisplayRow {
-  const lifecycle = lifecycleOps.resolveDisplayStatus(node)
-  const lifecycleLabel = lifecycle.labelKey.startsWith('nodeLifecycle.state.')
-    ? (te(lifecycle.labelKey) ? t(lifecycle.labelKey) : lifecycle.labelKey)
-    : ''
+  const lifecycle = resolveBackupSourceLifecycleStatus(node)
+  const lifecycleLabel = te(lifecycle.labelKey) ? t(lifecycle.labelKey) : lifecycle.labelKey
   return {
     id: hostSelectableId(node),
     name: node.name,
@@ -2194,7 +2197,7 @@ onUnmounted(() => {
                   </button>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="155" align="center" header-align="center">
+              <el-table-column :label="t('protection.sourceResources.colLifecycleStatus')" min-width="155" align="center" header-align="center">
                 <template #default="{ row }">
                   <div class="hfl-table-no-tooltip">
                     <FlowSourceReadyStatusCell
@@ -2205,7 +2208,7 @@ onUnmounted(() => {
                     <NodeLifecycleStatusCell
                       v-else
                       :node="row"
-                      :resolve-display-status="lifecycleOps.resolveDisplayStatus"
+                      :resolve-display-status="resolveBackupSourceLifecycleStatus"
                     />
                   </div>
                 </template>
@@ -2250,7 +2253,7 @@ onUnmounted(() => {
                   />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colAvailability')" min-width="110" align="center" header-align="center">
+              <el-table-column :label="t('protection.sourceResources.colConnectivity')" min-width="110" align="center" header-align="center">
                 <template #default="{ row }">
                   <div class="hfl-table-no-tooltip">
                     <ElTag :type="availabilityTagType(row.availability)" size="small">
@@ -2268,7 +2271,7 @@ onUnmounted(() => {
                   />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="145">
+              <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" min-width="145">
                 <template #default="{ row }">
                   <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatDate(row.created_at) }}</span>
                 </template>
@@ -2312,7 +2315,7 @@ onUnmounted(() => {
                   </button>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="165" align="center" header-align="center">
+              <el-table-column :label="t('protection.sourceResources.colLifecycleStatus')" min-width="165" align="center" header-align="center">
                 <template #default="{ row }">
                   <div class="hfl-table-no-tooltip">
                     <FlowSourceReadyStatusCell
@@ -2387,7 +2390,7 @@ onUnmounted(() => {
                   <span v-else class="hfl-empty-mark">—</span>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colAvailability')" min-width="110" align="center" header-align="center">
+              <el-table-column :label="t('protection.sourceResources.colConnectivity')" min-width="110" align="center" header-align="center">
                 <template #default="{ row }">
                   <div class="hfl-table-no-tooltip">
                     <ElTag :type="availabilityTagType(row.availability)" size="small">
@@ -2396,7 +2399,7 @@ onUnmounted(() => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="145">
+              <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" min-width="145">
                 <template #default="{ row }">
                   <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !sourceRegisteredAt(row) }">{{ formatDate(sourceRegisteredAt(row)) }}</span>
                 </template>
@@ -2567,7 +2570,7 @@ onUnmounted(() => {
         :node-id="hostDetailNodeId"
         :source="hostDetailSource"
         :initial-tab="hostDetailInitialTab"
-        :resolve-display-status="lifecycleOps.resolveDisplayStatus"
+        :resolve-display-status="resolveBackupSourceLifecycleStatus"
         @update:model-value="onHostDetailDrawerClose"
         @saved="onHostDetailDrawerSaved"
       />
