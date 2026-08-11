@@ -87,7 +87,7 @@ export type LensCopilotReadiness = {
 }
 
 export type LensCopilotUsageSummary = {
-  estimated_cost: number
+  estimated_cost: number | null
   cost_currency: string
   total_tokens: number
   prompt_tokens: number
@@ -96,7 +96,7 @@ export type LensCopilotUsageSummary = {
   reasoning_tokens: number
   model_calls: number
   q_and_a_requests: number
-  average_cost_per_q_and_a: number
+  average_cost_per_q_and_a: number | null
 }
 
 export type LensCopilotUsageTrend = {
@@ -107,7 +107,7 @@ export type LensCopilotUsageTrend = {
   total_tokens: number
   total_cached_tokens: number
   total_reasoning_tokens: number
-  total_cost: number
+  total_cost: number | null
 }
 
 export type LensCopilotUsageItem = {
@@ -146,6 +146,10 @@ export type LensCopilotUsageOverview = {
   total: number
   page: number
   page_size: number
+  data_freshness: {
+    last_source_sync_at: string | null
+    pending_runs: number
+  }
 }
 
 export type LensCopilotUsageDetail = LensCopilotUsageItem & {

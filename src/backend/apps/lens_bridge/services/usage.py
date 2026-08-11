@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
-import time
+import logging
 from typing import Any
 import uuid
 
-from django.db.models import Count, F, OrderBy, Q, Sum
+from django.db import transaction
+from django.db.models import Count, F, Max, OrderBy, Q, Sum
 from django.db.models.functions import TruncDate, TruncHour
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
@@ -20,9 +21,14 @@ from apps.protection.models import BackupConfig, BackupSourceSnapshot
 from apps.protection.services.source_identity import resolve_source_display_name
 
 
-MAX_BACKFILL_RUNS = 500
-BACKFILL_TTL_SECONDS = 300
-_BACKFILL_REFRESHED_AT: dict[tuple[int, str, str], float] = {}
+logger = logging.getLogger(__name__)
+
+TERMINAL_RUN_STATUSES = frozenset({"done", "failed", "cancelled"})
+RECONCILIATION_INTERVAL_SECONDS = 30
+RECONCILIATION_CLAIM_TTL_SECONDS = 300
+RECONCILIATION_MAX_BACKOFF_SECONDS = 900
+RECONCILIATION_NOT_FOUND_CONFIRMATIONS = 3
+RECONCILIATION_NOT_FOUND_GRACE_SECONDS = 300
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -107,6 +113,7 @@ def register_usage_run(
     if sl_user is None:
         return None
     context = _session_context(link)
+    registered_at = timezone.now()
     row, _ = LensUsageLedger.objects.update_or_create(
         sl_run_uuid=run_uuid,
         defaults={
@@ -115,7 +122,8 @@ def register_usage_run(
             "sl_user_id": sl_user.sl_user_id,
             "question": question.strip(),
             "run_status": status or "queued",
-            "occurred_at": timezone.now(),
+            "occurred_at": registered_at,
+            "reconciliation_next_at": registered_at,
             **context,
         },
     )
@@ -132,13 +140,15 @@ def _run_call_details(
         "cached_tokens": 0,
         "reasoning_tokens": 0,
         "total_tokens": 0,
+        "model_calls": 0,
         "estimated_cost": None,
+        "available": False,
     }
     total_cost = Decimal("0")
-    has_cost = False
+    has_missing_cost = False
 
     def add_call(payload: dict[str, Any]) -> None:
-        nonlocal total_cost, has_cost
+        nonlocal total_cost, has_missing_cost
         prompt = int(payload.get("prompt_tokens") or 0)
         completion = int(payload.get("completion_tokens") or 0)
         cached = int(payload.get("cached_tokens") or 0)
@@ -147,21 +157,26 @@ def _run_call_details(
         cost = _decimal(payload.get("cost"))
         if cost is not None:
             total_cost += cost
-            has_cost = True
-        calls.append({
-            "call": len(calls) + 1,
-            "prompt_tokens": prompt,
-            "completion_tokens": completion,
-            "cached_tokens": cached,
-            "reasoning_tokens": reasoning,
-            "total_tokens": total,
-            "estimated_cost": float(cost) if cost is not None else None,
-        })
+        else:
+            has_missing_cost = True
+        calls.append(
+            {
+                "call": len(calls) + 1,
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "cached_tokens": cached,
+                "reasoning_tokens": reasoning,
+                "total_tokens": total,
+                "estimated_cost": float(cost) if cost is not None else None,
+            }
+        )
         totals["prompt_tokens"] += prompt
         totals["completion_tokens"] += completion
         totals["cached_tokens"] += cached
         totals["reasoning_tokens"] += reasoning
         totals["total_tokens"] += total
+        totals["model_calls"] += 1
+        totals["available"] = True
 
     for step in run.get("steps") or []:
         detail = step.get("detail") if isinstance(step.get("detail"), dict) else step
@@ -171,11 +186,112 @@ def _run_call_details(
         usage = detail.get("usage")
         if isinstance(usage, dict) and usage:
             add_call(usage)
-    totals["estimated_cost"] = total_cost if has_cost else None
+    if calls:
+        totals["estimated_cost"] = total_cost if not has_missing_cost else None
+    else:
+        summary_keys = {
+            "prompt_tokens",
+            "completion_tokens",
+            "cached_tokens",
+            "reasoning_tokens",
+            "total_tokens",
+            "llm_calls",
+            "model_calls",
+            "total_cost",
+        }
+        if summary_keys.intersection(run):
+            prompt = int(run.get("prompt_tokens") or 0)
+            completion = int(run.get("completion_tokens") or 0)
+            totals.update(
+                {
+                    "prompt_tokens": prompt,
+                    "completion_tokens": completion,
+                    "cached_tokens": int(run.get("cached_tokens") or 0),
+                    "reasoning_tokens": int(run.get("reasoning_tokens") or 0),
+                    "total_tokens": int(run.get("total_tokens") or prompt + completion),
+                    "model_calls": int(
+                        run.get("llm_calls") or run.get("model_calls") or 0
+                    ),
+                    "estimated_cost": _decimal(run.get("total_cost")),
+                    "available": True,
+                }
+            )
     return calls, totals
 
 
-def capture_run_usage(link: LensSessionLink, run: dict[str, Any]) -> LensUsageLedger | None:
+def capture_ledger_usage(
+    row: LensUsageLedger,
+    run: dict[str, Any],
+    *,
+    synced_at: datetime | None = None,
+) -> LensUsageLedger:
+    """Persist the latest SourceLens state in the authoritative HFL ledger."""
+
+    calls, totals = _run_call_details(run)
+    row.run_status = str(run.get("status") or row.run_status or "")
+    if not row.question:
+        row.question = str(run.get("question") or "")
+    if totals["available"]:
+        row.prompt_tokens = totals["prompt_tokens"]
+        row.completion_tokens = totals["completion_tokens"]
+        row.cached_tokens = totals["cached_tokens"]
+        row.reasoning_tokens = totals["reasoning_tokens"]
+        row.total_tokens = totals["total_tokens"]
+        row.model_calls = totals["model_calls"]
+        row.estimated_cost = totals["estimated_cost"]
+        row.call_details_json = calls
+    if "error" in run:
+        row.run_error = str(run.get("error") or "")
+    started_at = _datetime(run.get("started_at"))
+    if started_at is not None:
+        row.started_at = started_at
+    finished_at = _datetime(run.get("finished_at"))
+    if finished_at is not None:
+        row.finished_at = finished_at
+    row.occurred_at = row.started_at or row.occurred_at or timezone.now()
+    row.source_synced_at = synced_at or timezone.now()
+    row.reconciliation_attempts = 0
+    row.reconciliation_claim_token = None
+    row.reconciliation_claimed_at = None
+    row.reconciliation_error = ""
+    row.reconciliation_next_at = (
+        None
+        if row.run_status in TERMINAL_RUN_STATUSES
+        else row.source_synced_at + timedelta(seconds=RECONCILIATION_INTERVAL_SECONDS)
+    )
+    row.save(
+        update_fields=[
+            "run_status",
+            "question",
+            "prompt_tokens",
+            "completion_tokens",
+            "cached_tokens",
+            "reasoning_tokens",
+            "total_tokens",
+            "model_calls",
+            "estimated_cost",
+            "call_details_json",
+            "run_error",
+            "started_at",
+            "finished_at",
+            "occurred_at",
+            "source_synced_at",
+            "reconciliation_attempts",
+            "reconciliation_claim_token",
+            "reconciliation_claimed_at",
+            "reconciliation_error",
+            "reconciliation_next_at",
+            "updated_at",
+        ]
+    )
+    return row
+
+
+def capture_run_usage(
+    link: LensSessionLink, run: dict[str, Any]
+) -> LensUsageLedger | None:
+    """Capture SourceLens run usage discovered during the interactive flow."""
+
     raw_uuid = run.get("uuid") or link.active_run_uuid
     if not raw_uuid:
         return None
@@ -190,37 +306,7 @@ def capture_run_usage(link: LensSessionLink, run: dict[str, Any]) -> LensUsageLe
         )
     if row is None:
         return None
-    calls, totals = _run_call_details(run)
-    row.run_status = str(run.get("status") or row.run_status or "")
-    row.prompt_tokens = totals["prompt_tokens"]
-    row.completion_tokens = totals["completion_tokens"]
-    row.cached_tokens = totals["cached_tokens"]
-    row.reasoning_tokens = totals["reasoning_tokens"]
-    row.total_tokens = totals["total_tokens"]
-    row.model_calls = len(calls)
-    row.estimated_cost = totals["estimated_cost"]
-    row.call_details_json = calls
-    row.run_error = str(run.get("error") or "")
-    row.started_at = _datetime(run.get("started_at"))
-    row.finished_at = _datetime(run.get("finished_at"))
-    row.occurred_at = row.started_at or row.occurred_at or timezone.now()
-    row.save(update_fields=[
-        "run_status",
-        "prompt_tokens",
-        "completion_tokens",
-        "cached_tokens",
-        "reasoning_tokens",
-        "total_tokens",
-        "model_calls",
-        "estimated_cost",
-        "call_details_json",
-        "run_error",
-        "started_at",
-        "finished_at",
-        "occurred_at",
-        "updated_at",
-    ])
-    return row
+    return capture_ledger_usage(row, run)
 
 
 def _public_run_failure(status: str, raw_error: str) -> tuple[str, str]:
@@ -296,94 +382,305 @@ def run_outcomes_for_messages(
     return outcomes
 
 
-def _session_by_assistant_name(org, user) -> dict[str, LensSessionLink]:
-    rows = LensSessionLink.objects.filter(
-        organization=org,
-        hfl_user=user,
-    ).select_related("knowledge_source", "gateway_link__gateway")
+def seed_missing_active_run_ledgers(*, limit: int = 100) -> list[int]:
+    """Create ledgers for active runs whose initial local write was interrupted."""
+
+    bounded_limit = max(1, min(int(limit), 500))
+    session_links = list(
+        LensSessionLink.objects.filter(active_run_uuid__isnull=False)
+        .exclude(usage_records__sl_run_uuid=F("active_run_uuid"))
+        .select_related(
+            "organization",
+            "hfl_user",
+            "gateway_link__gateway",
+        )
+        .order_by("updated_at", "id")[:bounded_limit]
+    )
+    seeded_ids: list[int] = []
+    for link in session_links:
+        row = register_usage_run(
+            link,
+            run_uuid=link.active_run_uuid,
+            question="",
+            status=link.active_run_status or "queued",
+        )
+        if row is not None:
+            seeded_ids.append(row.id)
+    return seeded_ids
+
+
+def claim_due_usage_ledgers(
+    *,
+    limit: int,
+    now: datetime,
+) -> list[tuple[int, uuid.UUID]]:
+    """Claim due ledger rows so overlapping workers cannot reconcile them."""
+
+    stale_claim = now - timedelta(seconds=RECONCILIATION_CLAIM_TTL_SECONDS)
+    bounded_limit = max(1, min(int(limit), 500))
+    with transaction.atomic():
+        rows = list(
+            LensUsageLedger.objects.select_for_update(skip_locked=True)
+            .filter(hfl_user__isnull=False)
+            .filter(
+                Q(source_synced_at__isnull=True)
+                | ~Q(run_status__in=TERMINAL_RUN_STATUSES)
+            )
+            .filter(
+                Q(reconciliation_next_at__isnull=True)
+                | Q(reconciliation_next_at__lte=now)
+            )
+            .filter(
+                Q(reconciliation_claimed_at__isnull=True)
+                | Q(reconciliation_claimed_at__lte=stale_claim)
+            )
+            .order_by("reconciliation_next_at", "updated_at", "id")[:bounded_limit]
+        )
+        claims: list[tuple[int, uuid.UUID]] = []
+        for row in rows:
+            claim_token = uuid.uuid4()
+            row.reconciliation_claim_token = claim_token
+            row.reconciliation_claimed_at = now
+            claims.append((row.id, claim_token))
+        if rows:
+            LensUsageLedger.objects.bulk_update(
+                rows,
+                ["reconciliation_claim_token", "reconciliation_claimed_at"],
+            )
+    return claims
+
+
+def record_reconciliation_failure(
+    *,
+    ledger_id: int,
+    claim_token: uuid.UUID,
+    message: str,
+    now: datetime,
+) -> None:
+    """Release a failed claim and persist bounded exponential backoff."""
+
+    row = LensUsageLedger.objects.filter(
+        id=ledger_id,
+        reconciliation_claim_token=claim_token,
+    ).first()
+    if row is None:
+        return
+    attempts = row.reconciliation_attempts + 1
+    delay_seconds = min(
+        RECONCILIATION_INTERVAL_SECONDS * (2 ** min(attempts - 1, 8)),
+        RECONCILIATION_MAX_BACKOFF_SECONDS,
+    )
+    LensUsageLedger.objects.filter(
+        id=ledger_id,
+        reconciliation_claim_token=claim_token,
+    ).update(
+        reconciliation_attempts=attempts,
+        reconciliation_claim_token=None,
+        reconciliation_claimed_at=None,
+        reconciliation_next_at=now + timedelta(seconds=delay_seconds),
+        reconciliation_error=str(message or "Usage reconciliation failed.")[:2000],
+    )
+
+
+def _finalize_missing_source_run(
+    *,
+    ledger_id: int,
+    claim_token: uuid.UUID,
+    now: datetime,
+) -> str | None:
+    """Close a ledger whose SourceLens run has been durably removed."""
+
+    row = LensUsageLedger.objects.filter(
+        id=ledger_id,
+        reconciliation_claim_token=claim_token,
+    ).first()
+    if row is None:
+        return None
+    updates: dict[str, Any] = {
+        "source_synced_at": now,
+        "reconciliation_claim_token": None,
+        "reconciliation_claimed_at": None,
+        "reconciliation_next_at": None,
+        "reconciliation_error": "SourceLens run no longer exists.",
+        "updated_at": now,
+    }
+    if row.run_status not in TERMINAL_RUN_STATUSES:
+        updates.update(
+            {
+                "run_status": "failed",
+                "run_error": "SOURCE_RUN_NOT_FOUND",
+                "finished_at": now,
+            }
+        )
+    LensUsageLedger.objects.filter(
+        id=ledger_id,
+        reconciliation_claim_token=claim_token,
+    ).update(**updates)
+    LensSessionLink.objects.filter(
+        id=row.session_link_id,
+        active_run_uuid=row.sl_run_uuid,
+    ).update(
+        active_run_uuid=None,
+        active_run_status="",
+        updated_at=now,
+    )
+    return str(updates.get("run_status") or row.run_status)
+
+
+def _missing_source_run_is_confirmed(
+    row: LensUsageLedger,
+    *,
+    now: datetime,
+) -> bool:
+    """Return whether repeated 404s are safe to treat as durable removal."""
+
+    observations = row.reconciliation_attempts + 1
+    grace_deadline = row.created_at + timedelta(
+        seconds=RECONCILIATION_NOT_FOUND_GRACE_SECONDS,
+    )
+    return (
+        observations >= RECONCILIATION_NOT_FOUND_CONFIRMATIONS and now >= grace_deadline
+    )
+
+
+def reconcile_claimed_usage_ledger(
+    *,
+    ledger_id: int,
+    claim_token: uuid.UUID,
+) -> dict[str, Any]:
+    """Synchronize one claimed SourceLens run into the HFL ledger."""
+
+    row = (
+        LensUsageLedger.objects.select_related(
+            "hfl_user",
+            "session_link",
+        )
+        .filter(
+            id=ledger_id,
+            reconciliation_claim_token=claim_token,
+        )
+        .first()
+    )
+    if row is None:
+        return {"status": "skipped", "ledger_id": ledger_id}
+    if row.hfl_user is None:
+        message = "The HFL user no longer exists."
+        record_reconciliation_failure(
+            ledger_id=ledger_id,
+            claim_token=claim_token,
+            message=message,
+            now=timezone.now(),
+        )
+        return {"status": "failed", "ledger_id": ledger_id, "error": message}
+    try:
+        run = sl_client.request_json(
+            "GET",
+            f"/api/lens/runs/{row.sl_run_uuid}/",
+            hfl_user=row.hfl_user,
+            timeout=30,
+        )
+        if not isinstance(run, dict):
+            raise ValueError("SourceLens returned an invalid run payload.")
+        returned_uuid = run.get("uuid")
+        if returned_uuid and uuid.UUID(str(returned_uuid)) != row.sl_run_uuid:
+            raise ValueError("SourceLens returned a different run.")
+    except sl_client.LensBridgeError as exc:
+        missing_status = None
+        failure_time = timezone.now()
+        if exc.status_code == 404 and _missing_source_run_is_confirmed(
+            row, now=failure_time
+        ):
+            missing_status = _finalize_missing_source_run(
+                ledger_id=ledger_id,
+                claim_token=claim_token,
+                now=failure_time,
+            )
+        if missing_status is not None:
+            return {
+                "status": missing_status,
+                "ledger_id": ledger_id,
+                "terminal": True,
+                "source_missing": True,
+            }
+        logger.warning(
+            "usage reconciliation failed ledger_id=%s: %s",
+            ledger_id,
+            exc,
+        )
+        record_reconciliation_failure(
+            ledger_id=ledger_id,
+            claim_token=claim_token,
+            message=str(exc),
+            now=failure_time,
+        )
+        return {
+            "status": "failed",
+            "ledger_id": ledger_id,
+            "error": str(exc)[:1000],
+        }
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "usage reconciliation failed ledger_id=%s: %s",
+            ledger_id,
+            exc,
+        )
+        record_reconciliation_failure(
+            ledger_id=ledger_id,
+            claim_token=claim_token,
+            message=str(exc),
+            now=timezone.now(),
+        )
+        return {
+            "status": "failed",
+            "ledger_id": ledger_id,
+            "error": str(exc)[:1000],
+        }
+
+    row = LensUsageLedger.objects.filter(
+        id=ledger_id,
+        reconciliation_claim_token=claim_token,
+    ).first()
+    if row is None:
+        return {"status": "skipped", "ledger_id": ledger_id}
+    row = capture_ledger_usage(row, run)
+    if row.run_status in TERMINAL_RUN_STATUSES:
+        LensSessionLink.objects.filter(
+            id=row.session_link_id,
+            active_run_uuid=row.sl_run_uuid,
+        ).update(
+            active_run_uuid=None,
+            active_run_status="",
+            updated_at=timezone.now(),
+        )
     return {
-        row.knowledge_source.name: row
-        for row in rows
-        if row.knowledge_source is not None and row.knowledge_source.name
+        "status": row.run_status,
+        "ledger_id": ledger_id,
+        "terminal": row.run_status in TERMINAL_RUN_STATUSES,
     }
 
 
-def backfill_usage_ledgers(org, user, *, start_date: str, end_date: str) -> None:
-    sl_user = _sl_user_link(user)
-    if sl_user is None:
-        return
-    cache_key = (user.pk, start_date, end_date)
-    refreshed_at = _BACKFILL_REFRESHED_AT.get(cache_key)
-    if refreshed_at is not None and time.monotonic() - refreshed_at < BACKFILL_TTL_SECONDS:
-        return
-    session_map = _session_by_assistant_name(org, user)
-    page = 1
-    imported = 0
-    while imported < MAX_BACKFILL_RUNS:
-        payload = sl_client.request_json(
-            "GET",
-            "/api/lens/admin/runs/",
-            params={
-                "username": sl_user.sl_username,
-                "start_date": start_date,
-                "end_date": end_date,
-                "page": page,
-                "page_size": 100,
-            },
+def reconcile_usage_ledgers(*, limit: int = 100) -> dict[str, Any]:
+    """Synchronize a bounded batch; intended for tests and repair commands."""
+
+    claims = claim_due_usage_ledgers(limit=limit, now=timezone.now())
+    results = [
+        reconcile_claimed_usage_ledger(
+            ledger_id=ledger_id,
+            claim_token=claim_token,
         )
-        results = payload.get("results") if isinstance(payload, dict) else []
-        exact_rows = [
-            item for item in (results or [])
-            if str(item.get("username") or "") == sl_user.sl_username
-        ]
-        for item in exact_rows:
-            raw_uuid = item.get("uuid")
-            if not raw_uuid:
-                continue
-            session = session_map.get(str(item.get("assistant_name") or ""))
-            context = _session_context(session) if session is not None else {
-                "session_link": None,
-                "sl_session_uuid": None,
-                "chat_title": "Deleted Chat",
-                "backup_config_id": None,
-                "backup_source_name": "",
-                "backup_source_snapshot_id": None,
-                "snapshot_created_at": None,
-                "source_scopes_json": [],
-                "gateway_selection_mode": "auto",
-                "gateway_name": "",
-            }
-            defaults = {
-                "organization": org,
-                "hfl_user": user,
-                "sl_user_id": sl_user.sl_user_id,
-                "question": str(item.get("question") or ""),
-                "run_status": str(item.get("status") or ""),
-                "prompt_tokens": int(item.get("prompt_tokens") or 0),
-                "completion_tokens": int(item.get("completion_tokens") or 0),
-                "total_tokens": int(item.get("total_tokens") or 0),
-                "model_calls": int(item.get("llm_calls") or 0),
-                "estimated_cost": _decimal(item.get("total_cost")),
-                "started_at": _datetime(item.get("started_at")),
-                "finished_at": _datetime(item.get("finished_at")),
-                "occurred_at": (
-                    _datetime(item.get("started_at") or item.get("created_at"))
-                    or timezone.now()
-                ),
-                **context,
-            }
-            LensUsageLedger.objects.update_or_create(
-                sl_run_uuid=uuid.UUID(str(raw_uuid)),
-                defaults=defaults,
-            )
-        imported += len(results or [])
-        total = int(payload.get("total") or 0) if isinstance(payload, dict) else 0
-        if not results or page * 100 >= total:
-            break
-        page += 1
-    if len(_BACKFILL_REFRESHED_AT) > 1000:
-        _BACKFILL_REFRESHED_AT.clear()
-    _BACKFILL_REFRESHED_AT[cache_key] = time.monotonic()
+        for ledger_id, claim_token in claims
+    ]
+    return {
+        "claimed": len(claims),
+        "reconciled": sum(
+            row["status"] not in {"failed", "skipped"} for row in results
+        ),
+        "pending": sum(
+            row["status"] not in TERMINAL_RUN_STATUSES | {"failed", "skipped"}
+            for row in results
+        ),
+        "failed": [row for row in results if row["status"] == "failed"],
+    }
 
 
 def _date_range(params) -> tuple[str, str]:
@@ -420,7 +717,8 @@ def _ledger_item(row: LensUsageLedger) -> dict[str, Any]:
         "chat_available": bool(
             row.session_link_id
             and row.session_link
-            and row.session_link.lifecycle_status != LensSessionLink.LifecycleStatus.DELETED
+            and row.session_link.lifecycle_status
+            != LensSessionLink.LifecycleStatus.DELETED
         ),
         "backup_source_name": row.backup_source_name or "Backup Source",
         "scope_summary": _scope_summary(list(row.source_scopes_json or [])),
@@ -431,13 +729,23 @@ def _ledger_item(row: LensUsageLedger) -> dict[str, Any]:
         "reasoning_tokens": row.reasoning_tokens,
         "total_tokens": row.total_tokens,
         "model_calls": row.model_calls,
-        "estimated_cost": float(row.estimated_cost) if row.estimated_cost is not None else None,
+        "estimated_cost": float(row.estimated_cost)
+        if row.estimated_cost is not None
+        else None,
         "cost_currency": row.cost_currency,
         "status": row.run_status,
     }
 
 
 def _trend_item(bucket: str, row: dict[str, Any]) -> dict[str, Any]:
+    request_count = int(row.get("request_count") or 0)
+    costed_requests = int(row.get("costed_requests") or 0)
+    if request_count == 0:
+        total_cost: float | None = 0
+    elif costed_requests == request_count and row.get("total_cost") is not None:
+        total_cost = float(row["total_cost"])
+    else:
+        total_cost = None
     return {
         "bucket": bucket,
         "total_calls": row.get("total_calls") or 0,
@@ -446,11 +754,7 @@ def _trend_item(bucket: str, row: dict[str, Any]) -> dict[str, Any]:
         "total_cached_tokens": row.get("total_cached_tokens") or 0,
         "total_reasoning_tokens": row.get("total_reasoning_tokens") or 0,
         "total_tokens": row.get("total_tokens") or 0,
-        "total_cost": (
-            float(row["total_cost"])
-            if row.get("total_cost") is not None
-            else 0
-        ),
+        "total_cost": total_cost,
     }
 
 
@@ -479,9 +783,11 @@ def usage_overview(org, user, params) -> dict[str, Any]:
             "total": 0,
             "page": 1,
             "page_size": 20,
+            "data_freshness": {
+                "last_source_sync_at": None,
+                "pending_runs": 0,
+            },
         }
-
-    backfill_usage_ledgers(org, user, start_date=start_date, end_date=end_date)
 
     start = parse_date(start_date)
     end = parse_date(end_date)
@@ -515,7 +821,7 @@ def usage_overview(org, user, params) -> dict[str, Any]:
         page_size = 20
     total = queryset.count()
     offset = (page - 1) * page_size
-    results = [_ledger_item(row) for row in queryset[offset:offset + page_size]]
+    results = [_ledger_item(row) for row in queryset[offset : offset + page_size]]
 
     period_rows = LensUsageLedger.objects.filter(
         organization=org,
@@ -531,23 +837,30 @@ def usage_overview(org, user, params) -> dict[str, Any]:
         reasoning_tokens=Sum("reasoning_tokens"),
         total_tokens=Sum("total_tokens"),
         model_calls=Sum("model_calls"),
-        estimated_cost=Sum("estimated_cost"),
+        total_estimated_cost=Sum("estimated_cost"),
+        costed_requests=Count("estimated_cost"),
+        last_source_sync_at=Max("source_synced_at"),
     )
     same_day = start == end
     bucket_expression = (
         TruncHour("occurred_at") if same_day else TruncDate("occurred_at")
     )
-    trend_rows = period_rows.annotate(bucket=bucket_expression).values(
-        "bucket"
-    ).annotate(
-        total_calls=Sum("model_calls"),
-        total_prompt_tokens=Sum("prompt_tokens"),
-        total_completion_tokens=Sum("completion_tokens"),
-        total_cached_tokens=Sum("cached_tokens"),
-        total_reasoning_tokens=Sum("reasoning_tokens"),
-        total_tokens=Sum("total_tokens"),
-        total_cost=Sum("estimated_cost"),
-    ).order_by("bucket")
+    trend_rows = (
+        period_rows.annotate(bucket=bucket_expression)
+        .values("bucket")
+        .annotate(
+            request_count=Count("id"),
+            costed_requests=Count("estimated_cost"),
+            total_calls=Sum("model_calls"),
+            total_prompt_tokens=Sum("prompt_tokens"),
+            total_completion_tokens=Sum("completion_tokens"),
+            total_cached_tokens=Sum("cached_tokens"),
+            total_reasoning_tokens=Sum("reasoning_tokens"),
+            total_tokens=Sum("total_tokens"),
+            total_cost=Sum("estimated_cost"),
+        )
+        .order_by("bucket")
+    )
     trend_index = {
         row["bucket"].isoformat(): row
         for row in trend_rows
@@ -574,18 +887,35 @@ def usage_overview(org, user, params) -> dict[str, Any]:
             row = trend_index.get(bucket) or {}
             trend.append(_trend_item(bucket, row))
             cursor += timedelta(days=1)
-    by_source = period_rows.values("backup_source_name").annotate(
-        q_and_a_requests=Count("id"),
-        model_calls=Sum("model_calls"),
-        total_tokens=Sum("total_tokens"),
-        estimated_cost=Sum("estimated_cost"),
-    ).order_by(
-        OrderBy(F("estimated_cost"), descending=True, nulls_last=True),
-        "-total_tokens",
-        "backup_source_name",
+    by_source = (
+        period_rows.values("backup_source_name")
+        .annotate(
+            q_and_a_requests=Count("id"),
+            costed_requests=Count("estimated_cost"),
+            model_calls=Sum("model_calls"),
+            total_tokens=Sum("total_tokens"),
+            total_estimated_cost=Sum("estimated_cost"),
+        )
+        .order_by(
+            OrderBy(F("total_estimated_cost"), descending=True, nulls_last=True),
+            "-total_tokens",
+            "backup_source_name",
+        )
     )
 
-    total_cost = float(period_totals["estimated_cost"] or 0)
+    costed_requests = int(period_totals["costed_requests"] or 0)
+    if q_and_a_requests == 0:
+        total_cost: float | None = 0
+    elif (
+        costed_requests == q_and_a_requests
+        and period_totals["total_estimated_cost"] is not None
+    ):
+        total_cost = float(period_totals["total_estimated_cost"])
+    else:
+        total_cost = None
+    pending_runs = period_rows.exclude(
+        run_status__in=TERMINAL_RUN_STATUSES,
+    ).count()
     return {
         "period": {"start_date": start_date, "end_date": end_date},
         "summary": {
@@ -599,7 +929,9 @@ def usage_overview(org, user, params) -> dict[str, Any]:
             "model_calls": int(period_totals["model_calls"] or 0),
             "q_and_a_requests": q_and_a_requests,
             "average_cost_per_q_and_a": (
-                total_cost / q_and_a_requests if q_and_a_requests else 0
+                total_cost / q_and_a_requests
+                if q_and_a_requests and total_cost is not None
+                else (0 if not q_and_a_requests else None)
             ),
         },
         "trend": trend,
@@ -610,8 +942,11 @@ def usage_overview(org, user, params) -> dict[str, Any]:
                 "model_calls": row["model_calls"] or 0,
                 "total_tokens": row["total_tokens"] or 0,
                 "estimated_cost": (
-                    float(row["estimated_cost"])
-                    if row["estimated_cost"] is not None
+                    float(row["total_estimated_cost"])
+                    if (
+                        row["total_estimated_cost"] is not None
+                        and row["costed_requests"] == row["q_and_a_requests"]
+                    )
                     else None
                 ),
             }
@@ -627,57 +962,36 @@ def usage_overview(org, user, params) -> dict[str, Any]:
         "total": total,
         "page": page,
         "page_size": page_size,
+        "data_freshness": {
+            "last_source_sync_at": period_totals["last_source_sync_at"],
+            "pending_runs": pending_runs,
+        },
     }
 
 
 def usage_detail(org, user, run_uuid: uuid.UUID) -> dict[str, Any]:
-    row = LensUsageLedger.objects.select_related("session_link").filter(
-        organization=org,
-        hfl_user=user,
-        sl_run_uuid=run_uuid,
-    ).first()
+    row = (
+        LensUsageLedger.objects.select_related("session_link")
+        .filter(
+            organization=org,
+            hfl_user=user,
+            sl_run_uuid=run_uuid,
+        )
+        .first()
+    )
     if row is None:
         raise NotFound()
-    if not row.call_details_json:
-        sl_user = _sl_user_link(user)
-        if sl_user is not None:
-            try:
-                payload = sl_client.request_json("GET", f"/api/lens/admin/runs/{run_uuid}/")
-                if str(payload.get("username") or "") == sl_user.sl_username:
-                    calls, totals = _run_call_details(payload)
-                    row.question = str(payload.get("question") or row.question)
-                    row.call_details_json = calls
-                    row.prompt_tokens = totals["prompt_tokens"] or row.prompt_tokens
-                    row.completion_tokens = totals["completion_tokens"] or row.completion_tokens
-                    row.cached_tokens = totals["cached_tokens"] or row.cached_tokens
-                    row.reasoning_tokens = totals["reasoning_tokens"] or row.reasoning_tokens
-                    row.total_tokens = totals["total_tokens"] or row.total_tokens
-                    row.model_calls = len(calls) or row.model_calls
-                    if totals["estimated_cost"] is not None:
-                        row.estimated_cost = totals["estimated_cost"]
-                    row.save(update_fields=[
-                        "question",
-                        "call_details_json",
-                        "prompt_tokens",
-                        "completion_tokens",
-                        "cached_tokens",
-                        "reasoning_tokens",
-                        "total_tokens",
-                        "model_calls",
-                        "estimated_cost",
-                        "updated_at",
-                    ])
-            except sl_client.LensBridgeError:
-                pass
     payload = _ledger_item(row)
-    payload.update({
-        "snapshot_created_at": row.snapshot_created_at,
-        "source_scopes": list(row.source_scopes_json or []),
-        "gateway_mode": row.gateway_selection_mode,
-        "gateway_name": row.gateway_name,
-        "started_at": row.started_at,
-        "finished_at": row.finished_at,
-        "error": row.run_error,
-        "call_details": list(row.call_details_json or []),
-    })
+    payload.update(
+        {
+            "snapshot_created_at": row.snapshot_created_at,
+            "source_scopes": list(row.source_scopes_json or []),
+            "gateway_mode": row.gateway_selection_mode,
+            "gateway_name": row.gateway_name,
+            "started_at": row.started_at,
+            "finished_at": row.finished_at,
+            "error": row.run_error,
+            "call_details": list(row.call_details_json or []),
+        }
+    )
     return payload

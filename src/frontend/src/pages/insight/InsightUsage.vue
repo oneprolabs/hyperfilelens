@@ -41,6 +41,7 @@ const statusFilter = ref('')
 const page = ref(1)
 const pageSize = ref(20)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+let loadRequestId = 0
 
 const questionHistoryEmptyDescription = computed(() => (
   searchQuery.value.trim() || backupSourceFilter.value || statusFilter.value
@@ -98,10 +99,11 @@ function changePageSize() {
   void loadUsage()
 }
 
-async function loadUsage(showFeedback = false) {
+async function loadUsage() {
+  const requestId = ++loadRequestId
   loading.value = true
   try {
-    usage.value = await fetchCopilotUsage({
+    const nextUsage = await fetchCopilotUsage({
       start_date: startDate.value,
       end_date: endDate.value,
       q: searchQuery.value.trim(),
@@ -110,11 +112,13 @@ async function loadUsage(showFeedback = false) {
       page: page.value,
       page_size: pageSize.value,
     })
-    if (showFeedback) ElMessage.success({ message: 'Usage refreshed.', grouping: true })
+    if (requestId === loadRequestId) usage.value = nextUsage
   } catch (error) {
-    ElMessage.error({ message: apiErrorMessage(error, 'Unable to load AI usage.'), grouping: true })
+    if (requestId === loadRequestId) {
+      ElMessage.error({ message: apiErrorMessage(error, 'Unable to load AI usage.'), grouping: true })
+    }
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId) loading.value = false
   }
 }
 
@@ -162,7 +166,7 @@ function statusLabel(status: string) {
 }
 
 const summary = computed(() => usage.value?.summary ?? {
-  estimated_cost: 0,
+  estimated_cost: null,
   cost_currency: 'USD',
   total_tokens: 0,
   prompt_tokens: 0,
@@ -171,7 +175,22 @@ const summary = computed(() => usage.value?.summary ?? {
   reasoning_tokens: 0,
   model_calls: 0,
   q_and_a_requests: 0,
-  average_cost_per_q_and_a: 0,
+  average_cost_per_q_and_a: null,
+})
+
+const usageFreshness = computed(() => {
+  const freshness = usage.value?.data_freshness
+  if (!freshness) return ''
+  if (freshness.pending_runs > 0) {
+    return `${formatNumber(freshness.pending_runs)} in progress · updates automatically`
+  }
+  if (freshness.last_source_sync_at) {
+    return `Usage updated ${formatShortDateTime(freshness.last_source_sync_at)}`
+  }
+  if (summary.value.q_and_a_requests > 0) {
+    return 'Usage recorded · updates automatically'
+  }
+  return 'No recorded usage'
 })
 
 const tokenBreakdown = computed(() => {
@@ -215,10 +234,13 @@ const chartOption = computed(() => {
       trigger: 'axis',
       renderMode: 'richText',
       borderWidth: 1,
-      formatter: (params: Array<{ axisValueLabel?: string; value?: number }>) => {
+      formatter: (params: Array<{ axisValueLabel?: string; value?: number | null }>) => {
         const point = params[0]
-        const value = Number(point?.value || 0)
-        const formattedValue = costMode ? formatCost(value) : `${formatNumber(value)} tokens`
+        const rawValue = point?.value
+        const value = rawValue == null ? null : Number(rawValue)
+        const formattedValue = costMode
+          ? formatCost(value)
+          : `${formatNumber(value)} tokens`
         return `${point?.axisValueLabel || ''}\n${formattedValue}`
       },
     },
@@ -259,7 +281,7 @@ const chartOption = computed(() => {
       lineStyle: { width: 2.5, color: '#6d5dfc' },
       itemStyle: { color: '#6d5dfc' },
       areaStyle: { color: 'rgba(109, 93, 252, 0.09)' },
-      data: items.map((row) => costMode ? Number(row.total_cost || 0) : Number(row.total_tokens || 0)),
+      data: items.map((row) => costMode ? row.total_cost : Number(row.total_tokens || 0)),
     }],
   }
 })
@@ -285,6 +307,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  loadRequestId += 1
   if (searchTimer) clearTimeout(searchTimer)
 })
 </script>
@@ -316,7 +339,8 @@ onBeforeUnmount(() => {
             class="usage-date-picker"
             @change="applyCustomRange"
           />
-          <button class="usage-icon-button" type="button" aria-label="Refresh usage" :disabled="loading" @click="loadUsage(true)">
+          <span v-if="usageFreshness" class="usage-freshness">{{ usageFreshness }}</span>
+          <button class="usage-icon-button" type="button" aria-label="Refresh usage" :disabled="loading" @click="loadUsage">
             <RefreshCw :size="17" :class="{ 'is-spinning': loading }" />
           </button>
         </div>
@@ -502,6 +526,7 @@ onBeforeUnmount(() => {
 .usage-segments button.active { background: var(--color-card-bg); color: var(--color-primary); box-shadow: 0 1px 3px rgb(16 24 40 / 10%); }
 .usage-segments--small button { min-height: 27px; padding: 0 10px; font-size: 11px; }
 .usage-date-picker { width: 250px !important; }
+.usage-freshness { overflow: hidden; color: var(--color-text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .usage-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
 .usage-summary-card { display: flex; min-width: 0; align-items: center; gap: 13px; padding: 17px; border: 1px solid var(--color-border-light); border-radius: 10px; background: var(--color-card-bg); }
 .usage-summary-card__icon { display: inline-flex; width: 36px; height: 36px; flex: 0 0 36px; align-items: center; justify-content: center; border-radius: 9px; }
@@ -894,6 +919,10 @@ onBeforeUnmount(() => {
   .usage-period__tail :deep(.usage-date-picker) {
     min-width: 0;
     flex: 1;
+  }
+
+  .usage-freshness {
+    display: none;
   }
 
   .usage-chart,
