@@ -90,9 +90,9 @@ const filters = reactive({
   search: '',
   search_field: 'name',
   status: '',
-  task_type: '',
+  task_type: textQueryValue(route.query.task_type),
   trigger_type: '',
-  time_mode: '7d',
+  time_mode: textQueryValue(route.query.time_mode) === '24h' ? '24h' : '7d',
   created_range: null as [Date, Date] | null,
   resource_type: '',
   resource_id: '',
@@ -331,6 +331,21 @@ function taskCreatedRangeParams() {
     }
   }
   return { created_after: undefined, created_before: undefined }
+}
+
+function taskFilterParams() {
+  const timeParams = taskCreatedRangeParams()
+  return {
+    search: appliedSearch.value.trim(),
+    search_field: filters.search_field,
+    status: filters.status,
+    task_type: filters.task_type,
+    trigger_type: filters.trigger_type,
+    resource_type: filters.resource_type,
+    resource_id: filters.resource_id,
+    created_after: timeParams.created_after,
+    created_before: timeParams.created_before,
+  }
 }
 
 function payloadRecord(task?: TaskRow | null) {
@@ -712,23 +727,15 @@ async function load() {
   loading.value = true
   listLoadError.value = null
   try {
-    const timeParams = taskCreatedRangeParams()
+    const filterParams = taskFilterParams()
     const res = await listTasks({
       page: pagination.page,
       page_size: pagination.pageSize,
-      search: appliedSearch.value.trim(),
-      search_field: filters.search_field,
-      status: filters.status,
-      task_type: filters.task_type,
-      trigger_type: filters.trigger_type,
-      resource_type: filters.resource_type,
-      resource_id: filters.resource_id,
-      created_after: timeParams.created_after,
-      created_before: timeParams.created_before,
+      ...filterParams,
     }, { signal })
     rows.value = res.results
     pagination.count = res.count
-    stats.value = await taskStatistics({ signal }).catch((e) => {
+    stats.value = await taskStatistics(filterParams, { signal }).catch((e) => {
       if (pageRequests.isAbortError(e)) throw e
       return stats.value
     })
@@ -909,7 +916,7 @@ async function cancelActiveTask() {
     syncTask(updated)
     const eventPage = await listTaskEvents(updated.task_uuid, { page_size: 50 })
     detailEvents.value = eventPage.results
-    stats.value = await taskStatistics().catch(() => stats.value)
+    stats.value = await taskStatistics(taskFilterParams()).catch(() => stats.value)
     if (syncRepositoryCancellation(updated)) {
       ElMessage.success(t('ops.task.repositoryCancelQueued'))
     }

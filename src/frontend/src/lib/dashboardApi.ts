@@ -3,7 +3,7 @@ import { unwrapApiPayload, asList } from './parse'
 import { getEffectiveOrgKey } from '../composables/useAuth'
 import { listRecords, listPolicies as listAlertPolicies } from './alertApi'
 import { auditStatistics } from './auditApi'
-import { taskStatistics, listTasks, type TaskRow } from './taskApi'
+import { taskStatistics, listTasks, type TaskRow, type TaskStatistics } from './taskApi'
 import { listAllNodes } from './nodeApi'
 import { fetchCurrentLicense } from './subscriptionApi'
 import { buildQuotaRows, type QuotaUsageRow } from './licenseQuotaDisplay'
@@ -93,7 +93,7 @@ export type DashboardOverview = {
     cancelled: number
     byTaskType: Record<string, number>
   }
-  tasks24h: {
+  recoveryDrill24h: {
     total: number
     success: number
     failed: number
@@ -249,18 +249,13 @@ function buildTasks7dBuckets(tasks: TaskRow[]): TaskDayBucket[] {
   return buckets
 }
 
-function summarizeTasks24h(tasks: TaskRow[]) {
-  let success = 0
-  let failed = 0
-  const terminal = new Set(['success', 'failed', 'timeout', 'cancelled'])
-  for (const task of tasks) {
-    if (!terminal.has(task.status)) continue
-    if (task.status === 'success') success += 1
-    else if (task.status === 'failed' || task.status === 'timeout') failed += 1
-  }
+function summarizeRecoveryDrill24h(stats: TaskStatistics) {
+  const success = stats.success
+  const failed = stats.failed + stats.timeout
   const done = success + failed
   return {
-    total: tasks.length,
+    total: stats.total,
+    running: stats.running,
     success,
     failed,
     successRate: done > 0 ? Math.round((success / done) * 1000) / 10 : null,
@@ -358,11 +353,12 @@ export async function loadDashboardOverview(
   t: (key: string, p?: Record<string, unknown>) => string,
 ): Promise<DashboardOverview> {
   const orgKey = getEffectiveOrgKey()
+  const recoveryDrillStartedAfter = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
   const [
     license,
     taskStats,
-    tasks24hPage,
+    recoveryDrill24hStats,
     tasks7dPage,
     runningTasksPage,
     productionSources,
@@ -395,7 +391,15 @@ export async function loadDashboardOverview(
       timeout: 0,
       by_task_type: {},
     })),
-    listTasks({ time_range: '24h', page_size: 500 }).catch(() => ({ count: 0, results: [] })),
+    taskStatistics({ task_type: 'restore', created_after: recoveryDrillStartedAfter }).catch(() => ({
+      total: 0,
+      running: 0,
+      success: 0,
+      failed: 0,
+      cancelled: 0,
+      timeout: 0,
+      by_task_type: {},
+    })),
     listTasks({ time_range: '7d', page_size: 500 }).catch(() => ({ count: 0, results: [] })),
     listTasks({ status: 'running', page_size: 8 }).catch(() => ({ count: 0, results: [] })),
     productionSourceSummary().catch(() => ({
@@ -495,7 +499,7 @@ export async function loadDashboardOverview(
       cancelled: taskStats.cancelled,
       byTaskType: taskStats.by_task_type || {},
     },
-    tasks24h: summarizeTasks24h(tasks24hPage.results),
+    recoveryDrill24h: summarizeRecoveryDrill24h(recoveryDrill24hStats),
     tasks7dBuckets: buildTasks7dBuckets(tasks7dPage.results),
     runningTasks: runningTasksPage.results,
     alertFiring: alertsFiringPage.count || alertsFiringPage.results.length,

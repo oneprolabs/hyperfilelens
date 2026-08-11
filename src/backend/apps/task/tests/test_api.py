@@ -1,7 +1,9 @@
 from decimal import Decimal
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -54,6 +56,52 @@ class TaskApiTests(TestCase):
 
     def _headers(self, org: Organization | None = None):
         return {"HTTP_X_ORG_KEY": (org or self.org).key}
+
+    def test_statistics_honors_task_type_and_created_range(self):
+        now = timezone.now()
+        recent_restore = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Recent restore",
+            status=Task.Status.SUCCESS,
+        )
+        recent_failure = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Recent failed restore",
+            status=Task.Status.FAILED,
+        )
+        old_restore = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Old restore",
+            status=Task.Status.SUCCESS,
+        )
+        Task.objects.filter(pk=recent_restore.pk).update(created_at=now - timedelta(hours=1))
+        Task.objects.filter(pk=recent_failure.pk).update(created_at=now - timedelta(hours=2))
+        Task.objects.filter(pk=old_restore.pk).update(created_at=now - timedelta(days=2))
+        Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Recent backup",
+            status=Task.Status.SUCCESS,
+        )
+
+        response = self.client.get(
+            "/api/v1/tasks/statistics/",
+            {
+                "task_type": Task.Type.RESTORE,
+                "created_after": (now - timedelta(hours=24)).isoformat(),
+            },
+            follow=True,
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(response.data["total"], 2)
+        self.assertEqual(response.data["success"], 1)
+        self.assertEqual(response.data["failed"], 1)
+        self.assertEqual(response.data["by_task_type"], {Task.Type.RESTORE: 2})
 
     def test_create_task_persists_after_listing_refresh(self):
         response = self.client.post(

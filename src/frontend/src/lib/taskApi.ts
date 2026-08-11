@@ -119,8 +119,11 @@ export async function getTask(taskUuid: string, init?: RequestInit) {
   return unwrapApiPayload<TaskRow>(await api<unknown>(`${base}/${taskUuid}/`, init))
 }
 
-export async function taskStatistics(init?: RequestInit) {
-  return unwrapApiPayload<TaskStatistics>(await api<unknown>(`${base}/statistics/`, init))
+export async function taskStatistics(
+  params?: Record<string, string | number | undefined>,
+  init?: RequestInit,
+) {
+  return unwrapApiPayload<TaskStatistics>(await api<unknown>(withQuery(`${base}/statistics/`, params), init))
 }
 
 export async function listTaskSteps(taskUuid: string, init?: RequestInit) {
