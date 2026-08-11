@@ -83,3 +83,40 @@ class SystemMonitorApiTests(TestCase):
         self.assertEqual(response.data["count"], 11)
         self.assertEqual(len(response.data["results"]), 10)
         self.assertIn("node", {row["kind"] for row in response.data["results"]})
+
+    def test_node_attention_excludes_online_active_nodes(self):
+        now = timezone.now()
+        online = Node.objects.create(
+            organization=self.org,
+            name="Online agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            availability_updated_at=now,
+        )
+        offline = Node.objects.create(
+            organization=self.org,
+            name="Offline agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+            availability_updated_at=now - timedelta(minutes=1),
+        )
+
+        response = self.client.get(
+            "/api/v1/monitors/attention/",
+            {"type": "node"},
+            HTTP_X_ORG_KEY=self.org.key,
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            [row["id"] for row in response.data["results"]],
+            [f"node-{offline.id}"],
+        )
+        self.assertNotIn(
+            f"node-{online.id}",
+            {row["id"] for row in response.data["results"]},
+        )

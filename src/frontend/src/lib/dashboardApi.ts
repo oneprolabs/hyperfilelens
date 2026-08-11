@@ -10,6 +10,7 @@ import { buildQuotaRows, type QuotaUsageRow } from './licenseQuotaDisplay'
 import { productionSourceSummary, type ProductionSourceSummary } from './sourceApi'
 import { listBackupConfigs } from './protectionBackupConfigApi'
 import { listRestorePlans } from './restoreApi'
+import { summarizeNodeAvailability } from './nodeAvailability'
 import type { ApiNode } from '../types/node'
 
 export type StorageSummary = {
@@ -426,7 +427,7 @@ export async function loadDashboardOverview(
     loadAttentionPage().catch(() => ({ count: 0, results: [] })),
   ])
 
-  const nodesOnline = nodes.filter((n) => n.status === 'online').length
+  const nodeAvailability = summarizeNodeAvailability(nodes)
   const nodesTotal = nodes.length
   const orgName =
     license.organization_name ||
@@ -507,9 +508,9 @@ export async function loadDashboardOverview(
       successRate: auditStats.success_rate,
       failureCount: auditStats.failure_count,
     },
-    nodesOnline,
+    nodesOnline: nodeAvailability.online,
     nodesTotal,
-    nodesOffline: nodesTotal - nodesOnline,
+    nodesOffline: nodeAvailability.offline,
     nodesByRole: countNodesByRole(nodes),
     productionSources,
     protectionPolicies,
