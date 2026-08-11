@@ -5,7 +5,7 @@ from decimal import Decimal
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
-from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
+from apps.task.models import Task, TaskDependency, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import create_task
 
 
@@ -31,6 +31,37 @@ class TaskEventSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class TaskDependencySerializer(serializers.ModelSerializer):
+    blocking_task_uuid = serializers.SerializerMethodField()
+    blocking_task_status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskDependency
+        fields = [
+            "id",
+            "blocking_task_uuid",
+            "blocking_task_status",
+            "reference_type",
+            "reference_id",
+            "reference_task_type",
+            "code",
+            "detail",
+            "auto_resumable",
+            "is_active",
+            "created_at",
+            "last_checked_at",
+            "next_check_at",
+            "resolved_at",
+        ]
+        read_only_fields = fields
+
+    def get_blocking_task_uuid(self, obj: TaskDependency) -> str | None:
+        return str(obj.blocking_task.task_uuid) if obj.blocking_task_id else None
+
+    def get_blocking_task_status(self, obj: TaskDependency) -> str | None:
+        return obj.blocking_task.status if obj.blocking_task_id else None
+
+
 class TaskSerializer(serializers.ModelSerializer):
     resources = TaskResourceSerializer(many=True, read_only=True)
     steps = TaskStepSerializer(many=True, read_only=True)
@@ -44,6 +75,8 @@ class TaskSerializer(serializers.ModelSerializer):
     repository_cancellation = serializers.SerializerMethodField()
     replaces_task_uuid = serializers.SerializerMethodField()
     replacement_task_uuid = serializers.SerializerMethodField()
+    dependencies = TaskDependencySerializer(many=True, read_only=True)
+    actions = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
@@ -62,6 +95,7 @@ class TaskSerializer(serializers.ModelSerializer):
             "replacement_task_uuid",
             "trigger_type",
             "request_payload",
+            "group_uuid",
             "result_payload",
             "transfer_progress",
             "operation_type",
@@ -79,6 +113,8 @@ class TaskSerializer(serializers.ModelSerializer):
             "primary_resource",
             "steps",
             "recent_events",
+            "dependencies",
+            "actions",
         ]
         read_only_fields = fields
 
@@ -91,6 +127,28 @@ class TaskSerializer(serializers.ModelSerializer):
         except ObjectDoesNotExist:
             return None
         return str(replacement.task_uuid)
+
+    def get_actions(self, obj: Task) -> dict[str, bool]:
+        waiting = obj.status in {Task.Status.WAITING, Task.Status.BLOCKED}
+        return {
+            "can_cancel": waiting if obj.task_type == Task.Type.SOURCE_UNREGISTER else (
+                obj.status in {Task.Status.PENDING, Task.Status.RUNNING}
+                and obj.task_type not in {
+                    Task.Type.NODE_LIFECYCLE,
+                    Task.Type.REPOSITORY_OPERATION,
+                }
+            ),
+            "can_recheck": obj.task_type == Task.Type.SOURCE_UNREGISTER and waiting,
+            "can_retry": (
+                obj.task_type not in {
+                    Task.Type.NODE_LIFECYCLE,
+                    Task.Type.REPOSITORY_OPERATION,
+                }
+                and obj.status
+                in {Task.Status.FAILED, Task.Status.TIMEOUT, Task.Status.CANCELLED}
+            ),
+            "can_force": False,
+        }
 
     def get_transfer_progress(self, obj: Task) -> dict | None:
         payload = obj.result_payload if isinstance(obj.result_payload, dict) else {}

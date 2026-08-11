@@ -23,6 +23,8 @@ class Task(models.Model):
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
+        WAITING = "waiting", "Waiting"
+        BLOCKED = "blocked", "Blocked"
         RUNNING = "running", "Running"
         SUCCESS = "success", "Success"
         FAILED = "failed", "Failed"
@@ -64,6 +66,8 @@ class Task(models.Model):
         db_index=True,
     )
     request_payload = models.JSONField(blank=True, null=True)
+    group_uuid = models.UUIDField(blank=True, null=True, db_index=True)
+    idempotency_key = models.CharField(max_length=128, blank=True, null=True)
     result_payload = models.JSONField(blank=True, null=True)
     error_code = models.CharField(max_length=64, blank=True, null=True, db_index=True)
     error_message = models.TextField(blank=True, null=True)
@@ -84,6 +88,11 @@ class Task(models.Model):
             models.CheckConstraint(
                 check=models.Q(progress__gte=0) & models.Q(progress__lte=100),
                 name="task_progress_range",
+            ),
+            models.UniqueConstraint(
+                fields=["organization_id", "idempotency_key"],
+                condition=models.Q(idempotency_key__isnull=False),
+                name="task_org_idempotency_uniq",
             ),
         ]
 

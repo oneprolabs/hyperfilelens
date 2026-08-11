@@ -107,7 +107,7 @@ import {
   type TransferProgress,
 } from '../../../lib/kopiaProgress'
 import type { TaskEventRow, TaskResourceRow, TaskRow } from '../../../lib/taskApi'
-import { getTask, listTaskEvents, listTasks } from '../../../lib/taskApi'
+import { cancelTask, getTask, listTaskEvents, listTasks, recheckTask } from '../../../lib/taskApi'
 import type { RestoreEndpointType, RestoreRecord, RestoreRecordItem } from '../../../lib/restoreApi'
 import { listRestoreRecords, fetchRestoreRecordRuntime } from '../../../lib/restoreApi'
 import { formatLocalDateTime } from '../../../lib/dateTime'
@@ -333,7 +333,7 @@ const resourceLoading = ref(false)
 const resourceDetails = reactive<Record<string, ResourceDetailRow[]>>({})
 const resourceErrors = reactive<Record<string, string>>({})
 
-const DEFAULT_TASK_STATUS_OPTIONS = ['pending', 'running', 'success', 'failed', 'cancelled', 'timeout']
+const DEFAULT_TASK_STATUS_OPTIONS = ['pending', 'waiting', 'running', 'success', 'failed', 'cancelled', 'timeout']
 const DEFAULT_TASK_TYPE_OPTIONS = ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'backup_config_reset']
 const sourceId = computed(() => props.source?.id ?? '')
 const aggregate = computed(() => (sourceId.value ? aggregateForSource(sourceId.value) : null))
@@ -612,11 +612,24 @@ const taskDetailDrawerSize = computed(() => {
   return '700px'
 })
 const activeTaskUuid = computed(() => activeTask.value?.task_uuid || '')
+const activeTaskDependencies = computed(() =>
+  (activeTask.value?.dependencies || []).filter((dependency) => dependency.is_active),
+)
 const canCancelBackupTask = computed(() => {
   const task = activeTask.value
   if (!task || task.task_type !== 'backup') return false
   return task.status === 'pending' || task.status === 'running'
 })
+const canCancelDeferredTask = computed(() => Boolean(
+  activeTask.value?.task_type === 'source_unregister'
+  && (activeTask.value.actions?.can_cancel
+    ?? ['waiting', 'blocked'].includes(activeTask.value.status)),
+))
+const canRecheckDeferredTask = computed(() => Boolean(
+  activeTask.value?.task_type === 'source_unregister'
+  && (activeTask.value.actions?.can_recheck
+    ?? ['waiting', 'blocked'].includes(activeTask.value.status)),
+))
 const failedBackupDirectories = computed(() => {
   const rows = activeBackupSnapshot.value?.directories || []
   return rows.filter((row) => row.status === 'failed' || row.status === 'cancelled')
@@ -727,6 +740,33 @@ async function cancelActiveBackupTask() {
   try {
     await cancelProtectionBackupTask(activeTask.value.task_uuid)
     ElMessage.success({ message: t('protection.backupsPage.backupTaskCancelSuccess'), grouping: true })
+    await refreshActiveTask()
+  } catch (err) {
+    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+  } finally {
+    backupTaskActionBusy.value = false
+  }
+}
+
+async function cancelActiveDeferredTask() {
+  if (!activeTask.value || !canCancelDeferredTask.value) return
+  backupTaskActionBusy.value = true
+  try {
+    await cancelTask(activeTask.value.task_uuid, t('ops.task.cancelReason'))
+    await refreshActiveTask()
+  } catch (err) {
+    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+  } finally {
+    backupTaskActionBusy.value = false
+  }
+}
+
+async function recheckActiveDeferredTask() {
+  if (!activeTask.value || !canRecheckDeferredTask.value) return
+  backupTaskActionBusy.value = true
+  try {
+    await recheckTask(activeTask.value.task_uuid)
+    ElMessage.success({ message: t('ops.task.recheckComplete'), grouping: true })
     await refreshActiveTask()
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err), grouping: true })
@@ -3883,6 +3923,24 @@ function onClosed() {
         <h2 v-else class="dp-task-detail__header-title">{{ t('protection.backupsPage.backupTaskDrawerTitle') }}</h2>
         <div class="dp-task-detail__header-actions">
           <ElButton
+            v-if="canRecheckDeferredTask"
+            :loading="backupTaskActionBusy"
+            :disabled="backupTaskActionBusy || activeTaskLoading"
+            @click="recheckActiveDeferredTask"
+          >
+            <RefreshCw :size="15" />
+            <span>{{ t('ops.task.btnRecheck') }}</span>
+          </ElButton>
+          <ElButton
+            v-if="canCancelDeferredTask"
+            :loading="backupTaskActionBusy"
+            :disabled="backupTaskActionBusy || activeTaskLoading"
+            @click="cancelActiveDeferredTask"
+          >
+            <CircleStop :size="15" />
+            <span>{{ t('ops.task.btnCancel') }}</span>
+          </ElButton>
+          <ElButton
             v-if="canCancelBackupTask"
             class="dp-task-detail__cancel-button"
             :loading="backupTaskActionBusy"
@@ -3956,10 +4014,10 @@ function onClosed() {
         </div>
 
         <TaskProgressCell
-          v-if="activeTask.status === 'pending' || activeTask.status === 'running'"
+          v-if="activeTask.status === 'pending' || activeTask.status === 'waiting' || activeTask.status === 'blocked' || activeTask.status === 'running'"
           :progress="progressValue(activeTask)"
           :transfer-progress="activeTransferProgress"
-          :failed="activeTask.status === 'failed' || activeTask.status === 'timeout'"
+          :failed="false"
         />
         <div v-else class="dp-task-detail__progress-block">
           <div class="dp-task-detail__progress-head">
@@ -3975,6 +4033,29 @@ function onClosed() {
           </div>
         </div>
       </section>
+
+      <ElAlert
+        v-if="['waiting', 'blocked'].includes(activeTask.status) && activeTaskDependencies.length"
+        :title="activeTask.status === 'blocked' ? t('ops.task.blockedTitle') : t('ops.task.waitingTitle')"
+        type="warning"
+        :closable="false"
+        show-icon
+      >
+        <p>{{ activeTask.status === 'blocked' ? t('ops.task.blockedDescription') : t('ops.task.waitingDescription') }}</p>
+        <ul>
+          <li v-for="dependency in activeTaskDependencies" :key="dependency.id">
+            <span>{{ dependency.detail }}</span>
+            <ElButton
+              v-if="dependency.blocking_task_uuid"
+              link
+              type="primary"
+              @click="openTaskDetailByUuid(dependency.blocking_task_uuid)"
+            >
+              {{ t('ops.task.viewBlockingTask') }}
+            </ElButton>
+          </li>
+        </ul>
+      </ElAlert>
 
       <section
         v-if="activeTask.task_type === 'backup' && (failedBackupDirectories.length || inProgressBackupDirectories.length)"

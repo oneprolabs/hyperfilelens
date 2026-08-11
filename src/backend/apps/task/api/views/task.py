@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from celery import current_app
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import JsonResponse
 from django.utils.dateparse import parse_datetime
@@ -27,7 +26,7 @@ from apps.task.selectors.interface import (
     list_tasks,
     task_statistics,
 )
-from apps.task.services.interface import cancel_task, retry_task, start_task
+from apps.task.services.interface import cancel_task, retry_task
 
 
 def health(_request):
@@ -118,10 +117,14 @@ class TaskViewSet(viewsets.ModelViewSet):
     def cancel(self, request, task_uuid=None):
         serializer = TaskCancelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        task_type = self.get_object().task_type
+        task = self.get_object()
+        task_type = task.task_type
         if task_type == Task.Type.REPOSITORY_OPERATION:
             raise ValidationError({"detail": "Repository tasks are managed by the server scheduler."})
-        if task_type == Task.Type.SOURCE_UNREGISTER:
+        if task_type == Task.Type.SOURCE_UNREGISTER and task.status not in {
+            Task.Status.WAITING,
+            Task.Status.BLOCKED,
+        }:
             raise ValidationError(
                 {"detail": "Source deregistration tasks cannot be cancelled after cleanup starts."}
             )
@@ -141,27 +144,48 @@ class TaskViewSet(viewsets.ModelViewSet):
     def retry(self, request, task_uuid=None):
         serializer = TaskRetrySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        if self.get_object().task_type == Task.Type.REPOSITORY_OPERATION:
+        current_task = self.get_object()
+        if current_task.task_type == Task.Type.REPOSITORY_OPERATION:
             raise ValidationError({"detail": "Repository tasks are retried by the server scheduler."})
         try:
-            task = retry_task(
-                task_uuid=task_uuid,
-                organization_id=self._organization_id(),
-                reason=serializer.validated_data.get("reason") or "",
-            )
+            if current_task.task_type == Task.Type.SOURCE_UNREGISTER:
+                from apps.source.services.internal.backup_source_delete import (
+                    retry_source_unregister_task,
+                )
+
+                task = retry_source_unregister_task(
+                    task_uuid=task_uuid,
+                    organization_id=self._organization_id(),
+                    reason=serializer.validated_data.get("reason") or "",
+                )
+            else:
+                task = retry_task(
+                    task_uuid=task_uuid,
+                    organization_id=self._organization_id(),
+                    reason=serializer.validated_data.get("reason") or "",
+                )
         except Task.DoesNotExist as exc:
             raise NotFound("task not found") from exc
         except DjangoValidationError as exc:
             raise ValidationError({"detail": str(exc)}) from exc
-        if task.task_type == Task.Type.SOURCE_UNREGISTER:
-            task = start_task(
-                task_uuid=task.task_uuid,
-                organization_id=task.organization_id,
+        return Response(TaskSerializer(task).data)
+
+    @action(detail=True, methods=["post"], url_path="recheck")
+    def recheck(self, request, task_uuid=None):
+        task = self.get_object()
+        if task.task_type != Task.Type.SOURCE_UNREGISTER or task.status not in {
+            Task.Status.WAITING,
+            Task.Status.BLOCKED,
+        }:
+            raise ValidationError(
+                {"detail": "Only deferred source deregistration tasks can be rechecked."}
             )
-            current_app.send_task(
-                "apps.source.tasks.source_unregister.execute_source_unregister_task",
-                kwargs={"task_id": task.id},
-            )
+        from apps.source.services.internal.backup_source_delete import (
+            reevaluate_source_unregister_task,
+        )
+
+        reevaluate_source_unregister_task(task_id=int(task.id))
+        task.refresh_from_db()
         return Response(TaskSerializer(task).data)
 
     @action(detail=True, methods=["get"], url_path="steps")

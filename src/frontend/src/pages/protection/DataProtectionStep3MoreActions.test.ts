@@ -171,6 +171,9 @@ describe('backup wizard step 3 More Actions refresh', () => {
 
     expect(monitor).toContain('getTask(taskUuid)')
     expect(monitor).toContain("new Set(['success', 'failed', 'cancelled', 'timeout'])")
+    expect(monitor).toContain('sourceUnregisterPendingKind(task.status)')
+    expect(monitor).toContain('UNREGISTER_BLOCKED_TASK_POLL_MS')
+    expect(monitor).toContain('if (nonTerminalTasks.length)')
     expect(monitor).toContain('refreshStep3AfterMoreAction({ preserveSelection: false })')
     expect(unregister).toContain('const bindings = sourceUnregisterTaskBindings(sourceIds, payload)')
     expect(unregister).toContain('const monitoredSourceIds = bindings.map((binding) => binding.sourceId)')

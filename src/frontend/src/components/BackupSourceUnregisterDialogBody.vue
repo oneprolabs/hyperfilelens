@@ -244,6 +244,46 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
       </section>
 
       <div
+        v-if="preflight?.waiting?.length"
+        class="hfl-flow-action-dialog__risks"
+      >
+        <p class="hfl-flow-action-dialog__risks-title">
+          {{ t('protection.backupsPage.deleteWaitingTitle') }}
+        </p>
+        <ul>
+          <li
+            v-for="(row, idx) in preflight.waiting"
+            :key="`w-${idx}`"
+          >
+            {{ reasonLabel(row) }}
+          </li>
+        </ul>
+        <p class="hfl-flow-action-dialog__risks-hint">
+          {{ t('protection.backupsPage.deleteWaitingHint') }}
+        </p>
+      </div>
+
+      <div
+        v-if="preflight?.requires_attention?.length"
+        class="hfl-flow-action-dialog__risks"
+      >
+        <p class="hfl-flow-action-dialog__risks-title">
+          {{ t('protection.backupsPage.deleteAttentionTitle') }}
+        </p>
+        <ul>
+          <li
+            v-for="(row, idx) in preflight.requires_attention"
+            :key="`a-${idx}`"
+          >
+            {{ reasonLabel(row) }}
+          </li>
+        </ul>
+        <p class="hfl-flow-action-dialog__risks-hint">
+          {{ t('protection.backupsPage.deleteAttentionHint') }}
+        </p>
+      </div>
+
+      <div
         v-if="preflight?.blocking?.length"
         class="hfl-flow-action-dialog__risks"
       >

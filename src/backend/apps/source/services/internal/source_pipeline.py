@@ -314,7 +314,12 @@ def _pipeline_operation_fenced(
             Task.Type.BACKUP_CONFIG_RESET,
             Task.Type.SOURCE_UNREGISTER,
         },
-        status__in={Task.Status.PENDING, Task.Status.RUNNING},
+        status__in={
+            Task.Status.PENDING,
+            Task.Status.WAITING,
+            Task.Status.BLOCKED,
+            Task.Status.RUNNING,
+        },
         resources__resource_type=TaskResource.Type.BACKUP_SOURCE,
         resources__resource_subtype=source_type,
         resources__resource_id=ref_id,

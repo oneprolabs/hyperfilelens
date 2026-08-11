@@ -745,6 +745,7 @@ def _run_kopia_snapshot_delete(
         },
         correlation_type="protection.backup_config_reset",
         correlation_id=str(task.task_uuid),
+        parent_task=task,
         wait_timeout_seconds=3600,
     )
 

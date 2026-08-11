@@ -28,6 +28,30 @@ export type TaskEventRow = {
   created_at?: string
 }
 
+export type TaskDependencyRow = {
+  id: number
+  blocking_task_uuid?: string | null
+  blocking_task_status?: string | null
+  reference_type: 'task' | 'node_task' | 'external' | string
+  reference_id?: string
+  reference_task_type?: string
+  code: string
+  detail: string
+  auto_resumable: boolean
+  is_active: boolean
+  created_at?: string
+  last_checked_at?: string | null
+  next_check_at?: string | null
+  resolved_at?: string | null
+}
+
+export type TaskActions = {
+  can_cancel: boolean
+  can_recheck: boolean
+  can_retry: boolean
+  can_force: boolean
+}
+
 export type TaskRow = {
   id: number
   organization_id: number | null
@@ -42,6 +66,7 @@ export type TaskRow = {
   replaces_task_uuid?: string | null
   replacement_task_uuid?: string | null
   trigger_type: string
+  group_uuid?: string | null
   request_payload?: unknown
   result_payload?: unknown
   transfer_progress?: TransferProgress | null
@@ -67,6 +92,8 @@ export type TaskRow = {
   primary_resource?: TaskResourceRow | null
   steps?: TaskStepRow[]
   recent_events?: TaskEventRow[]
+  dependencies?: TaskDependencyRow[]
+  actions?: TaskActions
 }
 
 export type TaskCreatePayload = {
@@ -81,6 +108,8 @@ export type TaskCreatePayload = {
 export type TaskStatistics = {
   total: number
   running: number
+  waiting?: number
+  blocked?: number
   success: number
   failed: number
   cancelled: number
@@ -162,6 +191,15 @@ export async function retryTask(taskUuid: string, reason?: string) {
     await api<unknown>(`${base}/${taskUuid}/retry/`, {
       method: 'POST',
       body: JSON.stringify({ reason: reason || '' }),
+    }),
+  )
+}
+
+export async function recheckTask(taskUuid: string) {
+  return unwrapApiPayload<TaskRow>(
+    await api<unknown>(`${base}/${taskUuid}/recheck/`, {
+      method: 'POST',
+      body: JSON.stringify({}),
     }),
   )
 }

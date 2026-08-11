@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any
+from uuid import UUID, uuid4
 
 from django.db import transaction
+from django.db.models import Count, Min, Q
 from django.utils import timezone
 
 from apps.audit.constants import AuditAction, AuditResult
@@ -52,15 +55,34 @@ from apps.storage.services.interface import (
     repository_cleanup_task_payload,
     run_repository_cleanup_task,
 )
-from apps.task.models import Task, TaskResource, TaskStep
-from apps.task.services.interface import append_task_step_event, complete_task, create_task, start_task
+from apps.task.models import Task, TaskDependency, TaskResource, TaskStep
+from apps.task.services.interface import (
+    append_task_step_event,
+    complete_task,
+    create_task,
+    resume_waiting_task,
+    start_task,
+)
+from apps.task.signals import task_updated
 
 logger = logging.getLogger(__name__)
 
 _ACTIVE_TASK_STATUSES = {
     Task.Status.PENDING,
+    Task.Status.WAITING,
     Task.Status.RUNNING,
 }
+
+_AUTO_RESUMABLE_DELETE_CODES = frozenset(
+    {
+        "lifecycle_in_progress",
+        "node_workload_active",
+        "repository_cleanup_blocked",
+        "reset_in_progress",
+        "running_tasks",
+        "source_operation_in_progress",
+    }
+)
 
 _SOURCE_UNREGISTER_STEPS = [
     "prepare_source_unregister",
@@ -86,6 +108,10 @@ class DeleteReason:
     source_name: str = ""
     repository_id: int | None = None
     repository_name: str = ""
+    reference_type: str = ""
+    reference_id: str = ""
+    reference_task_type: str = ""
+    blocking_task_uuid: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"code": self.code, "detail": self.detail}
@@ -97,7 +123,25 @@ class DeleteReason:
             payload["repository_id"] = self.repository_id
         if self.repository_name:
             payload["repository_name"] = self.repository_name
+        if self.reference_type:
+            payload["reference_type"] = self.reference_type
+        if self.reference_id:
+            payload["reference_id"] = self.reference_id
+        if self.reference_task_type:
+            payload["reference_task_type"] = self.reference_task_type
+        if self.blocking_task_uuid:
+            payload["blocking_task_uuid"] = self.blocking_task_uuid
         return payload
+
+
+@dataclass(frozen=True)
+class SourceDeregistrationDecision:
+    disposition: str
+    reasons: tuple[DeleteReason, ...] = ()
+
+    @property
+    def ready(self) -> bool:
+        return self.disposition == "ready"
 
 
 @dataclass
@@ -159,6 +203,22 @@ class BackupSourceDeleteFailed(Exception):
         self.hint = hint or (
             "Fix the issues above and try again, or use Force Cleanup where allowed."
         )
+
+
+def _emit_task_update_after_commit(*, task: Task) -> None:
+    task_uuid = str(task.task_uuid)
+    organization_id = int(task.organization_id)
+    status = str(task.status)
+    progress = float(task.progress)
+    transaction.on_commit(
+        lambda: task_updated.send(
+            sender=Task,
+            task_uuid=task_uuid,
+            organization_id=organization_id,
+            status=status,
+            progress=progress,
+        )
+    )
 
 
 def _source_key(source_type: str, source_ref_id: int) -> str:
@@ -280,6 +340,8 @@ def _create_source_unregister_task(
     org: Organization,
     selectable_id: str,
     force: bool,
+    group_uuid: UUID | None = None,
+    idempotency_key: str | None = None,
 ) -> Task:
     display_name = "Deregister backup source"
     return create_task(
@@ -297,6 +359,148 @@ def _create_source_unregister_task(
         },
         resources=_source_resource_defs([selectable_id]),
         steps=_SOURCE_UNREGISTER_STEPS,
+        group_uuid=group_uuid,
+        idempotency_key=idempotency_key,
+    )
+
+
+def _blocking_product_task(*, organization_id: int, reason: DeleteReason) -> Task | None:
+    task_uuid = reason.blocking_task_uuid
+    if not task_uuid and reason.reference_type == TaskDependency.ReferenceType.TASK:
+        task_uuid = reason.reference_id
+    if not task_uuid:
+        return None
+    return Task.objects.filter(
+        organization_id=organization_id,
+        task_uuid=task_uuid,
+    ).first()
+
+
+def _set_unregister_deferred(
+    *,
+    task: Task,
+    reasons: list[DeleteReason],
+    status: str,
+) -> None:
+    """Persist waiting or manual blockers without recording an execution failure."""
+    next_signature = sorted(
+        (
+            reason.code,
+            reason.reference_type,
+            reason.reference_id,
+            reason.detail,
+        )
+        for reason in reasons
+    )
+    current_signature = sorted(
+        (
+            dependency.code,
+            dependency.reference_type,
+            dependency.reference_id,
+            dependency.detail,
+        )
+        for dependency in task.dependencies.filter(is_active=True)
+    )
+    now = timezone.now()
+    automatic = status == Task.Status.WAITING
+    if task.status == status and current_signature == next_signature:
+        TaskDependency.objects.filter(task=task, is_active=True).update(
+            last_checked_at=now,
+            next_check_at=(now + timedelta(seconds=60) if automatic else None),
+        )
+        return
+    TaskDependency.objects.filter(task=task, is_active=True).update(
+        is_active=False,
+        resolved_at=now,
+    )
+    for reason in reasons:
+        blocking_task = _blocking_product_task(
+            organization_id=int(task.organization_id),
+            reason=reason,
+        )
+        reference_type = reason.reference_type or (
+            TaskDependency.ReferenceType.TASK
+            if blocking_task is not None
+            else TaskDependency.ReferenceType.EXTERNAL
+        )
+        reference_id = reason.reference_id or (
+            str(blocking_task.task_uuid) if blocking_task is not None else ""
+        )
+        TaskDependency.objects.create(
+            task=task,
+            blocking_task=blocking_task,
+            reference_type=reference_type,
+            reference_id=reference_id,
+            reference_task_type=reason.reference_task_type,
+            code=reason.code,
+            detail=reason.detail,
+            auto_resumable=automatic,
+            last_checked_at=now,
+            next_check_at=(now + timedelta(seconds=60) if automatic else None),
+        )
+
+    task.status = status
+    task.error_code = (
+        "SOURCE_UNREGISTER_WAITING"
+        if automatic
+        else "SOURCE_UNREGISTER_BLOCKED"
+    )
+    task.error_message = (
+        "Source deregistration is waiting for active operations to finish."
+        if automatic
+        else "Source deregistration requires attention before cleanup can start."
+    )
+    task.result_payload = {
+        "source_ids": list((task.request_payload or {}).get("source_ids") or []),
+        "waiting_reasons" if automatic else "blocked_reasons": [
+            reason.as_dict() for reason in reasons
+        ],
+    }
+    task.save(
+        update_fields=[
+            "status",
+            "error_code",
+            "error_message",
+            "result_payload",
+            "updated_at",
+        ]
+    )
+    _emit_task_update_after_commit(task=task)
+    _set_unregister_step(
+        task=task,
+        step_name="prepare_source_unregister",
+        status=TaskStep.Status.PENDING,
+        progress=0,
+        message=(
+            "Source deregistration is waiting for active operations"
+            if automatic
+            else "Source deregistration requires attention"
+        ),
+        level="WARN",
+        metadata={"reasons": [reason.as_dict() for reason in reasons]},
+    )
+
+
+def _set_unregister_waiting(*, task: Task, reasons: list[DeleteReason]) -> None:
+    _set_unregister_deferred(
+        task=task,
+        reasons=reasons,
+        status=Task.Status.WAITING,
+    )
+
+
+def _set_unregister_blocked(*, task: Task, reasons: list[DeleteReason]) -> None:
+    _set_unregister_deferred(
+        task=task,
+        reasons=reasons,
+        status=Task.Status.BLOCKED,
+    )
+
+
+def _resolve_unregister_dependencies(*, task: Task) -> None:
+    TaskDependency.objects.filter(task=task, is_active=True).update(
+        is_active=False,
+        resolved_at=timezone.now(),
     )
 
 
@@ -611,21 +815,24 @@ def _nas_remote_operation_blockers(*, ctx: SourceDeleteContext) -> list[DeleteRe
     if resource is None:
         return []
     active_probe = resource.connection_test_status in ConnectionTestStatus.ACTIVE
-    active_node_tasks = 0
+    active_node_tasks: list[NodeTask] = []
     if resource.bound_node_id:
-        active_node_tasks = NodeTask.objects.filter(
-            organization_id=resource.organization_id,
-            node_id=resource.bound_node_id,
-            correlation_type__in={
-                "source.connection_test",
-                "source.mount",
-                "source.unmount",
-            },
-            correlation_id=str(resource.id),
-            status__in={NodeTask.Status.PENDING, NodeTask.Status.RUNNING},
-        ).count()
-    if not active_probe and active_node_tasks == 0:
+        active_node_tasks = list(
+            NodeTask.objects.filter(
+                organization_id=resource.organization_id,
+                node_id=resource.bound_node_id,
+                correlation_type__in={
+                    "source.connection_test",
+                    "source.mount",
+                    "source.unmount",
+                },
+                correlation_id=str(resource.id),
+                status__in={NodeTask.Status.PENDING, NodeTask.Status.RUNNING},
+            ).order_by("created_at", "id")
+        )
+    if not active_probe and not active_node_tasks:
         return []
+    active_node_task = active_node_tasks[0] if active_node_tasks else None
     return [
         DeleteReason(
             code="source_operation_in_progress",
@@ -635,6 +842,15 @@ def _nas_remote_operation_blockers(*, ctx: SourceDeleteContext) -> list[DeleteRe
             ),
             source_id=ctx.selectable_id,
             source_name=ctx.display_name,
+            reference_type=(
+                TaskDependency.ReferenceType.NODE_TASK
+                if active_node_task is not None
+                else TaskDependency.ReferenceType.EXTERNAL
+            ),
+            reference_id=str(active_node_task.id) if active_node_task is not None else "",
+            reference_task_type=(
+                str(active_node_task.kind) if active_node_task is not None else "source.probe"
+            ),
         )
     ]
 
@@ -692,6 +908,10 @@ def _direct_nas_repository_blockers(
                     source_name=ctx.display_name,
                     repository_id=repository.id,
                     repository_name=repository.name,
+                    reference_type=TaskDependency.ReferenceType.TASK,
+                    reference_id=str(blocker.get("task_uuid") or ""),
+                    reference_task_type=str(blocker.get("task_type") or ""),
+                    blocking_task_uuid=str(blocker.get("task_uuid") or ""),
                 )
             )
     return reasons
@@ -757,11 +977,12 @@ def _prepare_delete_batch(
                     )
                 ],
             )
-        if _active_reset_task_for_source(
+        active_reset = _active_reset_task_for_source(
             organization_id=org.id,
             source_type=ctx.source_type,
             source_ref_id=ctx.source_ref_id,
-        ):
+        )
+        if active_reset:
             raise BackupSourceDeleteFailed(
                 message="Backup source was not deleted.",
                 reasons=[
@@ -770,6 +991,10 @@ def _prepare_delete_batch(
                         detail="A backup configuration reset is already running.",
                         source_id=ctx.selectable_id,
                         source_name=ctx.display_name,
+                        reference_type=TaskDependency.ReferenceType.TASK,
+                        reference_id=str(active_reset.task_uuid),
+                        reference_task_type=active_reset.task_type,
+                        blocking_task_uuid=str(active_reset.task_uuid),
                     )
                 ],
             )
@@ -785,12 +1010,17 @@ def _prepare_delete_batch(
                     DeleteReason(
                         code="running_tasks",
                         detail=(
-                            f"{len(running)} backup or restore task(s) are still running. "
-                            "Stop them or wait for completion before deregistering the source."
+                            f'{running_task.task_type} task "{running_task.display_name}" '
+                            "is still active. Deregistration will continue after it finishes."
                         ),
                         source_id=ctx.selectable_id,
                         source_name=ctx.display_name,
+                        reference_type=TaskDependency.ReferenceType.TASK,
+                        reference_id=str(running_task.task_uuid),
+                        reference_task_type=running_task.task_type,
+                        blocking_task_uuid=str(running_task.task_uuid),
                     )
+                    for running_task in running
                 ],
             )
         nas_operation_blockers = _nas_remote_operation_blockers(ctx=ctx)
@@ -851,6 +1081,9 @@ def _prepare_delete_batch(
                             detail="A lifecycle operation is already in progress.",
                             source_id=ctx.selectable_id,
                             source_name=ctx.display_name,
+                            reference_type=TaskDependency.ReferenceType.NODE_TASK,
+                            reference_id=str(active_lifecycle.id),
+                            reference_task_type=str(active_lifecycle.kind or "node.lifecycle"),
                         )
                     ],
                 )
@@ -861,17 +1094,48 @@ def _prepare_delete_batch(
                 if blocker.code not in {"backup_running", "restore_running"}
             ]
             if non_product_blockers:
-                raise BackupSourceDeleteFailed(
-                    message="Backup source was not deleted.",
-                    reasons=[
+                blocker_reasons: list[DeleteReason] = []
+                for blocker in non_product_blockers:
+                    product_task = None
+                    if blocker.code == "node_task_running":
+                        node_task = NodeTask.objects.filter(pk=blocker.task_uuid).first()
+                        if node_task is not None and node_task.correlation_id:
+                            try:
+                                product_task_uuid = UUID(node_task.correlation_id)
+                            except (TypeError, ValueError):
+                                product_task_uuid = None
+                            if product_task_uuid is not None:
+                                product_task = Task.objects.filter(
+                                    organization_id=org.id,
+                                    task_uuid=product_task_uuid,
+                                ).first()
+                    blocker_reasons.append(
                         DeleteReason(
                             code="node_workload_active",
                             detail=blocker.label,
                             source_id=ctx.selectable_id,
                             source_name=ctx.display_name,
+                            reference_type=(
+                                TaskDependency.ReferenceType.TASK
+                                if product_task is not None
+                                else TaskDependency.ReferenceType.NODE_TASK
+                            ),
+                            reference_id=(
+                                str(product_task.task_uuid)
+                                if product_task is not None
+                                else blocker.task_uuid
+                            ),
+                            reference_task_type=blocker.task_type,
+                            blocking_task_uuid=(
+                                str(product_task.task_uuid)
+                                if product_task is not None
+                                else ""
+                            ),
                         )
-                        for blocker in non_product_blockers
-                    ],
+                    )
+                raise BackupSourceDeleteFailed(
+                    message="Backup source was not deleted.",
+                    reasons=blocker_reasons,
                 )
             latest_remove = (
                 NodeTask.objects.filter(
@@ -934,6 +1198,32 @@ def _prepare_delete_batch(
         )
         prepared.append((ctx, {}, []))
     return prepared
+
+
+def evaluate_source_deregistration(
+    *,
+    org: Organization,
+    selectable_id: str,
+    force: bool,
+    executing_task_uuid: str | None = None,
+) -> SourceDeregistrationDecision:
+    """Return the authoritative eligibility decision used by every entry point."""
+    try:
+        _prepare_delete_batch(
+            org=org,
+            ids=[selectable_id],
+            force=force,
+            executing_task_uuid=executing_task_uuid,
+        )
+    except BackupSourceDeleteFailed as exc:
+        reasons = tuple(exc.reasons)
+        codes = {reason.code for reason in reasons}
+        if reasons and codes <= _AUTO_RESUMABLE_DELETE_CODES:
+            return SourceDeregistrationDecision("waiting", reasons)
+        if codes <= {"source_not_found", "invalid_id", "empty_ids"}:
+            return SourceDeregistrationDecision("invalid", reasons)
+        return SourceDeregistrationDecision("blocked", reasons)
+    return SourceDeregistrationDecision("ready")
 
 
 def _lock_delete_identities(*, organization_id: int, ids: list[str]) -> None:
@@ -2545,44 +2835,148 @@ def queue_delete_backup_sources(
     ids: list[str],
     force: bool = False,
     user=None,
+    idempotency_key: str = "",
 ) -> dict[str, Any]:
-    """Validate, create source_unregister task, and queue async execution."""
+    """Create durable source-unregister tasks and queue those ready to run."""
     normalized = _normalize_delete_ids(ids)
-    _prepare_delete_batch(org=org, ids=normalized, force=force)
-
     user_id = getattr(user, "id", None)
-    unregister_tasks: list[Task] = []
+    accepted_pairs: list[tuple[str, Task]] = []
+    rejected: list[dict[str, Any]] = []
+    ready_task_ids: set[int] = set()
+    ready_source_ids: list[str] = []
+    operation_group_uuid = uuid4()
+    clean_idempotency_key = idempotency_key.strip()
     with transaction.atomic():
         _lock_delete_identities(organization_id=org.id, ids=normalized)
-        _prepare_delete_batch(org=org, ids=normalized, force=force)
-        _set_source_nas_removal_status(
-            organization_id=org.id,
-            ids=normalized,
-            status=ResourceStatus.REMOVING,
-            message="Source deregistration is in progress.",
+        idempotency_keys = {
+            selectable_id: f"{clean_idempotency_key}:{selectable_id}"
+            for selectable_id in normalized
+            if clean_idempotency_key
+        }
+        idempotent_tasks = {
+            str(task.idempotency_key): task
+            for task in Task.objects.filter(
+                organization_id=org.id,
+                idempotency_key__in=idempotency_keys.values(),
+                task_type=Task.Type.SOURCE_UNREGISTER,
+            )
+        }
+        existing_group_uuid = next(
+            (
+                task.group_uuid
+                for task in idempotent_tasks.values()
+                if task.group_uuid is not None
+            ),
+            None,
         )
+        if existing_group_uuid is not None:
+            operation_group_uuid = existing_group_uuid
         for selectable_id in normalized:
+            task_idempotency_key = idempotency_keys.get(selectable_id)
+            if task_idempotency_key:
+                idempotent_task = idempotent_tasks.get(task_idempotency_key)
+                if idempotent_task is not None:
+                    accepted_pairs.append((selectable_id, idempotent_task))
+                    continue
+
+            ctx = _resolve_context(
+                organization_id=org.id,
+                selectable_id=selectable_id,
+            )
+            if ctx is None:
+                reason = DeleteReason(
+                    code="source_not_found",
+                    detail="Backup source was not found.",
+                    source_id=selectable_id,
+                )
+                rejected.append(
+                    {"source_id": selectable_id, "reasons": [reason.as_dict()]}
+                )
+                continue
+            existing = _active_unregister_task_for_source(
+                organization_id=org.id,
+                source_type=ctx.source_type,
+                source_ref_id=ctx.source_ref_id,
+            )
+            if existing is not None:
+                accepted_pairs.append((selectable_id, existing))
+                continue
+
+            decision = evaluate_source_deregistration(
+                org=org,
+                selectable_id=selectable_id,
+                force=force,
+            )
+            if decision.disposition == "invalid":
+                rejected.append(
+                    {
+                        "source_id": selectable_id,
+                        "reasons": [reason.as_dict() for reason in decision.reasons],
+                    }
+                )
+                continue
+
             unregister_task = _create_source_unregister_task(
                 org=org,
                 selectable_id=selectable_id,
                 force=force,
+                group_uuid=operation_group_uuid,
+                idempotency_key=task_idempotency_key,
             )
             payload = dict(unregister_task.request_payload or {})
             if user_id:
                 payload["user_id"] = int(user_id)
             unregister_task.request_payload = payload
             unregister_task.save(update_fields=["request_payload", "updated_at"])
+            if decision.disposition == "waiting":
+                _set_unregister_waiting(
+                    task=unregister_task,
+                    reasons=list(decision.reasons),
+                )
+            elif decision.disposition == "blocked":
+                _set_unregister_blocked(
+                    task=unregister_task,
+                    reasons=list(decision.reasons),
+                )
+            else:
+                unregister_task = start_task(
+                    task_uuid=unregister_task.task_uuid,
+                    organization_id=org.id,
+                )
+                _set_unregister_step(
+                    task=unregister_task,
+                    step_name="prepare_source_unregister",
+                    status=TaskStep.Status.SUCCESS,
+                    progress=15,
+                    message="Source deregistration prepared",
+                    metadata={"source_ids": [selectable_id], "force": bool(force)},
+                )
+                ready_task_ids.add(int(unregister_task.id))
+                ready_source_ids.append(selectable_id)
+            accepted_pairs.append((selectable_id, unregister_task))
 
-            start_task(task_uuid=unregister_task.task_uuid, organization_id=org.id)
-            _set_unregister_step(
-                task=unregister_task,
-                step_name="prepare_source_unregister",
-                status=TaskStep.Status.SUCCESS,
-                progress=15,
-                message="Source deregistration prepared",
-                metadata={"source_ids": [selectable_id], "force": bool(force)},
+        if ready_source_ids:
+            _set_source_nas_removal_status(
+                organization_id=org.id,
+                ids=ready_source_ids,
+                status=ResourceStatus.REMOVING,
+                message="Source deregistration is in progress.",
             )
-            unregister_tasks.append(unregister_task)
+
+        if not accepted_pairs:
+            reasons = [
+                DeleteReason(
+                    code=str(reason.get("code") or "invalid_source"),
+                    detail=str(reason.get("detail") or "Backup source was not accepted."),
+                    source_id=str(item.get("source_id") or ""),
+                )
+                for item in rejected
+                for reason in item.get("reasons") or []
+            ]
+            raise BackupSourceDeleteFailed(
+                message="No backup source deregistration was accepted.",
+                reasons=reasons,
+            )
 
     from apps.source.tasks.source_unregister import execute_source_unregister_task
 
@@ -2591,28 +2985,84 @@ def queue_delete_backup_sources(
 
     from django.conf import settings
 
-    if getattr(settings, "SOURCE_UNREGISTER_EAGER", False):
-        results = [
+    unregister_tasks = [task for _source_id, task in accepted_pairs]
+    ready_tasks = [task for task in unregister_tasks if task.id in ready_task_ids]
+    if getattr(settings, "SOURCE_UNREGISTER_EAGER", False) and ready_tasks:
+        for task in ready_tasks:
             run_source_unregister_task(organization_id=org.id, task_uuid=str(task.task_uuid))
-            for task in unregister_tasks
-        ]
-        deleted = [item for result in results for item in result.get("deleted", [])]
-        pending_removals = [item for result in results for item in result.get("pending_removals", [])]
-        warnings = [item for result in results for item in result.get("warnings", [])]
-        sources = [item for result in results for item in result.get("sources", [])]
-        accepted = False
-        result = "completed"
     else:
-        for task in unregister_tasks:
+        for task in ready_tasks:
             transaction.on_commit(lambda task_id=task.id: _dispatch(task_id))
-        deleted = []
-        pending_removals = []
-        warnings = []
-        sources = []
-        accepted = True
+
+    refreshed_tasks = Task.objects.in_bulk({task.id for task in unregister_tasks})
+    accepted_pairs = [
+        (source_id, refreshed_tasks.get(task.id, task))
+        for source_id, task in accepted_pairs
+    ]
+    unregister_tasks = [task for _source_id, task in accepted_pairs]
+    response_payloads = [
+        payload
+        for task in unregister_tasks
+        if isinstance((payload := task.result_payload), dict)
+    ]
+    deleted = [
+        item for payload in response_payloads for item in payload.get("deleted", [])
+    ]
+    pending_removals = [
+        item
+        for payload in response_payloads
+        for item in payload.get("pending_removals", [])
+    ]
+    warnings = [
+        item for payload in response_payloads for item in payload.get("warnings", [])
+    ]
+    sources = [
+        item for payload in response_payloads for item in payload.get("sources", [])
+    ]
+
+    statuses = {task.status for task in unregister_tasks}
+    if Task.Status.BLOCKED in statuses:
+        aggregate_status = Task.Status.BLOCKED
+    elif Task.Status.WAITING in statuses:
+        aggregate_status = Task.Status.WAITING
+    elif statuses & {Task.Status.PENDING, Task.Status.RUNNING}:
+        aggregate_status = Task.Status.RUNNING
+    elif statuses & {Task.Status.FAILED, Task.Status.TIMEOUT}:
+        aggregate_status = Task.Status.FAILED
+    elif Task.Status.CANCELLED in statuses:
+        aggregate_status = Task.Status.CANCELLED
+    else:
+        aggregate_status = Task.Status.SUCCESS
+
+    accepted = aggregate_status in {
+        Task.Status.BLOCKED,
+        Task.Status.WAITING,
+        Task.Status.RUNNING,
+    }
+    completed_with_warnings = any(
+        str(payload.get("result") or "").strip().lower() == "partial_success"
+        or payload.get("cleanup_complete") is False
+        for payload in response_payloads
+    )
+    if accepted:
         result = "pending"
+    elif aggregate_status in {Task.Status.FAILED, Task.Status.CANCELLED}:
+        has_success = Task.Status.SUCCESS in statuses
+        result = "partial_failure" if has_success else "failed"
+    else:
+        result = (
+            "partial_success"
+            if rejected or completed_with_warnings
+            else "completed"
+        )
 
     first_task = unregister_tasks[0]
+    task_group_uuids = {task.group_uuid for task in unregister_tasks}
+    response_group_uuid = (
+        next(iter(task_group_uuids))
+        if len(task_group_uuids) == 1 and None not in task_group_uuids
+        else None
+    )
 
     return {
         "ok": True,
@@ -2627,16 +3077,21 @@ def queue_delete_backup_sources(
         "task_uuid": str(first_task.task_uuid),
         "task_ids": [task.id for task in unregister_tasks],
         "task_uuids": [str(task.task_uuid) for task in unregister_tasks],
+        "group_uuid": str(response_group_uuid) if response_group_uuid else None,
         "tasks": [
             {
                 "source_id": selectable_id,
                 "task_id": task.id,
                 "task_uuid": str(task.task_uuid),
+                "status": task.status,
+                "group_uuid": str(task.group_uuid) if task.group_uuid else None,
             }
-            for selectable_id, task in zip(normalized, unregister_tasks, strict=True)
+            for selectable_id, task in accepted_pairs
         ],
-        "status": Task.Status.RUNNING if accepted else Task.Status.SUCCESS,
-        "source_ids": normalized,
+        "rejected": rejected,
+        "status": aggregate_status,
+        "source_ids": [source_id for source_id, _task in accepted_pairs],
+        "requested_source_ids": normalized,
     }
 
 
@@ -2651,6 +3106,10 @@ def run_source_unregister_task(
         raise Task.DoesNotExist
     if task.status in _UNREGISTER_TERMINAL:
         return task.result_payload if isinstance(task.result_payload, dict) else {}
+    if task.status in {Task.Status.WAITING, Task.Status.BLOCKED}:
+        return task.result_payload if isinstance(task.result_payload, dict) else {
+            "status": task.status
+        }
 
     org = Organization.objects.filter(pk=organization_id).first()
     if org is None:
@@ -2773,110 +3232,16 @@ def preflight_delete_backup_sources(
     *,
     organization_id: int,
     ids: list[str],
+    force: bool = False,
 ) -> dict[str, Any]:
-    """Return strict-mode risks for UI (offline agent, unreachable repo, running tasks)."""
+    """Return the authoritative eligibility decision plus non-blocking risks."""
     risks: list[dict[str, Any]] = []
-    blocking: list[dict[str, Any]] = []
     for selectable_id in ids:
         ctx = _resolve_context(organization_id=organization_id, selectable_id=selectable_id)
         if ctx is None:
-            blocking.append(
-                DeleteReason(
-                    code="source_not_found",
-                    detail="Backup source was not found.",
-                    source_id=selectable_id,
-                ).as_dict()
-            )
             continue
-        running = _running_tasks_for_source(
-            organization_id=organization_id,
-            source_type=ctx.source_type,
-            source_ref_id=ctx.source_ref_id,
-        )
-        if running:
-            blocking.append(
-                DeleteReason(
-                    code="running_tasks",
-                    detail=f"{len(running)} backup or restore task(s) are still running.",
-                    source_id=ctx.selectable_id,
-                    source_name=ctx.display_name,
-                ).as_dict()
-            )
-        if _active_unregister_task_for_source(
-            organization_id=organization_id,
-            source_type=ctx.source_type,
-            source_ref_id=ctx.source_ref_id,
-        ):
-            blocking.append(
-                DeleteReason(
-                    code="unregister_in_progress",
-                    detail="A source deregistration task is already running.",
-                    source_id=ctx.selectable_id,
-                    source_name=ctx.display_name,
-                ).as_dict()
-            )
-        if _active_reset_task_for_source(
-            organization_id=organization_id,
-            source_type=ctx.source_type,
-            source_ref_id=ctx.source_ref_id,
-        ):
-            blocking.append(
-                DeleteReason(
-                    code="reset_in_progress",
-                    detail="A backup configuration reset is already running.",
-                    source_id=ctx.selectable_id,
-                    source_name=ctx.display_name,
-                ).as_dict()
-            )
-        if ctx.is_agent and ctx.agent_node is not None:
-            from apps.node.services.internal.node_lifecycle import _active_lifecycle_task
-
-            org = Organization.objects.filter(pk=organization_id).first()
-            if org and _active_lifecycle_task(org=org, node=ctx.agent_node):
-                blocking.append(
-                    DeleteReason(
-                        code="lifecycle_in_progress",
-                        detail="A lifecycle operation is already in progress.",
-                        source_id=ctx.selectable_id,
-                        source_name=ctx.display_name,
-                    ).as_dict()
-                )
-            from apps.node.services.internal.node_workload import get_node_workload_blockers
-
-            for blocker in get_node_workload_blockers(node=ctx.agent_node):
-                if blocker.code in {"backup_running", "restore_running"}:
-                    continue
-                blocking.append(
-                    DeleteReason(
-                        code="node_workload_active",
-                        detail=blocker.label,
-                        source_id=ctx.selectable_id,
-                        source_name=ctx.display_name,
-                    ).as_dict()
-                )
-            status = agent_connection_status(node=ctx.agent_node)
-            if status == CONNECTION_OFFLINE:
-                risks.append(
-                    DeleteReason(
-                        code="agent_offline",
-                        detail="Agent is offline — remote uninstall cannot complete in strict mode.",
-                        source_id=ctx.selectable_id,
-                        source_name=ctx.display_name,
-                    ).as_dict()
-                )
-        blocking.extend(
-            reason.as_dict()
-            for reason in _direct_nas_repository_blockers(
-                organization_id=organization_id,
-                ctx=ctx,
-            )
-        )
         if ctx.nas_resource is not None:
             resource = ctx.nas_resource
-            blocking.extend(
-                reason.as_dict()
-                for reason in _nas_remote_operation_blockers(ctx=ctx)
-            )
             config_ids = list(
                 BackupConfig.objects.filter(
                     organization_id=organization_id,
@@ -2911,26 +3276,56 @@ def preflight_delete_backup_sources(
                         source_name=ctx.display_name,
                     ).as_dict()
                 )
-            proxy = resource.bound_node
-            if proxy is None or proxy.availability != Node.Availability.ONLINE:
-                risks.append(
-                    DeleteReason(
-                        code="proxy_offline",
-                        detail="Proxy is offline — NAS unmount cannot complete in strict mode.",
-                        source_id=ctx.selectable_id,
-                        source_name=ctx.display_name,
-                    ).as_dict()
-                )
         for risk in _repository_unreachable_preflight_risks(
             organization_id=organization_id,
             ctx=ctx,
         ):
             risks.append(risk.as_dict())
+    org = Organization.objects.filter(pk=organization_id).first()
+    decisions = (
+        [
+            evaluate_source_deregistration(
+                org=org,
+                selectable_id=selectable_id,
+                force=force,
+            )
+            for selectable_id in ids
+        ]
+        if org is not None
+        else []
+    )
+    waiting = [
+        reason.as_dict()
+        for decision in decisions
+        if decision.disposition == "waiting"
+        for reason in decision.reasons
+    ]
+    requires_attention = [
+        reason.as_dict()
+        for decision in decisions
+        if decision.disposition == "blocked"
+        for reason in decision.reasons
+    ]
+    hard_blocking = [
+        reason.as_dict()
+        for decision in decisions
+        if decision.disposition == "invalid"
+        for reason in decision.reasons
+    ]
+    decision_codes = {
+        str(reason.get("code") or "")
+        for reason in [*waiting, *requires_attention, *hard_blocking]
+    }
+    risks = [
+        risk for risk in risks if str(risk.get("code") or "") not in decision_codes
+    ]
     return {
         "risks": risks,
-        "blocking": blocking,
-        "strict_may_fail": bool(risks),
-        "delete_disabled": bool(blocking),
+        "waiting": waiting,
+        "requires_attention": requires_attention,
+        "blocking": hard_blocking,
+        "strict_may_fail": bool(risks or requires_attention),
+        "delete_disabled": bool(hard_blocking),
     }
 
 
@@ -3967,15 +4362,269 @@ def delete_backup_sources(
     )
 
 
+def reevaluate_source_unregister_task(*, task_id: int) -> dict[str, Any]:
+    """Recheck one deferred task and dispatch it when all prerequisites resolve."""
+    from apps.source.tasks.source_unregister import execute_source_unregister_task
+
+    with transaction.atomic():
+        task = Task.objects.select_for_update().filter(pk=int(task_id)).first()
+        if task is None:
+            return {"status": "missing"}
+        if task.status not in {Task.Status.WAITING, Task.Status.BLOCKED}:
+            return {"status": task.status, "unchanged": True}
+        payload = task.request_payload if isinstance(task.request_payload, dict) else {}
+        source_ids = [
+            str(value).strip()
+            for value in payload.get("source_ids") or []
+            if str(value).strip()
+        ]
+        org = Organization.objects.filter(pk=task.organization_id).first()
+        if org is None or not source_ids:
+            _complete_unregister_task(
+                task=task,
+                status=Task.Status.FAILED,
+                error_code="SOURCE_UNREGISTER_INVALID_REQUEST",
+                error_message="Source deregistration task has no valid organization or source.",
+            )
+            return {"status": Task.Status.FAILED}
+        _lock_delete_identities(
+            organization_id=int(task.organization_id),
+            ids=source_ids,
+        )
+        decision = evaluate_source_deregistration(
+            org=org,
+            selectable_id=source_ids[0],
+            force=bool(payload.get("force")),
+            executing_task_uuid=str(task.task_uuid),
+        )
+        if decision.disposition == "invalid":
+            invalid_codes = {reason.code for reason in decision.reasons}
+            if invalid_codes != {"source_not_found"}:
+                _resolve_unregister_dependencies(task=task)
+                _complete_unregister_task(
+                    task=task,
+                    status=Task.Status.FAILED,
+                    result_payload={
+                        "source_ids": source_ids,
+                        "reasons": [
+                            reason.as_dict() for reason in decision.reasons
+                        ],
+                    },
+                    error_code="SOURCE_UNREGISTER_INVALID_REQUEST",
+                    error_message="Source deregistration task has an invalid source identifier.",
+                )
+                return {"status": Task.Status.FAILED}
+            _resolve_unregister_dependencies(task=task)
+            _complete_unregister_task(
+                task=task,
+                status=Task.Status.SUCCESS,
+                result_payload={
+                    "source_ids": source_ids,
+                    "deleted": source_ids,
+                    "already_absent": True,
+                },
+            )
+            return {"status": Task.Status.SUCCESS, "already_absent": True}
+        if decision.disposition == "waiting":
+            _set_unregister_waiting(task=task, reasons=list(decision.reasons))
+            return {"status": Task.Status.WAITING}
+        if decision.disposition == "blocked":
+            _set_unregister_blocked(task=task, reasons=list(decision.reasons))
+            return {"status": Task.Status.BLOCKED}
+
+        _resolve_unregister_dependencies(task=task)
+        resume_waiting_task(
+            task_uuid=task.task_uuid,
+            organization_id=int(task.organization_id),
+        )
+        _set_unregister_step(
+            task=task,
+            step_name="prepare_source_unregister",
+            status=TaskStep.Status.SUCCESS,
+            progress=15,
+            message="Source deregistration prerequisites resolved",
+            metadata={"source_ids": source_ids},
+        )
+        _set_source_nas_removal_status(
+            organization_id=int(task.organization_id),
+            ids=source_ids,
+            status=ResourceStatus.REMOVING,
+            message="Source deregistration is in progress.",
+        )
+        transaction.on_commit(
+            lambda ready_task_id=int(task.id): execute_source_unregister_task.delay(
+                task_id=ready_task_id
+            )
+        )
+        return {"status": Task.Status.RUNNING, "resumed": True}
+
+
+def retry_source_unregister_task(
+    *,
+    task_uuid: UUID | str,
+    organization_id: int,
+    reason: str = "",
+) -> Task:
+    """Retry deregistration through the same eligibility state machine as submit."""
+    from apps.source.tasks.source_unregister import execute_source_unregister_task
+    from apps.task.services.interface import retry_task
+
+    with transaction.atomic():
+        existing = (
+            Task.objects.select_for_update()
+            .filter(
+                task_uuid=task_uuid,
+                organization_id=organization_id,
+                task_type=Task.Type.SOURCE_UNREGISTER,
+            )
+            .first()
+        )
+        if existing is None:
+            raise Task.DoesNotExist
+
+        task = retry_task(
+            task_uuid=task_uuid,
+            organization_id=organization_id,
+            reason=reason,
+        )
+        payload = task.request_payload if isinstance(task.request_payload, dict) else {}
+        source_ids = [
+            str(value).strip()
+            for value in payload.get("source_ids") or []
+            if str(value).strip()
+        ]
+        org = Organization.objects.filter(pk=organization_id).first()
+        if org is None or len(source_ids) != 1:
+            _complete_unregister_task(
+                task=task,
+                status=Task.Status.FAILED,
+                error_code="SOURCE_UNREGISTER_INVALID_REQUEST",
+                error_message="Source deregistration task has no valid organization or source.",
+            )
+            return Task.objects.get(pk=task.pk)
+
+        _lock_delete_identities(
+            organization_id=organization_id,
+            ids=source_ids,
+        )
+        decision = evaluate_source_deregistration(
+            org=org,
+            selectable_id=source_ids[0],
+            force=bool(payload.get("force")),
+            executing_task_uuid=str(task.task_uuid),
+        )
+        if decision.disposition == "invalid":
+            invalid_codes = {reason.code for reason in decision.reasons}
+            _resolve_unregister_dependencies(task=task)
+            if invalid_codes == {"source_not_found"}:
+                _complete_unregister_task(
+                    task=task,
+                    status=Task.Status.SUCCESS,
+                    result_payload={
+                        "source_ids": source_ids,
+                        "deleted": source_ids,
+                        "already_absent": True,
+                    },
+                )
+            else:
+                _complete_unregister_task(
+                    task=task,
+                    status=Task.Status.FAILED,
+                    result_payload={
+                        "source_ids": source_ids,
+                        "reasons": [
+                            item.as_dict() for item in decision.reasons
+                        ],
+                    },
+                    error_code="SOURCE_UNREGISTER_INVALID_REQUEST",
+                    error_message="Source deregistration task has an invalid source identifier.",
+                )
+            return Task.objects.get(pk=task.pk)
+        if decision.disposition == "waiting":
+            _set_unregister_waiting(task=task, reasons=list(decision.reasons))
+            return Task.objects.get(pk=task.pk)
+        if decision.disposition == "blocked":
+            _set_unregister_blocked(task=task, reasons=list(decision.reasons))
+            return Task.objects.get(pk=task.pk)
+
+        _resolve_unregister_dependencies(task=task)
+        task = start_task(
+            task_uuid=task.task_uuid,
+            organization_id=organization_id,
+        )
+        _set_unregister_step(
+            task=task,
+            step_name="prepare_source_unregister",
+            status=TaskStep.Status.SUCCESS,
+            progress=15,
+            message="Source deregistration prepared for retry",
+            metadata={"source_ids": source_ids, "force": bool(payload.get("force"))},
+        )
+        _set_source_nas_removal_status(
+            organization_id=organization_id,
+            ids=source_ids,
+            status=ResourceStatus.REMOVING,
+            message="Source deregistration is in progress.",
+        )
+        transaction.on_commit(
+            lambda ready_task_id=int(task.id): execute_source_unregister_task.delay(
+                task_id=ready_task_id
+            )
+        )
+        return task
+
+
 def reconcile_stuck_source_unregister_tasks(
     *,
     limit: int = 50,
     stale_seconds: int = 90,
 ) -> dict[str, int]:
-    """Re-dispatch source-unregister Celery jobs left RUNNING after worker never consumed them."""
-    from datetime import timedelta
-
+    """Resume unblocked unregister tasks and re-dispatch stuck executions."""
     from apps.source.tasks.source_unregister import execute_source_unregister_task
+
+    now = timezone.now()
+    waiting_ids = list(
+        Task.objects.filter(
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            status=Task.Status.WAITING,
+        )
+        .annotate(
+            active_dependency_count=Count(
+                "dependencies",
+                filter=Q(dependencies__is_active=True),
+                distinct=True,
+            ),
+            next_dependency_check=Min(
+                "dependencies__next_check_at",
+                filter=Q(
+                    dependencies__is_active=True,
+                    dependencies__auto_resumable=True,
+                ),
+            ),
+        )
+        .filter(
+            Q(active_dependency_count=0)
+            | Q(next_dependency_check__isnull=True)
+            | Q(next_dependency_check__lte=now)
+        )
+        .order_by("next_dependency_check", "id")
+        .values_list("id", flat=True)[: max(1, int(limit))]
+    )
+    resumed = 0
+    still_waiting = 0
+    blocked = 0
+    already_absent = 0
+    for task_id in waiting_ids:
+        result = reevaluate_source_unregister_task(task_id=int(task_id))
+        result_status = result.get("status")
+        if result_status == Task.Status.RUNNING:
+            resumed += 1
+        elif result_status == Task.Status.WAITING:
+            still_waiting += 1
+        elif result_status == Task.Status.BLOCKED:
+            blocked += 1
+        elif result.get("already_absent"):
+            already_absent += 1
 
     cutoff = timezone.now() - timedelta(seconds=max(30, int(stale_seconds)))
     stuck = list(
@@ -3983,6 +4632,7 @@ def reconcile_stuck_source_unregister_tasks(
             task_type=Task.Type.SOURCE_UNREGISTER,
             status=Task.Status.RUNNING,
             current_step__in={
+                "prepare_source_unregister",
                 "cleanup_direct_nas_repositories",
                 "reset_backup_config",
                 "cleanup_source_endpoint",
@@ -4001,7 +4651,15 @@ def reconcile_stuck_source_unregister_tasks(
             row.task_uuid,
             row.updated_at,
         )
-    return {"scanned": len(stuck), "redispatched": redispatched}
+    return {
+        "scanned": len(stuck),
+        "redispatched": redispatched,
+        "waiting_scanned": len(waiting_ids),
+        "resumed": resumed,
+        "still_waiting": still_waiting,
+        "blocked": blocked,
+        "already_absent": already_absent,
+    }
 
 
 __all__ = [
@@ -4011,6 +4669,8 @@ __all__ = [
     "preflight_delete_backup_sources",
     "queue_delete_backup_sources",
     "reconcile_stuck_source_unregister_tasks",
+    "reevaluate_source_unregister_task",
+    "retry_source_unregister_task",
     "run_source_unregister_task",
     "source_needs_reset_protection",
 ]

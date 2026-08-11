@@ -12,6 +12,16 @@ export type SourceUnregisterTaskBinding = {
   sourceId: string
   taskId?: number
   taskUuid: string
+  status?: string
+}
+
+export type SourceUnregisterPendingKind = 'deleting' | 'delete_waiting' | 'delete_blocked'
+
+export function sourceUnregisterPendingKind(status?: string | null): SourceUnregisterPendingKind {
+  const normalized = String(status || '').trim().toLowerCase()
+  if (normalized === 'waiting') return 'delete_waiting'
+  if (normalized === 'blocked') return 'delete_blocked'
+  return 'deleting'
 }
 
 export type SourceUnregisterTaskOutcome = {
@@ -61,7 +71,12 @@ export function sourceUnregisterTaskBindings(
   if (result.tasks?.length) {
     return result.tasks.flatMap((task) =>
       task.source_id && task.task_uuid
-        ? [{ sourceId: task.source_id, taskId: task.task_id, taskUuid: task.task_uuid }]
+        ? [{
+            sourceId: task.source_id,
+            taskId: task.task_id,
+            taskUuid: task.task_uuid,
+            ...(task.status ? { status: task.status } : {}),
+          }]
         : [],
     )
   }

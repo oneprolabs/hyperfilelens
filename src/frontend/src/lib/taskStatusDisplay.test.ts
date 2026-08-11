@@ -17,6 +17,7 @@ describe('taskStatusTone', () => {
     ['cancelled', 'neutral'],
     ['canceled', 'neutral'],
     ['retrying', 'warning'],
+    ['blocked', 'warning'],
     ['partial', 'warning'],
     ['degraded', 'warning'],
     ['warning', 'warning'],

@@ -46,6 +46,13 @@ class NodeTask(OrganizationScopedModel):
         default="",
         db_index=True,
     )
+    parent_task = models.ForeignKey(
+        "task.Task",
+        on_delete=models.SET_NULL,
+        related_name="node_tasks",
+        blank=True,
+        null=True,
+    )
 
     kind = models.CharField(max_length=120, db_index=True)
     payload = models.JSONField(default=dict, blank=True)

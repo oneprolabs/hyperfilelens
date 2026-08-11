@@ -2720,6 +2720,8 @@ export const en = {
       },
       status: {
         pending: 'Queued',
+        waiting: 'Waiting',
+        blocked: 'Needs Attention',
         dispatching: 'Dispatching',
         running: 'Running',
         creating: 'Creating',
@@ -2733,6 +2735,13 @@ export const en = {
         skipped: 'Skipped',
         available: 'Available',
       },
+      waitingTitle: 'Waiting for active operations',
+      waitingDescription: 'Source deregistration will continue automatically after these operations finish.',
+      blockedTitle: 'Action required before deregistration',
+      blockedDescription: 'Resolve the following conditions, then recheck this task.',
+      btnRecheck: 'Recheck',
+      recheckComplete: 'Deregistration prerequisites rechecked',
+      viewBlockingTask: 'View task',
       step: {
         prepare: 'Prepare Task',
         snapshot: 'Create Snapshot',

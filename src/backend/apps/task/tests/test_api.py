@@ -9,7 +9,7 @@ from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
 from apps.task.api.serializers.task import TaskStepInputSerializer
-from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
+from apps.task.models import Task, TaskDependency, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import complete_task, create_task
 
 
@@ -447,6 +447,67 @@ class TaskApiTests(TestCase):
         self.assertIn("cannot be cancelled", str(response.data))
         task.refresh_from_db()
         self.assertEqual(task.status, Task.Status.RUNNING)
+
+    def test_waiting_source_unregister_task_can_be_cancelled(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Unregister backup source",
+            status=Task.Status.WAITING,
+            trigger_type=Task.TriggerType.MANUAL,
+        )
+        dependency = TaskDependency.objects.create(
+            task=task,
+            code="running_tasks",
+            detail="A backup task is still active.",
+        )
+
+        response = self.client.post(
+            f"/api/v1/tasks/{task.task_uuid}/cancel/",
+            {"reason": "keep the source"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        task.refresh_from_db()
+        dependency.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.CANCELLED)
+        self.assertFalse(dependency.is_active)
+        self.assertIsNotNone(dependency.resolved_at)
+
+    def test_blocked_source_unregister_exposes_recheck_and_cancel_actions(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Blocked source deregistration",
+            status=Task.Status.BLOCKED,
+            trigger_type=Task.TriggerType.MANUAL,
+        )
+        dependency = TaskDependency.objects.create(
+            task=task,
+            code="agent_offline",
+            detail="Agent is offline.",
+            auto_resumable=False,
+        )
+
+        detail = self.client.get(
+            f"/api/v1/tasks/{task.task_uuid}/",
+            **self._headers(),
+        )
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertTrue(detail.data["actions"]["can_cancel"])
+        self.assertTrue(detail.data["actions"]["can_recheck"])
+
+        cancelled = self.client.post(
+            f"/api/v1/tasks/{task.task_uuid}/cancel/",
+            {"reason": "keep source"},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(cancelled.status_code, status.HTTP_200_OK)
+        dependency.refresh_from_db()
+        self.assertFalse(dependency.is_active)
 
     def test_node_lifecycle_task_cannot_be_cancelled_or_retried_generically(self):
         running = Task.objects.create(

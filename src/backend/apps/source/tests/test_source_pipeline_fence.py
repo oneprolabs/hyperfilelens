@@ -68,6 +68,21 @@ class SourcePipelineOperationFenceTests(TestCase):
         self.assertEqual(ensured.id, self.entry.id)
         self.assertEqual(self.entry.step, 1)
 
+    def test_blocked_deregistration_still_owns_the_pipeline_fence(self):
+        self.operation.task_type = Task.Type.SOURCE_UNREGISTER
+        self.operation.status = Task.Status.BLOCKED
+        self.operation.save(update_fields=["task_type", "status", "updated_at"])
+
+        updated = set_pipeline_steps(
+            organization_id=self.org.id,
+            ids=[f"agent:{self.agent.id}"],
+            step=2,
+        )
+
+        self.entry.refresh_from_db()
+        self.assertEqual(updated, [])
+        self.assertEqual(self.entry.step, 1)
+
     def test_operation_owner_can_finalize_its_pipeline_change(self):
         selectable_id = f"agent:{self.agent.id}"
 

@@ -224,7 +224,7 @@ class BackupSelectablePipelineRevertView(APIView):
             return Response({"detail": "target_step must be 1 or 2."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            force = bool(request.data.get("force"))
+            force = _query_bool(request.data.get("force"))
             updated = revert_backup_sources(
                 org=org,
                 ids=ids,
@@ -255,7 +255,13 @@ class BackupSelectableDeletePreflightView(APIView):
         ids = _parse_id_list(request.data.get("ids"))
         if ids is None:
             return Response({"detail": "ids must be a list of agent:/nas: keys."}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(preflight_delete_backup_sources(organization_id=org.id, ids=ids))
+        return Response(
+            preflight_delete_backup_sources(
+                organization_id=org.id,
+                ids=ids,
+                force=_query_bool(request.data.get("force")),
+            )
+        )
 
 
 class BackupSelectableBulkDeleteView(APIView):
@@ -266,7 +272,7 @@ class BackupSelectableBulkDeleteView(APIView):
         ids = _parse_id_list(request.data.get("ids"))
         if ids is None:
             return Response({"detail": "ids must be a list of agent:/nas: keys."}, status=status.HTTP_400_BAD_REQUEST)
-        force = bool(request.data.get("force"))
+        force = _query_bool(request.data.get("force"))
         confirmation_keyword = "FORCE DEREGISTER" if force else "DEREGISTER"
         if request.data.get("confirmation") != confirmation_keyword:
             return Response(
@@ -278,7 +284,17 @@ class BackupSelectableBulkDeleteView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            result = queue_delete_backup_sources(org=org, ids=ids, force=force, user=request.user)
+            result = queue_delete_backup_sources(
+                org=org,
+                ids=ids,
+                force=force,
+                user=request.user,
+                idempotency_key=str(
+                    request.headers.get("Idempotency-Key")
+                    or request.data.get("idempotency_key")
+                    or ""
+                )[:96],
+            )
         except BackupSourceDeleteFailed as exc:
             return Response(
                 {

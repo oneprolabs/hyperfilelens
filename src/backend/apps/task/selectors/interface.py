@@ -31,7 +31,7 @@ def list_tasks(
             "repository_operation__execution_target",
             "repository_operation__triggered_by_task",
         )
-        .prefetch_related("resources")
+        .prefetch_related("resources", "dependencies__blocking_task")
         .order_by("-created_at", "-id")
     )
     if status:
@@ -80,7 +80,12 @@ def get_task(*, organization_id: int, task_uuid: UUID | str) -> Task | None:
             "repository_operation__execution_target",
             "repository_operation__triggered_by_task",
         )
-        .prefetch_related("resources", "steps", "events")
+        .prefetch_related(
+            "resources",
+            "steps",
+            "events",
+            "dependencies__blocking_task",
+        )
         .first()
     )
 
@@ -111,6 +116,8 @@ def task_statistics(*, organization_id: int, queryset: QuerySet[Task] | None = N
     return {
         "total": sum(counts.values()),
         "running": counts.get(Task.Status.RUNNING, 0),
+        "waiting": counts.get(Task.Status.WAITING, 0),
+        "blocked": counts.get(Task.Status.BLOCKED, 0),
         "success": counts.get(Task.Status.SUCCESS, 0),
         "failed": counts.get(Task.Status.FAILED, 0),
         "cancelled": counts.get(Task.Status.CANCELLED, 0),

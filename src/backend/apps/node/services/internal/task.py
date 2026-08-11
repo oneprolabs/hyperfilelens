@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.db import transaction
 from django.db.models import F, QuerySet
@@ -23,6 +23,9 @@ from apps.node.models.base import NodeRole
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.agent_log import task_log_context
 from apps.storage.crypto import decrypt_text, encrypt_text
+
+if TYPE_CHECKING:
+    from apps.task.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -463,6 +466,7 @@ def create_agent_task(
     correlation_type: str = "",
     correlation_id: str = "",
     requesting_organization_id: int | None = None,
+    parent_task: Task | None = None,
 ) -> NodeTask:
     if node.organization_id != org.id:
         raise ValueError("node/org mismatch")
@@ -474,6 +478,7 @@ def create_agent_task(
         node=node,
         correlation_type=correlation_type or "",
         correlation_id=str(correlation_id or ""),
+        parent_task=parent_task,
         kind=kind,
         payload=payload or {},
         status=NodeTask.Status.PENDING,
@@ -748,6 +753,7 @@ def dispatch_task(
     correlation_type: str = "",
     correlation_id: str = "",
     requesting_organization_id: int | None = None,
+    parent_task: Task | None = None,
 ) -> NodeTask:
     task = create_agent_task(
         org=org,
@@ -757,6 +763,7 @@ def dispatch_task(
         correlation_type=correlation_type,
         correlation_id=correlation_id,
         requesting_organization_id=requesting_organization_id,
+        parent_task=parent_task,
     )
     transaction.on_commit(
         lambda bound_task=task: deliver_agent_task(task=bound_task),

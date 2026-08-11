@@ -35,13 +35,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
-  (e: 'started', payload: { sourceIds: string[] }): void
-  (e: 'failed', payload: {
-    sourceIds: string[]
-    failureDetails?: ErrorDetailsPayload
-    failuresBySource?: Record<string, ErrorDetailsPayload>
-    errorMessage?: string
-  }): void
   (e: 'deleted', payload: {
     result: string
     warnings: Array<Record<string, unknown>>
@@ -50,7 +43,9 @@ const emit = defineEmits<{
     task_uuid?: string
     task_ids?: number[]
     task_uuids?: string[]
+    group_uuid?: string
     tasks?: BackupSourceDeleteResult['tasks']
+    rejected?: BackupSourceDeleteResult['rejected']
     accepted?: boolean
   }): void
 }>()
@@ -64,6 +59,7 @@ const preflightError = ref(false)
 const submitErrorReasons = ref<BackupSourceDeleteReason[]>([])
 const lastFailureDetails = ref<ErrorDetailsPayload | null>(null)
 const confirmText = ref('')
+const idempotencyKey = ref('')
 const frozenSourceIds = ref<string[]>([])
 const frozenSources = ref<BackupSourceUnregisterDisplayRow[]>([])
 let preflightRequestSeq = 0
@@ -118,7 +114,7 @@ async function loadPreflight() {
   preflightError.value = false
   preflightLoading.value = true
   try {
-    const result = await preflightDeleteBackupSources(sourceIds)
+    const result = await preflightDeleteBackupSources(sourceIds, force.value)
     if (requestSeq !== preflightRequestSeq) return
     preflight.value = result
     submitErrorReasons.value = []
@@ -135,6 +131,7 @@ function resetDialogState() {
   preflightRequestSeq += 1
   force.value = false
   confirmText.value = ''
+  idempotencyKey.value = ''
   preflight.value = null
   preflightError.value = false
   preflightLoading.value = false
@@ -169,6 +166,8 @@ watch(
 
 watch(force, () => {
   confirmText.value = ''
+  idempotencyKey.value = ''
+  void loadPreflight()
 })
 
 function close() {
@@ -181,10 +180,20 @@ async function confirmDelete() {
   const sourceIds = [...dialogSourceIds.value]
   const forceDelete = force.value
   const confirmation = confirmText.value
-  emit('started', { sourceIds })
   loading.value = true
   try {
-    const result = await bulkDeleteBackupSources(sourceIds, forceDelete, confirmation)
+    if (!idempotencyKey.value) {
+      const requestId = typeof globalThis.crypto?.randomUUID === 'function'
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      idempotencyKey.value = `source-unregister:${requestId}`
+    }
+    const result = await bulkDeleteBackupSources(
+      sourceIds,
+      forceDelete,
+      confirmation,
+      idempotencyKey.value,
+    )
     submitErrorReasons.value = []
     lastFailureDetails.value = null
     visible.value = false
@@ -196,7 +205,9 @@ async function confirmDelete() {
       task_uuid: result.task_uuid,
       task_ids: result.task_ids,
       task_uuids: result.task_uuids,
+      group_uuid: result.group_uuid,
       tasks: result.tasks,
+      rejected: result.rejected,
       accepted: Boolean(result.accepted),
     })
   } catch (err: unknown) {
@@ -219,12 +230,6 @@ async function confirmDelete() {
     ) || (primaryId ? failuresBySource[primaryId] : undefined)
       || unregisterFailureToErrorDetails({ t, apiError: err })
     lastFailureDetails.value = details
-    emit('failed', {
-      sourceIds,
-      failureDetails: details,
-      failuresBySource,
-      errorMessage: unregisterFailureBannerText(details),
-    })
     notifyUnregisterFailureBatch({
       t,
       items: sourceIds.map((sourceId) => ({

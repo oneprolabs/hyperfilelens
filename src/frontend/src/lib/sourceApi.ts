@@ -368,10 +368,16 @@ export type BackupSourceDeleteReason = {
   source_name?: string
   repository_id?: number
   repository_name?: string
+  reference_type?: string
+  reference_id?: string
+  reference_task_type?: string
+  blocking_task_uuid?: string
 }
 
 export type BackupSourceDeletePreflight = {
   risks: BackupSourceDeleteReason[]
+  waiting?: BackupSourceDeleteReason[]
+  requires_attention?: BackupSourceDeleteReason[]
   blocking: BackupSourceDeleteReason[]
   strict_may_fail: boolean
   delete_disabled: boolean
@@ -397,14 +403,22 @@ export type BackupSourceDeleteResult = {
   task_uuid?: string
   task_ids?: number[]
   task_uuids?: string[]
-  tasks?: Array<{ source_id: string; task_id: number; task_uuid: string }>
+  group_uuid?: string
+  tasks?: Array<{
+    source_id: string
+    task_id: number
+    task_uuid: string
+    status?: string
+    group_uuid?: string | null
+  }>
+  rejected?: Array<{ source_id: string; reasons: BackupSourceDeleteReason[] }>
 }
 
-export async function preflightDeleteBackupSources(ids: string[]) {
+export async function preflightDeleteBackupSources(ids: string[], force = false) {
   return unwrapApiPayload<BackupSourceDeletePreflight>(
     await api<unknown>(`${backupSelectableBase}/delete-preflight/`, {
       method: 'POST',
-      body: JSON.stringify({ ids }),
+      body: JSON.stringify({ ids, force }),
       headers: orgHeaders(),
     }),
   )
@@ -466,13 +480,21 @@ export function parseBackupSourceDeleteError(err: unknown): {
   }
 }
 
-export async function bulkDeleteBackupSources(ids: string[], force = false, confirmation = '') {
+export async function bulkDeleteBackupSources(
+  ids: string[],
+  force = false,
+  confirmation = '',
+  idempotencyKey = '',
+) {
   try {
     return unwrapApiPayload<BackupSourceDeleteResult>(
       await api<unknown>(`${backupSelectableBase}/bulk-delete/`, {
         method: 'POST',
         body: JSON.stringify({ ids, force, confirmation }),
-        headers: orgHeaders(),
+        headers: {
+          ...orgHeaders(),
+          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+        },
       }),
     )
   } catch (err: unknown) {
