@@ -103,6 +103,61 @@ class TaskApiTests(TestCase):
         self.assertEqual(response.data["failed"], 1)
         self.assertEqual(response.data["by_task_type"], {Task.Type.RESTORE: 2})
 
+    def test_list_and_statistics_honor_finished_range_and_terminal_only(self):
+        now = timezone.now()
+        completed_success = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Completed successfully",
+            status=Task.Status.SUCCESS,
+            finished_at=now - timedelta(hours=2),
+        )
+        completed_timeout = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Completed with timeout",
+            status=Task.Status.TIMEOUT,
+            finished_at=now - timedelta(hours=3),
+        )
+        Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Still running",
+            status=Task.Status.RUNNING,
+        )
+        Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Completed yesterday",
+            status=Task.Status.SUCCESS,
+            finished_at=now - timedelta(days=2),
+        )
+
+        params = {
+            "finished_after": (now - timedelta(days=1)).isoformat(),
+            "finished_before": now.isoformat(),
+            "terminal_only": "true",
+        }
+        listing = self.client.get("/api/v1/tasks/", params, follow=True, **self._headers())
+        self.assertEqual(listing.status_code, status.HTTP_200_OK, listing.content)
+        self.assertEqual(listing.data["data"]["pagination"]["total"], 2)
+        self.assertEqual(
+            {row["task_uuid"] for row in listing.data["data"]["list"]},
+            {str(completed_success.task_uuid), str(completed_timeout.task_uuid)},
+        )
+
+        statistics = self.client.get(
+            "/api/v1/tasks/statistics/",
+            params,
+            follow=True,
+            **self._headers(),
+        )
+        self.assertEqual(statistics.status_code, status.HTTP_200_OK, statistics.content)
+        self.assertEqual(statistics.data["total"], 2)
+        self.assertEqual(statistics.data["success"], 1)
+        self.assertEqual(statistics.data["timeout"], 1)
+        self.assertEqual(statistics.data["running"], 0)
+
     def test_statistics_reports_all_task_statuses(self):
         for task_status in (
             Task.Status.PENDING,

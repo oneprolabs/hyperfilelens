@@ -92,8 +92,10 @@ const filters = reactive({
   status: '',
   task_type: textQueryValue(route.query.task_type),
   trigger_type: '',
-  time_mode: textQueryValue(route.query.time_mode) === '24h' ? '24h' : '7d',
-  created_range: null as [Date, Date] | null,
+  time_mode: routeTimeModeFromQuery(),
+  time_field: textQueryValue(route.query.time_field) === 'finished' ? 'finished' : 'created',
+  created_range: routeDateTimeRange(),
+  terminal_only: textQueryValue(route.query.terminal_only) === 'true',
   resource_type: '',
   resource_id: '',
 })
@@ -104,9 +106,11 @@ const {
   runSearchNow: runFilterSearch,
 } = useListSearch(toRef(filters, 'search'), () => applyFilters())
 const advancedFilterOpen = ref(false)
-const lastQuickTimeMode = ref('7d')
+const lastQuickTimeMode = ref(filters.time_mode === 'range' ? '7d' : filters.time_mode)
 const advancedFilterDraft = reactive({
   created_range: null as [Date, Date] | null,
+  time_field: 'created' as 'created' | 'finished',
+  terminal_only: false,
   resource_type: '',
   resource_id: '',
 })
@@ -180,6 +184,10 @@ const timeModeOptions = computed(() => [
   { value: '30d', label: t('ops.task.time30d') },
   { value: 'range', label: t('ops.task.timeRange') },
 ])
+const timeFieldOptions = computed(() => [
+  { value: 'created', label: t('ops.task.timeFieldCreated') },
+  { value: 'finished', label: t('ops.task.timeFieldFinished') },
+])
 const taskDateTimeRangePresets = computed(() => [
   { value: '24h', label: t('ops.task.time24h'), hours: 24 },
   { value: '7d', label: t('ops.task.time7d'), hours: 7 * 24 },
@@ -190,6 +198,7 @@ const advancedFilterCount = computed(() => {
   if (filters.resource_type) count += 1
   if (filters.resource_id) count += 1
   if (filters.time_mode === 'range' && filters.created_range) count += 1
+  if (filters.terminal_only) count += 1
   return count
 })
 
@@ -207,6 +216,20 @@ function parseLocalInputDateTime(value: string) {
   const normalized = value.length === 16 ? `${value}:00` : value
   const date = new Date(normalized)
   return Number.isFinite(date.getTime()) ? date : null
+}
+
+function routeTimeModeFromQuery() {
+  const value = textQueryValue(route.query.time_mode)
+  return ['all', '24h', '7d', '30d', 'range'].includes(value) ? value : '7d'
+}
+
+function routeDateTimeRange(): [Date, Date] | null {
+  if (textQueryValue(route.query.time_mode) !== 'range') return null
+  const timeField = textQueryValue(route.query.time_field) === 'finished' ? 'finished' : 'created'
+  const after = new Date(textQueryValue(route.query[`${timeField}_after`]))
+  const before = new Date(textQueryValue(route.query[`${timeField}_before`]))
+  if (!Number.isFinite(after.getTime()) || !Number.isFinite(before.getTime()) || after > before) return null
+  return [after, before]
 }
 
 const taskAdvancedRangeStart = computed(() => formatLocalInputDateTime(advancedFilterDraft.created_range?.[0]))
@@ -319,22 +342,25 @@ function isoDateParam(date?: Date | null) {
   return date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : undefined
 }
 
-function taskCreatedRangeParams() {
+function taskTimeRangeParams() {
   const now = new Date()
-  if (filters.time_mode === '24h') return { created_after: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(), created_before: undefined }
-  if (filters.time_mode === '7d') return { created_after: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(), created_before: undefined }
-  if (filters.time_mode === '30d') return { created_after: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString(), created_before: undefined }
+  let after: string | undefined
+  let before: string | undefined
+  if (filters.time_mode === '24h') after = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
+  if (filters.time_mode === '7d') after = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  if (filters.time_mode === '30d') after = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
   if (filters.time_mode === 'range' && filters.created_range) {
-    return {
-      created_after: isoDateParam(filters.created_range[0]),
-      created_before: isoDateParam(filters.created_range[1]),
-    }
+    after = isoDateParam(filters.created_range[0])
+    before = isoDateParam(filters.created_range[1])
   }
-  return { created_after: undefined, created_before: undefined }
+  if (filters.time_field === 'finished') {
+    return { created_after: undefined, created_before: undefined, finished_after: after, finished_before: before }
+  }
+  return { created_after: after, created_before: before, finished_after: undefined, finished_before: undefined }
 }
 
 function taskFilterParams() {
-  const timeParams = taskCreatedRangeParams()
+  const timeParams = taskTimeRangeParams()
   return {
     search: appliedSearch.value.trim(),
     search_field: filters.search_field,
@@ -345,6 +371,9 @@ function taskFilterParams() {
     resource_id: filters.resource_id,
     created_after: timeParams.created_after,
     created_before: timeParams.created_before,
+    finished_after: timeParams.finished_after,
+    finished_before: timeParams.finished_before,
+    terminal_only: filters.terminal_only ? 'true' : undefined,
   }
 }
 
@@ -762,6 +791,8 @@ function applyFilters() {
 
 function resetAdvancedFilterDraft() {
   advancedFilterDraft.created_range = null
+  advancedFilterDraft.time_field = 'created'
+  advancedFilterDraft.terminal_only = false
   advancedFilterDraft.resource_type = ''
   advancedFilterDraft.resource_id = ''
 }
@@ -801,6 +832,8 @@ function onTaskTimeModeChange(value: string) {
 
 function syncAdvancedFilterDraft() {
   advancedFilterDraft.created_range = filters.created_range
+  advancedFilterDraft.time_field = filters.time_field
+  advancedFilterDraft.terminal_only = filters.terminal_only
   advancedFilterDraft.resource_type = filters.resource_type
   advancedFilterDraft.resource_id = filters.resource_id
 }
@@ -816,6 +849,8 @@ function cancelAdvancedFilter() {
 
 function applyAdvancedFilters() {
   filters.created_range = advancedFilterDraft.created_range
+  filters.time_field = advancedFilterDraft.time_field
+  filters.terminal_only = advancedFilterDraft.terminal_only
   filters.resource_type = advancedFilterDraft.resource_type
   filters.resource_id = advancedFilterDraft.resource_id
   if (filters.created_range) filters.time_mode = 'range'
@@ -1043,6 +1078,9 @@ watch(
           <ElSelect v-model="filters.trigger_type" clearable :placeholder="t('ops.task.filterTrigger')" style="width: 130px">
             <ElOption v-for="item in triggerTypeOptions" :key="item" :label="labelFor('triggerType', item)" :value="item" />
           </ElSelect>
+          <ElSelect v-model="filters.time_field" :placeholder="t('ops.task.timeField')" style="width: 140px" @change="runFilterSearch">
+            <ElOption v-for="item in timeFieldOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </ElSelect>
           <ElSelect v-model="filters.time_mode" :placeholder="t('ops.task.filterTime')" style="width: 130px" @change="onTaskTimeModeChange">
             <ElOption v-for="item in timeModeOptions" :key="item.value" :label="item.label" :value="item.value" />
           </ElSelect>
@@ -1186,6 +1224,11 @@ watch(
       @closed="onAdvancedFilterClosed"
     >
       <ElForm label-position="top" class="hfl-task-filter-form">
+        <ElFormItem :label="t('ops.task.timeField')">
+          <ElSelect v-model="advancedFilterDraft.time_field" class="w-full">
+            <ElOption v-for="item in timeFieldOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </ElSelect>
+        </ElFormItem>
         <ElFormItem :label="t('ops.task.filterTime')">
           <HflDateTimeRangePicker
             class="hfl-filter-range"
@@ -1200,6 +1243,9 @@ watch(
             @apply="onAdvancedDateTimeApply"
             @clear="onAdvancedDateTimeClear"
           />
+        </ElFormItem>
+        <ElFormItem :label="t('ops.task.terminalOnly')">
+          <ElSwitch v-model="advancedFilterDraft.terminal_only" />
         </ElFormItem>
         <ElFormItem :label="t('ops.task.filterResource')">
           <ElSelect v-model="advancedFilterDraft.resource_type" clearable class="w-full" :placeholder="t('ops.task.filterResource')">

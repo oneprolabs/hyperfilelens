@@ -77,6 +77,9 @@ class TaskViewSet(viewsets.ModelViewSet):
             search_field=search_field or None,
             created_after=parse_datetime(params.get("created_after") or ""),
             created_before=parse_datetime(params.get("created_before") or ""),
+            finished_after=parse_datetime(params.get("finished_after") or ""),
+            finished_before=parse_datetime(params.get("finished_before") or ""),
+            terminal_only=(params.get("terminal_only") or "").strip().lower() == "true",
         )
 
     def get_object(self):
