@@ -1509,8 +1509,6 @@ cmd_uninstall() {
 			log_skip "Install directory ${INSTALL_DIR} was not removed (not empty or not present)."
 		fi
 	fi
-	rmdir "$(dirname "$INSTALL_DIR")" 2>/dev/null || true
-
 	if [[ $PURGE_ALL -eq 1 && -f "$env_file" ]]; then
 		rm -f "$env_file"
 		log_ok "Removed ${env_file}."

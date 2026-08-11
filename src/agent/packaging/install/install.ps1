@@ -733,11 +733,6 @@ if (Test-Path -LiteralPath `$target) {
   Write-Trace "failed to remove install directory `$target after retries"
   exit 1
 }
-`$parent = Split-Path -Parent `$target
-if (`$parent -and (Test-Path -LiteralPath `$parent) -and -not (Get-ChildItem -LiteralPath `$parent -Force -ErrorAction SilentlyContinue)) {
-  Remove-Item -LiteralPath `$parent -Force -ErrorAction SilentlyContinue
-  Write-Trace "removed empty parent directory `$parent"
-}
 exit 0
 "@
   Set-Content -LiteralPath $runner -Value $body -Encoding UTF8

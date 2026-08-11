@@ -47,6 +47,29 @@ func TestInstallShellRetiresIdentityBeforeRemovingAgent(t *testing.T) {
 	}
 }
 
+func TestInstallShellDoesNotRemoveInstallParent(t *testing.T) {
+	t.Parallel()
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve current test file")
+	}
+	path := filepath.Clean(filepath.Join(
+		filepath.Dir(currentFile),
+		"..", "..", "..", "packaging", "install", "install.sh",
+	))
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		t.Skipf("packaging source is not available beside the compiled test: %s", path)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if strings.Contains(body, `rmdir "$(dirname "$INSTALL_DIR")"`) {
+		t.Fatal("install.sh must not remove the parent of the Agent install directory")
+	}
+}
+
 func TestGatewayHooksPreferLongLivedNodeCredential(t *testing.T) {
 	t.Parallel()
 	for name, hook := range map[string]string{
