@@ -19,7 +19,7 @@ describe('related backup source detail columns', () => {
       'associatedSourceColSource',
       'associatedSourceColEndpoint',
       'associatedSourceColAvailability',
-      'repositoriesPage.colRegistered',
+      'sourceResources.colRegisteredAt',
     ]
 
     expect(columns.map((column) => table.indexOf(column))).toEqual(
@@ -28,21 +28,21 @@ describe('related backup source detail columns', () => {
     expect(table).toContain(':width="isDirectNasAssociatedSources() ? 80 : 90"')
     expect(table).toContain(':min-width="isDirectNasAssociatedSources() ? 160 : 260"')
     expect(table).toMatch(/associatedSourceColNasConnectivity'[\s\S]*?min-width="129"/)
-    expect(table).toMatch(/v-if="!isDirectNasAssociatedSources\(\)"[\s\S]*?repositoriesPage\.colRegistered/)
+    expect(table).toMatch(/v-if="!isDirectNasAssociatedSources\(\)"[\s\S]*?sourceResources\.colRegisteredAt/)
     expect(table).toContain('associatedSourceStatusTagAttrs(row.availability)')
     expect(table).toContain('associatedSourceStatusLabel(row.availability)')
   })
 
-  it('uses ID, Backup Source, Endpoint, Availability, Registered for policies and filters', () => {
+  it('uses ID, Backup Source, Endpoint, Connectivity, and Registered At for policies and filters', () => {
     expect(occurrences(policiesPage, "t('repositoriesPage.associatedSourceColId')")).toBe(2)
-    expect(occurrences(policiesPage, "t('protection.backupsPage.colRegistered')")).toBe(2)
+    expect(occurrences(policiesPage, "t('protection.sourceResources.colRegisteredAt')")).toBe(2)
 
     const tableKeys = [
       'associatedSourceColId',
       'colBackupSource',
       'associatedSourceColEndpoint',
       'associatedSourceColAvailability',
-      'colRegistered',
+      'colRegisteredAt',
     ]
     for (const resizeKey of ['protection.policies.backup.related', 'protection.policies.filters.related']) {
       const tableStart = policiesPage.indexOf(resizeKey)

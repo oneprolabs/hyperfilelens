@@ -30,25 +30,25 @@ describe('Production Sites availability presentation', () => {
   const nasTable = list.slice(nasStart, list.indexOf('</el-table>', nasStart))
   const proxyTable = proxyList.slice(proxyStart, proxyList.indexOf('<template v-else>', proxyStart))
 
-  it('keeps host lifecycle status separate and places availability before version', () => {
+  it('keeps host lifecycle status separate and places connectivity before version', () => {
     expect(ordered(hostTable, [
       'colName',
-      'colStatus',
+      'colLifecycleStatus',
       'colHostIp',
       'colCapacity',
-      'colAvailability',
+      'colConnectivity',
       'colVersion',
-      'colRegistered',
+      'colRegisteredAt',
     ])).toBe(true)
   })
 
-  it('places NAS lifecycle status immediately after name and keeps availability before registration', () => {
+  it('places NAS lifecycle status immediately after name and keeps connectivity before registration', () => {
     expect(ordered(nasTable, [
       'colName',
-      'colStatus',
+      'colLifecycleStatus',
       'colProtocol',
-      'colAvailability',
-      'colRegistered',
+      'colConnectivity',
+      'colRegisteredAt',
     ])).toBe(true)
   })
 
@@ -59,12 +59,12 @@ describe('Production Sites availability presentation', () => {
   it('places Proxy Hosts status after name and availability before version', () => {
     expect(ordered(proxyTable, [
       'colName',
-      'colStatus',
+      'colLifecycleStatus',
       'colHostIp',
       'colCapacity',
-      'colAvailability',
+      'colConnectivity',
       'colVersion',
-      'colRegistered',
+      'colRegisteredAt',
     ])).toBe(true)
   })
 
@@ -76,10 +76,10 @@ describe('Production Sites availability presentation', () => {
   it.each([
     'components/NodeBasicInfoPanel.vue',
     'pages/protection/components/NasSourceDetailDrawer.vue',
-  ])('shows availability and its observation time in %s', (relativePath) => {
+  ])('shows connectivity and its observation time in %s', (relativePath) => {
     const detail = source(relativePath)
-    expect(detail).toContain('colAvailability')
-    expect(detail).toContain('fieldAvailabilityUpdatedAt')
+    expect(detail).toContain('colConnectivity')
+    expect(detail).toContain('fieldConnectivityUpdatedAt')
     expect(detail).toContain('availability_updated_at')
   })
 

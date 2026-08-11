@@ -25,6 +25,7 @@ import {
 } from '../lib/nodeInventoryDisplay'
 import type { SourceResource } from '../lib/sourceApi'
 import type { ApiNode } from '../types/node'
+import { backupSourceLifecycleDisplay } from '../lib/backupSourceLifecycleDisplay'
 import HflCapacityCell from './HflCapacityCell.vue'
 import NodeLifecycleStatusCell from './node-lifecycle/NodeLifecycleStatusCell.vue'
 
@@ -43,6 +44,7 @@ const props = defineProps<{
   resolveDisplayStatus?: (node: ApiNode) => NodeDisplayStatus
   showRepositoryServerAddress?: boolean
   nodeScope?: NodeApiScope
+  useBackupSourceTerminology?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -126,7 +128,10 @@ const uptimeLabel = computed(() => {
 })
 
 function resolveNodeDisplayStatus(node: ApiNode): NodeDisplayStatus {
-  if (props.resolveDisplayStatus) return props.resolveDisplayStatus(node)
+  if (props.resolveDisplayStatus) {
+    const display = props.resolveDisplayStatus(node)
+    return props.useBackupSourceTerminology ? backupSourceLifecycleDisplay(display) : display
+  }
   if (node.status === 'reconnecting') {
     return {
       labelKey: 'protection.sourceResources.nodeStatusReconnecting',
@@ -136,7 +141,7 @@ function resolveNodeDisplayStatus(node: ApiNode): NodeDisplayStatus {
   }
   // Status is the lifecycle state. Connectivity is rendered separately from availability.
   const status = node.status === 'online' || node.status === 'offline' ? 'active' : node.status
-  return {
+  const display = {
     labelKey: `nodeLifecycle.state.${status}`,
     tagType: status === 'active'
       ? 'success'
@@ -144,6 +149,7 @@ function resolveNodeDisplayStatus(node: ApiNode): NodeDisplayStatus {
         ? 'danger'
         : 'info',
   }
+  return props.useBackupSourceTerminology ? backupSourceLifecycleDisplay(display) : display
 }
 
 async function copyText(value: string) {
@@ -354,7 +360,7 @@ function detailValueClass(text: string, monoWhenPresent = false) {
       <h4 class="hfl-detail-section__title">{{ t('protection.sourceResources.detailSectionRuntime') }}</h4>
       <div class="hfl-detail-grid">
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colStatus') }}</span>
+          <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.colLifecycleStatus' : 'protection.sourceResources.colStatus') }}</span>
           <div class="hfl-detail-row__value node-basic-info-status">
             <NodeLifecycleStatusCell
               :node="node"
@@ -368,17 +374,17 @@ function detailValueClass(text: string, monoWhenPresent = false) {
           <span class="hfl-detail-row__value">{{ versionText }}</span>
         </div>
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colAvailability') }}</span>
+          <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.colConnectivity' : 'protection.sourceResources.colAvailability') }}</span>
           <span class="hfl-detail-row__value">
             <ElTag :type="availabilityTagType" size="small">{{ availabilityLabel }}</ElTag>
           </span>
         </div>
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldAvailabilityUpdatedAt') }}</span>
+          <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.fieldConnectivityUpdatedAt' : 'protection.sourceResources.fieldAvailabilityUpdatedAt') }}</span>
           <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !node.availability_updated_at }">{{ formatNodeDate(node.availability_updated_at) }}</span>
         </div>
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colRegistered') }}</span>
+          <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.colRegisteredAt' : 'protection.sourceResources.colRegistered') }}</span>
           <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !node.created_at }">{{ formatNodeDate(node.created_at) }}</span>
         </div>
         <div class="hfl-detail-row">
