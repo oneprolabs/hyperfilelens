@@ -118,8 +118,18 @@ const tokenValidityLabel = computed(() => {
   return t('nodeLifecycle.installCommandValidFor', { hours, minutes })
 })
 
-const localCommandWarning = computed(() => (
-  installGenerated.value && /(?:127\.0\.0\.1|localhost)/i.test(installCommand.value)
+const localCommandWarning = computed(() => {
+  if (activeTab.value === 'install') {
+    return installGenerated.value && /(?:127\.0\.0\.1|localhost)/i.test(installCommand.value)
+  }
+  return activeTab.value === 'upgrade'
+    && /(?:127\.0\.0\.1|localhost)/i.test(upgradeCommand.value)
+})
+
+const localCommandWarningText = computed(() => (
+  activeTab.value === 'upgrade'
+    ? t('nodeLifecycle.localUpgradeCommandWarning')
+    : t('nodeLifecycle.localInstallCommandWarning')
 ))
 
 const isUbuntuHostDeploy = computed(
@@ -485,6 +495,7 @@ defineExpose({ clearInstallCommand })
     :class="{
       'agent-install-wizard--source-host': installOnly,
       'agent-install-wizard--ubuntu-host': isUbuntuHostDeploy,
+      'agent-install-wizard--maintenance': maintenanceOnly,
     }"
   >
     <ElAlert
@@ -789,12 +800,21 @@ defineExpose({ clearInstallCommand })
 
           <div class="agent-install-wizard__body-grid">
             <div class="agent-install-wizard__platform">
-              <AgentPlatformBrandIcon :os="os" />
+              <AgentPlatformBrandIcon :os="os" class="agent-install-wizard__platform-icon" />
               <p class="agent-install-wizard__platform-name">{{ roleLabel }}</p>
               <div v-if="activeTab !== 'install'" class="agent-install-wizard__platform-hints">
-                <p class="agent-install-wizard__platform-hint-line">{{ paths.installDir }}</p>
-                <p class="agent-install-wizard__platform-hint-line">{{ paths.dataDir }}</p>
-                <p class="agent-install-wizard__platform-hint-line">{{ paths.service }}</p>
+                <p class="agent-install-wizard__platform-hint-line">
+                  <span>{{ t('nodeLifecycle.installPathLabel') }}</span>
+                  <strong>{{ paths.installDir }}</strong>
+                </p>
+                <p class="agent-install-wizard__platform-hint-line">
+                  <span>{{ t('nodeLifecycle.dataPathLabel') }}</span>
+                  <strong>{{ paths.dataDir }}</strong>
+                </p>
+                <p class="agent-install-wizard__platform-hint-line">
+                  <span>{{ t('nodeLifecycle.serviceNameLabel') }}</span>
+                  <strong>{{ paths.service }}</strong>
+                </p>
               </div>
             </div>
 
@@ -867,13 +887,13 @@ defineExpose({ clearInstallCommand })
               </div>
 
               <div
-                v-if="activeTab === 'install' && localCommandWarning"
+                v-if="localCommandWarning"
                 class="add-s3-warning agent-install-wizard__warn"
                 role="note"
               >
                 <TriangleAlert class="add-s3-warning__icon" :size="16" stroke-width="2" />
                 <div class="agent-install-wizard__warn-body">
-                  <p class="agent-install-wizard__warn-desc">{{ t('nodeLifecycle.localInstallCommandWarning') }}</p>
+                  <p class="agent-install-wizard__warn-desc">{{ localCommandWarningText }}</p>
                 </div>
               </div>
 
@@ -928,5 +948,198 @@ defineExpose({ clearInstallCommand })
 
 .node-lifecycle-wizard__options {
   margin-bottom: 12px;
+}
+
+.agent-install-wizard--maintenance {
+  container-type: inline-size;
+}
+
+.agent-install-wizard--maintenance .fullscreen-form-step-stack {
+  gap: 0;
+}
+
+.agent-install-wizard--maintenance .fullscreen-form-section {
+  padding: 18px 20px 20px;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__body-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform {
+  display: grid;
+  grid-template-columns: 44px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 14px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 10px;
+  background: rgb(248 250 252);
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-icon {
+  display: block;
+  width: 40px;
+  height: 40px;
+  filter: drop-shadow(0 2px 4px rgb(15 23 42 / 8%));
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-name {
+  margin: 0;
+  color: rgb(30 41 59);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-hints {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-hint-line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  color: rgb(148 163 184);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-hint-line strong {
+  color: rgb(71 85 105);
+  font-weight: 500;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__command-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__command-lead {
+  margin: 0;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__console.source-script-shell {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #2b2d36;
+  border-radius: 10px;
+  background: #2b2d36;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__console-bar,
+.agent-install-wizard--maintenance .agent-install-wizard__console-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #25262e;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__console-bar {
+  border-bottom: 1px solid #3a3b45;
+  color: #c9cdd4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__console-body {
+  position: relative;
+  min-height: 88px;
+  max-height: 240px;
+  padding: 12px 14px;
+  overflow: auto;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__console-pre {
+  margin: 0;
+  color: #d9f7be;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__console-foot {
+  border-top: 1px solid #3a3b45;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__console-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: #86909c;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__copy-btn {
+  flex: 0 0 auto;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 11px 12px;
+  border: 1px solid rgb(253 230 138);
+  border-radius: 8px;
+  background: rgb(255 251 235);
+  color: rgb(146 64 14);
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__warn > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__warn-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__warn-title,
+.agent-install-wizard--maintenance .agent-install-wizard__warn-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__warn-title {
+  font-weight: 600;
+}
+
+@container (max-width: 680px) {
+  .agent-install-wizard--maintenance .agent-install-wizard__platform {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .agent-install-wizard--maintenance .agent-install-wizard__platform-hints {
+    grid-column: 1 / -1;
+    grid-template-columns: 1fr;
+  }
+
+  .agent-install-wizard--maintenance .agent-install-wizard__console-foot {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 </style>
