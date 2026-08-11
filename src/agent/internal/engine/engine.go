@@ -378,15 +378,17 @@ func (e *Engine) runPathUsage(ctx context.Context, p Payload) (string, map[strin
 	if path == "" {
 		return "failed", nil, "path is required"
 	}
-	total, used, free, usageErr := disk.Usage(path)
+	storage, usageErr := disk.Inspect(path)
 	if usageErr != nil {
 		return "failed", nil, usageErr.Error()
 	}
 	return "success", map[string]any{
 		"path":        path,
-		"total_bytes": total,
-		"used_bytes":  used,
-		"free_bytes":  free,
+		"mount_point": storage.MountPoint,
+		"pool_key":    storage.PoolKey,
+		"total_bytes": storage.Total,
+		"used_bytes":  storage.Used,
+		"free_bytes":  storage.Free,
 	}, ""
 }
 

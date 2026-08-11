@@ -47,6 +47,11 @@ export type StorageRepository = {
   capacity_bytes: number
   estimated_usage_bytes: number
   physical_usage_bytes?: number | null
+  storage_total_bytes?: number
+  storage_used_bytes?: number
+  storage_available_bytes?: number
+  storage_pool_key?: string
+  storage_mount_point?: string
   last_checked_at?: string | null
   removed_at?: string | null
   cleanup_result?: 'deleted' | 'force_skipped' | 'preserved' | string

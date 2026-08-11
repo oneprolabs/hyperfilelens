@@ -24,7 +24,7 @@ import {
 import S3PlatformBrandIcon from '../../components/S3PlatformBrandIcon.vue'
 import HflCapacityCell from '../../components/HflCapacityCell.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
-import { repositoryCapacityParts } from '../../lib/repositoryCapacityDisplay'
+import { repositoryCapacityParts, repositoryStorageParts } from '../../lib/repositoryCapacityDisplay'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
@@ -72,6 +72,11 @@ export type RepositoryRow = {
   capacity_bytes: number
   estimated_usage_bytes: number
   physical_usage_bytes?: number | null
+  storage_total_bytes: number
+  storage_used_bytes: number
+  storage_available_bytes: number
+  storage_pool_key?: string
+  storage_mount_point?: string
   last_checked_at?: string | null
   usage_probe_status?: string
   capacity_probe_status?: string
@@ -146,6 +151,11 @@ type ApiRepository = {
   capacity_bytes: number
   estimated_usage_bytes: number
   physical_usage_bytes?: number | null
+  storage_total_bytes?: number
+  storage_used_bytes?: number
+  storage_available_bytes?: number
+  storage_pool_key?: string
+  storage_mount_point?: string
   last_checked_at?: string | null
   usage_probe_status?: string
   capacity_probe_status?: string
@@ -401,6 +411,11 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       capacity_bytes: r.capacity_bytes,
       estimated_usage_bytes: r.estimated_usage_bytes,
       physical_usage_bytes: r.physical_usage_bytes ?? null,
+      storage_total_bytes: r.storage_total_bytes ?? 0,
+      storage_used_bytes: r.storage_used_bytes ?? 0,
+      storage_available_bytes: r.storage_available_bytes ?? 0,
+      storage_pool_key: r.storage_pool_key || '',
+      storage_mount_point: r.storage_mount_point || '',
       last_checked_at: r.last_checked_at ?? null,
       usage_probe_status: r.usage_probe_status || 'pending',
       capacity_probe_status: r.capacity_probe_status || 'pending',
@@ -441,6 +456,11 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       capacity_bytes: r.capacity_bytes,
       estimated_usage_bytes: r.estimated_usage_bytes,
       physical_usage_bytes: r.physical_usage_bytes ?? null,
+      storage_total_bytes: r.storage_total_bytes ?? 0,
+      storage_used_bytes: r.storage_used_bytes ?? 0,
+      storage_available_bytes: r.storage_available_bytes ?? 0,
+      storage_pool_key: r.storage_pool_key || '',
+      storage_mount_point: r.storage_mount_point || '',
       last_checked_at: r.last_checked_at ?? null,
       usage_probe_status: r.usage_probe_status || 'pending',
       capacity_probe_status: r.capacity_probe_status || 'pending',
@@ -474,6 +494,11 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
     capacity_bytes: r.capacity_bytes,
     estimated_usage_bytes: r.estimated_usage_bytes,
     physical_usage_bytes: r.physical_usage_bytes ?? null,
+    storage_total_bytes: r.storage_total_bytes ?? 0,
+    storage_used_bytes: r.storage_used_bytes ?? 0,
+    storage_available_bytes: r.storage_available_bytes ?? 0,
+    storage_pool_key: r.storage_pool_key || '',
+    storage_mount_point: r.storage_mount_point || '',
     last_checked_at: r.last_checked_at ?? null,
     usage_probe_status: r.usage_probe_status || 'pending',
     capacity_probe_status: r.capacity_probe_status || 'pending',
@@ -1025,14 +1050,13 @@ async function copyDetailText(value: string) {
 function s3QuotaLimitLabel(row: RepositoryRow) {
   const quotaGb = Number(row.config.quota_gb ?? 0)
   if (quotaGb > 0) return `${quotaGb} GB`
-  return DETAIL_EMPTY
+  return t('repositoriesPage.noConfiguredLimit')
 }
 
 function storageLimitLabel(row: RepositoryRow) {
   const quotaGb = Number(row.config.quota_gb ?? 0)
   if (quotaGb > 0) return `${quotaGb} GB`
-  if (row.capacity_bytes > 0) return repoCapacityLabel(row.capacity_bytes)
-  return t('repositoriesPage.capacityUnlimited')
+  return t('repositoriesPage.noConfiguredLimit')
 }
 
 function quotaMonitoringEnabled(row: RepositoryRow) {
@@ -1155,9 +1179,7 @@ const pagedRows = computed(() => {
 const nameColumnLabel = computed(() => t('repositoriesPage.colListName'))
 
 const usageColumnLabel = computed(() =>
-  activeTab.value === 's3' || activeTab.value === 'nas' || activeTab.value === 'proxy_fs'
-    ? t('repositoriesPage.colCapacity')
-    : t('repositoriesPage.colUsage'),
+  t('repositoriesPage.colRepositoryUsage'),
 )
 const sourceProxyColumnTip = computed(() =>
   activeTab.value === 'nas'
@@ -1689,10 +1711,6 @@ function accessPathLabel(row: RepositoryRow) {
 }
 
 
-function repoCapacityLabel(capacityBytes: number) {
-  return capacityBytes > 0 ? fmtBytes(capacityBytes) : t('repositoriesPage.capacityUnlimited')
-}
-
 function s3UsageParts(row: RepositoryRow) {
   return repositoryCapacityParts(row)
 }
@@ -1701,13 +1719,17 @@ function repoUsageParts(row: RepositoryRow) {
   return repositoryCapacityParts(row)
 }
 
-function repoMetricMessage(row: RepositoryRow) {
-  if (row.kind !== 'nas' && row.kind !== 'proxy_fs') return ''
-  const usage = String(row.usage_probe_status || 'pending')
-  const capacity = String(row.capacity_probe_status || 'pending')
-  if (usage === 'failed' && capacity === 'failed') return t('repositoriesPage.metricsUnavailable')
-  if (usage === 'pending' && capacity === 'pending') return t('repositoriesPage.metricsPending')
-  return ''
+function backingStorageParts(row: RepositoryRow) {
+  return repositoryStorageParts(row)
+}
+
+function backingStorageAvailableLabel(row: RepositoryRow) {
+  const storage = backingStorageParts(row)
+  if (storage.total <= 0) return DETAIL_EMPTY
+  return t('repositoriesPage.storageAvailableValue', {
+    available: fmtBytes(storage.available),
+    total: fmtBytes(storage.total),
+  })
 }
 
 function repoUsageProbeFailed(row: RepositoryRow) {
@@ -2500,23 +2522,18 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     :format-bytes="fmtBytes"
                   />
                   <HflCapacityCell
-                    v-else-if="s3UsageParts(row).used > 0"
+                    v-else
                     :used-bytes="s3UsageParts(row).used"
                     :total-bytes="0"
-                    :unlimited-total-label="t('repositoriesPage.capacityUnlimited')"
+                    :unlimited-total-label="t('repositoriesPage.noConfiguredLimit')"
                     variant="compact"
                     :format-bytes="fmtBytes"
                     :show-bar="false"
                     :show-percent="false"
                   />
-                  <span v-else class="hfl-empty-mark">—</span>
                 </template>
                 <template v-else-if="activeTab === 'nas' || activeTab === 'proxy_fs'">
-                  <span v-if="repoMetricMessage(row)">{{ repoMetricMessage(row) }}</span>
-                  <span v-else-if="repoCapacityProbeFailed(row)">
-                    {{ fmtBytes(repoUsageParts(row).used) }} / {{ t('repositoriesPage.capacityUnavailable') }}
-                  </span>
-                  <span v-else-if="repoUsageProbeFailed(row)">
+                  <span v-if="repoUsageProbeFailed(row)">
                     {{ t('repositoriesPage.usageUnavailable') }} / {{ fmtBytes(repoUsageParts(row).total) }}
                   </span>
                   <HflCapacityCell
@@ -2527,18 +2544,38 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     :format-bytes="fmtBytes"
                   />
                   <HflCapacityCell
-                    v-else-if="repoUsageParts(row).used > 0"
+                    v-else
                     :used-bytes="repoUsageParts(row).used"
                     :total-bytes="0"
-                    used-only
-                    :unlimited-total-label="t('repositoriesPage.capacityUnlimited')"
+                    :unlimited-total-label="t('repositoriesPage.noConfiguredLimit')"
                     variant="compact"
                     :format-bytes="fmtBytes"
                     :show-bar="false"
                     :show-percent="false"
                   />
-                  <span v-else class="hfl-empty-mark">—</span>
                 </template>
+              </template>
+            </el-table-column>
+            <el-table-column
+              v-if="activeTab === 'nas' || activeTab === 'proxy_fs'"
+              :label="t('repositoriesPage.colBackingStorage')"
+              min-width="178"
+            >
+              <template #default="{ row }">
+                <span v-if="repoCapacityProbeFailed(row)" class="hfl-empty-mark">
+                  {{ t('repositoriesPage.capacityUnavailable') }}
+                </span>
+                <span v-else-if="row.capacity_probe_status === 'pending'" class="hfl-empty-mark">
+                  {{ t('repositoriesPage.metricsPending') }}
+                </span>
+                <div v-else class="table-stack-cell">
+                  <span class="table-stack-cell__primary" :class="{ 'hfl-empty-mark': backingStorageAvailableLabel(row) === DETAIL_EMPTY }">
+                    {{ backingStorageAvailableLabel(row) }}
+                  </span>
+                  <span v-if="row.storage_mount_point" class="table-stack-cell__secondary">
+                    {{ row.storage_mount_point }}
+                  </span>
+                </div>
               </template>
             </el-table-column>
             <el-table-column
@@ -2744,7 +2781,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <h4 class="hfl-detail-section__title">{{ t('repositoriesPage.detailSectionCapacityUsage') }}</h4>
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldCapacity') }}</span>
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldRepositoryUsage') }}</span>
                     <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__value--stacked': hasS3UsageData(detailRow) }">
                       <HflCapacityCell
                         v-if="s3UsageParts(detailRow).total > 0"
@@ -2758,7 +2795,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                         v-else-if="s3UsageParts(detailRow).used > 0"
                         :used-bytes="s3UsageParts(detailRow).used"
                         :total-bytes="0"
-                        :unlimited-total-label="t('repositoriesPage.capacityUnlimited')"
+                        :unlimited-total-label="t('repositoriesPage.noConfiguredLimit')"
                         variant="compact"
                         :format-bytes="fmtBytes"
                         :show-bar="false"
@@ -2906,28 +2943,18 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <h4 class="hfl-detail-section__title">{{ t('repositoriesPage.detailSectionCapacityUsage') }}</h4>
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldCapacity') }}</span>
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldRepositoryUsage') }}</span>
                     <span
                       class="hfl-detail-row__value"
                       :class="{
                         'hfl-detail-row__value--stacked':
-                          Boolean(repoMetricMessage(detailRow)) ||
-                          repoCapacityProbeFailed(detailRow) ||
                           repoUsageProbeFailed(detailRow) ||
                           hasRepositoryUsageData(detailRow),
                         'hfl-detail-row__value--metric-state':
-                          Boolean(repoMetricMessage(detailRow)) ||
-                          repoCapacityProbeFailed(detailRow) ||
                           repoUsageProbeFailed(detailRow),
                       }"
                     >
-                      <span v-if="repoMetricMessage(detailRow)" class="hfl-detail-row__text hfl-detail-row__empty">
-                        {{ repoMetricMessage(detailRow) }}
-                      </span>
-                      <span v-else-if="repoCapacityProbeFailed(detailRow)" class="hfl-detail-row__text">
-                        {{ fmtBytes(repoUsageParts(detailRow).used) }} / {{ t('repositoriesPage.capacityUnavailable') }}
-                      </span>
-                      <span v-else-if="repoUsageProbeFailed(detailRow)" class="hfl-detail-row__text">
+                      <span v-if="repoUsageProbeFailed(detailRow)" class="hfl-detail-row__text">
                         {{ t('repositoriesPage.usageUnavailable') }} / {{ fmtBytes(repoUsageParts(detailRow).total) }}
                       </span>
                       <HflCapacityCell
@@ -2939,22 +2966,41 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                         :empty-label="DETAIL_EMPTY"
                       />
                       <HflCapacityCell
-                        v-else-if="repoUsageParts(detailRow).used > 0"
+                        v-else
                         :used-bytes="repoUsageParts(detailRow).used"
                         :total-bytes="0"
-                        :unlimited-total-label="t('repositoriesPage.capacityUnlimited')"
+                        :unlimited-total-label="t('repositoriesPage.noConfiguredLimit')"
                         variant="compact"
                         :format-bytes="fmtBytes"
                         :show-bar="false"
                         :show-percent="false"
                         :empty-label="DETAIL_EMPTY"
                       />
-                      <span v-else class="hfl-detail-row__text hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldLastChecked') }}</span>
                     <span class="hfl-detail-row__value" :class="detailEmptyValueClass(formatLastCheckedAt(detailRow.last_checked_at))">{{ formatLastCheckedAt(detailRow.last_checked_at) }}</span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldBackingStorage') }}</span>
+                    <span v-if="repoCapacityProbeFailed(detailRow)" class="hfl-detail-row__value hfl-detail-row__empty">
+                      {{ t('repositoriesPage.capacityUnavailable') }}
+                    </span>
+                    <span v-else class="hfl-detail-row__value" :class="detailEmptyValueClass(backingStorageAvailableLabel(detailRow))">
+                      {{ backingStorageAvailableLabel(detailRow) }}
+                    </span>
+                  </div>
+                  <div v-if="backingStorageParts(detailRow).total > 0" class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldPhysicalUsage') }}</span>
+                    <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
+                      <HflCapacityCell
+                        :used-bytes="backingStorageParts(detailRow).used"
+                        :total-bytes="backingStorageParts(detailRow).total"
+                        variant="compact"
+                        :format-bytes="fmtBytes"
+                      />
+                    </span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldQuota') }}</span>
@@ -3046,28 +3092,18 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <h4 class="hfl-detail-section__title">{{ t('repositoriesPage.detailSectionCapacityUsage') }}</h4>
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldCapacity') }}</span>
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldRepositoryUsage') }}</span>
                     <span
                       class="hfl-detail-row__value"
                       :class="{
                         'hfl-detail-row__value--stacked':
-                          Boolean(repoMetricMessage(detailRow)) ||
-                          repoCapacityProbeFailed(detailRow) ||
                           repoUsageProbeFailed(detailRow) ||
                           hasRepositoryUsageData(detailRow),
                         'hfl-detail-row__value--metric-state':
-                          Boolean(repoMetricMessage(detailRow)) ||
-                          repoCapacityProbeFailed(detailRow) ||
                           repoUsageProbeFailed(detailRow),
                       }"
                     >
-                      <span v-if="repoMetricMessage(detailRow)" class="hfl-detail-row__text hfl-detail-row__empty">
-                        {{ repoMetricMessage(detailRow) }}
-                      </span>
-                      <span v-else-if="repoCapacityProbeFailed(detailRow)" class="hfl-detail-row__text">
-                        {{ fmtBytes(repoUsageParts(detailRow).used) }} / {{ t('repositoriesPage.capacityUnavailable') }}
-                      </span>
-                      <span v-else-if="repoUsageProbeFailed(detailRow)" class="hfl-detail-row__text">
+                      <span v-if="repoUsageProbeFailed(detailRow)" class="hfl-detail-row__text">
                         {{ t('repositoriesPage.usageUnavailable') }} / {{ fmtBytes(repoUsageParts(detailRow).total) }}
                       </span>
                       <HflCapacityCell
@@ -3079,22 +3115,41 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                         :empty-label="DETAIL_EMPTY"
                       />
                       <HflCapacityCell
-                        v-else-if="repoUsageParts(detailRow).used > 0"
+                        v-else
                         :used-bytes="repoUsageParts(detailRow).used"
                         :total-bytes="0"
-                        :unlimited-total-label="t('repositoriesPage.capacityUnlimited')"
+                        :unlimited-total-label="t('repositoriesPage.noConfiguredLimit')"
                         variant="compact"
                         :format-bytes="fmtBytes"
                         :show-bar="false"
                         :show-percent="false"
                         :empty-label="DETAIL_EMPTY"
                       />
-                      <span v-else class="hfl-detail-row__text hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldLastChecked') }}</span>
                     <span class="hfl-detail-row__value" :class="detailEmptyValueClass(formatLastCheckedAt(detailRow.last_checked_at))">{{ formatLastCheckedAt(detailRow.last_checked_at) }}</span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldBackingStorage') }}</span>
+                    <span v-if="repoCapacityProbeFailed(detailRow)" class="hfl-detail-row__value hfl-detail-row__empty">
+                      {{ t('repositoriesPage.capacityUnavailable') }}
+                    </span>
+                    <span v-else class="hfl-detail-row__value" :class="detailEmptyValueClass(backingStorageAvailableLabel(detailRow))">
+                      {{ backingStorageAvailableLabel(detailRow) }}
+                    </span>
+                  </div>
+                  <div v-if="backingStorageParts(detailRow).total > 0" class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldPhysicalUsage') }}</span>
+                    <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
+                      <HflCapacityCell
+                        :used-bytes="backingStorageParts(detailRow).used"
+                        :total-bytes="backingStorageParts(detailRow).total"
+                        variant="compact"
+                        :format-bytes="fmtBytes"
+                      />
+                    </span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldQuota') }}</span>

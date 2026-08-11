@@ -36,6 +36,7 @@ export type ApiNode = {
   agent_control_ws_path?: string
   lifecycle?: NodeLifecycleInfo | null
   workload?: NodeWorkloadInfo | null
+  associated_repository_count?: number
 }
 
 export type ApiNodeToken = {

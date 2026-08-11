@@ -16,6 +16,7 @@ class NodeSerializer(serializers.ModelSerializer):
     routable = serializers.SerializerMethodField()
     lifecycle = serializers.SerializerMethodField(read_only=True)
     workload = serializers.SerializerMethodField(read_only=True)
+    associated_repository_count = serializers.SerializerMethodField(read_only=True)
     effective_repository_server_address = serializers.SerializerMethodField(
         read_only=True
     )
@@ -49,6 +50,7 @@ class NodeSerializer(serializers.ModelSerializer):
             "agent_control_ws_path",
             "lifecycle",
             "workload",
+            "associated_repository_count",
         ]
         read_only_fields = [
             "id",
@@ -64,6 +66,7 @@ class NodeSerializer(serializers.ModelSerializer):
             "agent_control_ws_path",
             "lifecycle",
             "workload",
+            "associated_repository_count",
         ]
 
     @staticmethod
@@ -89,6 +92,13 @@ class NodeSerializer(serializers.ModelSerializer):
         if isinstance(row, dict):
             return row.get("workload")
         return None
+
+    def get_associated_repository_count(self, obj: Node) -> int:
+        enrichments = self.context.get("enrichments") or {}
+        row = enrichments.get(obj.id)
+        if isinstance(row, dict):
+            return int(row.get("associated_repository_count") or 0)
+        return 0
 
     @staticmethod
     def get_effective_repository_server_address(obj: Node) -> str | None:

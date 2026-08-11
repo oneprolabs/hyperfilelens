@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from django.db.models import Q
+from django.db.models import Count, Q
 
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
@@ -44,17 +44,29 @@ class ProxyBindings:
 
 
 def _serialize_repository(repo: Repository) -> dict[str, Any]:
+    config = repo.config if isinstance(repo.config, dict) else {}
+    try:
+        planned_limit_bytes = max(0, round(float(config.get("quota_gb") or 0) * 1024**3))
+    except (TypeError, ValueError, OverflowError):
+        planned_limit_bytes = 0
     return {
         "id": repo.id,
         "name": repo.name,
+        "repo_type": repo.repo_type,
         "status": repo.status,
         "health": repo.health,
-        "config": repo.config or {},
+        "config": config,
         "s3_bucket": repo.s3_bucket,
         "s3_platform": repo.s3_platform,
         "nas_protocol": repo.nas_protocol,
         "capacity_bytes": int(repo.capacity_bytes or 0),
         "estimated_usage_bytes": int(repo.estimated_usage_bytes or 0),
+        "planned_limit_bytes": planned_limit_bytes,
+        "storage_total_bytes": int(repo.storage_total_bytes or 0),
+        "storage_used_bytes": int(repo.storage_used_bytes or 0),
+        "storage_available_bytes": int(repo.storage_available_bytes or 0),
+        "storage_pool_key": str(repo.storage_pool_key or ""),
+        "storage_mount_point": str(repo.storage_mount_point or ""),
     }
 
 
@@ -136,3 +148,28 @@ def proxy_bound_node_qs() -> Q:
         bind_node_type=Repository.BindNodeType.PROXY,
         repo_type__in=(Repository.Type.NAS, Repository.Type.PROXY_FS),
     ) & ~Q(status=Repository.Status.REMOVED)
+
+
+def count_proxy_repository_bindings(
+    *,
+    organization_id: int,
+    proxy_ids: list[int],
+) -> dict[int, int]:
+    """Return repository counts for Proxy nodes without per-node queries."""
+
+    if not proxy_ids:
+        return {}
+    rows = (
+        Repository.objects.filter(
+            organization_id=organization_id,
+            bind_node_id__in=proxy_ids,
+        )
+        .filter(proxy_bound_node_qs())
+        .values("bind_node_id")
+        .annotate(repository_count=Count("id"))
+    )
+    return {
+        int(row["bind_node_id"]): int(row["repository_count"])
+        for row in rows
+        if row["bind_node_id"] is not None
+    }

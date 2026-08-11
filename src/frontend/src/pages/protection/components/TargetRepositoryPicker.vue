@@ -30,6 +30,9 @@ export type TargetRepositoryItem = {
   proxyNodeDir?: string | null
   usedBytes?: number
   capacityBytes?: number
+  storageTotalBytes?: number
+  storageUsedBytes?: number
+  storageAvailableBytes?: number
   disabled?: boolean
   disabledReason?: string | null
   disabledReasonItems?: string[]

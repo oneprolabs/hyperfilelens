@@ -161,7 +161,7 @@ class ProxyBindingsTests(TestCase):
         self.assertEqual(self._response_bound(response)["source_nas_resources"], 1)
 
     def test_bindings_endpoint_returns_three_groups(self):
-        Repository.objects.create(
+        target = Repository.objects.create(
             organization_id=self.org.id,
             name="target-nas",
             repo_type=Repository.Type.NAS,
@@ -171,6 +171,12 @@ class ProxyBindingsTests(TestCase):
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=self.proxy.id,
             config={"server_address": "10.0.0.10", "share_path": "/backup"},
+            estimated_usage_bytes=2048,
+            storage_total_bytes=20 * 1024**3,
+            storage_used_bytes=3 * 1024**3,
+            storage_available_bytes=17 * 1024**3,
+            storage_pool_key="nas:nfs:10.0.0.10:/backup",
+            storage_mount_point="/mnt/hfl/target-nas",
         )
         Repository.objects.create(
             organization_id=self.org.id,
@@ -197,11 +203,26 @@ class ProxyBindingsTests(TestCase):
         self.assertEqual(len(response.data["target_nas_repositories"]), 1)
         self.assertEqual(len(response.data["standalone_disk_repositories"]), 1)
         self.assertEqual(len(response.data["source_nas_resources"]), 1)
+        self.assertEqual(
+            response.data["target_nas_repositories"][0]["storage_pool_key"],
+            target.storage_pool_key,
+        )
+        self.assertEqual(
+            response.data["target_nas_repositories"][0]["storage_total_bytes"],
+            20 * 1024**3,
+        )
         self.assertEqual(response.data["totals"], {
             "target_nas_repositories": 1,
             "standalone_disk_repositories": 1,
             "source_nas_resources": 1,
         })
+
+        list_response = self.client.get(
+            "/api/v1/node/nodes/?role=proxy&page=1&page_size=30",
+            **self._headers(),
+        )
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK, list_response.content)
+        self.assertEqual(list_response.data["results"][0]["associated_repository_count"], 2)
 
     @patch("apps.source.services.interface.unmount_resource")
     def test_force_remove_proxy_cannot_bypass_source_nas_binding(self, mock_umount):

@@ -106,12 +106,19 @@ export async function getGatewayNode(
 export type NodeBindingsRepository = {
   id: number
   name: string
+  repo_type?: 'nas' | 'proxy_fs' | string
   status: string
   health: string
   config?: Record<string, unknown>
   nas_protocol?: string | null
   capacity_bytes?: number
   estimated_usage_bytes?: number
+  planned_limit_bytes?: number
+  storage_total_bytes?: number
+  storage_used_bytes?: number
+  storage_available_bytes?: number
+  storage_pool_key?: string
+  storage_mount_point?: string
 }
 
 export type NodeBindingsSourceNas = {
