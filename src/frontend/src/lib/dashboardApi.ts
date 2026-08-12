@@ -14,11 +14,28 @@ import { summarizeNodeAvailability } from './nodeAvailability'
 import type { ApiNode } from '../types/node'
 
 export type StorageSummary = {
+  /** Backup data stored across every repository. */
   usedBytes: number
+  /** De-duplicated backing-storage metrics for known storage pools. */
+  storageUsedBytes: number
+  availableBytes: number
   capacityBytes: number
   repoCount: number
-  /** known = sum of repo capacities; unlimited = object storage without cap; pending = awaiting sync */
+  /** NAS and local-disk repositories expected to expose backing storage metrics. */
+  capacityRepoCount: number
+  coveredRepoCount: number
+  pools: StoragePoolSummary[]
+  /** known = at least one backing pool is known; pending = awaiting first pool probe. */
   capacityMode: 'empty' | 'known' | 'unlimited' | 'pending' | 'unavailable'
+}
+
+export type StoragePoolSummary = {
+  key: string
+  label: string
+  usedBytes: number
+  availableBytes: number
+  capacityBytes: number
+  repoCount: number
 }
 
 export type RepoUsageRow = {
@@ -28,6 +45,8 @@ export type RepoUsageRow = {
   status: string
   usedBytes: number
   capacityBytes: number
+  storageTotalBytes: number
+  storageAvailableBytes: number
   pct: number | null
   capacityMode: 'known' | 'unlimited' | 'pending' | 'unavailable'
   usageProbeStatus: string
@@ -173,6 +192,12 @@ type ApiRepository = {
   capacity_bytes?: number
   estimated_usage_bytes?: number
   physical_usage_bytes?: number | null
+  storage_total_bytes?: number
+  storage_used_bytes?: number
+  storage_available_bytes?: number
+  storage_pool_key?: string
+  storage_mount_point?: string
+  bind_node_display_name?: string | null
   usage_probe_status?: string
   capacity_probe_status?: string
 }
@@ -286,33 +311,71 @@ function repoConfigQuotaGb(repo: ApiRepository): number {
 
 /** NAS / proxy FS expect filesystem sync; S3 with quota_gb=0 is treated as unlimited. */
 function isRepoCapacityPending(repo: ApiRepository): boolean {
-  const cap = Number(repo.capacity_bytes) || 0
-  if (cap > 0) return false
-  if (repo.repo_type === 's3') return repoConfigQuotaGb(repo) > 0
+  const total = Number(repo.storage_total_bytes) || 0
+  if (total > 0) return false
+  if (repo.repo_type === 's3') return false
   return (repo.repo_type === 'nas' || repo.repo_type === 'proxy_fs') && repo.capacity_probe_status !== 'failed'
 }
 
-function summarizeStorage(repos: ApiRepository[]): StorageSummary {
+function plannedLimitBytes(repo: ApiRepository): number {
+  const quotaGb = repoConfigQuotaGb(repo)
+  return quotaGb > 0 ? Math.round(quotaGb * 1024 ** 3) : 0
+}
+
+function storagePoolLabel(repo: ApiRepository): string {
+  const proxy = String(repo.bind_node_display_name || '').trim()
+  const mountPoint = String(repo.storage_mount_point || '').trim()
+  if (proxy && mountPoint) return `${proxy} · ${mountPoint}`
+  if (mountPoint) return mountPoint
+  return repo.name || 'Storage pool'
+}
+
+export function summarizeStorage(repos: ApiRepository[]): StorageSummary {
   let usedBytes = 0
-  let capacityBytes = 0
-  let hasKnownCapacity = false
+  const pools = new Map<string, StoragePoolSummary>()
   let hasPending = false
 
   for (const r of repos) {
     usedBytes += Number(r.estimated_usage_bytes) || 0
-    const cap = Number(r.capacity_bytes) || 0
-    if (cap > 0) {
-      capacityBytes += cap
-      hasKnownCapacity = true
+    const total = Math.max(0, Number(r.storage_total_bytes) || 0)
+    if (total > 0) {
+      const key = String(r.storage_pool_key || '').trim() || `repository:${Number(r.id) || r.name || pools.size}`
+      const current = pools.get(key)
+      const nextUsed = Math.max(0, Number(r.storage_used_bytes) || 0)
+      const nextAvailable = Math.max(0, Number(r.storage_available_bytes) || 0)
+      if (current) {
+        current.usedBytes = Math.max(current.usedBytes, nextUsed)
+        current.availableBytes = Math.min(current.availableBytes, nextAvailable)
+        current.capacityBytes = Math.max(current.capacityBytes, total)
+        current.repoCount += 1
+      } else {
+        pools.set(key, {
+          key,
+          label: storagePoolLabel(r),
+          usedBytes: nextUsed,
+          availableBytes: nextAvailable,
+          capacityBytes: total,
+          repoCount: 1,
+        })
+      }
       continue
     }
     if (isRepoCapacityPending(r)) hasPending = true
   }
 
+  const poolRows = [...pools.values()]
+  const capacityRepoCount = repos.filter(
+    (repo) => repo.repo_type === 'nas' || repo.repo_type === 'proxy_fs',
+  ).length
+  const storageUsedBytes = poolRows.reduce((sum, pool) => sum + pool.usedBytes, 0)
+  const availableBytes = poolRows.reduce((sum, pool) => sum + pool.availableBytes, 0)
+  const capacityBytes = poolRows.reduce((sum, pool) => sum + pool.capacityBytes, 0)
+  const coveredRepoCount = poolRows.reduce((sum, pool) => sum + pool.repoCount, 0)
+
   let capacityMode: StorageSummary['capacityMode'] = 'empty'
   if (repos.length === 0) {
     capacityMode = 'empty'
-  } else if (hasKnownCapacity) {
+  } else if (poolRows.length > 0) {
     capacityMode = 'known'
   } else if (hasPending) {
     capacityMode = 'pending'
@@ -320,11 +383,21 @@ function summarizeStorage(repos: ApiRepository[]): StorageSummary {
     capacityMode = 'unlimited'
   }
 
-  return { usedBytes, capacityBytes, repoCount: repos.length, capacityMode }
+  return {
+    usedBytes,
+    storageUsedBytes,
+    availableBytes,
+    capacityBytes,
+    repoCount: repos.length,
+    capacityRepoCount,
+    coveredRepoCount,
+    pools: poolRows,
+    capacityMode,
+  }
 }
 
 function repoCapacityMode(repo: ApiRepository): RepoUsageRow['capacityMode'] {
-  const cap = Number(repo.capacity_bytes) || 0
+  const cap = plannedLimitBytes(repo)
   if (cap > 0) return 'known'
   if (isRepoCapacityPending(repo)) return 'pending'
   if (repo.repo_type === 'nas' || repo.repo_type === 'proxy_fs') return 'unavailable'
@@ -335,7 +408,9 @@ function repositoryUsageRows(repos: ApiRepository[]): RepoUsageRow[] {
   return repos
     .map((r) => {
       const usedBytes = Number(r.estimated_usage_bytes) || 0
-      const capacityBytes = Number(r.capacity_bytes) || 0
+      const capacityBytes = plannedLimitBytes(r)
+      const storageTotalBytes = Number(r.storage_total_bytes) || 0
+      const storageAvailableBytes = Number(r.storage_available_bytes) || 0
       const capacityMode = repoCapacityMode(r)
       const pct = capacityBytes > 0 ? Math.min(100, Math.round((usedBytes / capacityBytes) * 100)) : null
       return {
@@ -345,6 +420,8 @@ function repositoryUsageRows(repos: ApiRepository[]): RepoUsageRow[] {
         status: r.status || '',
         usedBytes,
         capacityBytes,
+        storageTotalBytes,
+        storageAvailableBytes,
         pct,
         capacityMode,
         usageProbeStatus: String(r.usage_probe_status || 'pending'),
@@ -354,8 +431,8 @@ function repositoryUsageRows(repos: ApiRepository[]): RepoUsageRow[] {
     .sort((a, b) => b.usedBytes - a.usedBytes)
 }
 
-function topRepos(repos: RepoUsageRow[], limit = 5): RepoUsageRow[] {
-  return repos.slice(0, limit)
+export function topRepos(repos: ApiRepository[], limit = 5): RepoUsageRow[] {
+  return repositoryUsageRows(repos).slice(0, limit)
 }
 
 function countNodesByRole(nodes: ApiNode[]): Record<string, number> {
@@ -540,7 +617,7 @@ export async function loadDashboardOverview(
     recovery,
     storage: summarizeStorage(reposRaw),
     repositories,
-    topRepos: topRepos(repositories),
+    topRepos: topRepos(reposRaw),
     notificationFailed: Number(notifyStats.failed) || 0,
     attentionCount: attentionPage.count,
     attention: attentionPage.results,
