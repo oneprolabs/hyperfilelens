@@ -11,19 +11,21 @@ ADMIN_PUBLIC_URL=""
 DIRECT_HOST=""
 RUNTIME_ENV_FILE=""
 DOWNLOAD_PROXY_URL=""
+PACKAGE_FILE=""
 
 usage() {
 	cat <<'USAGE'
-Usage: remote-deploy.sh --tag vX.Y.Z|main-SHA7 --channel release|main --direct-host HOST [options]
+Usage: remote-deploy.sh --tag vX.Y.Z --channel release --direct-host HOST [options]
 
   --repository OWNER/REPO  Public GitHub repository (default: HyperBDR/hyperfilelens)
-	--channel CHANNEL       Artifact channel: release or main (default: release)
+	--channel CHANNEL       Artifact channel: release (default: release)
   --install-dir DIR        HFL install directory (default: /opt/hyperfilelens)
   --direct-host HOST       SSH-reachable host used for direct listener URLs
   --public-url URL         Optional canonical browser URL; external checks are non-blocking
   --admin-public-url URL   Optional Admin Console browser URL; invalid values only warn
   --runtime-env-file PATH  Root-only staged runtime configuration under /var/tmp
   --download-proxy-url URL Optional HTTP(S) proxy used only for GitHub Release downloads
+  --package-file PATH       Verified local package; bypass GitHub Release download
 USAGE
 }
 
@@ -38,6 +40,7 @@ while [[ $# -gt 0 ]]; do
 	--install-dir) INSTALL_DIR=${2:-}; shift 2 ;;
 	--runtime-env-file) RUNTIME_ENV_FILE=${2:-}; shift 2 ;;
 	--download-proxy-url) DOWNLOAD_PROXY_URL=${2:-}; shift 2 ;;
+	--package-file) PACKAGE_FILE=${2:-}; shift 2 ;;
 	-h | --help) usage; exit 0 ;;
 	*) printf 'ERROR: unknown argument: %s\n' "$1" >&2; exit 2 ;;
 	esac
@@ -47,11 +50,8 @@ if [[ "${DOWNLOAD_PROXY_URL}" == "UNCONFIGURED" ]]; then
 	DOWNLOAD_PROXY_URL=""
 fi
 
-case "${CHANNEL}" in
-release) [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf 'ERROR: invalid release tag\n' >&2; exit 2; } ;;
-main) [[ "${TAG}" =~ ^main-[0-9a-f]{7}$ ]] || { printf 'ERROR: invalid main build identifier\n' >&2; exit 2; } ;;
-*) printf 'ERROR: invalid artifact channel\n' >&2; exit 2 ;;
-esac
+[[ "${CHANNEL}" == "release" && "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+	|| { printf 'ERROR: invalid release identity\n' >&2; exit 2; }
 [[ "${REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { printf 'ERROR: invalid repository\n' >&2; exit 2; }
 [[ "${INSTALL_DIR}" == /opt/hyperfilelens ]] || {
 	printf 'ERROR: current HFL installer supports /opt/hyperfilelens only\n' >&2
@@ -83,6 +83,18 @@ if [[ -n "${DOWNLOAD_PROXY_URL}" ]]; then
 		printf 'ERROR: download proxy port is out of range\n' >&2
 		exit 2
 	}
+fi
+if [[ -n "${PACKAGE_FILE}" ]]; then
+	[[ "${PACKAGE_FILE}" =~ ^/root/hfl-release/v[0-9]+\.[0-9]+\.[0-9]+/hyperfilelens-[0-9]+\.[0-9]+\.[0-9]+-ee\.tar\.gz$ ]] || {
+		printf 'ERROR: invalid Enterprise package path\n' >&2
+		exit 2
+	}
+	[[ -f "${PACKAGE_FILE}" && ! -L "${PACKAGE_FILE}" ]] || {
+		printf 'ERROR: Enterprise package is missing or unsafe\n' >&2
+		exit 1
+	}
+	exec 8</root/hfl-release/.lock
+	flock -s 8
 fi
 command -v curl >/dev/null || { printf 'ERROR: curl is required\n' >&2; exit 1; }
 command -v python3 >/dev/null || { printf 'ERROR: python3 is required\n' >&2; exit 1; }
@@ -380,13 +392,24 @@ download_release_file() {
 		"$(basename "${output}")" "${size_human}" "${elapsed}" "${rate_human}"
 }
 
-if [[ -n "${DOWNLOAD_PROXY_URL}" ]]; then
+if [[ -n "${DOWNLOAD_PROXY_URL}" && -z "${PACKAGE_FILE}" ]]; then
 	printf '[deploy] Target-side Release download proxy is enabled\n'
 fi
-api="https://api.github.com/repos/${REPOSITORY}/releases/tags/${TAG}"
-printf '[deploy] Resolving published release %s\n' "${TAG}"
-download_release_file "${api}" "${work}/release.json"
+if [[ -n "${PACKAGE_FILE}" ]]; then
+	check_disk_capacity "$(stat -c '%s' "${PACKAGE_FILE}")"
+	package="${work}/$(basename "${PACKAGE_FILE}")"
+	cp --reflink=auto "${PACKAGE_FILE}" "${package}"
+	checksum_file="$(dirname "${PACKAGE_FILE}")/SHA256SUMS"
+	[[ -s "${checksum_file}" ]]
+	expected="$(awk -v file="$(basename "${PACKAGE_FILE}")" '$2 == file || $2 == "*" file {print $1; exit}' "${checksum_file}")"
+	[[ -n "${expected}" ]]
+	printf '%s  %s\n' "${expected}" "${package}" | sha256sum -c -
+else
+	api="https://api.github.com/repos/${REPOSITORY}/releases/tags/${TAG}"
+	printf '[deploy] Resolving published release %s\n' "${TAG}"
+	download_release_file "${api}" "${work}/release.json"
 
+# BEGIN COMMUNITY RELEASE ASSET SELECTOR
 python3 - "${work}/release.json" "${work}/assets.tsv" "${TAG}" <<'PY'
 import json
 import pathlib
@@ -400,33 +423,42 @@ if release.get("draft"):
 if release.get("tag_name") != tag:
     raise SystemExit("release tag does not match the requested tag")
 assets = {item["name"]: item["browser_download_url"] for item in release.get("assets", [])}
-selected = {}
 if "SHA256SUMS" not in assets:
     raise SystemExit("release has no SHA256SUMS")
-selected["SHA256SUMS"] = assets["SHA256SUMS"]
-if tag.startswith("main-"):
-    package_pattern = re.escape(f"hyperfilelens-{tag}.tar.gz")
-else:
-    prefix = re.escape(f"hyperfilelens-{tag[1:]}-")
-    package_pattern = prefix + r"[0-9a-f]{7}\.tar\.gz"
-full = sorted(name for name in assets if re.fullmatch(package_pattern, name))
-if len(full) == 1:
-    selected[full[0]] = assets[full[0]]
-else:
-    parts = sorted(
-        name
-        for name in assets
-        if re.fullmatch(package_pattern + r"\.part-[0-9]{3}", name)
+
+
+def package_assets(base):
+    if base in assets:
+        return [base]
+    return sorted(
+        name for name in assets if re.fullmatch(re.escape(base) + r"\.part-[0-9]{3}", name)
     )
-    if not parts:
-        raise SystemExit("release has neither one full package nor package parts")
-    for name in parts:
-        selected[name] = assets[name]
+
+
+current_base = f"hyperfilelens-{tag[1:]}.tar.gz"
+package_names = package_assets(current_base)
+if not package_names:
+    legacy_pattern = re.compile(
+        rf"^(hyperfilelens-{re.escape(tag[1:])}-[0-9a-fA-F]{{7}}\.tar\.gz)"
+        rf"(?:\.part-[0-9]{{3}})?$"
+    )
+    legacy_bases = sorted(
+        {match.group(1) for name in assets if (match := legacy_pattern.fullmatch(name))}
+    )
+    if len(legacy_bases) > 1:
+        raise SystemExit("release has multiple legacy package candidates")
+    if legacy_bases:
+        package_names = package_assets(legacy_bases[0])
+if not package_names:
+    raise SystemExit("release has neither one full package nor package parts")
+
+selected = ["SHA256SUMS", *package_names]
 pathlib.Path(sys.argv[2]).write_text(
-    "".join(f"{name}\t{url}\n" for name, url in selected.items()),
+    "".join(f"{name}\t{assets[name]}\n" for name in selected),
     encoding="utf-8",
 )
 PY
+# END COMMUNITY RELEASE ASSET SELECTOR
 
 total_bytes="$(python3 - "${work}/release.json" "${work}/assets.tsv" <<'PY'
 import json, pathlib, sys
@@ -444,24 +476,35 @@ while IFS=$'\t' read -r name url; do
 done <"${work}/assets.tsv"
 
 package="$(find "${work}" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz' -print -quit)"
-if [[ -z "${package}" ]]; then
-	first_part="$(find "${work}" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz.part-000' -print -quit)"
-	[[ -n "${first_part}" ]] || { printf 'ERROR: package parts are missing\n' >&2; exit 1; }
-	package="${first_part%.part-000}"
-	cat "${package}.part-"* >"${package}"
+	if [[ -z "${package}" ]]; then
+		first_part="$(find "${work}" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz.part-000' -print -quit)"
+		[[ -n "${first_part}" ]] || { printf 'ERROR: package parts are missing\n' >&2; exit 1; }
+		package="${first_part%.part-000}"
+		cat "${package}.part-"* >"${package}"
+	fi
+	# End of the GitHub Release download path. Local Enterprise packages bypass it.
 fi
 package_name="$(basename "${package}")"
-expected="$(awk -v file="${package_name}" '$2 == file || $2 == "*" file {print $1; exit}' "${work}/SHA256SUMS")"
-if [[ -n "${expected}" ]]; then
-	printf '%s  %s\n' "${expected}" "${package}" | sha256sum -c -
-else
-	# Split releases checksum every part; validate all downloaded parts before use.
-	while IFS= read -r part; do
-		name="$(basename "${part}")"
-		expected="$(awk -v file="${name}" '$2 == file || $2 == "*" file {print $1; exit}' "${work}/SHA256SUMS")"
-		[[ -n "${expected}" ]] || { printf 'ERROR: no checksum for %s\n' "${name}" >&2; exit 1; }
-		printf '%s  %s\n' "${expected}" "${part}" | sha256sum -c -
-	done < <(find "${work}" -maxdepth 1 -type f -name '*.part-*' | sort)
+if [[ -z "${PACKAGE_FILE}" ]]; then
+	expected="$(awk -v file="${package_name}" '$2 == file || $2 == "*" file {print $1; exit}' "${work}/SHA256SUMS")"
+	if [[ -n "${expected}" ]]; then
+		printf '%s  %s\n' "${expected}" "${package}" | sha256sum -c -
+	else
+		# Split releases checksum every part; validate all downloaded parts before use.
+		mapfile -t package_parts < <(
+			find "${work}" -maxdepth 1 -type f -name '*.part-*' | sort
+		)
+		((${#package_parts[@]} > 0)) || {
+			printf 'ERROR: no checksum for %s\n' "${package_name}" >&2
+			exit 1
+		}
+		for part in "${package_parts[@]}"; do
+			name="$(basename "${part}")"
+			expected="$(awk -v file="${name}" '$2 == file || $2 == "*" file {print $1; exit}' "${work}/SHA256SUMS")"
+			[[ -n "${expected}" ]] || { printf 'ERROR: no checksum for %s\n' "${name}" >&2; exit 1; }
+			printf '%s  %s\n' "${expected}" "${part}" | sha256sum -c -
+		done
+	fi
 fi
 
 mkdir -p "${work}/extract"
@@ -471,7 +514,9 @@ package_root="$(find "${work}/extract" -mindepth 1 -maxdepth 1 -type d -name 'hy
 	printf 'ERROR: invalid HFL package layout\n' >&2
 	exit 1
 }
-python3 - "${package_root}/MANIFEST.json" "${CHANNEL}" "${TAG}" <<'PY'
+expected_edition=community
+[[ -z "${PACKAGE_FILE}" ]] || expected_edition=enterprise
+python3 - "${package_root}/MANIFEST.json" "${CHANNEL}" "${TAG}" "${expected_edition}" <<'PY'
 import json
 import pathlib
 import sys
@@ -479,6 +524,7 @@ import sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 expected_channel = sys.argv[2]
 expected_id = sys.argv[3]
+expected_edition = sys.argv[4]
 channel = str(manifest.get("channel") or "release")
 if channel != expected_channel:
     raise SystemExit(f"package channel mismatch: {channel} != {expected_channel}")
@@ -487,6 +533,13 @@ if expected_channel == "release" and not artifact_id:
     artifact_id = "v" + str(manifest.get("version") or "")
 if artifact_id != expected_id:
     raise SystemExit(f"package identity mismatch: {artifact_id} != {expected_id}")
+version = expected_id[1:] if expected_id.startswith("v") else expected_id
+edition = str(manifest.get("edition") or "community")
+if edition != expected_edition:
+    raise SystemExit(f"package edition mismatch: {edition} != {expected_edition}")
+expected_image_version = version + ("-ee" if edition == "enterprise" else "")
+if manifest.get("image_version", version) != expected_image_version:
+    raise SystemExit("package image identity mismatch")
 PY
 
 if [[ -f "${INSTALL_DIR}/.env" && -f "${INSTALL_DIR}/VERSION" ]]; then
@@ -499,7 +552,6 @@ if [[ -f "${INSTALL_DIR}/.env" && -f "${INSTALL_DIR}/VERSION" ]]; then
 		--public-url "${PUBLIC_URL}"
 		--admin-public-url "${ADMIN_PUBLIC_URL}"
 	)
-	[[ "${CHANNEL}" == "main" ]] && install_args+=(--allow-main-build)
 	if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
 		install_args+=(--runtime-env-file "${RUNTIME_ENV_FILE}")
 	fi
@@ -513,7 +565,6 @@ else
 		--public-url "${PUBLIC_URL}"
 		--admin-public-url "${ADMIN_PUBLIC_URL}"
 	)
-	[[ "${CHANNEL}" == "main" ]] && install_args+=(--allow-main-build)
 	if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
 		install_args+=(--runtime-env-file "${RUNTIME_ENV_FILE}")
 	fi

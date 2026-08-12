@@ -1,0 +1,186 @@
+name: HFL - Enterprise Promotion (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Enterprise release stored on the TEST host (vX.Y.Z)
+        required: true
+        type: string
+      automatic:
+        description: Promotion follows a successful TEST deployment in the same run
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hyperfilelens-enterprise-promotion-prod
+  cancel-in-progress: false
+
+jobs:
+  stage-production:
+    name: Stage · PROD
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # Automatic promotion stays on the immutable release tag. The manual
+          # wrapper only permits main, so emergency promotion uses reviewed main code.
+          ref: ${{ inputs.automatic && inputs.tag || 'main' }}
+      - name: Validate and copy Enterprise release from TEST to PROD
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          TEST_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
+          TEST_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
+          TEST_SSH_USER: ${{ vars.TEST_SSH_USER }}
+          TEST_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
+          TEST_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
+          PROD_SSH_HOST: ${{ vars.PROD_SSH_HOST }}
+          PROD_SSH_PORT: ${{ vars.PROD_SSH_PORT }}
+          PROD_SSH_USER: ${{ vars.PROD_SSH_USER }}
+          PROD_SSH_KNOWN_HOSTS: ${{ vars.PROD_SSH_KNOWN_HOSTS }}
+          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+          version="${BASH_REMATCH[1]}"
+          [[ "$TEST_SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ && "$TEST_SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$PROD_SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ && "$PROD_SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$TEST_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$PROD_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ -n "$TEST_SSH_KNOWN_HOSTS" && -n "$TEST_SSH_PRIVATE_KEY" ]]
+          [[ -n "$PROD_SSH_KNOWN_HOSTS" && -n "$PROD_SSH_PRIVATE_KEY" ]]
+
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
+          chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
+
+          hop="/var/tmp/hfl-prod-promotion-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf '%s\n' "$PROD_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/prod-key"
+          printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/prod-known-hosts"
+          chmod 0600 "$RUNNER_TEMP/prod-key" "$RUNNER_TEMP/prod-known-hosts"
+          eval "$(ssh-agent -s)"
+          trap 'ssh-agent -k >/dev/null 2>&1 || true' EXIT
+          ssh-add "$RUNNER_TEMP/prod-key"
+          ssh -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
+            "rm -rf -- '$hop' && install -d -m 0700 '$hop'"
+          scp -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -P "$TEST_SSH_PORT" \
+            "$RUNNER_TEMP/prod-known-hosts" \
+            .github/scripts/store-enterprise-release.sh \
+            "$TEST_SSH_USER@$TEST_SSH_HOST:$hop/"
+          printf -v remote_command '%q ' \
+            bash -s -- "$RELEASE_TAG" "$version" "$hop" \
+              "$PROD_SSH_HOST" "$PROD_SSH_PORT" "$PROD_SSH_USER"
+          ssh -A -i ~/.ssh/hyperfilelens_test -o IdentitiesOnly=yes \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
+            "$remote_command" <<'REMOTE'
+          set -euo pipefail
+          tag=$1
+          version=$2
+          hop=$3
+          prod_host=$4
+          prod_port=$5
+          prod_user=$6
+          source="/root/hfl-release/${tag}"
+          incoming="/root/hfl-release/.incoming/promotion-${tag#v}"
+          cleanup() {
+            ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$hop/prod-known-hosts" -p "$prod_port" \
+              "$prod_user@$prod_host" "rm -rf -- '$incoming'" >/dev/null 2>&1 || true
+            rm -rf -- "$hop"
+          }
+          trap cleanup EXIT
+          chmod 0600 "$hop/prod-known-hosts"
+          exec 9</root/hfl-release/.lock
+          flock -s 9
+          cd "$source"
+          sha256sum -c SHA256SUMS
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$hop/prod-known-hosts" -p "$prod_port" \
+            "$prod_user@$prod_host" "rm -rf -- '$incoming' && install -d -m 0700 '$incoming'"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$hop/prod-known-hosts" -P "$prod_port" \
+            "hyperfilelens-${version}-ee.tar.gz" SHA256SUMS MANIFEST.json \
+            "$prod_user@$prod_host:$incoming/"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$hop/prod-known-hosts" -p "$prod_port" \
+            "$prod_user@$prod_host" \
+            "bash -s -- '$tag' '$incoming' /root/hfl-release 0" \
+            < "$hop/store-enterprise-release.sh"
+          REMOTE
+
+      - name: Remove promotion staging from TEST
+        if: ${{ always() }}
+        env:
+          TEST_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
+          TEST_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
+          TEST_SSH_USER: ${{ vars.TEST_SSH_USER }}
+          TEST_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
+          TEST_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set +e
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
+          chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
+          ssh -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
+            "rm -rf -- '/var/tmp/hfl-prod-promotion-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}'"
+
+  deploy-production:
+    name: Deploy · PROD
+    needs: stage-production
+    uses: ./.github/workflows/deploy_target.yml
+    with:
+      target: prod
+      channel: release
+      package_source: host-store
+      allow_automatic_prod: ${{ inputs.automatic }}
+      tag: ${{ inputs.tag }}
+      public_url: ${{ vars.PROD_PUBLIC_URL }}
+      admin_public_url: ${{ vars.PROD_ADMIN_PUBLIC_URL }}
+      ssh_host: ${{ vars.PROD_SSH_HOST }}
+      ssh_port: ${{ vars.PROD_SSH_PORT }}
+      ssh_user: ${{ vars.PROD_SSH_USER }}
+      ssh_known_hosts: ${{ vars.PROD_SSH_KNOWN_HOSTS }}
+      turnstile_site_key: ${{ vars.PROD_TURNSTILE_SITE_KEY }}
+      turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED == 'true' }}
+      email_signup_enabled: ${{ vars.PROD_EMAIL_SIGNUP_ENABLED == 'true' }}
+      email_code_login_enabled: ${{ vars.PROD_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
+      google_oauth_enabled: ${{ vars.PROD_GOOGLE_OAUTH_ENABLED == 'true' }}
+      google_client_id: ${{ vars.PROD_GOOGLE_CLIENT_ID }}
+      ga_measurement_id: ${{ vars.PROD_GA_MEASUREMENT_ID }}
+      sentry_enabled: ${{ vars.PROD_SENTRY_ENABLED == 'true' }}
+      platform_gateway_auto_deploy: ${{ vars.PROD_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
+      hfl_insecure_tls: ${{ vars.PROD_HFL_INSECURE_TLS }}
+      smtp_host: ${{ vars.PROD_SMTP_HOST }}
+      smtp_port: ${{ vars.PROD_SMTP_PORT }}
+      smtp_username: ${{ vars.PROD_SMTP_USERNAME }}
+      smtp_security: ${{ vars.PROD_SMTP_SECURITY }}
+      email_from: ${{ vars.PROD_EMAIL_FROM }}
+      ai_model_provider: ${{ vars.PROD_AI_MODEL_PROVIDER }}
+      ai_model_id: ${{ vars.PROD_AI_MODEL_ID }}
+      ai_model_display_name: ${{ vars.PROD_AI_MODEL_DISPLAY_NAME }}
+      ai_multimodal_model_provider: ${{ vars.PROD_AI_MULTIMODAL_MODEL_PROVIDER }}
+      ai_multimodal_model_id: ${{ vars.PROD_AI_MULTIMODAL_MODEL_ID }}
+      ai_multimodal_model_display_name: ${{ vars.PROD_AI_MULTIMODAL_MODEL_DISPLAY_NAME }}
+    secrets:
+      ssh_private_key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+      turnstile_secret_key: ${{ secrets.PROD_TURNSTILE_SECRET_KEY }}
+      smtp_password: ${{ secrets.PROD_SMTP_PASSWORD }}
+      google_client_secret: ${{ secrets.PROD_GOOGLE_CLIENT_SECRET }}
+      ai_model_api_base: ${{ secrets.PROD_AI_MODEL_API_BASE }}
+      ai_model_api_key: ${{ secrets.PROD_AI_MODEL_API_KEY }}
+      sentry_backend_dsn: ${{ secrets.SENTRY_BACKEND_DSN }}
+      sentry_frontend_dsn: ${{ secrets.SENTRY_FRONTEND_DSN }}
+      sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}

@@ -36,7 +36,7 @@ grep -F 'alias /usr/share/nginx/runtime/admin-app-runtime-config.js;' \
 grep -F '<script src="/app-runtime-config.js"></script>' \
 	"${ROOT}/src/frontend/index.html" >/dev/null
 grep -F 'PROD_GA_MEASUREMENT_ID' \
-	"${ROOT}/.github/workflows/production_deploy.yml" >/dev/null
+	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'ga4_measurement_id_pattern.fullmatch(candidate)' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F "event_callback: completeNavigation" \
@@ -87,7 +87,7 @@ invalid_value, invalid_output = render(
 )
 assert invalid_value == ""
 assert "::warning title=Google Analytics configuration::" in invalid_output
-assert render("preprod", "G-0RX9GZJCWF", "preprod.env") == ("", "")
+assert render("community", "G-0RX9GZJCWF", "community.env") == ("", "")
 PY
 
 if grep -R -E '(TEST|PREPROD)_GA_MEASUREMENT_ID' "${ROOT}/.github/workflows" >/dev/null; then

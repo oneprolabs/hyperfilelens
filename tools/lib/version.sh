@@ -19,6 +19,13 @@ normalize_release_version() {
 	printf '%s' "${version}"
 }
 
+normalize_edition() {
+	local edition="${1:-community}"
+	[[ "${edition}" == "community" || "${edition}" == "enterprise" ]] \
+		|| version_die "invalid edition: ${edition} (expected community or enterprise)" 2
+	printf '%s' "${edition}"
+}
+
 lowercase() {
 	printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
@@ -93,9 +100,10 @@ resolve_commit7() {
 }
 
 release_package_basename_for_version() {
-	local version commit7
+	local version commit7 edition
 	version="$(normalize_artifact_id "$1")" || return $?
 	commit7="$(lowercase "$2")"
+	edition="$(normalize_edition "${3:-community}")" || return $?
 	[[ "${commit7}" =~ ^[0-9a-f]{7}$ ]] \
 		|| version_die "invalid short git commit: ${2} (expected 7 hexadecimal characters)" 2
 	if [[ "${version}" == main-* ]]; then
@@ -104,5 +112,9 @@ release_package_basename_for_version() {
 		printf 'hyperfilelens-%s.tar.gz' "${version}"
 		return
 	fi
-	printf 'hyperfilelens-%s-%s.tar.gz' "${version}" "${commit7}"
+	if [[ "${edition}" == "enterprise" ]]; then
+		printf 'hyperfilelens-%s-ee.tar.gz' "${version}"
+	else
+		printf 'hyperfilelens-%s.tar.gz' "${version}"
+	fi
 }

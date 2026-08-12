@@ -1,11 +1,11 @@
-name: HFL - PROD Release Promotion
+name: HFL - Enterprise PROD Promotion
 run-name: PROD · ${{ inputs.tag }} · Promote
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Published HFL release tag (vX.Y.Z)
+        description: Enterprise release stored on the TEST host (vX.Y.Z)
         required: true
         type: string
 
@@ -13,95 +13,25 @@ permissions:
   contents: read
 
 jobs:
-  validate-production-release:
-    name: Validate · PROD release
+  validate-production-promotion:
+    name: Validate · Manual promotion
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          fetch-depth: 0
-
-      - name: Validate PROD Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PROD_DEPLOY_ENABLED: ${{ vars.PROD_DEPLOY_ENABLED }}
-          RELEASE_TAG: ${{ inputs.tag }}
+      - name: Require main branch
         shell: bash
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
-            echo 'Production deployment must be dispatched from refs/heads/main' >&2
-            exit 1
-          }
-          [[ "$PROD_DEPLOY_ENABLED" == "true" ]] || {
-            echo 'Production deployment is disabled' >&2
-            exit 1
-          }
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo 'Production requires a formal vX.Y.Z release tag' >&2
-            exit 2
-          }
-          gh release view "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json isDraft,isPrerelease,tagName \
-            > "$RUNNER_TEMP/production-release.json"
-          jq -e --arg tag "$RELEASE_TAG" \
-            '.tagName == $tag and .isDraft == false and .isPrerelease == false' \
-            "$RUNNER_TEMP/production-release.json" >/dev/null || {
-              echo 'Production requires a published, non-prerelease GitHub Release' >&2
-              exit 1
-            }
-          git fetch origin main --no-tags
-          release_commit="$(git rev-parse --verify "${RELEASE_TAG}^{commit}")"
-          git merge-base --is-ancestor "$release_commit" origin/main || {
-            echo 'Production release tag is not part of main' >&2
+            echo "::error::Manual production promotion must be started from the main branch"
             exit 1
           }
 
-  deploy-production:
-    name: Deploy · PROD
-    needs: validate-production-release
-    uses: ./.github/workflows/deploy_target.yml
+  promote-production:
+    name: Promote · PROD
+    needs: validate-production-promotion
+    uses: ./.github/workflows/enterprise_promotion.yml
     with:
-      target: prod
-      channel: release
       tag: ${{ inputs.tag }}
-      public_url: ${{ vars.PROD_PUBLIC_URL }}
-      admin_public_url: ${{ vars.PROD_ADMIN_PUBLIC_URL }}
-      release_download_proxy_url: ${{ vars.PROD_RELEASE_DOWNLOAD_PROXY_URL }}
-      ssh_host: ${{ vars.PROD_SSH_HOST }}
-      ssh_port: ${{ vars.PROD_SSH_PORT }}
-      ssh_user: ${{ vars.PROD_SSH_USER }}
-      ssh_known_hosts: ${{ vars.PROD_SSH_KNOWN_HOSTS }}
-      turnstile_site_key: ${{ vars.PROD_TURNSTILE_SITE_KEY }}
-      turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED == 'true' }}
-      email_signup_enabled: ${{ vars.PROD_EMAIL_SIGNUP_ENABLED == 'true' }}
-      email_code_login_enabled: ${{ vars.PROD_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
-      google_oauth_enabled: ${{ vars.PROD_GOOGLE_OAUTH_ENABLED == 'true' }}
-      google_client_id: ${{ vars.PROD_GOOGLE_CLIENT_ID }}
-      ga_measurement_id: ${{ vars.PROD_GA_MEASUREMENT_ID }}
-      sentry_enabled: ${{ vars.PROD_SENTRY_ENABLED == 'true' }}
-      platform_gateway_auto_deploy: ${{ vars.PROD_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
-      hfl_insecure_tls: ${{ vars.PROD_HFL_INSECURE_TLS }}
-      smtp_host: ${{ vars.PROD_SMTP_HOST }}
-      smtp_port: ${{ vars.PROD_SMTP_PORT }}
-      smtp_username: ${{ vars.PROD_SMTP_USERNAME }}
-      smtp_security: ${{ vars.PROD_SMTP_SECURITY }}
-      email_from: ${{ vars.PROD_EMAIL_FROM }}
-      ai_model_provider: ${{ vars.PROD_AI_MODEL_PROVIDER }}
-      ai_model_id: ${{ vars.PROD_AI_MODEL_ID }}
-      ai_model_display_name: ${{ vars.PROD_AI_MODEL_DISPLAY_NAME }}
-      ai_multimodal_model_provider: ${{ vars.PROD_AI_MULTIMODAL_MODEL_PROVIDER }}
-      ai_multimodal_model_id: ${{ vars.PROD_AI_MULTIMODAL_MODEL_ID }}
-      ai_multimodal_model_display_name: ${{ vars.PROD_AI_MULTIMODAL_MODEL_DISPLAY_NAME }}
-    secrets:
-      ssh_private_key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
-      turnstile_secret_key: ${{ secrets.PROD_TURNSTILE_SECRET_KEY }}
-      smtp_password: ${{ secrets.PROD_SMTP_PASSWORD }}
-      google_client_secret: ${{ secrets.PROD_GOOGLE_CLIENT_SECRET }}
-      ai_model_api_base: ${{ secrets.PROD_AI_MODEL_API_BASE }}
-      ai_model_api_key: ${{ secrets.PROD_AI_MODEL_API_KEY }}
-      sentry_backend_dsn: ${{ secrets.SENTRY_BACKEND_DSN }}
-      sentry_frontend_dsn: ${{ secrets.SENTRY_FRONTEND_DSN }}
-      sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      automatic: false
+    secrets: inherit

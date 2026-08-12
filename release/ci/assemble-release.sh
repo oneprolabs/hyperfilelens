@@ -16,18 +16,20 @@ fi
 
 usage() {
 	cat <<'USAGE'
-Usage: assemble-release.sh --input-dir DIR --version X.Y.Z|main-SHA7 --commit SHA
+Usage: assemble-release.sh --input-dir DIR --version X.Y.Z|main-SHA7 --commit SHA [--edition community|enterprise]
 USAGE
 }
 
 input_dir=""
 version=""
 commit=""
+edition="community"
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--input-dir) input_dir=${2:-}; shift 2 ;;
 	--version) version=${2#v}; shift 2 ;;
 	--commit) commit=${2:-}; shift 2 ;;
+	--edition) edition=${2:-}; shift 2 ;;
 	-h | --help) usage; exit 0 ;;
 	*) printf 'ERROR: unknown argument: %s\n' "$1" >&2; exit 2 ;;
 	esac
@@ -35,6 +37,11 @@ done
 
 [[ -d "${input_dir}" ]] || { printf 'ERROR: input directory is missing\n' >&2; exit 2; }
 version="$(normalize_artifact_id "${version}")"
+edition="$(normalize_edition "${edition}")"
+if [[ "${version}" == main-* && "${edition}" != "community" ]]; then
+	printf 'ERROR: main packages do not support an edition override\n' >&2
+	exit 2
+fi
 [[ "${commit}" =~ ^[0-9a-f]{40}$ ]] || { printf 'ERROR: invalid commit\n' >&2; exit 2; }
 if [[ "${version}" == main-* && "${version#main-}" != "${commit:0:7}" ]]; then
 	printf 'ERROR: main build identifier does not match commit\n' >&2
@@ -46,10 +53,12 @@ hfl_logging_start
 trap 'hfl_logging_finish "$?"' EXIT
 
 commit7=${commit:0:7}
-pkg_name="hyperfilelens-${version}"
+edition_suffix=""
+[[ "${edition}" == community ]] || edition_suffix="-ee"
+pkg_name="hyperfilelens-${version}${edition_suffix}"
 pkg_root="${STAGING_BASE}/${pkg_name}"
 images_dir="${pkg_root}/images"
-tar_basename="$(release_package_basename_for_version "${version}" "${commit7}")"
+tar_basename="$(release_package_basename_for_version "${version}" "${commit7}" "${edition}")"
 safe_assert_package_basename "${tar_basename}"
 safe_assert_staging_pkg_root "${pkg_root}" "${STAGING_BASE}"
 safe_rm_dir "${pkg_root}"
@@ -191,6 +200,8 @@ if [[ -z "${HFL_EXTENSIONS_RUNTIME}" && -n "${HFL_EXTENSION_SOURCES:-}" ]]; then
 	)"
 fi
 export HFL_EXTENSIONS_RUNTIME
+HFL_IMAGE_VERSION="${version}${edition_suffix}"
+export HFL_IMAGE_VERSION
 stage_release_env_example "${pkg_root}"
 cp "${ROOT}/LICENSE" "${pkg_root}/LICENSE"
 mkdir -p \
@@ -223,11 +234,12 @@ frontend_digest="$(image_digest "${pkg_root}/metadata/hfl-frontend.json")"
 postgres_digest="$(jq -r '.digest' "${pkg_root}/metadata/postgres.json")"
 redis_digest="$(jq -r '.digest' "${pkg_root}/metadata/redis.json")"
 
-write_manifest "${pkg_root}" "${version}" "${commit}" "${payload_sha}" \
+HFL_RELEASE_EDITION="${edition}" HFL_IMAGE_VERSION="${HFL_IMAGE_VERSION}" \
+	write_manifest "${pkg_root}" "${version}" "${commit}" "${payload_sha}" \
 	"${backend_digest}" "${frontend_digest}" "${postgres_digest}" "${redis_digest}"
 rm -rf "${pkg_root}/metadata"
 validate_release_publish_artifacts "${pkg_root}"
-write_package_readme "${pkg_root}" "${version}"
+write_package_readme "${pkg_root}" "${version}" "${edition}"
 validate_release_security "${pkg_root}"
 
 python3 - "${pkg_root}" <<'PY'

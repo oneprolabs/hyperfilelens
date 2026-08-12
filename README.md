@@ -404,10 +404,14 @@ Application source code is not copied into the release package. Installed
 runtime files are placed under `/opt/hyperfilelens`, with persistent state
 under `/opt/hyperfilelens/data`.
 
+Community and Enterprise CI publishing, deployment, artifact retention, and
+repository configuration are documented in
+[`docs/release-workflows.md`](docs/release-workflows.md).
+
 Install a generated package:
 
 ```bash
-tar xzf hyperfilelens-<version>-<commit7>.tar.gz
+tar xzf hyperfilelens-<version>.tar.gz
 cd hyperfilelens-<version>
 sudo ./install.sh install
 ```
@@ -423,7 +427,7 @@ Upgrade an existing installation:
 
 ```bash
 sudo /opt/hyperfilelens/install.sh upgrade \
-  --from /path/to/hyperfilelens-<version>-<commit7>.tar.gz
+  --from /path/to/hyperfilelens-<version>.tar.gz
 ```
 
 Inspect all build options from the repository and installer options from an

@@ -14,7 +14,7 @@ from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 
-_ENVIRONMENT_RE = re.compile(r"^hfl-(test|preprod|production)$")
+_ENVIRONMENT_RE = re.compile(r"^hfl-(test|community|preprod|production)$")
 _VERSION_RE = re.compile(r"^[A-Za-z0-9._+-]+$")
 
 

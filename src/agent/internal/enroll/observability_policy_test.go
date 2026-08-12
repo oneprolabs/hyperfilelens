@@ -37,7 +37,7 @@ func TestParseGatewayLensConfigNormalizesObservabilityPolicy(t *testing.T) {
         "observability": {
             "enabled": true,
             "backend_dsn": "https://public@sentry.example.com/25",
-            "environment": "hfl-preprod",
+            "environment": "hfl-community",
             "agent_release": "hyperfilelens-agent@0.1.8",
             "lensnode_release": "hyperfilelens-lensnode@0.1.8-sl0.20.0",
             "traces_sample_rate": 0
@@ -51,7 +51,7 @@ func TestParseGatewayLensConfigNormalizesObservabilityPolicy(t *testing.T) {
 	if !lens.Observability.Enabled {
 		t.Fatalf("observability policy was disabled: %#v", lens.Observability)
 	}
-	if lens.Observability.Environment != "hfl-preprod" {
+	if lens.Observability.Environment != "hfl-community" {
 		t.Fatalf("environment = %q", lens.Observability.Environment)
 	}
 }

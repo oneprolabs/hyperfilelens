@@ -14,12 +14,12 @@ HFL_WEBSITE_CONFIG_OUTPUT="${website}" \
 	HFL_ADMIN_CONFIG_OUTPUT="${admin}" \
 	HFL_SENTRY_ENABLED=true \
 	HFL_SENTRY_DSN=https://public@sentry.example.com/42 \
-	HFL_SENTRY_ENVIRONMENT=hfl-preprod \
+	HFL_SENTRY_ENVIRONMENT=hfl-community \
 	HFL_SENTRY_RELEASE=hyperfilelens-frontend@0.1.8 \
 	HFL_SENTRY_TRACES_SAMPLE_RATE=0.1 \
 	sh "${ROOT}/deploy/docker/frontend-runtime-config.sh"
 grep -F "sentryEnabled: true" "${tenant}" >/dev/null
-grep -F "sentryEnvironment: 'hfl-preprod'" "${tenant}" >/dev/null
+grep -F "sentryEnvironment: 'hfl-community'" "${tenant}" >/dev/null
 grep -F "sentrySurface: 'tenant'" "${tenant}" >/dev/null
 grep -F "sentrySurface: 'admin'" "${admin}" >/dev/null
 if grep -F 'sentryDsn' "${website}" >/dev/null; then
@@ -68,9 +68,9 @@ cat >"${runtime_file}" <<'EOF'
 SENTRY_ENABLED=true
 SENTRY_BACKEND_DSN=https://backend@sentry.example.com/41
 SENTRY_FRONTEND_DSN=https://frontend@sentry.example.com/42
-SENTRY_ENVIRONMENT=hfl-preprod
+SENTRY_ENVIRONMENT=hfl-community
 SENTRY_TRACES_SAMPLE_RATE=0.1
-HFL_DEPLOY_TARGET=preprod
+HFL_DEPLOY_TARGET=community
 HFL_INSECURE_TLS=1
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false
 HFL_EMAIL_SIGNUP_ENABLED=false
@@ -97,8 +97,8 @@ python3 "${ROOT}/deploy/installer/apply-runtime-config.py" \
 grep -Fx 'SENTRY_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'SENTRY_BACKEND_DSN="https://backend@sentry.example.com/41"' "${env_file}" >/dev/null
 grep -Fx 'SENTRY_FRONTEND_DSN="https://frontend@sentry.example.com/42"' "${env_file}" >/dev/null
-grep -Fx 'SENTRY_ENVIRONMENT=hfl-preprod' "${env_file}" >/dev/null
-grep -Fx 'HFL_DEPLOY_TARGET=preprod' "${env_file}" >/dev/null
+grep -Fx 'SENTRY_ENVIRONMENT=hfl-community' "${env_file}" >/dev/null
+grep -Fx 'HFL_DEPLOY_TARGET=community' "${env_file}" >/dev/null
 grep -Fx 'HFL_DEPLOYMENT_MODE=managed' "${env_file}" >/dev/null
 
 sl_env="${tmp}/sl.env"
@@ -304,8 +304,8 @@ if grep -R -n -E 'ARG SENTRY_DSN|ENV SENTRY_DSN|import\.meta\.env\.SENTRY' \
 	exit 1
 fi
 grep -F 'TEST_SENTRY_ENABLED' "${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
-grep -F 'PREPROD_SENTRY_ENABLED' "${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
-grep -F 'PROD_SENTRY_ENABLED' "${ROOT}/.github/workflows/production_deploy.yml" >/dev/null
+grep -F 'COMMUNITY_SENTRY_ENABLED' "${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F 'PROD_SENTRY_ENABLED' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'SENTRY_AUTH_TOKEN' "${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 grep -F "secrets.SENTRY_AUTH_TOKEN != ''" \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null

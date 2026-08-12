@@ -1,14 +1,11 @@
-name: HFL - PREPROD Release & Deploy
-run-name: ${{ github.event_name == 'workflow_dispatch' && format('PREPROD · {0} · Redeploy', inputs.tag) || format('PREPROD · {0} · Build, release & deploy', github.ref_name) }}
+name: HFL - Community Release & Deploy
+run-name: Community · ${{ inputs.tag }} · Release & deploy
 
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
     inputs:
       tag:
-        description: Published HFL release tag to redeploy to pre-production (vX.Y.Z)
+        description: Existing OSS tag to publish (vX.Y.Z)
         required: true
         type: string
 
@@ -16,104 +13,26 @@ permissions:
   contents: write
 
 jobs:
-  build-publish-and-deploy-preprod:
-    name: Build, Release & Deploy · PREPROD
-    if: ${{ github.event_name == 'push' }}
-    uses: ./.github/workflows/artifact_pipeline.yml
-    with:
-      channel: release
-      force_rebuild: false
-    secrets: inherit
-
-  validate-preprod-release:
-    name: Validate · PREPROD release
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+  validate-community-release:
+    name: Validate · Community release
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          fetch-depth: 0
-      - name: Validate PREPROD Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREPROD_DEPLOY_ENABLED: ${{ vars.PREPROD_DEPLOY_ENABLED }}
-          RELEASE_TAG: ${{ inputs.tag }}
+      - name: Require main branch
         shell: bash
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
-            echo 'Pre-production redeployment must be dispatched from refs/heads/main' >&2
-            exit 1
-          }
-          [[ "$PREPROD_DEPLOY_ENABLED" == "true" ]] || {
-            echo 'PREPROD deployment is disabled' >&2
-            exit 1
-          }
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo 'Pre-production requires a formal vX.Y.Z release tag' >&2
-            exit 2
-          }
-          gh release view "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json isDraft,isPrerelease,tagName \
-            > "$RUNNER_TEMP/preprod-release.json"
-          jq -e --arg tag "$RELEASE_TAG" \
-            '.tagName == $tag and .isDraft == false and .isPrerelease == false' \
-            "$RUNNER_TEMP/preprod-release.json" >/dev/null || {
-              echo 'Pre-production redeployment requires a published, non-prerelease GitHub Release' >&2
-              exit 1
-            }
-          git fetch origin main --no-tags
-          release_commit="$(git rev-parse --verify "${RELEASE_TAG}^{commit}")"
-          git merge-base --is-ancestor "$release_commit" origin/main || {
-            echo 'Pre-production release tag is not part of main' >&2
+            echo "::error::Community releases must be started from the main branch"
             exit 1
           }
 
-  redeploy-preprod:
-    name: Deploy · PREPROD
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs: validate-preprod-release
-    uses: ./.github/workflows/deploy_target.yml
+  release-community:
+    name: Build, Release & Deploy · Community
+    needs: validate-community-release
+    uses: ./.github/workflows/artifact_pipeline.yml
     with:
-      target: preprod
       channel: release
-      tag: ${{ inputs.tag }}
-      public_url: ${{ vars.PREPROD_PUBLIC_URL }}
-      admin_public_url: ${{ vars.PREPROD_ADMIN_PUBLIC_URL }}
-      release_download_proxy_url: ${{ vars.PREPROD_RELEASE_DOWNLOAD_PROXY_URL }}
-      ssh_host: ${{ vars.PREPROD_SSH_HOST }}
-      ssh_port: ${{ vars.PREPROD_SSH_PORT }}
-      ssh_user: ${{ vars.PREPROD_SSH_USER }}
-      ssh_known_hosts: ${{ vars.PREPROD_SSH_KNOWN_HOSTS }}
-      turnstile_site_key: ${{ vars.PREPROD_TURNSTILE_SITE_KEY }}
-      turnstile_enabled: ${{ vars.PREPROD_TURNSTILE_ENABLED == 'true' }}
-      email_signup_enabled: ${{ vars.PREPROD_EMAIL_SIGNUP_ENABLED == 'true' }}
-      email_code_login_enabled: ${{ vars.PREPROD_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
-      google_oauth_enabled: ${{ vars.PREPROD_GOOGLE_OAUTH_ENABLED == 'true' }}
-      google_client_id: ${{ vars.PREPROD_GOOGLE_CLIENT_ID }}
-      sentry_enabled: ${{ vars.PREPROD_SENTRY_ENABLED == 'true' }}
-      platform_gateway_auto_deploy: ${{ vars.PREPROD_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
-      hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}
-      smtp_host: ${{ vars.PREPROD_SMTP_HOST }}
-      smtp_port: ${{ vars.PREPROD_SMTP_PORT }}
-      smtp_username: ${{ vars.PREPROD_SMTP_USERNAME }}
-      smtp_security: ${{ vars.PREPROD_SMTP_SECURITY }}
-      email_from: ${{ vars.PREPROD_EMAIL_FROM }}
-      ai_model_provider: ${{ vars.PREPROD_AI_MODEL_PROVIDER }}
-      ai_model_id: ${{ vars.PREPROD_AI_MODEL_ID }}
-      ai_model_display_name: ${{ vars.PREPROD_AI_MODEL_DISPLAY_NAME }}
-      ai_multimodal_model_provider: ${{ vars.PREPROD_AI_MULTIMODAL_MODEL_PROVIDER }}
-      ai_multimodal_model_id: ${{ vars.PREPROD_AI_MULTIMODAL_MODEL_ID }}
-      ai_multimodal_model_display_name: ${{ vars.PREPROD_AI_MULTIMODAL_MODEL_DISPLAY_NAME }}
-    secrets:
-      ssh_private_key: ${{ secrets.PREPROD_SSH_PRIVATE_KEY }}
-      turnstile_secret_key: ${{ secrets.PREPROD_TURNSTILE_SECRET_KEY }}
-      smtp_password: ${{ secrets.PREPROD_SMTP_PASSWORD }}
-      google_client_secret: ${{ secrets.PREPROD_GOOGLE_CLIENT_SECRET }}
-      ai_model_api_base: ${{ secrets.PREPROD_AI_MODEL_API_BASE }}
-      ai_model_api_key: ${{ secrets.PREPROD_AI_MODEL_API_KEY }}
-      sentry_backend_dsn: ${{ secrets.SENTRY_BACKEND_DSN }}
-      sentry_frontend_dsn: ${{ secrets.SENTRY_FRONTEND_DSN }}
-      sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      edition: community
+      release_tag: ${{ inputs.tag }}
+    secrets: inherit

@@ -122,7 +122,7 @@ Examples:
   sudo ./install.sh
   sudo ./install.sh install
   sudo ./install.sh backup
-  sudo ./install.sh upgrade --from /path/to/hyperfilelens-0.1.0-<commit7>.tar.gz
+  sudo ./install.sh upgrade --from /path/to/hyperfilelens-0.1.0.tar.gz
   sudo ./install.sh uninstall
   sudo ./install.sh uninstall --purge-all
   sudo ./install.sh lang-pack install --file /path/to/hyperfilelens-lang-fr-0.1.0.tar.gz
@@ -332,7 +332,7 @@ safe_assert_env_file() {
 
 safe_assert_package_basename() {
 	local name=$1
-	[[ "${name}" =~ ^hyperfilelens-([0-9][0-9A-Za-z._-]*-[0-9a-fA-F]{7}|main-[0-9a-f]{7})\.tar\.gz$ ]] \
+	[[ "${name}" =~ ^hyperfilelens-([0-9]+\.[0-9]+\.[0-9]+(-ee|-[0-9a-fA-F]{7})?|main-[0-9a-f]{7})\.tar\.gz$ ]] \
 		|| die "invalid release package basename: ${name}"
 	[[ "${name}" != */* ]] || die "package basename must not contain slashes: ${name}"
 }
@@ -1093,6 +1093,25 @@ print(str(manifest.get("channel") or "release").strip())
 PY
 }
 
+read_image_version_from_dir() {
+	local dir=$1
+	python3 - "${dir}" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+manifest_path = root / "MANIFEST.json"
+if manifest_path.is_file():
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    value = str(manifest.get("image_version") or "").strip()
+    if value:
+        print(value)
+        raise SystemExit(0)
+print((root / "VERSION").read_text(encoding="utf-8").strip())
+PY
+}
+
 validate_package_identity() {
 	local dir=$1
 	python3 - "${dir}" <<'PY'
@@ -1107,6 +1126,9 @@ channel = str(manifest.get("channel") or "release").strip()
 commit = str(manifest.get("git_commit") or "").strip().lower()
 artifact_id = str(manifest.get("artifact_id") or "").strip().lower()
 version_file = (root / "VERSION").read_text(encoding="utf-8").strip()
+edition = str(manifest.get("edition") or "community").strip()
+image_version = str(manifest.get("image_version") or version_file).strip()
+extension_commit = str(manifest.get("extension_commit") or "").strip().lower()
 
 if not re.fullmatch(r"[0-9a-f]{40}", commit):
     raise SystemExit("release manifest has an invalid git_commit")
@@ -1129,6 +1151,16 @@ else:
     raise SystemExit(f"unsupported release channel: {channel}")
 if version_file != expected:
     raise SystemExit("VERSION does not match the release manifest identity")
+if edition not in {"community", "enterprise"}:
+    raise SystemExit("release package has an invalid edition")
+expected_image_version = version_file + ("-ee" if edition == "enterprise" else "")
+if image_version != expected_image_version:
+    raise SystemExit("release package image_version does not match its edition")
+if edition == "enterprise":
+    if not re.fullmatch(r"[0-9a-f]{40}", extension_commit):
+        raise SystemExit("Enterprise release package has an invalid extension_commit")
+elif extension_commit:
+    raise SystemExit("Community release package must not declare extension_commit")
 PY
 }
 
@@ -1398,8 +1430,9 @@ ensure_env_file() {
 		return 0
 	fi
 
-	local version channel secret db_pass host
+	local version image_version channel secret db_pass host
 	version="$(read_version)"
+	image_version="$(read_image_version_from_dir "${ROOT}")"
 	channel="$(read_channel_from_dir "${ROOT}")"
 	secret="$(random_hex)"
 	db_pass="$(random_hex | cut -c1-32)"
@@ -1412,13 +1445,13 @@ ensure_env_file() {
 	step "Creating .env from .env.example ..."
 	cp "${example}" "${env_file}"
 	chmod 600 "${env_file}"
-	python3 - "${env_file}" "${version}" "${channel}" "${secret}" "${db_pass}" "${host}" <<'PY'
+	python3 - "${env_file}" "${version}" "${image_version}" "${channel}" "${secret}" "${db_pass}" "${host}" <<'PY'
 import pathlib
 import re
 import sys
 
 path = pathlib.Path(sys.argv[1])
-version, channel, secret, db_pass, host = sys.argv[2:7]
+version, image_version, channel, secret, db_pass, host = sys.argv[2:8]
 text = path.read_text(encoding="utf-8")
 
 def sub_key(name, value):
@@ -1430,8 +1463,8 @@ def sub_key(name, value):
         text = text.rstrip() + f"\n{name}={value}\n"
 
 sub_key("AGENT_VERSION", version)
-sub_key("APP_VERSION", version)
-sub_key("HFL_GATEWAY_VERSION", version)
+sub_key("APP_VERSION", image_version)
+sub_key("HFL_GATEWAY_VERSION", image_version)
 sub_key("HFL_RELEASE_CHANNEL", channel)
 sub_key("SECRET_KEY", secret)
 sub_key("POSTGRES_PASSWORD", db_pass)
@@ -1693,8 +1726,8 @@ sync_env_from_example() {
 reconcile_hfl_extensions_env() {
 	# Empty HFL_EXTENSIONS= in .env overrides Dockerfile ENV and disables baked plugins.
 	# - Example has a non-empty value → fill missing/empty .env from example (Enterprise).
-	# - Example omits the key (Community) → drop empty HFL_EXTENSIONS= so image ENV wins.
-	# Non-empty operator overrides in .env are preserved.
+	# - Example omits the key (Community) → remove any previous extension setting.
+	# Non-empty Enterprise operator overrides are preserved.
 	local env_file=$1
 	local example=$2
 	[[ -f "${env_file}" ]] || return 0
@@ -1729,7 +1762,7 @@ if example_val:
         )
     else:
         raise SystemExit(0)
-elif env_val == "":
+elif env_val is not None:
     env_text = re.sub(r"(?m)^[ \t]*HFL_EXTENSIONS=.*\n?", "", env_text)
 else:
     raise SystemExit(0)
@@ -1769,21 +1802,23 @@ PY
 update_env_versions() {
 	local version=$1
 	local channel=$2
-	python3 - "${ROOT}" "${version}" "${channel}" <<'PY'
+	local image_version=${3:-$1}
+	python3 - "${ROOT}" "${version}" "${channel}" "${image_version}" <<'PY'
 import pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
 channel = sys.argv[3]
+image_version = sys.argv[4]
 env = root / ".env"
 if not env.exists():
     raise SystemExit(0)
 text = env.read_text(encoding="utf-8")
-for key in ("AGENT_VERSION", "APP_VERSION"):
+for key, value in (("AGENT_VERSION", version), ("APP_VERSION", image_version)):
     pattern = rf"^({re.escape(key)}=).*$"
     if re.search(pattern, text, flags=re.M):
-        text = re.sub(pattern, lambda m, v=version: f"{m.group(1)}{v}", text, count=1, flags=re.M)
+        text = re.sub(pattern, lambda m, v=value: f"{m.group(1)}{v}", text, count=1, flags=re.M)
     else:
-        text = text.rstrip() + f"\n{key}={version}\n"
+        text = text.rstrip() + f"\n{key}={value}\n"
 pattern = r"^(HFL_RELEASE_CHANNEL=).*$"
 if re.search(pattern, text, flags=re.M):
     text = re.sub(pattern, rf"\g<1>{channel}", text, count=1, flags=re.M)
@@ -4250,7 +4285,7 @@ cmd_upgrade() {
 		# Do not claim a blue active pool while the legacy API still owns traffic.
 		safe_rm_file "$(active_color_file)"
 	fi
-	update_env_versions "${new_version}" "${new_channel}"
+	update_env_versions "${new_version}" "${new_channel}" "$(read_image_version_from_dir "${src_root}")"
 	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] \
 		&& sourcelens_installed \
 		&& [[ "${remove_sourcelens}" -eq 0 ]]; then
