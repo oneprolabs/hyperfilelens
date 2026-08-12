@@ -72,7 +72,7 @@ export function nodeAttentionLinkForRole(role: string | undefined, nodeId: numbe
 
 export type DashboardAttentionItem = {
   id: string
-  kind: 'task' | 'alert' | 'node' | 'source' | 'audit'
+  kind: 'task' | 'alert' | 'node' | 'source'
   title: string
   detail: string
   to: string
@@ -517,7 +517,7 @@ export async function loadDashboardOverview(
       result_stats: {},
     })),
     api<unknown>('/api/v1/protection/policies/?page_size=200').then((raw) => asList<ApiPolicy>(raw)).catch(() => []),
-    api<unknown>('/api/v1/notification/logs/stats/').then((raw) => unwrapApiPayload<{ failed?: number }>(raw)).catch(() => ({ failed: 0 })),
+    api<unknown>('/api/v1/notifications/logs/stats/').then((raw) => unwrapApiPayload<{ failed?: number }>(raw)).catch(() => ({ failed: 0 })),
     listBackupConfigs({ page_size: 200 }).catch(() => ({ count: 0, results: [] })),
     listRestorePlans({ enabled: true, page_size: 1 }).catch(() => ({ count: 0, results: [] })),
     listTasks({ task_type: 'restore', page_size: 30 }).catch(() => ({ count: 0, results: [] })),

@@ -23,14 +23,14 @@ describe('login route security state', () => {
       path,
       query: {
         reason: 'TOKEN_REUSED',
-        redirect: '/ops/alerts/incidents',
+        redirect: '/ops/alerts',
       },
     })
 
     expect(router.currentRoute.value.name).toBe('login')
     expect(router.currentRoute.value.query).toEqual({
-      redirect: '/ops/alerts/incidents',
+      redirect: '/ops/alerts',
     })
-    expect(window.location.search).toBe('?redirect=/ops/alerts/incidents')
+    expect(window.location.search).toBe('?redirect=/ops/alerts')
   })
 })

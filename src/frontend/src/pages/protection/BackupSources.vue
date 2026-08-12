@@ -1007,7 +1007,7 @@ function openSourcePendingFailureDetails(sourceId: string) {
   const op = pendingSourceOps.value.get(sourceId)
   if (op?.kind !== 'delete_failed') {
     if (op?.taskUuid) {
-      void router.push({ path: '/ops/task', query: { taskUuid: op.taskUuid } })
+      void router.push({ path: '/ops/tasks', query: { taskUuid: op.taskUuid } })
     }
     return
   }

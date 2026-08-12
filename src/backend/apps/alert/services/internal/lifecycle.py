@@ -10,6 +10,20 @@ from apps.alert.constants import AlertStatus
 from apps.alert.models import AlertPolicy, AlertRecord
 from apps.alert.services.internal.fingerprint import build_fingerprint
 from apps.alert.services.internal.notifier import send_notification, send_resolved_notification
+from apps.notification.services.internal.in_app import publish_to_org_members_after_commit
+
+
+def _publish_in_app(alert: AlertRecord, *, resolved: bool) -> None:
+    publish_to_org_members_after_commit(
+        organization_id=alert.organization_id,
+        event_type="alert.resolved" if resolved else "alert.firing",
+        source_type="alert",
+        source_id=str(alert.id),
+        title=f"Resolved: {alert.title}" if resolved else alert.title,
+        summary=alert.resource_name or alert.message or alert.resource_type,
+        severity=alert.severity,
+        target_url="/ops/alerts",
+    )
 
 
 def _threshold_from_policy(policy) -> Decimal | None:
@@ -136,6 +150,8 @@ def fire_alert(
             previous_status != AlertStatus.FIRING or _should_retry_firing_notification(alert, policy)
         ):
             send_notification(alert)
+        if previous_status != AlertStatus.FIRING:
+            _publish_in_app(alert, resolved=False)
         return alert
 
     alert = AlertRecord.objects.create(
@@ -159,14 +175,27 @@ def fire_alert(
     )
     if _notify_on_firing(policy):
         send_notification(alert)
+    _publish_in_app(alert, resolved=False)
     return alert
 
 
 def resolve_alert(alert: AlertRecord) -> AlertRecord:
+    resolved_at = timezone.now()
+    updated = AlertRecord.objects.filter(id=alert.id).exclude(
+        status=AlertStatus.RESOLVED,
+    ).update(
+        status=AlertStatus.RESOLVED,
+        resolved_at=resolved_at,
+        updated_at=resolved_at,
+    )
+    if not updated:
+        alert.refresh_from_db()
+        return alert
     alert.status = AlertStatus.RESOLVED
-    alert.resolved_at = timezone.now()
-    alert.save(update_fields=["status", "resolved_at", "updated_at"])
+    alert.resolved_at = resolved_at
+    alert.updated_at = resolved_at
     policy = AlertPolicy.objects.filter(id=alert.policy_id).first() if alert.policy_id else None
     if _notify_on_resolved(policy):
         send_resolved_notification(alert)
+    _publish_in_app(alert, resolved=True)
     return alert

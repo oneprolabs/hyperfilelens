@@ -1,6 +1,11 @@
 from django.contrib import admin
 
-from apps.notification.models import NotificationChannel, NotificationDelivery, NotificationLog
+from apps.notification.models import (
+    NotificationChannel,
+    NotificationDelivery,
+    NotificationLog,
+    UserNotification,
+)
 
 
 @admin.register(NotificationChannel)
@@ -18,3 +23,9 @@ class NotificationLogAdmin(admin.ModelAdmin):
 @admin.register(NotificationDelivery)
 class NotificationDeliveryAdmin(admin.ModelAdmin):
     list_display = ("channel", "organization", "event_type", "status", "created_at")
+
+
+@admin.register(UserNotification)
+class UserNotificationAdmin(admin.ModelAdmin):
+    list_display = ("title", "user", "organization", "event_type", "read_at", "updated_at")
+    list_filter = ("organization", "event_type", "severity")

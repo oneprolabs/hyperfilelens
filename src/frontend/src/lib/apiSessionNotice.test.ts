@@ -19,8 +19,8 @@ vi.mock('../router', () => ({
   router: {
     currentRoute: {
       value: {
-        path: '/ops/alerts/incidents',
-        fullPath: '/ops/alerts/incidents?status=open',
+        path: '/ops/alerts',
+        fullPath: '/ops/alerts?status=open',
       },
     },
     replace: mocks.routerReplace,
@@ -58,7 +58,7 @@ describe('api session expiry handoff', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(api('/api/v1/ops/alerts/incidents')).rejects.toMatchObject({
+    await expect(api('/api/v1/ops/alerts')).rejects.toMatchObject({
       status: 401,
       errorCode: 'TOKEN_REUSED',
     })
@@ -67,7 +67,7 @@ describe('api session expiry handoff', () => {
       expect(mocks.routerReplace).toHaveBeenCalledWith({
         path: '/login',
         query: {
-          redirect: '/ops/alerts/incidents?status=open',
+          redirect: '/ops/alerts?status=open',
         },
       })
     })

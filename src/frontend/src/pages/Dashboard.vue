@@ -44,10 +44,10 @@ const routes = {
   sources: '/protection/backup-sources?tab=host',
   policies: '/protection/policies',
   repositories: '/node/repositories',
-  taskList: '/ops/task',
-  recoveryDrillTasks: '/ops/task?task_type=restore&time_mode=24h',
-  attention: '/ops/attention',
-  audit: '/ops/audit',
+  taskList: '/ops/tasks',
+  recoveryDrillTasks: '/ops/tasks?task_type=restore&time_mode=24h',
+  attention: '/ops/health',
+  audit: '/ops/audit-logs',
   subscription: '/node/subscription',
 } as const
 

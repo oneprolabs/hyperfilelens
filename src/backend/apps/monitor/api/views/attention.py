@@ -12,8 +12,6 @@ from rest_framework.views import APIView
 
 from apps.alert.constants import AlertStatus
 from apps.alert.models import AlertRecord
-from apps.audit.constants import AuditResult
-from apps.audit.models import AuditLog
 from apps.iam.org_context import require_org
 from apps.iam.permissions_org import IsOrgReader
 from apps.node.models import Node
@@ -21,7 +19,7 @@ from apps.source.constants import ResourceStatus
 from apps.source.models import SourceResource
 from apps.task.models import Task
 
-KINDS = {"task", "alert", "node", "source", "audit"}
+KINDS = {"task", "alert", "node", "source"}
 PREVIEWS = {"", "diverse"}
 
 
@@ -36,7 +34,7 @@ class AttentionView(APIView):
         org = require_org(request)
         kind = str(request.query_params.get("type") or "").strip()
         if kind and kind not in KINDS:
-            raise ValidationError({"type": "type must be one of task, alert, node, source, audit."})
+            raise ValidationError({"type": "type must be one of task, alert, node, source."})
         preview = str(request.query_params.get("preview") or "").strip()
         if preview not in PREVIEWS:
             raise ValidationError({"preview": "preview must be diverse when provided."})
@@ -51,20 +49,44 @@ class AttentionView(APIView):
         since = timezone.now() - timedelta(hours=24)
         streams: list[tuple[int, list[dict]]] = []
         if not kind or kind == "task":
-            qs = Task.objects.filter(organization_id=org.id, status=Task.Status.FAILED, finished_at__gte=since).order_by("-finished_at", "-id")
-            streams.append((qs.count(), [{"id": f"task-{row.id}", "kind": "task", "title": f"Failed task: {row.display_name or row.task_type}", "detail": row.error_message or "", "occurred_at": _iso(row.finished_at or row.created_at), "to": f"/ops/task?taskUuid={row.task_uuid}"} for row in qs[:end]]))
+            qs = Task.objects.filter(
+                organization_id=org.id,
+                status__in=[Task.Status.FAILED, Task.Status.TIMEOUT],
+                finished_at__gte=since,
+            ).order_by("-finished_at", "-id")
+            streams.append(
+                (
+                    qs.count(),
+                    [
+                        {
+                            "id": f"task-{row.id}",
+                            "kind": "task",
+                            "title": (
+                                "Timed out task: "
+                                if row.status == Task.Status.TIMEOUT
+                                else "Failed task: "
+                            )
+                            + (row.display_name or row.task_type),
+                            "detail": row.error_message or "",
+                            "occurred_at": _iso(row.finished_at or row.created_at),
+                            "to": f"/ops/tasks?taskUuid={row.task_uuid}",
+                        }
+                        for row in qs[:end]
+                    ],
+                )
+            )
         if not kind or kind == "alert":
-            qs = AlertRecord.objects.filter(organization_id=org.id, status=AlertStatus.FIRING).order_by("-last_triggered_at", "-created_at")
-            streams.append((qs.count(), [{"id": f"alert-{row.id}", "kind": "alert", "title": row.title, "detail": row.message, "occurred_at": _iso(row.last_triggered_at or row.created_at), "to": "/ops/alerts/incidents"} for row in qs[:end]]))
+            qs = AlertRecord.objects.filter(
+                organization_id=org.id,
+                status__in=[AlertStatus.FIRING, AlertStatus.ACKNOWLEDGED],
+            ).order_by("-last_triggered_at", "-created_at")
+            streams.append((qs.count(), [{"id": f"alert-{row.id}", "kind": "alert", "title": row.title, "detail": row.message, "occurred_at": _iso(row.last_triggered_at or row.created_at), "to": "/ops/alerts"} for row in qs[:end]]))
         if not kind or kind == "node":
             qs = Node.objects.filter(organization_id=org.id, availability=Node.Availability.OFFLINE).order_by("-availability_updated_at", "-id")
             streams.append((qs.count(), [{"id": f"node-{row.id}", "kind": "node", "title": f"Offline node: {row.name}", "detail": row.role, "occurred_at": _iso(row.availability_updated_at), "to": "/node/agents"} for row in qs[:end]]))
         if not kind or kind == "source":
             qs = SourceResource.objects.filter(organization_id=org.id, status=ResourceStatus.ERROR).order_by("-updated_at", "-id")
             streams.append((qs.count(), [{"id": f"source-{row.id}", "kind": "source", "title": f"Source error: {row.name}", "detail": row.status_message, "occurred_at": _iso(row.updated_at), "to": "/protection/backup-sources?tab=host"} for row in qs[:end]]))
-        if not kind or kind == "audit":
-            qs = AuditLog.objects.filter(organization_id=org.id, result=AuditResult.FAILURE).order_by("-created_at", "-id")
-            streams.append((qs.count(), [{"id": f"audit-{row.id}", "kind": "audit", "title": row.action, "detail": row.error_message or row.details, "occurred_at": _iso(row.created_at), "to": "/ops/audit?result=failure"} for row in qs[:end]]))
         rows = sorted((row for _, stream in streams for row in stream), key=lambda row: row["occurred_at"] or "", reverse=True)
         if preview == "diverse":
             preview_rows: list[dict] = []

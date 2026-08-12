@@ -190,7 +190,7 @@ watch(
 </script>
 
 <template>
-  <ModulePage :title="t('ops.nav.notificationRecords')" :menus="opsMenus" body-fill>
+  <ModulePage :title="t('ops.nav.deliveryHistory')" :menus="opsMenus" body-fill>
     <div class="hfl-ops-page hfl-ops-page--fill">
       <div class="hfl-ops-stats-grid hfl-ops-stats-grid--4">
         <OpsStatCard :label="t('ops.notification.logsTotal')" :value="stats.total" accent="indigo" accent-side="left" />

@@ -529,7 +529,7 @@ watch(
       @closed="closeDetail"
     >
       <template #header>
-        <span class="hfl-detail-drawer__title">{{ selected?.title || t('ops.nav.alertIncidents') }}</span>
+        <span class="hfl-detail-drawer__title">{{ selected?.title || t('ops.nav.alerts') }}</span>
       </template>
 
       <div v-if="selected" class="hfl-detail-drawer__body">

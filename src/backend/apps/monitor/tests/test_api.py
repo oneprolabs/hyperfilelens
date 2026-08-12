@@ -8,6 +8,8 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from apps.alert.constants import AlertStatus
+from apps.alert.models import AlertRecord
 from apps.iam.models import Membership, Organization
 from apps.node.models import Node
 from apps.task.models import Task
@@ -119,4 +121,87 @@ class SystemMonitorApiTests(TestCase):
         self.assertNotIn(
             f"node-{online.id}",
             {row["id"] for row in response.data["results"]},
+        )
+
+    def test_operational_health_includes_acknowledged_but_not_resolved_alerts(self):
+        acknowledged = AlertRecord.objects.create(
+            organization=self.org,
+            type="event",
+            severity="warning",
+            status=AlertStatus.ACKNOWLEDGED,
+            title="Acknowledged issue",
+            fingerprint="acknowledged-operational-health",
+        )
+        resolved = AlertRecord.objects.create(
+            organization=self.org,
+            type="event",
+            severity="warning",
+            status=AlertStatus.RESOLVED,
+            title="Resolved issue",
+            fingerprint="resolved-operational-health",
+        )
+
+        response = self.client.get(
+            "/api/v1/monitors/attention/",
+            {"type": "alert"},
+            HTTP_X_ORG_KEY=self.org.key,
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = {row["id"] for row in response.data["results"]}
+        self.assertIn(f"alert-{acknowledged.id}", ids)
+        self.assertNotIn(f"alert-{resolved.id}", ids)
+
+    def test_operational_health_limits_failed_tasks_to_last_24_hours(self):
+        now = timezone.now()
+        recent = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Recent failure",
+            status=Task.Status.FAILED,
+            finished_at=now - timedelta(hours=23),
+        )
+        old = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Old failure",
+            status=Task.Status.FAILED,
+            finished_at=now - timedelta(hours=25),
+        )
+
+        response = self.client.get(
+            "/api/v1/monitors/attention/",
+            {"type": "task"},
+            HTTP_X_ORG_KEY=self.org.key,
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = {row["id"] for row in response.data["results"]}
+        self.assertIn(f"task-{recent.id}", ids)
+        self.assertNotIn(f"task-{old.id}", ids)
+
+    def test_operational_health_includes_timed_out_tasks(self):
+        timed_out = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Timed out backup",
+            status=Task.Status.TIMEOUT,
+            finished_at=timezone.now(),
+        )
+
+        response = self.client.get(
+            "/api/v1/monitors/attention/",
+            {"type": "task"},
+            HTTP_X_ORG_KEY=self.org.key,
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rows = {row["id"]: row for row in response.data["results"]}
+        self.assertIn(f"task-{timed_out.id}", rows)
+        self.assertEqual(
+            rows[f"task-{timed_out.id}"]["title"],
+            "Timed out task: Timed out backup",
         )

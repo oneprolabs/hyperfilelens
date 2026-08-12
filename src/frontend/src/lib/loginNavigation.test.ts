@@ -5,9 +5,9 @@ const ORIGIN = 'https://hyperfilelens.com'
 
 describe('login redirect validation', () => {
   it.each([
-    ['/ops/alerts/incidents', '/ops/alerts/incidents'],
+    ['/ops/alerts', '/ops/alerts'],
     ['/search?q=backup#results', '/search?q=backup#results'],
-    ['/foo/../ops/task', '/ops/task'],
+    ['/foo/../ops/tasks', '/ops/tasks'],
   ])('accepts and canonicalizes a local path: %s', (redirect, expected) => {
     expect(resolveSafeLoginRedirect(redirect, ORIGIN)).toBe(expected)
   })
@@ -20,7 +20,7 @@ describe('login redirect validation', () => {
     '/login/',
     '/LOGIN',
     '/Login/',
-    '/login?redirect=/ops/task',
+    '/login?redirect=/ops/tasks',
     '/foo/../login',
     '/foo/../LOGIN',
     '/%2e%2e/login',
@@ -33,7 +33,7 @@ describe('login redirect validation', () => {
   })
 
   it('rejects non-string query values', () => {
-    expect(resolveSafeLoginRedirect(['/ops/task'], ORIGIN)).toBeNull()
+    expect(resolveSafeLoginRedirect(['/ops/tasks'], ORIGIN)).toBeNull()
     expect(resolveSafeLoginRedirect(undefined, ORIGIN)).toBeNull()
   })
 })
@@ -42,15 +42,15 @@ describe('legacy session reason cleanup', () => {
   it('removes reason while preserving valid navigation context', () => {
     expect(withoutLegacySessionReason({
       reason: 'TOKEN_REUSED',
-      redirect: '/ops/alerts/incidents',
+      redirect: '/ops/alerts',
       email: 'person@example.com',
     })).toEqual({
-      redirect: '/ops/alerts/incidents',
+      redirect: '/ops/alerts',
       email: 'person@example.com',
     })
   })
 
   it('does not redirect a clean login route', () => {
-    expect(withoutLegacySessionReason({ redirect: '/ops/task' })).toBeNull()
+    expect(withoutLegacySessionReason({ redirect: '/ops/tasks' })).toBeNull()
   })
 })

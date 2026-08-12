@@ -6,8 +6,8 @@ import { consumeSessionNotice } from '../lib/sessionNotice'
 const mocks = vi.hoisted(() => ({
   currentRoute: {
     value: {
-      path: '/ops/alerts/incidents',
-      fullPath: '/ops/alerts/incidents?status=open',
+      path: '/ops/alerts',
+      fullPath: '/ops/alerts?status=open',
     },
   },
   refreshAuthToken: vi.fn().mockResolvedValue({
@@ -88,7 +88,7 @@ describe('session watchdog notice handoff', () => {
       expect(mocks.routerReplace).toHaveBeenCalledWith({
         path: '/login',
         query: {
-          redirect: '/ops/alerts/incidents?status=open',
+          redirect: '/ops/alerts?status=open',
         },
       })
     })

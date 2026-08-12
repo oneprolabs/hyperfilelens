@@ -93,6 +93,24 @@ export type NotificationLog = {
   policy?: Record<string, unknown>
 }
 
+export type UserNotification = {
+  id: string
+  kind: string
+  title: string
+  summary?: string
+  severity: string
+  occurred_at?: string
+  updated_at?: string
+  is_read: boolean
+  to: string
+}
+
+export type UserNotificationPage = {
+  count: number
+  unread_count: number
+  results: UserNotification[]
+}
+
 type Paged<T> = { count: number; results: T[] }
 
 function paged<T>(raw: unknown): Paged<T> {
@@ -100,7 +118,24 @@ function paged<T>(raw: unknown): Paged<T> {
   return { count: typeof data.count === 'number' ? data.count : 0, results: asList<T>(data) }
 }
 
-const base = '/api/v1/notification'
+const base = '/api/v1/notifications'
+
+export async function listUserNotifications(pageSize = 10, page = 1) {
+  return unwrapApiPayload<UserNotificationPage>(
+    await api<unknown>(`${base}/inbox/?page=${page}&page_size=${pageSize}`),
+  )
+}
+
+export async function markUserNotificationRead(id: string) {
+  await api(`${base}/inbox/${encodeURIComponent(id)}/read/`, {
+    method: 'POST',
+    body: '{}',
+  })
+}
+
+export async function markAllUserNotificationsRead() {
+  await api(`${base}/inbox/mark-all-read/`, { method: 'POST', body: '{}' })
+}
 
 export async function listChannels(
   params?: Record<string, string | number>,
