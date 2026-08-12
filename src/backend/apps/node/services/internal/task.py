@@ -106,7 +106,7 @@ def _protection_backup_watchdog_deadline(*, from_time: datetime | None = None) -
 
     base = from_time or timezone.now()
     return base + timezone.timedelta(
-        seconds=protection_conf.PROTECTION_BACKUP_NODE_TASK_WATCHDOG_SECONDS
+        seconds=protection_conf.PROTECTION_BACKUP_ACTIVITY_LEASE_SECONDS
     )
 
 
@@ -794,17 +794,19 @@ def record_task_progress(
     task.status = NodeTask.Status.RUNNING
     task.accepted_at = task.accepted_at or now
     task.last_progress_at = now
-    from apps.protection import conf as protection_conf
-
-    if (
-        _is_protection_backup_task(task)
-        and protection_conf.PROTECTION_BACKUP_DISABLE_SHORT_WATCHDOG
-    ):
-        if _substantive_backup_progress(progress):
-            task.watchdog_deadline_at = _protection_backup_watchdog_deadline(from_time=now)
-        update_fields = ["status", "accepted_at", "last_progress_at", "result", "updated_at"]
-        if _substantive_backup_progress(progress):
-            update_fields.append("watchdog_deadline_at")
+    if _is_protection_backup_task(task):
+        # task.alive and generic task.progress frames prove that the Agent's
+        # execution goroutine is still running. Renew the activity lease even
+        # when Kopia's byte counters or percentage have not changed.
+        task.watchdog_deadline_at = _protection_backup_watchdog_deadline(from_time=now)
+        update_fields = [
+            "status",
+            "accepted_at",
+            "last_progress_at",
+            "watchdog_deadline_at",
+            "result",
+            "updated_at",
+        ]
     else:
         task.watchdog_deadline_at = _watchdog_deadline(from_time=now)
         update_fields = ["status", "accepted_at", "last_progress_at", "watchdog_deadline_at", "result", "updated_at"]

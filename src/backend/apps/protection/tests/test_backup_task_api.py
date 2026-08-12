@@ -21,6 +21,7 @@ from apps.protection.models import (
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
 from apps.node.services.internal.agent_task import AgentTaskHandle
 from apps.protection.services.backup_orchestrator import (
+    _handle_directory_stall,
     _reconcile_pending_backup_queue,
     _repository_public_host,
     cancel_backup,
@@ -933,6 +934,117 @@ class ProtectionBackupTaskApiTests(TestCase):
             task_uuid=str(task.task_uuid),
             source_snapshot_id=snapshot.id,
         )
+
+    @patch("apps.protection.services.backup_orchestrator.cancel_agent_task")
+    def test_substantive_stall_warns_without_canceling_snapshot(self, mock_cancel):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-stall-warning-only",
+        )
+        directory_config = self.config.directories.first()
+        directory = BackupSourceSnapshotDirectory.objects.create(
+            source_snapshot=snapshot,
+            organization_id=self.org.id,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=directory_config.id,
+            source_path=directory_config.path,
+            display_name=directory_config.display_name,
+            repository_id=self.repository.id,
+        )
+        directory.status = BackupSourceSnapshotDirectory.Status.RUNNING
+        directory.dispatched_at = timezone.now() - timezone.timedelta(hours=3)
+        directory.save(update_fields=["status", "dispatched_at", "updated_at"])
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.snapshot.create",
+            correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+            correlation_id=str(task.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now()
+            + timezone.timedelta(
+                seconds=protection_conf.PROTECTION_BACKUP_ACTIVITY_LEASE_SECONDS
+            ),
+        )
+
+        failed = _handle_directory_stall(
+            task=task,
+            directory_row=directory,
+            node_task=node_task,
+            node_online=True,
+        )
+
+        directory.refresh_from_db()
+        self.assertFalse(failed)
+        self.assertIsNotNone(directory.stall_warned_at)
+        self.assertIsNone(directory.cancel_requested_at)
+        mock_cancel.assert_not_called()
+        self.assertEqual(
+            TaskEvent.objects.filter(
+                task=task,
+                message="Backup progress stalled",
+            ).count(),
+            1,
+        )
+        self.assertFalse(
+            _handle_directory_stall(
+                task=task,
+                directory_row=directory,
+                node_task=node_task,
+                node_online=True,
+            )
+        )
+        self.assertEqual(
+            TaskEvent.objects.filter(
+                task=task,
+                message="Backup progress stalled",
+            ).count(),
+            1,
+        )
+
+    def test_file_count_progress_refreshes_substantive_activity_only_on_change(self):
+        from apps.protection.services.progress.backup_runtime import (
+            update_directory_progress_snapshot,
+        )
+
+        _, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-file-count-substantive-progress",
+        )
+        directory_config = self.config.directories.first()
+        directory = BackupSourceSnapshotDirectory.objects.create(
+            source_snapshot=snapshot,
+            organization_id=self.org.id,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=directory_config.id,
+            source_path=directory_config.path,
+            display_name=directory_config.display_name,
+            repository_id=self.repository.id,
+        )
+
+        update_directory_progress_snapshot(
+            directory=directory,
+            progress={"hashed_count": 10, "hashed_bytes": 0},
+        )
+        directory.refresh_from_db()
+        first_activity = directory.last_substantive_progress_at
+        self.assertIsNotNone(first_activity)
+
+        directory.stall_warned_at = timezone.now()
+        directory.save(update_fields=["stall_warned_at", "updated_at"])
+        update_directory_progress_snapshot(
+            directory=directory,
+            progress={"hashed_count": 10, "hashed_bytes": 0},
+        )
+        directory.refresh_from_db()
+        self.assertEqual(directory.last_substantive_progress_at, first_activity)
+        self.assertIsNotNone(directory.stall_warned_at)
+
+        update_directory_progress_snapshot(
+            directory=directory,
+            progress={"hashed_count": 11, "hashed_bytes": 0},
+        )
+        directory.refresh_from_db()
+        self.assertGreater(directory.last_substantive_progress_at, first_activity)
+        self.assertIsNone(directory.stall_warned_at)
 
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",

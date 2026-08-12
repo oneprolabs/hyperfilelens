@@ -22,7 +22,7 @@ class BackupTaskWatchdogTests(SimpleTestCase):
             deadline,
             started_at
             + timezone.timedelta(
-                seconds=protection_conf.PROTECTION_BACKUP_NODE_TASK_WATCHDOG_SECONDS
+                seconds=protection_conf.PROTECTION_BACKUP_ACTIVITY_LEASE_SECONDS
             ),
         )
 
@@ -41,7 +41,7 @@ class BackupTaskWatchdogTests(SimpleTestCase):
             deadline,
             started_at
             + timezone.timedelta(
-                seconds=protection_conf.PROTECTION_BACKUP_NODE_TASK_WATCHDOG_SECONDS
+                seconds=protection_conf.PROTECTION_BACKUP_ACTIVITY_LEASE_SECONDS
             ),
         )
 
