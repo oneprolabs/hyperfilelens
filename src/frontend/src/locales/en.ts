@@ -37,6 +37,21 @@ export const en = {
     supportModeBanner: 'Support mode · {org} · Read-only',
   },
   errors: {
+    pageLoad: {
+      update: {
+        eyebrow: 'Update available',
+        title: 'A newer version is ready',
+        message:
+          'This page belongs to a previous application version. Reload to continue with the latest version.',
+      },
+      loadFailed: {
+        eyebrow: 'Page unavailable',
+        title: 'This page could not be loaded',
+        message: 'Reload and try again. If the problem continues, contact your administrator.',
+      },
+      reload: 'Reload now',
+      note: 'Your saved data and running server tasks are not affected.',
+    },
     agentWsNotRoutable:
       'The agent node is offline or unreachable. Wait until the host is back online and try again, or use Force Cleanup to record the retained installation.',
     agentWsReconnecting:
@@ -1191,6 +1206,7 @@ export const en = {
     statusOnline: 'Online',
     statusReconnecting: 'Reconnecting',
     statusOffline: 'Offline',
+    lastSeenDetail: 'Last seen {time}',
     statusOfflineWithLastSeen: 'Offline · last seen {time}',
     actionUpgradeNow: 'Upgrade Now',
     actionUpgrade: 'Upgrade',
@@ -1724,7 +1740,7 @@ export const en = {
     colRepoPath: 'Repository Path',
     colSourceNode: 'Auth Source Node',
     colStatus: 'Status',
-    colAvailability: 'Availability',
+    colAvailability: 'Connectivity',
     statusCreating: 'Creating',
     statusCreateFailed: 'Create Failed',
     statusCreated: 'Created',
@@ -1795,7 +1811,7 @@ export const en = {
     associatedSourceColNasConnectivity: 'NAS Connectivity',
     associatedSourceColEndpoint: 'Endpoint',
     associatedSourceColStatus: 'Status',
-    associatedSourceColAvailability: 'Availability',
+    associatedSourceColAvailability: 'Connectivity',
     associatedSourceTypeHost: 'Host',
     associatedSourceTypeNas: 'NAS',
     associatedSourceOnline: 'Online',
