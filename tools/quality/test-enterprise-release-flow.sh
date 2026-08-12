@@ -99,6 +99,14 @@ grep -F '"ls-remote"' "${workflow}" >/dev/null
 grep -F 'f"refs/tags/{tag}"' "${workflow}" >/dev/null
 grep -F 'gh release delete "$ARTIFACT_ID"' "${workflow}" >/dev/null
 
+checkout_count="$(grep -c 'uses: actions/checkout@' "${workflow}")"
+credentialless_checkout_count="$(grep -c 'persist-credentials: false' "${workflow}")"
+if [[ "${credentialless_checkout_count}" -ne "${checkout_count}" ]]; then
+	printf 'ERROR: every release checkout must disable persisted credentials (%s/%s)\n' \
+		"${credentialless_checkout_count}" "${checkout_count}" >&2
+	exit 1
+fi
+
 # actions/checkout leaves an Authorization extraheader in local Git config. The
 # extension auth environment must reset it before adding the private-repo token,
 # otherwise GitHub rejects the duplicate Authorization headers with HTTP 400.
