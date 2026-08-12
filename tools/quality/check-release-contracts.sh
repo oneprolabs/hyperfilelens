@@ -204,7 +204,7 @@ grep -F 'source_version=0.20.0' <<<"${component_identity}" >/dev/null
 grep -F 'build_compose_file=docker-compose.standalone.yml' \
 	<<<"${component_identity}" >/dev/null
 
-grep -F 'archive.extractall(destination, filter="data")' \
+grep -F 'archive.extractall(destination, members=members)' \
 	"${ROOT}/src/agent/scripts/package.sh" >/dev/null
 grep -F 'chown postgres:postgres /var/lib/postgresql/data' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
