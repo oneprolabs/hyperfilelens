@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.utils import timezone
+
 from apps.node.models import NodeTask
 from apps.protection import conf as protection_conf
 from apps.protection.models import BackupConfigDirectory, BackupSourceSnapshot, BackupSourceSnapshotDirectory
@@ -23,6 +25,40 @@ _DIRECTORY_ACTIVE = {
     BackupSourceSnapshotDirectory.Status.RUNNING,
     BackupSourceSnapshotDirectory.Status.CREATING,
 }
+
+_SUBSTANTIVE_PROGRESS_FIELDS = (
+    "hashed_bytes",
+    "uploaded_bytes",
+    "hashed_count",
+    "uploaded_count",
+    "hashing_count",
+    "kopia_percent",
+    "percent",
+)
+_SUBSTANTIVE_PROGRESS_PHASES = {
+    "hashing",
+    "uploading",
+    "snapshot_created",
+    "repository_ready",
+    "snapshot_start",
+}
+
+
+def _has_substantive_progress_change(
+    *, current: dict[str, Any] | None, previous: dict[str, Any] | None
+) -> bool:
+    if not isinstance(current, dict) or not current:
+        return False
+    previous = previous if isinstance(previous, dict) else {}
+    for key in _SUBSTANTIVE_PROGRESS_FIELDS:
+        value = current.get(key)
+        if value not in (None, "") and value != previous.get(key):
+            return True
+    phase = str(current.get("kopia_phase") or current.get("phase") or "").strip().lower()
+    previous_phase = str(
+        previous.get("kopia_phase") or previous.get("phase") or ""
+    ).strip().lower()
+    return phase in _SUBSTANTIVE_PROGRESS_PHASES and phase != previous_phase
 
 
 def build_backup_kopia_progress(
@@ -133,6 +169,11 @@ def update_directory_progress_snapshot(
     progress: dict[str, Any] | None,
     node_task: NodeTask | None = None,
 ) -> BackupSourceSnapshotDirectory:
+    previous_progress = (
+        directory.last_progress_snapshot
+        if isinstance(directory.last_progress_snapshot, dict)
+        else {}
+    )
     sample = directory.last_progress_sample if isinstance(directory.last_progress_sample, dict) else {}
     normalized = normalize_lane_progress(
         progress=progress,
@@ -149,6 +190,13 @@ def update_directory_progress_snapshot(
         **{k: v for k, v in normalized.items() if k not in {"last_sample"}},
     }
     update_fields.append("last_progress_snapshot")
+    if _has_substantive_progress_change(
+        current=progress,
+        previous=previous_progress,
+    ):
+        directory.last_substantive_progress_at = timezone.now()
+        directory.stall_warned_at = None
+        update_fields.extend(["last_substantive_progress_at", "stall_warned_at"])
     if normalized.get("last_sample"):
         directory.last_progress_sample = normalized["last_sample"]
         update_fields.append("last_progress_sample")

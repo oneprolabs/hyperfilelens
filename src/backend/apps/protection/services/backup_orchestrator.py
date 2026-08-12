@@ -105,23 +105,6 @@ def _directory_in_progress(status: str) -> bool:
     return str(status or "").strip().lower() in _DIRECTORY_IN_PROGRESS
 
 
-def _substantive_progress_signature(progress: dict[str, Any]) -> str | None:
-    if not isinstance(progress, dict) or not progress:
-        return None
-    parts: list[str] = []
-    for key in ("hashed_bytes", "uploaded_bytes", "kopia_percent", "percent"):
-        value = progress.get(key)
-        if value is None or value == "":
-            continue
-        parts.append(f"{key}={value}")
-    if parts:
-        return "|".join(parts)
-    phase = str(progress.get("kopia_phase") or progress.get("phase") or "").strip().lower()
-    if phase in {"hashing", "uploading", "snapshot_created", "repository_ready", "snapshot_start"}:
-        return f"phase={phase}"
-    return None
-
-
 def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
     bt = _bt()
     last_error = str(node_task.last_error or "").strip()
@@ -185,29 +168,6 @@ def _get_node_task_for_directory(
         task_uuid=task_uuid,
         backup_config_dir_id=directory.backup_config_dir_id,
     )
-
-
-def _update_directory_from_node_task(
-    *,
-    directory: BackupSourceSnapshotDirectory,
-    node_task: NodeTask,
-    progress: dict[str, Any] | None = None,
-) -> BackupSourceSnapshotDirectory:
-    now = timezone.now()
-    update_fields = ["updated_at"]
-    if progress:
-        directory.last_progress_snapshot = progress
-        update_fields.append("last_progress_snapshot")
-        if _substantive_progress_signature(progress):
-            directory.last_substantive_progress_at = now
-            directory.stall_warned_at = None
-            update_fields.extend(["last_substantive_progress_at", "stall_warned_at"])
-    if node_task.id and directory.node_task_id != node_task.id:
-        directory.node_task_id = node_task.id
-        update_fields.append("node_task_id")
-    if update_fields != ["updated_at"]:
-        directory.save(update_fields=list(dict.fromkeys(update_fields)))
-    return directory
 
 
 def _task_result_payload(task: Task) -> dict[str, Any]:
@@ -1087,7 +1047,6 @@ def _handle_directory_stall(
         return False
     elapsed = (now - reference).total_seconds()
     warn_seconds = protection_conf.PROTECTION_BACKUP_SUBSTANTIVE_STALL_WARN_SECONDS
-    fail_seconds = protection_conf.PROTECTION_BACKUP_SUBSTANTIVE_STALL_FAIL_SECONDS
     if elapsed >= warn_seconds and directory_row.stall_warned_at is None:
         directory_row.stall_warned_at = now
         directory_row.save(update_fields=["stall_warned_at", "updated_at"])
@@ -1103,44 +1062,11 @@ def _handle_directory_stall(
                 "object_name": directory_row.source_path,
             },
         )
-    if elapsed < fail_seconds:
-        return False
-    if directory_row.cancel_requested_at is None:
-        directory_row.cancel_requested_at = now
-        directory_row.save(update_fields=["cancel_requested_at", "updated_at"])
-        cancel_agent_task(task_id=node_task.id, reason="backup progress stall")
-        return False
-    grace = protection_conf.PROTECTION_BACKUP_CANCEL_GRACE_SECONDS
-    if (now - directory_row.cancel_requested_at).total_seconds() < grace:
-        return False
-    error_code = "KOPIA_PROGRESS_STALL"
-    error_message = f"No substantive backup progress for {int(elapsed)} seconds."
-    record_source_snapshot_directory_result(
-        source_snapshot=directory_row.source_snapshot,
-        backup_config_dir_id=directory_row.backup_config_dir_id,
-        source_path=directory_row.source_path,
-        path_type=directory_row.path_type,
-        display_name=directory_row.display_name,
-        repository_id=directory_row.repository_id,
-        status=BackupSourceSnapshotDirectory.Status.FAILED,
-        error_code=error_code,
-        error_message=error_message,
-    )
-    append_task_step_event(
-        task=task,
-        step_name="kopia_snapshot",
-        level=TaskEvent.Level.ERROR,
-        message="Directory backup failed",
-        metadata={
-            "backup_config_dir_id": directory_row.backup_config_dir_id,
-            "source_path": directory_row.source_path,
-            "node_task_id": str(node_task.id),
-            "error_code": error_code,
-            "error_message": error_message,
-            "object_name": directory_row.source_path,
-        },
-    )
-    return True
+    # A lack of changing Kopia counters is diagnostic, not proof that the
+    # process is dead (large small-file trees can spend a long time walking and
+    # reading metadata). The NodeTask activity lease and Agent-side Kopia
+    # watchdog own termination decisions.
+    return False
 
 
 _STALE_DIRECTORY_FAILURE_CODES = frozenset(
@@ -3152,7 +3078,7 @@ def reattach_backup_node_task(
     node_task.status = NodeTask.Status.RUNNING
     node_task.last_error = ""
     node_task.watchdog_deadline_at = timezone.now() + timedelta(
-        seconds=protection_conf.PROTECTION_BACKUP_NODE_TASK_WATCHDOG_SECONDS,
+        seconds=protection_conf.PROTECTION_BACKUP_ACTIVITY_LEASE_SECONDS,
     )
     node_task.save(
         update_fields=["status", "last_error", "watchdog_deadline_at", "updated_at"]

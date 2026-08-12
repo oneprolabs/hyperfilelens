@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
+from apps.protection import conf as protection_conf
 from apps.node.services.internal.task import (
     _RouteState,
     accept_task,
@@ -14,6 +15,7 @@ from apps.node.services.internal.task import (
     deliver_agent_task,
     reconcile_unaccepted_agent_tasks,
     record_task_progress,
+    sweep_watchdog_timeouts,
 )
 
 
@@ -81,6 +83,73 @@ class TaskCommandAckTests(TestCase):
         )
         self.assertEqual(completed.status, NodeTask.Status.SUCCESS)
         self.assertIsNotNone(completed.accepted_at)
+
+    @patch("apps.node.services.internal.task.redis_store.set_task_info")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    def test_backup_alive_renews_activity_lease_without_substantive_progress(
+        self, _push, _set_info
+    ):
+        task = self.task(
+            status=NodeTask.Status.RUNNING,
+            accepted_at=timezone.now() - timezone.timedelta(hours=3),
+            watchdog_deadline_at=timezone.now() - timezone.timedelta(seconds=1),
+        )
+
+        renewed = record_task_progress(
+            task_id=task.id,
+            node_id=self.node.id,
+            progress={},
+            alive=True,
+        )
+
+        self.assertEqual(renewed.status, NodeTask.Status.RUNNING)
+        remaining = (renewed.watchdog_deadline_at - timezone.now()).total_seconds()
+        self.assertGreater(
+            remaining,
+            protection_conf.PROTECTION_BACKUP_ACTIVITY_LEASE_SECONDS - 5,
+        )
+        self.assertLessEqual(
+            remaining,
+            protection_conf.PROTECTION_BACKUP_ACTIVITY_LEASE_SECONDS,
+        )
+
+    @patch("apps.node.services.internal.task._send_cancel_command")
+    @patch(
+        "apps.node.services.internal.task_offline_reconcile.sync_platform_tasks_for_node_task"
+    )
+    @patch("apps.node.services.internal.task._sync_task_info")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch(
+        "apps.node.services.internal.task.redis_store.get_task_uplink_activities",
+        return_value={},
+    )
+    def test_backup_without_activity_expires_after_lease(
+        self,
+        _uplink_activity,
+        _push,
+        _set_info,
+        _sync_platform_task,
+        send_cancel,
+    ):
+        task = self.task(
+            status=NodeTask.Status.RUNNING,
+            accepted_at=timezone.now() - timezone.timedelta(hours=3),
+            last_progress_at=timezone.now()
+            - timezone.timedelta(
+                seconds=protection_conf.PROTECTION_BACKUP_ACTIVITY_LEASE_SECONDS + 1
+            ),
+            watchdog_deadline_at=timezone.now() - timezone.timedelta(seconds=1),
+        )
+
+        marked = sweep_watchdog_timeouts(
+            queryset=NodeTask.objects.filter(pk=task.pk),
+        )
+
+        task.refresh_from_db()
+        self.assertEqual(marked, 1)
+        self.assertEqual(task.status, NodeTask.Status.TIMEOUT)
+        self.assertEqual(task.last_error, "watchdog timeout (no progress)")
+        send_cancel.assert_called_once()
 
     @patch("apps.node.services.internal.task.redis_store.ws_recovery_hold_active", return_value=False)
     @patch("apps.node.services.internal.task.redis_store.set_task_info")
