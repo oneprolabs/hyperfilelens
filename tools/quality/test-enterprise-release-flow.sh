@@ -75,7 +75,8 @@ grep -F 'secrets.COMMUNITY_SSH_PRIVATE_KEY || secrets.PREPROD_SSH_PRIVATE_KEY' \
 grep -F 'Materialize Enterprise extension for quality gates' "${workflow}" >/dev/null
 grep -F 'HFL_EXTENSIONS=$extensions' "${workflow}" >/dev/null
 grep -F 'Enterprise extension contains no discoverable backend tests' "${workflow}" >/dev/null
-grep -F 'manage.py test "${extension_test_labels[@]}"' "${workflow}" >/dev/null
+grep -F '"${extension_test_dirs[@]}"' "${workflow}" >/dev/null
+grep -F -- '--top-level-directory "$backend"' "${workflow}" >/dev/null
 grep -F 'HFL_EXTENSIONS= uv run python src/backend/manage.py test' "${workflow}" >/dev/null
 if grep -Fx '          uv run python src/backend/manage.py test' "${workflow}" >/dev/null; then
 	printf 'ERROR: the full Host backend suite must run with the extension socket empty\n' >&2
