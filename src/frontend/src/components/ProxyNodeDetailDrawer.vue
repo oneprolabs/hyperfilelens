@@ -212,6 +212,7 @@ onUnmounted(() => {
             <ProxyStorageRepositoriesPanel
               v-if="nodeId != null"
               :node-id="nodeId"
+              :node="node"
               :active="storageTabActive"
             />
           </ElTabPane>

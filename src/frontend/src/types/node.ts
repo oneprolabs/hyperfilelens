@@ -14,6 +14,27 @@ export type NodeStatus =
   | 'deregistration_failed'
 export type Availability = 'online' | 'offline'
 
+export type NodeStoragePool = {
+  key?: string
+  kind?: 'local' | 'network' | string
+  device?: string
+  fs_type?: string
+  mount_points?: string[]
+  total_bytes?: number
+  used_bytes?: number
+  free_bytes?: number
+}
+
+export type NodeStoragePoolRow = {
+  key: string
+  device: string
+  fsType: string
+  mountPoints: string[]
+  totalBytes: number
+  usedBytes: number
+  availableBytes: number
+}
+
 export type ApiNode = {
   id: number
   organization: number

@@ -1,4 +1,5 @@
 from importlib import import_module
+from unittest.mock import patch
 
 from django.apps import apps as django_apps
 from django.test import SimpleTestCase, TestCase
@@ -13,7 +14,10 @@ from apps.node.services.internal.network_inventory import (
     normalize_network_inventory,
     same_network_inventory,
 )
-from apps.node.ws.uplink import apply_heartbeat_inventory_snapshot
+from apps.node.ws.uplink import (
+    _process_heartbeat_followup,
+    apply_heartbeat_inventory_snapshot,
+)
 
 
 def network_payload(primary: str = "10.20.1.15") -> dict:
@@ -159,6 +163,104 @@ class NodeNetworkInventoryHeartbeatTests(TestCase):
 
         self.node.refresh_from_db()
         self.assertEqual(str(self.node.ip_address), "10.20.1.10")
+
+    def test_structured_storage_snapshot_clears_legacy_capacity(self):
+        self.node.metadata = {
+            "inventory": {
+                "disk_total_bytes": 338_700_000_000,
+                "disk_used_bytes": 119_600_000_000,
+                "disk_free_bytes": 219_100_000_000,
+                "disk_count": 5,
+            }
+        }
+        self.node.save(update_fields=["metadata"])
+
+        apply_heartbeat_inventory_snapshot(
+            node_id=self.node.id,
+            inventory={
+                "capabilities": ["storage_inventory_v1"],
+                "local_storage_pools": [],
+                "network_storage_pools": [],
+                "disk_total_bytes": 0,
+                "disk_used_bytes": 0,
+                "disk_free_bytes": 0,
+                "disk_count": 0,
+            },
+        )
+
+        self.node.refresh_from_db()
+        inventory = self.node.metadata["inventory"]
+        self.assertEqual(inventory["local_storage_pools"], [])
+        self.assertEqual(inventory["network_storage_pools"], [])
+        self.assertEqual(inventory["disk_total_bytes"], 0)
+        self.assertEqual(inventory["disk_used_bytes"], 0)
+        self.assertEqual(inventory["disk_free_bytes"], 0)
+        self.assertEqual(inventory["disk_count"], 0)
+
+    def test_inventory_snapshot_preserves_monitor_metadata(self):
+        self.node.metadata = {
+            "metrics": {"cpu_usage": 12.5},
+            "monitor_sample_timestamp": "2026-08-12T10:00:00Z",
+            "inventory": {"cpu_cores": 4},
+        }
+        self.node.save(update_fields=["metadata"])
+
+        apply_heartbeat_inventory_snapshot(
+            node_id=self.node.id,
+            inventory={
+                "capabilities": ["storage_inventory_v1"],
+                "storage_inventory_status": "ready",
+                "local_storage_pools": [],
+                "disk_total_bytes": 0,
+            },
+        )
+
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.metadata["metrics"], {"cpu_usage": 12.5})
+        self.assertEqual(
+            self.node.metadata["monitor_sample_timestamp"],
+            "2026-08-12T10:00:00Z",
+        )
+        self.assertEqual(self.node.metadata["inventory"]["cpu_cores"], 4)
+        self.assertEqual(self.node.metadata["inventory"]["local_storage_pools"], [])
+
+    @patch("apps.node.ws.uplink.sync_agent_source_host_by_id")
+    @patch("apps.node.ws.uplink.record_node_available")
+    @patch("apps.node.ws.uplink._should_process_full_inventory", return_value=True)
+    @patch("apps.node.ws.uplink.redis_store.touch_ws_instance_alive")
+    @patch("apps.node.ws.uplink.redis_store.touch_agent_location")
+    def test_delayed_followup_does_not_reapply_stale_inventory(
+        self,
+        _mock_touch_location,
+        _mock_touch_instance,
+        _mock_should_process,
+        _mock_record_available,
+        _mock_sync_source,
+    ):
+        self.node.metadata = {
+            "inventory": {
+                "capabilities": ["storage_inventory_v1"],
+                "storage_inventory_status": "ready",
+                "local_storage_pools": [{"key": "local:new"}],
+                "disk_total_bytes": 100,
+            }
+        }
+        self.node.save(update_fields=["metadata"])
+
+        _process_heartbeat_followup(
+            node_id=self.node.id,
+            inventory={
+                "capabilities": ["storage_inventory_v1"],
+                "storage_inventory_status": "ready",
+                "local_storage_pools": [{"key": "local:old"}],
+                "disk_total_bytes": 50,
+            },
+        )
+
+        self.node.refresh_from_db()
+        inventory = self.node.metadata["inventory"]
+        self.assertEqual(inventory["local_storage_pools"], [{"key": "local:new"}])
+        self.assertEqual(inventory["disk_total_bytes"], 100)
 
 
 class NodeNetworkInventoryMigrationTests(TestCase):

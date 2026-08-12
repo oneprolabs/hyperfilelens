@@ -1214,6 +1214,54 @@ class SourceResourceApiTests(TestCase):
         self.assertIsNotNone(resource)
         self.assertEqual(resource.config["platform"], "macos")
 
+    def test_sync_agent_source_host_clears_legacy_capacity_while_inventory_pending(self):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-storage-pending",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={
+                "inventory": {
+                    "capabilities": ["storage_inventory_v1"],
+                    "storage_inventory_status": "pending",
+                    "disk_total_bytes": 338_700_000_000,
+                    "disk_used_bytes": 119_600_000_000,
+                    "disk_free_bytes": 219_100_000_000,
+                }
+            },
+        )
+
+        resource = sync_agent_source_host(node=agent)
+
+        self.assertEqual(resource.total_size, 0)
+        self.assertEqual(resource.used_size, 0)
+        self.assertEqual(resource.free_size, 0)
+
+    def test_sync_agent_source_host_rejects_incomplete_ready_storage_snapshot(self):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-storage-incomplete",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={
+                "inventory": {
+                    "capabilities": ["storage_inventory_v1"],
+                    "storage_inventory_status": "ready",
+                    "disk_total_bytes": 338_700_000_000,
+                    "disk_used_bytes": 119_600_000_000,
+                    "disk_free_bytes": 219_100_000_000,
+                }
+            },
+        )
+
+        resource = sync_agent_source_host(node=agent)
+
+        self.assertEqual(resource.total_size, 0)
+        self.assertEqual(resource.used_size, 0)
+        self.assertEqual(resource.free_size, 0)
+
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_agent_directory_uses_agent_task(self, mock_run_task):
         agent = Node.objects.create(

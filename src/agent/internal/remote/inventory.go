@@ -6,7 +6,6 @@ import (
 	"runtime"
 
 	"github.com/shirou/gopsutil/v4/cpu"
-	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
 
 	"hyperfilelens/agent/internal/infra/config"
@@ -21,7 +20,12 @@ import (
 )
 
 // SendInventory emits a heartbeat frame with host and bundle metadata for the control plane.
-func SendInventory(ctx context.Context, sink wire.Sender, provider config.Provider) error {
+func SendInventory(
+	ctx context.Context,
+	sink wire.Sender,
+	provider config.Provider,
+	storagePayload map[string]any,
+) error {
 	if sink == nil || provider == nil {
 		return nil
 	}
@@ -51,6 +55,7 @@ func SendInventory(ctx context.Context, sink wire.Sender, provider config.Provid
 			"network_inventory_v1",
 			"repository_server_port_range_v1",
 			"detached_uninstall_v2",
+			"storage_inventory_v1",
 		},
 	} {
 		payload[key] = value
@@ -74,18 +79,8 @@ func SendInventory(ctx context.Context, sink wire.Sender, provider config.Provid
 		payload["primary_ip_source"] = networkSnapshot.Selection.Source
 		payload["network_inventory"] = networkSnapshot
 	}
-	if total, used, free, count, err := agentdisk.HostStorageUsage(); err == nil && count > 0 {
-		payload["disk_total_bytes"] = total
-		payload["disk_used_bytes"] = used
-		payload["disk_free_bytes"] = free
-		payload["disk_count"] = count
-	} else if total, used, free, err := agentdisk.Usage(dataDir); err == nil {
-		payload["disk_total_bytes"] = total
-		payload["disk_used_bytes"] = used
-		payload["disk_free_bytes"] = free
-		if parts, err := disk.Partitions(false); err == nil && len(parts) > 0 {
-			payload["disk_count"] = len(parts)
-		}
+	for key, value := range storagePayload {
+		payload[key] = value
 	}
 	if logical, err := cpu.Counts(true); err == nil && logical > 0 {
 		payload["cpu_cores"] = logical
@@ -101,6 +96,61 @@ func SendInventory(ctx context.Context, sink wire.Sender, provider config.Provid
 		}
 	}
 	return sink.SendJSON(ctx, wire.NewHeartbeatWithPayload(payload))
+}
+
+// EmptyStorageInventoryPayload returns an explicit empty structured inventory.
+// The zero-valued summary clears capacity reported by older Agent versions.
+func EmptyStorageInventoryPayload() map[string]any {
+	return map[string]any{
+		"storage_inventory_status":         "pending",
+		"network_storage_inventory_status": "pending",
+		"local_storage_pools":              []agentdisk.StoragePool{},
+		"network_storage_pools":            []agentdisk.StoragePool{},
+		"disk_total_bytes":                 uint64(0),
+		"disk_used_bytes":                  uint64(0),
+		"disk_free_bytes":                  uint64(0),
+		"disk_count":                       0,
+	}
+}
+
+// CollectStorageInventoryPayload returns the current structured storage
+// inventory. The list capacity is derived exclusively from host-local pools.
+func CollectStorageInventoryPayload() (map[string]any, error) {
+	localPools, err := agentdisk.HostLocalStorageInventory()
+	if err != nil {
+		return nil, err
+	}
+	return localStorageInventoryPayload(localPools), nil
+}
+
+func storageInventoryPayload(storage agentdisk.StorageInventory) map[string]any {
+	payload := localStorageInventoryPayload(storage.LocalPools)
+	payload["network_storage_pools"] = storage.NetworkPools
+	payload["network_storage_inventory_status"] = "ready"
+	return payload
+}
+
+func localStorageInventoryPayload(localPools []agentdisk.StoragePool) map[string]any {
+	payload := EmptyStorageInventoryPayload()
+	payload["storage_inventory_status"] = "ready"
+	payload["local_storage_pools"] = localPools
+
+	var total, used, free uint64
+	for _, pool := range localPools {
+		total += pool.TotalBytes
+		used += pool.UsedBytes
+		free += pool.FreeBytes
+	}
+	payload["disk_total_bytes"] = total
+	payload["disk_used_bytes"] = used
+	payload["disk_free_bytes"] = free
+	payload["disk_count"] = len(localPools)
+	return payload
+}
+
+// CollectNetworkStorageInventory returns the current remote mount inventory.
+func CollectNetworkStorageInventory() ([]agentdisk.StoragePool, error) {
+	return agentdisk.HostNetworkStorageInventory()
 }
 
 func hostname() string {

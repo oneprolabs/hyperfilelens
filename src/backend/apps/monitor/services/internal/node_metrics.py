@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from django.db import transaction
+from django.utils.dateparse import parse_datetime
+
 from apps.alert.constants import ResourceType
 from apps.monitor.services.internal.resource_metrics import record_resource_metric
 from apps.node.models import Node
@@ -12,6 +15,26 @@ _ROLE_TO_RESOURCE_TYPE = {
     NodeRole.AGENT: ResourceType.AGENT_PROXY,
     NodeRole.GATEWAY: ResourceType.GATEWAY,
 }
+
+
+def _monitor_sample_is_stale(*, previous: object, incoming: str) -> bool:
+    if not incoming:
+        return False
+    previous_text = str(previous or "").strip()
+    if not previous_text:
+        return False
+    if incoming == previous_text:
+        return True
+    previous_at = parse_datetime(previous_text)
+    incoming_at = parse_datetime(incoming)
+    if previous_at is None or incoming_at is None:
+        return False
+    try:
+        return incoming_at <= previous_at
+    except TypeError:
+        # Legacy timestamps may be timezone-naive. Accept the new sample and
+        # replace the marker with the Agent's current RFC 3339 timestamp.
+        return False
 
 
 def _normalize_mountpoint(mountpoint: str) -> str:
@@ -55,7 +78,11 @@ def _disk_capacity_from_disks(disks: list) -> dict[str, int]:
     }
 
 
-def _hardware_inventory_summary(sample: dict) -> dict[str, int]:
+def _hardware_inventory_summary(
+    sample: dict,
+    *,
+    preserve_storage_inventory: bool = False,
+) -> dict[str, int]:
     """Extract stable hardware fields for node list display."""
     summary: dict[str, int] = {}
     cpu = sample.get("cpu") if isinstance(sample.get("cpu"), dict) else {}
@@ -68,9 +95,10 @@ def _hardware_inventory_summary(sample: dict) -> dict[str, int]:
             break
     if memory.get("total") is not None:
         summary["memory_total_bytes"] = int(memory["total"])
-    summary.update(_disk_capacity_from_disks(disks))
-    if "disk_count" not in summary and disks:
-        summary["disk_count"] = len(disks)
+    if not preserve_storage_inventory:
+        summary.update(_disk_capacity_from_disks(disks))
+        if "disk_count" not in summary and disks:
+            summary["disk_count"] = len(disks)
     return summary
 
 
@@ -126,12 +154,25 @@ def _scalar_metrics(sample: dict) -> dict:
     return scalars
 
 
+@transaction.atomic
 def ingest_node_monitor_sample(*, node: Node, sample: dict) -> None:
     """Persist a full host monitor sample for charts and alert evaluation."""
     if not isinstance(sample, dict) or not sample:
         return
+
+    node = Node.objects.select_for_update().filter(pk=node.pk).first()
+    if node is None:
+        return
     resource_type = _ROLE_TO_RESOURCE_TYPE.get(node.role)
     if not resource_type:
+        return
+
+    meta = dict(node.metadata or {})
+    sample_timestamp = str(sample.get("timestamp") or "").strip()
+    if _monitor_sample_is_stale(
+        previous=meta.get("monitor_sample_timestamp"),
+        incoming=sample_timestamp,
+    ):
         return
 
     payload = dict(sample)
@@ -145,13 +186,22 @@ def ingest_node_monitor_sample(*, node: Node, sample: dict) -> None:
         metrics=payload,
     )
 
-    meta = dict(node.metadata or {})
     meta["metrics"] = {k: payload[k] for k in _scalar_metrics(sample)}
+    if sample_timestamp:
+        meta["monitor_sample_timestamp"] = sample_timestamp
     if sample.get("boot_time") is not None:
         meta["boot_time"] = sample["boot_time"]
-    hw = _hardware_inventory_summary(sample)
+    inv = dict(meta.get("inventory") or {})
+    capabilities = inv.get("capabilities")
+    preserve_storage_inventory = (
+        isinstance(capabilities, list)
+        and "storage_inventory_v1" in capabilities
+    )
+    hw = _hardware_inventory_summary(
+        sample,
+        preserve_storage_inventory=preserve_storage_inventory,
+    )
     if hw:
-        inv = dict(meta.get("inventory") or {})
         inv.update(hw)
         meta["inventory"] = inv
     Node.objects.filter(pk=node.pk).update(metadata=meta)

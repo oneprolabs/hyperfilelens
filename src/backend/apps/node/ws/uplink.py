@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 from django.utils import timezone
 
 from apps.node import conf as node_conf
@@ -149,19 +149,40 @@ def _merge_heartbeat_inventory_updates(*, node: Node, inventory: dict) -> dict:
     return updates
 
 
+@transaction.atomic
+def _persist_heartbeat_snapshot(
+    *,
+    node_id: int,
+    inventory: dict | None,
+    observed_at,
+    merge_inventory: bool,
+) -> Node | None:
+    """Serialize Node metadata updates shared by heartbeat and monitor ingest."""
+    node = Node.objects.select_for_update().filter(pk=node_id).first()
+    if node is None:
+        return None
+    updates: dict = {"last_seen_at": observed_at}
+    if merge_inventory and inventory:
+        updates.update(
+            _merge_heartbeat_inventory_updates(node=node, inventory=inventory)
+        )
+    Node.objects.filter(pk=node_id).update(**updates)
+    return node
+
+
 def apply_heartbeat_inventory_snapshot(*, node_id: int, inventory: dict | None) -> None:
     """Hot path: persist list/detail inventory fields without waiting for Celery ingest."""
     if not inventory:
         return
-    node = Node.objects.filter(pk=node_id).first()
+    observed_at = timezone.now()
+    node = _persist_heartbeat_snapshot(
+        node_id=node_id,
+        inventory=inventory,
+        observed_at=observed_at,
+        merge_inventory=True,
+    )
     if node is None:
         return
-    updates = _merge_heartbeat_inventory_updates(node=node, inventory=inventory)
-    if not updates:
-        return
-    observed_at = timezone.now()
-    updates["last_seen_at"] = observed_at
-    Node.objects.filter(pk=node_id).update(**updates)
     record_node_available(node_id=node_id, observed_at=observed_at)
 
 
@@ -179,18 +200,19 @@ def _should_process_full_inventory(*, node_id: int) -> bool:
 def _process_heartbeat_followup(*, node_id: int, inventory: dict | None = None) -> None:
     redis_store.touch_agent_location(agent_id=node_id)
     redis_store.touch_ws_instance_alive()
-    node = Node.objects.filter(pk=node_id).first()
-    if node is None:
-        return
-
     full_inventory = inventory and _should_process_full_inventory(node_id=node_id)
     observed_at = timezone.now()
-    updates: dict = {
-        "last_seen_at": observed_at,
-    }
-    if full_inventory:
-        updates.update(_merge_heartbeat_inventory_updates(node=node, inventory=inventory))
-    Node.objects.filter(pk=node_id).update(**updates)
+    node = _persist_heartbeat_snapshot(
+        node_id=node_id,
+        inventory=inventory,
+        observed_at=observed_at,
+        # The WebSocket hot path already persisted this snapshot before it
+        # entered the queue. Reapplying a delayed payload could overwrite a
+        # newer inventory that arrived while the queue was backlogged.
+        merge_inventory=False,
+    )
+    if node is None:
+        return
     record_node_available(node_id=node_id, observed_at=observed_at)
 
     if (
@@ -201,9 +223,7 @@ def _process_heartbeat_followup(*, node_id: int, inventory: dict | None = None) 
     ):
         from apps.monitor.services.internal.node_metrics import ingest_node_monitor_sample
 
-        fresh = Node.objects.filter(pk=node_id).first()
-        if fresh is not None:
-            ingest_node_monitor_sample(node=fresh, sample=inventory["metrics"])
+        ingest_node_monitor_sample(node=node, sample=inventory["metrics"])
 
     if full_inventory:
         try:

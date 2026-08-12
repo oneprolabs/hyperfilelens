@@ -2,12 +2,20 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getNodeBindings, type NodeBindings, type NodeBindingsRepository } from '../lib/nodeApi'
-import { formatNodeBytes } from '../lib/nodeInventoryDisplay'
+import {
+  formatNodeBytes,
+  nodeHasNetworkStorageInventorySnapshot,
+  nodeHasStorageInventorySnapshot,
+  nodeStoragePoolRows,
+  nodeSupportsStorageInventory,
+} from '../lib/nodeInventoryDisplay'
 import { usePageRequestScope } from '../composables/usePageRequestScope'
 import HflCapacityCell from './HflCapacityCell.vue'
+import type { ApiNode, NodeStoragePoolRow } from '../types/node'
 
 const props = defineProps<{
   nodeId: number
+  node: ApiNode
   active: boolean
 }>()
 
@@ -25,6 +33,27 @@ const requests = usePageRequestScope()
 const bindings = ref<NodeBindings | null>(null)
 const loading = ref(false)
 
+const localStoragePools = computed(() => nodeStoragePoolRows(props.node, 'local_storage_pools'))
+const networkStoragePools = computed(() => nodeStoragePoolRows(props.node, 'network_storage_pools'))
+const storageInventorySupported = computed(() => nodeSupportsStorageInventory(props.node))
+const storageInventoryAvailable = computed(() => nodeHasStorageInventorySnapshot(props.node))
+const networkStorageInventoryAvailable = computed(() => (
+  nodeHasNetworkStorageInventorySnapshot(props.node)
+))
+
+function storageIdentity(row: NodeStoragePoolRow) {
+  return row.device || row.mountPoints[0] || '—'
+}
+
+function storageMountPoints(row: NodeStoragePoolRow) {
+  return row.mountPoints.length ? row.mountPoints.join(', ') : '—'
+}
+
+function nonNegativeBytes(value: unknown) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0
+}
+
 const repositories = computed(() => [
   ...(bindings.value?.target_nas_repositories ?? []),
   ...(bindings.value?.standalone_disk_repositories ?? []),
@@ -33,30 +62,33 @@ const repositories = computed(() => [
 const storagePools = computed<StoragePoolRow[]>(() => {
   const pools = new Map<string, StoragePoolRow>()
   for (const repository of repositories.value) {
-    const totalBytes = Math.max(0, Number(repository.storage_total_bytes || 0))
+    const totalBytes = nonNegativeBytes(repository.storage_total_bytes)
+    const usedBytes = nonNegativeBytes(repository.storage_used_bytes)
+    const availableBytes = nonNegativeBytes(repository.storage_available_bytes)
+    const mountPoint = String(repository.storage_mount_point || '').trim()
     const poolKey = String(repository.storage_pool_key || '').trim()
     if (!poolKey || totalBytes <= 0) continue
     const existing = pools.get(poolKey)
     if (existing) {
       existing.repositoryNames.push(repository.name)
-      existing.totalBytes = Math.max(existing.totalBytes, totalBytes)
-      existing.usedBytes = Math.max(
-        existing.usedBytes,
-        Math.max(0, Number(repository.storage_used_bytes || 0)),
-      )
-      existing.availableBytes = Math.min(
-        existing.availableBytes,
-        Math.max(0, Number(repository.storage_available_bytes || 0)),
-      )
+      if (
+        totalBytes > existing.totalBytes
+        || (totalBytes === existing.totalBytes && usedBytes > existing.usedBytes)
+      ) {
+        existing.totalBytes = totalBytes
+        existing.usedBytes = usedBytes
+        existing.availableBytes = availableBytes
+        if (mountPoint) existing.mountPoint = mountPoint
+      }
       continue
     }
     pools.set(poolKey, {
       key: poolKey,
-      mountPoint: String(repository.storage_mount_point || '').trim(),
+      mountPoint,
       repositoryNames: [repository.name],
       totalBytes,
-      usedBytes: Math.max(0, Number(repository.storage_used_bytes || 0)),
-      availableBytes: Math.max(0, Number(repository.storage_available_bytes || 0)),
+      usedBytes,
+      availableBytes,
     })
   }
   return [...pools.values()]
@@ -131,7 +163,147 @@ watch(
     <section class="proxy-storage-panel__section">
       <div class="proxy-storage-panel__section-head">
         <div>
-          <h4>{{ t('protection.sourceResources.storagePoolsTitle') }}</h4>
+          <h4>{{ t('protection.sourceResources.localStorageTitle') }}</h4>
+          <p>{{ t('protection.sourceResources.localStorageHint') }}</p>
+        </div>
+        <ElTag
+          size="small"
+          effect="plain"
+        >
+          {{ t('protection.sourceResources.storagePoolCount', { n: localStoragePools.length }) }}
+        </ElTag>
+      </div>
+
+      <ElTable
+        v-if="localStoragePools.length"
+        :data="localStoragePools"
+        size="small"
+        class="proxy-storage-panel__table"
+      >
+        <ElTableColumn
+          :label="t('protection.sourceResources.storageDevice')"
+          min-width="165"
+        >
+          <template #default="{ row }">
+            <span class="proxy-storage-panel__mono">{{ storageIdentity(row) }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          :label="t('protection.sourceResources.storageMountPoint')"
+          min-width="170"
+        >
+          <template #default="{ row }">
+            <span class="proxy-storage-panel__mono">{{ storageMountPoints(row) }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          :label="t('repositoriesPage.detailFieldPhysicalUsage')"
+          min-width="190"
+        >
+          <template #default="{ row }">
+            <HflCapacityCell
+              :used-bytes="row.usedBytes"
+              :total-bytes="row.totalBytes"
+              :format-bytes="formatNodeBytes"
+              variant="compact"
+            />
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          :label="t('protection.sourceResources.storageAvailable')"
+          min-width="110"
+        >
+          <template #default="{ row }">
+            {{ formatNodeBytes(row.availableBytes) }}
+          </template>
+        </ElTableColumn>
+      </ElTable>
+      <div
+        v-else
+        class="proxy-storage-panel__empty"
+      >
+        {{ t(!storageInventorySupported
+          ? 'protection.sourceResources.localStorageUpgradeRequired'
+          : storageInventoryAvailable
+            ? 'protection.sourceResources.localStorageEmpty'
+            : 'protection.sourceResources.storageInventoryUnavailable') }}
+      </div>
+    </section>
+
+    <section class="proxy-storage-panel__section">
+      <div class="proxy-storage-panel__section-head">
+        <div>
+          <h4>{{ t('protection.sourceResources.networkStorageTitle') }}</h4>
+          <p>{{ t('protection.sourceResources.networkStorageHint') }}</p>
+        </div>
+        <ElTag
+          size="small"
+          effect="plain"
+        >
+          {{ t('protection.sourceResources.storagePoolCount', { n: networkStoragePools.length }) }}
+        </ElTag>
+      </div>
+
+      <ElTable
+        v-if="networkStoragePools.length"
+        :data="networkStoragePools"
+        size="small"
+        class="proxy-storage-panel__table"
+      >
+        <ElTableColumn
+          :label="t('protection.sourceResources.storageShare')"
+          min-width="170"
+        >
+          <template #default="{ row }">
+            <span class="proxy-storage-panel__mono">{{ storageIdentity(row) }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          :label="t('protection.sourceResources.storageMountPoints')"
+          min-width="220"
+        >
+          <template #default="{ row }">
+            <span class="proxy-storage-panel__mono">{{ storageMountPoints(row) }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          :label="t('repositoriesPage.detailFieldPhysicalUsage')"
+          min-width="190"
+        >
+          <template #default="{ row }">
+            <HflCapacityCell
+              :used-bytes="row.usedBytes"
+              :total-bytes="row.totalBytes"
+              :format-bytes="formatNodeBytes"
+              variant="compact"
+            />
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          :label="t('protection.sourceResources.storageAvailable')"
+          min-width="110"
+        >
+          <template #default="{ row }">
+            {{ formatNodeBytes(row.availableBytes) }}
+          </template>
+        </ElTableColumn>
+      </ElTable>
+      <div
+        v-else
+        class="proxy-storage-panel__empty"
+      >
+        {{ t(!storageInventorySupported
+          ? 'protection.sourceResources.storageInventoryUpgradeRequired'
+          : networkStorageInventoryAvailable
+            ? 'protection.sourceResources.networkStorageEmpty'
+            : 'protection.sourceResources.storageInventoryUnavailable') }}
+      </div>
+    </section>
+
+    <section class="proxy-storage-panel__section">
+      <div class="proxy-storage-panel__section-head">
+        <div>
+          <h4>{{ t('protection.sourceResources.repositoryStoragePoolsTitle') }}</h4>
           <p>{{ t('protection.sourceResources.storagePoolsHint') }}</p>
         </div>
         <ElTag
@@ -307,6 +479,17 @@ watch(
 
 .proxy-storage-panel__table {
   width: 100%;
+}
+
+.proxy-storage-panel__empty {
+  padding: 16px;
+  border: 1px dashed rgb(203 213 225);
+  border-radius: 6px;
+  background: rgb(248 250 252);
+  color: rgb(100 116 139);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .proxy-storage-panel__mono {

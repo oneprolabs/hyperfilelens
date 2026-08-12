@@ -45,6 +45,91 @@ class NodeMonitorIngestTests(TestCase):
         self.assertEqual(inv.get("memory_total_bytes"), 100)
         self.assertEqual(inv.get("disk_count"), 2)
 
+    def test_ingest_skips_duplicate_agent_sample_timestamp(self):
+        sample = {
+            "timestamp": "2026-08-12T10:00:00Z",
+            "cpu": {"usage_percent": 9.0, "logical_cores": 2},
+            "memory": {"percent": 33.0, "total": 100},
+        }
+
+        ingest_node_monitor_sample(node=self.node, sample=sample)
+        self.node.refresh_from_db()
+        ingest_node_monitor_sample(node=self.node, sample=sample)
+
+        self.assertEqual(
+            ResourceMetric.objects.filter(resource_id=str(self.node.id)).count(),
+            1,
+        )
+
+    def test_ingest_skips_delayed_older_agent_sample(self):
+        newer = {
+            "timestamp": "2026-08-12T10:01:00Z",
+            "cpu": {"usage_percent": 12.0, "logical_cores": 4},
+        }
+        older = {
+            "timestamp": "2026-08-12T10:00:00Z",
+            "cpu": {"usage_percent": 99.0, "logical_cores": 2},
+        }
+
+        ingest_node_monitor_sample(node=self.node, sample=newer)
+        ingest_node_monitor_sample(node=self.node, sample=older)
+
+        self.node.refresh_from_db()
+        self.assertEqual(
+            ResourceMetric.objects.filter(resource_id=str(self.node.id)).count(),
+            1,
+        )
+        self.assertEqual(self.node.metadata["monitor_sample_timestamp"], newer["timestamp"])
+        self.assertEqual(self.node.metadata["metrics"]["cpu_usage"], 12.0)
+        self.assertEqual(self.node.metadata["inventory"]["cpu_cores"], 4)
+
+    def test_ingest_replaces_legacy_timezone_naive_timestamp(self):
+        metadata = dict(self.node.metadata or {})
+        metadata["monitor_sample_timestamp"] = "2026-08-12T09:59:00"
+        self.node.metadata = metadata
+        self.node.save(update_fields=["metadata"])
+
+        ingest_node_monitor_sample(
+            node=self.node,
+            sample={
+                "timestamp": "2026-08-12T10:00:00Z",
+                "cpu": {"usage_percent": 12.0},
+            },
+        )
+
+        self.node.refresh_from_db()
+        self.assertEqual(
+            self.node.metadata["monitor_sample_timestamp"],
+            "2026-08-12T10:00:00Z",
+        )
+        self.assertEqual(self.node.metadata["metrics"]["cpu_usage"], 12.0)
+
+    def test_ingest_uses_latest_inventory_metadata(self):
+        stale_node = Node.objects.get(pk=self.node.pk)
+        latest_meta = dict(self.node.metadata or {})
+        latest_meta["inventory"] = {
+            "capabilities": ["storage_inventory_v1"],
+            "storage_inventory_status": "ready",
+            "local_storage_pools": [{"key": "local:root"}],
+            "disk_total_bytes": 38_000_000_000,
+        }
+        Node.objects.filter(pk=self.node.pk).update(metadata=latest_meta)
+
+        ingest_node_monitor_sample(
+            node=stale_node,
+            sample={
+                "timestamp": "2026-08-12T10:01:00Z",
+                "cpu": {"logical_cores": 4},
+                "disks": [{"mountpoint": "/mnt/share", "total": 100_000_000_000}],
+            },
+        )
+
+        self.node.refresh_from_db()
+        inv = (self.node.metadata or {}).get("inventory") or {}
+        self.assertEqual(inv.get("local_storage_pools"), [{"key": "local:root"}])
+        self.assertEqual(inv.get("disk_total_bytes"), 38_000_000_000)
+        self.assertEqual(inv.get("cpu_cores"), 4)
+
     def test_ingest_sums_disk_capacity_across_volumes(self):
         ingest_node_monitor_sample(
             node=self.node,
@@ -72,6 +157,55 @@ class NodeMonitorIngestTests(TestCase):
         self.assertEqual(inv.get("disk_used_bytes"), 600_000_000_000)
         self.assertEqual(inv.get("disk_free_bytes"), 900_000_000_000)
         self.assertEqual(inv.get("disk_count"), 2)
+
+    def test_monitor_sample_does_not_override_structured_storage_inventory(self):
+        self.node.metadata = {
+            "inventory": {
+                "capabilities": ["storage_inventory_v1"],
+                "disk_total_bytes": 38_000_000_000,
+                "disk_used_bytes": 7_200_000_000,
+                "disk_free_bytes": 30_800_000_000,
+                "disk_count": 1,
+                "local_storage_pools": [{"key": "local:root"}],
+                "network_storage_pools": [{"key": "network:smb:share"}],
+            }
+        }
+        self.node.save(update_fields=["metadata"])
+
+        ingest_node_monitor_sample(
+            node=self.node,
+            sample={
+                "cpu": {"logical_cores": 4},
+                "memory": {"total": 16_000_000_000},
+                "disks": [
+                    {
+                        "mountpoint": "/",
+                        "total": 38_000_000_000,
+                        "used": 7_200_000_000,
+                        "free": 30_800_000_000,
+                    },
+                    {
+                        "mountpoint": "/mnt/share",
+                        "total": 100_000_000_000,
+                        "used": 38_000_000_000,
+                        "free": 62_000_000_000,
+                    },
+                ],
+            },
+        )
+
+        self.node.refresh_from_db()
+        inv = (self.node.metadata or {}).get("inventory") or {}
+        self.assertEqual(inv.get("disk_total_bytes"), 38_000_000_000)
+        self.assertEqual(inv.get("disk_used_bytes"), 7_200_000_000)
+        self.assertEqual(inv.get("disk_count"), 1)
+        self.assertEqual(inv.get("cpu_cores"), 4)
+        self.assertEqual(inv.get("memory_total_bytes"), 16_000_000_000)
+        self.assertEqual(inv.get("local_storage_pools"), [{"key": "local:root"}])
+        self.assertEqual(
+            inv.get("network_storage_pools"),
+            [{"key": "network:smb:share"}],
+        )
 
 
 class NodeMonitorReadApiCommunityTests(TestCase):
