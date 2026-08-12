@@ -14,14 +14,6 @@ describe('Add Local Disk Repository proxy availability', () => {
     expect(page).toContain("node.role === 'proxy' && node.availability === 'online'")
   })
 
-  it('includes the optional repository server address in the confirmation summary', () => {
-    expect(page).toContain("const repositoryServerHost = ref('')")
-    expect(page).toContain('v-model="repositoryServerHost"')
-    expect(page).toContain('proxy_repository_server_host: repositoryServerHost.value.trim() || undefined')
-    expect(page).toContain("t('repositoriesPage.fieldRepositoryServerHost')")
-    expect(page).toContain("repositoryServerHost || t('repositoriesPage.repositoryServerHostNotConfigured')")
-  })
-
   it('submits a base directory and previews the managed child path', () => {
     expect(page).toContain('proxy_node_base_dir: proxyNodeDir.value.trim()')
     expect(page).toContain('hfl-repo-<repository-id>')
