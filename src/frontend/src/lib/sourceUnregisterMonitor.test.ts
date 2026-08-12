@@ -90,6 +90,22 @@ describe('sourceUnregisterTaskOutcome', () => {
     })
   })
 
+  it('does not report the final successful step as a failed step', () => {
+    expect(sourceUnregisterTaskOutcome({
+      status: 'success',
+      current_step: 'finalize_source_unregister',
+      result_payload: {
+        result: 'partial_success',
+        cleanup_complete: false,
+      },
+    } as never)).toMatchObject({
+      success: true,
+      partialSuccess: true,
+      failedStep: undefined,
+      currentStep: 'finalize_source_unregister',
+    })
+  })
+
   it('exposes structured failure fields for the details adapter', () => {
     expect(sourceUnregisterTaskOutcome({
       status: 'failed',

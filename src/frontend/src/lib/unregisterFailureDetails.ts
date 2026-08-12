@@ -168,10 +168,11 @@ export function unregisterFailureToErrorDetails(input: {
     ...syncRetained,
   ])
   const failedChildren = outcome?.failedChildren ?? (task ? taskFailedCleanupChildren(task) : [])
+  const taskSucceeded = String(task?.status || '').trim().toLowerCase() === 'success'
   const failedStep = String(
     outcome?.failedStep
     || payload.failed_step
-    || task?.current_step
+    || (taskSucceeded ? '' : task?.current_step)
     || '',
   ).trim()
   const hint = String(outcome?.hint || payload.hint || '').trim()
@@ -190,7 +191,7 @@ export function unregisterFailureToErrorDetails(input: {
   )
 
   const reasons = uniqueStrings([
-    failedStep
+    !isResidue && failedStep
       ? t('protection.backupsPage.unregisterFailureFailedStep', { step: failedStep })
       : '',
     ...structuredReasons.map((reason) => unregisterReasonLabel(reason, t)),
@@ -200,12 +201,13 @@ export function unregisterFailureToErrorDetails(input: {
         ? `${item.detail} (${target})`
         : item.detail
     }),
-    ...failedChildren.map((item) =>
-      t('protection.backupsPage.unregisterFailureChildTask', {
-        uuid: item.taskUuid,
-        error: item.error,
-      }),
-    ),
+    ...(!isResidue
+      ? failedChildren.map((item) =>
+          t('protection.backupsPage.unregisterFailureChildTask', {
+            uuid: item.taskUuid,
+            error: item.error,
+          }))
+      : []),
     ...eventHints,
     isResidue ? '' : errorMessage,
   ])
@@ -226,7 +228,7 @@ export function unregisterFailureToErrorDetails(input: {
     isResidue
       ? t('protection.backupsPage.unregisterFailureForceCleanupHint')
       : t('protection.backupsPage.unregisterFailureStrictRetryHint'),
-    t('protection.backupsPage.unregisterFailureRetryHint'),
+    isResidue ? '' : t('protection.backupsPage.unregisterFailureRetryHint'),
   ])
 
   const summary = isResidue
