@@ -1019,7 +1019,7 @@ jobs:
     name: Assemble · Release
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     needs:
       - prepare
       - build-agent
@@ -1051,6 +1051,10 @@ jobs:
           HFL_EXTENSION_EXPECTED_COMMIT: ${{ needs.prepare.outputs.enterprise_commit }}
           ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
           HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN || secrets.HFL_EXTENSION_GIT_TOKEN }}
+          # Enterprise packages are staged outside GitHub. Fixed-size parts
+          # make the cross-region transfer parallel, retryable and bounded.
+          HFL_RELEASE_MAX_SINGLE_BYTES: ${{ needs.prepare.outputs.edition == 'enterprise' && '1' || '1900000000' }}
+          HFL_RELEASE_PART_BYTES: ${{ needs.prepare.outputs.edition == 'enterprise' && '100663296' || '1073741824' }}
         run: |
           if [[ "$RELEASE_EDITION" == "enterprise" ]]; then
             export HFL_EXTENSION_SOURCES="${ENTERPRISE_EXTENSION_REPOSITORY}@${RELEASE_TAG}"
@@ -1091,20 +1095,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$TEST_SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ && "$TEST_SSH_PORT" =~ ^[0-9]+$ ]]
-          [[ "$TEST_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
-          [[ -n "$TEST_SSH_KNOWN_HOSTS" && -n "$TEST_SSH_PRIVATE_KEY" ]]
-          install -d -m 0700 ~/.ssh
-          printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
-          chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
           incoming="/root/hfl-release/.incoming/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          ssh -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
-            "install -d -m 0700 '$incoming'"
-          scp -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            -P "$TEST_SSH_PORT" build/release/dist/* \
-            "$TEST_SSH_USER@$TEST_SSH_HOST:$incoming/"
+          .github/scripts/stage-enterprise-release.sh build/release/dist "$incoming"
           echo 'stored=true' >> "$GITHUB_OUTPUT"
       - name: Disk report
         if: always()

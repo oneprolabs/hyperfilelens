@@ -456,8 +456,8 @@ for entrypoint in \
 		exit 1
 	}
 done
-[[ "$(awk '/^  assemble-release:/{job=1} job && /timeout-minutes:/{print $2; exit}' "${workflow}")" == "90" ]] || {
-	printf 'ERROR: release assembly timeout must cover large GitHub asset uploads\n' >&2
+[[ "$(awk '/^  assemble-release:/{job=1} job && /timeout-minutes:/{print $2; exit}' "${workflow}")" == "120" ]] || {
+	printf 'ERROR: release assembly timeout must cover package transfer and retries\n' >&2
 	exit 1
 }
 [[ "$(awk '/^  verify-release:/{job=1} job && /timeout-minutes:/{print $2; exit}' "${workflow}")" == "120" ]] || {
