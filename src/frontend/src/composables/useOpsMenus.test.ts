@@ -22,10 +22,10 @@ function mountMenus() {
       en: {
         ops: {
           nav: {
-            groupHealthMonitoring: 'HEALTH & MONITORING',
+            groupHealthMonitoring: 'Health & Monitoring',
             operationalHealth: 'Operational Health',
-            groupAlerting: 'ALERTING',
-            groupActivity: 'ACTIVITY',
+            groupAlerting: 'Alerting',
+            groupActivity: 'Activity',
             alerts: 'Alerts',
             alertRules: 'Alert Rules',
             notificationChannels: 'Notification Channels',
@@ -65,9 +65,9 @@ describe('useOpsMenus', () => {
     )
 
     expect(menus.value.map((group) => group.label)).toEqual([
-      'HEALTH & MONITORING',
-      'ALERTING',
-      'ACTIVITY',
+      'Health & Monitoring',
+      'Alerting',
+      'Activity',
     ])
     expect(paths).not.toContain('/ops/host-monitor')
     expect(paths).toContain('/ops/health')
@@ -83,7 +83,7 @@ describe('useOpsMenus', () => {
       (group.children || []).map((child) => child.to).filter(Boolean),
     )
 
-    const healthGroup = menus.value.find((group) => group.label === 'HEALTH & MONITORING')
+    const healthGroup = menus.value.find((group) => group.label === 'Health & Monitoring')
     expect(healthGroup?.children?.map((item) => item.label)).toEqual([
       'Operational Health',
       'System Monitoring',

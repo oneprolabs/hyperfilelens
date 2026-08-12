@@ -14,7 +14,7 @@ function mountMenus() {
     messages: {
       en: {
         account: {
-          groupAccountCenter: 'ACCOUNT CENTER',
+          groupAccountCenter: 'Account Center',
           sidebarProfile: 'Personal Settings',
           pageProfileTitle: 'Personal Settings',
           sidebarNotifications: 'Notifications',
@@ -41,7 +41,7 @@ describe('useAccountCenterMenus', () => {
   it('keeps personal settings and notifications together in Account Center', () => {
     const menus = mountMenus()
 
-    expect(menus.value[0].label).toBe('ACCOUNT CENTER')
+    expect(menus.value[0].label).toBe('Account Center')
     expect(menus.value[0].children?.map((item) => ({
       label: item.label,
       pageTitle: item.pageTitle,
