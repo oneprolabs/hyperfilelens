@@ -76,6 +76,11 @@ grep -F 'Materialize Enterprise extension for quality gates' "${workflow}" >/dev
 grep -F 'HFL_EXTENSIONS=$extensions' "${workflow}" >/dev/null
 grep -F 'Enterprise extension contains no discoverable backend tests' "${workflow}" >/dev/null
 grep -F 'manage.py test "${extension_test_labels[@]}"' "${workflow}" >/dev/null
+grep -F 'HFL_EXTENSIONS= uv run python src/backend/manage.py test' "${workflow}" >/dev/null
+if grep -Fx '          uv run python src/backend/manage.py test' "${workflow}" >/dev/null; then
+	printf 'ERROR: the full Host backend suite must run with the extension socket empty\n' >&2
+	exit 1
+fi
 grep -F 'enterprise_commit: ${{ steps.enterprise-ref.outputs.commit }}' "${workflow}" >/dev/null
 grep -F 'Check immutable Enterprise store' "${workflow}" >/dev/null
 grep -F 'ENTERPRISE_STORED: ${{ steps.enterprise-store.outputs.stored }}' "${workflow}" >/dev/null
