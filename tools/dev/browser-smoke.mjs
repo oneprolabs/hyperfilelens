@@ -233,7 +233,7 @@ async function verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, ad
     '/protection/backup-sources',
     '/protection/backups',
     '/node/repositories',
-    '/ops/task',
+    '/ops/tasks',
     '/insight/copilot',
   ]
   const platformRoutes = ['/platform-ops/monitoring/host', '/platform-ops/orgs']

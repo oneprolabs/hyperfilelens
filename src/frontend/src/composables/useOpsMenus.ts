@@ -7,38 +7,32 @@ import { tenantOpsObserveMenus } from '@ext/platform/ops/menus'
 export function useOpsMenus() {
   const { t } = useI18n()
   return computed<MenuItem[]>(() => {
-    const observeChildren = tenantOpsObserveMenus(t)
-    const menus: MenuItem[] = []
-    if (observeChildren.length) {
-      menus.push({
-        label: t('ops.nav.groupObserve'),
-        children: observeChildren,
-      })
-    }
-    menus.push(
+    const infrastructureMonitoringItems = tenantOpsObserveMenus(t)
+    const menus: MenuItem[] = [
       {
-        label: t('ops.nav.groupAttention'),
+        label: t('ops.nav.groupHealthMonitoring'),
         children: [
-          { label: t('ops.nav.attention'), to: '/ops/attention', icon: CircleAlert },
+          { label: t('ops.nav.operationalHealth'), to: '/ops/health', icon: CircleAlert },
+          ...infrastructureMonitoringItems,
         ],
       },
       {
-        label: t('ops.nav.groupAlerts'),
+        label: t('ops.nav.groupAlerting'),
         children: [
-          { label: t('ops.nav.alertIncidents'), to: '/ops/alerts/incidents', icon: AlertTriangle },
+          { label: t('ops.nav.alerts'), to: '/ops/alerts', icon: AlertTriangle },
           { label: t('ops.nav.alertRules'), to: '/ops/alerts/rules', icon: BellRing },
           { label: t('ops.nav.notificationChannels'), to: '/ops/channels', icon: Radio },
-          { label: t('ops.nav.notificationRecords'), to: '/ops/notification-records', icon: ScrollText },
+          { label: t('ops.nav.deliveryHistory'), to: '/ops/delivery-history', icon: ScrollText },
         ],
       },
       {
-        label: t('ops.nav.groupEvents'),
+        label: t('ops.nav.groupActivity'),
         children: [
-          { label: t('ops.task.sideAudit'), to: '/ops/audit', icon: FileText },
-          { label: t('ops.task.sideTasks'), to: '/ops/task', icon: History },
+          { label: t('ops.task.sideTasks'), to: '/ops/tasks', icon: History },
+          { label: t('ops.task.sideAudit'), to: '/ops/audit-logs', icon: FileText },
         ],
       },
-    )
+    ]
     return menus
   })
 }

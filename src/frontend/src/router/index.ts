@@ -63,6 +63,7 @@ const AccountSettingsLayout = lazyRoute(() => import('../pages/account/AccountSe
 const AccountProfilePage = lazyRoute(() => import('../pages/account/AccountProfile.vue'))
 const InsightPage = lazyRoute(() => import('../pages/insight/Insight.vue'))
 const GlobalSearchPage = lazyRoute(() => import('../pages/Search.vue'))
+const NotificationsPage = lazyRoute(() => import('../pages/Notifications.vue'))
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -146,20 +147,20 @@ export const router = createRouter({
         { path: 'node/subscription', component: SubscriptionPage },
         { path: 'node/system', component: NodeGlobalSettingsPage },
         { path: 'node/snapshots', component: AssetsSnapshotsPage },
-        { path: 'ops', redirect: '/ops/alerts/incidents' },
+        { path: 'ops', redirect: '/ops/health' },
         ...tenantOpsRoutes,
-        { path: 'ops/attention', component: OpsAttentionPage },
-        { path: 'ops/task', component: OpsTasksPage },
-        { path: 'ops/alerts', redirect: '/ops/alerts/incidents' },
-        { path: 'ops/alerts/incidents', component: OpsAlertIncidentsPage },
+        { path: 'ops/health', component: OpsAttentionPage },
+        { path: 'ops/tasks', component: OpsTasksPage },
+        { path: 'ops/alerts', component: OpsAlertIncidentsPage },
         { path: 'ops/alerts/rules', component: OpsAlertPoliciesPage },
         { path: 'ops/alerts/rules/create', component: OpsAlertPolicyEditorPage, meta: fullscreenRouteMeta },
         { path: 'ops/alerts/rules/:id/edit', component: OpsAlertPolicyEditorPage, meta: fullscreenRouteMeta },
         { path: 'ops/channels/create', component: OpsNotificationChannelEditorPage, meta: fullscreenRouteMeta },
         { path: 'ops/channels/:id/edit', component: OpsNotificationChannelEditorPage, meta: fullscreenRouteMeta },
         { path: 'ops/channels', component: OpsNotificationChannelsPage },
-        { path: 'ops/notification-records', component: OpsNotificationRecordsPage },
-        { path: 'ops/audit', component: OpsAuditPage },
+        { path: 'ops/delivery-history', component: OpsNotificationRecordsPage },
+        { path: 'ops/audit-logs', component: OpsAuditPage },
+        { path: 'notifications', component: NotificationsPage },
         {
           path: 'account',
           component: AccountSettingsLayout,

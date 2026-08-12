@@ -184,7 +184,7 @@ describe('Login Turnstile lifecycle', () => {
 
   it('ignores a forged session reason from the public URL', async () => {
     mocks.routeQuery.reason = 'TOKEN_REUSED'
-    mocks.routeQuery.redirect = '/ops/alerts/incidents'
+    mocks.routeQuery.redirect = '/ops/alerts'
 
     const wrapper = await mountLogin(1440)
 

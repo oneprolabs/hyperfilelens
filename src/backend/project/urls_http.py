@@ -41,10 +41,6 @@ urlpatterns = [
     path("api/v1/audits/", include("apps.audit.urls")),
     path("api/v1/monitors/", include("apps.monitor.urls")),
     path("api/v1/notifications/", include("apps.notification.urls")),
-    # Deprecated singular URL prefixes (console compatibility)
-    path("api/v1/alert/", include("apps.alert.urls")),
-    path("api/v1/monitor/", include("apps.monitor.urls")),
-    path("api/v1/notification/", include("apps.notification.urls")),
     path("api/v1/insight/", include("apps.insight.urls")),
     path("api/v1/lens/", include("apps.lens_bridge.urls")),
     path("api/v1/subscription/", include("apps.subscription.urls")),

@@ -4,18 +4,20 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ArrowUpRight, Bell } from 'lucide-vue-next'
 import {
-  acknowledgeRecord,
-  listRecords,
-  type AlertRecord,
-} from '../lib/alertApi'
+  listUserNotifications,
+  markAllUserNotificationsRead,
+  markUserNotificationRead,
+  type UserNotification,
+} from '../lib/notificationApi'
 
 const { t } = useI18n()
 const router = useRouter()
 const visible = ref(false)
 const loading = ref(false)
 const markingAll = ref(false)
-const alerts = ref<AlertRecord[]>([])
-const totalCount = ref(0)
+const loadError = ref('')
+const notifications = ref<UserNotification[]>([])
+const unreadCount = ref(0)
 
 type Severity = 'critical' | 'warning' | 'insight' | 'info'
 
@@ -24,12 +26,9 @@ const PAGE_SIZE = 10
 
 let cancelled = false
 let interval: ReturnType<typeof setInterval> | undefined
+let requestSequence = 0
 
-const unreadCount = computed(
-  () => alerts.value.filter((a) => a.status === 'firing').length,
-)
-
-const badgeCount = computed(() => totalCount.value)
+const badgeCount = computed(() => unreadCount.value)
 
 const badgeText = computed(() => (badgeCount.value > 99 ? '99+' : String(badgeCount.value)))
 
@@ -51,23 +50,11 @@ const popperOptions = {
   ],
 }
 
-function severityClass(alert: AlertRecord): Severity {
-  if (alert.severity === 'critical') return 'critical'
-  if (alert.severity === 'warning') return 'warning'
-  if (alert.type === 'event') return 'insight'
+function severityClass(notification: UserNotification): Severity {
+  if (notification.severity === 'critical') return 'critical'
+  if (notification.severity === 'warning') return 'warning'
+  if (notification.severity === 'info') return 'info'
   return 'info'
-}
-
-function alertSummary(alert: AlertRecord) {
-  const resource = alert.resourceName || alert.resource_name
-  if (resource) return resource
-  const message = alert.message?.trim()
-  if (message) return message
-  return alert.resourceType || alert.resource_type || '—'
-}
-
-function alertTimestamp(alert: AlertRecord) {
-  return alert.lastTriggeredAt || alert.last_triggered_at || alert.createdAt || alert.created_at
 }
 
 function formatRelativeTime(iso?: string) {
@@ -90,46 +77,57 @@ function formatRelativeTime(iso?: string) {
   return t('nav.notificationPopover.relative.daysAgo', { n: days })
 }
 
-async function loadAlerts() {
+async function loadNotifications() {
+  const requestId = ++requestSequence
   loading.value = true
   try {
-    const res = await listRecords({ status: 'firing', page_size: PAGE_SIZE })
-    if (cancelled) return
-    alerts.value = res.results
-    totalCount.value = res.count
+    const res = await listUserNotifications(PAGE_SIZE)
+    if (cancelled || requestId !== requestSequence) return
+    notifications.value = res.results
+    unreadCount.value = res.unread_count
+    loadError.value = ''
   } catch {
-    if (!cancelled) {
-      alerts.value = []
-      totalCount.value = 0
+    if (!cancelled && requestId === requestSequence) {
+      loadError.value = t('nav.notificationPopover.loadFailed')
     }
   } finally {
-    if (!cancelled) loading.value = false
+    if (!cancelled && requestId === requestSequence) loading.value = false
   }
 }
 
-async function onItemClick(alert: AlertRecord) {
+async function onItemClick(notification: UserNotification) {
   visible.value = false
-  if (alert.status === 'firing') {
+  if (!notification.is_read) {
     try {
-      await acknowledgeRecord(alert.id)
-      await loadAlerts()
+      await markUserNotificationRead(notification.id)
+      requestSequence += 1
+      loading.value = false
+      notification.is_read = true
+      unreadCount.value = Math.max(0, unreadCount.value - 1)
+      loadError.value = ''
     } catch {
-      /* ignore */
+      loadError.value = t('nav.notificationPopover.markReadFailed')
     }
   }
-  router.push('/ops/alerts/incidents')
+  void router.push(notification.to || '/notifications')
 }
 
 async function markAllRead() {
-  const firing = alerts.value.filter((a) => a.status === 'firing')
-  if (!firing.length || markingAll.value) return
+  if (!unreadCount.value || markingAll.value) return
 
   markingAll.value = true
   try {
-    await Promise.all(firing.map((a) => acknowledgeRecord(a.id)))
-    await loadAlerts()
+    await markAllUserNotificationsRead()
+    requestSequence += 1
+    loading.value = false
+    notifications.value = notifications.value.map((notification) => ({
+      ...notification,
+      is_read: true,
+    }))
+    unreadCount.value = 0
+    loadError.value = ''
   } catch {
-    await loadAlerts()
+    loadError.value = t('nav.notificationPopover.markReadFailed')
   } finally {
     markingAll.value = false
   }
@@ -137,16 +135,16 @@ async function markAllRead() {
 
 function viewAll() {
   visible.value = false
-  router.push('/ops/alerts/incidents')
+  void router.push('/notifications')
 }
 
 watch(visible, (open) => {
-  if (open) loadAlerts()
+  if (open) void loadNotifications()
 })
 
 onMounted(() => {
-  loadAlerts()
-  interval = setInterval(loadAlerts, POLL_MS)
+  void loadNotifications()
+  interval = setInterval(() => void loadNotifications(), POLL_MS)
 })
 
 onUnmounted(() => {
@@ -198,36 +196,40 @@ onUnmounted(() => {
         </header>
 
         <div class="nav-dropdown-panel__body nav-dropdown-panel__body--flush">
-          <div v-if="loading && !alerts.length" class="nav-dropdown-panel__empty">
+          <div v-if="loadError" class="nn-load-error" role="status">
+            {{ loadError }}
+          </div>
+          <div v-if="loading && !notifications.length" class="nav-dropdown-panel__empty">
             {{ t('nav.notificationPopover.loading') }}
           </div>
-          <div v-else-if="!alerts.length" class="nav-dropdown-panel__empty">
+          <div v-else-if="!notifications.length && !loadError" class="nav-dropdown-panel__empty">
             {{ t('nav.notificationPopover.empty') }}
           </div>
           <ul v-else class="nav-dropdown-panel__list nn-list" role="list">
             <li
-              v-for="alert in alerts"
-              :key="alert.id"
+              v-for="notification in notifications"
+              :key="notification.id"
               class="nn-item"
               role="button"
               tabindex="0"
-              @click="onItemClick(alert)"
-              @keydown.enter.prevent="onItemClick(alert)"
+              @click="onItemClick(notification)"
+              @keydown.enter.prevent="onItemClick(notification)"
+              @keydown.space.prevent="onItemClick(notification)"
             >
               <span
                 class="nn-icon"
-                :class="`nn-icon--${severityClass(alert)}`"
+                :class="`nn-icon--${severityClass(notification)}`"
                 aria-hidden="true"
               />
               <div class="nn-item-body">
-                <div class="nn-item-title">{{ alert.title }}</div>
+                <div class="nn-item-title">{{ notification.title }}</div>
                 <div class="nn-item-meta">
-                  <span class="nn-item-summary">{{ alertSummary(alert) }}</span>
+                  <span class="nn-item-summary">{{ notification.summary || '—' }}</span>
                   <span class="nn-item-sep">|</span>
-                  <span class="nn-item-time">{{ formatRelativeTime(alertTimestamp(alert)) }}</span>
+                  <span class="nn-item-time">{{ formatRelativeTime(notification.occurred_at || notification.updated_at) }}</span>
                 </div>
               </div>
-              <span v-if="alert.status === 'firing'" class="nn-unread-dot" aria-hidden="true" />
+              <span v-if="!notification.is_read" class="nn-unread-dot" aria-hidden="true" />
             </li>
           </ul>
         </div>
@@ -294,6 +296,13 @@ onUnmounted(() => {
   text-align: center;
   background-color: var(--color-error);
   border-radius: 9px;
+}
+
+.nn-load-error {
+  padding: 10px 14px;
+  color: var(--el-color-danger);
+  font-size: 12px;
+  background: var(--el-color-danger-light-9);
 }
 
 .nn-list {

@@ -11,7 +11,7 @@ import { api, apiErrorMessage } from '../../lib/api'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { asList, unwrapApiPayload } from '../../lib/parse'
 
-type AttentionKind = 'task' | 'alert' | 'node' | 'source' | 'audit'
+type AttentionKind = 'task' | 'alert' | 'node' | 'source'
 
 type AttentionItem = {
   id: string
@@ -75,7 +75,7 @@ watch(() => [pagination.page, pagination.pageSize], () => void loadItems())
       <HflTablePanel fill>
         <template #toolbar>
           <el-select v-model="filters.kind" clearable :placeholder="t('ops.attention.allTypes')" style="width: 160px">
-            <el-option v-for="kind in ['task', 'alert', 'node', 'source', 'audit']" :key="kind" :value="kind" :label="itemKindLabel(kind as AttentionKind)" />
+            <el-option v-for="kind in ['task', 'alert', 'node', 'source']" :key="kind" :value="kind" :label="itemKindLabel(kind as AttentionKind)" />
           </el-select>
         </template>
         <template #toolbar-utility>

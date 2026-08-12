@@ -22,16 +22,14 @@ function mountMenus() {
       en: {
         ops: {
           nav: {
-            groupObserve: 'MONITORING',
-            monitor: 'Monitor',
-            groupAttention: 'ATTENTION',
-            attention: 'Attention',
-            groupAlerts: 'ALERT CENTER',
-            groupEvents: 'AUDIT CENTER',
-            alertIncidents: 'Incidents',
-            alertRules: 'Alert Policies',
+            groupHealthMonitoring: 'HEALTH & MONITORING',
+            operationalHealth: 'Operational Health',
+            groupAlerting: 'ALERTING',
+            groupActivity: 'ACTIVITY',
+            alerts: 'Alerts',
+            alertRules: 'Alert Rules',
             notificationChannels: 'Notification Channels',
-            notificationRecords: 'Notification History',
+            deliveryHistory: 'Delivery History',
           },
           task: {
             sideAudit: 'Audit Logs',
@@ -60,27 +58,36 @@ describe('useOpsMenus', () => {
     observeMenus.items = []
   })
 
-  it('hides Observe/Monitor when the platform extension contributes no observe menus', () => {
+  it('shows the stable Community groups without Enterprise monitoring', () => {
     const menus = mountMenus()
     const paths = menus.value.flatMap((group) =>
       (group.children || []).map((child) => child.to).filter(Boolean),
     )
 
-    expect(menus.value.some((group) => group.label === 'MONITORING')).toBe(false)
+    expect(menus.value.map((group) => group.label)).toEqual([
+      'HEALTH & MONITORING',
+      'ALERTING',
+      'ACTIVITY',
+    ])
     expect(paths).not.toContain('/ops/host-monitor')
-    expect(paths).toContain('/ops/attention')
-    expect(paths).toContain('/ops/alerts/incidents')
-    expect(paths).toContain('/ops/task')
+    expect(paths).toContain('/ops/health')
+    expect(paths).toContain('/ops/alerts')
+    expect(paths).toContain('/ops/tasks')
+    expect(paths).toContain('/ops/audit-logs')
   })
 
-  it('shows Observe/Monitor when the platform extension contributes the monitor item', () => {
-    observeMenus.items = [{ label: 'Monitor', to: '/ops/host-monitor' }]
+  it('shows Infrastructure Monitoring when the Enterprise extension contributes it', () => {
+    observeMenus.items = [{ label: 'Infrastructure Monitoring', to: '/ops/host-monitor' }]
     const menus = mountMenus()
     const paths = menus.value.flatMap((group) =>
       (group.children || []).map((child) => child.to).filter(Boolean),
     )
 
-    expect(menus.value.some((group) => group.label === 'MONITORING')).toBe(true)
+    const healthGroup = menus.value.find((group) => group.label === 'HEALTH & MONITORING')
+    expect(healthGroup?.children?.map((item) => item.label)).toEqual([
+      'Operational Health',
+      'Infrastructure Monitoring',
+    ])
     expect(paths).toContain('/ops/host-monitor')
   })
 })

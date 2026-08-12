@@ -105,6 +105,6 @@ describe('Platform Ops deploy profile refresh policy', () => {
   })
 
   it('ignores ordinary tenant navigation', () => {
-    expect(shouldForceDeployProfileRefresh('/ops/task', '/')).toBe(false)
+    expect(shouldForceDeployProfileRefresh('/ops/tasks', '/')).toBe(false)
   })
 })

@@ -513,7 +513,7 @@ function applyThemeVars(t: string) {
       <RouterView v-slot="{ Component, route: matchedRoute }">
         <Suspense
           :key="
-            matchedRoute.path === '/protection/backups' || matchedRoute.path === '/ops/task'
+            matchedRoute.path === '/protection/backups' || matchedRoute.path === '/ops/tasks'
               ? matchedRoute.path
               : matchedRoute.fullPath
           "
