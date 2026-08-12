@@ -44,7 +44,7 @@ sourcelens_load_config() {
 	fi
 	BUILD_SOURCELENS="${BUILD_SOURCELENS:-1}"
 	SOURCELENS_GIT_URL="${SOURCELENS_GIT_URL:-https://github.com/HyperBDR/sourcelens.git}"
-	SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.21.0}"
+	SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.29.0}"
 	SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"
 	SOURCELENS_UPSTREAM_IMAGE_PREFIX="${SOURCELENS_UPSTREAM_IMAGE_PREFIX:-oneprocloud}"
 	SOURCELENS_IMAGE_REGISTRY="${SOURCELENS_IMAGE_REGISTRY:-}"
@@ -529,6 +529,7 @@ scoped_names = {
         "pip_retry_max",
         "pip_retry_delay",
         "uv_version",
+        "npm_registry",
         "upstream_image_prefix",
     },
     "frontend": {
@@ -1056,23 +1057,47 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
-pattern = re.compile(
-    r"(?ms)(^  frontend:\n.*?^    build:\n.*?^      args:\n)(.*?)(?=^    \S)"
-)
-matches = list(pattern.finditer(text))
-if len(matches) != 1:
-    raise SystemExit(
-        f"expected one frontend build args block in {path}, found {len(matches)}"
-    )
 
-match = matches[0]
-args = match.group(2)
-line = "        NPM_REGISTRY: ${NPM_REGISTRY:-}\n"
-if re.search(r"(?m)^        NPM_REGISTRY:.*$", args):
-    args = re.sub(r"(?m)^        NPM_REGISTRY:.*$", line.rstrip(), args, count=1)
-else:
-    args = args.rstrip("\n") + "\n" + line
-text = text[: match.start(2)] + args + text[match.end(2) :]
+
+def patch_build_arg(source, service, name, value):
+    pattern = re.compile(
+        rf"(?ms)(^  {re.escape(service)}:\n.*?^    build:\n.*?^      args:\n)"
+        rf"(.*?)(?=^    \S)"
+    )
+    matches = list(pattern.finditer(source))
+    if len(matches) != 1:
+        raise SystemExit(
+            f"expected one {service} build args block in {path}, "
+            f"found {len(matches)}"
+        )
+
+    match = matches[0]
+    args = match.group(2)
+    line = f"        {name}: {value}\n"
+    if re.search(rf"(?m)^        {re.escape(name)}:.*$", args):
+        args = re.sub(
+            rf"(?m)^        {re.escape(name)}:.*$",
+            line.rstrip(),
+            args,
+            count=1,
+        )
+    else:
+        args = args.rstrip("\n") + "\n" + line
+    return source[: match.start(2)] + args + source[match.end(2) :]
+
+
+text = patch_build_arg(
+    text,
+    "frontend",
+    "NPM_REGISTRY",
+    "${NPM_REGISTRY:-}",
+)
+text = patch_build_arg(
+    text,
+    "lensnode",
+    "CODEGRAPH_REGISTRY",
+    "${NPM_REGISTRY:-https://registry.npmjs.org}",
+)
 path.write_text(text, encoding="utf-8")
 PY
 }

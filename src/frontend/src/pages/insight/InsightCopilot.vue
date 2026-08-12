@@ -7,6 +7,8 @@ import { ElMessage } from 'element-plus'
 defineOptions({ name: 'InsightCopilot' })
 import { apiErrorMessage } from '../../lib/api'
 import {
+  beginSessionRunSubmission,
+  clearSessionRunSubmission,
   getSessionRunStream,
   isActiveRunStatus,
 } from '../../composables/useLensRunStream'
@@ -28,6 +30,7 @@ import {
   type LensCopilotActiveRun,
   type LensCopilotReadiness,
   type LensCopilotRunOutcome,
+  type LensCopilotResponseState,
   type LensCopilotAssistant,
   type LensGatewayInsight,
   type LensCopilotGatewayOption,
@@ -67,6 +70,7 @@ const deleteOpen = ref(false)
 const deleteLoading = ref(false)
 const deleteTarget = ref<SessionRow | null>(null)
 const messagesBySession = ref<Record<number, CopilotDisplayMessage[]>>({})
+const selectedStarterBySession = ref<Record<number, string>>({})
 const input = ref('')
 const chatScrollRef = ref<HTMLElement | null>(null)
 const lifecyclePollingIds = new Set<number>()
@@ -148,12 +152,31 @@ function applyMessagesFromSync(
   sessionId: number,
   rows: LensChatMessage[],
   runOutcomes: LensCopilotRunOutcome[],
+  responseState?: LensCopilotResponseState,
 ) {
   const list = Array.isArray(rows) ? rows : []
   const mapped = appendRunOutcomeMessages(
     list.map(mapApiMessage).filter(Boolean) as CopilotDisplayMessage[],
     runOutcomes,
   )
+  const pendingQuestion = responseState?.status === 'submitting'
+    ? responseState.question?.trim()
+    : ''
+  const latestMessage = mapped.at(-1)
+  if (
+    pendingQuestion
+    && !(
+      latestMessage?.role === 'user'
+      && latestMessage.text?.trim() === pendingQuestion
+    )
+  ) {
+    mapped.push({
+      id: `pending-${sessionId}`,
+      role: 'user',
+      text: pendingQuestion,
+      createdAt: responseState?.started_at || new Date().toISOString(),
+    })
+  }
   const session = sessions.value.find((row) => row.id === sessionId)
   messagesBySession.value = {
     ...messagesBySession.value,
@@ -189,6 +212,7 @@ function applySessionSyncMeta(sessionId: number, payload: { last_assistant_messa
         has_unread: payload.has_unread ?? row.has_unread,
       }
     : row)
+  refreshPollerSessions()
 }
 
 const syncHandlers = {
@@ -199,7 +223,10 @@ const syncHandlers = {
 
 function refreshPollerSessions() {
   const ids = sessions.value
-    .filter((row) => isActiveRunStatus(row.active_run_status))
+    .filter(
+      (row) => isActiveRunStatus(row.active_run_status)
+        || getSessionRunStream(row.id).isSubmitting,
+    )
     .map((row) => row.id)
   copilotStore.updatePollerSessions(ids)
 }
@@ -245,16 +272,24 @@ const activeStream = computed(() => {
 
 const runInProgress = computed(() => {
   const stream = activeStream.value
-  if (!stream) return false
-  return stream.streamAttached || isActiveRunStatus(stream.runStatus)
+  return Boolean(
+    isActiveRunStatus(activeSession.value?.active_run_status)
+    || stream?.isSubmitting
+    || stream?.streamAttached
+    || isActiveRunStatus(stream?.runStatus),
+  )
 })
 
 const showLiveStream = computed(
   () => runInProgress.value || Boolean(activeStream.value?.streamError),
 )
 
+const runCanStop = computed(
+  () => runInProgress.value && Boolean(activeStream.value?.runUuid),
+)
+
 const composerDisabled = computed(() => {
-  if (!bridgeReady.value || activeSessionId.value == null) return true
+  if (loading.value || !bridgeReady.value || activeSessionId.value == null) return true
   const session = sessions.value.find((row) => row.id === activeSessionId.value)
   if (session && session.lifecycle_status && session.lifecycle_status !== 'ready') return true
   const stream = activeStream.value
@@ -263,6 +298,11 @@ const composerDisabled = computed(() => {
 })
 
 const bubbleTag = computed(() => activeAssistant.value?.name ?? '')
+
+const selectedStarterKey = computed(() => {
+  const sessionId = activeSessionId.value
+  return sessionId == null ? '' : selectedStarterBySession.value[sessionId] || ''
+})
 
 const emptyPhase = computed((): CopilotEmptyPhase => {
   if (loading.value) return 'loading'
@@ -473,6 +513,9 @@ async function confirmDeleteSession() {
     const copy = { ...messagesBySession.value }
     delete copy[row.id]
     messagesBySession.value = copy
+    const starterCopy = { ...selectedStarterBySession.value }
+    delete starterCopy[row.id]
+    selectedStarterBySession.value = starterCopy
     if (activeSessionId.value === row.id) {
       activeSessionId.value = sessions.value[0]?.id ?? null
       if (activeSessionId.value != null) {
@@ -510,8 +553,14 @@ watch(
   () => scrollToBottom(),
 )
 
-function applyStarterChip(text: string) {
-  input.value = input.value.trim() ? `${input.value.trim()}\n${text}` : text
+async function applyStarterChip(key: string, text: string) {
+  const sessionId = activeSessionId.value
+  if (sessionId == null || composerDisabled.value) return
+  selectedStarterBySession.value = {
+    ...selectedStarterBySession.value,
+    [sessionId]: key,
+  }
+  await submitQuestion(text)
 }
 
 function retryQuestion(text: string) {
@@ -523,31 +572,43 @@ function onAttach() {
   ElMessage.info({ message: t('insight.copilot.attachComingSoon'), grouping: true })
 }
 
-async function sendMessage() {
-  const text = input.value.trim()
+async function submitQuestion(question: string, { clearComposer = false } = {}) {
+  const text = question.trim()
   const sessionId = activeSessionId.value
   if (!text || sessionId == null || composerDisabled.value) return
 
+  beginSessionRunSubmission(sessionId)
   const list = [...(messagesBySession.value[sessionId] ?? [])]
   list.push({ id: uid('m'), role: 'user', text, createdAt: new Date().toISOString() })
   messagesBySession.value = { ...messagesBySession.value, [sessionId]: list }
-  input.value = ''
+  if (clearComposer) input.value = ''
   scrollToBottom()
 
   try {
-    const run = await createCopilotRun(sessionId, text)
+    const run = await createCopilotRun(sessionId, text, uid(`copilot-${sessionId}`))
     applySessionActiveMeta(sessionId, {
       uuid: run.uuid,
       status: run.status || 'queued',
     })
-    await copilotStore.startRunStream(sessionId, run.uuid, syncHandlers, activeSessionId.value)
+    await copilotStore.startRunStream(
+      sessionId,
+      run.uuid,
+      run.status || 'queued',
+      syncHandlers,
+      activeSessionId.value,
+    )
   } catch (err) {
+    clearSessionRunSubmission(sessionId)
     const message = apiErrorMessage(err, t('errors.generic.requestFailed'))
     ElMessage.error({ message, grouping: true })
     await copilotStore.syncSession(sessionId, syncHandlers, activeSessionId.value).catch(() => undefined)
   } finally {
     scrollToBottom()
   }
+}
+
+async function sendMessage() {
+  await submitQuestion(input.value, { clearComposer: true })
 }
 
 async function stopStreaming() {
@@ -673,6 +734,8 @@ onUnmounted(() => {
             :streaming-elapsed-seconds="activeStream?.thinkingElapsedSeconds ?? 0"
             :stream-error="activeStream?.streamError ?? ''"
             :bubble-tag="bubbleTag"
+            :selected-starter-key="selectedStarterKey"
+            :starter-disabled="composerDisabled"
             @starter-chip="applyStarterChip"
             @retry-question="retryQuestion"
           />
@@ -681,7 +744,7 @@ onUnmounted(() => {
         <CopilotComposer
           v-if="activeSession?.lifecycle_status === 'ready'"
           v-model="input"
-          :sending="runInProgress"
+          :sending="runCanStop"
           :disabled="composerDisabled"
           @send="sendMessage"
           @stop="stopStreaming"

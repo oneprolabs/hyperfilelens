@@ -59,14 +59,26 @@ services:
       args:
         VITE_GA_ID: ${VITE_GA_ID:-}
     image: example/frontend:latest
+  lensnode:
+    build:
+      context: ./lensnode
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: example/lensnode:latest
 YAML
 sourcelens_patch_compose_npm_registry "${tmp}"
 sourcelens_patch_compose_npm_registry "${tmp}"
-[[ "$(grep -c 'NPM_REGISTRY:' "${tmp}/docker-compose.standalone.yml")" -eq 1 ]] || {
-	printf 'ERROR: SourceLens npm registry Compose patch is not idempotent\n' >&2
+[[ "$(grep -Ec '^        NPM_REGISTRY:' "${tmp}/docker-compose.standalone.yml")" -eq 1 ]] || {
+	printf 'ERROR: SourceLens frontend npm registry Compose patch is not idempotent\n' >&2
 	exit 1
 }
 grep -F 'NPM_REGISTRY: ${NPM_REGISTRY:-}' \
+	"${tmp}/docker-compose.standalone.yml" >/dev/null
+[[ "$(grep -Ec '^        CODEGRAPH_REGISTRY:' "${tmp}/docker-compose.standalone.yml")" -eq 1 ]] || {
+	printf 'ERROR: SourceLens CodeGraph registry Compose patch is not idempotent\n' >&2
+	exit 1
+}
+grep -F 'CODEGRAPH_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}' \
 	"${tmp}/docker-compose.standalone.yml" >/dev/null
 
 cat >"${tmp}/nginx.conf" <<'NGINX'
@@ -144,6 +156,7 @@ VITE_GA_ID=G-CONTRACT
 BUILD_INPUTS
 backend_inputs="$(sourcelens_effective_build_inputs_digest backend)"
 frontend_inputs="$(sourcelens_effective_build_inputs_digest frontend)"
+lensnode_inputs="$(sourcelens_effective_build_inputs_digest lensnode)"
 npm_backend_inputs="$({
 	SOURCELENS_NPM_REGISTRY=https://npm.example.invalid
 	sourcelens_effective_build_inputs_digest backend
@@ -151,6 +164,10 @@ npm_backend_inputs="$({
 npm_frontend_inputs="$({
 	SOURCELENS_NPM_REGISTRY=https://npm.example.invalid
 	sourcelens_effective_build_inputs_digest frontend
+})"
+npm_lensnode_inputs="$({
+	SOURCELENS_NPM_REGISTRY=https://npm.example.invalid
+	sourcelens_effective_build_inputs_digest lensnode
 })"
 pip_backend_inputs="$({
 	SOURCELENS_PIP_INDEX_URL=https://packages.example.invalid/simple
@@ -162,6 +179,7 @@ pip_frontend_inputs="$({
 })"
 [[ "${npm_backend_inputs}" == "${backend_inputs}" ]]
 [[ "${npm_frontend_inputs}" != "${frontend_inputs}" ]]
+[[ "${npm_lensnode_inputs}" != "${lensnode_inputs}" ]]
 [[ "${pip_backend_inputs}" != "${backend_inputs}" ]]
 [[ "${pip_frontend_inputs}" == "${frontend_inputs}" ]]
 
@@ -202,8 +220,10 @@ grep -F 'no_cache=1' <<<"${config}" >/dev/null
 grep -F -- '--prebuilt' "${ROOT}/release/build-sourcelens.sh" >/dev/null
 grep -F 'ln "${source_archive}" "${temporary}"' \
 	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
-grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.21.0}"' \
+grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.29.0}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
+grep -F 'SOURCELENS_GIT_REF=v0.29.0' \
+	"${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
 grep -F 'SOURCELENS_UV_VERSION="${SOURCELENS_UV_VERSION:-0.10.2}"' \
@@ -309,12 +329,19 @@ services:
         APT_MIRROR_URL: ${APT_MIRROR_URL:-https://mirrors.tuna.tsinghua.edu.cn/debian}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_GA_ID: ${VITE_GA_ID:-}
+    image: example/frontend:latest
   lensnode:
     build:
       context: ./lensnode
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
+    image: example/lensnode:latest
 YAML
 sourcelens_patch_compose_lensnode_apt_mirror \
 	"${tmp}/source-patch" https://deb.debian.org/debian
@@ -325,6 +352,7 @@ sourcelens_patch_compose_build_sources \
 	https://pypi.org/simple \
 	pypi.org
 sourcelens_patch_compose_uv_network "${tmp}/source-patch" 120 2 0.10.2
+sourcelens_patch_compose_npm_registry "${tmp}/source-patch"
 if grep -F 'mirrors.tuna.tsinghua.edu.cn' \
 	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null; then
 	printf 'ERROR: patched SourceLens Compose still defaults to a third-party mirror\n' >&2
@@ -338,8 +366,12 @@ grep -F 'APT_MIRROR_URL: ${DEBIAN_APT_MIRROR_URL:-https://deb.debian.org/debian}
 	"${tmp}/source-patch/docker-compose.standalone.yml")" -eq 2 ]]
 [[ "$(grep -Fc 'UV_VERSION: ${UV_VERSION:-0.10.2}' \
 	"${tmp}/source-patch/docker-compose.standalone.yml")" -eq 2 ]]
+grep -F 'NPM_REGISTRY: ${NPM_REGISTRY:-}' \
+	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
+grep -F 'CODEGRAPH_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}' \
+	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 
-grep -F '# SourceLens v0.21.0 requires no HFL functional patches.' \
+grep -F '# SourceLens v0.29.0 requires no HFL functional patches.' \
 	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
 [[ -f "${ROOT}/tools/sourcelens/patches/retired/lensnode-tls-v0.4.0.patch" ]]
 if [[ -e "${ROOT}/deploy/installer/sourcelens/lensnode-tls.patch" \

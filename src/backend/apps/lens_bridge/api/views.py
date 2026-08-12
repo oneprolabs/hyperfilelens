@@ -75,6 +75,12 @@ class SourceLensMaintenanceUnavailable(APIException):
     default_code = "sourcelens_maintenance"
 
 
+class CopilotRunConflict(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "This chat already has an active response."
+    default_code = "copilot_run_active"
+
+
 def _lens_error_response(exc: sl_client.LensBridgeError) -> Response:
     """Preserve retryable SourceLens status codes at the HFL API boundary."""
     response_status = (
@@ -957,43 +963,61 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         self._require_ready_session(link)
         body = LensRunCreateSerializer(data=request.data)
         body.is_valid(raise_exception=True)
-        from apps.subscription.services.interface import enforce_license_quota
+        question = body.validated_data.get("question") or ""
+        idempotency_key = body.validated_data.get("idempotency_key") or uuid.uuid4().hex
+        from apps.lens_bridge.services import run_submissions
 
-        # Block new runs when the lifetime AI token budget is already exhausted
-        # (additional=0: deny at/over limit without reserving an estimated run cost).
-        enforce_license_quota(link.organization, "ai_tokens", additional=0)
-        payload = {"question": body.validated_data.get("question") or ""}
-        if body.validated_data.get("idempotency_key"):
-            payload["idempotency_key"] = body.validated_data["idempotency_key"]
         with sourcelens_run_creation_guard():
             if sourcelens_maintenance_active():
                 raise SourceLensMaintenanceUnavailable()
-            data = sl_client.request_json(
-                "POST",
-                f"/api/lens/sessions/{link.sl_session_uuid}/runs/",
-                json_body=payload,
-                hfl_user=request.user,
-            )
-            from django.utils import timezone
+            try:
+                submission, existing_run = run_submissions.prepare_submission(
+                    link,
+                    question=question,
+                    idempotency_key=idempotency_key,
+                )
+            except run_submissions.RunSubmissionConflictError as exc:
+                raise CopilotRunConflict() from exc
+        if existing_run is not None:
+            return Response(existing_run, status=status.HTTP_201_CREATED)
 
-            link.last_message_at = timezone.now()
-            run_uuid = data.get("uuid")
-            run_status = str(data.get("status") or "queued")
-            if run_uuid:
-                link.save(update_fields=["last_message_at", "updated_at"])
-                copilot_service.set_active_run(
-                    link,
-                    run_uuid=uuid.UUID(str(run_uuid)),
-                    status=run_status,
-                )
-                usage.register_usage_run(
-                    link,
-                    run_uuid=uuid.UUID(str(run_uuid)),
-                    question=payload["question"],
-                    status=run_status,
-                )
-            else:
-                link.save(update_fields=["last_message_at", "updated_at"])
+        try:
+            with sourcelens_run_creation_guard():
+                if sourcelens_maintenance_active():
+                    raise SourceLensMaintenanceUnavailable()
+                data = run_submissions.execute_submission(submission.id)
+        except SourceLensMaintenanceUnavailable:
+            raise
+        except run_submissions.RunSubmissionContractError as exc:
+            run_submissions.record_submission_error(
+                submission.id,
+                exc,
+                retryable=False,
+            )
+            raise
+        except sl_client.LensBridgeError as exc:
+            retryable = exc.status_code >= 500 or exc.status_code in {
+                408,
+                409,
+                425,
+                429,
+            }
+            run_submissions.record_submission_error(
+                submission.id,
+                exc,
+                retryable=retryable,
+            )
+            raise
+        except (
+            run_submissions.RunSubmissionConflictError,
+            run_submissions.RunSubmissionInvalidError,
+        ) as exc:
+            run_submissions.record_submission_error(
+                submission.id,
+                exc,
+                retryable=False,
+            )
+            raise CopilotRunConflict() from exc
         return Response(data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["get"], url_path="sync")
@@ -1008,6 +1032,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                     "session_id": link.id,
                     "messages": [],
                     "active_run": None,
+                    "response_state": {"status": "idle", "started_at": None},
                     "run_outcomes": [],
                     "lifecycle_status": link.lifecycle_status,
                     "lifecycle_error": link.lifecycle_error,
@@ -1105,6 +1130,7 @@ class LensCopilotRunStreamView(APIView):
             organization=org,
             hfl_user=request.user,
             status=LensSessionLink.Status.ACTIVE,
+            active_run_uuid=run_uuid,
         )
         if session_id is not None:
             link = qs.filter(pk=session_id).first()

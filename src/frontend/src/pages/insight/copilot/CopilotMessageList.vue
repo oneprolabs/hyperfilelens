@@ -20,10 +20,12 @@ const props = defineProps<{
   streamingElapsedSeconds?: number
   streamError?: string
   bubbleTag?: string
+  selectedStarterKey?: string
+  starterDisabled?: boolean
 }>()
 
 const emit = defineEmits<{
-  starterChip: [text: string]
+  starterChip: [key: string, text: string]
   retryQuestion: [text: string]
 }>()
 
@@ -235,7 +237,10 @@ const showLiveRow = computed(() => props.streaming)
                 :key="chip.key"
                 type="button"
                 class="copilot-chip-box"
-                @click="emit('starterChip', starterChipPrompt(chip.key))"
+                :class="{ 'is-selected': selectedStarterKey === chip.key }"
+                :aria-pressed="selectedStarterKey === chip.key"
+                :disabled="starterDisabled"
+                @click="emit('starterChip', chip.key, starterChipPrompt(chip.key))"
               >
                 <span class="copilot-chip-inner">
                   <span class="copilot-chip-icon" aria-hidden="true">{{ chip.icon }}</span>
@@ -291,8 +296,14 @@ const showLiveRow = computed(() => props.streaming)
           <Sparkles :size="16" :stroke-width="2" />
         </div>
         <div class="message-body">
-          <div v-if="streamingThinking?.length" class="thinking-panel thinking-panel-live">
-            <button type="button" class="thinking-panel-header" @click="liveThinkingOpen = !liveThinkingOpen">
+          <div v-if="!streamError" class="thinking-panel thinking-panel-live">
+            <button
+              v-if="streamingThinking?.length"
+              type="button"
+              class="thinking-panel-header"
+              :aria-expanded="liveThinkingOpen"
+              @click="liveThinkingOpen = !liveThinkingOpen"
+            >
               <span class="live-progress-dot" />
               <span class="thinking-panel-status">
                 <span class="thinking-panel-status-text">{{ liveThinkingStatus() }}</span>
@@ -303,7 +314,18 @@ const showLiveRow = computed(() => props.streaming)
               <ChevronUp v-if="liveThinkingOpen" :size="13" class="thinking-panel-chevron" />
               <ChevronDown v-else :size="13" class="thinking-panel-chevron" />
             </button>
-            <div v-if="liveThinkingOpen" class="thinking-panel-body">
+            <div
+              v-else
+              class="thinking-panel-header thinking-panel-header--static"
+              role="status"
+              aria-live="polite"
+            >
+              <span class="live-progress-dot" />
+              <span class="thinking-panel-status">
+                <span class="thinking-panel-status-text">{{ liveThinkingStatus() }}</span>
+              </span>
+            </div>
+            <div v-if="liveThinkingOpen && streamingThinking?.length" class="thinking-panel-body">
               <div v-for="(step, idx) in streamingThinking" :key="idx" class="thinking-step-item">
                 <span class="thinking-step-bullet">▸</span>
                 <span class="thinking-step-text">{{ step.displayMessage || stepLabel(step) }}</span>
@@ -320,10 +342,6 @@ const showLiveRow = computed(() => props.streaming)
             <div v-else class="message-markdown live-markdown" :class="{ 'is-streaming': streaming }">
               <CopilotStreamingMarkdown :content="streamingContent || ''" :streaming="streaming" />
             </div>
-          </div>
-          <div v-else-if="!streamError" class="message-card assistant message-card--typing">
-            <span class="typing-label">{{ t('insight.copilot.typing') }}</span>
-            <span class="typing-dots" aria-hidden="true"><span /><span /><span /></span>
           </div>
         </div>
       </div>
@@ -592,6 +610,23 @@ const showLiveRow = computed(() => props.streaming)
   box-shadow: 0 1px 4px rgb(69 122 176 / 0.15);
 }
 
+.copilot-chip-box.is-selected {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 9%, var(--color-card-bg));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.copilot-chip-box:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.copilot-chip-box:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+  box-shadow: none;
+}
+
 .thinking-panel {
   width: 100%;
   margin-bottom: 8px;
@@ -616,6 +651,14 @@ const showLiveRow = computed(() => props.streaming)
 
 .thinking-panel-header:hover {
   background: var(--color-grey-2);
+}
+
+.thinking-panel-header--static {
+  cursor: default;
+}
+
+.thinking-panel-header--static:hover {
+  background: transparent;
 }
 
 .thinking-panel-status {

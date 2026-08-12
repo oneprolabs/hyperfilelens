@@ -343,12 +343,20 @@ export type LensCopilotActiveRun = {
   thinking?: LensChatThinkingStep[]
   error?: string
   started_at?: string | null
+  elapsed_anchor_at?: string | null
+}
+
+export type LensCopilotResponseState = {
+  status: 'idle' | 'submitting' | 'running'
+  started_at?: string | null
+  question?: string
 }
 
 export type LensCopilotSyncResponse = {
   session_id: number
   messages: LensChatMessage[]
   active_run: LensCopilotActiveRun | null
+  response_state?: LensCopilotResponseState
   run_outcomes: LensCopilotRunOutcome[]
   last_assistant_message_at?: string | null
   has_unread?: boolean
@@ -928,11 +936,15 @@ export async function fetchCopilotMessages(sessionId: number): Promise<LensChatM
 export async function createCopilotRun(
   sessionId: number,
   question: string,
+  idempotencyKey?: string,
 ): Promise<LensRun> {
   const raw = await api(lensUrl(`copilot/sessions/${sessionId}/runs/`), {
     method: 'POST',
     headers: lensHeaders(),
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({
+      question,
+      ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
+    }),
   })
   return lensPayload<LensRun>(raw)
 }

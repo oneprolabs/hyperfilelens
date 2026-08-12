@@ -13,6 +13,7 @@ export type ThinkingStep = {
 export type SessionRunStreamState = {
   partialAnswer: string
   streamError: string
+  isSubmitting: boolean
   isStreaming: boolean
   streamAttached: boolean
   thinkingSteps: ThinkingStep[]
@@ -34,6 +35,7 @@ function createEmptyState(): SessionRunStreamState {
   return reactive({
     partialAnswer: '',
     streamError: '',
+    isSubmitting: false,
     isStreaming: false,
     streamAttached: false,
     thinkingSteps: [],
@@ -54,7 +56,6 @@ class SessionRunStreamController {
   private streamStartedAt = 0
   private seenActivityKeys = new Set<string>()
   private seenStepEventCounts = new Map<string, number>()
-  private onFinished: (() => void) | null = null
 
   constructor() {
     this.state = createEmptyState()
@@ -67,16 +68,43 @@ class SessionRunStreamController {
     }
   }
 
-  private startElapsedTimer() {
+  private updateElapsedSeconds() {
+    this.state.thinkingElapsedSeconds = Math.max(
+      0,
+      Math.floor((Date.now() - this.streamStartedAt) / 1000),
+    )
+  }
+
+  private parseElapsedAnchor(elapsedAnchorAt?: string | null): number | null {
+    if (!elapsedAnchorAt) return null
+    const parsed = Date.parse(elapsedAnchorAt)
+    if (!Number.isFinite(parsed)) return null
+    return Math.min(parsed, Date.now())
+  }
+
+  private setElapsedAnchor(elapsedAnchorAt?: string | null) {
+    const parsed = this.parseElapsedAnchor(elapsedAnchorAt)
+    if (parsed != null && (this.streamStartedAt === 0 || parsed < this.streamStartedAt)) {
+      this.streamStartedAt = parsed
+      this.updateElapsedSeconds()
+    }
+  }
+
+  private startElapsedTimer(elapsedAnchorAt?: string | null) {
     this.clearElapsedTimer()
-    this.streamStartedAt = Date.now()
-    this.state.thinkingElapsedSeconds = 0
+    const parsed = this.parseElapsedAnchor(elapsedAnchorAt)
+    this.streamStartedAt = parsed ?? (this.streamStartedAt || Date.now())
+    this.updateElapsedSeconds()
     this.elapsedTimer = setInterval(() => {
-      this.state.thinkingElapsedSeconds = Math.max(
-        0,
-        Math.floor((Date.now() - this.streamStartedAt) / 1000),
-      )
+      this.updateElapsedSeconds()
     }, 1000)
+  }
+
+  private ensureElapsedTimer(elapsedAnchorAt?: string | null) {
+    this.setElapsedAnchor(elapsedAnchorAt)
+    if (!this.elapsedTimer) {
+      this.startElapsedTimer(elapsedAnchorAt)
+    }
   }
 
   resetStreamState() {
@@ -87,11 +115,13 @@ class SessionRunStreamController {
     this.controller = null
     this.state.partialAnswer = ''
     this.state.streamError = ''
+    this.state.isSubmitting = false
     this.state.runStatus = null
     this.state.runUuid = null
     this.state.thinkingSteps = []
     this.state.thinkingPanelOpen = true
     this.state.thinkingElapsedSeconds = 0
+    this.streamStartedAt = 0
     this.seenActivityKeys.clear()
     this.seenStepEventCounts.clear()
     this.clearElapsedTimer()
@@ -104,7 +134,9 @@ class SessionRunStreamController {
     status: string,
     partialContent: string,
     thinking: Array<{ message?: string; agent_event?: string; activity?: string }>,
+    elapsedAnchorAt?: string | null,
   ) {
+    this.state.isSubmitting = false
     this.state.runUuid = runUuid
     this.state.runStatus = status
     if (partialContent) {
@@ -126,6 +158,19 @@ class SessionRunStreamController {
         .filter(Boolean) as ThinkingStep[]
     }
     this.state.isStreaming = isActiveRunStatus(status)
+    this.setElapsedAnchor(elapsedAnchorAt)
+  }
+
+  applySubmissionSnapshot(elapsedAnchorAt?: string | null) {
+    if (this.state.runUuid || this.state.streamAttached) {
+      this.resetStreamState()
+    }
+    this.state.isSubmitting = true
+    this.state.runUuid = null
+    this.state.runStatus = null
+    this.state.streamError = ''
+    this.state.isStreaming = false
+    this.ensureElapsedTimer(elapsedAnchorAt)
   }
 
   private pushThinkingStep(item: {
@@ -251,19 +296,22 @@ class SessionRunStreamController {
     runUuid: string,
     onFinished?: () => void,
   ): Promise<void> {
-    this.onFinished = onFinished ?? null
+    const finishedCallback = onFinished ?? null
     this.userAborted = false
     this.receivedStreamTokens = false
     this.streamFinished = false
     this.controller?.abort()
-    this.controller = new AbortController()
+    const controller = new AbortController()
+    this.controller = controller
     this.state.runUuid = runUuid
     this.state.streamError = ''
+    this.state.isSubmitting = false
     this.state.isStreaming = true
     this.state.streamAttached = true
-    this.startElapsedTimer()
+    this.ensureElapsedTimer()
     const timeoutMs = 180_000
     const timeout = window.setTimeout(() => {
+      if (this.controller !== controller) return
       if (!this.streamFinished) {
         this.state.streamError = this.state.streamError || 'Response timed out. Try again.'
         this.markStreamFinished()
@@ -274,13 +322,15 @@ class SessionRunStreamController {
         sessionId,
         runUuid,
         (payload) => {
+          if (this.controller !== controller) return
           if (payload && typeof payload === 'object') {
             this.handleEvent(payload as StreamPayload)
           }
         },
-        this.controller.signal,
+        controller.signal,
       )
     } catch (err) {
+      if (this.controller !== controller) return
       if (this.streamFinished || this.userAborted || isAbortError(err)) {
         return
       }
@@ -289,21 +339,21 @@ class SessionRunStreamController {
       }
     } finally {
       window.clearTimeout(timeout)
-      this.clearElapsedTimer()
-      if (
-        !this.state.streamError &&
-        (this.state.runStatus === 'failed' || this.state.runStatus === 'cancelled')
-      ) {
-        this.state.streamError = this.formatStreamError(
-          this.state.runStatus === 'cancelled' ? 'Run cancelled' : 'Run failed',
-        )
+      if (this.controller === controller) {
+        this.clearElapsedTimer()
+        if (
+          !this.state.streamError &&
+          (this.state.runStatus === 'failed' || this.state.runStatus === 'cancelled')
+        ) {
+          this.state.streamError = this.formatStreamError(
+            this.state.runStatus === 'cancelled' ? 'Run cancelled' : 'Run failed',
+          )
+        }
+        this.controller = null
+        this.state.streamAttached = false
+        this.state.isStreaming = false
+        finishedCallback?.()
       }
-      this.controller = null
-      this.state.streamAttached = false
-      this.state.isStreaming = false
-      const callback = this.onFinished
-      this.onFinished = null
-      callback?.()
     }
   }
 
@@ -314,6 +364,19 @@ class SessionRunStreamController {
     this.clearElapsedTimer()
     this.state.streamAttached = false
     this.state.isStreaming = false
+  }
+
+  beginSubmission() {
+    this.resetStreamState()
+    this.state.isSubmitting = true
+    this.startElapsedTimer()
+  }
+
+  clearSubmission() {
+    this.state.isSubmitting = false
+    if (!this.state.isStreaming && !this.state.streamAttached) {
+      this.clearElapsedTimer()
+    }
   }
 }
 
@@ -336,14 +399,36 @@ export function resetSessionRunStream(sessionId: number) {
   getController(sessionId).resetStreamState()
 }
 
+export function beginSessionRunSubmission(sessionId: number) {
+  getController(sessionId).beginSubmission()
+}
+
+export function clearSessionRunSubmission(sessionId: number) {
+  getController(sessionId).clearSubmission()
+}
+
+export function applySessionRunSubmission(
+  sessionId: number,
+  elapsedAnchorAt?: string | null,
+) {
+  getController(sessionId).applySubmissionSnapshot(elapsedAnchorAt)
+}
+
 export function applySessionActiveRun(
   sessionId: number,
   runUuid: string,
   status: string,
   partialContent: string,
   thinking: Array<{ message?: string; agent_event?: string; activity?: string }>,
+  elapsedAnchorAt?: string | null,
 ) {
-  getController(sessionId).applyActiveRunSnapshot(runUuid, status, partialContent, thinking)
+  getController(sessionId).applyActiveRunSnapshot(
+    runUuid,
+    status,
+    partialContent,
+    thinking,
+    elapsedAnchorAt,
+  )
 }
 
 export async function consumeSessionStream(
