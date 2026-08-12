@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"hyperfilelens/agent/internal/controller"
@@ -24,6 +25,7 @@ import (
 
 const controlPlanePollInterval = 5 * time.Second
 const gatewayObservabilityRefreshInterval = 10 * time.Minute
+const heartbeatCollectionInterval = 30 * time.Second
 
 // Agent is the runtime composition root coordinating module startup and shutdown.
 type Agent struct {
@@ -37,6 +39,10 @@ type Agent struct {
 	taskFixer *controller.TaskFixer
 	monitor   *monitor.Collector
 
+	heartbeatMu      sync.RWMutex
+	storageInventory map[string]any
+	monitorMetrics   map[string]any
+
 	idleLogged bool
 }
 
@@ -48,11 +54,12 @@ func New(store *config.Store) *Agent {
 	}
 	slog.Info("backup snapshot scheduler configured", "max_concurrent", snapshotConcurrency)
 	return &Agent{
-		store:     store,
-		sender:    remote.NewSender(),
-		scheduler: controller.NewScheduler(snapshotConcurrency),
-		tracker:   controller.NewTracker(),
-		monitor:   monitor.NewCollector(),
+		store:            store,
+		sender:           remote.NewSender(),
+		scheduler:        controller.NewScheduler(snapshotConcurrency),
+		tracker:          controller.NewTracker(),
+		monitor:          monitor.NewCollector(),
+		storageInventory: remote.EmptyStorageInventoryPayload(),
 	}
 }
 
@@ -105,6 +112,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		return err
 	}
 	defer a.Shutdown(context.Background())
+	go a.storageInventoryLoop(ctx)
+	go a.networkStorageInventoryLoop(ctx)
+	go a.monitorCollectionLoop(ctx)
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -121,13 +131,8 @@ func (a *Agent) Run(ctx context.Context) error {
 		if a.connector == nil {
 			a.connector = remote.NewConnector(a.store)
 			a.sender.Bind(a.connector)
-			a.connector.SetHeartbeatHook(func(ctx context.Context) map[string]any {
-				sample, err := a.monitor.SampleOnce(ctx)
-				if err != nil {
-					slog.Debug("monitor sample failed", "err", err)
-					return nil
-				}
-				return map[string]any{"metrics": sample.ToPayload()}
+			a.connector.SetHeartbeatHook(func(context.Context) map[string]any {
+				return a.heartbeatPayload()
 			})
 		}
 
@@ -155,7 +160,12 @@ func (a *Agent) Run(ctx context.Context) error {
 				if a.wire.TaskResultAckEnabled() {
 					go a.taskResultOutboxLoop(ctx)
 				}
-				if err := remote.SendInventory(ctx, a.connector, a.store); err != nil {
+				if err := remote.SendInventory(
+					ctx,
+					a.connector,
+					a.store,
+					a.storageInventorySnapshot(),
+				); err != nil {
 					return err
 				}
 				go a.deferredLifecycleRepair(context.WithoutCancel(ctx))
@@ -176,6 +186,115 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.connector = nil
 		}
 	}
+}
+
+func (a *Agent) heartbeatPayload() map[string]any {
+	a.heartbeatMu.RLock()
+	defer a.heartbeatMu.RUnlock()
+	payload := clonePayload(a.storageInventory)
+	if len(a.monitorMetrics) > 0 {
+		payload["metrics"] = a.monitorMetrics
+	}
+	return payload
+}
+
+func (a *Agent) storageInventorySnapshot() map[string]any {
+	a.heartbeatMu.RLock()
+	defer a.heartbeatMu.RUnlock()
+	return clonePayload(a.storageInventory)
+}
+
+func clonePayload(source map[string]any) map[string]any {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func (a *Agent) storageInventoryLoop(ctx context.Context) {
+	a.collectStorageInventory()
+	ticker := time.NewTicker(heartbeatCollectionInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.collectStorageInventory()
+		}
+	}
+}
+
+func (a *Agent) collectStorageInventory() {
+	payload, err := remote.CollectStorageInventoryPayload()
+	if err != nil {
+		slog.Debug("storage inventory collection failed", "err", err)
+		return
+	}
+	a.heartbeatMu.Lock()
+	if current, ok := a.storageInventory["network_storage_pools"]; ok {
+		payload["network_storage_pools"] = current
+	}
+	if current, ok := a.storageInventory["network_storage_inventory_status"]; ok {
+		payload["network_storage_inventory_status"] = current
+	}
+	a.storageInventory = payload
+	a.heartbeatMu.Unlock()
+}
+
+func (a *Agent) networkStorageInventoryLoop(ctx context.Context) {
+	a.collectNetworkStorageInventory()
+	ticker := time.NewTicker(heartbeatCollectionInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.collectNetworkStorageInventory()
+		}
+	}
+}
+
+func (a *Agent) collectNetworkStorageInventory() {
+	pools, err := remote.CollectNetworkStorageInventory()
+	if err != nil {
+		slog.Debug("network storage inventory collection failed", "err", err)
+		return
+	}
+	a.heartbeatMu.Lock()
+	if a.storageInventory == nil {
+		a.storageInventory = remote.EmptyStorageInventoryPayload()
+	}
+	a.storageInventory["network_storage_pools"] = pools
+	a.storageInventory["network_storage_inventory_status"] = "ready"
+	a.heartbeatMu.Unlock()
+}
+
+func (a *Agent) monitorCollectionLoop(ctx context.Context) {
+	a.collectMonitorSample(ctx)
+	ticker := time.NewTicker(heartbeatCollectionInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.collectMonitorSample(ctx)
+		}
+	}
+}
+
+func (a *Agent) collectMonitorSample(ctx context.Context) {
+	sample, err := a.monitor.SampleOnce(ctx)
+	if err != nil {
+		slog.Debug("monitor sample failed", "err", err)
+		return
+	}
+	a.heartbeatMu.Lock()
+	a.monitorMetrics = sample.ToPayload()
+	a.heartbeatMu.Unlock()
 }
 
 func (a *Agent) gatewayObservabilityLoop(ctx context.Context) {

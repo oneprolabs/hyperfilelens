@@ -49,9 +49,18 @@ def sync_agent_source_host(*, node: Node) -> SourceResource | None:
     inv = _merged_inventory(node)
     hostname = str(inv.get("hostname") or node.name or "").strip()
     root_path = str(inv.get("root_path") or "/").strip() or "/"
-    total = _as_int(inv.get("disk_total_bytes"))
-    used = _as_int(inv.get("disk_used_bytes"))
-    free = _as_int(inv.get("disk_free_bytes"))
+    capabilities = inv.get("capabilities")
+    storage_pending = (
+        isinstance(capabilities, list)
+        and "storage_inventory_v1" in capabilities
+        and (
+            inv.get("storage_inventory_status") != "ready"
+            or not isinstance(inv.get("local_storage_pools"), list)
+        )
+    )
+    total = 0 if storage_pending else _as_int(inv.get("disk_total_bytes"))
+    used = 0 if storage_pending else _as_int(inv.get("disk_used_bytes"))
+    free = 0 if storage_pending else _as_int(inv.get("disk_free_bytes"))
     if not free and total >= used:
         free = total - used
 

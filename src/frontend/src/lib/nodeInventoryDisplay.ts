@@ -1,5 +1,5 @@
 import type { EnrollmentOs } from './nodeApi'
-import type { ApiNode } from '../types/node'
+import type { ApiNode, NodeStoragePool, NodeStoragePoolRow } from '../types/node'
 import { installPathsSummary } from './nodeInstallCommands'
 import { formatAppDateTime } from './dateTime'
 
@@ -70,10 +70,72 @@ export function nodeOsDetailText(node: ApiNode): string {
 
 export function nodeDiskUsageParts(node: ApiNode): { used: number; total: number } {
   const inv = nodeInventory(node)
+  if (
+    Array.isArray(inv.capabilities)
+    && inv.capabilities.includes('storage_inventory_v1')
+    && (
+      inv.storage_inventory_status !== 'ready'
+      || !Array.isArray(inv.local_storage_pools)
+    )
+  ) {
+    return { used: 0, total: 0 }
+  }
   return {
     used: Number(inv.disk_used_bytes || 0),
     total: Number(inv.disk_total_bytes || 0),
   }
+}
+
+export function nodeStoragePoolRows(
+  node: ApiNode,
+  field: 'local_storage_pools' | 'network_storage_pools',
+): NodeStoragePoolRow[] {
+  const inventory = nodeInventory(node)
+  const capabilities = Array.isArray(inventory.capabilities) ? inventory.capabilities : []
+  if (!capabilities.includes('storage_inventory_v1')) return []
+  const statusField = field === 'local_storage_pools'
+    ? 'storage_inventory_status'
+    : 'network_storage_inventory_status'
+  if (inventory[statusField] !== 'ready') return []
+  const value = inventory[field]
+  if (!Array.isArray(value)) return []
+  const bytes = (raw: unknown): number => {
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0
+  }
+  return value
+    .filter((item): item is NodeStoragePool => Boolean(item && typeof item === 'object'))
+    .map((item, index) => ({
+      key: String(item.key || `storage-pool-${index}`),
+      device: String(item.device || '').trim(),
+      fsType: String(item.fs_type || '').trim(),
+      mountPoints: Array.isArray(item.mount_points)
+        ? [...new Set(item.mount_points.map((point) => String(point || '').trim()).filter(Boolean))]
+        : [],
+      totalBytes: bytes(item.total_bytes),
+      usedBytes: bytes(item.used_bytes),
+      availableBytes: bytes(item.free_bytes),
+    }))
+    .filter((item) => item.totalBytes > 0)
+}
+
+export function nodeSupportsStorageInventory(node: ApiNode): boolean {
+  const capabilities = nodeInventory(node).capabilities
+  return Array.isArray(capabilities) && capabilities.includes('storage_inventory_v1')
+}
+
+export function nodeHasStorageInventorySnapshot(node: ApiNode): boolean {
+  const inventory = nodeInventory(node)
+  return nodeSupportsStorageInventory(node)
+    && inventory.storage_inventory_status === 'ready'
+    && Array.isArray(inventory.local_storage_pools)
+}
+
+export function nodeHasNetworkStorageInventorySnapshot(node: ApiNode): boolean {
+  const inventory = nodeInventory(node)
+  return nodeSupportsStorageInventory(node)
+    && inventory.network_storage_inventory_status === 'ready'
+    && Array.isArray(inventory.network_storage_pools)
 }
 
 export function nodeDiskUsagePercent(node: ApiNode): number {
@@ -98,6 +160,16 @@ export function nodeMemoryTotalBytes(node: ApiNode): number | null {
 
 export function nodeDiskCount(node: ApiNode): number | null {
   const inv = nodeInventory(node)
+  if (
+    Array.isArray(inv.capabilities)
+    && inv.capabilities.includes('storage_inventory_v1')
+    && (
+      inv.storage_inventory_status !== 'ready'
+      || !Array.isArray(inv.local_storage_pools)
+    )
+  ) {
+    return null
+  }
   const count = Number(inv.disk_count)
   if (Number.isFinite(count) && count > 0) return count
   return null
