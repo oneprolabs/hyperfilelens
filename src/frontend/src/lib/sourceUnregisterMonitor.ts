@@ -114,7 +114,9 @@ export function sourceUnregisterTaskOutcome(task: TaskRow): SourceUnregisterTask
       typeof meta.hint === 'string' ? meta.hint.trim() : '',
     ].filter(Boolean)
   })
-  const failedStep = String(payload.failed_step || task.current_step || '').trim() || undefined
+  const failedStep = String(
+    payload.failed_step || (status === 'success' ? '' : task.current_step) || '',
+  ).trim() || undefined
   const hint = String(payload.hint || '').trim() || undefined
   return {
     terminal,

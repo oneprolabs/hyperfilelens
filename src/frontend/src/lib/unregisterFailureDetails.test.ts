@@ -80,6 +80,33 @@ describe('unregisterFailureToErrorDetails', () => {
     expect((details.rawDetail as { task_uuid?: string }).task_uuid).toBe('task-uuid-9')
   })
 
+  it('presents force residue as a completed removal instead of a failed cleanup', () => {
+    const details = unregisterFailureToErrorDetails({
+      t,
+      sourceId: 'agent:13',
+      sourceName: 'zjb',
+      task: {
+        status: 'success',
+        current_step: 'finalize_source_unregister',
+        result_payload: {
+          result: 'partial_success',
+          cleanup_complete: false,
+          retained_resources: ['repository_cleanup_record:6'],
+          snapshot_cleanup_tasks: [{
+            task_uuid: 'snapshot-task-1',
+            status: 'failed',
+            error_message: 'Agent source is offline.',
+          }],
+        },
+      } as never,
+    })
+
+    expect(details.title).toBe('Removed with cleanup warnings')
+    expect(details.reasons?.some(item => /Failed step/i.test(item))).toBe(false)
+    expect(details.reasons?.some(item => /Cleanup task .* failed/i.test(item))).toBe(false)
+    expect(details.resolutions?.some(item => /Open the deregistration dialog again/i.test(item))).toBe(false)
+  })
+
   it('falls back to a generic failure when no structured fields exist', () => {
     const details = unregisterFailureToErrorDetails({
       t,

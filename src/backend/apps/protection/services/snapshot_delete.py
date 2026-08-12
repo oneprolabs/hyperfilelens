@@ -12,7 +12,6 @@ from django.utils import timezone
 from apps.node.services.interface import run_agent_task_sync
 from apps.protection.models import BackupSourceSnapshot, BackupSourceSnapshotDirectory
 from apps.protection.services.backup_task import (
-    _resolve_execution_target,
     _set_step_status,
 )
 from apps.protection.services.kopia_snapshot_delete import (
@@ -22,9 +21,8 @@ from apps.protection.services.kopia_snapshot_delete import (
 from apps.protection.services.repository_compatibility import validate_backup_repository_compatible
 from apps.protection.services.snapshot_repository_locator import (
     group_snapshot_directories_by_repository_locator,
-    resolve_snapshot_repository_reader,
 )
-from apps.storage.services.internal.repository_access import repository_uses_bound_proxy
+from apps.protection.services.snapshot_delete_execution import run_snapshot_delete
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import (
     append_task_step_event,
@@ -560,9 +558,6 @@ def _run_snapshot_delete_task_locked(
         source_ref_id=source_snapshot.source_ref_id,
         repository_id=source_snapshot.repository_id,
     )
-    fallback_target = None
-    if not repository_uses_bound_proxy(repository):
-        fallback_target = _resolve_execution_target(source_snapshot=source_snapshot)
     _set_step_status(
         task=task,
         step_name="delete_kopia_snapshots",
@@ -600,27 +595,15 @@ def _run_snapshot_delete_task_locked(
     now = timezone.now()
     for group in groups:
         group_kopia_ids = _kopia_snapshot_ids(group)
-        repository_access = resolve_snapshot_repository_reader(
+        outcome = run_snapshot_delete(
+            organization_id=organization_id,
+            task=task,
+            source_snapshot=source_snapshot,
             directory=group[0],
             repository=repository,
-            fallback_node=(
-                fallback_target.node if fallback_target is not None else None
-            ),
-            source_type=source_snapshot.source_type,
-            source_ref_id=source_snapshot.source_ref_id,
-        )
-        outcome = run_agent_task_sync(
-            organization_id=organization_id,
-            node_id=repository_access.node.id,
-            kind="snapshot.delete",
-            payload={
-                "repository": repository_access.repository_payload,
-                "kopia_snapshot_ids": group_kopia_ids,
-            },
+            kopia_ids=group_kopia_ids,
             correlation_type="protection.snapshot_delete",
-            correlation_id=str(task.task_uuid),
-            parent_task=task,
-            wait_timeout_seconds=3600,
+            agent_runner=run_agent_task_sync,
         )
         result = outcome.result if isinstance(outcome.result, dict) else {}
         group_results = (

@@ -14,16 +14,14 @@ from apps.protection.services.kopia_snapshot_delete import (
     normalize_kopia_snapshot_id,
 )
 from apps.protection.services.backup_task import (
-    _resolve_execution_target,
     _set_step_status,
 )
 from apps.protection.services.repository_compatibility import validate_backup_repository_compatible
 from apps.protection.services.snapshot_repository_locator import (
     group_snapshot_directories_by_repository_locator,
-    resolve_snapshot_repository_reader,
 )
+from apps.protection.services.snapshot_delete_execution import run_snapshot_delete
 from apps.storage.repositories.models import Repository
-from apps.storage.services.internal.repository_access import repository_uses_bound_proxy
 from apps.source.constants import PipelineStep
 from apps.source.services.internal.selectable_ids import parse_selectable_id
 from apps.source.services.internal.source_pipeline import force_set_pipeline_steps
@@ -725,28 +723,15 @@ def _run_kopia_snapshot_delete(
 ):
     from apps.node.services.interface import run_agent_task_sync
 
-    fallback_target = None
-    if not repository_uses_bound_proxy(repository):
-        fallback_target = _resolve_execution_target(source_snapshot=source_snapshot)
-    repository_access = resolve_snapshot_repository_reader(
+    return run_snapshot_delete(
+        organization_id=organization_id,
+        task=task,
+        source_snapshot=source_snapshot,
         directory=directory,
         repository=repository,
-        fallback_node=fallback_target.node if fallback_target is not None else None,
-        source_type=source_snapshot.source_type,
-        source_ref_id=source_snapshot.source_ref_id,
-    )
-    return run_agent_task_sync(
-        organization_id=organization_id,
-        node_id=repository_access.node.id,
-        kind="snapshot.delete",
-        payload={
-            "repository": repository_access.repository_payload,
-            "kopia_snapshot_ids": kopia_ids,
-        },
+        kopia_ids=kopia_ids,
         correlation_type="protection.backup_config_reset",
-        correlation_id=str(task.task_uuid),
-        parent_task=task,
-        wait_timeout_seconds=3600,
+        agent_runner=run_agent_task_sync,
     )
 
 

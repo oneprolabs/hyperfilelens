@@ -17,7 +17,11 @@ from typing import Callable
 
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.s3_client import endpoint_for_kopia
-from apps.storage.services.internal.repository_secrets import resolve_repository_secrets
+from apps.storage.services.internal.repository_secrets import (
+    resolve_repository_secrets,
+    scrub_secrets,
+    secret_values_for_scrub,
+)
 from apps.storage.services.internal.repository_endpoints import repository_control_endpoint
 from apps.storage.services.internal.s3_url_style import (
     S3_URL_STYLE_AUTO,
@@ -161,6 +165,82 @@ def run_maintenance(
     if result.returncode != 0:
         raise KopiaCliError(_format_failure("Kopia repository maintenance failed", result))
     return KopiaResult(stdout=result.stdout, stderr=result.stderr)
+
+
+def delete_s3_snapshots(
+    repository: Repository,
+    *,
+    snapshot_ids: list[str],
+    timeout_seconds: int | None = None,
+) -> dict[str, object]:
+    """Delete selected S3 snapshots from the control-plane worker.
+
+    This is a fallback for an unavailable original writer. Normal snapshot
+    deletion continues to run on the Agent or Proxy that created the snapshot.
+    """
+
+    if repository.repo_type != Repository.Type.S3:
+        raise KopiaCliError("Control-plane snapshot delete only supports S3 repositories")
+
+    config_file = _snapshot_delete_config_file(repository)
+    secrets_payload = resolve_repository_secrets(repository)
+    secret_values = secret_values_for_scrub(
+        repository,
+        secrets_payload,
+    )
+    try:
+        _connect_maintenance_repository(
+            repository,
+            timeout_seconds=timeout_seconds,
+            config_file=config_file,
+        )
+    except KopiaCliError as exc:
+        safe_message = str(
+            scrub_secrets(str(exc), extra_values=secret_values) or ""
+        )
+        raise KopiaCliError(safe_message) from exc
+    results: list[dict[str, object]] = []
+    failed = 0
+    for raw_snapshot_id in snapshot_ids:
+        snapshot_id = str(raw_snapshot_id or "").strip()
+        if not snapshot_id:
+            continue
+        result = _run_repository_command(
+            repository,
+            ["snapshot", "delete", snapshot_id, "--delete"],
+            timeout_seconds=timeout_seconds,
+            config_file=config_file,
+        )
+        stdout_tail = str(
+            scrub_secrets(result.stdout[-2000:], extra_values=secret_values) or ""
+        )
+        stderr_tail = str(
+            scrub_secrets(result.stderr[-2000:], extra_values=secret_values) or ""
+        )
+        item: dict[str, object] = {
+            "kopia_snapshot_id": snapshot_id,
+            "status": "success" if result.returncode == 0 else "failed",
+            "delete": {
+                "exit_code": result.returncode,
+                "stdout_tail": stdout_tail,
+                "stderr_tail": stderr_tail,
+            },
+        }
+        if result.returncode != 0:
+            failed += 1
+            item["error_message"] = str(
+                scrub_secrets(
+                    _format_failure("Kopia snapshot delete failed", result),
+                    extra_values=secret_values,
+                )
+            )
+        results.append(item)
+    return {
+        "results": results,
+        "deleted_count": len(results) - failed,
+        "failed_count": failed,
+        "execution_mode": "controller_fallback",
+    }
 
 
 def _connect_maintenance_repository(
@@ -454,6 +534,10 @@ def _config_file(repository: Repository) -> Path:
 
 def _maintenance_config_file(repository: Repository) -> Path:
     return _config_file(repository).with_name("maintenance.repository.config")
+
+
+def _snapshot_delete_config_file(repository: Repository) -> Path:
+    return _config_file(repository).with_name("snapshot-delete.repository.config")
 
 
 def _environment(repository: Repository) -> dict[str, str]:

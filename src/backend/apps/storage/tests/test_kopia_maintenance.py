@@ -19,6 +19,7 @@ from apps.storage.services.internal.kopia_cli import (
     _s3_flags,
     _terminate_process_group,
     create_s3_repository,
+    delete_s3_snapshots,
     run_maintenance,
 )
 
@@ -114,6 +115,74 @@ class KopiaRepositoryCreateCommandTests(SimpleTestCase):
             run_command.call_args.args[1][:3],
             ["repository", "create", "s3"],
         )
+
+
+class KopiaSnapshotDeleteCommandTests(SimpleTestCase):
+    @patch("apps.storage.services.internal.kopia_cli._connect_maintenance_repository")
+    @patch("apps.storage.services.internal.kopia_cli._run_repository_command")
+    def test_controller_fallback_deletes_only_requested_s3_snapshots(
+        self,
+        run_command,
+        connect_repository,
+    ):
+        repository = Repository(
+            id=7,
+            repo_type=Repository.Type.S3,
+            s3_bucket="bucket",
+            config={"secret_access_key": "secret-value"},
+        )
+        run_command.side_effect = [
+            CompletedProcess([], 0, stdout="deleted secret-value", stderr=""),
+            CompletedProcess(
+                [],
+                1,
+                stdout="",
+                stderr="no snapshots matched secret-value",
+            ),
+        ]
+
+        with TemporaryDirectory() as temporary, patch.dict(
+            "os.environ", {"HFL_KOPIA_CONFIG_DIR": temporary}
+        ):
+            result = delete_s3_snapshots(
+                repository,
+                snapshot_ids=["snapshot-a", "snapshot-b"],
+                timeout_seconds=45,
+            )
+
+        connect_repository.assert_called_once()
+        self.assertEqual(result["deleted_count"], 1)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertEqual(result["execution_mode"], "controller_fallback")
+        delete_result = result["results"][0]["delete"]
+        self.assertNotIn("stdout", delete_result)
+        self.assertNotIn("stderr", delete_result)
+        self.assertEqual(delete_result["stdout_tail"], "deleted ******")
+        self.assertEqual(
+            result["results"][1]["delete"]["stderr_tail"],
+            "no snapshots matched ******",
+        )
+        self.assertNotIn("secret-value", str(result))
+        self.assertEqual(
+            [call.args[1] for call in run_command.call_args_list],
+            [
+                ["snapshot", "delete", "snapshot-a", "--delete"],
+                ["snapshot", "delete", "snapshot-b", "--delete"],
+            ],
+        )
+
+    def test_controller_fallback_rejects_non_s3_repository(self):
+        repository = Repository(
+            id=8,
+            repo_type=Repository.Type.NAS,
+            config={},
+        )
+
+        with self.assertRaisesMessage(
+            KopiaCliError,
+            "Control-plane snapshot delete only supports S3 repositories",
+        ):
+            delete_s3_snapshots(repository, snapshot_ids=["snapshot-a"])
 
 
 class KopiaMaintenanceCommandTests(SimpleTestCase):

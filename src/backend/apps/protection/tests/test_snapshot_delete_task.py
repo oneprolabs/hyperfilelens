@@ -29,6 +29,7 @@ from apps.protection.services.snapshot_delete import (
     run_snapshot_delete_task,
     snapshot_delete_retry_delay,
 )
+from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskResource
 
@@ -409,8 +410,23 @@ class SnapshotDeleteTaskTests(TestCase):
             [TaskResource.Type.BACKUP_SOURCE],
         )
 
+    @patch(
+        "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots",
+        return_value={
+            "deleted_count": 2,
+            "failed_count": 0,
+            "results": [
+                {"kopia_snapshot_id": "kopia-a", "status": "success"},
+                {"kopia_snapshot_id": "kopia-b", "status": "success"},
+            ],
+        },
+    )
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
-    def test_offline_source_is_closed_as_retryable_business_failure(self, mock_run_agent_task_sync):
+    def test_offline_s3_writer_falls_back_to_controller(
+        self,
+        mock_run_agent_task_sync,
+        mock_delete_s3_snapshots,
+    ):
         task = create_snapshot_delete_task(source_snapshot=self.snapshot)
         self.agent.availability = Node.Availability.OFFLINE
         self.agent.save(update_fields=["availability", "updated_at"])
@@ -424,11 +440,427 @@ class SnapshotDeleteTaskTests(TestCase):
         self.snapshot.refresh_from_db()
         task.refresh_from_db()
         mock_run_agent_task_sync.assert_not_called()
+        mock_delete_s3_snapshots.assert_called_once_with(
+            self.repository,
+            snapshot_ids=["kopia-a", "kopia-b"],
+            timeout_seconds=3600,
+        )
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETED)
+        self.assertEqual(result["deleted_count"], 2)
+
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_busy_s3_writer_does_not_shift_cleanup_to_controller(
+        self,
+        mock_run_agent_task_sync,
+    ):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        self.agent.status = Node.Status.UPGRADING
+        self.agent.save(update_fields=["status", "updated_at"])
+
+        with patch(
+            "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots"
+        ) as mock_delete_s3_snapshots:
+            run_snapshot_delete_task(
+                organization_id=self.org.id,
+                task_uuid=str(task.task_uuid),
+                source_snapshot_id=self.snapshot.id,
+            )
+
+        task.refresh_from_db()
+        mock_run_agent_task_sync.assert_not_called()
+        mock_delete_s3_snapshots.assert_not_called()
         self.assertEqual(task.status, Task.Status.FAILED)
-        self.assertEqual(task.error_code, "SNAPSHOT_DELETE_PRECONDITION_FAILED")
-        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETE_FAILED)
-        self.assertIn("Agent source is offline", self.snapshot.error_message)
-        self.assertEqual(result["source_snapshot_id"], self.snapshot.id)
+        self.assertIn("busy", task.error_message)
+
+    @patch(
+        "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots"
+    )
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_online_s3_writer_remains_preferred_over_controller(
+        self,
+        mock_run_agent_task_sync,
+        mock_delete_s3_snapshots,
+    ):
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            task=SimpleNamespace(id="node-delete-online", status="success", last_error=""),
+            result={
+                "deleted_count": 2,
+                "failed_count": 0,
+                "results": [
+                    {"kopia_snapshot_id": "kopia-a", "status": "success"},
+                    {"kopia_snapshot_id": "kopia-b", "status": "success"},
+                ],
+            },
+            ok=True,
+            timed_out=False,
+        )
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        mock_run_agent_task_sync.assert_called_once()
+        self.assertEqual(
+            mock_run_agent_task_sync.call_args.kwargs["node_id"],
+            self.agent.id,
+        )
+        mock_delete_s3_snapshots.assert_not_called()
+
+    @patch(
+        "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots",
+        return_value={
+            "deleted_count": 2,
+            "failed_count": 0,
+            "results": [
+                {"kopia_snapshot_id": "kopia-a", "status": "success"},
+                {"kopia_snapshot_id": "kopia-b", "status": "success"},
+            ],
+        },
+    )
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_s3_delivery_failure_before_dispatch_uses_controller(
+        self,
+        mock_run_agent_task_sync,
+        mock_delete_s3_snapshots,
+    ):
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            task=SimpleNamespace(
+                id="node-delete-undelivered",
+                status="failed",
+                last_error="agent websocket is not routable",
+                dispatched_at=None,
+            ),
+            result={},
+            ok=False,
+            timed_out=False,
+        )
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        mock_run_agent_task_sync.assert_called_once()
+        mock_delete_s3_snapshots.assert_called_once()
+
+    @patch(
+        "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots"
+    )
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_s3_failure_after_dispatch_does_not_run_twice_on_controller(
+        self,
+        mock_run_agent_task_sync,
+        mock_delete_s3_snapshots,
+    ):
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            task=SimpleNamespace(
+                id="node-delete-dispatched",
+                status="failed",
+                last_error="Agent went offline during task execution.",
+                dispatched_at=timezone.now(),
+            ),
+            result={},
+            ok=False,
+            timed_out=False,
+        )
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        mock_run_agent_task_sync.assert_called_once()
+        mock_delete_s3_snapshots.assert_not_called()
+
+    @patch(
+        "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots"
+    )
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_nas_source_s3_cleanup_prefers_backup_writer_proxy(
+        self,
+        mock_run_agent_task_sync,
+        mock_delete_s3_snapshots,
+    ):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="snapshot-delete-nas-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        nas_source = SourceResource.objects.create(
+            organization_id=self.org.id,
+            name="snapshot-delete-nas",
+            resource_type="nas",
+            bound_node=proxy,
+            availability="online",
+            mount_status="mounted",
+        )
+        self.config.source_type = "nas"
+        self.config.source_ref_id = nas_source.id
+        self.config.save(update_fields=["source_type", "source_ref_id"])
+        self.snapshot.source_type = "nas"
+        self.snapshot.source_ref_id = nas_source.id
+        self.snapshot.save(update_fields=["source_type", "source_ref_id", "updated_at"])
+        BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot=self.snapshot,
+        ).update(
+            repository_locator={
+                "version": 1,
+                "repository_id": self.repository.id,
+                "repository_type": Repository.Type.S3,
+                "repository_subdir": "",
+                "writer_node_id": proxy.id,
+                "access_node_id": None,
+            }
+        )
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            task=SimpleNamespace(id="proxy-delete-s3", status="success", last_error=""),
+            result={
+                "deleted_count": 2,
+                "failed_count": 0,
+                "results": [
+                    {"kopia_snapshot_id": "kopia-a", "status": "success"},
+                    {"kopia_snapshot_id": "kopia-b", "status": "success"},
+                ],
+            },
+            ok=True,
+            timed_out=False,
+        )
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        self.assertEqual(
+            mock_run_agent_task_sync.call_args.kwargs["node_id"],
+            proxy.id,
+        )
+        mock_delete_s3_snapshots.assert_not_called()
+
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_offline_direct_nas_writer_never_uses_controller(
+        self,
+        mock_run_agent_task_sync,
+    ):
+        self.repository.repo_type = Repository.Type.NAS
+        self.repository.nas_protocol = Repository.NasProtocol.NFS
+        self.repository.s3_bucket = ""
+        self.repository.config = {
+            "server_address": "10.0.0.20",
+            "share_path": "/backup",
+            "kopia_password": "repo-pass",
+        }
+        self.repository.save()
+        self.agent.metadata = {"platform": "linux"}
+        self.agent.availability = Node.Availability.OFFLINE
+        self.agent.save(update_fields=["metadata", "availability", "updated_at"])
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        with patch(
+            "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots"
+        ) as mock_delete_s3_snapshots:
+            run_snapshot_delete_task(
+                organization_id=self.org.id,
+                task_uuid=str(task.task_uuid),
+                source_snapshot_id=self.snapshot.id,
+            )
+
+        task.refresh_from_db()
+        mock_run_agent_task_sync.assert_not_called()
+        mock_delete_s3_snapshots.assert_not_called()
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertIn("offline", task.error_message)
+
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_offline_proxy_filesystem_never_uses_controller(
+        self,
+        mock_run_agent_task_sync,
+    ):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="snapshot-delete-offline-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+        self.repository.repo_type = Repository.Type.PROXY_FS
+        self.repository.s3_bucket = ""
+        self.repository.bind_node_type = Repository.BindNodeType.PROXY
+        self.repository.bind_node_id = proxy.id
+        self.repository.config = {
+            "proxy_node_dir": "/srv/hfl-repository",
+            "kopia_password": "repo-pass",
+        }
+        self.repository.save()
+        BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot=self.snapshot,
+        ).update(
+            repository_locator={
+                "version": 1,
+                "repository_id": self.repository.id,
+                "repository_type": Repository.Type.PROXY_FS,
+                "repository_subdir": "",
+                "writer_node_id": self.agent.id,
+                "access_node_id": proxy.id,
+            }
+        )
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        with patch(
+            "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots"
+        ) as mock_delete_s3_snapshots:
+            run_snapshot_delete_task(
+                organization_id=self.org.id,
+                task_uuid=str(task.task_uuid),
+                source_snapshot_id=self.snapshot.id,
+            )
+
+        task.refresh_from_db()
+        mock_run_agent_task_sync.assert_not_called()
+        mock_delete_s3_snapshots.assert_not_called()
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertIn("offline", task.error_message)
+
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_offline_proxy_bound_nas_never_uses_controller(
+        self,
+        mock_run_agent_task_sync,
+    ):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="snapshot-delete-offline-nas-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+        self.repository.repo_type = Repository.Type.NAS
+        self.repository.nas_protocol = Repository.NasProtocol.NFS
+        self.repository.s3_bucket = ""
+        self.repository.bind_node_type = Repository.BindNodeType.PROXY
+        self.repository.bind_node_id = proxy.id
+        self.repository.config = {
+            "server_address": "10.0.0.20",
+            "share_path": "/backup",
+            "kopia_password": "repo-pass",
+        }
+        self.repository.save()
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        with patch(
+            "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots"
+        ) as mock_delete_s3_snapshots:
+            run_snapshot_delete_task(
+                organization_id=self.org.id,
+                task_uuid=str(task.task_uuid),
+                source_snapshot_id=self.snapshot.id,
+            )
+
+        task.refresh_from_db()
+        mock_run_agent_task_sync.assert_not_called()
+        mock_delete_s3_snapshots.assert_not_called()
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertIn("offline", task.error_message)
+
+    @patch(
+        "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots",
+        return_value={
+            "deleted_count": 2,
+            "failed_count": 0,
+            "results": [
+                {"kopia_snapshot_id": "kopia-a", "status": "success"},
+                {"kopia_snapshot_id": "kopia-b", "status": "success"},
+            ],
+        },
+    )
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_data_gateway_is_never_selected_as_snapshot_delete_worker(
+        self,
+        mock_run_agent_task_sync,
+        mock_delete_s3_snapshots,
+    ):
+        gateway = Node.objects.create(
+            organization=self.org,
+            name="snapshot-delete-data-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot=self.snapshot,
+        ).update(
+            repository_locator={
+                "version": 1,
+                "repository_id": self.repository.id,
+                "repository_type": Repository.Type.S3,
+                "repository_subdir": "",
+                "writer_node_id": gateway.id,
+                "access_node_id": None,
+            }
+        )
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        mock_run_agent_task_sync.assert_not_called()
+        mock_delete_s3_snapshots.assert_called_once()
+
+    @patch(
+        "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots",
+        return_value={
+            "deleted_count": 0,
+            "failed_count": 1,
+            "results": [
+                {
+                    "kopia_snapshot_id": "kopia-a",
+                    "status": "failed",
+                    "delete": {"stderr_tail": "no snapshots matched kopia-a"},
+                },
+                {
+                    "kopia_snapshot_id": "kopia-b",
+                    "status": "failed",
+                    "delete": {"stderr_tail": "no snapshots matched kopia-b"},
+                },
+            ],
+        },
+    )
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_controller_treats_already_absent_snapshots_as_idempotent_success(
+        self,
+        mock_run_agent_task_sync,
+        _delete_s3_snapshots,
+    ):
+        self.agent.availability = Node.Availability.OFFLINE
+        self.agent.save(update_fields=["availability", "updated_at"])
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        result = run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        task.refresh_from_db()
+        self.snapshot.refresh_from_db()
+        mock_run_agent_task_sync.assert_not_called()
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETED)
+        self.assertEqual(result["already_absent_count"], 2)
 
     def test_reconcile_recovers_stale_running_task_by_request_payload(self):
         task = create_snapshot_delete_task(source_snapshot=self.snapshot)
