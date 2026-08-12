@@ -77,7 +77,11 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
 
   function pendingDeleteTasks() {
     return [...ops.value.entries()].flatMap(([sourceId, op]) =>
-      ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind) && op.taskUuid
+      op.taskUuid
+        && (
+          ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind)
+          || (op.kind === 'delete_failed' && !op.failureDetails)
+        )
         ? [{ sourceId, taskUuid: op.taskUuid, startedAt: op.startedAt }]
         : [],
     )

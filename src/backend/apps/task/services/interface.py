@@ -293,12 +293,10 @@ def cancel_task(*, task_uuid: UUID | str, organization_id: int, reason: str = ""
         raise Task.DoesNotExist
     if task.status in TERMINAL_STATUSES:
         raise ValidationError("Finished tasks cannot be cancelled.")
-    if task.task_type == Task.Type.SOURCE_UNREGISTER and task.status not in {
-        Task.Status.WAITING,
-        Task.Status.BLOCKED,
-    }:
+    if task.task_type == Task.Type.SOURCE_UNREGISTER:
         raise ValidationError(
-            "Source deregistration tasks cannot be cancelled after cleanup starts."
+            "Source deregistration tasks cannot be cancelled. Submit a new request "
+            "if cleanup did not start."
         )
     if task.task_type == Task.Type.NODE_LIFECYCLE:
         raise ValidationError(

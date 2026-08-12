@@ -4113,7 +4113,7 @@ cmd_upgrade() {
 	local from="" allow_main_build=0
 	local sourcelens_mode=-1 remove_sourcelens=0 purge_sourcelens_data=0
 	local src_root new_version cur_version new_channel cur_channel upgrade_sourcelens=0 backup_stamp
-	local target_color
+	local target_color running_worker_ids
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--from)
@@ -4207,7 +4207,7 @@ cmd_upgrade() {
 	step "Preloading verified target images before the maintenance window ..."
 	load_images_from_manifest "$([[ "${upgrade_sourcelens}" -eq 0 ]] && echo 1 || echo 0)" "${src_root}"
 
-	step "[5/8] Selecting the inactive color and pausing singleton scheduling ..."
+	step "[5/8] Selecting the inactive color and pausing background execution ..."
 	if compose_in_root ps -q 2>/dev/null | grep -q .; then
 		UPGRADE_HFL_WAS_RUNNING=1
 	fi
@@ -4229,6 +4229,16 @@ cmd_upgrade() {
 	record_deployment_phase prepared "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	UPGRADE_RECOVERY_ARMED=1
 	compose_in_root stop scheduler || true
+	# Let the old worker finish or return late-acknowledged work before migrations
+	# change task state contracts. This prevents old code from advancing a
+	# deferred source deregistration while the new release ends that behavior.
+	compose_in_root stop --timeout 600 worker \
+		|| die "old worker did not stop; refusing to apply task-state migrations"
+	if ! running_worker_ids="$(compose_in_root ps --status running -q worker 2>/dev/null)"; then
+		die "could not verify old worker state; refusing to apply task-state migrations"
+	fi
+	[[ -z "${running_worker_ids}" ]] \
+		|| die "old worker is still running; refusing to apply task-state migrations"
 
 	step "[6/8] Applying target files, configuration, and singleton migration ..."
 	# Existing releases used APP_VERSION for stable Nginx. Pin that currently
@@ -4264,9 +4274,8 @@ cmd_upgrade() {
 	cutover_hfl_color "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" \
 		|| die "blue/green cutover failed; previous traffic route was restored"
 	record_deployment_phase switched "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
-	# The active API/Web pool is now authoritative. Celery uses late ACK and
-	# prefetch=1; allow the old worker up to ten minutes to finish/return work.
-	compose_in_root stop --timeout 600 worker || true
+	# The active API/Web pool is now authoritative; start singleton consumers
+	# from the target release and recover any returned in-flight work.
 	compose_in_root up -d --no-build worker scheduler
 	wait_for_services_health "${HFL_HEALTH_TIMEOUT_SECONDS:-600}" \
 		postgres redis worker scheduler "api-${target_color}" "web-${target_color}" nginx \

@@ -31,6 +31,7 @@ describe('sourceUnregisterPendingKind', () => {
   it('keeps waiting and blocked distinct from active cleanup', () => {
     expect(sourceUnregisterPendingKind('waiting')).toBe('delete_waiting')
     expect(sourceUnregisterPendingKind('blocked')).toBe('delete_blocked')
+    expect(sourceUnregisterPendingKind('failed')).toBe('delete_failed')
     expect(sourceUnregisterPendingKind('running')).toBe('deleting')
   })
 })

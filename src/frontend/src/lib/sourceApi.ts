@@ -376,8 +376,6 @@ export type BackupSourceDeleteReason = {
 
 export type BackupSourceDeletePreflight = {
   risks: BackupSourceDeleteReason[]
-  waiting?: BackupSourceDeleteReason[]
-  requires_attention?: BackupSourceDeleteReason[]
   blocking: BackupSourceDeleteReason[]
   strict_may_fail: boolean
   delete_disabled: boolean

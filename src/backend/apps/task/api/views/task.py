@@ -124,12 +124,14 @@ class TaskViewSet(viewsets.ModelViewSet):
         task_type = task.task_type
         if task_type == Task.Type.REPOSITORY_OPERATION:
             raise ValidationError({"detail": "Repository tasks are managed by the server scheduler."})
-        if task_type == Task.Type.SOURCE_UNREGISTER and task.status not in {
-            Task.Status.WAITING,
-            Task.Status.BLOCKED,
-        }:
+        if task_type == Task.Type.SOURCE_UNREGISTER:
             raise ValidationError(
-                {"detail": "Source deregistration tasks cannot be cancelled after cleanup starts."}
+                {
+                    "detail": (
+                        "Source deregistration tasks cannot be cancelled. "
+                        "Resolve the prerequisite and submit a new request if cleanup did not start."
+                    )
+                }
             )
         try:
             task = cancel_task(
@@ -150,6 +152,24 @@ class TaskViewSet(viewsets.ModelViewSet):
         current_task = self.get_object()
         if current_task.task_type == Task.Type.REPOSITORY_OPERATION:
             raise ValidationError({"detail": "Repository tasks are retried by the server scheduler."})
+        if (
+            current_task.task_type == Task.Type.SOURCE_UNREGISTER
+            and current_task.error_code
+            in {
+                "SOURCE_UNREGISTER_PREFLIGHT_FAILED",
+                "SOURCE_UNREGISTER_DEFERRED_CANCELLED",
+                "SOURCE_UNREGISTER_INVALID_REQUEST",
+                "TASK_CANCELLED",
+            }
+        ):
+            raise ValidationError(
+                {
+                    "detail": (
+                        "This deregistration did not start. Resolve the prerequisite "
+                        "and submit a new request from the source deregistration dialog."
+                    )
+                }
+            )
         try:
             if current_task.task_type == Task.Type.SOURCE_UNREGISTER:
                 from apps.source.services.internal.backup_source_delete import (
@@ -171,24 +191,6 @@ class TaskViewSet(viewsets.ModelViewSet):
             raise NotFound("task not found") from exc
         except DjangoValidationError as exc:
             raise ValidationError({"detail": str(exc)}) from exc
-        return Response(TaskSerializer(task).data)
-
-    @action(detail=True, methods=["post"], url_path="recheck")
-    def recheck(self, request, task_uuid=None):
-        task = self.get_object()
-        if task.task_type != Task.Type.SOURCE_UNREGISTER or task.status not in {
-            Task.Status.WAITING,
-            Task.Status.BLOCKED,
-        }:
-            raise ValidationError(
-                {"detail": "Only deferred source deregistration tasks can be rechecked."}
-            )
-        from apps.source.services.internal.backup_source_delete import (
-            reevaluate_source_unregister_task,
-        )
-
-        reevaluate_source_unregister_task(task_id=int(task.id))
-        task.refresh_from_db()
         return Response(TaskSerializer(task).data)
 
     @action(detail=True, methods=["get"], url_path="steps")

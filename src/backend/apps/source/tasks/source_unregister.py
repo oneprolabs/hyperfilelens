@@ -188,7 +188,14 @@ def queue_source_unregister_task(*, task_id: int, countdown_seconds: int = 0) ->
     retry_kwargs={"max_retries": 2},
 )
 def execute_source_unregister_task(self, *, task_id: int) -> dict:
-    from apps.source.services.internal.backup_source_delete import run_source_unregister_task
+    from apps.source.services.internal.backup_source_delete import (
+        end_legacy_deferred_source_unregister_task,
+        run_source_unregister_task,
+    )
+
+    legacy_result = end_legacy_deferred_source_unregister_task(task_id=int(task_id))
+    if legacy_result.get("legacy_deferred_ended"):
+        return legacy_result
 
     lease, task = _acquire_source_unregister_lease(task_id=int(task_id))
     if lease.terminal:
@@ -264,9 +271,9 @@ def reconcile_stuck_source_unregister_tasks_task(self, *, limit: int = 50) -> di
     name="apps.source.tasks.source_unregister.reevaluate_source_unregister_task_task",
 )
 def reevaluate_source_unregister_task_task(*, task_id: int) -> dict:
-    """Reevaluate one deferred deregistration after a dependency state change."""
+    """Drain a queued legacy recheck without executing its stale delete intent."""
     from apps.source.services.internal.backup_source_delete import (
-        reevaluate_source_unregister_task,
+        end_legacy_deferred_source_unregister_task,
     )
 
-    return reevaluate_source_unregister_task(task_id=int(task_id))
+    return end_legacy_deferred_source_unregister_task(task_id=int(task_id))

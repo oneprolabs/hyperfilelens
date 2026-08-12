@@ -61,7 +61,6 @@ import {
   getTask,
   listTaskEvents,
   listTasks,
-  recheckTask,
   taskStatistics,
   type TaskEventRow,
   type TaskRow,
@@ -242,9 +241,7 @@ const taskAdvancedRangeLabel = computed(() => {
 
 const canCancel = computed(() => {
   if (activeTask.value?.actions) return activeTask.value.actions.can_cancel
-  if (activeTask.value?.task_type === 'source_unregister') {
-    return activeTask.value.status === 'waiting' || activeTask.value.status === 'blocked'
-  }
+  if (activeTask.value?.task_type === 'source_unregister') return false
   if (activeTask.value?.task_type === 'node_lifecycle') return false
   if (activeTask.value?.task_type === 'repository_operation') {
     return canCancelRepositoryTask(activeTask.value)
@@ -252,13 +249,6 @@ const canCancel = computed(() => {
   const status = activeTask.value?.status
   return status === 'pending' || status === 'waiting' || status === 'running'
 })
-const canRecheck = computed(() => Boolean(
-  activeTask.value?.actions?.can_recheck
-  ?? (
-    activeTask.value?.task_type === 'source_unregister'
-    && ['waiting', 'blocked'].includes(activeTask.value?.status || '')
-  ),
-))
 const activeDependencies = computed(() =>
   (activeTask.value?.dependencies || []).filter((dependency) => dependency.is_active),
 )
@@ -977,23 +967,6 @@ async function cancelActiveTask() {
   }
 }
 
-async function recheckActiveTask() {
-  if (!activeTask.value || !canRecheck.value) return
-  actionBusy.value = true
-  try {
-    const updated = await recheckTask(activeTask.value.task_uuid)
-    syncTask(updated)
-    const eventPage = await listTaskEvents(updated.task_uuid, { page_size: 50 })
-    detailEvents.value = eventPage.results
-    initExpandedSteps(updated)
-    ElMessage.success(t('ops.task.recheckComplete'))
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessageI18n(err, t), grouping: true })
-  } finally {
-    actionBusy.value = false
-  }
-}
-
 async function refreshActiveTask() {
   if (!activeTask.value) return
   await openTaskDetail(activeTask.value.task_uuid)
@@ -1331,15 +1304,6 @@ watch(
           </div>
           <h2 v-else class="hfl-task-drawer__header-title">{{ t('ops.task.detailTitle') }}</h2>
           <div class="hfl-task-drawer__header-actions">
-            <ElButton
-              v-if="canRecheck"
-              :loading="actionBusy"
-              :disabled="actionBusy || detailRefreshing"
-              @click="recheckActiveTask"
-            >
-              <RefreshCw :size="15" />
-              <span>{{ t('ops.task.btnRecheck') }}</span>
-            </ElButton>
             <ElButton
               v-if="canCancel"
               class="hfl-task-drawer__cancel-button"

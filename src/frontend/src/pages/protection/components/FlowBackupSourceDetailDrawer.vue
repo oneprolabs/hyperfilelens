@@ -107,7 +107,7 @@ import {
   type TransferProgress,
 } from '../../../lib/kopiaProgress'
 import type { TaskEventRow, TaskResourceRow, TaskRow } from '../../../lib/taskApi'
-import { cancelTask, getTask, listTaskEvents, listTasks, recheckTask } from '../../../lib/taskApi'
+import { getTask, listTaskEvents, listTasks } from '../../../lib/taskApi'
 import type { RestoreEndpointType, RestoreRecord, RestoreRecordItem } from '../../../lib/restoreApi'
 import { listRestoreRecords, fetchRestoreRecordRuntime } from '../../../lib/restoreApi'
 import { formatLocalDateTime } from '../../../lib/dateTime'
@@ -620,16 +620,6 @@ const canCancelBackupTask = computed(() => {
   if (!task || task.task_type !== 'backup') return false
   return task.status === 'pending' || task.status === 'running'
 })
-const canCancelDeferredTask = computed(() => Boolean(
-  activeTask.value?.task_type === 'source_unregister'
-  && (activeTask.value.actions?.can_cancel
-    ?? ['waiting', 'blocked'].includes(activeTask.value.status)),
-))
-const canRecheckDeferredTask = computed(() => Boolean(
-  activeTask.value?.task_type === 'source_unregister'
-  && (activeTask.value.actions?.can_recheck
-    ?? ['waiting', 'blocked'].includes(activeTask.value.status)),
-))
 const failedBackupDirectories = computed(() => {
   const rows = activeBackupSnapshot.value?.directories || []
   return rows.filter((row) => row.status === 'failed' || row.status === 'cancelled')
@@ -740,33 +730,6 @@ async function cancelActiveBackupTask() {
   try {
     await cancelProtectionBackupTask(activeTask.value.task_uuid)
     ElMessage.success({ message: t('protection.backupsPage.backupTaskCancelSuccess'), grouping: true })
-    await refreshActiveTask()
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
-  } finally {
-    backupTaskActionBusy.value = false
-  }
-}
-
-async function cancelActiveDeferredTask() {
-  if (!activeTask.value || !canCancelDeferredTask.value) return
-  backupTaskActionBusy.value = true
-  try {
-    await cancelTask(activeTask.value.task_uuid, t('ops.task.cancelReason'))
-    await refreshActiveTask()
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
-  } finally {
-    backupTaskActionBusy.value = false
-  }
-}
-
-async function recheckActiveDeferredTask() {
-  if (!activeTask.value || !canRecheckDeferredTask.value) return
-  backupTaskActionBusy.value = true
-  try {
-    await recheckTask(activeTask.value.task_uuid)
-    ElMessage.success({ message: t('ops.task.recheckComplete'), grouping: true })
     await refreshActiveTask()
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err), grouping: true })
@@ -3928,24 +3891,6 @@ function onClosed() {
         </div>
         <h2 v-else class="dp-task-detail__header-title">{{ t('protection.backupsPage.backupTaskDrawerTitle') }}</h2>
         <div class="dp-task-detail__header-actions">
-          <ElButton
-            v-if="canRecheckDeferredTask"
-            :loading="backupTaskActionBusy"
-            :disabled="backupTaskActionBusy || activeTaskLoading"
-            @click="recheckActiveDeferredTask"
-          >
-            <RefreshCw :size="15" />
-            <span>{{ t('ops.task.btnRecheck') }}</span>
-          </ElButton>
-          <ElButton
-            v-if="canCancelDeferredTask"
-            :loading="backupTaskActionBusy"
-            :disabled="backupTaskActionBusy || activeTaskLoading"
-            @click="cancelActiveDeferredTask"
-          >
-            <CircleStop :size="15" />
-            <span>{{ t('ops.task.btnCancel') }}</span>
-          </ElButton>
           <ElButton
             v-if="canCancelBackupTask"
             class="dp-task-detail__cancel-button"

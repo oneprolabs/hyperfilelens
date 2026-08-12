@@ -6,6 +6,7 @@ import {
   readWizardPendingSourceOps,
   WIZARD_PENDING_STORAGE_KEY,
 } from './backupWizardPendingStorage'
+import { useBackupWizardSourcePendingOps } from './useBackupWizardSourcePendingOps'
 
 describe('backup wizard pending source storage', () => {
   beforeEach(() => {
@@ -59,5 +60,23 @@ describe('backup wizard pending source storage', () => {
     const op = readWizardPendingSourceOps().get('agent:9')
     expect(op?.failureDetails?.rawDetail).toEqual({ task_uuid: 'task-uuid-9' })
     expect(op?.failureDetails?.reasons).toEqual(['Agent uninstall callback failed'])
+  })
+
+  it('reconciles a failed task whose terminal details were not persisted', () => {
+    markWizardPendingBySourceIds(['nas:42'], {
+      kind: 'delete_failed',
+      taskUuid: 'task-uuid-42',
+      startedAt: 1234,
+    })
+
+    const pending = useBackupWizardSourcePendingOps({
+      t: ((key: string) => key) as never,
+    })
+
+    expect(pending.pendingDeleteTasks()).toEqual([{
+      sourceId: 'nas:42',
+      taskUuid: 'task-uuid-42',
+      startedAt: 1234,
+    }])
   })
 })

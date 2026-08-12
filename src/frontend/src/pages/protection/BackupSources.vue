@@ -966,10 +966,20 @@ function stopPendingSourceDeletePoll() {
   }
 }
 
+function sourceDeleteTaskNeedsReconcile(op: SourcePendingOp) {
+  return Boolean(
+    op.taskUuid
+    && (
+      ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind)
+      || (op.kind === 'delete_failed' && !op.failureDetails)
+    ),
+  )
+}
+
 function schedulePendingSourceDeletePoll(delay = SOURCE_DELETE_TASK_POLL_MS) {
   stopPendingSourceDeletePoll()
   const hasPendingTask = [...pendingSourceOps.value.values()].some(
-    (op) => ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind) && Boolean(op.taskUuid),
+    sourceDeleteTaskNeedsReconcile,
   )
   if (!hasPendingTask) return
   sourceDeleteTaskPollTimer = window.setTimeout(() => {
@@ -1027,7 +1037,7 @@ async function reconcilePendingSourceDeleteTasks() {
   if (sourceDeleteTaskPollInFlight) return
   refreshPendingSourceOps()
   const pending = [...pendingSourceOps.value.entries()].flatMap(([sourceId, op]) =>
-    ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind) && op.taskUuid
+    sourceDeleteTaskNeedsReconcile(op) && op.taskUuid
       ? [{ sourceId, op }]
       : [],
   )
@@ -1112,7 +1122,7 @@ async function reconcilePendingSourceDeleteTasks() {
     sourceDeleteTaskPollInFlight = false
     refreshPendingSourceOps()
     const trackedDeleteOps = [...pendingSourceOps.value.values()].filter(
-      (op) => ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind) && op.taskUuid,
+      sourceDeleteTaskNeedsReconcile,
     )
     const onlyBlocked = trackedDeleteOps.length > 0
       && trackedDeleteOps.every((op) => op.kind === 'delete_blocked')
