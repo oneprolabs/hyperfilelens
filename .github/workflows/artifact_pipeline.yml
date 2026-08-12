@@ -454,24 +454,28 @@ jobs:
           HFL_EXTENSIONS= uv run python src/backend/manage.py makemigrations --check --dry-run
           HFL_EXTENSIONS= uv run python src/backend/manage.py test
           if [[ -n "${HFL_EXTENSIONS:-}" ]]; then
-            extension_test_labels=()
+            uv run python src/backend/manage.py makemigrations --check --dry-run
+            extension_test_count=0
             IFS=',' read -r -a extension_roots <<<"$HFL_EXTENSIONS"
             for root in "${extension_roots[@]}"; do
               backend="$root/src/backend"
+              extension_test_dirs=()
               while IFS= read -r test_dir; do
-                label="${test_dir#"$backend/"}"
-                extension_test_labels+=("${label//\//.}")
+                extension_test_dirs+=("$test_dir")
               done < <(
                 find "$backend" -type d -name tests -exec test -f '{}/__init__.py' \; -print \
                   | sort
               )
+              ((${#extension_test_dirs[@]} > 0)) || continue
+              extension_test_count=$((extension_test_count + ${#extension_test_dirs[@]}))
+              uv run python src/backend/manage.py test \
+                "${extension_test_dirs[@]}" \
+                --top-level-directory "$backend"
             done
-            ((${#extension_test_labels[@]} > 0)) || {
+            ((extension_test_count > 0)) || {
               echo "::error::Enterprise extension contains no discoverable backend tests"
               exit 1
             }
-            uv run python src/backend/manage.py makemigrations --check --dry-run
-            uv run python src/backend/manage.py test "${extension_test_labels[@]}"
           fi
 
       - name: Frontend checks
