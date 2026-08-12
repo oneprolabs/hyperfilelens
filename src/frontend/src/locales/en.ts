@@ -1712,7 +1712,8 @@ export const en = {
     batchDelete: 'Delete',
     batchDeleteNeedSelect: 'Select repositories to delete first',
     batchDeleteTitle: 'Batch Delete',
-    batchDeleteConfirm: 'Delete {n} selected repositories?',
+    batchDeleteConfirm:
+      'Delete {n} selected repositories? If a Target NAS is not currently mounted, its platform record will be removed but remote repository data may be retained.',
     batchDeleteS3Title: 'Delete Object Storage',
     batchDeleteS3Confirm:
       'Delete the selected {n} object storage repositories? This cannot be undone. Ensure data in these repositories has been handled or is no longer needed.',

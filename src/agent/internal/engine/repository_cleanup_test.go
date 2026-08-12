@@ -164,6 +164,62 @@ func TestManagedRepositoryCleanupRemovesOnlyOwnedCache(t *testing.T) {
 	}
 }
 
+func TestManagedNASCleanupSkipsUnmountedRemoteAndRemovesLocalState(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("HFL_DATA_DIR", dataDir)
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{DataDir: dataDir}})
+	mountPoint := filepath.Join(dataDir, "mounts", "repositories", "repo-17-node-13")
+	remoteLookingPath := filepath.Join(mountPoint, "hp-repos", "storage-17")
+	if err := os.MkdirAll(remoteLookingPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(remoteLookingPath, "must-not-delete")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := repositorySpec{ID: 17, Type: "nas", Subdir: "hp-repos/storage-17"}
+	configFile := engine.repositoryConfigPath(spec)
+	if err := os.MkdirAll(filepath.Dir(configFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configFile, []byte("config"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(managedRepositoryCacheDir(engine.current(), configFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := ParsePayload(map[string]any{
+		"operation_type":   "cleanup.repository",
+		"unmounted_policy": "retain_and_continue",
+		"repository": map[string]any{
+			"id": 17, "type": "nas", "subdir": spec.Subdir,
+			"nas": map[string]any{
+				"protocol": "smb", "server": "192.0.2.1", "share": "backup",
+				"mount_point": mountPoint, "username": "backup", "password": "secret",
+			},
+		},
+	})
+	status, result, message := engine.runManagedRepositoryCleanup(
+		context.Background(), ReporterSink{}, "cleanup-unmounted", payload,
+	)
+	if status != "success" {
+		t.Fatalf("cleanup status=%q message=%q result=%#v", status, message, result)
+	}
+	if result["physical_cleanup"] != "skipped_unmounted" || result["cleanup_complete"] != false {
+		t.Fatalf("unexpected cleanup result: %#v", result)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("unmounted mount-point contents were touched: %v", err)
+	}
+	if _, err := os.Stat(configFile); !os.IsNotExist(err) {
+		t.Fatalf("local config still exists: %v", err)
+	}
+	if _, err := os.Stat(managedRepositoryCacheDir(engine.current(), configFile)); !os.IsNotExist(err) {
+		t.Fatalf("local cache still exists: %v", err)
+	}
+}
+
 func TestManagedProxyFSCleanupPreservesBaseDirectorySiblings(t *testing.T) {
 	base := t.TempDir()
 	target := filepath.Join(base, "hfl-repo-81")

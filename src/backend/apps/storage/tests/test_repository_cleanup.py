@@ -104,6 +104,90 @@ class RepositoryCleanupTests(TestCase):
         self.assertEqual(repository.cleanup_result, Repository.CleanupResult.PRESERVED)
 
     @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+        return_value={
+            "mount_status": "not_mounted",
+            "physical_cleanup": "skipped_unmounted",
+            "cleanup_complete": False,
+            "local_state_cleanup": "completed",
+            "cleanup_failures": [
+                {
+                    "code": "NAS_NOT_MOUNTED",
+                    "detail": "Remote repository cleanup was skipped because the NAS was not mounted.",
+                }
+            ],
+            "retained_resources": ["nas_repository:17"],
+        },
+    )
+    def test_unmounted_nas_cleanup_succeeds_with_retained_resource_warning(self, _execute_cleanup):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="unmounted-nas-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="unmounted-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.SMB,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.OFFLINE,
+            config={"server_address": "192.0.2.1", "share_path": "/backup"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        repository_task = create_repository_cleanup_task(repository=repository, dispatch=False)
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        repository.refresh_from_db()
+        repository_task.task.refresh_from_db()
+        warning_step = repository_task.task.steps.get(step_name="delete_physical_repository")
+        warning_event = repository_task.task.events.filter(level="WARN").get()
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["outcome"], "cleanup_success_with_retained_resources")
+        self.assertFalse(result["cleanup_complete"])
+        self.assertEqual(warning_step.status, warning_step.Status.WARNING)
+        self.assertEqual(warning_event.metadata["mount_status"], "not_mounted")
+        self.assertEqual(repository.status, Repository.Status.REMOVED)
+        self.assertEqual(repository.cleanup_result, Repository.CleanupResult.FORCE_SKIPPED)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
+    )
+    def test_nas_cleanup_dispatches_explicit_unmounted_policy(self, dispatch):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="nas-policy-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="nas-policy",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "192.0.2.1", "share_path": "/backup"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        repository_task = create_repository_cleanup_task(repository=repository, dispatch=False)
+
+        _execute_physical_cleanup(repository_task)
+
+        self.assertEqual(
+            dispatch.call_args.kwargs["payload"]["unmounted_policy"],
+            "retain_and_continue",
+        )
+
+    @mock.patch(
         "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
     )
     def test_legacy_local_disk_on_v1_agent_is_preserved_without_dispatch(self, dispatch):

@@ -2,6 +2,7 @@ package nas
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,39 @@ type Service struct{}
 
 func NewService() *Service {
 	return &Service{}
+}
+
+// IsMounted reports whether mountPoint is an active filesystem mount.
+func (s *Service) IsMounted(mountPoint string) bool {
+	mountPoint = ResolvedMountPoint(mountPoint)
+	return mountPoint != "" && isMounted(mountPoint)
+}
+
+// CleanupUnmountedMountPoint removes an empty managed mount-point directory.
+// It checks the live mount table before inspecting and again before removing
+// the directory so cleanup never traverses a concurrently mounted NAS.
+func (s *Service) CleanupUnmountedMountPoint(mountPoint string) (bool, error) {
+	mountPoint = ResolvedMountPoint(mountPoint)
+	if mountPoint == "" {
+		return false, fmt.Errorf("invalid mount_point")
+	}
+	if isMounted(mountPoint) {
+		return false, nil
+	}
+	entries, err := os.ReadDir(mountPoint)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if len(entries) != 0 || isMounted(mountPoint) {
+		return false, nil
+	}
+	if err := removeManagedMountDirectory(mountPoint); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // EnsureMounted mounts the NAS share when the mount point is not active yet.
