@@ -701,9 +701,9 @@ def _run_copilot_chat_provision(
     if scope_result is not None:
         return scope_result
     link.refresh_from_db()
-    scopes = list(link.source_scopes_json or [])
-    _reserve_chat_capacity(link=link, claim_token=claim_token, scopes=scopes)
+    _reserve_chat_capacity(link=link, claim_token=claim_token)
     link.refresh_from_db()
+    scopes = list(link.source_scopes_json or [])
 
     _set_phase(
         link,
@@ -1074,7 +1074,6 @@ def _reserve_chat_capacity(
     *,
     link: LensSessionLink,
     claim_token: str,
-    scopes: list[dict[str, Any]],
 ) -> None:
     """Atomically validate trusted summaries and reserve Chat capacity once."""
 
@@ -1097,6 +1096,7 @@ def _reserve_chat_capacity(
         return
     if locked.scope_resolution_status != LensSessionLink.ScopeResolutionStatus.RESOLVED:
         raise RuntimeError("Chat capacity cannot be reserved before scope resolution.")
+    scopes = list(locked.source_scopes_json or [])
     if not scopes or not all(_scope_has_trusted_summary(scope) for scope in scopes):
         raise RuntimeError("Chat capacity requires trusted scope summaries.")
 
@@ -1122,6 +1122,8 @@ def _reserve_chat_capacity(
         )
         from apps.subscription.services.interface import enforce_license_quota
 
+        # Keep the reservation lock order stable: Session -> Organization ->
+        # Public Gateway. Future admission locks must preserve this ordering.
         Organization.objects.select_for_update().get(pk=locked.organization_id)
         gateway = lock_public_gateway_capacity(gateway_link=locked.gateway_link)
         assert_public_gateway_capacity(

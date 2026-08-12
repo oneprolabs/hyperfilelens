@@ -1,9 +1,12 @@
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import SimpleTestCase, TestCase
+from django.db import close_old_connections
+from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -21,6 +24,7 @@ from apps.protection.models import (
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
 )
+from common.errors import AppError
 
 
 class CopilotLifecycleQueueTests(SimpleTestCase):
@@ -322,12 +326,14 @@ class CopilotCapacityReservationTests(TestCase):
             ),
             provision_claim_token=claim_token,
             knowledge_source=None,
+            source_scopes_json=[
+                {"path_type": "dir", "file_count": 3, "size_bytes": 4096}
+            ],
         )
 
         chat_lifecycle._reserve_chat_capacity(
             link=session,
             claim_token=str(claim_token),
-            scopes=[{"path_type": "dir", "file_count": 3, "size_bytes": 4096}],
         )
 
         session.refresh_from_db()
@@ -336,6 +342,116 @@ class CopilotCapacityReservationTests(TestCase):
             LensSessionLink.CapacityReservationStatus.RESERVED,
         )
         self.assertEqual(session.capacity_reserved_bytes, 4096)
+
+
+class CopilotCapacityReservationConcurrencyTests(TransactionTestCase):
+    reset_sequences = True
+
+    def test_same_public_gateway_capacity_cannot_be_oversubscribed(self):
+        platform_org = Organization.objects.create(
+            key="capacity-platform",
+            name="Capacity Platform",
+        )
+        gateway = Node.objects.create(
+            organization=platform_org,
+            name="shared-capacity-gateway",
+            role=Node.Role.GATEWAY,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=platform_org,
+            gateway=gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+            capacity_gb=1,
+        )
+        session_claims = []
+        reservation_bytes = 700 * 1024**2
+        for index in range(2):
+            organization = Organization.objects.create(
+                key=f"capacity-tenant-{index}",
+                name=f"Capacity Tenant {index}",
+            )
+            user = get_user_model().objects.create_user(
+                username=f"capacity-tenant-{index}@example.test",
+                email=f"capacity-tenant-{index}@example.test",
+            )
+            claim_token = uuid.uuid4()
+            session = LensSessionLink.objects.create(
+                organization=organization,
+                hfl_user=user,
+                gateway_link=gateway_link,
+                lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+                scope_resolution_status=(
+                    LensSessionLink.ScopeResolutionStatus.RESOLVED
+                ),
+                capacity_reservation_status=(
+                    LensSessionLink.CapacityReservationStatus.PENDING
+                ),
+                provision_claim_token=claim_token,
+                knowledge_source=None,
+                source_scopes_json=[
+                    {
+                        "path_type": "dir",
+                        "file_count": 1,
+                        "size_bytes": reservation_bytes,
+                    }
+                ],
+            )
+            session_claims.append((session.id, str(claim_token)))
+
+        gateway_lock_barrier = threading.Barrier(2)
+        from apps.lens_bridge.services import public_gateway_capacity
+
+        original_gateway_lock = public_gateway_capacity.lock_public_gateway_capacity
+
+        def synchronized_gateway_lock(*, gateway_link):
+            gateway_lock_barrier.wait(timeout=5)
+            return original_gateway_lock(gateway_link=gateway_link)
+
+        def reserve(session_id, claim_token):
+            close_old_connections()
+            try:
+                try:
+                    chat_lifecycle._reserve_chat_capacity(
+                        link=LensSessionLink(pk=session_id),
+                        claim_token=claim_token,
+                    )
+                except AppError as exc:
+                    return exc.code
+                return "reserved"
+            finally:
+                close_old_connections()
+
+        with patch.object(
+            public_gateway_capacity,
+            "lock_public_gateway_capacity",
+            side_effect=synchronized_gateway_lock,
+        ):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(
+                    executor.map(
+                        lambda args: reserve(*args),
+                        session_claims,
+                    )
+                )
+
+        self.assertCountEqual(
+            results,
+            ["reserved", "SUBSCRIPTION.QUOTA_EXCEEDED"],
+        )
+        reservations = list(
+            LensSessionLink.objects.filter(
+                id__in=[session_id for session_id, _claim in session_claims]
+            ).values_list("capacity_reservation_status", "capacity_reserved_bytes")
+        )
+        self.assertEqual(
+            sum(
+                reserved_bytes
+                for status, reserved_bytes in reservations
+                if status == LensSessionLink.CapacityReservationStatus.RESERVED
+            ),
+            reservation_bytes,
+        )
 
 
 class CopilotChatModelBindingTests(TestCase):
