@@ -449,8 +449,10 @@ jobs:
           set -euo pipefail
           uv sync --locked --group dev
           uv run ruff check src/backend
-          uv run python src/backend/manage.py makemigrations --check --dry-run
-          uv run python src/backend/manage.py test
+          # Host tests define the Community contract and must run with the
+          # extension socket empty, even while producing an Enterprise release.
+          HFL_EXTENSIONS= uv run python src/backend/manage.py makemigrations --check --dry-run
+          HFL_EXTENSIONS= uv run python src/backend/manage.py test
           if [[ -n "${HFL_EXTENSIONS:-}" ]]; then
             extension_test_labels=()
             IFS=',' read -r -a extension_roots <<<"$HFL_EXTENSIONS"
@@ -468,6 +470,7 @@ jobs:
               echo "::error::Enterprise extension contains no discoverable backend tests"
               exit 1
             }
+            uv run python src/backend/manage.py makemigrations --check --dry-run
             uv run python src/backend/manage.py test "${extension_test_labels[@]}"
           fi
 
