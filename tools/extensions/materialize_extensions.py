@@ -263,6 +263,11 @@ def main() -> int:
     parser.add_argument("--sources", default=os.getenv("HFL_EXTENSION_SOURCES", ""))
     parser.add_argument("--extensions", default=os.getenv("HFL_EXTENSIONS", ""))
     parser.add_argument(
+        "--expected-commit",
+        default=os.getenv("HFL_EXTENSION_EXPECTED_COMMIT", ""),
+        help="Require the single Git extension source to resolve to this commit.",
+    )
+    parser.add_argument(
         "--compose-out",
         type=Path,
         default=None,
@@ -308,6 +313,25 @@ def main() -> int:
         if args.print_extensions:
             print("")
         return 0
+
+    expected_commit = args.expected_commit.strip().lower()
+    if expected_commit:
+        if not re.fullmatch(r"[0-9a-f]{40}", expected_commit):
+            raise SystemExit("invalid expected extension commit")
+        if len(sources) != 1 or len(host_roots) != 1:
+            raise SystemExit("expected extension commit requires one Git source")
+        location, _ = _parse_source(sources[0])
+        if not (location.startswith("git@") or "://" in location):
+            raise SystemExit("expected extension commit requires a Git source")
+        actual_commit = subprocess.check_output(
+            ["git", "-C", str(host_roots[0]), "rev-parse", "HEAD"],
+            text=True,
+        ).strip().lower()
+        if actual_commit != expected_commit:
+            raise SystemExit(
+                "extension source commit mismatch: "
+                f"{actual_commit} != {expected_commit}"
+            )
 
     if bake_dir is not None:
         mounts = bake_extensions(host_roots, bake_dir)

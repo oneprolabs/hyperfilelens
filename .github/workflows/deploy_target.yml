@@ -4,14 +4,24 @@ on:
   workflow_call:
     inputs:
       target:
-        description: Deployment target identity (test, preprod, or prod)
+        description: Deployment target identity (test, community, or prod)
         required: true
         type: string
       channel:
-        description: Artifact channel (release or main)
+        description: Artifact channel (release)
         required: false
         default: release
         type: string
+      package_source:
+        description: Package source (github or host-store)
+        required: false
+        default: github
+        type: string
+      allow_automatic_prod:
+        description: Allow a trusted caller to deploy PROD outside workflow_dispatch
+        required: false
+        default: false
+        type: boolean
       tag:
         description: Published HFL artifact identifier to deploy
         required: true
@@ -184,7 +194,7 @@ permissions:
 
 jobs:
   deploy:
-    name: ${{ inputs.target == 'test' && 'Deploy · TEST' || inputs.target == 'preprod' && 'Deploy · PREPROD' || 'Deploy · PROD' }}
+    name: ${{ inputs.target == 'test' && 'Deploy · TEST' || inputs.target == 'community' && 'Deploy · Community' || 'Deploy · PROD' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     concurrency:
@@ -200,35 +210,6 @@ jobs:
       RELEASE_DOWNLOAD_PROXY_URL: ${{ inputs.release_download_proxy_url }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - name: Guard Current Main Deployment
-        if: ${{ inputs.channel == 'main' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          freshness="$(./.github/scripts/check-main-freshness.sh "$GITHUB_SHA")"
-          if [[ "$freshness" != "current" ]]; then
-            echo '::error title=Superseded Main deployment::A newer origin/main commit exists; this deployment will not contact the TEST host.'
-            printf '### Main deployment\n\nBlocked stale Main commit `%s` before any target-host operation.\n' \
-              "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-
-      - name: Guard Current PREPROD Release
-        if: ${{ inputs.target == 'preprod' && inputs.channel == 'release' }}
-        env:
-          ARTIFACT_ID: ${{ inputs.tag }}
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          freshness="$(./.github/scripts/check-release-freshness.sh "$ARTIFACT_ID")"
-          if [[ "$freshness" != "current" ]]; then
-            echo '::error title=Superseded PREPROD release::A higher SemVer tag exists; this deployment will not contact the PREPROD host.'
-            printf '### PREPROD deployment\n\nBlocked historical release `%s` before any target-host operation.\n' \
-              "$ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
 
       - name: Validate Deployment Inputs
         env:
@@ -266,13 +247,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "$DEPLOY_SSH_HOST" && "$DEPLOY_SSH_HOST" != *[[:space:]]* ]]
+          [[ "$DEPLOY_SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
           [[ "$DEPLOY_SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$DEPLOY_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
           [[ -n "$DEPLOY_SSH_KNOWN_HOSTS" ]]
           [[ -n "$DEPLOY_SSH_PRIVATE_KEY" ]]
-          [[ "$DEPLOY_TARGET" =~ ^(test|preprod|prod)$ ]]
-          [[ "$ARTIFACT_CHANNEL" =~ ^(release|main)$ ]]
+          [[ "$DEPLOY_TARGET" =~ ^(test|community|prod)$ ]]
+          [[ "${{ inputs.package_source }}" =~ ^(github|host-store)$ ]]
+          [[ "$ARTIFACT_CHANNEL" == "release" ]]
+          case "$DEPLOY_TARGET:${{ inputs.package_source }}" in
+            community:github|test:host-store|prod:host-store) ;;
+            *)
+              echo "Deployment target $DEPLOY_TARGET refuses package source ${{ inputs.package_source }}" >&2
+              exit 1
+              ;;
+          esac
           if [[ -n "$RELEASE_DOWNLOAD_PROXY_URL" && "$RELEASE_DOWNLOAD_PROXY_URL" != "UNCONFIGURED" ]]; then
             [[ "$RELEASE_DOWNLOAD_PROXY_URL" =~ ^https?://[A-Za-z0-9.-]+:[0-9]{1,5}$ ]] || {
               echo 'Release download proxy must use http://host:port or https://host:port without credentials' >&2
@@ -282,18 +271,16 @@ jobs:
             proxy_port="${proxy_address##*:}"
             ((proxy_port >= 1 && proxy_port <= 65535))
           fi
-          case "$ARTIFACT_CHANNEL" in
-            release) [[ "$ARTIFACT_ID" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ;;
-            main) [[ "$ARTIFACT_ID" =~ ^main-[0-9a-f]{7}$ ]] ;;
-          esac
+          [[ "$ARTIFACT_ID" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           case "$DEPLOY_TARGET:$ARTIFACT_CHANNEL" in
-            test:main|preprod:release|prod:release) ;;
+            test:release|community:release|prod:release) ;;
             *)
               echo "Deployment target $DEPLOY_TARGET refuses channel $ARTIFACT_CHANNEL" >&2
               exit 1
               ;;
           esac
-          if [[ "$DEPLOY_TARGET" == "prod" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+          if [[ "$DEPLOY_TARGET" == "prod" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" \
+            && "${{ inputs.allow_automatic_prod }}" != "true" ]]; then
             echo 'Production deployment requires a manual workflow_dispatch event' >&2
             exit 1
           fi
@@ -302,7 +289,7 @@ jobs:
             exit 1
           }
           case "$DEPLOY_TARGET:$HFL_INSECURE_TLS" in
-            test:1|preprod:1|prod:0) ;;
+            test:1|community:1|prod:0) ;;
             *)
               echo "Deployment target $DEPLOY_TARGET refuses HFL_INSECURE_TLS=$HFL_INSECURE_TLS" >&2
               exit 1
@@ -486,7 +473,7 @@ jobs:
                   target = os.environ.get("DEPLOY_TARGET", "")
                   value = {
                       "test": "hfl-test",
-                      "preprod": "hfl-preprod",
+                      "community": "hfl-community",
                       "prod": "hfl-production",
                   }.get(target, "")
               elif name == "SENTRY_TRACES_SAMPLE_RATE":
@@ -532,35 +519,6 @@ jobs:
             "umask 077 && cat > /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env && chmod 0600 /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
             < "$runtime_env"
 
-      - name: Revalidate Current Main Deployment
-        if: ${{ inputs.channel == 'main' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          freshness="$(./.github/scripts/check-main-freshness.sh "$GITHUB_SHA")"
-          if [[ "$freshness" != "current" ]]; then
-            echo '::error title=Superseded Main deployment::origin/main advanced while this deployment was being prepared; installation is blocked.'
-            printf '### Main deployment\n\nBlocked stale Main commit `%s` immediately before installation.\n' \
-              "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-
-      - name: Revalidate Current PREPROD Release
-        if: ${{ inputs.target == 'preprod' && inputs.channel == 'release' }}
-        env:
-          ARTIFACT_ID: ${{ inputs.tag }}
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          freshness="$(./.github/scripts/check-release-freshness.sh "$ARTIFACT_ID")"
-          if [[ "$freshness" != "current" ]]; then
-            echo '::error title=Superseded PREPROD release::A higher SemVer tag appeared while deployment was being prepared; installation is blocked.'
-            printf '### PREPROD deployment\n\nBlocked historical release `%s` immediately before installation.\n' \
-              "$ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-
       - name: Download and Install Release
         shell: bash
         run: |
@@ -569,6 +527,23 @@ jobs:
           if [[ -n "$RELEASE_DOWNLOAD_PROXY_URL" && "$RELEASE_DOWNLOAD_PROXY_URL" != "UNCONFIGURED" ]]; then
             download_proxy_args=(--download-proxy-url "$RELEASE_DOWNLOAD_PROXY_URL")
           fi
+          package_args=()
+          if [[ "${{ inputs.package_source }}" == "host-store" ]]; then
+            version="${{ inputs.tag }}"
+            version="${version#v}"
+            package_args=(--package-file "/root/hfl-release/${{ inputs.tag }}/hyperfilelens-${version}-ee.tar.gz")
+          fi
+          printf -v remote_command '%q ' \
+            bash -s -- \
+              --tag "${{ inputs.tag }}" \
+              --channel "${{ inputs.channel }}" \
+              --public-url "$APP_PUBLIC_URL" \
+              --admin-public-url "$ADMIN_PUBLIC_URL" \
+              --direct-host "$DEPLOY_SSH_HOST" \
+              --install-dir /opt/hyperfilelens \
+              "${download_proxy_args[@]}" \
+              "${package_args[@]}" \
+              --runtime-env-file "/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env"
           ssh -i ~/.ssh/hyperfilelens_deploy \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
@@ -578,15 +553,7 @@ jobs:
             -o TCPKeepAlive=yes \
             -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            bash -s -- \
-              --tag "${{ inputs.tag }}" \
-              --channel "${{ inputs.channel }}" \
-              --public-url "$APP_PUBLIC_URL" \
-              --admin-public-url "$ADMIN_PUBLIC_URL" \
-              --direct-host "$DEPLOY_SSH_HOST" \
-              --install-dir /opt/hyperfilelens \
-              "${download_proxy_args[@]}" \
-              --runtime-env-file "/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
+            "$remote_command" \
             < .github/scripts/remote-deploy.sh
 
       - name: Remove Staged Runtime Configuration
@@ -884,6 +851,7 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.sentry_auth_token }}
           DEPLOY_TARGET: ${{ inputs.target }}
           ARTIFACT_ID: ${{ inputs.tag }}
+          PACKAGE_SOURCE: ${{ inputs.package_source }}
         shell: bash
         run: |
           set +e
@@ -909,12 +877,15 @@ jobs:
               raise SystemExit(0)
 
           artifact = os.environ.get("ARTIFACT_ID", "").removeprefix("v")
+          hfl_artifact = artifact
+          if os.environ.get("PACKAGE_SOURCE") == "host-store":
+              hfl_artifact += "-ee"
           defaults = pathlib.Path("tools/sourcelens/defaults.env").read_text(encoding="utf-8")
           match = re.search(r"SOURCELENS_GIT_REF=.*?v(\d+\.\d+\.\d+)", defaults)
           sl_version = match.group(1) if match else "unknown"
           releases = (
-              (f"hyperfilelens-backend@{artifact}", backend_project),
-              (f"hyperfilelens-frontend@{artifact}", frontend_project),
+              (f"hyperfilelens-backend@{hfl_artifact}", backend_project),
+              (f"hyperfilelens-frontend@{hfl_artifact}", frontend_project),
               (f"hyperfilelens-sourcelens@{artifact}-sl{sl_version}", backend_project),
               (f"hyperfilelens-sourcelens-frontend@{artifact}-sl{sl_version}", frontend_project),
               (f"hyperfilelens-agent@{artifact}", backend_project),
@@ -922,7 +893,7 @@ jobs:
           )
           environment = {
               "test": "hfl-test",
-              "preprod": "hfl-preprod",
+              "community": "hfl-community",
               "prod": "hfl-production",
           }[os.environ["DEPLOY_TARGET"]]
           failed = []

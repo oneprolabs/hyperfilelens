@@ -5,6 +5,9 @@ umask 022
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 version="${HFL_TEST_VERSION:-1.2.3}"
+edition="${HFL_TEST_EDITION:-community}"
+image_version="${version}"
+[[ "${edition}" == community ]] || image_version="${version}-ee"
 commit="0123456789abcdef0123456789abcdef01234567"
 tmp="$(mktemp -d "${ROOT}/build/ci-assembly-test.XXXXXX")"
 trap 'rm -rf "${tmp}"' EXIT
@@ -28,8 +31,8 @@ make_metadata() {
 
 hfl="${fixtures}/hfl"
 make_gzip "${hfl}/images/00-hyperfilelens.tar.gz" hfl-images
-make_metadata "${hfl}/metadata/hfl-backend.json" hfl-backend "example/hfl-backend:${version}" 1
-make_metadata "${hfl}/metadata/hfl-frontend.json" hfl-frontend "example/hfl-frontend:${version}" 2
+make_metadata "${hfl}/metadata/hfl-backend.json" hfl-backend "example/hfl-backend:${image_version}" 1
+make_metadata "${hfl}/metadata/hfl-frontend.json" hfl-frontend "example/hfl-frontend:${image_version}" 2
 tar -C "${hfl}" -cf "${input}/_internal-hfl-images.tar" images metadata
 
 runtime="${fixtures}/runtime"
@@ -146,10 +149,12 @@ done
 HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	HFL_RELEASE_MAX_SINGLE_BYTES=1024 \
 	HFL_RELEASE_PART_BYTES=4096 \
+	HFL_EXTENSION_EXPECTED_COMMIT="$([[ "${edition}" == enterprise ]] && printf '%s' 89abcdef0123456789abcdef0123456789abcdef)" \
 	"${ROOT}/release/ci/assemble-release.sh" \
 		--input-dir "${input}" \
 		--version "${version}" \
-		--commit "${commit}"
+		--commit "${commit}" \
+		--edition "${edition}"
 
 (
 	cd "${output}/dist"
@@ -168,9 +173,15 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 			'.channel == "main" and .artifact_id == $id and (has("version") | not)' \
 			MANIFEST.json >/dev/null
 	else
-		jq -e --arg version "${version}" \
-			'.channel == "release" and .artifact_id == ("v" + $version) and .version == $version' \
-			MANIFEST.json >/dev/null
+		if [[ "${edition}" == enterprise ]]; then
+			jq -e --arg version "${version}" \
+				'.channel == "release" and .artifact_id == ("v" + $version) and .version == $version and .edition == "enterprise" and .image_version == ($version + "-ee") and .extension_commit == "89abcdef0123456789abcdef0123456789abcdef"' \
+				MANIFEST.json >/dev/null
+		else
+			jq -e --arg version "${version}" \
+				'.channel == "release" and .artifact_id == ("v" + $version) and .version == $version and .edition == "community" and .image_version == $version and (has("extension_commit") | not)' \
+				MANIFEST.json >/dev/null
+		fi
 	fi
 	sha256sum -c SHA256SUMS
 	[[ -s hyperfilelens-root-ca.crt ]]

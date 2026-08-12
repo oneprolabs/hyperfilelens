@@ -21,8 +21,13 @@ grep -F './tools/quality/test-dev-stack-upgrade.sh' \
 # shellcheck source=../lib/version.sh
 source "${ROOT}/tools/lib/version.sh"
 actual="$(release_package_basename_for_version v0.1.0 69F809F)"
-[[ "${actual}" == "hyperfilelens-0.1.0-69f809f.tar.gz" ]] || {
+[[ "${actual}" == "hyperfilelens-0.1.0.tar.gz" ]] || {
 	printf 'ERROR: unexpected release package basename: %s\n' "${actual}" >&2
+	exit 1
+}
+enterprise_actual="$(release_package_basename_for_version v0.1.0 69F809F enterprise)"
+[[ "${enterprise_actual}" == "hyperfilelens-0.1.0-ee.tar.gz" ]] || {
+	printf 'ERROR: unexpected Enterprise package basename: %s\n' "${enterprise_actual}" >&2
 	exit 1
 }
 main_actual="$(release_package_basename_for_version main-69f809f 69F809F)"
@@ -437,12 +442,15 @@ workflow="${ROOT}/.github/workflows/artifact_pipeline.yml"
 release_workflow="${ROOT}/.github/workflows/release.yml"
 test_workflow="${ROOT}/.github/workflows/test.yml"
 production_workflow="${ROOT}/.github/workflows/production_deploy.yml"
+enterprise_promotion_workflow="${ROOT}/.github/workflows/enterprise_promotion.yml"
 agent_certification="${ROOT}/release/ci/certify-agent-candidate.py"
 [[ -f "${workflow}" ]] || {
 	printf 'ERROR: reusable artifact workflow is missing\n' >&2
 	exit 1
 }
-for entrypoint in "${release_workflow}" "${test_workflow}" "${production_workflow}"; do
+for entrypoint in \
+	"${release_workflow}" "${test_workflow}" "${production_workflow}" \
+	"${enterprise_promotion_workflow}"; do
 	[[ -f "${entrypoint}" ]] || {
 		printf 'ERROR: deployment entrypoint is missing: %s\n' "${entrypoint}" >&2
 		exit 1
@@ -462,22 +470,18 @@ grep -F 'Existing Docker not found; the verified offline release bundle will ins
 	"${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
 grep -F 'existing Docker daemon is not reachable' \
 	"${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
-grep -F 'turnstile_enabled: ${{ vars.PREPROD_TURNSTILE_ENABLED' "${workflow}" >/dev/null
-grep -F 'public_url: ${{ vars.PREPROD_PUBLIC_URL }}' "${workflow}" >/dev/null
-grep -F 'admin_public_url: ${{ vars.PREPROD_ADMIN_PUBLIC_URL }}' "${workflow}" >/dev/null
+grep -F 'turnstile_enabled: ${{ vars.COMMUNITY_TURNSTILE_ENABLED' "${workflow}" >/dev/null
+grep -F 'public_url: ${{ vars.COMMUNITY_PUBLIC_URL }}' "${workflow}" >/dev/null
+grep -F 'admin_public_url: ${{ vars.COMMUNITY_ADMIN_PUBLIC_URL }}' "${workflow}" >/dev/null
 grep -F 'turnstile_enabled: ${{ vars.TEST_TURNSTILE_ENABLED' "${workflow}" >/dev/null
 grep -F 'public_url: ${{ vars.TEST_PUBLIC_URL }}' "${workflow}" >/dev/null
 grep -F 'admin_public_url: ${{ vars.TEST_ADMIN_PUBLIC_URL }}' "${workflow}" >/dev/null
-grep -F 'turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED' "${production_workflow}" >/dev/null
-grep -F 'public_url: ${{ vars.PROD_PUBLIC_URL }}' "${production_workflow}" >/dev/null
-grep -F 'admin_public_url: ${{ vars.PROD_ADMIN_PUBLIC_URL }}' "${production_workflow}" >/dev/null
+grep -F 'turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+grep -F 'public_url: ${{ vars.PROD_PUBLIC_URL }}' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+grep -F 'admin_public_url: ${{ vars.PROD_ADMIN_PUBLIC_URL }}' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'hfl_insecure_tls: ${{ vars.TEST_HFL_INSECURE_TLS }}' "${workflow}" >/dev/null
-grep -F 'hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}' "${workflow}" >/dev/null
-grep -F 'hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}' "${release_workflow}" >/dev/null
-grep -F 'hfl_insecure_tls: ${{ vars.PROD_HFL_INSECURE_TLS }}' "${production_workflow}" >/dev/null
-grep -F 'release_download_proxy_url: ${{ vars.TEST_RELEASE_DOWNLOAD_PROXY_URL }}' "${workflow}" >/dev/null
-grep -F 'release_download_proxy_url: ${{ vars.PREPROD_RELEASE_DOWNLOAD_PROXY_URL }}' "${workflow}" >/dev/null
-grep -F 'release_download_proxy_url: ${{ vars.PROD_RELEASE_DOWNLOAD_PROXY_URL }}' "${production_workflow}" >/dev/null
+grep -F 'hfl_insecure_tls: ${{ vars.COMMUNITY_HFL_INSECURE_TLS }}' "${workflow}" >/dev/null
+grep -F 'hfl_insecure_tls: ${{ vars.PROD_HFL_INSECURE_TLS }}' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 if grep -F 'PROD_PUBLIC_HOST' "${workflow}" "${production_workflow}" >/dev/null; then
 	printf 'ERROR: release workflow still uses the ambiguous PROD_PUBLIC_HOST variable\n' >&2
 	exit 1
@@ -486,34 +490,34 @@ grep -F '"TURNSTILE_ENABLED"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F '"HFL_INSECURE_TLS"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
-grep -F 'test:1|preprod:1|prod:0' \
+grep -F 'test:1|community:1|prod:0' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 for variable in \
 	SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_SECURITY EMAIL_FROM; do
 	grep -F "TEST_${variable}" "${workflow}" >/dev/null
-	grep -F "PREPROD_${variable}" "${workflow}" >/dev/null
-	grep -F "PROD_${variable}" "${production_workflow}" >/dev/null
+	grep -F "COMMUNITY_${variable}" "${workflow}" >/dev/null
+	grep -F "PROD_${variable}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 done
 grep -F 'smtp_password: ${{ secrets.TEST_SMTP_PASSWORD }}' "${workflow}" >/dev/null
-grep -F 'smtp_password: ${{ secrets.PREPROD_SMTP_PASSWORD }}' "${workflow}" >/dev/null
-grep -F 'smtp_password: ${{ secrets.PROD_SMTP_PASSWORD }}' "${production_workflow}" >/dev/null
+grep -F 'smtp_password: ${{ secrets.COMMUNITY_SMTP_PASSWORD }}' "${workflow}" >/dev/null
+grep -F 'smtp_password: ${{ secrets.PROD_SMTP_PASSWORD }}' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 for variable in AI_MODEL_PROVIDER AI_MODEL_ID AI_MODEL_DISPLAY_NAME; do
 	grep -F "TEST_${variable}" "${workflow}" >/dev/null
-	grep -F "PREPROD_${variable}" "${workflow}" >/dev/null
-	grep -F "PROD_${variable}" "${production_workflow}" >/dev/null
+	grep -F "COMMUNITY_${variable}" "${workflow}" >/dev/null
+	grep -F "PROD_${variable}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 done
 for variable in \
 	AI_MULTIMODAL_MODEL_PROVIDER \
 	AI_MULTIMODAL_MODEL_ID \
 	AI_MULTIMODAL_MODEL_DISPLAY_NAME; do
 	grep -F "TEST_${variable}" "${workflow}" >/dev/null
-	grep -F "PREPROD_${variable}" "${workflow}" >/dev/null
-	grep -F "PROD_${variable}" "${production_workflow}" >/dev/null
+	grep -F "COMMUNITY_${variable}" "${workflow}" >/dev/null
+	grep -F "PROD_${variable}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 done
 for secret in AI_MODEL_API_BASE AI_MODEL_API_KEY; do
 	grep -F "secrets.TEST_${secret}" "${workflow}" >/dev/null
-	grep -F "secrets.PREPROD_${secret}" "${workflow}" >/dev/null
-	grep -F "secrets.PROD_${secret}" "${production_workflow}" >/dev/null
+	grep -F "secrets.COMMUNITY_${secret}" "${workflow}" >/dev/null
+	grep -F "secrets.PROD_${secret}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 done
 grep -F '/opt/hyperfilelens/install.sh manage ensure_platform_ai_model' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
@@ -530,12 +534,12 @@ if grep -F '"AI_MODEL_API_KEY=$AI_MODEL_API_KEY"' \
 fi
 for variable in EMAIL_SIGNUP_ENABLED EMAIL_CODE_LOGIN_ENABLED GOOGLE_OAUTH_ENABLED GOOGLE_CLIENT_ID; do
 	grep -F "vars.TEST_${variable}" "${workflow}" >/dev/null
-	grep -F "vars.PREPROD_${variable}" "${workflow}" >/dev/null
-	grep -F "vars.PROD_${variable}" "${production_workflow}" >/dev/null
+	grep -F "vars.COMMUNITY_${variable}" "${workflow}" >/dev/null
+	grep -F "vars.PROD_${variable}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 done
 grep -F 'secrets.TEST_GOOGLE_CLIENT_SECRET' "${workflow}" >/dev/null
-grep -F 'secrets.PREPROD_GOOGLE_CLIENT_SECRET' "${workflow}" "${release_workflow}" >/dev/null
-grep -F 'secrets.PROD_GOOGLE_CLIENT_SECRET' "${production_workflow}" >/dev/null
+grep -F 'secrets.COMMUNITY_GOOGLE_CLIENT_SECRET' "${workflow}" >/dev/null
+grep -F 'secrets.PROD_GOOGLE_CLIENT_SECRET' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 for runtime_key in \
 	HFL_EMAIL_SIGNUP_ENABLED HFL_EMAIL_CODE_LOGIN_ENABLED HFL_GOOGLE_OAUTH_ENABLED \
 	GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SMTP_PASSWORD; do
@@ -583,42 +587,31 @@ if grep -E '^  (workflow_dispatch|push|schedule):' "${workflow}" >/dev/null; the
 	exit 1
 fi
 grep -F 'workflow_call:' "${workflow}" >/dev/null
-grep -F 'tags:' "${release_workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${release_workflow}" >/dev/null
-grep -F 'name: HFL - TEST Build & Deploy' "${test_workflow}" >/dev/null
-grep -F 'name: HFL - PREPROD Release & Deploy' "${release_workflow}" >/dev/null
-grep -F 'name: HFL - PROD Release Promotion' "${production_workflow}" >/dev/null
+grep -F 'name: HFL - Enterprise Build & Deploy' "${test_workflow}" >/dev/null
+grep -F 'name: HFL - Community Release & Deploy' "${release_workflow}" >/dev/null
+grep -F 'name: HFL - Enterprise PROD Promotion' "${production_workflow}" >/dev/null
 grep -F 'name: HFL - Build & Package (Reusable)' "${workflow}" >/dev/null
-grep -F 'Validate PREPROD Release' "${release_workflow}" >/dev/null
-grep -F 'uses: ./.github/workflows/deploy_target.yml' "${release_workflow}" >/dev/null
+grep -F 'uses: ./.github/workflows/artifact_pipeline.yml' "${release_workflow}" >/dev/null
 grep -F 'channel: release' "${release_workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${test_workflow}" >/dev/null
-grep -F 'schedule:' "${test_workflow}" >/dev/null
-grep -F 'channel: main' "${test_workflow}" >/dev/null
+grep -F 'tags:' "${test_workflow}" >/dev/null
+grep -F 'edition: enterprise' "${test_workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${production_workflow}" >/dev/null
-grep -F 'Production deployment must be dispatched from refs/heads/main' \
-	"${production_workflow}" >/dev/null
-grep -F 'Production requires a published, non-prerelease GitHub Release' \
-	"${production_workflow}" >/dev/null
 for job in \
 	prepare quality build-hfl-images build-sourcelens-images build-agent \
 	certify-source-host agent-release-gate \
 	build-host-debs export-hfl-images export-sourcelens-bundle \
 	export-runtime-images assemble-release verify-release publish-release \
-	deploy-test deploy-preprod; do
+	deploy-test deploy-community promote-production; do
 	grep -F "  ${job}:" "${workflow}" >/dev/null || {
 		printf 'ERROR: artifact workflow job is missing: %s\n' "${job}" >&2
 		exit 1
 	}
 done
-if grep -F 'deploy-prod:' "${workflow}" >/dev/null \
-	|| grep -E '(^|[^A-Z])PROD_' "${workflow}" >/dev/null; then
-	printf 'ERROR: automatic artifact workflow must not contain production deployment configuration\n' >&2
-	exit 1
-fi
-grep -F "vars.TEST_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
-grep -F "vars.PREPROD_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
-grep -F 'PROD_DEPLOY_ENABLED' "${production_workflow}" >/dev/null
+grep -F "vars.TEST_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
+grep -F "vars.COMMUNITY_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
+grep -F "vars.PROD_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
 
 for job in build-hfl-images build-sourcelens-images build-host-debs export-runtime-images; do
 	body="$(sed -n "/^  ${job}:/,/^  [a-zA-Z0-9_-]*:/p" "${workflow}")"
@@ -627,41 +620,11 @@ for job in build-hfl-images build-sourcelens-images build-host-debs export-runti
 		exit 1
 	}
 done
-grep -F "'hyperfilelens-main'" "${workflow}" >/dev/null
-grep -F "format('hyperfilelens-main-rerun-{0}-{1}', github.run_id, github.run_attempt)" \
-	"${workflow}" >/dev/null
-grep -F "format('hyperfilelens-release-{0}', github.ref_name)" "${workflow}" >/dev/null
-grep -F 'cancel-in-progress: ${{ inputs.channel == '\''main'\'' && github.run_attempt == 1 }}' \
-	"${workflow}" >/dev/null
-grep -F '[[ "$GITHUB_SHA" == "$latest_main" ]]' "${workflow}" >/dev/null
-grep -F 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' "${workflow}" >/dev/null
-grep -F 'Retain retryable draft or current successful Main build' "${workflow}" >/dev/null
-grep -F 'needs: [prepare, publish-release]' "${workflow}" >/dev/null
-grep -F 'BUILD_REQUIRED: ${{ needs.prepare.outputs.build_required }}' "${workflow}" >/dev/null
-grep -F 'MAIN_COMMIT: ${{ needs.prepare.outputs.commit }}' "${workflow}" >/dev/null
-grep -F 'PUBLISH_DISPOSITION: ${{ needs.publish-release.outputs.disposition }}' \
-	"${workflow}" >/dev/null
-grep -F 'freshness="$(./.github/scripts/check-main-freshness.sh "$GITHUB_SHA")"' \
-	"${workflow}" >/dev/null
-grep -F "needs.publish-release.outputs.deployable == 'true'" "${workflow}" >/dev/null
-cleanup_body="$(sed -n '/^  cleanup-main-builds:/,$p' "${workflow}")"
-grep -F 'run: ./.github/scripts/cleanup-main-builds.sh' <<<"${cleanup_body}" >/dev/null
-if grep -F -- '--cleanup-tag' <<<"${cleanup_body}" >/dev/null; then
-  printf 'ERROR: idempotent Main cleanup must not fail when a Release has no Git tag\n' >&2
-  exit 1
-fi
-cleanup_script="${ROOT}/.github/scripts/cleanup-main-builds.sh"
-grep -F 'Retaining retryable Main draft' "${cleanup_script}" >/dev/null
-grep -F '"${PUBLISH_DISPOSITION}" == "superseded"' "${cleanup_script}" >/dev/null
-grep -F 'check-main-freshness.sh" "${MAIN_COMMIT}"' "${cleanup_script}" >/dev/null
-grep -F 'compare/${target_commit}...${MAIN_COMMIT}' "${cleanup_script}" >/dev/null
-grep -F '"${BUILD_REQUIRED}" == "false" && "${PUBLISH_RESULT}" == "skipped"' \
-	"${cleanup_script}" >/dev/null
-grep -F 'gh release delete "${artifact_id}" --repo "${GITHUB_REPOSITORY}" --yes' \
-	"${cleanup_script}" >/dev/null
-grep -F 'git/ref/tags/${artifact_id}' "${cleanup_script}" >/dev/null
-grep -F 'git/refs/tags/${artifact_id}' "${cleanup_script}" >/dev/null
-grep -F 'check-release-freshness.sh "$ARTIFACT_ID"' "${workflow}" >/dev/null
+grep -F "format('hyperfilelens-package-{0}', inputs.release_tag)" "${workflow}" >/dev/null
+grep -F 'cancel-in-progress: false' "${workflow}" >/dev/null
+grep -F 'git merge-base --is-ancestor "$COMMIT" origin/main' "${workflow}" >/dev/null
+grep -F 'cleanup-enterprise-candidate:' "${workflow}" >/dev/null
+grep -F 'gh release delete "$ARTIFACT_ID"' "${workflow}" >/dev/null
 grep -F 'make_latest=legacy' "${workflow}" >/dev/null
 grep -F -- '--json apiUrl --jq '\''.apiUrl'\''' "${workflow}" >/dev/null
 grep -F 'release_api_prefix="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/"' \
@@ -671,12 +634,6 @@ if grep -F 'releases/tags/${ARTIFACT_ID}' "${workflow}" >/dev/null; then
 	exit 1
 fi
 grep -F "needs.publish-release.outputs.deployable == 'true'" "${workflow}" >/dev/null
-grep -F "inputs.target == 'preprod' && inputs.channel == 'release'" \
-	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
-if grep -F -- '--cleanup-tag' "${cleanup_script}" >/dev/null; then
-	printf 'ERROR: idempotent Main cleanup must not fail when a Release has no Git tag\n' >&2
-	exit 1
-fi
 grep -F 'ubuntu_release: "22.04"' "${workflow}" >/dev/null
 grep -F 'asset: ubuntu2204' "${workflow}" >/dev/null
 
@@ -1278,6 +1235,7 @@ for executable in \
 	"${ROOT}/.github/scripts/check-public-endpoint.sh" \
 	"${ROOT}/.github/scripts/cleanup-main-builds.sh" \
 	"${ROOT}/.github/scripts/remote-deploy.sh" \
+	"${ROOT}/.github/scripts/store-enterprise-release.sh" \
 	"${ROOT}/tools/quality/check-python38-runtime.py" \
 	"${ROOT}/tools/quality/test-docker-pull-retry.sh" \
 	"${ROOT}/tools/quality/test-bootstrap-curl-tls-nounset.sh" \
@@ -1287,6 +1245,7 @@ for executable in \
 	"${ROOT}/tools/quality/test-main-release-freshness.sh" \
 	"${ROOT}/tools/quality/test-main-release-cleanup.sh" \
 	"${ROOT}/tools/quality/test-release-freshness.sh" \
+	"${ROOT}/tools/quality/test-enterprise-release-flow.sh" \
 	"${ROOT}/tools/quality/test-language-pack-runtime-index.sh" \
 	"${ROOT}/tools/quality/test-upgrade-backup-retention.sh" \
 	"${ROOT}/tools/quality/test-redis-rdb-preflight.sh" \
@@ -1439,8 +1398,8 @@ grep -F 'MemoryHigh=512M' "${ROOT}/src/agent/packaging/install/install.sh" >/dev
 grep -F 'CPUQuota=50%' "${ROOT}/src/agent/packaging/install/install.sh" >/dev/null
 grep -F 'name: hyperfilelens-sourcelens' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
-grep -F 'target: prod' "${production_workflow}" >/dev/null
-grep -F 'channel: release' "${production_workflow}" >/dev/null
+grep -F 'target: prod' "${enterprise_promotion_workflow}" >/dev/null
+grep -F 'channel: release' "${enterprise_promotion_workflow}" >/dev/null
 grep -F 'Production deployment requires a manual workflow_dispatch event' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'if ! SOURCELENS_BUILD_SOURCE_MAPS=1' \

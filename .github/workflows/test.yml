@@ -1,95 +1,45 @@
-name: HFL - TEST Build & Deploy
-run-name: TEST · main · Build & deploy
+name: HFL - Enterprise Build & Deploy
+run-name: Enterprise · ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} · Build & deploy
 
 on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
     inputs:
-      force_rebuild:
-        description: Rebuild and redeploy an already-published Main commit
-        required: false
-        default: false
-        type: boolean
-  schedule:
-    # 02:30 Asia/Shanghai, Monday through Friday.
-    - cron: "30 18 * * 0-4"
+      tag:
+        description: Existing OSS and EE tag to rebuild (vX.Y.Z)
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
-  require-main:
-    name: Prepare · TEST
+  validate-enterprise-build:
+    name: Validate · Enterprise build
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    outputs:
-      should_run: ${{ steps.target.outputs.should_run }}
     steps:
-      - name: Validate Main Ref
+      - name: Validate trusted trigger
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
-            echo "This workflow only builds refs/heads/main" >&2
-            exit 1
-          }
-          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
-
-      - name: Resolve TEST Build Target
-        id: target
-        env:
-          DEPLOY_ENABLED: ${{ vars.TEST_DEPLOY_ENABLED }}
-          DEPLOY_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
-          DEPLOY_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
-          DEPLOY_SSH_USER: ${{ vars.TEST_SSH_USER }}
-          DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
-          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
-          FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$DEPLOY_ENABLED" != "true" ]]; then
-            echo 'TEST deployment is disabled; skipping Main build.'
-            echo 'should_run=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          [[ -n "$DEPLOY_SSH_HOST" && "$DEPLOY_SSH_HOST" != *[[:space:]]* ]]
-          [[ "$DEPLOY_SSH_PORT" =~ ^[0-9]+$ ]]
-          [[ "$DEPLOY_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
-          [[ -n "$DEPLOY_SSH_KNOWN_HOSTS" && -n "$DEPLOY_SSH_PRIVATE_KEY" ]]
-          install -d -m 0700 ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
-          chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
-          ssh -i ~/.ssh/hyperfilelens_test \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=20 \
-            -p "$DEPLOY_SSH_PORT" \
-            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            'if [[ -f /opt/hyperfilelens/MANIFEST.json ]]; then cat /opt/hyperfilelens/MANIFEST.json; else printf "{}\n"; fi' \
-            > "$RUNNER_TEMP/test-manifest.json"
-          deployed_commit="$(python3 - "$RUNNER_TEMP/test-manifest.json" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-          print(str(manifest.get("git_commit") or "").strip().lower())
-          PY
-          )"
-          if [[ "$FORCE_REBUILD" != "true" && "$deployed_commit" == "$GITHUB_SHA" ]]; then
-            echo "TEST already runs main-${GITHUB_SHA:0:7}; skipping."
-            echo 'should_run=false' >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+              echo "::error::Manual Enterprise builds must be started from the main branch"
+              exit 1
+            }
           else
-            echo 'should_run=true' >> "$GITHUB_OUTPUT"
+            [[ "$GITHUB_REF" == refs/tags/v* ]]
           fi
 
-  build-and-deploy-test:
-    name: Build & Deploy · TEST
-    needs: require-main
-    if: ${{ needs.require-main.outputs.should_run == 'true' }}
+  build-enterprise:
+    name: Build & Deploy · Enterprise
+    needs: validate-enterprise-build
     uses: ./.github/workflows/artifact_pipeline.yml
     with:
-      channel: main
-      force_rebuild: ${{ inputs.force_rebuild || false }}
+      channel: release
+      edition: enterprise
+      release_tag: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
     secrets: inherit

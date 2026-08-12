@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	observabilityEnvironmentPattern = regexp.MustCompile(`^hfl-(test|preprod|production)$`)
+	observabilityEnvironmentPattern = regexp.MustCompile(`^hfl-(test|community|preprod|production)$`)
 	observabilityReleasePattern     = regexp.MustCompile(`^[A-Za-z0-9._@+-]+$`)
 )
 

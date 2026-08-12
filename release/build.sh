@@ -220,7 +220,8 @@ usage() {
 Usage: release/build.sh [options]
 
 Build one package into build/release/dist/:
-  release channel: hyperfilelens-<version>-<commit7>.tar.gz
+  Community:       hyperfilelens-<version>.tar.gz
+  Enterprise:      hyperfilelens-<version>-ee.tar.gz
   main channel:    hyperfilelens-main-<commit7>.tar.gz
 
 Version:
@@ -527,7 +528,8 @@ stage_release_env_example() {
 	local pkg_root=$1
 	local example="${pkg_root}/.env.example"
 	cp "${ROOT}/.env.example" "${example}"
-	HFL_EXTENSIONS_RUNTIME="${HFL_EXTENSIONS_RUNTIME:-}" python3 - "${example}" <<'PY'
+	HFL_EXTENSIONS_RUNTIME="${HFL_EXTENSIONS_RUNTIME:-}" \
+		HFL_IMAGE_VERSION="${HFL_IMAGE_VERSION:-}" python3 - "${example}" <<'PY'
 import os
 import pathlib
 import re
@@ -537,6 +539,9 @@ path = pathlib.Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 text = re.sub(r"(?m)^[ \t]*HFL_EXTENSIONS=.*\n?", "", text)
 runtime = os.environ.get("HFL_EXTENSIONS_RUNTIME", "").strip()
+image_version = os.environ.get("HFL_IMAGE_VERSION", "").strip()
+if image_version:
+    text = re.sub(r"(?m)^APP_VERSION=.*$", f"APP_VERSION={image_version}", text, count=1)
 if runtime:
     block = (
         "\n# Baked into this release's control-plane images (Open Core).\n"
@@ -706,6 +711,7 @@ preflight() {
 
 build_control_plane_images() {
 	[[ -n "${HFL_VERSION:-}" ]] || die "HFL_VERSION is not resolved" 2
+	local image_version="${HFL_IMAGE_VERSION:-${HFL_VERSION}}"
 	local -a common_args=(
 		--platform linux/amd64
 		--network host
@@ -717,10 +723,10 @@ build_control_plane_images() {
 		common_args+=(--no-cache)
 	fi
 
-	log "Building hyperfilelens-backend:${HFL_VERSION} (alias: latest)"
+	log "Building hyperfilelens-backend:${image_version} (alias: latest)"
 	docker build "${common_args[@]}" \
 		-f "${ROOT}/deploy/docker/backend.Dockerfile" \
-		-t "hyperfilelens-backend:${HFL_VERSION}" \
+		-t "hyperfilelens-backend:${image_version}" \
 		-t hyperfilelens-backend:latest \
 		--build-arg "APT_MIRROR=${APT_MIRROR:-}" \
 		--build-arg "BACKEND_BASE_IMAGE=${HFL_BACKEND_BASE_IMAGE}" \
@@ -728,7 +734,7 @@ build_control_plane_images() {
 		--build-arg "PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST:-}" \
 		--build-arg "PIP_TIMEOUT=${PIP_TIMEOUT:-600}" \
 		--build-arg "KOPIA_BINARY=${KOPIA_BINARY:-build/kopia/dist/linux/amd64/kopia}" \
-		--build-arg "IMAGE_VERSION=${HFL_VERSION}" \
+		--build-arg "IMAGE_VERSION=${image_version}" \
 		--build-arg "IMAGE_REVISION=${RELEASE_COMMIT}" \
 		--build-arg "HFL_EXTENSIONS=${HFL_EXTENSIONS_RUNTIME:-}" \
 		"${ROOT}"
@@ -745,16 +751,16 @@ build_control_plane_images() {
 	[[ "${FORCE_PULL}" -eq 0 ]] || website_args+=(--pull)
 	"${ROOT}/website/build.sh" "${website_args[@]}"
 
-	log "Building hyperfilelens-frontend:${HFL_VERSION} (alias: latest)"
+	log "Building hyperfilelens-frontend:${image_version} (alias: latest)"
 	docker build "${common_args[@]}" \
 		-f "${ROOT}/deploy/docker/frontend.Dockerfile" \
-		-t "hyperfilelens-frontend:${HFL_VERSION}" \
+		-t "hyperfilelens-frontend:${image_version}" \
 		-t hyperfilelens-frontend:latest \
 		--build-arg "NPM_REGISTRY=${NPM_REGISTRY:-}" \
 		--build-arg "FRONTEND_NODE_BASE_IMAGE=${HFL_FRONTEND_NODE_BASE_IMAGE}" \
 		--build-arg "FRONTEND_NGINX_BASE_IMAGE=${HFL_FRONTEND_NGINX_BASE_IMAGE}" \
 		--build-arg "VITE_SHOW_EULA=${VITE_SHOW_EULA:-false}" \
-		--build-arg "IMAGE_VERSION=${HFL_VERSION}" \
+		--build-arg "IMAGE_VERSION=${image_version}" \
 		--build-arg "IMAGE_REVISION=${RELEASE_COMMIT}" \
 		--build-arg "HFL_EXTENSIONS=${HFL_EXTENSIONS_RUNTIME:-}" \
 		"${ROOT}"
@@ -867,14 +873,14 @@ save_image_archive() {
 
 save_images() {
 	local images_dir=$1
-	local archive
+	local archive image_version="${HFL_IMAGE_VERSION:-${HFL_VERSION}}"
 	mkdir -p "${images_dir}"
 
 	log "Saving hyperfilelens backend + frontend images..."
 	archive="${images_dir}/00-hyperfilelens.tar.gz"
 	save_image_archive "${archive}" \
-		"hyperfilelens-backend:${HFL_VERSION}" hyperfilelens-backend:latest \
-		"hyperfilelens-frontend:${HFL_VERSION}" hyperfilelens-frontend:latest
+		"hyperfilelens-backend:${image_version}" hyperfilelens-backend:latest \
+		"hyperfilelens-frontend:${image_version}" hyperfilelens-frontend:latest
 	log "  wrote $(du -h "${archive}" | awk '{print $1}') ${archive##*/}"
 
 	log "Saving hyperfilelens-postgres:17..."
@@ -907,7 +913,9 @@ write_manifest() {
 	python3 - "${pkg_root}/MANIFEST.json" "${version}" "${built_at}" "${commit}" \
 		"${payload_sha}" \
 		"${backend_digest}" "${frontend_digest}" "${postgres_digest}" "${redis_digest}" \
-		"${version_file}" "${build_info}" <<'PY'
+		"${version_file}" "${build_info}" \
+		"${HFL_RELEASE_EDITION:-community}" "${HFL_IMAGE_VERSION:-${version}}" \
+		"${HFL_EXTENSION_EXPECTED_COMMIT:-}" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -927,7 +935,10 @@ import tarfile
     redis_d,
     version_file,
     build_info_path,
-) = sys.argv[1:12]
+    edition,
+    image_version,
+    extension_commit,
+) = sys.argv[1:15]
 pkg_root = pathlib.Path(out_path).parent
 
 pins = {}
@@ -985,9 +996,9 @@ images = [
     {
         "file": "images/00-hyperfilelens.tar.gz",
         "refs": [
-            f"hyperfilelens-backend:{version}",
+            f"hyperfilelens-backend:{image_version}",
             "hyperfilelens-backend:latest",
-            f"hyperfilelens-frontend:{version}",
+            f"hyperfilelens-frontend:{image_version}",
             "hyperfilelens-frontend:latest",
         ],
         "digests": [backend_d, frontend_d],
@@ -1092,6 +1103,8 @@ for role, relative in (
 manifest = {
     "schema_version": 2,
     "product": "hyperfilelens",
+    "edition": edition,
+    "image_version": image_version,
     "channel": "main" if version.startswith("main-") else "release",
     "artifact_id": version if version.startswith("main-") else f"v{version}",
     "built_at": built_at,
@@ -1116,6 +1129,19 @@ manifest = {
         "default_tls": tls_artifacts,
     },
 }
+if edition not in {"community", "enterprise"}:
+    raise SystemExit(f"invalid release edition: {edition}")
+expected_image_version = version + ("-ee" if edition == "enterprise" else "")
+if image_version != expected_image_version:
+    raise SystemExit(
+        f"image version {image_version} does not match {edition} release {version}"
+    )
+if edition == "enterprise":
+    if not re.fullmatch(r"[0-9a-f]{40}", extension_commit):
+        raise SystemExit("Enterprise release requires an immutable extension commit")
+    manifest["extension_commit"] = extension_commit
+elif extension_commit:
+    raise SystemExit("Community release must not identify an Enterprise extension commit")
 if manifest["channel"] == "release":
     manifest["version"] = version
 pathlib.Path(out_path).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -1179,6 +1205,8 @@ validate_release_publish_artifacts() {
 write_package_readme() {
 	local pkg_root=$1
 	local version=$2
+	local edition=${3:-community} edition_suffix=""
+	[[ "${edition}" == community ]] || edition_suffix="-ee"
 	cat > "${pkg_root}/README.md" <<EOF
 # HyperFileLens ${version}
 
@@ -1215,8 +1243,8 @@ enters through the configured HyperFileLens Tenant HTTPS endpoint.
 ## Install
 
 \`\`\`bash
-tar xzf hyperfilelens-${version}-<commit7>.tar.gz
-cd hyperfilelens-${version}
+tar xzf hyperfilelens-${version}${edition_suffix}.tar.gz
+cd hyperfilelens-${version}${edition_suffix}
 sudo ./install.sh install
 \`\`\`
 
@@ -1252,7 +1280,7 @@ Existing complete \`tls.crt\` / \`tls.key\` pairs are preserved during upgrade; 
 ## Upgrade
 
 \`\`\`bash
-sudo ./install.sh upgrade --from /path/to/hyperfilelens-<version>-<commit>.tar.gz
+sudo ./install.sh upgrade --from /path/to/hyperfilelens-<version>.tar.gz
 sudo ./install.sh upgrade --from /path/to/new.tar.gz --hfl-only
 sudo ./install.sh upgrade --from /path/to/new.tar.gz --remove-sourcelens
 \`\`\`
@@ -1293,24 +1321,31 @@ main() {
 	preflight
 	log "Checking English-only public source trees"
 	python3 "${ROOT}/tools/quality/check-english-source.py"
-	local version commit_full commit7 release_commit pkg_name pkg_root images_dir tar_path tar_basename
+	local version commit_full commit7 release_commit pkg_name pkg_root images_dir tar_path tar_basename edition edition_suffix
 	version="$(read_version)"
 	HFL_VERSION="${version}"
 	commit_full="$(resolve_commit_full "${ROOT}")"
 	commit7="$(resolve_commit7 "${ROOT}")"
 	release_commit="${commit_full}"
 	RELEASE_COMMIT="${release_commit}"
-	pkg_name="hyperfilelens-${version}"
+	edition=community
+	[[ ${#EXTENSION_SOURCES[@]} -eq 0 ]] || edition=enterprise
+	edition_suffix=""
+	[[ "${edition}" == community ]] || edition_suffix="-ee"
+	pkg_name="hyperfilelens-${version}${edition_suffix}"
 	if [[ -n "${PACKAGE_BASENAME:-}" ]]; then
 		tar_basename="${PACKAGE_BASENAME}"
 	else
-		tar_basename="$(release_package_basename_for_version "${version}" "${commit7}")"
+		tar_basename="$(release_package_basename_for_version "${version}" "${commit7}" "${edition}")"
 	fi
 	safe_assert_package_basename "${tar_basename}"
 	pkg_root="${STAGING_BASE}/${pkg_name}"
 	images_dir="${pkg_root}/images"
 
-	log "Version ${version} (git ${commit7}, ${commit_full})"
+	HFL_RELEASE_EDITION="${edition}"
+	HFL_IMAGE_VERSION="${version}${edition_suffix}"
+	export HFL_RELEASE_EDITION HFL_IMAGE_VERSION
+	log "Version ${version} (${edition}, git ${commit7}, ${commit_full})"
 	safe_assert_staging_pkg_root "${pkg_root}" "${STAGING_BASE}"
 	safe_rm_dir "${pkg_root}"
 	mkdir -p "${images_dir}"
@@ -1377,7 +1412,7 @@ main() {
 	write_manifest "${pkg_root}" "${version}" "${release_commit}" "${payload_sha}" \
 		"${backend_digest}" "${frontend_digest}" "${postgres_digest}" "${redis_digest}"
 	validate_release_publish_artifacts "${pkg_root}"
-	write_package_readme "${pkg_root}" "${version}"
+	write_package_readme "${pkg_root}" "${version}" "${edition}"
 	validate_release_security "${pkg_root}"
 
 	mkdir -p "${DIST_DIR}"

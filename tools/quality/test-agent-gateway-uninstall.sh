@@ -112,6 +112,7 @@ PATH="${fake_bin}:${PATH}" \
 	HFL_AGENT_ENV_FILE="${tmp}/missing-agent.env" \
 	HFL_LENS_ENV_FILE="${tmp}/missing-lensnode.env" \
 	HFL_GATEWAY_COMPOSE_DIR="${compose_dir}" \
+	HFL_GATEWAY_SIDECAR_LOCK_FILE="${tmp}/gateway-sidecar.lock" \
 	bash "${ROOT}/deploy/bootstrap/gateway-lifecycle.sh" uninstall-sidecar --purge-all
 
 [[ -f "${docker_state}.down" ]]

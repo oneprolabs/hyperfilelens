@@ -41,7 +41,9 @@ GOOGLE_CLIENT_ID_PATTERN = re.compile(
     r"^[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$"
 )
 GA4_MEASUREMENT_ID_PATTERN = re.compile(r"^G-[A-Z0-9]+$")
-SENTRY_ENVIRONMENT_PATTERN = re.compile(r"^hfl-(test|preprod|production)$")
+SENTRY_ENVIRONMENT_PATTERN = re.compile(
+    r"^hfl-(test|community|preprod|production)$"
+)
 
 
 def warn(message: str) -> None:
@@ -414,7 +416,7 @@ def apply_configuration(
 
         updates.update(turnstile_runtime_updates(runtime_values))
         deploy_target = runtime_values.get("HFL_DEPLOY_TARGET", "").strip()
-        if deploy_target in {"test", "preprod", "prod"}:
+        if deploy_target in {"test", "community", "preprod", "prod"}:
             updates["HFL_DEPLOY_TARGET"] = deploy_target
             updates["HFL_DEPLOYMENT_MODE"] = "managed"
         else:

@@ -7,27 +7,18 @@ on:
         description: Artifact channel requested by a trusted wrapper
         required: true
         type: string
-      force_rebuild:
-        description: Rebuild an already-published Main commit
+      edition:
+        description: Product edition to package
         required: false
-        default: false
-        type: boolean
-
+        default: community
+        type: string
+      release_tag:
+        description: Existing OSS release tag used as the immutable source baseline
+        required: true
+        type: string
 concurrency:
-  group: >-
-    ${{
-      inputs.channel == 'main' &&
-      (
-        github.run_attempt == 1 &&
-        'hyperfilelens-main' ||
-        format('hyperfilelens-main-rerun-{0}-{1}', github.run_id, github.run_attempt)
-      ) ||
-      format('hyperfilelens-release-{0}', github.ref_name)
-    }}
-  # Main is a moving development target, while formal release builds must
-  # always run to completion once a version tag has been accepted. A stale
-  # Main retry must never cancel the active build for a newer commit.
-  cancel-in-progress: ${{ inputs.channel == 'main' && github.run_attempt == 1 }}
+  group: ${{ format('hyperfilelens-package-{0}', inputs.release_tag) }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -46,54 +37,52 @@ jobs:
       contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
+      image_version: ${{ steps.version.outputs.image_version }}
       tag: ${{ steps.version.outputs.tag }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
       commit: ${{ steps.version.outputs.commit }}
       channel: ${{ steps.version.outputs.channel }}
+      edition: ${{ steps.version.outputs.edition }}
+      enterprise_commit: ${{ steps.enterprise-ref.outputs.commit }}
+      enterprise_stored: ${{ steps.enterprise-store.outputs.stored }}
       build_required: ${{ steps.candidate.outputs.build_required }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+          ref: ${{ inputs.release_tag }}
 
       - name: Validate release tag and commit
         id: version
         env:
           REQUESTED_CHANNEL: ${{ inputs.channel }}
+          REQUESTED_EDITION: ${{ inputs.edition }}
+          REQUESTED_TAG: ${{ inputs.release_tag }}
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$REQUESTED_CHANNEL" == "release" ]]
+          [[ "$REQUESTED_EDITION" =~ ^(community|enterprise)$ ]]
+          TAG="$REQUESTED_TAG"
+          [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+          VERSION="${BASH_REMATCH[1]}"
+          IMAGE_VERSION="$VERSION"
+          [[ "$REQUESTED_EDITION" == "community" ]] || IMAGE_VERSION="${VERSION}-ee"
           git fetch origin main --no-tags
-          case "$REQUESTED_CHANNEL" in
-            release)
-              TAG="${GITHUB_REF_NAME}"
-              [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
-              VERSION="${BASH_REMATCH[1]}"
-              ;;
-            main)
-              [[ "$GITHUB_REF" == "refs/heads/main" ]]
-              [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
-              TAG="main-${GITHUB_SHA:0:7}"
-              VERSION="$TAG"
-              ;;
-            *)
-              echo "unsupported artifact channel: $REQUESTED_CHANNEL" >&2
-              exit 2
-              ;;
-          esac
-          if [[ "$REQUESTED_CHANNEL" == "main" ]]; then
-            latest_main="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')"
-            [[ "$GITHUB_SHA" == "$latest_main" ]] || {
-              echo "Main build $GITHUB_SHA is superseded by $latest_main; stale retries stop before package construction" >&2
-              exit 1
-            }
-          else
-            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          COMMIT="$(git rev-parse --verify "${TAG}^{commit}")"
+          git merge-base --is-ancestor "$COMMIT" origin/main
+          CANDIDATE_TAG="$TAG"
+          if [[ "$REQUESTED_EDITION" == "enterprise" ]]; then
+            CANDIDATE_TAG="enterprise-${TAG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           fi
           {
             echo "version=$VERSION"
-            echo "tag=$TAG"
-            echo "commit=$GITHUB_SHA"
+            echo "image_version=$IMAGE_VERSION"
+            echo "tag=$CANDIDATE_TAG"
+            echo "release_tag=$TAG"
+            echo "commit=$COMMIT"
             echo "channel=$REQUESTED_CHANNEL"
+            echo "edition=$REQUESTED_EDITION"
           } >> "$GITHUB_OUTPUT"
           [[ "${REGISTRY_HOST}" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ ]] || {
             echo "REGISTRY_HOST repository variable is missing or invalid" >&2
@@ -104,66 +93,202 @@ jobs:
             exit 1
           }
 
+      - name: Validate matching Enterprise tag
+        id: enterprise-ref
+        if: ${{ steps.version.outputs.edition == 'enterprise' }}
+        env:
+          ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ENTERPRISE_EXTENSION_REPOSITORY" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?$ ]] || {
+            echo 'ENTERPRISE_EXTENSION_REPOSITORY must be a credential-free GitHub HTTPS repository URL' >&2
+            exit 1
+          }
+          enterprise_commit="$(python3 - "$ENTERPRISE_EXTENSION_REPOSITORY" "$RELEASE_TAG" <<'PY'
+          import re
+          import subprocess
+          import sys
+
+          from tools.extensions.materialize_extensions import _git_env
+
+          repository, tag = sys.argv[1:]
+          result = subprocess.run(
+              [
+                  "git",
+                  "ls-remote",
+                  "--exit-code",
+                  repository,
+                  f"refs/tags/{tag}",
+                  f"refs/tags/{tag}^{{}}",
+              ],
+              check=True,
+              env=_git_env(repository, require_https_auth=True),
+              stdout=subprocess.PIPE,
+              text=True,
+          )
+          refs = {}
+          for line in result.stdout.splitlines():
+              commit, ref = line.split("\t", 1)
+              refs[ref] = commit
+          commit = refs.get(f"refs/tags/{tag}^{{}}") or refs.get(f"refs/tags/{tag}")
+          if not commit or not re.fullmatch(r"[0-9a-f]{40}", commit):
+              raise SystemExit("Enterprise tag did not resolve to one commit")
+          print(commit)
+          PY
+          )"
+          echo "commit=$enterprise_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Check immutable Enterprise store
+        id: enterprise-store
+        if: ${{ steps.version.outputs.edition == 'enterprise' }}
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          RELEASE_COMMIT: ${{ steps.version.outputs.commit }}
+          ENTERPRISE_COMMIT: ${{ steps.enterprise-ref.outputs.commit }}
+          TEST_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
+          TEST_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
+          TEST_SSH_USER: ${{ vars.TEST_SSH_USER }}
+          TEST_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
+          TEST_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TEST_SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ && "$TEST_SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$TEST_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ -n "$TEST_SSH_KNOWN_HOSTS" && -n "$TEST_SSH_PRIVATE_KEY" ]]
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
+          chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
+          stored="$({
+            ssh -i ~/.ssh/hyperfilelens_test \
+              -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
+              "bash -s -- '$RELEASE_TAG' '$RELEASE_COMMIT' '$ENTERPRISE_COMMIT'" <<'REMOTE'
+          set -euo pipefail
+          tag=$1
+          oss_commit=$2
+          enterprise_commit=$3
+          [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+          version=${BASH_REMATCH[1]}
+          directory="/root/hfl-release/${tag}"
+          exec 9>/root/hfl-release/.lock
+          flock -s 9
+          if [[ ! -e "$directory" ]]; then
+            printf 'false\n'
+            exit 0
+          fi
+          [[ -d "$directory" && ! -L "$directory" ]]
+          [[ -f "$directory/SHA256SUMS" && ! -L "$directory/SHA256SUMS" ]]
+          [[ -f "$directory/MANIFEST.json" && ! -L "$directory/MANIFEST.json" ]]
+          [[ -f "$directory/hyperfilelens-${version}-ee.tar.gz" \
+            && ! -L "$directory/hyperfilelens-${version}-ee.tar.gz" ]]
+          (
+            cd "$directory"
+            sha256sum -c SHA256SUMS >/dev/null
+            python3 - MANIFEST.json "$tag" "$version" "$oss_commit" "$enterprise_commit" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          path, tag, version, oss_commit, enterprise_commit = sys.argv[1:]
+          manifest = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+          expected = {
+              "product": "hyperfilelens",
+              "edition": "enterprise",
+              "version": version,
+              "artifact_id": tag,
+              "image_version": f"{version}-ee",
+              "git_commit": oss_commit,
+              "extension_commit": enterprise_commit,
+          }
+          differences = [key for key, value in expected.items() if manifest.get(key) != value]
+          if differences:
+              raise SystemExit(
+                  "stored Enterprise release identity differs for: " + ", ".join(differences)
+              )
+          PY
+          )
+          printf 'true\n'
+          REMOTE
+          } 2>&1)" || {
+            printf '%s\n' "$stored" >&2
+            exit 1
+          }
+          [[ "$stored" =~ ^(true|false)$ ]]
+          echo "stored=$stored" >> "$GITHUB_OUTPUT"
+
       - name: Create or reuse build candidate
         id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_CHANNEL: ${{ steps.version.outputs.channel }}
           ARTIFACT_ID: ${{ steps.version.outputs.tag }}
-          FORCE_REBUILD: ${{ inputs.force_rebuild }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          RELEASE_EDITION: ${{ steps.version.outputs.edition }}
+          RELEASE_COMMIT: ${{ steps.version.outputs.commit }}
+          ENTERPRISE_STORED: ${{ steps.enterprise-store.outputs.stored }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$ARTIFACT_CHANNEL" == "main" ]] \
-            && existing_commit="$(git rev-parse --verify "${ARTIFACT_ID}^{commit}" 2>/dev/null)"; then
-            [[ "$existing_commit" == "$GITHUB_SHA" ]] || {
-              echo "Main artifact ID collision: $ARTIFACT_ID already identifies $existing_commit" >&2
-              exit 1
-            }
+          validate_build_contract() {
+            local file
+            local -a required_files=(
+              release/ci/assemble-release.sh
+              release/build.sh
+              tools/extensions/materialize_extensions.py
+              tools/lib/version.sh
+              tools/quality/test-enterprise-release-flow.sh
+            )
+            for file in "${required_files[@]}"; do
+              [[ -f "$file" ]] || {
+                echo "::error::Selected tag predates the edition-aware release contract: missing $file"
+                return 1
+              }
+            done
+            grep -F -- '--edition' release/ci/assemble-release.sh >/dev/null
+            grep -F 'HFL_RELEASE_EDITION' release/build.sh >/dev/null
+            grep -F 'HFL_EXTENSION_EXPECTED_COMMIT' \
+              tools/extensions/materialize_extensions.py >/dev/null
+            grep -F 'normalize_edition' tools/lib/version.sh >/dev/null
+          }
+          if [[ "$RELEASE_EDITION" == "enterprise" ]]; then
+            if [[ "$ENTERPRISE_STORED" == "true" ]]; then
+              echo "build_required=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            validate_build_contract
+            gh release create "$ARTIFACT_ID" \
+              --target "$RELEASE_COMMIT" \
+              --draft \
+              --title "Enterprise build candidate $RELEASE_TAG"
+            echo "build_required=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           if gh release view "$ARTIFACT_ID" \
             --json isDraft,isPrerelease,targetCommitish \
             >/tmp/hfl-release.json 2>/dev/null; then
-            if [[ "$ARTIFACT_CHANNEL" == "main" ]]; then
-              release_target="$(jq -r .targetCommitish /tmp/hfl-release.json)"
-              [[ "$release_target" == "$GITHUB_SHA" ]] || {
-                echo "Main artifact target mismatch: $ARTIFACT_ID targets $release_target, expected $GITHUB_SHA" >&2
-                exit 1
-              }
-            fi
             if [[ "$ARTIFACT_CHANNEL" == "release" ]]; then
-              [[ "$(jq -r .isDraft /tmp/hfl-release.json)" == "true" ]] || {
-                echo "Refusing to overwrite an already-published release" >&2
-                exit 1
-              }
-              echo "build_required=true" >> "$GITHUB_OUTPUT"
-            elif [[ "$FORCE_REBUILD" == "true" ]]; then
-              gh release delete "$ARTIFACT_ID" --cleanup-tag --yes
-              gh release create "$ARTIFACT_ID" \
-                --target "$GITHUB_SHA" \
-                --draft \
-                --prerelease \
-                --title "Main ${GITHUB_SHA:0:7}"
-              echo "build_required=true" >> "$GITHUB_OUTPUT"
-            elif [[ "$(jq -r .isDraft /tmp/hfl-release.json)" == "true" ]]; then
-              echo "build_required=true" >> "$GITHUB_OUTPUT"
+              if [[ "$(jq -r .isDraft /tmp/hfl-release.json)" == "true" ]]; then
+                validate_build_contract
+                echo "build_required=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "build_required=false" >> "$GITHUB_OUTPUT"
+              fi
             else
-              [[ "$(jq -r .isPrerelease /tmp/hfl-release.json)" == "true" ]]
               echo "build_required=false" >> "$GITHUB_OUTPUT"
             fi
           else
             if [[ "$ARTIFACT_CHANNEL" == "release" ]]; then
+              validate_build_contract
               gh release create "$ARTIFACT_ID" \
                 --verify-tag \
                 --draft \
                 --generate-notes \
                 --title "HyperFileLens $ARTIFACT_ID"
-            else
-              gh release create "$ARTIFACT_ID" \
-                --target "$GITHUB_SHA" \
-                --draft \
-                --prerelease \
-                --title "Main ${GITHUB_SHA:0:7}"
             fi
             echo "build_required=true" >> "$GITHUB_OUTPUT"
           fi
@@ -206,6 +331,8 @@ jobs:
       DJANGO_DEBUG: "true"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
@@ -222,6 +349,50 @@ jobs:
         with:
           version: "0.10.2"
           enable-cache: true
+
+      - name: Materialize Enterprise extension for quality gates
+        env:
+          RELEASE_EDITION: ${{ needs.prepare.outputs.edition }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          ENTERPRISE_COMMIT: ${{ needs.prepare.outputs.enterprise_commit }}
+          ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_EDITION" == "community" ]]; then
+            echo "HFL_EXTENSIONS=" >>"$GITHUB_ENV"
+            echo "Community quality gates: extensions disabled by edition"
+            exit 0
+          fi
+          [[ "$ENTERPRISE_EXTENSION_REPOSITORY" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?$ ]] || {
+            echo "::error::ENTERPRISE_EXTENSION_REPOSITORY must be a credential-free GitHub HTTPS repository URL"
+            exit 1
+          }
+          token="${HFL_EXTENSION_GIT_TOKEN:-}"
+          if [[ ${#token} -lt 20 || "$token" == "-" ]]; then
+            echo "::error::ENTERPRISE_EXTENSION_GIT_TOKEN is missing or a placeholder; set a token with contents:read on the private extension repository"
+            exit 1
+          fi
+          quality_dir="$GITHUB_WORKSPACE/build/quality/extensions"
+          HFL_EXTENSION_GIT_TOKEN="$token" \
+            python3 tools/extensions/materialize_extensions.py \
+              --repo-root . \
+              --sources "${ENTERPRISE_EXTENSION_REPOSITORY}@${RELEASE_TAG}" \
+              --expected-commit "$ENTERPRISE_COMMIT" \
+              --bake-dir "$quality_dir"
+          extensions="$(
+            find "$quality_dir" -mindepth 1 -maxdepth 1 -type d \
+              -exec test -d '{}/src/backend' \; -print \
+              | sort \
+              | paste -sd, -
+          )"
+          [[ -n "$extensions" ]] || {
+            echo "::error::Enterprise extension materialization produced no extension roots"
+            exit 1
+          }
+          echo "HFL_EXTENSIONS=$extensions" >>"$GITHUB_ENV"
+          echo "Enterprise quality gates: extension enabled"
 
       - name: Release and source checks
         shell: bash
@@ -252,10 +423,7 @@ jobs:
           ./tools/quality/test-redis-rdb-preflight.sh
           ./tools/quality/test-agent-release-retention.sh
           ./tools/quality/test-managed-image-retention.sh
-          ./tools/quality/test-main-channel-contracts.sh
-          ./tools/quality/test-main-release-freshness.sh
-          ./tools/quality/test-main-release-cleanup.sh
-          ./tools/quality/test-release-freshness.sh
+          ./tools/quality/test-enterprise-release-flow.sh
           ./tools/quality/test-shared-host-guard.sh
           ./tools/quality/test-release-download-proxy.sh
           ./tools/quality/test-public-endpoint-check.sh
@@ -265,7 +433,7 @@ jobs:
           ./tools/quality/test-sentry-runtime-config.sh
           ./tools/quality/test-payload-tree-hash.sh
           ./tools/quality/test-ci-release-assembly.sh
-          HFL_TEST_VERSION=main-0123456 ./tools/quality/test-ci-release-assembly.sh
+          HFL_TEST_EDITION=enterprise ./tools/quality/test-ci-release-assembly.sh
           ./tools/quality/test-kopia-build-config.sh
           ./tools/quality/test-dev-stack-upgrade.sh
           ./tools/quality/test-sourcelens-git-mirror.sh
@@ -281,6 +449,25 @@ jobs:
           uv run ruff check src/backend
           uv run python src/backend/manage.py makemigrations --check --dry-run
           uv run python src/backend/manage.py test
+          if [[ -n "${HFL_EXTENSIONS:-}" ]]; then
+            extension_test_labels=()
+            IFS=',' read -r -a extension_roots <<<"$HFL_EXTENSIONS"
+            for root in "${extension_roots[@]}"; do
+              backend="$root/src/backend"
+              while IFS= read -r test_dir; do
+                label="${test_dir#"$backend/"}"
+                extension_test_labels+=("${label//\//.}")
+              done < <(
+                find "$backend" -type d -name tests -exec test -f '{}/__init__.py' \; -print \
+                  | sort
+              )
+            done
+            ((${#extension_test_labels[@]} > 0)) || {
+              echo "::error::Enterprise extension contains no discoverable backend tests"
+              exit 1
+            }
+            uv run python src/backend/manage.py test "${extension_test_labels[@]}"
+          fi
 
       - name: Frontend checks
         working-directory: src/frontend
@@ -330,6 +517,8 @@ jobs:
             needs_kopia: false
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: matrix.needs_kopia
         with:
@@ -356,18 +545,23 @@ jobs:
 
       - name: Materialize Open Core extensions for image bake
         env:
-          HFL_EXTENSION_SOURCES: ${{ vars.HFL_EXTENSION_SOURCES }}
-          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.HFL_EXTENSION_GIT_TOKEN }}
+          RELEASE_EDITION: ${{ needs.prepare.outputs.edition }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          ENTERPRISE_COMMIT: ${{ needs.prepare.outputs.enterprise_commit }}
+          ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p build/release/extensions
           : >build/release/extensions/.gitkeep
-          if [[ -z "${HFL_EXTENSION_SOURCES// }" ]]; then
+          if [[ "$RELEASE_EDITION" == "community" ]]; then
             echo "HFL_EXTENSIONS=" >>"${GITHUB_ENV}"
-            echo "Community bake: HFL_EXTENSION_SOURCES empty"
+            echo "Community bake: extensions disabled by edition"
             exit 0
           fi
+          [[ "$ENTERPRISE_EXTENSION_REPOSITORY" == https://github.com/* ]]
+          HFL_EXTENSION_SOURCES="${ENTERPRISE_EXTENSION_REPOSITORY}@${RELEASE_TAG}"
           # Prefer packaging secret for private plugin repos; do not fall back to
           # github.token (that token cannot clone other private repositories).
           # Scope to HFL_EXTENSION_GIT_TOKEN only (materialize reads it first).
@@ -379,9 +573,10 @@ jobs:
           exts="$(
             HFL_EXTENSION_GIT_TOKEN="${token}" \
               python3 tools/extensions/materialize_extensions.py \
-              --repo-root . \
-              --sources "${HFL_EXTENSION_SOURCES}" \
-              --bake-dir build/release/extensions \
+                --repo-root . \
+                --sources "${HFL_EXTENSION_SOURCES}" \
+                --expected-commit "${ENTERPRISE_COMMIT}" \
+                --bake-dir build/release/extensions \
               --print-extensions
           )"
           echo "HFL_EXTENSIONS=${exts}" >>"${GITHUB_ENV}"
@@ -396,16 +591,16 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
-          tags: ${{ env.REGISTRY_PREFIX }}/${{ matrix.repository }}:${{ needs.prepare.outputs.version }}
+          tags: ${{ env.REGISTRY_PREFIX }}/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}
           build-args: |
             KOPIA_BINARY=build/kopia/dist/linux/amd64/kopia
-            IMAGE_VERSION=${{ needs.prepare.outputs.version }}
+            IMAGE_VERSION=${{ needs.prepare.outputs.image_version }}
             IMAGE_REVISION=${{ needs.prepare.outputs.commit }}
             PIP_TIMEOUT=600
             SENTRY_URL=${{ vars.SENTRY_URL }}
             SENTRY_ORG=${{ vars.SENTRY_ORG }}
             SENTRY_FRONTEND_PROJECT=${{ vars.SENTRY_FRONTEND_PROJECT }}
-            SENTRY_RELEASE=hyperfilelens-frontend@${{ needs.prepare.outputs.version }}
+            SENTRY_RELEASE=hyperfilelens-frontend@${{ needs.prepare.outputs.image_version }}
             VITE_SHOW_EULA=false
             HFL_EXTENSIONS=${{ env.HFL_EXTENSIONS }}
           secrets: ${{ matrix.component == 'hfl-frontend' && secrets.SENTRY_AUTH_TOKEN != '' && format('sentry_auth_token={0}', secrets.SENTRY_AUTH_TOKEN) || '' }}
@@ -415,7 +610,7 @@ jobs:
       - name: Upload immutable image metadata
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE_REF: ${{ env.REGISTRY_PREFIX }}/${{ matrix.repository }}:${{ needs.prepare.outputs.version }}
+          IMAGE_REF: ${{ env.REGISTRY_PREFIX }}/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         shell: bash
         run: |
@@ -446,6 +641,8 @@ jobs:
         component: [backend, frontend, lensnode]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -505,6 +702,8 @@ jobs:
             asset: windows-amd64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: src/agent/go.mod
@@ -565,6 +764,8 @@ jobs:
             runner: windows-2022
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
@@ -618,6 +819,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
@@ -673,6 +876,8 @@ jobs:
             asset: ubuntu2404
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - name: Build host dependency asset
         env:
           APT_MIRROR: ${{ vars.CI_UBUNTU_APT_MIRROR }}
@@ -702,6 +907,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY_HOST }}
@@ -718,7 +925,7 @@ jobs:
         run: |
           ./release/ci/export-hfl-images.sh \
             build/ci-metadata \
-            "${{ needs.prepare.outputs.version }}" \
+            "${{ needs.prepare.outputs.image_version }}" \
             _internal-hfl-images.tar
       - name: Upload offline HFL archive
         env:
@@ -735,6 +942,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY_HOST }}
@@ -770,6 +979,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY_HOST }}
@@ -796,8 +1007,12 @@ jobs:
       - export-runtime-images
     permissions:
       contents: write
+    outputs:
+      stored: ${{ steps.store-enterprise.outputs.stored }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - name: Download matrix bundles
         env:
           GH_TOKEN: ${{ github.token }}
@@ -807,14 +1022,24 @@ jobs:
       - name: Assemble canonical offline release
         env:
           # Same sources as image bake so packaged .env.example matches image ENV.
-          HFL_EXTENSION_SOURCES: ${{ vars.HFL_EXTENSION_SOURCES }}
-          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.HFL_EXTENSION_GIT_TOKEN }}
+          RELEASE_EDITION: ${{ needs.prepare.outputs.edition }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          HFL_EXTENSION_EXPECTED_COMMIT: ${{ needs.prepare.outputs.enterprise_commit }}
+          ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
         run: |
+          if [[ "$RELEASE_EDITION" == "enterprise" ]]; then
+            export HFL_EXTENSION_SOURCES="${ENTERPRISE_EXTENSION_REPOSITORY}@${RELEASE_TAG}"
+          else
+            export HFL_EXTENSION_SOURCES=""
+          fi
           ./release/ci/assemble-release.sh \
             --input-dir build/ci-input \
             --version "${{ needs.prepare.outputs.version }}" \
-            --commit "${{ needs.prepare.outputs.commit }}"
-      - name: Upload final assets to draft release
+            --commit "${{ needs.prepare.outputs.commit }}" \
+            --edition "${{ needs.prepare.outputs.edition }}"
+      - name: Upload Community assets to draft release
+        if: ${{ needs.prepare.outputs.edition == 'community' }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -829,6 +1054,34 @@ jobs:
             ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" \
               "build/release/dist/${asset}" --clobber
           done < build/release/release-assets.txt
+      - name: Stage Enterprise release on TEST host
+        id: store-enterprise
+        if: ${{ needs.prepare.outputs.edition == 'enterprise' }}
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          TEST_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
+          TEST_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
+          TEST_SSH_USER: ${{ vars.TEST_SSH_USER }}
+          TEST_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
+          TEST_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TEST_SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ && "$TEST_SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$TEST_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ -n "$TEST_SSH_KNOWN_HOSTS" && -n "$TEST_SSH_PRIVATE_KEY" ]]
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
+          chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
+          incoming="/root/hfl-release/.incoming/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ssh -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
+            "install -d -m 0700 '$incoming'"
+          scp -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -P "$TEST_SSH_PORT" build/release/dist/* \
+            "$TEST_SSH_USER@$TEST_SSH_HOST:$incoming/"
+          echo 'stored=true' >> "$GITHUB_OUTPUT"
       - name: Disk report
         if: always()
         run: df -h
@@ -843,12 +1096,15 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - name: Reclaim unused runner toolchains
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
           docker system prune -af || true
           df -h
-      - name: Download public release candidates from draft
+      - name: Download Community release candidate from draft
+        if: ${{ needs.prepare.outputs.edition == 'community' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -861,6 +1117,29 @@ jobs:
             --pattern 'hyperfilelens-root-ca.crt' \
             --pattern 'assemble-release.*' \
             --dir build/release-candidate
+      - name: Download Enterprise release candidate from TEST host
+        if: ${{ needs.prepare.outputs.edition == 'enterprise' }}
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          TEST_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
+          TEST_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
+          TEST_SSH_USER: ${{ vars.TEST_SSH_USER }}
+          TEST_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
+          TEST_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 ~/.ssh build/release-candidate
+          printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
+          chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
+          remote="/root/hfl-release/.incoming/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          scp -r -i ~/.ssh/hyperfilelens_test \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -P "$TEST_SSH_PORT" \
+            "$TEST_SSH_USER@$TEST_SSH_HOST:$remote/." \
+            build/release-candidate/
       - name: Verify checksums and reconstruct package when split
         id: package
         working-directory: build/release-candidate
@@ -913,37 +1192,42 @@ jobs:
       disposition: ${{ steps.publish.outputs.disposition }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - name: Remove internal assets and publish release
         id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_CHANNEL: ${{ needs.prepare.outputs.channel }}
           ARTIFACT_ID: ${{ needs.prepare.outputs.tag }}
+          RELEASE_EDITION: ${{ needs.prepare.outputs.edition }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          TEST_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
+          TEST_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
+          TEST_SSH_USER: ${{ vars.TEST_SSH_USER }}
+          TEST_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
+          TEST_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          release_freshness=not-applicable
-          if [[ "$ARTIFACT_CHANNEL" == "main" ]]; then
-            freshness="$(./.github/scripts/check-main-freshness.sh "$GITHUB_SHA")"
-            if [[ "$freshness" == "superseded" ]]; then
-              if gh release view "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" \
-                >/dev/null 2>&1; then
-                gh release delete "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" --yes
-              fi
-              if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${ARTIFACT_ID}" \
-                --silent >/dev/null 2>&1; then
-                gh api --method DELETE \
-                  "repos/${GITHUB_REPOSITORY}/git/refs/tags/${ARTIFACT_ID}" --silent
-              fi
-              {
-                echo 'deployable=false'
-                echo 'disposition=superseded'
-              } >> "$GITHUB_OUTPUT"
-              printf '### Main publish\n\nSkipped `%s`: origin/main advanced beyond `%s`; a stale rerun cannot publish or deploy.\n' \
-                "$ARTIFACT_ID" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            [[ "$freshness" == "current" ]]
+          if [[ "$RELEASE_EDITION" == "enterprise" ]]; then
+            install -d -m 0700 ~/.ssh
+            printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+            printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
+            chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
+            incoming="/root/hfl-release/.incoming/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            ssh -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
+              "bash -s -- '$RELEASE_TAG' '$incoming' /root/hfl-release 10" \
+              < .github/scripts/store-enterprise-release.sh
+            gh release delete "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            {
+              echo 'deployable=true'
+              echo 'disposition=stored-on-test-host'
+            } >> "$GITHUB_OUTPUT"
+            printf '### Enterprise release\n\nVerified and stored on the TEST host; the temporary GitHub build candidate was deleted.\n' \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           while IFS= read -r asset; do
             [[ -n "$asset" ]] || continue
@@ -952,30 +1236,17 @@ jobs:
           done < <(gh release view "${{ needs.prepare.outputs.tag }}" \
             --repo "${GITHUB_REPOSITORY}" --json assets \
             --jq '.assets[] | select(.name | startswith("_internal-")) | .name')
-          if [[ "$ARTIFACT_CHANNEL" == "main" ]]; then
-            gh release edit "${{ needs.prepare.outputs.tag }}" \
-              --repo "${GITHUB_REPOSITORY}" --draft=false --prerelease
-          else
-            release_api_url="$(gh release view "$ARTIFACT_ID" \
-              --repo "$GITHUB_REPOSITORY" --json apiUrl --jq '.apiUrl')"
-            release_api_prefix="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/"
-            [[ "$release_api_url" == "$release_api_prefix"* ]]
-            release_id="${release_api_url#"$release_api_prefix"}"
-            [[ "$release_id" =~ ^[0-9]+$ ]]
-            gh api --method PATCH \
-              "$release_api_url" \
-              -F draft=false -F prerelease=false -f make_latest=legacy --silent
-            release_freshness="$(./.github/scripts/check-release-freshness.sh "$ARTIFACT_ID")"
-            [[ "$release_freshness" == "current" || "$release_freshness" == "superseded" ]]
-          fi
+          release_api_url="$(gh release view "$ARTIFACT_ID" \
+            --repo "$GITHUB_REPOSITORY" --json apiUrl --jq '.apiUrl')"
+          release_api_prefix="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/"
+          [[ "$release_api_url" == "$release_api_prefix"* ]]
+          release_id="${release_api_url#"$release_api_prefix"}"
+          [[ "$release_id" =~ ^[0-9]+$ ]]
+          gh api --method PATCH \
+            "$release_api_url" \
+            -F draft=false -F prerelease=false -f make_latest=legacy --silent
           deployable=true
           disposition=published
-          if [[ "$ARTIFACT_CHANNEL" == "release" && "$release_freshness" == "superseded" ]]; then
-            deployable=false
-            disposition=published-superseded
-            printf '### Release publish\n\nPublished historical release `%s`; a higher SemVer tag exists, so PREPROD deployment was skipped.\n' \
-              "$ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
-          fi
           {
             echo "deployable=$deployable"
             echo "disposition=$disposition"
@@ -987,8 +1258,8 @@ jobs:
     if: >-
       ${{
         always() &&
-        needs.prepare.outputs.channel == 'main' &&
-        vars.TEST_DEPLOY_ENABLED == 'true' &&
+        needs.prepare.outputs.edition == 'enterprise' &&
+        vars.TEST_AUTO_DEPLOY != 'false' &&
         needs.prepare.result == 'success' &&
         (
           (
@@ -1004,11 +1275,11 @@ jobs:
     uses: ./.github/workflows/deploy_target.yml
     with:
       target: test
-      channel: main
-      tag: ${{ needs.prepare.outputs.tag }}
+      channel: release
+      package_source: host-store
+      tag: ${{ needs.prepare.outputs.release_tag }}
       public_url: ${{ vars.TEST_PUBLIC_URL }}
       admin_public_url: ${{ vars.TEST_ADMIN_PUBLIC_URL }}
-      release_download_proxy_url: ${{ vars.TEST_RELEASE_DOWNLOAD_PROXY_URL }}
       ssh_host: ${{ vars.TEST_SSH_HOST }}
       ssh_port: ${{ vars.TEST_SSH_PORT }}
       ssh_user: ${{ vars.TEST_SSH_USER }}
@@ -1044,82 +1315,120 @@ jobs:
       sentry_frontend_dsn: ${{ secrets.SENTRY_FRONTEND_DSN }}
       sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
-  deploy-preprod:
-    name: Deploy · PREPROD
+  promote-production:
+    name: Promote · PROD
+    needs: [prepare, deploy-test]
+    if: >-
+      ${{
+        always() &&
+        needs.prepare.outputs.edition == 'enterprise' &&
+        vars.TEST_AUTO_DEPLOY != 'false' &&
+        vars.PROD_AUTO_DEPLOY != 'false' &&
+        needs.deploy-test.result == 'success'
+      }}
+    uses: ./.github/workflows/enterprise_promotion.yml
+    with:
+      tag: ${{ needs.prepare.outputs.release_tag }}
+      automatic: true
+    secrets: inherit
+
+  deploy-community:
+    name: Deploy · Community
     needs: [prepare, publish-release]
     if: >-
       ${{
         always() &&
-        needs.prepare.outputs.channel == 'release' &&
-        vars.PREPROD_DEPLOY_ENABLED == 'true' &&
+        needs.prepare.outputs.edition == 'community' &&
+        vars.COMMUNITY_AUTO_DEPLOY != 'false' &&
         needs.prepare.result == 'success' &&
-        needs.publish-release.result == 'success' &&
-        needs.publish-release.outputs.deployable == 'true'
+        (
+          (
+            needs.publish-release.result == 'success' &&
+            needs.publish-release.outputs.deployable == 'true'
+          ) ||
+          (
+            needs.prepare.outputs.build_required == 'false' &&
+            needs.publish-release.result == 'skipped'
+          )
+        )
       }}
     uses: ./.github/workflows/deploy_target.yml
     with:
-      target: preprod
+      target: community
       channel: release
-      tag: ${{ needs.prepare.outputs.tag }}
-      public_url: ${{ vars.PREPROD_PUBLIC_URL }}
-      admin_public_url: ${{ vars.PREPROD_ADMIN_PUBLIC_URL }}
-      release_download_proxy_url: ${{ vars.PREPROD_RELEASE_DOWNLOAD_PROXY_URL }}
-      ssh_host: ${{ vars.PREPROD_SSH_HOST }}
-      ssh_port: ${{ vars.PREPROD_SSH_PORT }}
-      ssh_user: ${{ vars.PREPROD_SSH_USER }}
-      ssh_known_hosts: ${{ vars.PREPROD_SSH_KNOWN_HOSTS }}
-      turnstile_site_key: ${{ vars.PREPROD_TURNSTILE_SITE_KEY }}
-      turnstile_enabled: ${{ vars.PREPROD_TURNSTILE_ENABLED == 'true' }}
-      email_signup_enabled: ${{ vars.PREPROD_EMAIL_SIGNUP_ENABLED == 'true' }}
-      email_code_login_enabled: ${{ vars.PREPROD_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
-      google_oauth_enabled: ${{ vars.PREPROD_GOOGLE_OAUTH_ENABLED == 'true' }}
-      google_client_id: ${{ vars.PREPROD_GOOGLE_CLIENT_ID }}
-      sentry_enabled: ${{ vars.PREPROD_SENTRY_ENABLED == 'true' }}
-      platform_gateway_auto_deploy: ${{ vars.PREPROD_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
-      hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}
-      smtp_host: ${{ vars.PREPROD_SMTP_HOST }}
-      smtp_port: ${{ vars.PREPROD_SMTP_PORT }}
-      smtp_username: ${{ vars.PREPROD_SMTP_USERNAME }}
-      smtp_security: ${{ vars.PREPROD_SMTP_SECURITY }}
-      email_from: ${{ vars.PREPROD_EMAIL_FROM }}
-      ai_model_provider: ${{ vars.PREPROD_AI_MODEL_PROVIDER }}
-      ai_model_id: ${{ vars.PREPROD_AI_MODEL_ID }}
-      ai_model_display_name: ${{ vars.PREPROD_AI_MODEL_DISPLAY_NAME }}
-      ai_multimodal_model_provider: ${{ vars.PREPROD_AI_MULTIMODAL_MODEL_PROVIDER }}
-      ai_multimodal_model_id: ${{ vars.PREPROD_AI_MULTIMODAL_MODEL_ID }}
-      ai_multimodal_model_display_name: ${{ vars.PREPROD_AI_MULTIMODAL_MODEL_DISPLAY_NAME }}
+      tag: ${{ needs.prepare.outputs.release_tag }}
+      public_url: ${{ vars.COMMUNITY_PUBLIC_URL }}
+      admin_public_url: ${{ vars.COMMUNITY_ADMIN_PUBLIC_URL }}
+      release_download_proxy_url: ${{ vars.COMMUNITY_RELEASE_DOWNLOAD_PROXY_URL }}
+      ssh_host: ${{ vars.COMMUNITY_SSH_HOST }}
+      ssh_port: ${{ vars.COMMUNITY_SSH_PORT }}
+      ssh_user: ${{ vars.COMMUNITY_SSH_USER }}
+      ssh_known_hosts: ${{ vars.COMMUNITY_SSH_KNOWN_HOSTS }}
+      turnstile_site_key: ${{ vars.COMMUNITY_TURNSTILE_SITE_KEY }}
+      turnstile_enabled: ${{ vars.COMMUNITY_TURNSTILE_ENABLED == 'true' }}
+      email_signup_enabled: ${{ vars.COMMUNITY_EMAIL_SIGNUP_ENABLED == 'true' }}
+      email_code_login_enabled: ${{ vars.COMMUNITY_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
+      google_oauth_enabled: ${{ vars.COMMUNITY_GOOGLE_OAUTH_ENABLED == 'true' }}
+      google_client_id: ${{ vars.COMMUNITY_GOOGLE_CLIENT_ID }}
+      sentry_enabled: ${{ vars.COMMUNITY_SENTRY_ENABLED == 'true' }}
+      platform_gateway_auto_deploy: ${{ vars.COMMUNITY_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
+      hfl_insecure_tls: ${{ vars.COMMUNITY_HFL_INSECURE_TLS }}
+      smtp_host: ${{ vars.COMMUNITY_SMTP_HOST }}
+      smtp_port: ${{ vars.COMMUNITY_SMTP_PORT }}
+      smtp_username: ${{ vars.COMMUNITY_SMTP_USERNAME }}
+      smtp_security: ${{ vars.COMMUNITY_SMTP_SECURITY }}
+      email_from: ${{ vars.COMMUNITY_EMAIL_FROM }}
+      ai_model_provider: ${{ vars.COMMUNITY_AI_MODEL_PROVIDER }}
+      ai_model_id: ${{ vars.COMMUNITY_AI_MODEL_ID }}
+      ai_model_display_name: ${{ vars.COMMUNITY_AI_MODEL_DISPLAY_NAME }}
+      ai_multimodal_model_provider: ${{ vars.COMMUNITY_AI_MULTIMODAL_MODEL_PROVIDER }}
+      ai_multimodal_model_id: ${{ vars.COMMUNITY_AI_MULTIMODAL_MODEL_ID }}
+      ai_multimodal_model_display_name: ${{ vars.COMMUNITY_AI_MULTIMODAL_MODEL_DISPLAY_NAME }}
     secrets:
-      ssh_private_key: ${{ secrets.PREPROD_SSH_PRIVATE_KEY }}
-      turnstile_secret_key: ${{ secrets.PREPROD_TURNSTILE_SECRET_KEY }}
-      smtp_password: ${{ secrets.PREPROD_SMTP_PASSWORD }}
-      google_client_secret: ${{ secrets.PREPROD_GOOGLE_CLIENT_SECRET }}
-      ai_model_api_base: ${{ secrets.PREPROD_AI_MODEL_API_BASE }}
-      ai_model_api_key: ${{ secrets.PREPROD_AI_MODEL_API_KEY }}
+      ssh_private_key: ${{ secrets.COMMUNITY_SSH_PRIVATE_KEY }}
+      turnstile_secret_key: ${{ secrets.COMMUNITY_TURNSTILE_SECRET_KEY }}
+      smtp_password: ${{ secrets.COMMUNITY_SMTP_PASSWORD }}
+      google_client_secret: ${{ secrets.COMMUNITY_GOOGLE_CLIENT_SECRET }}
+      ai_model_api_base: ${{ secrets.COMMUNITY_AI_MODEL_API_BASE }}
+      ai_model_api_key: ${{ secrets.COMMUNITY_AI_MODEL_API_KEY }}
       sentry_backend_dsn: ${{ secrets.SENTRY_BACKEND_DSN }}
       sentry_frontend_dsn: ${{ secrets.SENTRY_FRONTEND_DSN }}
       sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
-  cleanup-main-builds:
-    name: Cleanup · Main releases
+  cleanup-enterprise-candidate:
+    name: Cleanup · Enterprise candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     needs: [prepare, publish-release]
     if: >-
       ${{
         always() &&
-        needs.prepare.outputs.channel == 'main' &&
-        needs.prepare.result == 'success'
+        needs.prepare.outputs.edition == 'enterprise' &&
+        needs.prepare.outputs.build_required == 'true' &&
+        needs.prepare.result == 'success' &&
+        needs.publish-release.result != 'success'
       }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - name: Retain retryable draft or current successful Main build
+      - name: Delete temporary Enterprise candidate
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_ID: ${{ needs.prepare.outputs.tag }}
-          MAIN_COMMIT: ${{ needs.prepare.outputs.commit }}
-          BUILD_REQUIRED: ${{ needs.prepare.outputs.build_required }}
-          PUBLISH_RESULT: ${{ needs.publish-release.result }}
-          PUBLISH_DISPOSITION: ${{ needs.publish-release.outputs.disposition }}
-        run: ./.github/scripts/cleanup-main-builds.sh
+          TEST_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
+          TEST_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
+          TEST_SSH_USER: ${{ vars.TEST_SSH_USER }}
+          TEST_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
+          TEST_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
+          chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
+          ssh -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
+            "rm -rf -- '/root/hfl-release/.incoming/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}'" \
+            || true
+          gh release delete "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes \
+            || true

@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+# Fast contracts for Community/Enterprise CI identity and TEST-host retention.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=../lib/version.sh
+source "${ROOT}/tools/lib/version.sh"
+
+[[ "$(release_package_basename_for_version v1.2.3 abcdef0 community)" \
+	== "hyperfilelens-1.2.3.tar.gz" ]]
+[[ "$(release_package_basename_for_version v1.2.3 abcdef0 enterprise)" \
+	== "hyperfilelens-1.2.3-ee.tar.gz" ]]
+
+# The packaged installer carries its own deletion guards; both canonical
+# release names must remain valid when passed directly to `upgrade --from`.
+# shellcheck disable=SC1090
+source "${ROOT}/deploy/installer/install.sh"
+tmp_guard="$(mktemp -d)"
+trap 'rm -rf "${tmp_guard}"' EXIT
+touch "${tmp_guard}/hyperfilelens-1.2.3.tar.gz" \
+	"${tmp_guard}/hyperfilelens-1.2.3-ee.tar.gz" \
+	"${tmp_guard}/hyperfilelens-1.2.3-abcdef0.tar.gz"
+safe_assert_upgrade_package_file "${tmp_guard}/hyperfilelens-1.2.3.tar.gz"
+safe_assert_upgrade_package_file "${tmp_guard}/hyperfilelens-1.2.3-ee.tar.gz"
+safe_assert_upgrade_package_file "${tmp_guard}/hyperfilelens-1.2.3-abcdef0.tar.gz"
+rm -rf "${tmp_guard}"
+trap - EXIT
+
+tmp_extensions="$(mktemp -d)"
+trap 'rm -rf "${tmp_extensions}"' EXIT
+env_file="${tmp_extensions}/.env"
+example_file="${tmp_extensions}/.env.example"
+printf '%s\n' 'APP_VERSION=1.2.2-ee' \
+	'HFL_EXTENSIONS=/opt/hfl/extensions/platform' >"${env_file}"
+printf '%s\n' 'APP_VERSION=1.2.3' >"${example_file}"
+reconcile_hfl_extensions_env "${env_file}" "${example_file}"
+if grep -F 'HFL_EXTENSIONS=' "${env_file}" >/dev/null; then
+	printf 'ERROR: Community upgrade must remove a previous Enterprise extension path\n' >&2
+	exit 1
+fi
+printf '%s\n' 'APP_VERSION=1.2.3-ee' \
+	'HFL_EXTENSIONS=/opt/hfl/extensions/platform' >"${example_file}"
+reconcile_hfl_extensions_env "${env_file}" "${example_file}"
+grep -Fx 'HFL_EXTENSIONS=/opt/hfl/extensions/platform' "${env_file}" >/dev/null
+rm -rf "${tmp_extensions}"
+trap - EXIT
+
+workflow="${ROOT}/.github/workflows/artifact_pipeline.yml"
+entry_enterprise="${ROOT}/.github/workflows/test.yml"
+entry_community="${ROOT}/.github/workflows/release.yml"
+promotion="${ROOT}/.github/workflows/production_deploy.yml"
+grep -F 'name: HFL - Enterprise Build & Deploy' "${entry_enterprise}" >/dev/null
+grep -F 'tags:' "${entry_enterprise}" >/dev/null
+grep -F 'edition: enterprise' "${entry_enterprise}" >/dev/null
+grep -F 'needs: validate-enterprise-build' "${entry_enterprise}" >/dev/null
+grep -F 'Manual Enterprise builds must be started from the main branch' \
+	"${entry_enterprise}" >/dev/null
+grep -F 'name: HFL - Community Release & Deploy' "${entry_community}" >/dev/null
+if grep -F 'tags:' "${entry_community}" >/dev/null; then
+	printf 'ERROR: Community publishing must be manual\n' >&2
+	exit 1
+fi
+grep -F 'edition: community' "${entry_community}" >/dev/null
+grep -F 'needs: validate-community-release' "${entry_community}" >/dev/null
+grep -F 'Community releases must be started from the main branch' \
+	"${entry_community}" >/dev/null
+grep -F "vars.TEST_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
+grep -F "vars.PROD_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
+grep -F "vars.COMMUNITY_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
+grep -F 'ENTERPRISE_EXTENSION_REPOSITORY' "${workflow}" >/dev/null
+grep -F 'secrets.ENTERPRISE_EXTENSION_GIT_TOKEN' "${workflow}" >/dev/null
+grep -F 'Materialize Enterprise extension for quality gates' "${workflow}" >/dev/null
+grep -F 'HFL_EXTENSIONS=$extensions' "${workflow}" >/dev/null
+grep -F 'Enterprise extension contains no discoverable backend tests' "${workflow}" >/dev/null
+grep -F 'manage.py test "${extension_test_labels[@]}"' "${workflow}" >/dev/null
+grep -F 'enterprise_commit: ${{ steps.enterprise-ref.outputs.commit }}' "${workflow}" >/dev/null
+grep -F 'Check immutable Enterprise store' "${workflow}" >/dev/null
+grep -F 'ENTERPRISE_STORED: ${{ steps.enterprise-store.outputs.stored }}' "${workflow}" >/dev/null
+grep -F 'stored Enterprise release identity differs' "${workflow}" >/dev/null
+grep -F 'flock -s 9' "${workflow}" >/dev/null
+grep -F -- '--expected-commit "$ENTERPRISE_COMMIT"' "${workflow}" >/dev/null
+grep -F 'validate_build_contract()' "${workflow}" >/dev/null
+grep -F 'Selected tag predates the edition-aware release contract' "${workflow}" >/dev/null
+grep -F '"$TEST_SSH_USER@$TEST_SSH_HOST:$remote/."' "${workflow}" >/dev/null
+grep -F 'local image_version="${HFL_IMAGE_VERSION:-${HFL_VERSION}}"' \
+	"${ROOT}/release/build.sh" >/dev/null
+grep -F 'tar xzf hyperfilelens-${version}${edition_suffix}.tar.gz' \
+	"${ROOT}/release/build.sh" >/dev/null
+grep -F '"hyperfilelens-backend:${image_version}"' "${ROOT}/release/build.sh" >/dev/null
+grep -F '"hyperfilelens-frontend:${image_version}"' "${ROOT}/release/build.sh" >/dev/null
+grep -F 'sub_key("HFL_GATEWAY_VERSION", image_version)' \
+	"${ROOT}/deploy/installer/install.sh" >/dev/null
+grep -F 'Enterprise release package has an invalid extension_commit' \
+	"${ROOT}/deploy/installer/install.sh" >/dev/null
+grep -F '"ls-remote"' "${workflow}" >/dev/null
+grep -F 'f"refs/tags/{tag}"' "${workflow}" >/dev/null
+grep -F 'gh release delete "$ARTIFACT_ID"' "${workflow}" >/dev/null
+grep -F 'uses: ./.github/workflows/enterprise_promotion.yml' "${promotion}" >/dev/null
+grep -F 'needs: validate-production-promotion' "${promotion}" >/dev/null
+grep -F '[[ "$GITHUB_REF" == "refs/heads/main" ]]' "${promotion}" >/dev/null
+grep -F "ref: \${{ inputs.automatic && inputs.tag || 'main' }}" \
+	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+grep -F 'ssh-agent -s' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+grep -F 'flock -s 9' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+grep -F "printf -v remote_command '%q '" \
+	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+grep -F 'expected_edition=enterprise' "${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
+grep -F 'flock -s 8' "${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
+grep -F "printf -v remote_command '%q '" \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'release has multiple legacy package candidates' \
+	"${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
+grep -F 'ERROR: no checksum for %s' \
+	"${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
+grep -F 'community:github|test:host-store|prod:host-store' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'PACKAGE_SOURCE: ${{ inputs.package_source }}' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'hfl_artifact += "-ee"' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'hyperfilelens-agent@{artifact}' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+if grep -E '^[[:space:]]+"\$RUNNER_TEMP/prod-key"[[:space:]]' \
+	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null; then
+	printf 'ERROR: the PROD private key must not be copied onto the TEST host\n' >&2
+	exit 1
+fi
+if grep -R -F 'TESTED' "${promotion}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null; then
+	printf 'ERROR: manual Enterprise production promotion must not require TESTED\n' >&2
+	exit 1
+fi
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+
+selector="${tmp}/select-community-release-assets.py"
+sed -n \
+	'/^# BEGIN COMMUNITY RELEASE ASSET SELECTOR$/,/^# END COMMUNITY RELEASE ASSET SELECTOR$/p' \
+	"${ROOT}/.github/scripts/remote-deploy.sh" \
+	| sed '1d;$d' \
+	| sed '1d;$d' >"${selector}"
+
+write_release_json() {
+	python3 - "$1" "${@:2}" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+names = sys.argv[2:]
+path.write_text(
+    json.dumps(
+        {
+            "draft": False,
+            "tag_name": "v1.2.3",
+            "assets": [
+                {"name": name, "browser_download_url": f"https://example.invalid/{name}"}
+                for name in ["SHA256SUMS", *names]
+            ],
+        }
+    ),
+    encoding="utf-8",
+)
+PY
+}
+
+release_json="${tmp}/release.json"
+assets_tsv="${tmp}/assets.tsv"
+write_release_json "$release_json" \
+	"hyperfilelens-1.2.3.tar.gz" \
+	"hyperfilelens-1.2.3-abcdef0.tar.gz"
+python3 "$selector" "$release_json" "$assets_tsv" v1.2.3
+grep -F $'hyperfilelens-1.2.3.tar.gz\thttps://example.invalid/hyperfilelens-1.2.3.tar.gz' \
+	"$assets_tsv" >/dev/null
+if grep -F 'hyperfilelens-1.2.3-abcdef0.tar.gz' "$assets_tsv" >/dev/null; then
+	printf 'ERROR: current Community package must take precedence over a legacy package\n' >&2
+	exit 1
+fi
+
+write_release_json "$release_json" \
+	"hyperfilelens-1.2.3-abcdef0.tar.gz.part-000" \
+	"hyperfilelens-1.2.3-abcdef0.tar.gz.part-001"
+python3 "$selector" "$release_json" "$assets_tsv" v1.2.3
+grep -F 'hyperfilelens-1.2.3-abcdef0.tar.gz.part-000' "$assets_tsv" >/dev/null
+grep -F 'hyperfilelens-1.2.3-abcdef0.tar.gz.part-001' "$assets_tsv" >/dev/null
+
+write_release_json "$release_json" \
+	"hyperfilelens-1.2.3-abcdef0.tar.gz" \
+	"hyperfilelens-1.2.3-1234567.tar.gz"
+if python3 "$selector" "$release_json" "$assets_tsv" v1.2.3 2>"${tmp}/selector-error"; then
+	printf 'ERROR: ambiguous legacy Community packages must be rejected\n' >&2
+	exit 1
+fi
+grep -F 'multiple legacy package candidates' "${tmp}/selector-error" >/dev/null
+
+store="${tmp}/hfl-release"
+mkdir -p "${store}/.incoming"
+
+make_candidate() {
+	local number=$1 marker=${2:-} extension_commit=${3:-89abcdef0123456789abcdef0123456789abcdef}
+	local tag version incoming root archive
+	version="1.0.${number}"
+	tag="v${version}"
+	incoming="${store}/.incoming/${number}"
+	root="${tmp}/package-${number}/hyperfilelens-${version}-ee"
+	archive="${incoming}/hyperfilelens-${version}-ee.tar.gz"
+	mkdir -p "${incoming}" "${root}"
+	printf '%s\n' "${version}" >"${root}/VERSION"
+	printf '#!/usr/bin/env bash\n' >"${root}/install.sh"
+	chmod +x "${root}/install.sh"
+	[[ -z "${marker}" ]] || printf '%s\n' "${marker}" >"${root}/BUILD-MARKER"
+	cat >"${root}/MANIFEST.json" <<JSON
+{"schema_version":2,"product":"hyperfilelens","edition":"enterprise","image_version":"${version}-ee","channel":"release","artifact_id":"${tag}","version":"${version}","git_commit":"0123456789abcdef0123456789abcdef01234567","extension_commit":"${extension_commit}"}
+JSON
+	cp "${root}/MANIFEST.json" "${incoming}/MANIFEST.json"
+	tar -C "$(dirname "${root}")" -czf "${archive}" "$(basename "${root}")"
+	(cd "${incoming}" && sha256sum "$(basename "${archive}")" MANIFEST.json >SHA256SUMS)
+	"${ROOT}/.github/scripts/store-enterprise-release.sh" \
+		"${tag}" "${incoming}" "${store}" 10 >/dev/null
+}
+
+for number in $(seq 0 10); do
+	make_candidate "${number}"
+done
+[[ "$(find "${store}" -mindepth 1 -maxdepth 1 -type d -name 'v*' | wc -l)" -eq 10 ]]
+[[ ! -e "${store}/v1.0.0" ]]
+[[ -s "${store}/v1.0.10/hyperfilelens-1.0.10-ee.tar.gz" ]]
+[[ "$(find "${store}/v1.0.10" -maxdepth 1 -type f | wc -l)" -eq 3 ]]
+(cd "${store}/v1.0.10" && sha256sum -c SHA256SUMS >/dev/null)
+
+# Revalidating an old version must not make it displace a newer SemVer.
+if make_candidate 0 2>"${tmp}/retention-error"; then
+	printf 'ERROR: an Enterprise version outside the retention window must not be deployable\n' >&2
+	exit 1
+fi
+grep -F 'is outside the retained SemVer window' "${tmp}/retention-error" >/dev/null
+[[ ! -e "${store}/v1.0.0" ]]
+[[ -e "${store}/v1.0.1" && -e "${store}/v1.0.10" ]]
+
+# The store accepts an exact retry without replacing the retained package.
+stored_digest="$(sha256sum "${store}/v1.0.10/hyperfilelens-1.0.10-ee.tar.gz" | awk '{print $1}')"
+exact_retry="${store}/.incoming/exact-retry"
+cp -a "${store}/v1.0.10" "${exact_retry}"
+"${ROOT}/.github/scripts/store-enterprise-release.sh" \
+	v1.0.10 "${exact_retry}" "${store}" 10 >/dev/null
+[[ "$(sha256sum "${store}/v1.0.10/hyperfilelens-1.0.10-ee.tar.gz" | awk '{print $1}')" \
+	== "${stored_digest}" ]]
+
+# Different output for the same source identity is not an immutable retry.
+if make_candidate 10 changed-output 2>"${tmp}/content-error"; then
+	printf 'ERROR: an immutable Enterprise version accepted different package bytes\n' >&2
+	exit 1
+fi
+grep -F 'immutable Enterprise package content differs' "${tmp}/content-error" >/dev/null
+
+# Moving either source tag must not make an immutable version appear to rebuild.
+if make_candidate 10 changed-source fedcba9876543210fedcba9876543210fedcba98 \
+	2>"${tmp}/identity-error"; then
+	printf 'ERROR: an immutable Enterprise version accepted different source identity\n' >&2
+	exit 1
+fi
+grep -F 'immutable Enterprise release identity differs' "${tmp}/identity-error" >/dev/null
+
+printf 'Enterprise release flow contracts passed.\n'

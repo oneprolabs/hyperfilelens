@@ -59,6 +59,21 @@ class GatewayObservabilityPolicyTests(TestCase):
             "hyperfilelens-lensnode@main-123abcd-sl0.20.0",
         )
 
+    @override_settings(SENTRY_ENVIRONMENT="hfl-community")
+    @patch.dict(
+        "os.environ",
+        {
+            "SENTRY_BACKEND_DSN": "https://public@sentry.example.com/25",
+            "SOURCELENS_GIT_REF": "v0.20.0",
+        },
+        clear=False,
+    )
+    def test_community_gateway_receives_error_tracking_policy(self) -> None:
+        policy = gateway_observability_policy(self.node)
+
+        self.assertTrue(policy["enabled"])
+        self.assertEqual(policy["environment"], "hfl-community")
+
     @patch.dict(
         "os.environ",
         {"SENTRY_BACKEND_DSN": "https://public@sentry.example.com/25"},
