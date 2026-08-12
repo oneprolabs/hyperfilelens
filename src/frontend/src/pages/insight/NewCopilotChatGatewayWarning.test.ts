@@ -310,6 +310,29 @@ describe('New Chat Public Data Gateway warning', () => {
     wrapper.unmount()
   })
 
+  it('reuses the create request key after an uncertain transport failure', async () => {
+    mocks.createCopilotSession
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockResolvedValueOnce({ id: 91 })
+    const wrapper = await mountNewChat({ gatewayResponse: [publicGateway] })
+
+    await startChatButton(wrapper).trigger('click')
+    await flushPromises()
+    await startChatButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(mocks.createCopilotSession).toHaveBeenCalledTimes(2)
+    const firstKey = mocks.createCopilotSession.mock.calls[0][0].idempotency_key
+    const secondKey = mocks.createCopilotSession.mock.calls[1][0].idempotency_key
+    expect(firstKey).toBeTruthy()
+    expect(secondKey).toBe(firstKey)
+    expect(mocks.routerReplace).toHaveBeenCalledWith({
+      path: '/insight/copilot',
+      query: { session: '91' },
+    })
+    wrapper.unmount()
+  })
+
   it('keeps the warning theme-aware and safe to wrap on narrow screens', () => {
     expect(componentSource).toContain(
       'background: color-mix(in srgb, var(--color-warning) 10%, var(--color-card-bg))',

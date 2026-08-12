@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { apiErrorMessage } from '../lib/api'
 import {
   browseGatewayDirectory,
+  browseCopilotSnapshotDirectory,
   createKnowledgeSource,
   fetchKnowledgeSource,
   listLensGateways,
@@ -12,7 +13,6 @@ import {
   type LensIngestPolicy,
 } from '../lib/lensApi'
 import {
-  browseBackupSnapshotDirectory,
   getBackupSourceSnapshot,
   listBackupSourceSnapshots,
   type BackupSourceSnapshot,
@@ -105,6 +105,7 @@ export function useKnowledgeSourceForm(
   let backupScopeValidationSequence = 0
   let backupScopeBlurSequence = 0
   let scopeDisposed = false
+  const snapshotBrowseControllers = new Set<AbortController>()
   const openBackupScopePickerId = ref<string | null>(null)
   const backupScopeTreeRevision = ref(0)
   const backupScopeBrowseLoading = ref(false)
@@ -119,6 +120,32 @@ export function useKnowledgeSourceForm(
 
   const readOnlyGatewayName = ref('')
   const readOnlySourcePath = ref('')
+
+  async function browseInsightSnapshotDirectory(
+    directoryId: number,
+    params: { path?: string; limit?: number },
+  ) {
+    const controller = new AbortController()
+    snapshotBrowseControllers.add(controller)
+    try {
+      return await browseCopilotSnapshotDirectory(
+        directoryId,
+        params,
+        controller.signal,
+      )
+    } finally {
+      snapshotBrowseControllers.delete(controller)
+    }
+  }
+
+  function cancelSnapshotBrowseRequests() {
+    for (const controller of snapshotBrowseControllers) controller.abort()
+    snapshotBrowseControllers.clear()
+  }
+
+  function isAbortError(error: unknown): boolean {
+    return (error as { name?: string } | null)?.name === 'AbortError'
+  }
 
   const isEditing = computed(() => editingId.value != null)
   const isBackupSource = computed(() => sourceType.value === 'backup_source')
@@ -248,6 +275,7 @@ export function useKnowledgeSourceForm(
   const canSubmitCreate = computed(() => canSubmit.value)
 
   function resetBackupScopeState() {
+    cancelSnapshotBrowseRequests()
     latestBackupScopeValidation.clear()
     pendingBackupScopeBlurValidation.clear()
     backupScopeEntries.value = [createBackupScopeEntry()]
@@ -394,7 +422,7 @@ export function useKnowledgeSourceForm(
     }
     backupScopeBrowseLoading.value = true
     try {
-      const result = await browseBackupSnapshotDirectory(data.directoryId, {
+      const result = await browseInsightSnapshotDirectory(data.directoryId, {
         path: data.browsePath || '',
         limit: 500,
       })
@@ -417,7 +445,9 @@ export function useKnowledgeSourceForm(
         }
       }))
     } catch (err) {
-      ElMessage.error({ message: apiErrorMessage(err, t('insight.kb.backupScopeBrowseFailed')), grouping: true })
+      if (!isAbortError(err)) {
+        ElMessage.error({ message: apiErrorMessage(err, t('insight.kb.backupScopeBrowseFailed')), grouping: true })
+      }
       resolve([])
     } finally {
       backupScopeBrowseLoading.value = false
@@ -521,7 +551,7 @@ export function useKnowledgeSourceForm(
     const relativePath = relativeSnapshotPath(directory.source_path, rawPath)
     try {
       if (relativePath) {
-        await browseBackupSnapshotDirectory(directory.id, { path: relativePath, limit: 1 })
+        await browseInsightSnapshotDirectory(directory.id, { path: relativePath, limit: 1 })
       }
       if (!isCurrentBackupScopeValidation(
         entryId,
@@ -878,6 +908,7 @@ export function useKnowledgeSourceForm(
 
   onScopeDispose(() => {
     scopeDisposed = true
+    cancelSnapshotBrowseRequests()
     latestBackupScopeValidation.clear()
     pendingBackupScopeBlurValidation.clear()
   })

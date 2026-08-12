@@ -1,0 +1,105 @@
+// @vitest-environment jsdom
+
+import { mount } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
+import { describe, expect, it } from 'vitest'
+
+import type { LensSessionLink } from '../../../lib/lensApi'
+import { en } from '../../../locales/en'
+import CopilotLifecycleState from './CopilotLifecycleState.vue'
+
+function session(overrides: Partial<LensSessionLink> = {}): LensSessionLink {
+  return {
+    title: 'Quarterly reports',
+    knowledge_source: null,
+    knowledge_source_name: null,
+    sl_session_uuid: null,
+    sl_assistant_uuid: null,
+    agent_model_ref: 'model-ref',
+    backup_config_id: 7,
+    backup_source_name: 'Documents',
+    backup_source_snapshot_id: 17,
+    snapshot_created_at: '2026-08-12T03:00:00Z',
+    snapshot_size_bytes: 4096,
+    source_scopes_json: [{ backup_snapshot_directory_id: 31, source_path: '/reports' }],
+    gateway_link: 11,
+    gateway_selection_mode: 'auto',
+    gateway_name: 'public-dg-01',
+    gateway_scope: 'platform',
+    status: 'active',
+    lifecycle_status: 'provisioning',
+    provision_phase: 'converting',
+    provision_detail: 'Prepared 11 files for conversion.',
+    document_conversion: {
+      status: 'STARTED',
+      phase: 'running',
+      progress_message: 'Prepared 11 files for conversion.',
+      counts: {
+        total: 11,
+        candidates: 6,
+        success: 0,
+        failed: 0,
+        skipped: 0,
+        unsupported: 5,
+        unchanged: 0,
+      },
+      items: Array.from({ length: 5 }, (_, index) => ({
+        name: `unsupported-${index + 1}.txt`,
+        reason: 'UNSUPPORTED_TYPE',
+        reason_label: 'Unsupported file type',
+      })),
+      warnings: [],
+      usable: false,
+    },
+    last_message_at: null,
+    last_assistant_message_at: null,
+    last_viewed_at: null,
+    has_unread: false,
+    created_at: '2026-08-12T03:00:00Z',
+    updated_at: '2026-08-12T03:00:00Z',
+    ...overrides,
+  }
+}
+
+function mountState(value: LensSessionLink) {
+  const i18n = createI18n({
+    legacy: false,
+    locale: 'en',
+    messages: { en },
+    missingWarn: false,
+    fallbackWarn: false,
+  })
+  return mount(CopilotLifecycleState, {
+    props: { session: value },
+    global: {
+      plugins: [i18n],
+      stubs: {
+        ElButton: { template: '<button><slot /></button>' },
+      },
+    },
+  })
+}
+
+describe('CopilotLifecycleState', () => {
+  it('shows one conversion message and keeps file-level problems collapsed', () => {
+    const wrapper = mountState(session())
+
+    expect(wrapper.findAll('.copilot-conversion__detail')).toHaveLength(1)
+    expect(wrapper.text().match(/Prepared 11 files for conversion\./g)).toHaveLength(1)
+    expect(wrapper.get('summary').text()).toContain('5 items need attention')
+    expect(wrapper.get('details').attributes('open')).toBeUndefined()
+    expect(wrapper.get('.copilot-lifecycle-card').classes()).toContain('has-conversion')
+  })
+
+  it('maps asynchronous scope resolution to the first preparation step', () => {
+    const wrapper = mountState(session({
+      provision_phase: 'resolving_scope',
+      provision_detail: 'Checking selected files and folders.',
+      document_conversion: null,
+    }))
+
+    const steps = wrapper.findAll('.copilot-lifecycle-steps li')
+    expect(steps[0].classes()).toContain('is-active')
+    expect(steps[1].classes()).toContain('is-pending')
+  })
+})

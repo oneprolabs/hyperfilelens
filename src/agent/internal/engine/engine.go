@@ -98,6 +98,24 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 			break
 		}
 		status, result, errMsg = "failed", nil, "repository payload is required"
+	case "lens.snapshot.browse":
+		if _, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr != nil {
+			status, result, errMsg = "failed", nil, parseErr.Error()
+			break
+		} else if ok {
+			status, result, errMsg = e.runManagedInsightSnapshotBrowse(ctx, rep, cmd.ID, p)
+			break
+		}
+		status, result, errMsg = "failed", nil, "repository payload is required"
+	case "lens.snapshot.scope.resolve":
+		if _, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr != nil {
+			status, result, errMsg = "failed", nil, parseErr.Error()
+			break
+		} else if ok {
+			status, result, errMsg = e.runManagedSnapshotScopeResolve(ctx, rep, cmd.ID, p)
+			break
+		}
+		status, result, errMsg = "failed", nil, "repository payload is required"
 	case "snapshot.download":
 		if _, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr != nil {
 			status, result, errMsg = "failed", nil, parseErr.Error()

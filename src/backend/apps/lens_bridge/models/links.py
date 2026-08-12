@@ -635,6 +635,8 @@ class LensSessionLink(OrganizationScopedModel):
 
     class ProvisionPhase(models.TextChoices):
         QUEUED = "queued", "Queued"
+        RESOLVING_SCOPE = "resolving_scope", "Validating selected data"
+        RESERVING_CAPACITY = "reserving_capacity", "Reserving gateway capacity"
         RESTORING = "restoring", "Restoring backup data"
         CONVERTING = "converting", "Extracting document content"
         CREATING_KNOWLEDGE_SOURCE = "creating_knowledge_source", "Creating knowledge source"
@@ -646,14 +648,43 @@ class LensSessionLink(OrganizationScopedModel):
         DELETING = "deleting", "Deleting"
         DELETED = "deleted", "Deleted"
 
+    class ScopeResolutionStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RESOLVED = "resolved", "Resolved"
+
+    class CapacityReservationStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RESERVED = "reserved", "Reserved"
+        RELEASED = "released", "Released"
+
     hfl_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="lens_session_links",
     )
+    create_idempotency_key = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+    )
+    create_request_hash = models.CharField(max_length=64, blank=True, default="")
     backup_config_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     backup_source_snapshot_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     source_scopes_json = models.JSONField(default=list, blank=True)
+    scope_resolution_status = models.CharField(
+        max_length=16,
+        choices=ScopeResolutionStatus.choices,
+        default=ScopeResolutionStatus.RESOLVED,
+        db_index=True,
+    )
+    capacity_reservation_status = models.CharField(
+        max_length=16,
+        choices=CapacityReservationStatus.choices,
+        default=CapacityReservationStatus.RESERVED,
+        db_index=True,
+    )
+    capacity_reserved_bytes = models.BigIntegerField(default=0)
+    capacity_reserved_at = models.DateTimeField(null=True, blank=True)
     gateway_link = models.ForeignKey(
         LensGatewayLink,
         on_delete=models.PROTECT,
@@ -724,6 +755,16 @@ class LensSessionLink(OrganizationScopedModel):
     class Meta:
         db_table = "lens_bridge_session_link"
         ordering = ["-last_message_at", "-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "hfl_user", "create_idempotency_key"],
+                condition=models.Q(
+                    create_idempotency_key__isnull=False,
+                    is_deleted=False,
+                ),
+                name="uniq_lens_session_create_key",
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=["organization", "hfl_user", "status"],

@@ -57,6 +57,13 @@ const backupScopePickerWidth = ref(460)
 const backupScopeStackRef = ref<HTMLElement | null>(null)
 const privateGatewayCardRef = ref<HTMLElement | null>(null)
 let backupScopeResizeObserver: ResizeObserver | null = null
+let createIdempotencyKey: string | null = null
+let createRequestFingerprint = ''
+
+function newCreateIdempotencyKey(): string {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
+  return `chat-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
 
 const {
   loading,
@@ -241,16 +248,30 @@ async function createChat() {
   if (!scopesValid || sourceScopes.value.length === 0) return
 
   submitting.value = true
+  const requestPayload = {
+    backup_config_id: selectedBackupConfigId.value,
+    backup_source_snapshot_id: effectiveSnapshotId.value,
+    source_scopes: sourceScopes.value,
+    gateway_mode: gatewayMode.value,
+    gateway_link_id: gatewayMode.value === 'manual' ? gatewayLinkId.value : null,
+  }
+  const requestFingerprint = JSON.stringify(requestPayload)
+  if (!createIdempotencyKey || createRequestFingerprint !== requestFingerprint) {
+    createIdempotencyKey = newCreateIdempotencyKey()
+    createRequestFingerprint = requestFingerprint
+  }
   try {
     const session = await createCopilotSession({
-      backup_config_id: selectedBackupConfigId.value,
-      backup_source_snapshot_id: effectiveSnapshotId.value,
-      source_scopes: sourceScopes.value,
-      gateway_mode: gatewayMode.value,
-      gateway_link_id: gatewayMode.value === 'manual' ? gatewayLinkId.value : null,
+      idempotency_key: createIdempotencyKey,
+      ...requestPayload,
     })
     await router.replace({ path: '/insight/copilot', query: { session: String(session.id) } })
   } catch (error) {
+    const status = Number((error as { status?: number })?.status || 0)
+    if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+      createIdempotencyKey = null
+      createRequestFingerprint = ''
+    }
     ElMessage.error({ message: apiErrorMessage(error, 'Unable to start chat.'), grouping: true })
   } finally {
     submitting.value = false

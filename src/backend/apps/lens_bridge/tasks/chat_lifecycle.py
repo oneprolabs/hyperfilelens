@@ -21,6 +21,7 @@ _PROVISION_TIME_LIMIT = PROVISION_TASK_HARD_LIMIT_SECONDS
 _PROVISION_SOFT_LIMIT = max(60, _PROVISION_TIME_LIMIT - 300)
 _TEARDOWN_TIME_LIMIT = TEARDOWN_TASK_HARD_LIMIT_SECONDS
 _TEARDOWN_SOFT_LIMIT = max(60, _TEARDOWN_TIME_LIMIT - 300)
+_CHAT_PROVISION_WAIT_SECONDS = 5
 
 
 @shared_task(
@@ -42,13 +43,9 @@ def execute_copilot_chat_provision_task(self, *, session_link_id: int) -> dict:
         logger.info("copilot chat provision celery started session_link_id=%s", session_link_id)
         result = run_copilot_chat_provision(session_link_id=int(session_link_id))
         if result.get("status") == "waiting":
-            from apps.lens_bridge.services.managed_datasource import (
-                CONVERSION_RETRY_SECONDS,
-            )
-
             self.apply_async(
                 kwargs={"session_link_id": int(session_link_id)},
-                countdown=CONVERSION_RETRY_SECONDS,
+                countdown=_CHAT_PROVISION_WAIT_SECONDS,
             )
         logger.info(
             "copilot chat provision celery finished session_link_id=%s status=%s",

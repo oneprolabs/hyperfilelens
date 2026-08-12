@@ -7,7 +7,7 @@ import type { BackupSourceSnapshot } from '../lib/protectionBackupConfigApi'
 import { useKnowledgeSourceForm } from './useKnowledgeSourceForm'
 
 const mocks = vi.hoisted(() => ({
-  browseBackupSnapshotDirectory: vi.fn(),
+  browseCopilotSnapshotDirectory: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
   success: vi.fn(),
@@ -30,6 +30,7 @@ vi.mock('../lib/api', () => ({
 }))
 
 vi.mock('../lib/lensApi', () => ({
+  browseCopilotSnapshotDirectory: mocks.browseCopilotSnapshotDirectory,
   browseGatewayDirectory: vi.fn(),
   createKnowledgeSource: vi.fn(),
   fetchKnowledgeSource: vi.fn(),
@@ -38,7 +39,6 @@ vi.mock('../lib/lensApi', () => ({
 }))
 
 vi.mock('../lib/protectionBackupConfigApi', () => ({
-  browseBackupSnapshotDirectory: mocks.browseBackupSnapshotDirectory,
   getBackupSourceSnapshot: vi.fn(),
   listBackupSourceSnapshots: vi.fn().mockResolvedValue({ results: [] }),
 }))
@@ -106,7 +106,7 @@ describe('knowledge source backup scope validation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers()
-    mocks.browseBackupSnapshotDirectory.mockResolvedValue({ entries: [] })
+    mocks.browseCopilotSnapshotDirectory.mockResolvedValue({ entries: [] })
   })
 
   afterEach(() => {
@@ -124,7 +124,7 @@ describe('knowledge source backup scope validation', () => {
 
       await expect(validation).resolves.toBe(false)
       expect(mocks.warning).not.toHaveBeenCalled()
-      expect(mocks.browseBackupSnapshotDirectory).not.toHaveBeenCalled()
+      expect(mocks.browseCopilotSnapshotDirectory).not.toHaveBeenCalled()
     } finally {
       wrapper.unmount()
     }
@@ -153,7 +153,7 @@ describe('knowledge source backup scope validation', () => {
         pathType: 'dir',
       })
       expect(mocks.warning).not.toHaveBeenCalled()
-      expect(mocks.browseBackupSnapshotDirectory).not.toHaveBeenCalled()
+      expect(mocks.browseCopilotSnapshotDirectory).not.toHaveBeenCalled()
     } finally {
       wrapper.unmount()
     }
@@ -169,10 +169,10 @@ describe('knowledge source backup scope validation', () => {
       await vi.runAllTimersAsync()
 
       await expect(validation).resolves.toBe(true)
-      expect(mocks.browseBackupSnapshotDirectory).toHaveBeenCalledWith(31, {
+      expect(mocks.browseCopilotSnapshotDirectory).toHaveBeenCalledWith(31, {
         path: 'docs',
         limit: 1,
-      })
+      }, expect.any(AbortSignal))
       expect(form.backupScopeEntries.value[0]).toMatchObject({
         path: '/root/datatest/docs',
         directoryId: 31,
@@ -192,16 +192,16 @@ describe('knowledge source backup scope validation', () => {
 
       await vi.runAllTimersAsync()
       await expect(blurValidation).resolves.toBe(false)
-      expect(mocks.browseBackupSnapshotDirectory).not.toHaveBeenCalled()
+      expect(mocks.browseCopilotSnapshotDirectory).not.toHaveBeenCalled()
 
       form.setBackupScopePickerOpen(entryId, false)
       await vi.runAllTimersAsync()
       await flushPromises()
 
-      expect(mocks.browseBackupSnapshotDirectory).toHaveBeenCalledWith(31, {
+      expect(mocks.browseCopilotSnapshotDirectory).toHaveBeenCalledWith(31, {
         path: 'docs',
         limit: 1,
-      })
+      }, expect.any(AbortSignal))
       expect(form.backupScopeEntries.value[0]).toMatchObject({
         path: '/root/datatest/docs',
         directoryId: 31,
@@ -213,7 +213,7 @@ describe('knowledge source backup scope validation', () => {
 
   it('deduplicates picker-close and blur validation from the same outside click', async () => {
     let resolveBrowse!: (value: { entries: never[] }) => void
-    mocks.browseBackupSnapshotDirectory.mockReturnValueOnce(
+    mocks.browseCopilotSnapshotDirectory.mockReturnValueOnce(
       new Promise((resolve) => { resolveBrowse = resolve }),
     )
     const { form, wrapper } = mountForm()
@@ -224,15 +224,15 @@ describe('knowledge source backup scope validation', () => {
 
       const blurValidation = form.validateBackupScopeEntryOnBlur(entryId)
       form.setBackupScopePickerOpen(entryId, false)
-      expect(mocks.browseBackupSnapshotDirectory).not.toHaveBeenCalled()
+      expect(mocks.browseCopilotSnapshotDirectory).not.toHaveBeenCalled()
 
       await vi.runAllTimersAsync()
-      expect(mocks.browseBackupSnapshotDirectory).toHaveBeenCalledTimes(1)
+      expect(mocks.browseCopilotSnapshotDirectory).toHaveBeenCalledTimes(1)
       resolveBrowse({ entries: [] })
 
       await expect(blurValidation).resolves.toBe(false)
       await flushPromises()
-      expect(mocks.browseBackupSnapshotDirectory).toHaveBeenCalledTimes(1)
+      expect(mocks.browseCopilotSnapshotDirectory).toHaveBeenCalledTimes(1)
       expect(form.backupScopeEntries.value[0]).toMatchObject({
         path: '/root/datatest/docs',
         directoryId: 31,
@@ -244,7 +244,7 @@ describe('knowledge source backup scope validation', () => {
 
   it('deduplicates the same validation when picker-close arrives before blur', async () => {
     let resolveBrowse!: (value: { entries: never[] }) => void
-    mocks.browseBackupSnapshotDirectory.mockReturnValueOnce(
+    mocks.browseCopilotSnapshotDirectory.mockReturnValueOnce(
       new Promise((resolve) => { resolveBrowse = resolve }),
     )
     const { form, wrapper } = mountForm()
@@ -255,14 +255,14 @@ describe('knowledge source backup scope validation', () => {
 
       form.setBackupScopePickerOpen(entryId, false)
       const blurValidation = form.validateBackupScopeEntryOnBlur(entryId)
-      expect(mocks.browseBackupSnapshotDirectory).not.toHaveBeenCalled()
+      expect(mocks.browseCopilotSnapshotDirectory).not.toHaveBeenCalled()
 
       await vi.runAllTimersAsync()
-      expect(mocks.browseBackupSnapshotDirectory).toHaveBeenCalledTimes(1)
+      expect(mocks.browseCopilotSnapshotDirectory).toHaveBeenCalledTimes(1)
       resolveBrowse({ entries: [] })
 
       await expect(blurValidation).resolves.toBe(true)
-      expect(mocks.browseBackupSnapshotDirectory).toHaveBeenCalledTimes(1)
+      expect(mocks.browseCopilotSnapshotDirectory).toHaveBeenCalledTimes(1)
       expect(form.backupScopeEntries.value[0]).toMatchObject({
         path: '/root/datatest/docs',
         directoryId: 31,
@@ -274,7 +274,7 @@ describe('knowledge source backup scope validation', () => {
 
   it('does not let an older async validation overwrite a newer tree selection', async () => {
     let resolveBrowse!: (value: { entries: never[] }) => void
-    mocks.browseBackupSnapshotDirectory.mockReturnValueOnce(
+    mocks.browseCopilotSnapshotDirectory.mockReturnValueOnce(
       new Promise((resolve) => { resolveBrowse = resolve }),
     )
     const { form, wrapper } = mountForm()
@@ -307,7 +307,7 @@ describe('knowledge source backup scope validation', () => {
   it('lets only the latest request report the result for an unchanged path', async () => {
     let rejectFirst!: (reason: Error) => void
     let resolveSecond!: (value: { entries: never[] }) => void
-    mocks.browseBackupSnapshotDirectory
+    mocks.browseCopilotSnapshotDirectory
       .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectFirst = reject }))
       .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve }))
     const { form, wrapper } = mountForm()
@@ -342,14 +342,14 @@ describe('knowledge source backup scope validation', () => {
     await vi.runAllTimersAsync()
 
     await expect(validation).resolves.toBe(false)
-    expect(mocks.browseBackupSnapshotDirectory).not.toHaveBeenCalled()
+    expect(mocks.browseCopilotSnapshotDirectory).not.toHaveBeenCalled()
     expect(mocks.warning).not.toHaveBeenCalled()
     expect(mocks.error).not.toHaveBeenCalled()
   })
 
   it('ignores a successful validation result after the form unmounts', async () => {
     let resolveBrowse!: (value: { entries: never[] }) => void
-    mocks.browseBackupSnapshotDirectory.mockReturnValueOnce(
+    mocks.browseCopilotSnapshotDirectory.mockReturnValueOnce(
       new Promise((resolve) => { resolveBrowse = resolve }),
     )
     const { form, wrapper } = mountForm()
@@ -370,7 +370,7 @@ describe('knowledge source backup scope validation', () => {
 
   it('suppresses a failed validation result after the form unmounts', async () => {
     let rejectBrowse!: (reason: Error) => void
-    mocks.browseBackupSnapshotDirectory.mockReturnValueOnce(
+    mocks.browseCopilotSnapshotDirectory.mockReturnValueOnce(
       new Promise((_resolve, reject) => { rejectBrowse = reject }),
     )
     const { form, wrapper } = mountForm()
@@ -382,6 +382,42 @@ describe('knowledge source backup scope validation', () => {
     rejectBrowse(new Error('request completed after navigation'))
 
     await expect(validation).resolves.toBe(false)
+    expect(mocks.error).not.toHaveBeenCalled()
+  })
+
+  it('treats an aborted directory browse as normal form disposal', async () => {
+    mocks.browseCopilotSnapshotDirectory.mockImplementationOnce(
+      (_directoryId, _params, signal: AbortSignal) => new Promise((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => reject(new DOMException('Aborted', 'AbortError')),
+          { once: true },
+        )
+      }),
+    )
+    const { form, wrapper } = mountForm()
+    const resolvedNodes: unknown[][] = []
+    const browse = form.loadBackupScopePickerNode(
+      {
+        level: 1,
+        data: {
+          id: '31:dir:/root/datatest',
+          label: 'datatest',
+          path: '/root/datatest',
+          type: 'dir',
+          directoryId: 31,
+          browsePath: '',
+          sourceRootPath: '/root/datatest',
+          isLeaf: false,
+        },
+      },
+      (nodes) => resolvedNodes.push(nodes),
+    )
+
+    wrapper.unmount()
+    await browse
+
+    expect(resolvedNodes).toEqual([[]])
     expect(mocks.error).not.toHaveBeenCalled()
   })
 })

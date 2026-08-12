@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import math
 import uuid as uuid_lib
 from datetime import timedelta
 from typing import Any
 
 from django.contrib.auth.models import AbstractBaseUser
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
-from rest_framework.exceptions import ValidationError
+from rest_framework import status as http_status
+from rest_framework.exceptions import APIException, ValidationError
 
 from apps.iam.models import Organization
 from apps.lens_bridge.models import (
@@ -34,7 +38,11 @@ from apps.lens_bridge.services.teardown_claims import (
     TEARDOWN_CLAIM_TTL_SECONDS,
     next_retry_at,
 )
-from apps.protection.models import BackupConfig, BackupSourceSnapshot, BackupSourceSnapshotDirectory
+from apps.protection.models import (
+    BackupConfig,
+    BackupSourceSnapshot,
+    BackupSourceSnapshotDirectory,
+)
 from apps.protection.services.source_identity import resolve_source_display_name
 
 logger = logging.getLogger(__name__)
@@ -43,6 +51,9 @@ _ASSISTANT_CREATE_OPERATION = "assistant_create"
 _SESSION_CREATE_OPERATION = "session_create"
 _TEARDOWN_INTENT_DELETE = "delete_session"
 _TEARDOWN_INTENT_RESET_FOR_RETRY = "reset_for_retry"
+_SCOPE_TASK_STATE_KEY = "scope_resolution"
+_MAX_BIGINT = 2**63 - 1
+_MIN_BIGINT = -(2**63)
 
 
 class ChatProvisionLeaseLostError(RuntimeError):
@@ -51,6 +62,109 @@ class ChatProvisionLeaseLostError(RuntimeError):
 
 class ChatTeardownIncompleteError(RuntimeError):
     """Raised after durable teardown state is saved so Celery retries it."""
+
+
+class ChatCreateIdempotencyConflict(APIException):
+    """Raised when an idempotency key is reused for another Chat request."""
+
+    status_code = http_status.HTTP_409_CONFLICT
+    default_detail = "The chat request key was already used with different data."
+    default_code = "chat_create_idempotency_conflict"
+
+
+def _chat_create_request_identity(
+    *,
+    backup_config_id: int,
+    backup_source_snapshot_id: int,
+    source_scopes: list[dict[str, Any]],
+    gateway_mode: str,
+    gateway_link_id: int | None,
+    title: str | None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Return a stable request hash and normalized user-selected scopes."""
+
+    from apps.subscription.services.quota import normalize_scope_path
+
+    request_scopes: list[dict[str, Any]] = []
+    for index, scope in enumerate(source_scopes):
+        raw_path = str(scope.get("source_path") or "").strip()
+        try:
+            directory_id = int(scope.get("backup_snapshot_directory_id"))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                {"source_scopes": {index: "Select a valid file or directory."}}
+            ) from exc
+        if not raw_path or directory_id <= 0:
+            raise ValidationError(
+                {"source_scopes": {index: "Select a valid file or directory."}}
+            )
+        selected_path = normalize_scope_path(raw_path)
+        request_scopes.append(
+            {
+                "source_path": selected_path,
+                "backup_snapshot_directory_id": directory_id,
+            }
+        )
+    if not request_scopes:
+        raise ValidationError({"source_scopes": "Select at least one file or folder."})
+
+    canonical_request = {
+        "backup_config_id": int(backup_config_id),
+        "backup_source_snapshot_id": int(backup_source_snapshot_id),
+        "source_scopes": request_scopes,
+        "gateway_mode": str(gateway_mode),
+        "gateway_link_id": (
+            int(gateway_link_id) if gateway_link_id is not None else None
+        ),
+        "title": str(title or "").strip(),
+    }
+    request_hash = hashlib.sha256(
+        json.dumps(
+            canonical_request,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return request_hash, request_scopes
+
+
+def _scope_has_trusted_summary(scope: Any) -> bool:
+    """Return whether a scope has a complete nonnegative Agent/root summary."""
+
+    if not isinstance(scope, dict):
+        return False
+    path_type = str(scope.get("path_type") or "").lower()
+    if path_type not in {"file", "dir"}:
+        return False
+    try:
+        file_count = _exact_summary_int(scope["file_count"])
+        size_bytes = _exact_summary_int(scope["size_bytes"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    if file_count < 0 or size_bytes < 0:
+        return False
+    return path_type != "file" or file_count == 1
+
+
+def _exact_summary_int(value: Any) -> int:
+    """Parse one JSON integer without truncating fractional numeric values."""
+
+    if isinstance(value, bool):
+        raise ValueError("boolean is not an integer summary")
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            raise ValueError("summary must be an exact integer")
+        parsed = int(value)
+    elif isinstance(value, str):
+        parsed = int(value.strip())
+    else:
+        raise TypeError("summary must be an integer")
+    if parsed < _MIN_BIGINT or parsed > _MAX_BIGINT:
+        raise OverflowError("summary is outside the database integer range")
+    return parsed
 
 
 def _source_path_basename(path: str) -> str:
@@ -102,6 +216,44 @@ def _default_session_title(
     return _unique_session_title(org, user=user, base_title=base_title)
 
 
+def _configured_gateway_link_for_chat(
+    org: Organization,
+    *,
+    user: AbstractBaseUser,
+    gateway_mode: str,
+    gateway_link_id: int | None,
+):
+    """Select an authorized configured gateway using database state only."""
+
+    from apps.lens_bridge.models import LensGatewayLink
+
+    if gateway_mode == LensSessionLink.GatewaySelectionMode.AUTO:
+        platform_org = platform_lens.get_or_create_platform_org()
+        return (
+            LensGatewayLink.objects.filter(
+                organization=platform_org,
+                scope=LensGatewayLink.GatewayScope.PLATFORM,
+                sl_lensnode_uuid__isnull=False,
+                is_deleted=False,
+            )
+            .select_related("organization", "gateway")
+            .order_by("-is_platform_default", "created_at", "id")
+            .first()
+        )
+    return (
+        LensGatewayLink.objects.filter(
+            pk=gateway_link_id,
+            organization=org,
+            owner_user=user,
+            scope=LensGatewayLink.GatewayScope.USER,
+            sl_lensnode_uuid__isnull=False,
+            is_deleted=False,
+        )
+        .select_related("organization", "gateway")
+        .first()
+    )
+
+
 def start_copilot_chat(
     org: Organization,
     *,
@@ -112,11 +264,13 @@ def start_copilot_chat(
     """Legacy adapter for old clients that still submit a prepared binding."""
     if not binding.gateway_link_id:
         raise ValidationError({"gateway_link_id": "Data gateway is required."})
-    scopes = [{
-        "source_path": binding.source_path,
-        "backup_snapshot_directory_id": binding.backup_snapshot_directory_id,
-        "path_type": "unknown",
-    }]
+    scopes = [
+        {
+            "source_path": binding.source_path,
+            "backup_snapshot_directory_id": binding.backup_snapshot_directory_id,
+            "path_type": "unknown",
+        }
+    ]
     link = create_copilot_chat(
         org,
         user=user,
@@ -126,6 +280,7 @@ def start_copilot_chat(
         gateway_mode=LensSessionLink.GatewaySelectionMode.MANUAL,
         gateway_link_id=binding.gateway_link_id,
         title=title,
+        idempotency_key=str(uuid_lib.uuid4()),
     )
     link.chat_binding = binding
     link.save(update_fields=["chat_binding", "updated_at"])
@@ -142,10 +297,35 @@ def create_copilot_chat(
     source_scopes: list[dict[str, Any]],
     gateway_mode: str,
     gateway_link_id: int | None,
+    idempotency_key: str,
     title: str | None = None,
 ) -> LensSessionLink:
-    """Create the local Chat shell; all SourceLens resources are asynchronous."""
-    config = BackupConfig.objects.filter(id=backup_config_id, organization_id=org.id).first()
+    """Persist an idempotent local Chat shell without remote service calls."""
+    request_key = str(idempotency_key or "").strip()
+    if not request_key:
+        raise ValidationError({"idempotency_key": "A chat request key is required."})
+    request_hash, request_scopes = _chat_create_request_identity(
+        backup_config_id=backup_config_id,
+        backup_source_snapshot_id=backup_source_snapshot_id,
+        source_scopes=source_scopes,
+        gateway_mode=gateway_mode,
+        gateway_link_id=gateway_link_id,
+        title=title,
+    )
+    existing = LensSessionLink.objects.filter(
+        organization=org,
+        hfl_user=user,
+        create_idempotency_key=request_key,
+        is_deleted=False,
+    ).first()
+    if existing is not None:
+        if existing.create_request_hash != request_hash:
+            raise ChatCreateIdempotencyConflict()
+        return existing
+
+    config = BackupConfig.objects.filter(
+        id=backup_config_id, organization_id=org.id
+    ).first()
     if config is None:
         raise ValidationError({"backup_config_id": "Backup source not found."})
     snapshot = BackupSourceSnapshot.objects.filter(
@@ -154,94 +334,94 @@ def create_copilot_chat(
         backup_config_id=config.id,
     ).first()
     if snapshot is None:
-        raise ValidationError({"backup_source_snapshot_id": "Snapshot not found for this backup source."})
+        raise ValidationError(
+            {"backup_source_snapshot_id": "Snapshot not found for this backup source."}
+        )
 
     normalized_scopes: list[dict[str, Any]] = []
-    scope_directories: list[BackupSourceSnapshotDirectory] = []
     from apps.subscription.services.quota import (
-        assert_gateway_select_within_limits,
-        resolve_scope_entry,
-        summarize_gateway_select_scopes,
+        normalize_scope_path,
+        relative_scope_path,
     )
 
-    for index, scope in enumerate(source_scopes):
-        path = str(scope.get("source_path") or "").strip()
-        directory_id = scope.get("backup_snapshot_directory_id")
+    for index, scope in enumerate(request_scopes):
+        path = str(scope["source_path"])
+        directory_id = int(scope["backup_snapshot_directory_id"])
         directory = BackupSourceSnapshotDirectory.objects.filter(
             id=directory_id,
             source_snapshot_id=snapshot.id,
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         ).first()
         if not path or directory is None:
-            raise ValidationError({"source_scopes": {index: "Select a valid file or directory from this snapshot."}})
-        trusted_type, size_bytes = resolve_scope_entry(
-            organization_id=org.id,
-            directory=directory,
-            source_path=path,
-            claimed_type=str(scope.get("path_type") or "unknown"),
+            raise ValidationError(
+                {
+                    "source_scopes": {
+                        index: "Select a valid file or directory from this snapshot."
+                    }
+                }
+            )
+        root_path = str(directory.source_path)
+        relative_path = relative_scope_path(root=root_path, selected=path)
+        if path != normalize_scope_path(root_path) and not relative_path:
+            raise ValidationError(
+                {
+                    "source_scopes": {
+                        index: "Selected path is outside the snapshot directory."
+                    }
+                }
+            )
+        is_root = path == normalize_scope_path(root_path)
+        trusted_type = (
+            "file"
+            if is_root and str(directory.path_type or "").lower() == "file"
+            else "dir"
+            if is_root
+            else "unknown"
         )
         normalized = {
             "source_path": path,
             "backup_snapshot_directory_id": directory.id,
             "path_type": trusted_type,
         }
-        if size_bytes is not None:
-            normalized["size_bytes"] = int(size_bytes)
+        if is_root:
+            normalized["file_count"] = (
+                1
+                if trusted_type == "file"
+                else max(0, int(directory.file_count or 0))
+            )
+            normalized["size_bytes"] = max(0, int(directory.size_bytes or 0))
         normalized_scopes.append(normalized)
-        scope_directories.append(directory)
-    if not normalized_scopes:
-        raise ValidationError({"source_scopes": "Select at least one file or folder."})
-
-    total_files, total_bytes, unknown_directory = summarize_gateway_select_scopes(
-        normalized_scopes,
-        scope_directories,
+    all_scopes_resolved = all(
+        _scope_has_trusted_summary(scope) for scope in normalized_scopes
     )
-    assert_gateway_select_within_limits(
-        organization=org,
-        file_count=total_files,
-        size_bytes=total_bytes,
-        unknown_directory=unknown_directory,
+    gateway_link = _configured_gateway_link_for_chat(
+        org,
+        user=user,
+        gateway_mode=gateway_mode,
+        gateway_link_id=gateway_link_id,
     )
-
-    if gateway_mode == LensSessionLink.GatewaySelectionMode.AUTO:
-        gateway_link = platform_lens.resolve_auto_gateway_link_for_copilot(user=user)
-    else:
-        gateway_link = platform_lens.resolve_gateway_link_for_copilot(
-            org,
-            user=user,
-            gateway_link_id=gateway_link_id,
-        )
     if gateway_link is None:
         raise ValidationError(
-            {
-                "gateway_link_id": (
-                    platform_lens.NO_PUBLIC_DATA_GATEWAY_AVAILABLE
-                )
-            }
+            {"gateway_link_id": (platform_lens.NO_PUBLIC_DATA_GATEWAY_AVAILABLE)}
         )
 
-    from apps.lens_bridge.models import LensGatewayLink
     from apps.lens_bridge.services.gateway_execution import context_for_gateway_link
-    from apps.lens_bridge.services.public_gateway_capacity import (
-        assert_public_gateway_capacity,
-        lock_public_gateway_capacity,
-    )
-    from apps.subscription.services.interface import enforce_license_quota
 
     context_for_gateway_link(
         tenant_organization=org,
         gateway_link=gateway_link,
         expected_owner_user_id=(
-            user.id
-            if gateway_link.scope == gateway_link.GatewayScope.USER
-            else None
+            user.id if gateway_link.scope == gateway_link.GatewayScope.USER else None
         ),
+        require_ready=False,
     )
     model_ref, multimodal_model_ref = (
-        provisioning.default_model_refs_for_org(org)
+        provisioning.configured_default_model_refs_for_org(org)
     )
     if not model_ref:
-        raise ValidationError({"model": "Configure an active AI model before creating a chat."})
+        raise ValidationError(
+            {"model": "Configure an active AI model before creating a chat."}
+        )
 
     source_display_name = resolve_source_display_name(
         organization_id=org.id,
@@ -260,6 +440,8 @@ def create_copilot_chat(
         return LensSessionLink.objects.create(
             organization=org,
             hfl_user=user,
+            create_idempotency_key=request_key,
+            create_request_hash=request_hash,
             title=(title or "").strip() or default_title,
             backup_config_id=config.id,
             backup_source_snapshot_id=snapshot.id,
@@ -268,6 +450,15 @@ def create_copilot_chat(
             gateway_selection_mode=gateway_mode,
             agent_model_ref=model_ref,
             multimodal_model_ref=multimodal_model_ref,
+            scope_resolution_status=(
+                LensSessionLink.ScopeResolutionStatus.RESOLVED
+                if all_scopes_resolved
+                else LensSessionLink.ScopeResolutionStatus.PENDING
+            ),
+            capacity_reservation_status=(
+                LensSessionLink.CapacityReservationStatus.PENDING
+            ),
+            capacity_reserved_bytes=0,
             status=LensSessionLink.Status.ACTIVE,
             lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
             provision_phase=LensSessionLink.ProvisionPhase.QUEUED,
@@ -275,69 +466,21 @@ def create_copilot_chat(
             lifecycle_error="",
         )
 
-    def _assert_org_public_capacity() -> None:
-        """Org pool share (GiB) across all Public Gateways."""
-        from common.errors import AppError
-        from common.extension_spi import get_quota_provider
-
-        provider = get_quota_provider()
-        if provider is None:
-            return
-        limits = provider.get_limits(org) or {}
-        # Missing key must not mean unlimited (fail closed).
-        if "max_public_gateway_capacity_gb" not in limits:
-            raise AppError(
-                code="SUBSCRIPTION.QUOTA_EXCEEDED",
-                status=403,
-                title=(
-                    "Organization public gateway capacity is unavailable. "
-                    "Contact your platform administrator."
-                ),
-                diagnostic="max_public_gateway_capacity_gb missing from quota limits",
-                meta={
-                    "quota_type": "max_public_gateway_capacity_gb",
-                    "scope": "organization",
-                },
-            )
-        limit = int(limits["max_public_gateway_capacity_gb"])
-        if limit < 0:
-            return
-        if unknown_directory:
-            raise AppError(
-                code="SUBSCRIPTION.QUOTA_EXCEEDED",
-                status=403,
-                title=(
-                    "Organization public gateway capacity cannot be proven for this "
-                    "selection. Contact your platform administrator."
-                ),
-                diagnostic="unknown public gateway selection size",
-                meta={
-                    "quota_type": "max_public_gateway_capacity_gb",
-                    "unknown_size": True,
-                    "limit": limit,
-                    "scope": "organization",
-                },
-            )
-        additional_gb = float(total_bytes) / float(1024**3)
-        enforce_license_quota(org, "max_public_gateway_capacity_gb", additional=additional_gb)
-
-    # Public Gateway: lock + infra/org capacity + PROVISIONING insert together so
-    # concurrent creates observe each other's reserved occupancy.
-    if gateway_link.scope == LensGatewayLink.GatewayScope.PLATFORM:
-        from apps.iam.models import Organization
-
-        # Serialize org capacity (layer 3) across different Public Gateways.
-        Organization.objects.select_for_update().get(pk=org.pk)
-        locked_gateway = lock_public_gateway_capacity(gateway_link=gateway_link)
-        assert_public_gateway_capacity(
-            gateway_link=locked_gateway,
-            additional_bytes=total_bytes,
-            unknown_size=unknown_directory,
-        )
-        _assert_org_public_capacity()
-        link = _create_session_link()
-    else:
-        link = _create_session_link()
+    try:
+        with transaction.atomic():
+            link = _create_session_link()
+    except IntegrityError:
+        link = LensSessionLink.objects.filter(
+            organization=org,
+            hfl_user=user,
+            create_idempotency_key=request_key,
+            is_deleted=False,
+        ).first()
+        if link is None:
+            raise
+        if link.create_request_hash != request_hash:
+            raise ChatCreateIdempotencyConflict()
+        return link
 
     transaction.on_commit(lambda: _queue_provision_or_mark_failed(link.id))
     return link
@@ -350,9 +493,7 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
     if locked.lifecycle_status == LensSessionLink.LifecycleStatus.DELETED:
         return locked
 
-    teardown_intent = str(
-        (locked.teardown_state_json or {}).get("intent") or ""
-    )
+    teardown_intent = str((locked.teardown_state_json or {}).get("intent") or "")
     delete_intent_already_active = (
         locked.lifecycle_status == LensSessionLink.LifecycleStatus.DELETING
         and teardown_intent == _TEARDOWN_INTENT_DELETE
@@ -408,16 +549,11 @@ def _claim_copilot_chat_provision(
             return None, "missing"
         if link.lifecycle_status != LensSessionLink.LifecycleStatus.PROVISIONING:
             return None, str(link.lifecycle_status)
-        if (
-            link.provision_claimed_at
-            and link.provision_claimed_at
-            > now - timedelta(seconds=PROVISION_CLAIM_TTL_SECONDS)
+        if link.provision_claimed_at and link.provision_claimed_at > now - timedelta(
+            seconds=PROVISION_CLAIM_TTL_SECONDS
         ):
             return None, "busy"
-        if (
-            link.provision_next_retry_at
-            and link.provision_next_retry_at > now
-        ):
+        if link.provision_next_retry_at and link.provision_next_retry_at > now:
             return None, "scheduled"
 
         claim_token = uuid_lib.uuid4()
@@ -527,18 +663,47 @@ def _run_copilot_chat_provision(
         raise ValidationError({"gateway_link": "Data gateway is missing."})
     scopes = list(link.source_scopes_json or [])
     if not scopes and binding is not None:
-        scopes = [{
-            "source_path": binding.source_path,
-            "backup_snapshot_directory_id": binding.backup_snapshot_directory_id,
-            "path_type": "unknown",
-        }]
+        scopes = [
+            {
+                "source_path": binding.source_path,
+                "backup_snapshot_directory_id": binding.backup_snapshot_directory_id,
+                "path_type": "unknown",
+            }
+        ]
     if not scopes:
         raise ValidationError({"source_scopes": "Backup content selection is missing."})
-    snapshot_id = link.backup_source_snapshot_id or (binding.backup_source_snapshot_id if binding else None)
+    snapshot_id = link.backup_source_snapshot_id or (
+        binding.backup_source_snapshot_id if binding else None
+    )
     if not snapshot_id:
-        raise ValidationError({"backup_source_snapshot_id": "Backup snapshot is missing."})
+        raise ValidationError(
+            {"backup_source_snapshot_id": "Backup snapshot is missing."}
+        )
     org = link.organization
     user = link.hfl_user
+
+    from apps.lens_bridge.services.gateway_execution import context_for_gateway_link
+
+    context_for_gateway_link(
+        tenant_organization=org,
+        gateway_link=gateway_link,
+        expected_owner_user_id=(
+            user.id if gateway_link.scope == gateway_link.GatewayScope.USER else None
+        ),
+        require_ready=True,
+    )
+
+    scope_result = _resolve_chat_scopes(
+        link=link,
+        claim_token=claim_token,
+        scopes=scopes,
+    )
+    if scope_result is not None:
+        return scope_result
+    link.refresh_from_db()
+    scopes = list(link.source_scopes_json or [])
+    _reserve_chat_capacity(link=link, claim_token=claim_token, scopes=scopes)
+    link.refresh_from_db()
 
     _set_phase(
         link,
@@ -552,7 +717,9 @@ def _run_copilot_chat_provision(
     ks = link.knowledge_source
     if ks is None:
         first_path = str(scopes[0].get("source_path") or "Copilot")
-        ks_name = f"{first_path.rstrip('/').split('/')[-1] or 'Copilot'} · Chat {link.id}"
+        ks_name = (
+            f"{first_path.rstrip('/').split('/')[-1] or 'Copilot'} · Chat {link.id}"
+        )
         first_directory_id = scopes[0].get("backup_snapshot_directory_id")
         ks = LensKnowledgeSource.objects.create(
             organization=org,
@@ -569,9 +736,7 @@ def _run_copilot_chat_provision(
                     "document": True,
                     "image": bool(link.multimodal_model_ref),
                     "embedded_image": bool(link.multimodal_model_ref),
-                    "pdf_render_scanned_pages": bool(
-                        link.multimodal_model_ref
-                    ),
+                    "pdf_render_scanned_pages": bool(link.multimodal_model_ref),
                     "vision_model_ref": (
                         str(link.multimodal_model_ref)
                         if link.multimodal_model_ref
@@ -597,9 +762,7 @@ def _run_copilot_chat_provision(
             else LensSessionLink.ProvisionPhase.RESTORING
         )
         if phase in {"push_assistant", "finalize"}:
-            provision_phase = (
-                LensSessionLink.ProvisionPhase.CREATING_KNOWLEDGE_SOURCE
-            )
+            provision_phase = LensSessionLink.ProvisionPhase.CREATING_KNOWLEDGE_SOURCE
         _set_phase(link, claim_token, provision_phase, detail)
 
     sync_result = knowledge_source_sync.run_knowledge_source_sync(
@@ -620,7 +783,9 @@ def _run_copilot_chat_provision(
         LensKnowledgeSource.Status.DEGRADED,
     ):
         raise ValidationError(
-            {"knowledge_source": f"Knowledge source sync did not complete ({ks.status})."}
+            {
+                "knowledge_source": f"Knowledge source sync did not complete ({ks.status})."
+            }
         )
 
     # 3) Create Assistant (SL Admin) and grant to Chat User.
@@ -755,6 +920,260 @@ def _run_copilot_chat_provision(
         "knowledge_source_id": ks.id,
         "sync": sync_result,
     }
+
+
+def _resolve_chat_scopes(
+    *,
+    link: LensSessionLink,
+    claim_token: str,
+    scopes: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Resolve one selected scope per pass and release the worker while pending."""
+
+    if link.scope_resolution_status == LensSessionLink.ScopeResolutionStatus.RESOLVED:
+        return None
+    from apps.lens_bridge.services import snapshot_scope_tasks
+    from apps.node.models import NodeTask
+    from apps.subscription.services.quota import normalize_scope_path
+
+    state = dict(link.provision_state_json or {})
+    scope_state = dict(state.get(_SCOPE_TASK_STATE_KEY) or {})
+    for index, scope in enumerate(scopes):
+        if _scope_has_trusted_summary(scope):
+            continue
+        _set_phase(
+            link,
+            claim_token,
+            LensSessionLink.ProvisionPhase.RESOLVING_SCOPE,
+            "Validating selected backup data.",
+        )
+        task_id = str(scope_state.get("task_id") or "")
+        task_index = scope_state.get("scope_index")
+        correlation_id = str(scope_state.get("correlation_id") or "")
+        task = None
+        if task_id and task_index == index:
+            task = snapshot_scope_tasks.scope_task_for_reference(
+                organization=link.organization,
+                task_id=task_id,
+                correlation_id=correlation_id,
+            )
+        if task is None and correlation_id and task_index == index:
+            task = snapshot_scope_tasks.scope_task_for_correlation(
+                organization=link.organization,
+                correlation_id=correlation_id,
+            )
+            if task is not None:
+                scope_state["task_id"] = str(task.id)
+                state[_SCOPE_TASK_STATE_KEY] = scope_state
+                link.provision_state_json = state
+                _update_provision_claim(
+                    link,
+                    claim_token,
+                    "provision_state_json",
+                )
+        if task is not None:
+            if task.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}:
+                return {
+                    "session_link_id": link.id,
+                    "status": "waiting",
+                    "scope_task_id": str(task.id),
+                }
+            if task.status != NodeTask.Status.SUCCESS:
+                logger.warning(
+                    "copilot scope validation failed session_link_id=%s "
+                    "node_task_id=%s task_status=%s error=%s",
+                    link.id,
+                    task.id,
+                    task.status,
+                    str(task.last_error or "")[:500],
+                )
+                raise ValidationError(
+                    {
+                        "source_scopes": (
+                            "Selected backup data could not be validated. "
+                            "Try again or choose another file or folder."
+                        )
+                    }
+                )
+            summary = snapshot_scope_tasks.resolved_scope_summary(task)
+            updated_scopes = list(scopes)
+            updated_scopes[index] = {
+                **scope,
+                **summary,
+            }
+            state.pop(_SCOPE_TASK_STATE_KEY, None)
+            link.source_scopes_json = updated_scopes
+            link.provision_state_json = state
+            link.scope_resolution_status = (
+                LensSessionLink.ScopeResolutionStatus.RESOLVED
+                if all(_scope_has_trusted_summary(row) for row in updated_scopes)
+                else LensSessionLink.ScopeResolutionStatus.PENDING
+            )
+            _update_provision_claim(
+                link,
+                claim_token,
+                "source_scopes_json",
+                "provision_state_json",
+                "scope_resolution_status",
+            )
+            return _resolve_chat_scopes(
+                link=link,
+                claim_token=claim_token,
+                scopes=updated_scopes,
+            )
+
+        directory = BackupSourceSnapshotDirectory.objects.filter(
+            id=scope.get("backup_snapshot_directory_id"),
+            source_snapshot_id=link.backup_source_snapshot_id,
+            organization_id=link.organization_id,
+            status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
+        ).first()
+        if directory is None:
+            raise ValidationError(
+                {"source_scopes": "Snapshot directory is no longer available."}
+            )
+        selected = normalize_scope_path(str(scope.get("source_path") or ""))
+        root = normalize_scope_path(directory.source_path)
+        relative_path = (
+            "" if selected == root else selected[len(root.rstrip("/") + "/") :]
+        )
+        if not correlation_id or task_index != index:
+            correlation_id = f"chat:{link.id}:scope:{index}:{uuid_lib.uuid4().hex}"
+            state[_SCOPE_TASK_STATE_KEY] = {
+                "scope_index": index,
+                "correlation_id": correlation_id,
+            }
+            link.provision_state_json = state
+            _update_provision_claim(link, claim_token, "provision_state_json")
+        task = snapshot_scope_tasks.dispatch_scope_resolution(
+            organization_id=link.organization_id,
+            directory_id=directory.id,
+            path=relative_path,
+            correlation_id=correlation_id,
+        )
+        state[_SCOPE_TASK_STATE_KEY] = {
+            "scope_index": index,
+            "correlation_id": correlation_id,
+            "task_id": str(task.id),
+        }
+        link.provision_state_json = state
+        _update_provision_claim(link, claim_token, "provision_state_json")
+        return {
+            "session_link_id": link.id,
+            "status": "waiting",
+            "scope_task_id": str(task.id),
+        }
+
+    link.scope_resolution_status = LensSessionLink.ScopeResolutionStatus.RESOLVED
+    _update_provision_claim(link, claim_token, "scope_resolution_status")
+    return None
+
+
+@transaction.atomic
+def _reserve_chat_capacity(
+    *,
+    link: LensSessionLink,
+    claim_token: str,
+    scopes: list[dict[str, Any]],
+) -> None:
+    """Atomically validate trusted summaries and reserve Chat capacity once."""
+
+    locked = (
+        LensSessionLink.objects.select_for_update()
+        .select_related("gateway_link", "organization")
+        .filter(
+            pk=link.id,
+            lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+            provision_claim_token=claim_token,
+        )
+        .first()
+    )
+    if locked is None:
+        raise ChatProvisionLeaseLostError("Chat provisioning lease was lost.")
+    if (
+        locked.capacity_reservation_status
+        == LensSessionLink.CapacityReservationStatus.RESERVED
+    ):
+        return
+    if locked.scope_resolution_status != LensSessionLink.ScopeResolutionStatus.RESOLVED:
+        raise RuntimeError("Chat capacity cannot be reserved before scope resolution.")
+    if not scopes or not all(_scope_has_trusted_summary(scope) for scope in scopes):
+        raise RuntimeError("Chat capacity requires trusted scope summaries.")
+
+    total_files = sum(max(0, int(scope.get("file_count") or 0)) for scope in scopes)
+    total_bytes = sum(max(0, int(scope.get("size_bytes") or 0)) for scope in scopes)
+    if total_files > _MAX_BIGINT or total_bytes > _MAX_BIGINT:
+        raise RuntimeError("Chat scope totals exceed the supported integer range.")
+    from apps.lens_bridge.models import LensGatewayLink
+    from apps.subscription.services.quota import assert_gateway_select_within_limits
+
+    assert_gateway_select_within_limits(
+        organization=locked.organization,
+        file_count=total_files,
+        size_bytes=total_bytes,
+        unknown_directory=False,
+    )
+    if locked.gateway_link.scope == LensGatewayLink.GatewayScope.PLATFORM:
+        from common.errors import AppError
+        from common.extension_spi import get_quota_provider
+        from apps.lens_bridge.services.public_gateway_capacity import (
+            assert_public_gateway_capacity,
+            lock_public_gateway_capacity,
+        )
+        from apps.subscription.services.interface import enforce_license_quota
+
+        Organization.objects.select_for_update().get(pk=locked.organization_id)
+        gateway = lock_public_gateway_capacity(gateway_link=locked.gateway_link)
+        assert_public_gateway_capacity(
+            gateway_link=gateway,
+            additional_bytes=total_bytes,
+            unknown_size=False,
+        )
+        provider = get_quota_provider()
+        if provider is not None:
+            limits = provider.get_limits(locked.organization) or {}
+            if "max_public_gateway_capacity_gb" not in limits:
+                raise AppError(
+                    code="SUBSCRIPTION.QUOTA_EXCEEDED",
+                    status=403,
+                    title="Organization public gateway capacity is unavailable.",
+                    diagnostic="max_public_gateway_capacity_gb missing from quota limits",
+                    meta={
+                        "quota_type": "max_public_gateway_capacity_gb",
+                        "scope": "organization",
+                    },
+                )
+            enforce_license_quota(
+                locked.organization,
+                "max_public_gateway_capacity_gb",
+                additional=float(total_bytes) / float(1024**3),
+            )
+
+    now = timezone.now()
+    locked.provision_phase = LensSessionLink.ProvisionPhase.RESERVING_CAPACITY
+    locked.provision_detail = "Reserving Data Gateway capacity."
+    locked.capacity_reservation_status = (
+        LensSessionLink.CapacityReservationStatus.RESERVED
+    )
+    locked.capacity_reserved_bytes = total_bytes
+    locked.capacity_reserved_at = now
+    locked.provision_claimed_at = now
+    locked.save(
+        update_fields=[
+            "provision_phase",
+            "provision_detail",
+            "capacity_reservation_status",
+            "capacity_reserved_bytes",
+            "capacity_reserved_at",
+            "provision_claimed_at",
+            "updated_at",
+        ]
+    )
+    link.capacity_reservation_status = (
+        LensSessionLink.CapacityReservationStatus.RESERVED
+    )
+    link.capacity_reserved_bytes = total_bytes
+    link.capacity_reserved_at = now
 
 
 def _require_provision_claim(link_id: int, claim_token: str) -> None:
@@ -928,9 +1347,7 @@ def _bind_assistant_to_provision_claim(
     locked.provision_state_json = state
     locked.sl_assistant_uuid = assistant_uuid
     locked_knowledge_source.sl_assistant_uuid = assistant_uuid
-    locked_knowledge_source.save(
-        update_fields=["sl_assistant_uuid", "updated_at"]
-    )
+    locked_knowledge_source.save(update_fields=["sl_assistant_uuid", "updated_at"])
     assistant_access.ensure_assistant_link(
         org=locked.organization,
         sl_assistant_uuid=assistant_uuid,
@@ -1037,11 +1454,7 @@ def _find_remote_uuid(
             hfl_user=hfl_user,
         )
         items = _remote_items(raw)
-        matches = [
-            item
-            for item in items
-            if str(item.get(field) or "") == value
-        ]
+        matches = [item for item in items if str(item.get(field) or "") == value]
         if len(matches) > 1:
             raise sl_client.LensBridgeError(
                 f"SourceLens returned multiple {field}={value!r} resources."
@@ -1056,8 +1469,7 @@ def _find_remote_uuid(
         if isinstance(raw, list) or not items or len(items) < page_size:
             return None
         signature = tuple(
-            str(item.get("uuid") or item.get(field) or "")
-            for item in items
+            str(item.get("uuid") or item.get(field) or "") for item in items
         )
         if signature in seen_pages:
             raise sl_client.LensBridgeError(
@@ -1210,10 +1622,7 @@ def _orphan_knowledge_source_needs_enqueue(knowledge_source_id: int) -> bool:
     )
     if knowledge_source is None:
         return False
-    if (
-        knowledge_source.lifecycle_status
-        == LensKnowledgeSource.LifecycleStatus.DELETED
-    ):
+    if knowledge_source.lifecycle_status == LensKnowledgeSource.LifecycleStatus.DELETED:
         return False
     if (
         knowledge_source.teardown_claimed_at
@@ -1294,9 +1703,7 @@ def _record_late_source_lens_resource(
     link = LensSessionLink.objects.select_for_update().get(pk=link_id)
     existing = getattr(link, field)
     if existing not in {None, resource_uuid}:
-        resource_kind = (
-            "session" if field == "sl_session_uuid" else "assistant"
-        )
+        resource_kind = "session" if field == "sl_session_uuid" else "assistant"
         late_resources = _late_remote_uuids(link, resource_kind)
         late_resources.add(resource_uuid)
         _retain_failed_late_resources(
@@ -1398,17 +1805,19 @@ def _compensate_late_assistant(
 def _claim_copilot_chat_teardown(session_link_id: int) -> tuple[str | None, str]:
     now = timezone.now()
     with transaction.atomic():
-        link = LensSessionLink.objects.select_for_update().filter(pk=session_link_id).first()
+        link = (
+            LensSessionLink.objects.select_for_update()
+            .filter(pk=session_link_id)
+            .first()
+        )
         if link is None:
             return None, "missing"
         if link.lifecycle_status == LensSessionLink.LifecycleStatus.DELETED:
             return None, "deleted"
         if link.lifecycle_status != LensSessionLink.LifecycleStatus.DELETING:
             return None, str(link.lifecycle_status)
-        if (
-            link.teardown_claimed_at
-            and link.teardown_claimed_at
-            > now - timedelta(seconds=TEARDOWN_CLAIM_TTL_SECONDS)
+        if link.teardown_claimed_at and link.teardown_claimed_at > now - timedelta(
+            seconds=TEARDOWN_CLAIM_TTL_SECONDS
         ):
             return None, "busy"
         if link.teardown_next_retry_at and link.teardown_next_retry_at > now:
@@ -1433,7 +1842,10 @@ def _claim_copilot_chat_teardown(session_link_id: int) -> tuple[str | None, str]
 
 
 def _source_lens_not_found(exc: Exception) -> bool:
-    return isinstance(exc, sl_client.LensBridgeError) and getattr(exc, "status_code", None) == 404
+    return (
+        isinstance(exc, sl_client.LensBridgeError)
+        and getattr(exc, "status_code", None) == 404
+    )
 
 
 def _teardown_step(
@@ -1491,9 +1903,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     critical_errors: list[str] = []
     warnings: list[str] = []
     teardown_state = dict(link.teardown_state_json or {})
-    teardown_intent = str(
-        teardown_state.get("intent") or _TEARDOWN_INTENT_DELETE
-    )
+    teardown_intent = str(teardown_state.get("intent") or _TEARDOWN_INTENT_DELETE)
 
     if link.active_run_uuid:
         try:
@@ -1505,7 +1915,9 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         except Exception as exc:
             if not _source_lens_not_found(exc):
                 warnings.append(f"cancel_run: {exc}")
-                _teardown_step(teardown_state, "cancel_run", status="warning", error=str(exc))
+                _teardown_step(
+                    teardown_state, "cancel_run", status="warning", error=str(exc)
+                )
             else:
                 _teardown_step(teardown_state, "cancel_run", status="success")
         else:
@@ -1540,9 +1952,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
             if not _source_lens_not_found(exc):
                 failed_session_uuids.append(session_uuid)
                 critical_errors.append(f"delete_session {session_uuid}: {exc}")
-    link.sl_session_uuid = (
-        failed_session_uuids[0] if failed_session_uuids else None
-    )
+    link.sl_session_uuid = failed_session_uuids[0] if failed_session_uuids else None
     if journal_session_uuid and journal_session_uuid not in failed_session_uuids:
         _set_operation_status(
             link,
@@ -1606,9 +2016,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
                 assistant_access.soft_delete_assistant_link(org, assistant_uuid)
             except Exception as exc:
                 failed_assistant_uuids.append(assistant_uuid)
-                critical_errors.append(
-                    f"delete_assistant {assistant_uuid}: {exc}"
-                )
+                critical_errors.append(f"delete_assistant {assistant_uuid}: {exc}")
         link.sl_assistant_uuid = (
             failed_assistant_uuids[0] if failed_assistant_uuids else None
         )
@@ -1627,9 +2035,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
             failed_assistant_uuids,
         )
         if ks is not None:
-            deleted_assistant_uuids = assistant_uuids.difference(
-                failed_assistant_uuids
-            )
+            deleted_assistant_uuids = assistant_uuids.difference(failed_assistant_uuids)
             if ks.sl_assistant_uuid in deleted_assistant_uuids:
                 LensKnowledgeSource.objects.filter(
                     pk=ks.id,
@@ -1702,7 +2108,9 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
             _teardown_step(teardown_state, "cleanup_workspace", status="success")
         except Exception as exc:
             critical_errors.append(f"cleanup_workspace: {exc}")
-            _teardown_step(teardown_state, "cleanup_workspace", status="retry", error=str(exc))
+            _teardown_step(
+                teardown_state, "cleanup_workspace", status="retry", error=str(exc)
+            )
     elif ks is None:
         _teardown_step(teardown_state, "cleanup_workspace", status="success")
     else:
@@ -1774,6 +2182,11 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         teardown_claim_token=None,
         teardown_claimed_at=None,
         teardown_next_retry_at=link.teardown_next_retry_at,
+        capacity_reservation_status=(
+            LensSessionLink.CapacityReservationStatus.RELEASED
+            if not critical_errors
+            else link.capacity_reservation_status
+        ),
         updated_at=timezone.now(),
     )
     if updated != 1:
@@ -1805,6 +2218,7 @@ def _mark_provision_failed_by_id(
         provision_claim_token=None,
         provision_claimed_at=None,
         provision_next_retry_at=None,
+        capacity_reservation_status=LensSessionLink.CapacityReservationStatus.RELEASED,
         updated_at=timezone.now(),
     )
 
@@ -1882,77 +2296,6 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     elif locked.lifecycle_status != LensSessionLink.LifecycleStatus.FAILED:
         raise ValidationError({"lifecycle_status": "Session is not retryable."})
 
-    # FAILED → PROVISIONING re-reserves capacity only when this session is not
-    # already represented via a linked knowledge_source / binding.
-    was_failed = locked.lifecycle_status == LensSessionLink.LifecycleStatus.FAILED
-    if (
-        was_failed
-        and locked.knowledge_source_id is None
-        and locked.gateway_link is not None
-    ):
-        from apps.lens_bridge.models import LensGatewayLink
-        from apps.lens_bridge.services.public_gateway_capacity import (
-            assert_public_gateway_capacity,
-            lock_public_gateway_capacity,
-            session_scope_occupancy,
-        )
-        from apps.subscription.services.interface import enforce_license_quota
-
-        if locked.gateway_link.scope == LensGatewayLink.GatewayScope.PLATFORM:
-            from apps.iam.models import Organization
-            from common.errors import AppError
-            from common.extension_spi import get_quota_provider
-
-            Organization.objects.select_for_update().get(pk=locked.organization_id)
-            locked_gateway = lock_public_gateway_capacity(gateway_link=locked.gateway_link)
-            nbytes, unknown = session_scope_occupancy(session=locked)
-            assert_public_gateway_capacity(
-                gateway_link=locked_gateway,
-                additional_bytes=nbytes,
-                unknown_size=unknown,
-            )
-            # Align with create: fail closed on unknown size when org capacity is finite.
-            provider = get_quota_provider()
-            if provider is not None:
-                limits = provider.get_limits(locked.organization) or {}
-                if "max_public_gateway_capacity_gb" not in limits:
-                    raise AppError(
-                        code="SUBSCRIPTION.QUOTA_EXCEEDED",
-                        status=403,
-                        title=(
-                            "Organization public gateway capacity is unavailable. "
-                            "Contact your platform administrator."
-                        ),
-                        diagnostic="max_public_gateway_capacity_gb missing from quota limits",
-                        meta={
-                            "quota_type": "max_public_gateway_capacity_gb",
-                            "scope": "organization",
-                        },
-                    )
-                org_cap = int(limits["max_public_gateway_capacity_gb"])
-                if org_cap >= 0 and unknown:
-                    raise AppError(
-                        code="SUBSCRIPTION.QUOTA_EXCEEDED",
-                        status=403,
-                        title=(
-                            "Organization public gateway capacity cannot be proven for this "
-                            "selection. Contact your platform administrator."
-                        ),
-                        diagnostic="unknown public gateway selection size on retry",
-                        meta={
-                            "quota_type": "max_public_gateway_capacity_gb",
-                            "unknown_size": True,
-                            "limit": org_cap,
-                            "scope": "organization",
-                        },
-                    )
-                if org_cap >= 0 and not unknown:
-                    enforce_license_quota(
-                        locked.organization,
-                        "max_public_gateway_capacity_gb",
-                        additional=float(nbytes) / float(1024**3),
-                    )
-
     locked.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
     locked.provision_phase = LensSessionLink.ProvisionPhase.QUEUED
     locked.provision_detail = "Chat creation is queued."
@@ -1965,6 +2308,13 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     locked.teardown_claimed_at = None
     locked.teardown_next_retry_at = None
     locked.teardown_state_json = {}
+    provision_state = dict(locked.provision_state_json or {})
+    provision_state.pop(_SCOPE_TASK_STATE_KEY, None)
+    locked.provision_state_json = provision_state
+    if locked.knowledge_source_id is None:
+        locked.capacity_reservation_status = (
+            LensSessionLink.CapacityReservationStatus.PENDING
+        )
     locked.save(
         update_fields=[
             "lifecycle_status",
@@ -1979,6 +2329,8 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             "teardown_claimed_at",
             "teardown_next_retry_at",
             "teardown_state_json",
+            "provision_state_json",
+            "capacity_reservation_status",
             "updated_at",
         ]
     )
@@ -1992,16 +2344,16 @@ def _queue_provision_or_mark_failed(session_link_id: int) -> None:
     try:
         queue_copilot_chat_provision(session_link_id=session_link_id)
     except Exception as exc:
-        logger.exception("copilot chat provision dispatch failed session_link_id=%s", session_link_id)
+        logger.exception(
+            "copilot chat provision dispatch failed session_link_id=%s", session_link_id
+        )
         LensSessionLink.objects.filter(
             pk=session_link_id,
             lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
             provision_claim_token__isnull=True,
         ).update(
             provision_phase=LensSessionLink.ProvisionPhase.QUEUED,
-            provision_detail=(
-                "Chat preparation is waiting for the worker queue."
-            ),
+            provision_detail=("Chat preparation is waiting for the worker queue."),
             lifecycle_error=str(exc)[:2000],
             provision_next_retry_at=timezone.now() + timedelta(seconds=60),
             updated_at=timezone.now(),
@@ -2014,7 +2366,9 @@ def _queue_teardown_or_record_error(session_link_id: int) -> None:
     try:
         queue_copilot_chat_teardown(session_link_id=session_link_id)
     except Exception as exc:
-        logger.exception("copilot chat teardown dispatch failed session_link_id=%s", session_link_id)
+        logger.exception(
+            "copilot chat teardown dispatch failed session_link_id=%s", session_link_id
+        )
         LensSessionLink.objects.filter(
             pk=session_link_id,
             lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
@@ -2084,7 +2438,10 @@ def _cleanup_failed_provision(
         except Exception as exc:
             if _source_lens_not_found(exc):
                 link.sl_session_uuid = None
-                if _operation_remote_uuid(link, _SESSION_CREATE_OPERATION) == session_uuid:
+                if (
+                    _operation_remote_uuid(link, _SESSION_CREATE_OPERATION)
+                    == session_uuid
+                ):
                     _set_operation_status(
                         link,
                         _SESSION_CREATE_OPERATION,
@@ -2107,9 +2464,14 @@ def _cleanup_failed_provision(
             from apps.lens_bridge.services.assistants import _delete_sl_assistant
 
             _delete_sl_assistant(assistant_uuid)
-            assistant_access.soft_delete_assistant_link(link.organization, assistant_uuid)
+            assistant_access.soft_delete_assistant_link(
+                link.organization, assistant_uuid
+            )
             link.sl_assistant_uuid = None
-            if _operation_remote_uuid(link, _ASSISTANT_CREATE_OPERATION) == assistant_uuid:
+            if (
+                _operation_remote_uuid(link, _ASSISTANT_CREATE_OPERATION)
+                == assistant_uuid
+            ):
                 _set_operation_status(
                     link,
                     _ASSISTANT_CREATE_OPERATION,
@@ -2157,5 +2519,7 @@ def _cleanup_failed_provision(
         "provision_state_json",
     )
     if errors:
-        logger.warning("partial Copilot cleanup session_link_id=%s errors=%s", link.id, errors)
+        logger.warning(
+            "partial Copilot cleanup session_link_id=%s errors=%s", link.id, errors
+        )
     return errors

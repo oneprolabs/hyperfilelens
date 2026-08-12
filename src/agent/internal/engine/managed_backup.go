@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -364,6 +365,21 @@ func int64Value(raw any) (int64, bool) {
 		}
 	}
 	return 0, false
+}
+
+func exactInt64Value(raw any) (int64, bool) {
+	switch value := raw.(type) {
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value {
+			return 0, false
+		}
+		if value < math.MinInt64 || value >= math.MaxInt64 {
+			return 0, false
+		}
+		return int64(value), true
+	default:
+		return int64Value(raw)
+	}
 }
 
 func stringValue(raw any) string {
@@ -1347,6 +1363,137 @@ func snapshotObjectPath(snapshotID string, relPath string) string {
 	return snapshot + "/" + rel
 }
 
+func newInsightSnapshotResult(snapshotID string, path string) map[string]any {
+	return map[string]any{
+		"path":        strings.Trim(strings.TrimSpace(path), "/\\"),
+		"snapshot_id": strings.TrimSpace(snapshotID),
+	}
+}
+
+type snapshotScopeSelection struct {
+	name        string
+	found       bool
+	pathType    string
+	sizeBytes   int64
+	modifiedAt  string
+	invalidType bool
+}
+
+type insightSnapshotBrowseCollector struct {
+	basePath string
+	limit    int
+	entries  []map[string]any
+	hasMore  bool
+	invalid  bool
+}
+
+func newInsightSnapshotBrowseCollector(basePath string, limit int) *insightSnapshotBrowseCollector {
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+	return &insightSnapshotBrowseCollector{
+		basePath: strings.Trim(strings.TrimSpace(basePath), "/\\"),
+		limit:    limit,
+		entries:  make([]map[string]any, 0, limit),
+	}
+}
+
+func (collector *insightSnapshotBrowseCollector) consume(line string) bool {
+	if len(collector.entries) >= collector.limit {
+		collector.hasMore = true
+		return false
+	}
+	mode, size, modTime, name, ok := parseInsightSnapshotLongLine(line)
+	if !ok || size < 0 {
+		collector.invalid = true
+		return false
+	}
+	normalizedMode := strings.ToLower(mode)
+	isDir := strings.HasPrefix(normalizedMode, "d")
+	if !isDir && !strings.HasPrefix(normalizedMode, "-") {
+		collector.invalid = true
+		return false
+	}
+	path := normalizeSnapshotBrowsePath(name, name, collector.basePath, "")
+	collector.entries = append(collector.entries, map[string]any{
+		"name":         snapshotBrowseName(name, path),
+		"path":         path,
+		"type":         mapSnapshotBrowseType(isDir),
+		"is_dir":       isDir,
+		"size_bytes":   size,
+		"modified_at":  modTime,
+		"downloadable": true,
+		"has_children": nil,
+	})
+	return true
+}
+
+func (selection *snapshotScopeSelection) inspectLine(line string) {
+	if selection.found {
+		return
+	}
+	mode, size, modifiedAt, name, ok := parseInsightSnapshotLongLine(line)
+	if !ok || filepath.Base(filepath.ToSlash(name)) != selection.name {
+		return
+	}
+	selection.found = true
+	selection.modifiedAt = modifiedAt
+	normalizedMode := strings.ToLower(mode)
+	switch {
+	case strings.HasPrefix(normalizedMode, "-") && size >= 0:
+		selection.pathType = "file"
+		selection.sizeBytes = size
+	case strings.HasPrefix(normalizedMode, "d") && size >= 0:
+		selection.pathType = "dir"
+	default:
+		selection.invalidType = true
+	}
+}
+
+func inspectManagedSnapshotSelection(
+	ctx context.Context,
+	bin string,
+	configFile string,
+	env map[string]string,
+	snapshotID string,
+	cleanPath string,
+) (snapshotScopeSelection, process.Result, error) {
+	parentPath := filepath.ToSlash(filepath.Dir(cleanPath))
+	if parentPath == "." {
+		parentPath = ""
+	}
+	selection := snapshotScopeSelection{
+		name: filepath.Base(filepath.ToSlash(cleanPath)),
+	}
+	inspectCtx, cancelInspect := context.WithCancel(ctx)
+	defer cancelInspect()
+	inspectResult, inspectErr := process.RunStreamingDiscardStdout(
+		inspectCtx,
+		bin,
+		[]string{
+			"--config-file=" + configFile,
+			"ls",
+			"-l",
+			snapshotObjectPath(snapshotID, parentPath),
+		},
+		env,
+		"",
+		func(line string, stderr bool) {
+			if stderr {
+				return
+			}
+			selection.inspectLine(line)
+			if selection.found {
+				cancelInspect()
+			}
+		},
+	)
+	if selection.found && ctx.Err() == nil {
+		inspectErr = nil
+	}
+	return selection, inspectResult, inspectErr
+}
+
 func (e *Engine) runManagedSnapshotBrowse(
 	ctx context.Context,
 	rep ReporterSink,
@@ -1381,6 +1528,209 @@ func (e *Engine) runManagedSnapshotBrowse(
 	if runErr != nil {
 		return "failed", result, snapshotBrowseFailureMessage(res, runErr)
 	}
+	return "success", result, ""
+}
+
+func (e *Engine) runManagedInsightSnapshotBrowse(
+	ctx context.Context,
+	rep ReporterSink,
+	taskID string,
+	p Payload,
+) (string, map[string]any, string) {
+	if p.SnapshotID == "" {
+		return "failed", nil, "snapshot_id is required"
+	}
+	bin, err := e.kopiaBin(ctx)
+	if err != nil {
+		return "failed", nil, err.Error()
+	}
+	configFile, env, _, _, prepErr := e.prepareManagedRepository(
+		ctx,
+		rep,
+		taskID,
+		p,
+		repositoryPrepareConnect,
+	)
+	if prepErr != "" {
+		return "failed", nil, prepErr
+	}
+	basePath := strings.Trim(strings.TrimSpace(p.Path), "/\\")
+	result := newInsightSnapshotResult(p.SnapshotID, basePath)
+	target := snapshotObjectPath(p.SnapshotID, basePath)
+	args := []string{"--config-file=" + configFile, "ls", "-l", target}
+	collector := newInsightSnapshotBrowseCollector(basePath, p.Limit)
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	res, runErr := process.RunStreamingDiscardStdout(
+		runCtx,
+		bin,
+		args,
+		env,
+		"",
+		func(line string, stderr bool) {
+			if !stderr && !collector.consume(line) {
+				cancelRun()
+			}
+		},
+	)
+	limitReached := collector.hasMore && ctx.Err() == nil
+	if collector.invalid {
+		return "failed", result, "snapshot browse returned invalid directory entries"
+	}
+	if runErr != nil && !limitReached {
+		if basePath != "" {
+			selection, _, inspectErr := inspectManagedSnapshotSelection(
+				ctx,
+				bin,
+				configFile,
+				env,
+				p.SnapshotID,
+				basePath,
+			)
+			if inspectErr == nil && selection.found && !selection.invalidType && selection.pathType == "file" {
+				result["entries"] = []map[string]any{
+					{
+						"name":         selection.name,
+						"path":         basePath,
+						"type":         "file",
+						"is_dir":       false,
+						"size_bytes":   selection.sizeBytes,
+						"modified_at":  selection.modifiedAt,
+						"downloadable": true,
+						"has_children": nil,
+					},
+				}
+				result["count"] = 1
+				result["has_more"] = false
+				return "success", result, ""
+			}
+		}
+		return "failed", result, snapshotBrowseFailureMessage(res, runErr)
+	}
+	result["entries"] = collector.entries
+	result["count"] = len(collector.entries)
+	result["has_more"] = collector.hasMore
+	return "success", result, ""
+}
+
+func (e *Engine) runManagedSnapshotScopeResolve(
+	ctx context.Context,
+	rep ReporterSink,
+	taskID string,
+	p Payload,
+) (string, map[string]any, string) {
+	if p.SnapshotID == "" {
+		return "failed", nil, "snapshot_id is required"
+	}
+	bin, err := e.kopiaBin(ctx)
+	if err != nil {
+		return "failed", nil, err.Error()
+	}
+	configFile, env, _, _, prepErr := e.prepareManagedRepository(
+		ctx,
+		rep,
+		taskID,
+		p,
+		repositoryPrepareConnect,
+	)
+	if prepErr != "" {
+		return "failed", nil, prepErr
+	}
+	cleanPath := strings.Trim(strings.TrimSpace(p.Path), "/\\")
+	result := newInsightSnapshotResult(p.SnapshotID, cleanPath)
+	pathType := "dir"
+	var selectedFileSize int64
+	if cleanPath == "" && strings.EqualFold(
+		strings.TrimSpace(stringValue(p.Extra["root_path_type"])),
+		"file",
+	) {
+		pathType = "file"
+		var sizeOK bool
+		selectedFileSize, sizeOK = exactInt64Value(p.Extra["root_size_bytes"])
+		if !sizeOK || selectedFileSize < 0 {
+			return "failed", result, "snapshot root file size is invalid"
+		}
+	} else if cleanPath != "" {
+		selection, inspectResult, inspectErr := inspectManagedSnapshotSelection(
+			ctx,
+			bin,
+			configFile,
+			env,
+			p.SnapshotID,
+			cleanPath,
+		)
+		if inspectErr != nil {
+			return "failed", result, snapshotBrowseFailureMessage(inspectResult, inspectErr)
+		}
+		if selection.invalidType {
+			return "failed", result, "selected snapshot path type is not supported"
+		}
+		if !selection.found {
+			return "failed", result, "selected snapshot path was not found"
+		}
+		pathType = selection.pathType
+		selectedFileSize = selection.sizeBytes
+	}
+	result["path_type"] = pathType
+	if pathType == "file" {
+		result["file_count"] = int64(1)
+		result["directory_count"] = int64(0)
+		result["size_bytes"] = selectedFileSize
+		return "success", result, ""
+	}
+
+	target := snapshotObjectPath(p.SnapshotID, cleanPath)
+	args := []string{"--config-file=" + configFile, "ls", "-lr", target}
+	var fileCount int64
+	var sizeBytes int64
+	var directoryCount int64
+	var invalidTotals bool
+	res, runErr := process.RunStreamingDiscardStdout(
+		ctx,
+		bin,
+		args,
+		env,
+		"",
+		func(line string, stderr bool) {
+			if stderr {
+				return
+			}
+			mode, size, _, _, ok := parseInsightSnapshotLongLine(line)
+			if !ok {
+				if strings.TrimSpace(line) != "" {
+					invalidTotals = true
+				}
+				return
+			}
+			if strings.HasPrefix(strings.ToLower(mode), "d") {
+				if size < 0 {
+					invalidTotals = true
+					return
+				}
+				directoryCount++
+				return
+			}
+			if !strings.HasPrefix(strings.ToLower(mode), "-") || size < 0 {
+				invalidTotals = true
+				return
+			}
+			fileCount++
+			if size > 0 && sizeBytes <= math.MaxInt64-size {
+				sizeBytes += size
+			} else if size > 0 {
+				invalidTotals = true
+			}
+		},
+	)
+	if runErr != nil {
+		return "failed", result, snapshotBrowseFailureMessage(res, runErr)
+	}
+	if invalidTotals {
+		return "failed", result, "snapshot scope contains unsupported or invalid entries"
+	}
+	result["file_count"] = fileCount
+	result["directory_count"] = directoryCount
+	result["size_bytes"] = sizeBytes
 	return "success", result, ""
 }
 
@@ -2076,6 +2426,22 @@ func parseSnapshotBrowseLongLine(line string) (mode string, size int64, modTime 
 		return "", 0, "", "", false
 	}
 	return mode, size, modTime, name, true
+}
+
+func parseInsightSnapshotLongLine(line string) (mode string, size int64, modTime string, name string, ok bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 7 || !looksLikeMode(fields[0]) {
+		return "", 0, "", "", false
+	}
+	parsedSize, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return "", 0, "", "", false
+	}
+	mode, _, modTime, name, ok = parseSnapshotBrowseLongLine(line)
+	if !ok {
+		return "", 0, "", "", false
+	}
+	return mode, parsedSize, modTime, name, true
 }
 
 func parseSnapshotBrowseTextOutput(stdout string, basePath string) []map[string]any {
