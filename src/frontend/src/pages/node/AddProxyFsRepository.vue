@@ -33,7 +33,6 @@ const emit = defineEmits<{
 const busy = ref(false)
 const proxyNodeId = ref<number | undefined>(undefined)
 const proxyNodeDir = ref('')
-const repositoryServerHost = ref('')
 const repoName = ref('')
 const quota = ref(0)
 const enableQuotaAlert = ref(false)
@@ -474,7 +473,6 @@ function buildCreatePayload() {
     bind_node_id: proxyNodeId.value,
     config: {
       proxy_node_base_dir: proxyNodeDir.value.trim(),
-      proxy_repository_server_host: repositoryServerHost.value.trim() || undefined,
       quota_gb: quota.value || 0,
       quota_alert_enabled: enableQuotaAlert.value,
       quota_alert_threshold: enableQuotaAlert.value ? Number(quotaAlertThreshold.value || 0) : 0,
@@ -666,16 +664,6 @@ watch(enableQuotaAlert, (enabled) => {
                     >
                       <RefreshCw :size="16" :class="{ 'is-spinning': proxyNodesRefreshing }" />
                     </ElButton>
-                  </div>
-                </ElFormItem>
-
-                <ElFormItem :label="t('repositoriesPage.fieldRepositoryServerHost')" class="fullscreen-form-item--in-card">
-                  <ElInput
-                    v-model="repositoryServerHost"
-                    :placeholder="t('repositoriesPage.phRepositoryServerHost')"
-                  />
-                  <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">
-                    {{ t('repositoriesPage.hintRepositoryServerHost') }}
                   </div>
                 </ElFormItem>
 
@@ -945,12 +933,6 @@ watch(enableQuotaAlert, (enabled) => {
 
               <div class="add-form-preview-section">
                 <h5 class="add-form-preview-section__title">{{ t('addS3Repo.previewConnection') }}</h5>
-                <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldRepositoryServerHost') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !repositoryServerHost }">
-                    {{ repositoryServerHost || t('repositoriesPage.repositoryServerHostNotConfigured') }}
-                  </span>
-                </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldProxyNodeBaseDir') }}</span>
                   <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !proxyNodeDir }">

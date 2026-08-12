@@ -945,12 +945,11 @@ export async function browseCopilotSnapshotDirectory(
         reject(new DOMException('Aborted', 'AbortError'))
         return
       }
-      let timer: number
       const onAbort = () => {
         window.clearTimeout(timer)
         reject(new DOMException('Aborted', 'AbortError'))
       }
-      timer = window.setTimeout(() => {
+      const timer = window.setTimeout(() => {
         signal?.removeEventListener('abort', onAbort)
         resolve()
       }, COPILOT_SNAPSHOT_BROWSE_POLL_MS)
