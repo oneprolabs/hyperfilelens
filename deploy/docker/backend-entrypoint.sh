@@ -125,7 +125,6 @@ run_api_dev() {
 run_worker_dev() {
   ensure_log_dir
   wait_for_postgres
-  run_migrations_and_register
   require_watchfiles
   echo "[entrypoint] watch backend source and restart celery worker"
   exec watchfiles --filter python --ignore-paths "${DEV_WATCH_IGNORE_PATHS}" \

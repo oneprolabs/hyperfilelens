@@ -76,8 +76,8 @@ describe('useOpsMenus', () => {
     expect(paths).toContain('/ops/audit-logs')
   })
 
-  it('shows Infrastructure Monitoring when the Enterprise extension contributes it', () => {
-    observeMenus.items = [{ label: 'Infrastructure Monitoring', to: '/ops/host-monitor' }]
+  it('shows System Monitoring when the Enterprise extension contributes it', () => {
+    observeMenus.items = [{ label: 'System Monitoring', to: '/ops/host-monitor' }]
     const menus = mountMenus()
     const paths = menus.value.flatMap((group) =>
       (group.children || []).map((child) => child.to).filter(Boolean),
@@ -86,7 +86,7 @@ describe('useOpsMenus', () => {
     const healthGroup = menus.value.find((group) => group.label === 'HEALTH & MONITORING')
     expect(healthGroup?.children?.map((item) => item.label)).toEqual([
       'Operational Health',
-      'Infrastructure Monitoring',
+      'System Monitoring',
     ])
     expect(paths).toContain('/ops/host-monitor')
   })

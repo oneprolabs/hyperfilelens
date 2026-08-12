@@ -247,7 +247,7 @@ def write_compose(out: Path, mounts: list[tuple[str, Path]]) -> None:
         "    volumes:",
         *uniq_vols,
     ]
-    for svc in ("api", "worker", "scheduler"):
+    for svc in ("migration", "api", "worker", "scheduler"):
         lines.append(f"  {svc}:")
         lines.extend(block)
     lines.append("  web:")

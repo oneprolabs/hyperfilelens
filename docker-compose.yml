@@ -1,6 +1,6 @@
 # Default local development stack. HFL source is bind-mounted with automatic process reload.
 # SourceLens remains a separate image-only stack managed by dev/sourcelens.sh.
-# Startup order: PostgreSQL/Redis, worker migrations, scheduler/API, Web, then Nginx.
+# Startup order: PostgreSQL/Redis, singleton migration, Worker/Scheduler/API, Web, then Nginx.
 # Website sources are built into build/website before Compose starts and are
 # served by the Web container; no separate Website runtime container is used.
 
@@ -34,6 +34,20 @@ x-backend-image: &backend-image
     - bridge
 
 services:
+  migration:
+    <<: *backend-image
+    profiles: ["tools"]
+    restart: "no"
+    environment:
+      <<: *backend-environment
+      LOG_FILE: /var/log/hyperfilelens/migration.log
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: migrate
+
   worker:
     <<: *backend-image
     build:

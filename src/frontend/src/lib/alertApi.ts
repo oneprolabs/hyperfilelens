@@ -68,7 +68,7 @@ function paged<T>(raw: unknown): Paged<T> {
   return { count, results }
 }
 
-const base = '/api/v1/alert'
+const base = '/api/v1/alerts'
 
 export async function listPolicies(params?: Record<string, string | number | boolean>) {
   const qs = new URLSearchParams()
