@@ -15,6 +15,9 @@ describe('Add Local Disk Repository proxy availability', () => {
   })
 
   it('includes the optional repository server address in the confirmation summary', () => {
+    expect(page).toContain("const repositoryServerHost = ref('')")
+    expect(page).toContain('v-model="repositoryServerHost"')
+    expect(page).toContain('proxy_repository_server_host: repositoryServerHost.value.trim() || undefined')
     expect(page).toContain("t('repositoriesPage.fieldRepositoryServerHost')")
     expect(page).toContain("repositoryServerHost || t('repositoriesPage.repositoryServerHostNotConfigured')")
   })
@@ -23,5 +26,12 @@ describe('Add Local Disk Repository proxy availability', () => {
     expect(page).toContain('proxy_node_base_dir: proxyNodeDir.value.trim()')
     expect(page).toContain('hfl-repo-<repository-id>')
     expect(page).not.toContain('proxy_node_dir: proxyNodeDir.value.trim()')
+  })
+
+  it('uses localized repository capacity labels', () => {
+    const locale = readFileSync(resolve(process.cwd(), 'src/locales/en.ts'), 'utf8')
+    expect(locale).toContain("noConfiguredLimit: 'No configured limit'")
+    expect(locale).toContain("colRepositoryUsage: 'Repository Usage'")
+    expect(locale).toContain("colBackingStorage: 'Backing Storage'")
   })
 })
