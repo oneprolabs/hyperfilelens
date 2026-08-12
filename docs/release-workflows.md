@@ -82,6 +82,11 @@ use. Rename old settings as follows:
 | `PROD_DEPLOY_ENABLED` | `PROD_AUTO_DEPLOY` |
 | `PREPROD_*` | `COMMUNITY_*` |
 
+During migration, the workflows prefer the new Enterprise and Community
+secret names and fall back to the existing `HFL_EXTENSION_GIT_TOKEN` and
+`PREPROD_*` secrets. Variables use only the new names. This allows credentials
+to be rotated into the new names without exposing or copying existing values.
+
 The three automatic-deploy variables deliberately use opt-out semantics:
 missing or empty means enabled, and only the exact value `false` disables the
 corresponding deployment.

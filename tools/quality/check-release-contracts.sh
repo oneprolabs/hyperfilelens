@@ -499,7 +499,7 @@ for variable in \
 	grep -F "PROD_${variable}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 done
 grep -F 'smtp_password: ${{ secrets.TEST_SMTP_PASSWORD }}' "${workflow}" >/dev/null
-grep -F 'smtp_password: ${{ secrets.COMMUNITY_SMTP_PASSWORD }}' "${workflow}" >/dev/null
+grep -F 'smtp_password: ${{ secrets.COMMUNITY_SMTP_PASSWORD || secrets.PREPROD_SMTP_PASSWORD }}' "${workflow}" >/dev/null
 grep -F 'smtp_password: ${{ secrets.PROD_SMTP_PASSWORD }}' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 for variable in AI_MODEL_PROVIDER AI_MODEL_ID AI_MODEL_DISPLAY_NAME; do
 	grep -F "TEST_${variable}" "${workflow}" >/dev/null
@@ -516,7 +516,7 @@ for variable in \
 done
 for secret in AI_MODEL_API_BASE AI_MODEL_API_KEY; do
 	grep -F "secrets.TEST_${secret}" "${workflow}" >/dev/null
-	grep -F "secrets.COMMUNITY_${secret}" "${workflow}" >/dev/null
+	grep -F "secrets.COMMUNITY_${secret} || secrets.PREPROD_${secret}" "${workflow}" >/dev/null
 	grep -F "secrets.PROD_${secret}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 done
 grep -F '/opt/hyperfilelens/install.sh manage ensure_platform_ai_model' \
@@ -538,7 +538,7 @@ for variable in EMAIL_SIGNUP_ENABLED EMAIL_CODE_LOGIN_ENABLED GOOGLE_OAUTH_ENABL
 	grep -F "vars.PROD_${variable}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 done
 grep -F 'secrets.TEST_GOOGLE_CLIENT_SECRET' "${workflow}" >/dev/null
-grep -F 'secrets.COMMUNITY_GOOGLE_CLIENT_SECRET' "${workflow}" >/dev/null
+grep -F 'secrets.COMMUNITY_GOOGLE_CLIENT_SECRET || secrets.PREPROD_GOOGLE_CLIENT_SECRET' "${workflow}" >/dev/null
 grep -F 'secrets.PROD_GOOGLE_CLIENT_SECRET' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 for runtime_key in \
 	HFL_EMAIL_SIGNUP_ENABLED HFL_EMAIL_CODE_LOGIN_ENABLED HFL_GOOGLE_OAUTH_ENABLED \
