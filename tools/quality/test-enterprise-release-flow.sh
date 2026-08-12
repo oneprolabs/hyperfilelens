@@ -68,7 +68,10 @@ grep -F "vars.TEST_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
 grep -F "vars.PROD_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
 grep -F "vars.COMMUNITY_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
 grep -F 'ENTERPRISE_EXTENSION_REPOSITORY' "${workflow}" >/dev/null
-grep -F 'secrets.ENTERPRISE_EXTENSION_GIT_TOKEN' "${workflow}" >/dev/null
+grep -F 'secrets.ENTERPRISE_EXTENSION_GIT_TOKEN || secrets.HFL_EXTENSION_GIT_TOKEN' \
+	"${workflow}" >/dev/null
+grep -F 'secrets.COMMUNITY_SSH_PRIVATE_KEY || secrets.PREPROD_SSH_PRIVATE_KEY' \
+	"${workflow}" >/dev/null
 grep -F 'Materialize Enterprise extension for quality gates' "${workflow}" >/dev/null
 grep -F 'HFL_EXTENSIONS=$extensions' "${workflow}" >/dev/null
 grep -F 'Enterprise extension contains no discoverable backend tests' "${workflow}" >/dev/null
