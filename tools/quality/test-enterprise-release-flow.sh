@@ -89,6 +89,30 @@ if grep -Fx '          npm run test:ci' "${workflow}" >/dev/null; then
 	printf 'ERROR: Host and Extension frontend test contracts must run separately\n' >&2
 	exit 1
 fi
+grep -F "HFL_RELEASE_MAX_SINGLE_BYTES: \${{ needs.prepare.outputs.edition == 'enterprise' && '1' || '1900000000' }}" \
+	"${workflow}" >/dev/null
+grep -F "HFL_RELEASE_PART_BYTES: \${{ needs.prepare.outputs.edition == 'enterprise' && '100663296' || '1073741824' }}" \
+	"${workflow}" >/dev/null
+awk '
+	/^  assemble-release:$/ { inside = 1; next }
+	inside && /^  [a-z0-9-]+:$/ { inside = 0 }
+	inside && /timeout-minutes: 120/ { found = 1 }
+	END { exit(found ? 0 : 1) }
+' "${workflow}"
+grep -F '.github/scripts/stage-enterprise-release.sh build/release/dist "$incoming"' \
+	"${workflow}" >/dev/null
+if grep -F 'build/release/dist/*' "${workflow}" >/dev/null; then
+	printf 'ERROR: Enterprise release must not use one unbounded SCP transfer\n' >&2
+	exit 1
+fi
+transfer="${ROOT}/.github/scripts/stage-enterprise-release.sh"
+grep -F 'HFL_ENTERPRISE_TRANSFER_PARALLEL:-6' "${transfer}" >/dev/null
+grep -F 'HFL_ENTERPRISE_TRANSFER_ATTEMPTS:-3' "${transfer}" >/dev/null
+grep -F 'HFL_ENTERPRISE_TRANSFER_TIMEOUT:-20m' "${transfer}" >/dev/null
+grep -F 'xargs -0 -r -n 1 -P "${parallel}"' "${transfer}" >/dev/null
+grep -F 'ServerAliveInterval=30' "${transfer}" >/dev/null
+grep -F 'timeout "${transfer_timeout}" scp' "${transfer}" >/dev/null
+grep -F 'sha256sum -c SHA256SUMS' "${transfer}" >/dev/null
 grep -F 'enterprise_commit: ${{ steps.enterprise-ref.outputs.commit }}' "${workflow}" >/dev/null
 grep -F 'Check immutable Enterprise store' "${workflow}" >/dev/null
 grep -F 'ENTERPRISE_STORED: ${{ steps.enterprise-store.outputs.stored }}' "${workflow}" >/dev/null
