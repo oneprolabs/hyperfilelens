@@ -118,7 +118,7 @@ describe('NavNotificationPopover', () => {
 
     await wrapper.get('.nav-dropdown-panel__foot-link').trigger('click')
 
-    expect(mocks.push).toHaveBeenCalledWith('/notifications')
+    expect(mocks.push).toHaveBeenCalledWith('/account/notifications')
     wrapper.unmount()
   })
 

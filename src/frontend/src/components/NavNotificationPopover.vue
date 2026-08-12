@@ -109,7 +109,7 @@ async function onItemClick(notification: UserNotification) {
       loadError.value = t('nav.notificationPopover.markReadFailed')
     }
   }
-  void router.push(notification.to || '/notifications')
+  void router.push(notification.to || '/account/notifications')
 }
 
 async function markAllRead() {
@@ -135,7 +135,7 @@ async function markAllRead() {
 
 function viewAll() {
   visible.value = false
-  void router.push('/notifications')
+  void router.push('/account/notifications')
 }
 
 watch(visible, (open) => {

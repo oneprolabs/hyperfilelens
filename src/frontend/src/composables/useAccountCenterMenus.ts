@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { User } from 'lucide-vue-next'
+import { Bell, User } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 
 /** Account center sidebar menus. */
@@ -15,6 +15,12 @@ export function useAccountCenterMenus() {
           label: t('account.sidebarProfile'),
           pageTitle: t('account.pageProfileTitle'),
           icon: User,
+        },
+        {
+          to: '/account/notifications',
+          label: t('account.sidebarNotifications'),
+          pageTitle: t('account.pageNotificationsTitle'),
+          icon: Bell,
         },
       ],
     },
