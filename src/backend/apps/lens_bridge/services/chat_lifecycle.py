@@ -1079,7 +1079,7 @@ def _reserve_chat_capacity(
     """Atomically validate trusted summaries and reserve Chat capacity once."""
 
     locked = (
-        LensSessionLink.objects.select_for_update()
+        LensSessionLink.objects.select_for_update(of=("self",))
         .select_related("gateway_link", "organization")
         .filter(
             pk=link.id,

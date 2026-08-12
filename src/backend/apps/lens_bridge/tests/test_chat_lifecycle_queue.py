@@ -281,6 +281,63 @@ class CopilotRetryTests(TestCase):
             chat_lifecycle.retry_copilot_chat_provision(session)
 
 
+class CopilotCapacityReservationTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(
+            key="copilot-capacity-reservation",
+            name="Copilot Capacity Reservation",
+        )
+        self.user = get_user_model().objects.create_user(
+            username="copilot-capacity-reservation@example.test",
+            email="copilot-capacity-reservation@example.test",
+        )
+        gateway = Node.objects.create(
+            organization=self.organization,
+            name="capacity-gateway",
+            role=Node.Role.GATEWAY,
+        )
+        self.gateway_link = LensGatewayLink.objects.create(
+            organization=self.organization,
+            gateway=gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+            origin=LensGatewayLink.Origin.USER,
+        )
+
+    @patch(
+        "apps.subscription.services.quota.assert_gateway_select_within_limits"
+    )
+    def test_reservation_locks_session_with_nullable_relations(self, _assert_limits):
+        claim_token = uuid.uuid4()
+        session = LensSessionLink.objects.create(
+            organization=self.organization,
+            hfl_user=self.user,
+            gateway_link=self.gateway_link,
+            lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+            scope_resolution_status=(
+                LensSessionLink.ScopeResolutionStatus.RESOLVED
+            ),
+            capacity_reservation_status=(
+                LensSessionLink.CapacityReservationStatus.PENDING
+            ),
+            provision_claim_token=claim_token,
+            knowledge_source=None,
+        )
+
+        chat_lifecycle._reserve_chat_capacity(
+            link=session,
+            claim_token=str(claim_token),
+            scopes=[{"path_type": "dir", "file_count": 3, "size_bytes": 4096}],
+        )
+
+        session.refresh_from_db()
+        self.assertEqual(
+            session.capacity_reservation_status,
+            LensSessionLink.CapacityReservationStatus.RESERVED,
+        )
+        self.assertEqual(session.capacity_reserved_bytes, 4096)
+
+
 class CopilotChatModelBindingTests(TestCase):
     def setUp(self):
         self.organization = Organization.objects.create(
