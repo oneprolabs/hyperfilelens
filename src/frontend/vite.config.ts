@@ -47,6 +47,10 @@ function discoverExtensionRoots(): string[] {
 }
 
 const extensionRoots = discoverExtensionRoots()
+const frontendTestScope = (process.env.HFL_FRONTEND_TEST_SCOPE || 'host').trim()
+if (!['host', 'extension'].includes(frontendTestScope)) {
+  throw new Error(`Unsupported HFL_FRONTEND_TEST_SCOPE: ${frontendTestScope}`)
+}
 const extensionFrontendSrcs = extensionRoots.map((root) => ({
   id: readExtensionId(root),
   root,
@@ -106,6 +110,7 @@ const extensionDepAlias = extensionFrontendSrcs.length
   : []
 
 const extResolveAlias = [
+  { find: '@host', replacement: frontendSrc },
   ...(platformFrontendSrc
     ? [
         { find: '@ext/platform/platform-ops', replacement: resolve(platformFrontendSrc, 'platform-ops') },
@@ -136,15 +141,14 @@ export default defineConfig(() => ({
     alias: extResolveAlias,
   },
   test: {
-    // Host tests plus extension tests when HFL_EXTENSIONS is set (ops + platform-ops).
-    // Community CI has empty HFL_EXTENSIONS so only Host ``src/**`` runs.
-    include: [
-      'src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}',
-      ...extensionFrontendSrcs.flatMap((e) => [
-        `${e.src}/ops/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}`,
-        `${e.src}/platform-ops/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}`,
-      ]),
-    ],
+    // Host and Extension tests are separate contracts. Enterprise CI runs both
+    // scopes independently so Extension injection cannot change Community tests.
+    include: frontendTestScope === 'extension'
+      ? extensionFrontendSrcs.flatMap((e) => [
+          `${e.src}/ops/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}`,
+          `${e.src}/platform-ops/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}`,
+        ])
+      : ['src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
   },
   plugins: [
     ...(platformFrontendSrc ? [hflExtOssBridgePlugin()] : []),
