@@ -740,6 +740,64 @@ class LensSessionLink(OrganizationScopedModel):
         ]
 
 
+class LensRunSubmission(OrganizationScopedModel):
+    """Durable HFL submission used to recover one SourceLens Run creation."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        BOUND = "bound", "Bound"
+        FAILED = "failed", "Failed"
+
+    hfl_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="lens_run_submissions",
+    )
+    session_link = models.ForeignKey(
+        LensSessionLink,
+        on_delete=models.CASCADE,
+        related_name="run_submissions",
+    )
+    idempotency_key = models.CharField(max_length=128)
+    question = models.TextField(blank=True, default="")
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    sl_run_uuid = models.UUIDField(null=True, blank=True, unique=True)
+    run_status = models.CharField(max_length=24, blank=True, default="")
+    last_error = models.TextField(blank=True, default="")
+    recovery_attempts = models.PositiveIntegerField(default=0)
+    recovery_claim_token = models.UUIDField(null=True, blank=True, unique=True)
+    recovery_claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    recovery_next_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        db_table = "lens_bridge_run_submission"
+        ordering = ["created_at", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["session_link", "idempotency_key"],
+                name="uniq_lens_runsub_session_key",
+            ),
+            models.UniqueConstraint(
+                fields=["session_link"],
+                condition=models.Q(status="pending", is_deleted=False),
+                name="uniq_lens_runsub_pending_session",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["status", "recovery_next_at"],
+                name="lens_brunsub_st_retry_idx",
+            ),
+        ]
+
+
 class LensUsageLedger(OrganizationScopedModel):
     """Authoritative HFL-facing usage record for one SourceLens Q&A run."""
 

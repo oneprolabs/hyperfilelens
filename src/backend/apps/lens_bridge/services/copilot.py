@@ -11,7 +11,12 @@ from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import NotFound, ValidationError
 
 from apps.iam.models import Membership, Organization
-from apps.lens_bridge.models import LensChatBinding, LensKnowledgeSource, LensSessionLink
+from apps.lens_bridge.models import (
+    LensChatBinding,
+    LensKnowledgeSource,
+    LensRunSubmission,
+    LensSessionLink,
+)
 from apps.lens_bridge.services import assistant_access, chat_user_provisioning, org_models, provisioning, sl_client
 from apps.lens_bridge.services.assistants import get_org_assistant, list_org_assistants
 
@@ -266,8 +271,15 @@ def _assistant_message_for_run(
 def _build_active_run_payload(
     run: dict[str, Any],
     messages: list[dict[str, Any]],
+    *,
+    bound_run_uuid: uuid_lib.UUID | None = None,
 ) -> dict[str, Any]:
-    run_uuid = str(run.get("uuid") or "")
+    run_uuid = str(bound_run_uuid or run.get("uuid") or "")
+    submission_started_at = (
+        LensRunSubmission.objects.filter(sl_run_uuid=run_uuid)
+        .values_list("created_at", flat=True)
+        .first()
+    )
     assistant_msg = _assistant_message_for_run(messages, run_uuid)
     thinking = {}
     if assistant_msg:
@@ -279,6 +291,31 @@ def _build_active_run_payload(
         "thinking": thinking.get("steps") or [],
         "error": run.get("error") or "",
         "started_at": run.get("started_at"),
+        "elapsed_anchor_at": (
+            submission_started_at
+            or run.get("created_at")
+            or run.get("started_at")
+        ),
+    }
+
+
+def _pending_response_state(link: LensSessionLink) -> dict[str, Any] | None:
+    """Return the user-visible state for a durable submission awaiting a Run."""
+
+    submission = (
+        LensRunSubmission.objects.filter(
+            session_link=link,
+            status=LensRunSubmission.Status.PENDING,
+        )
+        .only("created_at", "question")
+        .first()
+    )
+    if submission is None:
+        return None
+    return {
+        "status": "submitting",
+        "started_at": submission.created_at,
+        "question": submission.question,
     }
 
 
@@ -288,10 +325,17 @@ def resolve_active_run(link: LensSessionLink) -> dict[str, Any] | None:
         return None
     try:
         run = _fetch_sl_run(link.active_run_uuid, user=link.hfl_user)
-    except sl_client.LensBridgeError:
-        clear_active_run(link)
-        return None
+    except sl_client.LensBridgeError as exc:
+        if exc.status_code == 404:
+            clear_active_run(link)
+            return None
+        raise
     status = str(run.get("status") or "")
+    if status:
+        LensRunSubmission.objects.filter(sl_run_uuid=link.active_run_uuid).update(
+            run_status=status,
+            updated_at=timezone.now(),
+        )
     if status in TERMINAL_RUN_STATUSES:
         from apps.lens_bridge.services import usage
 
@@ -309,7 +353,11 @@ def get_active_run_payload(link: LensSessionLink) -> dict[str, Any] | None:
     if run is None:
         return None
     messages = _fetch_session_messages(link)
-    return _build_active_run_payload(run, messages)
+    return _build_active_run_payload(
+        run,
+        messages,
+        bound_run_uuid=link.active_run_uuid,
+    )
 
 
 def sync_copilot_session(link: LensSessionLink) -> dict[str, Any]:
@@ -320,11 +368,25 @@ def sync_copilot_session(link: LensSessionLink) -> dict[str, Any]:
     active_run = None
     run = resolve_active_run(link)
     if run is not None:
-        active_run = _build_active_run_payload(run, messages)
+        active_run = _build_active_run_payload(
+            run,
+            messages,
+            bound_run_uuid=link.active_run_uuid,
+        )
+        response_state = {
+            "status": "running",
+            "started_at": active_run["elapsed_anchor_at"],
+        }
+    else:
+        response_state = _pending_response_state(link) or {
+            "status": "idle",
+            "started_at": None,
+        }
     return {
         "session_id": link.id,
         "messages": messages,
         "active_run": active_run,
+        "response_state": response_state,
         "run_outcomes": usage.run_outcomes_for_messages(link, messages),
     }
 
@@ -340,5 +402,9 @@ def cancel_copilot_run(link: LensSessionLink, run_uuid: uuid_lib.UUID) -> dict[s
     from apps.lens_bridge.services import usage
 
     usage.capture_run_usage(link, data)
+    LensRunSubmission.objects.filter(sl_run_uuid=run_uuid).update(
+        run_status=str(data.get("status") or "cancelled"),
+        updated_at=timezone.now(),
+    )
     clear_active_run(link)
     return data

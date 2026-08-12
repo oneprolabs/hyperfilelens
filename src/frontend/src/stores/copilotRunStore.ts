@@ -3,10 +3,12 @@ import {
   cancelCopilotRun,
   syncCopilotSession,
   type LensCopilotActiveRun,
+  type LensCopilotResponseState,
   type LensCopilotSyncResponse,
 } from '../lib/lensApi'
 import {
   applySessionActiveRun,
+  applySessionRunSubmission,
   consumeSessionStream,
   detachAllSessionStreams,
   detachSessionStream,
@@ -20,6 +22,7 @@ export type CopilotSyncHandlers = {
     sessionId: number,
     messages: LensCopilotSyncResponse['messages'],
     runOutcomes: LensCopilotSyncResponse['run_outcomes'],
+    responseState?: LensCopilotResponseState,
   ) => void
   onSessionMeta?: (sessionId: number, activeRun: LensCopilotActiveRun | null) => void
   onSessionSync?: (sessionId: number, payload: LensCopilotSyncResponse) => void
@@ -53,9 +56,13 @@ export function useCopilotRunStore() {
     opts?: { attachStream?: boolean },
   ) {
     const payload = await syncCopilotSession(sessionId)
-    handlers.onMessages(sessionId, payload.messages, payload.run_outcomes || [])
+    handlers.onMessages(
+      sessionId,
+      payload.messages,
+      payload.run_outcomes || [],
+      payload.response_state,
+    )
     handlers.onSessionMeta?.(sessionId, payload.active_run)
-    handlers.onSessionSync?.(sessionId, payload)
     if (payload.active_run && isActiveRunStatus(payload.active_run.status)) {
       applySessionActiveRun(
         sessionId,
@@ -63,17 +70,23 @@ export function useCopilotRunStore() {
         payload.active_run.status,
         payload.active_run.partial_content || '',
         payload.active_run.thinking || [],
+        payload.active_run.elapsed_anchor_at,
       )
       if (opts?.attachStream && sessionId === activeSessionId) {
         void attachStream(sessionId, payload.active_run.uuid, handlers, activeSessionId)
       }
+    } else if (payload.response_state?.status === 'submitting') {
+      applySessionRunSubmission(sessionId, payload.response_state.started_at)
     } else {
-      const hadActiveRun = isActiveRunStatus(getSessionRunStream(sessionId).runStatus)
+      const previousState = getSessionRunStream(sessionId)
+      const hadActiveRun = isActiveRunStatus(previousState.runStatus)
+      const hadPendingSubmission = previousState.isSubmitting
       resetSessionRunStream(sessionId)
-      if (hadActiveRun) {
+      if (hadActiveRun || hadPendingSubmission) {
         notifySessionComplete(sessionId, activeSessionId)
       }
     }
+    handlers.onSessionSync?.(sessionId, payload)
     return payload
   }
 
@@ -91,10 +104,15 @@ export function useCopilotRunStore() {
   async function startRunStream(
     sessionId: number,
     runUuid: string,
+    status: string,
     handlers: CopilotSyncHandlers,
     activeSessionId: number | null,
   ) {
-    applySessionActiveRun(sessionId, runUuid, 'queued', '', [])
+    if (!isActiveRunStatus(status)) {
+      await syncSession(sessionId, handlers, activeSessionId, { attachStream: false })
+      return
+    }
+    applySessionActiveRun(sessionId, runUuid, status, '', [])
     if (sessionId === activeSessionId) {
       await attachStream(sessionId, runUuid, handlers, activeSessionId)
     }
