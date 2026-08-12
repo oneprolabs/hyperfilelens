@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -78,6 +79,24 @@ func TestRepositoryNASPathRejectsEscapes(t *testing.T) {
 	want := filepath.Clean(testRepositoryMountPoint(t, 42) + "/hp-repos/storage-42")
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNASRepositoryWriteDeniedIsLimitedToSMBPermissionErrors(t *testing.T) {
+	smb := mustNASSpec(t, map[string]any{
+		"protocol": "smb", "server": "10.0.0.15", "share": "backup",
+		"username": "backup", "password": "secret", "mount_point": testRepositoryMountPoint(t, 42),
+	})
+	if !isNASRepositoryWriteDenied(*smb, fs.ErrPermission) {
+		t.Fatal("expected SMB permission error to be classified")
+	}
+	nfs := *smb
+	nfs.Protocol = "nfs"
+	if isNASRepositoryWriteDenied(nfs, fs.ErrPermission) {
+		t.Fatal("did not expect NFS permission error to be classified")
+	}
+	if isNASRepositoryWriteDenied(*smb, fs.ErrNotExist) {
+		t.Fatal("did not expect non-permission error to be classified")
 	}
 }
 

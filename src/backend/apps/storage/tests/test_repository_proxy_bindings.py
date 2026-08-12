@@ -14,6 +14,7 @@ from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.nas_repository import (
+    NASRepositoryError,
     check_proxy_nas_repository,
     initialize_proxy_nas_repository,
 )
@@ -259,6 +260,33 @@ class StorageRepositoryProxyBindingTests(TestCase):
         run_agent_task_sync.reset_mock()
         check_proxy_nas_repository(repo)
         self.assertEqual(run_agent_task_sync.call_args.kwargs["kind"], "repo.status")
+
+    @mock.patch("apps.storage.services.internal.nas_repository.run_agent_task_sync")
+    def test_target_nas_initializer_preserves_agent_write_denied_code(self, run_agent_task_sync):
+        run_agent_task_sync.return_value = mock.Mock(
+            task=mock.Mock(
+                status="failed",
+                last_error="The SMB share was mounted, but the Agent could not create the repository directory.",
+            ),
+            result={"error_code": "NAS_REPOSITORY_WRITE_DENIED"},
+            ok=False,
+        )
+        repo = Repository.objects.create(
+            organization_id=self.org.id,
+            name="target-nas-write-denied",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.SMB,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=self.proxy_a.id,
+            config={"server_address": "192.168.8.82", "share_path": "/smb-share"},
+        )
+
+        with self.assertRaises(NASRepositoryError) as raised:
+            initialize_proxy_nas_repository(repo)
+
+        self.assertEqual(raised.exception.error_code, "NAS_REPOSITORY_WRITE_DENIED")
 
     def test_proxy_fs_rejects_non_proxy_bind_node(self):
         agent = Node.objects.create(

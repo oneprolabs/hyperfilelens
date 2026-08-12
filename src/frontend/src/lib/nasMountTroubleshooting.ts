@@ -1,4 +1,5 @@
 export const NAS_MOUNT_OPTIONS_FOCUS_QUERY = 'mount-options'
+export const NAS_REPOSITORY_WRITE_DENIED = 'NAS_REPOSITORY_WRITE_DENIED'
 
 export const SMB_MOUNT_OPTION_EXAMPLES = [
   'vers=3.0',
@@ -26,6 +27,17 @@ export function isSmbMountNegotiationError(message: string): boolean {
     SMB_MOUNT_NEGOTIATION_PATTERNS.some((pattern) => pattern.test(normalized)) &&
     SMB_MOUNT_CONTEXT_PATTERNS.some((pattern) => pattern.test(normalized))
   )
+}
+
+export function nasRepositoryFailureMessage(
+  errorCode: string | null | undefined,
+  fallback: string | null | undefined,
+  t: (key: string) => string,
+): string {
+  if (String(errorCode || '').trim() === NAS_REPOSITORY_WRITE_DENIED) {
+    return t('repositoriesPage.nasRepositoryWriteDenied')
+  }
+  return String(fallback || '').trim()
 }
 
 export function buildNasRepairMountOptionsPath(repositoryId: number): string {

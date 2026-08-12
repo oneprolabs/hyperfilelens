@@ -1809,6 +1809,7 @@ export const en = {
     taskOperationCheck: 'Repository Check',
     createAccepted: 'Repository creation started. Track progress in the list.',
     createFailed: 'Repository creation failed. Review the task details and retry or delete the failed entry.',
+    nasRepositoryWriteDenied: 'The SMB share was mounted, but the backup account cannot create the repository directory. Check the NAS share ACL for create, write, and delete permissions; also confirm that the share is not read-only and has available quota.',
     createSucceeded: 'Repository is ready',
     taskStatusPending: 'Pending',
     taskStatusRunning: 'Running',

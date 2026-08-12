@@ -28,7 +28,9 @@ NAS_AGENT_REPOSITORY_SUBDIR_TEMPLATE = f"{NAS_REPOSITORY_ROOT}/agent-{{node_id}}
 
 
 class NASRepositoryError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, error_code: str = "REPOSITORY_CREATE_FAILED"):
+        super().__init__(message)
+        self.error_code = error_code
 
 
 def nas_agent_repository_subdir(node_id: int) -> str:
@@ -214,7 +216,12 @@ def _run_proxy_nas_repository_task(
             outcome.result,
             last_error=str(getattr(outcome.task, "last_error", "") or ""),
         )
-        raise NASRepositoryError(message or "NAS repository initialization failed.")
+        result = outcome.result if isinstance(outcome.result, dict) else {}
+        error_code = str(result.get("error_code") or "").strip()
+        raise NASRepositoryError(
+            message or "NAS repository initialization failed.",
+            error_code=error_code or "REPOSITORY_CREATE_FAILED",
+        )
     if not health_only:
         sync_proxy_mount_path_from_repo_status(repository, outcome.result)
     logger.info(

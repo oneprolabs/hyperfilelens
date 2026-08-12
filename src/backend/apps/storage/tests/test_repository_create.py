@@ -7,6 +7,7 @@ from apps.iam.models import Membership, Organization
 from apps.node.models import Node
 from apps.storage.repositories.models import Credential, Repository, RepositoryTask
 from apps.storage.services.internal.repository_create import (
+    _create_error_code,
     enqueue_repository_create_task,
     run_repository_create_task,
 )
@@ -15,6 +16,7 @@ from apps.storage.services.internal.repository_errors import (
     RepositoryAlreadyExistsError,
 )
 from apps.storage.services.internal.repository_initializer import RepositoryInitializationError
+from apps.storage.services.internal.nas_repository import NASRepositoryError
 from apps.task.models import Task
 
 
@@ -34,6 +36,50 @@ class RepositoryCreateTaskTests(TestCase):
             organization=self.org,
             role=Membership.Role.ADMIN,
         )
+
+    def test_nas_write_denied_error_code_is_preserved(self):
+        self.assertEqual(
+            _create_error_code(NASRepositoryError(
+                "The SMB share was mounted, but the Agent could not create the repository directory.",
+                error_code="NAS_REPOSITORY_WRITE_DENIED",
+            )),
+            "NAS_REPOSITORY_WRITE_DENIED",
+        )
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_proxy_nas_repository"
+    )
+    def test_nas_write_denied_failure_is_saved_on_task(self, initialize):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="write-denied-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.41",
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="write-denied-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.SMB,
+            status=Repository.Status.CREATING,
+            health=Repository.Health.OFFLINE,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+            config={"server_address": "10.0.0.10", "share_path": "/backup"},
+        )
+        initialize.side_effect = NASRepositoryError(
+            "The SMB share was mounted, but the Agent could not create the repository directory.",
+            error_code="NAS_REPOSITORY_WRITE_DENIED",
+        )
+        repository_task = self._enqueue_create(repository)
+
+        result = run_repository_create_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["error_code"], "NAS_REPOSITORY_WRITE_DENIED")
+        repository_task.task.refresh_from_db()
+        self.assertEqual(repository_task.task.error_code, "NAS_REPOSITORY_WRITE_DENIED")
 
     def _s3_repository(self, *, name: str = "async-s3", status=Repository.Status.CREATING):
         credential = Credential.objects.create(
