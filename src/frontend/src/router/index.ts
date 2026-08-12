@@ -160,13 +160,13 @@ export const router = createRouter({
         { path: 'ops/channels', component: OpsNotificationChannelsPage },
         { path: 'ops/delivery-history', component: OpsNotificationRecordsPage },
         { path: 'ops/audit-logs', component: OpsAuditPage },
-        { path: 'notifications', component: NotificationsPage },
         {
           path: 'account',
           component: AccountSettingsLayout,
           redirect: '/account/profile',
           children: [
             { path: 'profile', component: AccountProfilePage },
+            { path: 'notifications', component: NotificationsPage },
           ],
         },
         { path: 'search', component: GlobalSearchPage },

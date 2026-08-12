@@ -57,7 +57,7 @@ async function openNotification(notification: UserNotification) {
       loadError.value = t('notificationsPage.markReadFailed')
     }
   }
-  await router.push(notification.to || '/notifications')
+  await router.push(notification.to || '/account/notifications')
 }
 
 async function markAllRead() {
@@ -90,10 +90,7 @@ watch(
 <template>
   <div class="notifications-page">
     <header class="notifications-page__header">
-      <div>
-        <h1>{{ t('notificationsPage.title') }}</h1>
-        <p>{{ t('notificationsPage.subtitle') }}</p>
-      </div>
+      <p>{{ t('notificationsPage.subtitle') }}</p>
       <el-button
         :disabled="!unreadCount"
         :loading="markingAll"
@@ -175,20 +172,20 @@ watch(
 <style scoped>
 .notifications-page {
   display: flex;
-  min-height: calc(var(--app-viewport-height) - var(--app-header-height));
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
   flex-direction: column;
   gap: 16px;
-  padding: 20px 24px 16px;
 }
 
 .notifications-page__header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
 }
 
-.notifications-page__header h1,
 .notifications-page__header p {
   margin: 0;
 }
@@ -201,12 +198,7 @@ watch(
   background: var(--el-color-danger-light-9);
 }
 
-.notifications-page__header h1 {
-  font-size: 20px;
-}
-
 .notifications-page__header p {
-  margin-top: 6px;
   color: var(--el-text-color-secondary);
 }
 
@@ -239,10 +231,6 @@ watch(
 }
 
 @media (max-width: 767.98px) {
-  .notifications-page {
-    padding: 16px;
-  }
-
   .notifications-page__header {
     align-items: stretch;
     flex-direction: column;
