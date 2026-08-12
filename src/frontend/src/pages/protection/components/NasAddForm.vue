@@ -533,6 +533,7 @@ defineExpose({
   justify-content: space-between;
   gap: 10px;
   padding: 2px 0;
+  height: 34px;
   line-height: 1.35;
   max-width: 100%;
 }
