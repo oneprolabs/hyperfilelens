@@ -136,7 +136,7 @@ class CopilotSessionApiTests(TestCase):
             f"/api/lens/runs/{run_uuid}/stream/",
             hfl_user=self.user,
         )
-        response.close()
+        self.assertEqual(b"".join(response.streaming_content), b"data: {}\n\n")
 
     @patch("apps.lens_bridge.api.views.sl_client.stream_sse")
     def test_run_stream_rejects_a_run_not_bound_to_the_session(self, stream_sse):

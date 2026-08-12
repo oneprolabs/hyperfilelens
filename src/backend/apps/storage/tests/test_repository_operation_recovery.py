@@ -54,6 +54,7 @@ class RepositoryOperationRecoveryTests(TestCase):
                     "capabilities": [
                         "repository_operation_v1",
                         "repository_cleanup_v1",
+                        "repository_cleanup_v2",
                     ]
                 }
             },
@@ -66,7 +67,11 @@ class RepositoryOperationRecoveryTests(TestCase):
             health=Repository.Health.ONLINE,
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=self.node.id,
-            config={"proxy_node_dir": "/data/recovery-repository"},
+            config={
+                "proxy_node_base_dir": "/data",
+                "proxy_node_dir": "/data/hfl-repo-recovery",
+                "proxy_fs_layout": "managed_subdir_v1",
+            },
         )
         discover_repository_execution_targets()
 
