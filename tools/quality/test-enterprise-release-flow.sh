@@ -98,6 +98,27 @@ grep -F 'Enterprise release package has an invalid extension_commit' \
 grep -F '"ls-remote"' "${workflow}" >/dev/null
 grep -F 'f"refs/tags/{tag}"' "${workflow}" >/dev/null
 grep -F 'gh release delete "$ARTIFACT_ID"' "${workflow}" >/dev/null
+
+# actions/checkout leaves an Authorization extraheader in local Git config. The
+# extension auth environment must reset it before adding the private-repo token,
+# otherwise GitHub rejects the duplicate Authorization headers with HTTP 400.
+HFL_EXTENSION_GIT_TOKEN=01234567890123456789 python3 - "${ROOT}" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from tools.extensions.materialize_extensions import _git_env
+
+env = _git_env(
+    "https://github.com/oneprolabs/hyperfilelens-ee.git",
+    require_https_auth=True,
+)
+assert env["GIT_CONFIG_COUNT"] == "2"
+assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+assert env["GIT_CONFIG_VALUE_0"] == ""
+assert env["GIT_CONFIG_KEY_1"] == env["GIT_CONFIG_KEY_0"]
+assert env["GIT_CONFIG_VALUE_1"].startswith("AUTHORIZATION: basic ")
+PY
+
 grep -F 'uses: ./.github/workflows/enterprise_promotion.yml' "${promotion}" >/dev/null
 grep -F 'needs: validate-production-promotion' "${promotion}" >/dev/null
 grep -F '[[ "$GITHUB_REF" == "refs/heads/main" ]]' "${promotion}" >/dev/null
