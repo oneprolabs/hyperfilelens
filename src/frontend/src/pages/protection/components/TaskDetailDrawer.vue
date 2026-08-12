@@ -45,6 +45,7 @@ import { lifecycleStatusTagAttrs } from '../../../lib/statusTag'
 import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../../lib/taskBackupSourceResource'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../../lib/taskStepExpansion'
+import { nasRepositoryFailureMessage } from '../../../lib/nasMountTroubleshooting'
 import TaskStatusTag from '../../../components/TaskStatusTag.vue'
 import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
@@ -326,10 +327,17 @@ function taskEventMetadataText(event: TaskEventRow, keys: string[]) {
 
 function eventErrorText(event: TaskEventRow) {
   const message = taskEventMetadataText(event, ['error_message'])
-  if (!message) return ''
   const code = taskEventMetadataText(event, ['error_code'])
-  return code ? `[${code}] ${message}` : message
+  const display = nasRepositoryFailureMessage(code, message, t)
+  if (!display) return ''
+  return code && display === message ? `[${code}] ${display}` : display
 }
+
+const taskFailureMessage = computed(() => nasRepositoryFailureMessage(
+  activeTask.value?.error_code,
+  activeTask.value?.error_message,
+  t,
+))
 
 function eventObjectText(event: TaskEventRow) {
   const canonicalValue = taskEventObjectText(event)
@@ -798,6 +806,14 @@ watch(
           </div>
         </div>
       </section>
+
+      <ElAlert
+        v-if="taskFailureMessage"
+        :title="taskFailureMessage"
+        type="error"
+        :closable="false"
+        show-icon
+      />
 
       <ElAlert
         v-if="['waiting', 'blocked'].includes(activeTask.status) && activeDependencies.length"

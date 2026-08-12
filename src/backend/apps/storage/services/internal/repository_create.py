@@ -811,7 +811,9 @@ def _create_error_code(exc: Exception) -> str:
         return REPOSITORY_ALREADY_EXISTS_CODE
     if isinstance(exc, RepositoryInitializationError):
         return "REPOSITORY_S3_CREATE_FAILED"
-    if isinstance(exc, (NASRepositoryError, ProxyFSRepositoryError)):
+    if isinstance(exc, NASRepositoryError):
+        return exc.error_code
+    if isinstance(exc, ProxyFSRepositoryError):
         return "REPOSITORY_CREATE_FAILED"
     if isinstance(exc, (ValidationError, DRFValidationError)):
         return "REPOSITORY_CREATE_INVALID"

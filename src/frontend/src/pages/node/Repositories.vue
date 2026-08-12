@@ -15,6 +15,7 @@ import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
 import { nasMountProtocolIcon } from '../../lib/resourceIcons'
+import { nasRepositoryFailureMessage } from '../../lib/nasMountTroubleshooting'
 import {
   DEFAULT_S3_OBJECT_PREFIX,
   distinctS3EndpointPair,
@@ -958,7 +959,11 @@ async function reconcileRepositoryCreateTasks() {
       } else if (['failed', 'cancelled', 'timeout'].includes(status)) {
         repositoryCreatePending.value.delete(repositoryId)
         ElMessage.error({
-          message: result.value.error_message || `${pending.repositoryName}: ${t('repositoriesPage.createFailed')}`,
+          message: nasRepositoryFailureMessage(
+            result.value.error_code,
+            result.value.error_message,
+            t,
+          ) || `${pending.repositoryName}: ${t('repositoriesPage.createFailed')}`,
           grouping: true,
         })
         terminal = true

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"math"
 	"os"
@@ -33,6 +34,8 @@ const (
 	kopiaEstimatedUsageFactor            = 1.05
 	repositoryAlreadyExistsCode          = "STORAGE.REPOSITORY_ALREADY_EXISTS"
 	repositoryAlreadyExistsMessage       = "A Kopia repository already exists at the selected location. Import is not supported in this version. Choose a different storage location."
+	nasRepositoryWriteDeniedCode         = "NAS_REPOSITORY_WRITE_DENIED"
+	nasRepositoryWriteDeniedMessage      = "The SMB share was mounted, but the Agent could not create the repository directory."
 )
 
 type repositoryPrepareMode uint8
@@ -528,6 +531,14 @@ func (e *Engine) prepareManagedRepositoryLocked(
 			return os.MkdirAll(repoPath, 0o755)
 		}); mkErr != nil {
 			nassvc.LogSpec("repository_mkdir_failed", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath, "err", mkErr.Error())
+			if isNASRepositoryWriteDenied(*spec.TargetNAS, mkErr) {
+				return "", nil, map[string]any{
+					"error_code":   nasRepositoryWriteDeniedCode,
+					"protocol":     spec.TargetNAS.Protocol,
+					"stage":        "repository_directory_create",
+					"mount_status": "mounted",
+				}, repositorySpec{}, nasRepositoryWriteDeniedMessage
+			}
 			return "", nil, nil, repositorySpec{}, mkErr.Error()
 		}
 		nassvc.LogSpec("repository_mkdir_ok", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath)
@@ -659,6 +670,10 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		map[string]any{"config_file": configFile},
 	))
 	return configFile, env, result, spec, ""
+}
+
+func isNASRepositoryWriteDenied(spec nassvc.Spec, err error) bool {
+	return spec.Protocol == "smb" && errors.Is(err, fs.ErrPermission)
 }
 
 func managedProxyFSCreatePathExists(spec repositorySpec) (bool, error) {
