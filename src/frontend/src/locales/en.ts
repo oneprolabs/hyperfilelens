@@ -2547,7 +2547,7 @@ export const en = {
     nav: {
       groupHealthMonitoring: 'HEALTH & MONITORING',
       operationalHealth: 'Operational Health',
-      monitor: 'Infrastructure Monitoring',
+      monitor: 'System Monitoring',
       groupAlerting: 'ALERTING',
       groupActivity: 'ACTIVITY',
       alerts: 'Alerts',

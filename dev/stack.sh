@@ -1085,6 +1085,15 @@ sync_optional_identity_settings() {
 	fi
 }
 
+run_dev_migration_gate() {
+	log "Stopping backend services before database migration"
+	compose stop api worker scheduler
+	log "Starting development data services"
+	compose up -d --wait --no-build --pull never postgres redis
+	log "Applying backend database migrations"
+	compose --profile tools run --rm --no-deps migration
+}
+
 cmd_up() {
 	apply_mirror_env_defaults
 	require_dev_build_tools
@@ -1095,6 +1104,7 @@ cmd_up() {
 	ensure_bridge_network
 	prepare_sourcelens_dev 0
 	prepare_dev 0
+	run_dev_migration_gate
 	log "Starting hot-reload HFL stack from explicitly prepared images"
 	compose up -d --no-build --pull never --remove-orphans
 	refresh_website_web_mount
@@ -1124,6 +1134,7 @@ cmd_restart() {
 	ensure_bridge_network
 	prepare_sourcelens_dev "${force}"
 	prepare_dev "${force}"
+	run_dev_migration_gate
 
 	if [[ "${force}" -eq 1 ]]; then
 		log "Force restart: recreating services from freshly rebuilt images"

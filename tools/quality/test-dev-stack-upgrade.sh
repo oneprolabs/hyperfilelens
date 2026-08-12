@@ -137,8 +137,28 @@ refresh_website_web_mount
 
 cmd_up_body="$(sed -n '/^cmd_up()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
 cmd_restart_body="$(sed -n '/^cmd_restart()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
+run_dev_migration_gate_body="$(sed -n '/^run_dev_migration_gate()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
 grep -F 'refresh_website_web_mount' <<<"${cmd_up_body}" >/dev/null
 grep -F 'refresh_website_web_mount' <<<"${cmd_restart_body}" >/dev/null
+for command_body in "${cmd_up_body}" "${cmd_restart_body}"; do
+	gate_line="$(grep -nF 'run_dev_migration_gate' <<<"${command_body}" | cut -d: -f1)"
+	application_line="$(grep -nF 'compose up -d --no-build --pull never' <<<"${command_body}" | cut -d: -f1 | tail -n 1)"
+	[[ -n "${gate_line}" ]]
+	[[ -n "${application_line}" ]]
+	((gate_line < application_line))
+done
+backend_stop_line="$(grep -nF 'compose stop api worker scheduler' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
+data_services_line="$(grep -nF 'compose up -d --wait --no-build --pull never postgres redis' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
+migration_line="$(grep -nF 'compose --profile tools run --rm --no-deps migration' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
+[[ -n "${backend_stop_line}" ]]
+[[ -n "${data_services_line}" ]]
+[[ -n "${migration_line}" ]]
+((backend_stop_line < data_services_line))
+((data_services_line < migration_line))
+
+# The singleton migration must load the same backend extensions as runtime services.
+grep -F 'for svc in ("migration", "api", "worker", "scheduler"):' \
+	"${ROOT_REPO}/tools/extensions/materialize_extensions.py" >/dev/null
 
 # Runtime artifacts are mounted below the backend source root in development.
 # Publishing Python helpers into media must not restart API or Celery processes.
@@ -149,6 +169,11 @@ grep -F 'python /dev-process-supervisor.py' "${backend_entrypoint}" >/dev/null
 grep -F 'deploy/docker/dev-process-supervisor.py deploy/bootstrap' \
 	"${ROOT_REPO}/dev/stack.sh" >/dev/null
 [[ "$(grep -Fc -- '--ignore-paths "${DEV_WATCH_IGNORE_PATHS}"' "${backend_entrypoint}")" -eq 2 ]]
+worker_dev_entrypoint="$(sed -n '/^run_worker_dev()/,/^}/p' "${backend_entrypoint}")"
+if grep -F 'run_migrations_and_register' <<<"${worker_dev_entrypoint}" >/dev/null; then
+	echo 'Development worker must not run singleton migrations' >&2
+	exit 1
+fi
 
 # Development Nginx must re-resolve API/Web after Compose recreates containers.
 dev_upstreams="${ROOT_REPO}/deploy/nginx/development-upstreams.conf"
