@@ -89,10 +89,6 @@ if grep -Fx '          npm run test:ci' "${workflow}" >/dev/null; then
 	printf 'ERROR: Host and Extension frontend test contracts must run separately\n' >&2
 	exit 1
 fi
-grep -F "HFL_RELEASE_MAX_SINGLE_BYTES: \${{ needs.prepare.outputs.edition == 'enterprise' && '1' || '1900000000' }}" \
-	"${workflow}" >/dev/null
-grep -F "HFL_RELEASE_PART_BYTES: \${{ needs.prepare.outputs.edition == 'enterprise' && '100663296' || '1073741824' }}" \
-	"${workflow}" >/dev/null
 awk '
 	/^  assemble-release:$/ { inside = 1; next }
 	inside && /^  [a-z0-9-]+:$/ { inside = 0 }
@@ -101,18 +97,31 @@ awk '
 ' "${workflow}"
 grep -F '.github/scripts/stage-enterprise-release.sh build/release/dist "$incoming"' \
 	"${workflow}" >/dev/null
-if grep -F 'build/release/dist/*' "${workflow}" >/dev/null; then
-	printf 'ERROR: Enterprise release must not use one unbounded SCP transfer\n' >&2
+if grep -F 'HFL_RELEASE_MAX_SINGLE_BYTES:' "${workflow}" >/dev/null \
+	|| grep -F 'HFL_RELEASE_PART_BYTES:' "${workflow}" >/dev/null; then
+	printf 'ERROR: Enterprise staging must retain the canonical single archive\n' >&2
 	exit 1
 fi
 transfer="${ROOT}/.github/scripts/stage-enterprise-release.sh"
-grep -F 'HFL_ENTERPRISE_TRANSFER_PARALLEL:-6' "${transfer}" >/dev/null
-grep -F 'HFL_ENTERPRISE_TRANSFER_ATTEMPTS:-3' "${transfer}" >/dev/null
-grep -F 'HFL_ENTERPRISE_TRANSFER_TIMEOUT:-20m' "${transfer}" >/dev/null
-grep -F 'xargs -0 -r -n 1 -P "${parallel}"' "${transfer}" >/dev/null
+grep -F 'TEST_RELEASE_DOWNLOAD_PROXY_URL' "${workflow}" >/dev/null
+grep -F 'gh-release-upload.sh "${ARTIFACT_ID}"' "${transfer}" >/dev/null
+grep -F 'release-assets.githubusercontent.com' "${transfer}" >/dev/null
 grep -F 'ServerAliveInterval=30' "${transfer}" >/dev/null
-grep -F 'timeout "${transfer_timeout}" scp' "${transfer}" >/dev/null
-grep -F 'sha256sum -c SHA256SUMS' "${transfer}" >/dev/null
+grep -F '<.github/scripts/download-enterprise-release.sh' "${transfer}" >/dev/null
+if grep -F 'scp ' "${transfer}" >/dev/null; then
+	printf 'ERROR: Enterprise package staging must not copy release assets over SSH\n' >&2
+	exit 1
+fi
+downloader="${ROOT}/.github/scripts/download-enterprise-release.sh"
+grep -F -- '--proxy "${download_proxy}"' "${downloader}" >/dev/null
+grep -F -- '--continue-at -' "${downloader}" >/dev/null
+grep -F -- '--max-time 3000' "${downloader}" >/dev/null
+grep -F 'sha256sum -c SHA256SUMS' "${downloader}" >/dev/null
+grep -F 'Download release candidate from temporary draft' "${workflow}" >/dev/null
+if grep -F 'Download Enterprise release candidate from TEST host' "${workflow}" >/dev/null; then
+	printf 'ERROR: Enterprise verification must not copy the package back over SCP\n' >&2
+	exit 1
+fi
 grep -F 'enterprise_commit: ${{ steps.enterprise-ref.outputs.commit }}' "${workflow}" >/dev/null
 grep -F 'Check immutable Enterprise store' "${workflow}" >/dev/null
 grep -F 'ENTERPRISE_STORED: ${{ steps.enterprise-store.outputs.stored }}' "${workflow}" >/dev/null
@@ -121,7 +130,6 @@ grep -F 'flock -s 9' "${workflow}" >/dev/null
 grep -F -- '--expected-commit "$ENTERPRISE_COMMIT"' "${workflow}" >/dev/null
 grep -F 'validate_build_contract()' "${workflow}" >/dev/null
 grep -F 'Selected tag predates the edition-aware release contract' "${workflow}" >/dev/null
-grep -F '"$TEST_SSH_USER@$TEST_SSH_HOST:$remote/."' "${workflow}" >/dev/null
 grep -F 'local image_version="${HFL_IMAGE_VERSION:-${HFL_VERSION}}"' \
 	"${ROOT}/release/build.sh" >/dev/null
 grep -F 'tar xzf hyperfilelens-${version}${edition_suffix}.tar.gz' \
@@ -135,6 +143,60 @@ grep -F 'Enterprise release package has an invalid extension_commit' \
 grep -F '"ls-remote"' "${workflow}" >/dev/null
 grep -F 'f"refs/tags/{tag}"' "${workflow}" >/dev/null
 grep -F 'gh release delete "$ARTIFACT_ID"' "${workflow}" >/dev/null
+
+# Exercise the target-side downloader without network access. The fake curl
+# records its arguments and materializes the two expected assets, proving that
+# the canonical archive is downloaded through the configured proxy and then
+# covered by SHA256SUMS.
+download_test="$(mktemp -d)"
+trap 'rm -rf "${download_test}"' EXIT
+mkdir -p "${download_test}/bin" "${download_test}/.incoming/candidate"
+archive_name=hyperfilelens-1.2.3-ee.tar.gz
+printf 'enterprise archive\n' >"${download_test}/${archive_name}"
+archive_digest="$(sha256sum "${download_test}/${archive_name}" | awk '{print $1}')"
+printf '%s  %s\n' "${archive_digest}" "${archive_name}" >"${download_test}/SHA256SUMS"
+# Preserve the production downloader verbatim except for its fixed TEST-store
+# root, which an unprivileged CI contract test cannot create under /root.
+sed "s#/root/hfl-release#${download_test}#g" "${downloader}" \
+	>"${download_test}/downloader"
+chmod +x "${download_test}/downloader"
+cat >"${download_test}/bin/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%q ' "$@" >>"${HFL_FAKE_CURL_LOG}"
+printf '\n' >>"${HFL_FAKE_CURL_LOG}"
+output=""
+url=""
+while (($#)); do
+	case "$1" in
+	--output) output=$2; shift 2 ;;
+	https://*) url=$1; shift ;;
+	*) shift ;;
+	esac
+done
+[[ -n "${output}" && -n "${url}" ]]
+cp "${HFL_FAKE_ASSET_ROOT}/${url##*/}" "${output}"
+SH
+chmod +x "${download_test}/bin/curl"
+plan="${archive_name}"$'\t'"https://release-assets.githubusercontent.com/${archive_name}"$'\n'
+plan+="SHA256SUMS"$'\t'"https://release-assets.githubusercontent.com/SHA256SUMS"$'\n'
+PATH="${download_test}/bin:${PATH}" \
+	HFL_FAKE_ASSET_ROOT="${download_test}" \
+	HFL_FAKE_CURL_LOG="${download_test}/curl.log" \
+	"${download_test}/downloader" \
+	"${download_test}/.incoming/candidate" \
+	http://192.0.2.10:7890 \
+	"$(printf '%s' "${plan}" | base64 -w 0)" >/dev/null
+cmp "${download_test}/${archive_name}" \
+	"${download_test}/.incoming/candidate/${archive_name}"
+grep -F -- '--proxy http://192.0.2.10:7890' "${download_test}/curl.log" >/dev/null
+grep -F -- '--continue-at -' "${download_test}/curl.log" >/dev/null
+if find "${download_test}/.incoming/candidate" -maxdepth 1 -name '*.part-*' | grep -q .; then
+	printf 'ERROR: Enterprise target-side staging unexpectedly created split assets\n' >&2
+	exit 1
+fi
+rm -rf "${download_test}"
+trap - EXIT
 
 checkout_count="$(grep -c 'uses: actions/checkout@' "${workflow}")"
 credentialless_checkout_count="$(grep -c 'persist-credentials: false' "${workflow}")"
