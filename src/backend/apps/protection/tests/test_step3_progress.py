@@ -80,6 +80,51 @@ class Step3ProgressTests(SimpleTestCase):
         self.assertIsNone(transfer.get("step3_display_percent"))
         self.assertIsNone(transfer.get("eta_seconds"))
 
+    def test_backup_reconnect_keeps_cumulative_transfer_counters(self):
+        transfer = enrich_step3_backup_transfer(
+            transfer={"phase": "transferring", "uploaded_bytes": 0},
+            previous={
+                "phase": "transferring",
+                "uploaded_bytes": 5_000_000,
+                "bytes_done": 5_000_000,
+                "uploaded_count": 40,
+                "hashed_count": 80,
+                "estimated_bytes": 12_500_000,
+                "step3_display_percent": 40.0,
+            },
+            aggregate={
+                "uploaded_bytes": 0,
+                "uploaded_count": 0,
+                "hashed_count": 0,
+                "estimated_bytes": 0,
+            },
+            du_total=12_500_000,
+        )
+
+        self.assertEqual(transfer["bytes_done"], 5_000_000)
+        self.assertEqual(transfer["uploaded_bytes"], 5_000_000)
+        self.assertEqual(transfer["uploaded_count"], 40)
+        self.assertEqual(transfer["hashed_count"], 80)
+        self.assertEqual(transfer["estimated_bytes"], 12_500_000)
+        self.assertEqual(transfer["step3_display_percent"], 40.0)
+
+    def test_backup_keeps_task_scoped_source_total(self):
+        first = enrich_step3_backup_transfer(
+            transfer={"phase": "transferring"},
+            previous={},
+            aggregate={"uploaded_bytes": 100_000_000},
+            du_total=2_000_000_000,
+        )
+        second = enrich_step3_backup_transfer(
+            transfer={"phase": "transferring"},
+            previous=first,
+            aggregate={"uploaded_bytes": 200_000_000},
+            du_total=3_000_000_000,
+        )
+
+        self.assertEqual(second["du_total"], 2_000_000_000)
+        self.assertEqual(second["bytes_total"], 2_000_000_000)
+
     def test_should_latch_requires_uploaded_and_stable_estimate(self):
         now = timezone.now()
         history = [{"at": (now - timedelta(seconds=index)).isoformat(), "estimated_bytes": 1_050_000} for index in range(12)]

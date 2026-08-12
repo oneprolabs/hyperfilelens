@@ -24,6 +24,8 @@ from apps.protection.services.directory_size_estimate import (
     refresh_missing_backup_config_directory_estimates,
 )
 from apps.storage.repositories.models import Repository
+from apps.task.models import Task
+from apps.task.services.interface import create_task
 
 
 class DirectorySizeEstimateTests(TestCase):
@@ -231,6 +233,31 @@ class DirectorySizeEstimateTests(TestCase):
         )
         self.assertEqual(total, 2048)
         mock_estimate.assert_not_called()
+
+    @patch(
+        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes",
+        return_value=2_000_000_000,
+    )
+    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
+    def test_forced_refresh_replaces_cached_estimate(self, mock_resolve, mock_estimate):
+        self.directory.estimated_size_bytes = 12_500_000
+        self.directory.size_estimated_at = timezone.now()
+        self.directory.save(
+            update_fields=["estimated_size_bytes", "size_estimated_at", "updated_at"]
+        )
+        mock_resolve.return_value = self._target()
+
+        result = refresh_backup_config_directory_estimates_by_id(
+            config_id=self.config.id,
+            force_refresh=True,
+        )
+
+        self.directory.refresh_from_db()
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["du_total"], 2_000_000_000)
+        self.assertTrue(result["du_total_known"])
+        self.assertEqual(self.directory.estimated_size_bytes, 2_000_000_000)
+        mock_estimate.assert_called_once()
 
     @patch(
         "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes"
@@ -503,6 +530,81 @@ class DirectorySizeEstimateTests(TestCase):
             )
         self.assertTrue(result["should_requeue"])
         mock_async.assert_called_once_with(
-            kwargs={"config_id": self.config.id, "attempt": 3},
+            kwargs={
+                "config_id": self.config.id,
+                "attempt": 3,
+                "force_refresh": False,
+                "task_uuid": None,
+            },
             countdown=5,
         )
+
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "refresh_backup_config_directory_estimates_by_id"
+    )
+    def test_task_freezes_refreshed_total_on_backup_task(self, mock_by_id):
+        from apps.protection.tasks.directory_size_estimate import (
+            refresh_backup_config_directory_estimates_task,
+        )
+
+        task = create_task(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Backup directory size",
+            request_payload={"backup_config_id": self.config.id},
+        )
+        mock_by_id.return_value = {
+            "config_id": self.config.id,
+            "status": "ok",
+            "du_total": 2_000_000_000,
+            "du_total_known": True,
+            "attempt": 1,
+            "should_requeue": False,
+        }
+
+        refresh_backup_config_directory_estimates_task.run(
+            config_id=self.config.id,
+            force_refresh=True,
+            task_uuid=str(task.task_uuid),
+        )
+
+        task.refresh_from_db()
+        self.assertEqual(task.request_payload["du_total"], 2_000_000_000)
+        self.assertTrue(task.request_payload["du_total_known"])
+        self.assertEqual(task.result_payload["du_total"], 2_000_000_000)
+        self.assertTrue(task.result_payload["du_total_known"])
+
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "refresh_backup_config_directory_estimates_by_id"
+    )
+    def test_task_does_not_freeze_unverified_total(self, mock_by_id):
+        from apps.protection.tasks.directory_size_estimate import (
+            refresh_backup_config_directory_estimates_task,
+        )
+
+        task = create_task(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Backup directory size unavailable",
+            request_payload={"backup_config_id": self.config.id},
+        )
+        mock_by_id.return_value = {
+            "config_id": self.config.id,
+            "status": "ok",
+            "du_total": 0,
+            "du_total_known": False,
+            "attempt": 1,
+            "should_requeue": False,
+        }
+
+        refresh_backup_config_directory_estimates_task.run(
+            config_id=self.config.id,
+            force_refresh=True,
+            task_uuid=str(task.task_uuid),
+        )
+
+        task.refresh_from_db()
+        self.assertNotIn("du_total", task.request_payload)
+        self.assertNotIn("du_total", task.result_payload or {})
