@@ -694,6 +694,10 @@ class CopilotChatTeardownTests(TestCase):
 
     @mock.patch("apps.lens_bridge.services.chat_lifecycle._grant_assistant_to_chat_user")
     @mock.patch("apps.lens_bridge.services.chat_lifecycle.assistant_access.ensure_assistant_link")
+    @mock.patch(
+        "apps.lens_bridge.services.gateway_readiness.agent_ws_routable",
+        return_value=True,
+    )
     @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")
     @mock.patch("apps.lens_bridge.services.chat_lifecycle._find_remote_uuid")
     @mock.patch("apps.lens_bridge.services.chat_lifecycle.chat_user_provisioning.ensure_sl_chat_user")
@@ -706,6 +710,7 @@ class CopilotChatTeardownTests(TestCase):
         ensure_sl_user,
         find_remote_uuid,
         request_json,
+        _agent_ws_routable,
         _ensure_assistant_link,
         _grant_assistant,
     ):
@@ -721,6 +726,11 @@ class CopilotChatTeardownTests(TestCase):
         self.knowledge_source.sl_assistant_uuid = None
         self.knowledge_source.save(
             update_fields=["sl_assistant_uuid", "updated_at"]
+        )
+        self.gateway_link.sl_lensnode_uuid = uuid.uuid4()
+        self.gateway_link.sidecar_status = LensGatewayLink.SidecarStatus.ONLINE
+        self.gateway_link.save(
+            update_fields=["sl_lensnode_uuid", "sidecar_status", "updated_at"]
         )
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
         self.session.provision_claim_token = claim_token
