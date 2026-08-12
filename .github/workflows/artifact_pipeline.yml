@@ -485,7 +485,12 @@ jobs:
           set -euo pipefail
           npm ci
           npm run lint
-          npm run test:ci
+          # Community tests define the Host contract and always run with an
+          # empty Extension socket, including for Enterprise releases.
+          HFL_EXTENSIONS= HFL_FRONTEND_TEST_SCOPE=host npm run test:ci
+          if [[ -n "${HFL_EXTENSIONS:-}" ]]; then
+            HFL_FRONTEND_TEST_SCOPE=extension npm run test:ci
+          fi
           npm run build
 
       - name: Website checks
