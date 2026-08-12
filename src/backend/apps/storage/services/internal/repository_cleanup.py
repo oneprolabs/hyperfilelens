@@ -47,8 +47,8 @@ from apps.storage.services.internal.s3_client import (
     delete_s3_prefix,
 )
 from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
-from apps.task.models import Task, TaskResource, TaskStep
-from apps.task.services.interface import complete_task, create_task, start_task
+from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
+from apps.task.services.interface import append_task_event, complete_task, create_task, start_task
 from apps.task.services.recovery import (
     CONTROL_PLANE_RESTART_INTERRUPTED,
     MAX_AUTOMATIC_REPLACEMENTS,
@@ -551,7 +551,8 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
                     repository_task,
                 ),
             }
-        if not physical_cleanup_complete and not repository_task.force:
+        retained_unmounted_nas = _is_unmounted_nas_cleanup(result)
+        if not physical_cleanup_complete and not repository_task.force and not retained_unmounted_nas:
             cleanup_failures = [
                 item
                 for item in result.get("cleanup_failures") or []
@@ -584,6 +585,27 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
                     else []
                 ),
             }
+        elif retained_unmounted_nas:
+            result = {
+                **result,
+                "force": bool(repository_task.force),
+                "outcome": "cleanup_success_with_retained_resources",
+                "cleanup_complete": False,
+                "cleanup_failures": result.get("cleanup_failures") or [],
+                "retained_resources": result.get("retained_resources") or [],
+            }
+            append_task_event(
+                task=task,
+                step=task.steps.filter(step_name="delete_physical_repository").first(),
+                level=TaskEvent.Level.WARN,
+                message="Remote NAS repository cleanup skipped because the target was not mounted",
+                metadata={
+                    "owner_node_id": repository_task.owner_node_id,
+                    "mount_status": "not_mounted",
+                    "physical_cleanup": "skipped_unmounted",
+                    "retained_resources": result["retained_resources"],
+                },
+            )
         else:
             result = {
                 **result,
@@ -615,6 +637,8 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
                 cleanup_result=(
                     Repository.CleanupResult.PRESERVED
                     if result.get("physical_cleanup") == "preserved_legacy_directory"
+                    else Repository.CleanupResult.FORCE_SKIPPED
+                    if retained_unmounted_nas
                     else None
                 ),
             )
@@ -1196,12 +1220,17 @@ def _execute_physical_cleanup(
     )
     if repository.repo_type == Repository.Type.NAS and target.repository_subdir:
         repository_payload["subdir"] = target.repository_subdir
+    if repository.repo_type == Repository.Type.NAS:
+        unmounted_policy = "retain_and_continue"
+    else:
+        unmounted_policy = ""
     return resolve_or_dispatch_repository_agent_operation(
         repository_task=repository_task,
         node=node,
         payload={
             "operation_type": repository_task.operation_type,
             "cleanup_scope": cleanup_scope,
+            "unmounted_policy": unmounted_policy,
             "repository": repository_payload,
         },
         correlation_type="repository_cleanup",
@@ -1342,8 +1371,13 @@ def _finalize_cleanup_task(*, repository_task_id: int) -> None:
             target.save(update_fields=["active_task", "is_active", "updated_at"])
 
         repository = repository_task.repository
+        task_result = task.result_payload if isinstance(task.result_payload, dict) else {}
         if task.status == Task.Status.SUCCESS:
-            audit_result = AuditResult.PARTIAL if repository_task.force else AuditResult.SUCCESS
+            audit_result = (
+                AuditResult.PARTIAL
+                if repository_task.force or task_result.get("cleanup_complete") is False
+                else AuditResult.SUCCESS
+            )
         else:
             if repository_task.operation_type == RepositoryTask.OperationType.CLEANUP_REPOSITORY:
                 repository.status = Repository.Status.REMOVE_FAILED
@@ -1354,7 +1388,8 @@ def _finalize_cleanup_task(*, repository_task_id: int) -> None:
             user=_repository_task_user(repository_task),
             result=audit_result,
             details=(
-                f"{repository_task.operation_type} finished with task status {task.status}"
+                f"{repository_task.operation_type} finished with task status {task.status}; "
+                f"physical_cleanup={task_result.get('physical_cleanup') or 'unknown'}"
             ),
         )
         triggered_task = (
@@ -1539,6 +1574,20 @@ def _cleanup_exception_message(exc: Exception) -> str:
         if messages:
             return "; ".join(str(item) for item in messages)
     return str(exc)
+
+
+def _is_unmounted_nas_cleanup(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("physical_cleanup") != "skipped_unmounted":
+        return False
+    failures = result.get("cleanup_failures")
+    if not isinstance(failures, list) or not failures:
+        return False
+    return all(
+        isinstance(item, dict) and item.get("code") == "NAS_NOT_MOUNTED"
+        for item in failures
+    )
 
 
 def _retained_repository_resources(

@@ -40,22 +40,38 @@ func (e *Engine) runManagedRepositoryCleanup(
 		"repository_type": spec.Type,
 	}
 	cleanupScope := strings.ToLower(strings.TrimSpace(payloadStringValue(p.Extra["cleanup_scope"])))
+	unmountedPolicy := strings.ToLower(strings.TrimSpace(payloadStringValue(p.Extra["unmounted_policy"])))
 	var repositoryPath string
 	var allowedRoot string
 	preservePhysicalRepository := false
+	skippedUnmountedNAS := false
 	if spec.Type == "nas" {
-		nassvc.LogSpec("repository_cleanup_mount_begin", *spec.TargetNAS, "task_id", taskID)
-		if err := nassvc.NewService().EnsureMounted(ctx, *spec.TargetNAS); err != nil {
-			return "failed", result, redactRepositoryCleanupPaths(
-				err.Error(),
-				spec.TargetNAS.MountPoint,
-				nassvc.ResolvedMountPoint(spec.TargetNAS.MountPoint),
-			)
-		}
-		allowedRoot = nassvc.ResolvedMountPoint(spec.TargetNAS.MountPoint)
-		repositoryPath, err = repositoryNASPath(spec)
-		if err != nil {
-			return "failed", result, err.Error()
+		nasService := nassvc.NewService()
+		if unmountedPolicy == "retain_and_continue" && !nasService.IsMounted(spec.TargetNAS.MountPoint) {
+			skippedUnmountedNAS = true
+			result["mount_status"] = "not_mounted"
+			result["physical_cleanup"] = "skipped_unmounted"
+			result["cleanup_complete"] = false
+			result["cleanup_failures"] = []map[string]any{{
+				"code":   "NAS_NOT_MOUNTED",
+				"detail": "Remote repository cleanup was skipped because the NAS was not mounted.",
+			}}
+			result["retained_resources"] = []string{fmt.Sprintf("nas_repository:%d", spec.ID)}
+			nassvc.LogSpec("repository_cleanup_skip_unmounted", *spec.TargetNAS, "task_id", taskID)
+		} else {
+			nassvc.LogSpec("repository_cleanup_mount_begin", *spec.TargetNAS, "task_id", taskID)
+			if err := nasService.EnsureMounted(ctx, *spec.TargetNAS); err != nil {
+				return "failed", result, redactRepositoryCleanupPaths(
+					err.Error(),
+					spec.TargetNAS.MountPoint,
+					nassvc.ResolvedMountPoint(spec.TargetNAS.MountPoint),
+				)
+			}
+			allowedRoot = nassvc.ResolvedMountPoint(spec.TargetNAS.MountPoint)
+			repositoryPath, err = repositoryNASPath(spec)
+			if err != nil {
+				return "failed", result, err.Error()
+			}
 		}
 	} else if spec.Type == "proxy_fs" {
 		if cleanupScope == "local_state_only" {
@@ -74,7 +90,9 @@ func (e *Engine) runManagedRepositoryCleanup(
 		"phase":          "repository_cleanup",
 		"operation_type": operationType,
 	})
-	if preservePhysicalRepository {
+	if skippedUnmountedNAS {
+		// Never inspect the mount-point tree when it is not an active NAS mount.
+	} else if preservePhysicalRepository {
 		result["repository_existed"] = true
 		result["physical_cleanup"] = "preserved_legacy_directory"
 		result["scope"] = "legacy_local_disk"
@@ -111,7 +129,14 @@ func (e *Engine) runManagedRepositoryCleanup(
 		cacheExisted = cacheExisted || existed
 	}
 	result["repository_cache_existed"] = cacheExisted
-	if spec.Type == "nas" {
+	result["local_state_cleanup"] = "completed"
+	if spec.Type == "nas" && skippedUnmountedNAS {
+		removed, cleanupErr := nassvc.NewService().CleanupUnmountedMountPoint(spec.TargetNAS.MountPoint)
+		if cleanupErr != nil {
+			return "failed", result, redactRepositoryCleanupPaths(cleanupErr.Error(), spec.TargetNAS.MountPoint)
+		}
+		result["mount_point_directory_removed"] = removed
+	} else if spec.Type == "nas" {
 		mountPoint := spec.TargetNAS.MountPoint
 		if err := nassvc.NewService().Unmount(ctx, mountPoint); err != nil {
 			return "failed", result, redactRepositoryCleanupPaths(

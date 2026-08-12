@@ -1,6 +1,7 @@
 package nas
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -44,5 +45,37 @@ func TestResolveMountPointRejectsOutsideMounts(t *testing.T) {
 	}
 	if got := ResolvedMountPoint(`D:\backups\repo`); got != "" {
 		t.Fatalf("ResolvedMountPoint() = %q want empty", got)
+	}
+}
+
+func TestCleanupUnmountedMountPointRemovesOnlyEmptyManagedDirectory(t *testing.T) {
+	t.Setenv("HFL_DATA_DIR", t.TempDir())
+	service := NewService()
+	empty := filepath.Join(agentDataDirForMounts(), "mounts", "repositories", "empty")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := service.CleanupUnmountedMountPoint(empty)
+	if err != nil || !removed {
+		t.Fatalf("empty mount point removed=%v err=%v", removed, err)
+	}
+	if _, err := os.Stat(empty); !os.IsNotExist(err) {
+		t.Fatalf("empty mount point still exists: %v", err)
+	}
+
+	nonEmpty := filepath.Join(agentDataDirForMounts(), "mounts", "repositories", "non-empty")
+	if err := os.MkdirAll(nonEmpty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(nonEmpty, "keep")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	removed, err = service.CleanupUnmountedMountPoint(nonEmpty)
+	if err != nil || removed {
+		t.Fatalf("non-empty mount point removed=%v err=%v", removed, err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("non-empty mount point contents changed: %v", err)
 	}
 }
