@@ -461,7 +461,10 @@ def safe_extract_tar(archive_path: Path, destination: Path) -> Path:
             roots.add(parts[0])
         if len(roots) != 1:
             raise PrerequisiteError(f"base archive must contain one root directory: {archive_path}")
-        archive.extractall(destination, filter="data")
+        # Python 3.12 adds tarfile's data filter. The checks above enforce the
+        # same restrictions before extraction so supported older hosts (such as
+        # Ubuntu 20.04's Python 3.8) can package offline Agent bundles too.
+        archive.extractall(destination, members=members)
     return destination / next(iter(roots))
 
 
