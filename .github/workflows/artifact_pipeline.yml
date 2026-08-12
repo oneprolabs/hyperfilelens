@@ -1051,10 +1051,6 @@ jobs:
           HFL_EXTENSION_EXPECTED_COMMIT: ${{ needs.prepare.outputs.enterprise_commit }}
           ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
           HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN || secrets.HFL_EXTENSION_GIT_TOKEN }}
-          # Enterprise packages are staged outside GitHub. Fixed-size parts
-          # make the cross-region transfer parallel, retryable and bounded.
-          HFL_RELEASE_MAX_SINGLE_BYTES: ${{ needs.prepare.outputs.edition == 'enterprise' && '1' || '1900000000' }}
-          HFL_RELEASE_PART_BYTES: ${{ needs.prepare.outputs.edition == 'enterprise' && '100663296' || '1073741824' }}
         run: |
           if [[ "$RELEASE_EDITION" == "enterprise" ]]; then
             export HFL_EXTENSION_SOURCES="${ENTERPRISE_EXTENSION_REPOSITORY}@${RELEASE_TAG}"
@@ -1087,6 +1083,9 @@ jobs:
         if: ${{ needs.prepare.outputs.edition == 'enterprise' }}
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          ARTIFACT_ID: ${{ needs.prepare.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          TEST_RELEASE_DOWNLOAD_PROXY_URL: ${{ vars.TEST_RELEASE_DOWNLOAD_PROXY_URL }}
           TEST_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
           TEST_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
           TEST_SSH_USER: ${{ vars.TEST_SSH_USER }}
@@ -1120,8 +1119,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
           docker system prune -af || true
           df -h
-      - name: Download Community release candidate from draft
-        if: ${{ needs.prepare.outputs.edition == 'community' }}
+      - name: Download release candidate from temporary draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1134,29 +1132,6 @@ jobs:
             --pattern 'hyperfilelens-root-ca.crt' \
             --pattern 'assemble-release.*' \
             --dir build/release-candidate
-      - name: Download Enterprise release candidate from TEST host
-        if: ${{ needs.prepare.outputs.edition == 'enterprise' }}
-        env:
-          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-          TEST_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
-          TEST_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
-          TEST_SSH_USER: ${{ vars.TEST_SSH_USER }}
-          TEST_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
-          TEST_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -d -m 0700 ~/.ssh build/release-candidate
-          printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
-          chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
-          remote="/root/hfl-release/.incoming/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          scp -r -i ~/.ssh/hyperfilelens_test \
-            -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            -P "$TEST_SSH_PORT" \
-            "$TEST_SSH_USER@$TEST_SSH_HOST:$remote/." \
-            build/release-candidate/
       - name: Verify checksums and reconstruct package when split
         id: package
         working-directory: build/release-candidate
