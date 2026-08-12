@@ -2,6 +2,7 @@ from decimal import Decimal
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 from rest_framework import status
@@ -9,8 +10,8 @@ from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
 from apps.task.api.serializers.task import TaskStepInputSerializer
-from apps.task.models import Task, TaskDependency, TaskEvent, TaskResource, TaskStep
-from apps.task.services.interface import complete_task, create_task
+from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
+from apps.task.services.interface import cancel_task, complete_task, create_task
 
 
 class TaskStepInputSerializerTests(SimpleTestCase):
@@ -503,66 +504,75 @@ class TaskApiTests(TestCase):
         task.refresh_from_db()
         self.assertEqual(task.status, Task.Status.RUNNING)
 
-    def test_waiting_source_unregister_task_can_be_cancelled(self):
+    def test_legacy_deferred_source_unregister_exposes_no_user_actions(self):
         task = Task.objects.create(
             organization_id=self.org.id,
             task_type=Task.Type.SOURCE_UNREGISTER,
-            display_name="Unregister backup source",
+            display_name="Legacy deferred deregistration",
             status=Task.Status.WAITING,
-            trigger_type=Task.TriggerType.MANUAL,
-        )
-        dependency = TaskDependency.objects.create(
-            task=task,
-            code="running_tasks",
-            detail="A backup task is still active.",
-        )
-
-        response = self.client.post(
-            f"/api/v1/tasks/{task.task_uuid}/cancel/",
-            {"reason": "keep the source"},
-            format="json",
-            **self._headers(),
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        task.refresh_from_db()
-        dependency.refresh_from_db()
-        self.assertEqual(task.status, Task.Status.CANCELLED)
-        self.assertFalse(dependency.is_active)
-        self.assertIsNotNone(dependency.resolved_at)
-
-    def test_blocked_source_unregister_exposes_recheck_and_cancel_actions(self):
-        task = Task.objects.create(
-            organization_id=self.org.id,
-            task_type=Task.Type.SOURCE_UNREGISTER,
-            display_name="Blocked source deregistration",
-            status=Task.Status.BLOCKED,
-            trigger_type=Task.TriggerType.MANUAL,
-        )
-        dependency = TaskDependency.objects.create(
-            task=task,
-            code="agent_offline",
-            detail="Agent is offline.",
-            auto_resumable=False,
+            error_code="SOURCE_UNREGISTER_WAITING",
         )
 
         detail = self.client.get(
             f"/api/v1/tasks/{task.task_uuid}/",
             **self._headers(),
         )
+
         self.assertEqual(detail.status_code, status.HTTP_200_OK)
-        self.assertTrue(detail.data["actions"]["can_cancel"])
-        self.assertTrue(detail.data["actions"]["can_recheck"])
+        self.assertFalse(detail.data["actions"]["can_cancel"])
+        self.assertFalse(detail.data["actions"]["can_recheck"])
 
         cancelled = self.client.post(
             f"/api/v1/tasks/{task.task_uuid}/cancel/",
-            {"reason": "keep source"},
+            {"reason": "keep the source"},
             format="json",
             **self._headers(),
         )
-        self.assertEqual(cancelled.status_code, status.HTTP_200_OK)
-        dependency.refresh_from_db()
-        self.assertFalse(dependency.is_active)
+        rechecked = self.client.post(
+            f"/api/v1/tasks/{task.task_uuid}/recheck/",
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(cancelled.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(rechecked.status_code, status.HTTP_404_NOT_FOUND)
+        with self.assertRaisesMessage(
+            DjangoValidationError,
+            "Source deregistration tasks cannot be cancelled",
+        ):
+            cancel_task(
+                task_uuid=task.task_uuid,
+                organization_id=self.org.id,
+                reason="direct service call",
+            )
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.WAITING)
+
+    def test_legacy_cancelled_source_unregister_requires_a_new_submission(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Legacy cancelled deregistration",
+            status=Task.Status.CANCELLED,
+            error_code="TASK_CANCELLED",
+        )
+
+        detail = self.client.get(
+            f"/api/v1/tasks/{task.task_uuid}/",
+            **self._headers(),
+        )
+        retried = self.client.post(
+            f"/api/v1/tasks/{task.task_uuid}/retry/",
+            {"reason": "prerequisite resolved"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertFalse(detail.data["actions"]["can_retry"])
+        self.assertEqual(retried.status_code, status.HTTP_400_BAD_REQUEST)
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.CANCELLED)
 
     def test_node_lifecycle_task_cannot_be_cancelled_or_retried_generically(self):
         running = Task.objects.create(
@@ -581,6 +591,7 @@ class TaskApiTests(TestCase):
         )
 
         self.assertEqual(cancelled.status_code, status.HTTP_400_BAD_REQUEST)
+
         running.refresh_from_db()
         self.assertEqual(running.status, Task.Status.RUNNING)
 
@@ -601,6 +612,45 @@ class TaskApiTests(TestCase):
         self.assertEqual(retried.status_code, status.HTTP_400_BAD_REQUEST)
         failed.refresh_from_db()
         self.assertEqual(failed.status, Task.Status.FAILED)
+
+    def test_preflight_failed_source_unregister_requires_a_new_submission(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Rejected source deregistration",
+            status=Task.Status.FAILED,
+            error_code="SOURCE_UNREGISTER_PREFLIGHT_FAILED",
+        )
+
+        detail = self.client.get(
+            f"/api/v1/tasks/{task.task_uuid}/",
+            **self._headers(),
+        )
+        retried = self.client.post(
+            f"/api/v1/tasks/{task.task_uuid}/retry/",
+            {"reason": "prerequisite resolved"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertFalse(detail.data["actions"]["can_retry"])
+        self.assertEqual(retried.status_code, status.HTTP_400_BAD_REQUEST)
+        from apps.source.services.internal.backup_source_delete import (
+            retry_source_unregister_task,
+        )
+
+        with self.assertRaisesMessage(
+            DjangoValidationError,
+            "This deregistration did not start",
+        ):
+            retry_source_unregister_task(
+                task_uuid=task.task_uuid,
+                organization_id=self.org.id,
+                reason="direct service call",
+            )
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.FAILED)
 
     def test_failed_complete_task_stores_explicit_progress(self):
         task = Task.objects.create(

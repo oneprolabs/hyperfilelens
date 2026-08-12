@@ -885,6 +885,27 @@ if grep -F 'compose_in_root down' <<<"${upgrade_body}" >/dev/null; then
 	printf 'ERROR: blue/green upgrade must not stop the complete HFL stack\n' >&2
 	exit 1
 fi
+worker_stop_line="$(grep -n -F 'compose_in_root stop --timeout 600 worker' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
+worker_stopped_line="$(grep -n -F 'compose_in_root ps --status running -q worker' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
+migration_line="$(grep -n -F 'compose_in_root --profile tools run --rm --no-deps migration' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
+if [[ -z "${worker_stop_line}" \
+	|| -z "${worker_stopped_line}" \
+	|| -z "${migration_line}" \
+	|| "${worker_stop_line}" -ge "${worker_stopped_line}" \
+	|| "${worker_stopped_line}" -ge "${migration_line}" ]]; then
+	printf 'ERROR: upgrade must stop and verify the old worker before applying task-state migrations\n' >&2
+	exit 1
+fi
+if sed -n "${worker_stop_line}p" <<<"${upgrade_body}" | grep -F '|| true' >/dev/null; then
+	printf 'ERROR: upgrade must fail closed when the old worker cannot be stopped\n' >&2
+	exit 1
+fi
+worker_verify_body="$(sed -n "${worker_stop_line},${migration_line}p" <<<"${upgrade_body}")"
+if grep -F 'compose_in_root ps --status running -q worker 2>/dev/null || true' \
+	<<<"${worker_verify_body}" >/dev/null; then
+	printf 'ERROR: upgrade must fail closed when old-worker verification fails\n' >&2
+	exit 1
+fi
 recovery_body="$(sed -n '/^recover_upgrade_services()/,/^print_config()/p' "${ROOT}/deploy/installer/install.sh")"
 if grep -E 'compose_color .* up .*api-' <<<"${recovery_body}" >/dev/null; then
 	printf 'ERROR: recovery must not recreate the previous color from target image metadata\n' >&2

@@ -10,8 +10,9 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Count, Min, Q
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.audit.constants import AuditAction, AuditResult
@@ -60,7 +61,6 @@ from apps.task.services.interface import (
     append_task_step_event,
     complete_task,
     create_task,
-    resume_waiting_task,
     start_task,
 )
 from apps.task.signals import task_updated
@@ -72,17 +72,6 @@ _ACTIVE_TASK_STATUSES = {
     Task.Status.WAITING,
     Task.Status.RUNNING,
 }
-
-_AUTO_RESUMABLE_DELETE_CODES = frozenset(
-    {
-        "lifecycle_in_progress",
-        "node_workload_active",
-        "repository_cleanup_blocked",
-        "reset_in_progress",
-        "running_tasks",
-        "source_operation_in_progress",
-    }
-)
 
 _SOURCE_UNREGISTER_STEPS = [
     "prepare_source_unregister",
@@ -97,6 +86,13 @@ _UNREGISTER_TERMINAL = {
     Task.Status.FAILED,
     Task.Status.CANCELLED,
     Task.Status.TIMEOUT,
+}
+
+_UNREGISTER_NOT_STARTED_ERROR_CODES = {
+    "SOURCE_UNREGISTER_PREFLIGHT_FAILED",
+    "SOURCE_UNREGISTER_DEFERRED_CANCELLED",
+    "SOURCE_UNREGISTER_INVALID_REQUEST",
+    "TASK_CANCELLED",
 }
 
 
@@ -364,143 +360,118 @@ def _create_source_unregister_task(
     )
 
 
-def _blocking_product_task(*, organization_id: int, reason: DeleteReason) -> Task | None:
-    task_uuid = reason.blocking_task_uuid
-    if not task_uuid and reason.reference_type == TaskDependency.ReferenceType.TASK:
-        task_uuid = reason.reference_id
-    if not task_uuid:
-        return None
-    return Task.objects.filter(
-        organization_id=organization_id,
-        task_uuid=task_uuid,
-    ).first()
-
-
-def _set_unregister_deferred(
-    *,
-    task: Task,
-    reasons: list[DeleteReason],
-    status: str,
-) -> None:
-    """Persist waiting or manual blockers without recording an execution failure."""
-    next_signature = sorted(
-        (
-            reason.code,
-            reason.reference_type,
-            reason.reference_id,
-            reason.detail,
-        )
-        for reason in reasons
-    )
-    current_signature = sorted(
-        (
-            dependency.code,
-            dependency.reference_type,
-            dependency.reference_id,
-            dependency.detail,
-        )
-        for dependency in task.dependencies.filter(is_active=True)
-    )
-    now = timezone.now()
-    automatic = status == Task.Status.WAITING
-    if task.status == status and current_signature == next_signature:
-        TaskDependency.objects.filter(task=task, is_active=True).update(
-            last_checked_at=now,
-            next_check_at=(now + timedelta(seconds=60) if automatic else None),
-        )
-        return
-    TaskDependency.objects.filter(task=task, is_active=True).update(
-        is_active=False,
-        resolved_at=now,
-    )
-    for reason in reasons:
-        blocking_task = _blocking_product_task(
-            organization_id=int(task.organization_id),
-            reason=reason,
-        )
-        reference_type = reason.reference_type or (
-            TaskDependency.ReferenceType.TASK
-            if blocking_task is not None
-            else TaskDependency.ReferenceType.EXTERNAL
-        )
-        reference_id = reason.reference_id or (
-            str(blocking_task.task_uuid) if blocking_task is not None else ""
-        )
-        TaskDependency.objects.create(
-            task=task,
-            blocking_task=blocking_task,
-            reference_type=reference_type,
-            reference_id=reference_id,
-            reference_task_type=reason.reference_task_type,
-            code=reason.code,
-            detail=reason.detail,
-            auto_resumable=automatic,
-            last_checked_at=now,
-            next_check_at=(now + timedelta(seconds=60) if automatic else None),
-        )
-
-    task.status = status
-    task.error_code = (
-        "SOURCE_UNREGISTER_WAITING"
-        if automatic
-        else "SOURCE_UNREGISTER_BLOCKED"
-    )
-    task.error_message = (
-        "Source deregistration is waiting for active operations to finish."
-        if automatic
-        else "Source deregistration requires attention before cleanup can start."
-    )
-    task.result_payload = {
-        "source_ids": list((task.request_payload or {}).get("source_ids") or []),
-        "waiting_reasons" if automatic else "blocked_reasons": [
-            reason.as_dict() for reason in reasons
-        ],
-    }
-    task.save(
-        update_fields=[
-            "status",
-            "error_code",
-            "error_message",
-            "result_payload",
-            "updated_at",
-        ]
-    )
-    _emit_task_update_after_commit(task=task)
-    _set_unregister_step(
-        task=task,
-        step_name="prepare_source_unregister",
-        status=TaskStep.Status.PENDING,
-        progress=0,
-        message=(
-            "Source deregistration is waiting for active operations"
-            if automatic
-            else "Source deregistration requires attention"
-        ),
-        level="WARN",
-        metadata={"reasons": [reason.as_dict() for reason in reasons]},
-    )
-
-
-def _set_unregister_waiting(*, task: Task, reasons: list[DeleteReason]) -> None:
-    _set_unregister_deferred(
-        task=task,
-        reasons=reasons,
-        status=Task.Status.WAITING,
-    )
-
-
-def _set_unregister_blocked(*, task: Task, reasons: list[DeleteReason]) -> None:
-    _set_unregister_deferred(
-        task=task,
-        reasons=reasons,
-        status=Task.Status.BLOCKED,
-    )
-
-
 def _resolve_unregister_dependencies(*, task: Task) -> None:
     TaskDependency.objects.filter(task=task, is_active=True).update(
         is_active=False,
         resolved_at=timezone.now(),
+    )
+
+
+def _fail_unregister_before_start(
+    *,
+    task: Task,
+    reasons: list[DeleteReason],
+    error_code: str = "SOURCE_UNREGISTER_PREFLIGHT_FAILED",
+    error_message: str = "Source deregistration prerequisites are not satisfied.",
+) -> Task:
+    """Finish one rejected attempt without preserving a future delete intent."""
+    reason_payload = [reason.as_dict() for reason in reasons]
+    _resolve_unregister_dependencies(task=task)
+    _set_unregister_step(
+        task=task,
+        step_name="prepare_source_unregister",
+        status=TaskStep.Status.FAILED,
+        progress=0,
+        message=error_message,
+        level="ERROR",
+        metadata={"reasons": reason_payload},
+    )
+    TaskStep.objects.filter(
+        task=task,
+        status__in={TaskStep.Status.PENDING, TaskStep.Status.RUNNING},
+    ).exclude(step_name="prepare_source_unregister").update(
+        status=TaskStep.Status.SKIPPED,
+    )
+    _complete_unregister_task(
+        task=task,
+        status=Task.Status.FAILED,
+        result_payload={
+            "ok": False,
+            "accepted": False,
+            "result": "failed",
+            "source_ids": list((task.request_payload or {}).get("source_ids") or []),
+            "reasons": reason_payload,
+        },
+        error_code=error_code,
+        error_message=error_message,
+    )
+    task.refresh_from_db()
+    return task
+
+
+def _terminalize_legacy_deferred_unregister(task: Task) -> Task:
+    """End a pre-existing deferred attempt so it cannot delete later."""
+    payload = task.result_payload if isinstance(task.result_payload, dict) else {}
+    raw_reasons = payload.get("waiting_reasons") or payload.get("blocked_reasons") or []
+    reasons = [
+        DeleteReason(
+            code=str(item.get("code") or "deferred_unregister_cancelled"),
+            detail=str(item.get("detail") or "The previous deferred deregistration was ended."),
+            source_id=str(item.get("source_id") or ""),
+            source_name=str(item.get("source_name") or ""),
+            reference_type=str(item.get("reference_type") or ""),
+            reference_id=str(item.get("reference_id") or ""),
+            reference_task_type=str(item.get("reference_task_type") or ""),
+            blocking_task_uuid=str(item.get("blocking_task_uuid") or ""),
+        )
+        for item in raw_reasons
+        if isinstance(item, dict)
+    ]
+    task = _fail_unregister_before_start(
+        task=task,
+        reasons=reasons,
+        error_code="SOURCE_UNREGISTER_DEFERRED_CANCELLED",
+        error_message=(
+            "The previous deferred deregistration was ended. "
+            "Submit a new request after resolving the prerequisite."
+        ),
+    )
+    nas_ids = task.resources.filter(
+        resource_type=TaskResource.Type.BACKUP_SOURCE,
+        resource_subtype="nas",
+    ).values_list("resource_id", flat=True)
+    active_nas_ids = TaskResource.objects.filter(
+        task__organization_id=task.organization_id,
+        task__task_type=Task.Type.SOURCE_UNREGISTER,
+        task__status__in={Task.Status.PENDING, Task.Status.RUNNING},
+        resource_type=TaskResource.Type.BACKUP_SOURCE,
+        resource_subtype="nas",
+        resource_id__in=nas_ids,
+    ).exclude(task_id=task.id).values_list("resource_id", flat=True)
+    SourceResource.all_objects.filter(
+        organization_id=task.organization_id,
+        id__in=nas_ids,
+        is_deleted=False,
+        status=ResourceStatus.REMOVING,
+    ).exclude(id__in=active_nas_ids).update(
+        status=ResourceStatus.ACTIVE,
+        status_message=(
+            "The previous deferred deregistration ended. "
+            "Submit a new request after resolving the prerequisite."
+        ),
+        updated_at=timezone.now(),
+    )
+    return task
+
+
+def _is_legacy_deferred_unregister(task: Task) -> bool:
+    if task.status in {Task.Status.WAITING, Task.Status.BLOCKED}:
+        return True
+    payload = task.result_payload if isinstance(task.result_payload, dict) else {}
+    return bool(
+        task.status == Task.Status.RUNNING
+        and task.current_step == "prepare_source_unregister"
+        and any(key in payload for key in ("waiting_reasons", "blocked_reasons"))
     )
 
 
@@ -1011,7 +982,7 @@ def _prepare_delete_batch(
                         code="running_tasks",
                         detail=(
                             f'{running_task.task_type} task "{running_task.display_name}" '
-                            "is still active. Deregistration will continue after it finishes."
+                            "is still active. Submit a new deregistration request after it finishes."
                         ),
                         source_id=ctx.selectable_id,
                         source_name=ctx.display_name,
@@ -1218,7 +1189,14 @@ def evaluate_source_deregistration(
     except BackupSourceDeleteFailed as exc:
         reasons = tuple(exc.reasons)
         codes = {reason.code for reason in reasons}
-        if reasons and codes <= _AUTO_RESUMABLE_DELETE_CODES:
+        if reasons and codes <= {
+            "lifecycle_in_progress",
+            "node_workload_active",
+            "repository_cleanup_blocked",
+            "reset_in_progress",
+            "running_tasks",
+            "source_operation_in_progress",
+        }:
             return SourceDeregistrationDecision("waiting", reasons)
         if codes <= {"source_not_found", "invalid_id", "empty_ids"}:
             return SourceDeregistrationDecision("invalid", reasons)
@@ -2899,8 +2877,11 @@ def queue_delete_backup_sources(
                 source_ref_id=ctx.source_ref_id,
             )
             if existing is not None:
-                accepted_pairs.append((selectable_id, existing))
-                continue
+                if _is_legacy_deferred_unregister(existing):
+                    _terminalize_legacy_deferred_unregister(existing)
+                else:
+                    accepted_pairs.append((selectable_id, existing))
+                    continue
 
             decision = evaluate_source_deregistration(
                 org=org,
@@ -2928,13 +2909,8 @@ def queue_delete_backup_sources(
                 payload["user_id"] = int(user_id)
             unregister_task.request_payload = payload
             unregister_task.save(update_fields=["request_payload", "updated_at"])
-            if decision.disposition == "waiting":
-                _set_unregister_waiting(
-                    task=unregister_task,
-                    reasons=list(decision.reasons),
-                )
-            elif decision.disposition == "blocked":
-                _set_unregister_blocked(
+            if decision.disposition in {"waiting", "blocked"}:
+                unregister_task = _fail_unregister_before_start(
                     task=unregister_task,
                     reasons=list(decision.reasons),
                 )
@@ -3104,12 +3080,14 @@ def run_source_unregister_task(
     task = Task.objects.filter(organization_id=organization_id, task_uuid=task_uuid).first()
     if task is None:
         raise Task.DoesNotExist
+    if _is_legacy_deferred_unregister(task):
+        legacy_result = end_legacy_deferred_source_unregister_task(task_id=int(task.id))
+        if legacy_result.get("legacy_deferred_ended"):
+            task.refresh_from_db()
+            return task.result_payload if isinstance(task.result_payload, dict) else {}
+        task.refresh_from_db()
     if task.status in _UNREGISTER_TERMINAL:
         return task.result_payload if isinstance(task.result_payload, dict) else {}
-    if task.status in {Task.Status.WAITING, Task.Status.BLOCKED}:
-        return task.result_payload if isinstance(task.result_payload, dict) else {
-            "status": task.status
-        }
 
     org = Organization.objects.filter(pk=organization_id).first()
     if org is None:
@@ -3294,38 +3272,24 @@ def preflight_delete_backup_sources(
         if org is not None
         else []
     )
-    waiting = [
+    blocking = [
         reason.as_dict()
         for decision in decisions
-        if decision.disposition == "waiting"
-        for reason in decision.reasons
-    ]
-    requires_attention = [
-        reason.as_dict()
-        for decision in decisions
-        if decision.disposition == "blocked"
-        for reason in decision.reasons
-    ]
-    hard_blocking = [
-        reason.as_dict()
-        for decision in decisions
-        if decision.disposition == "invalid"
+        if decision.disposition != "ready"
         for reason in decision.reasons
     ]
     decision_codes = {
         str(reason.get("code") or "")
-        for reason in [*waiting, *requires_attention, *hard_blocking]
+        for reason in blocking
     }
     risks = [
         risk for risk in risks if str(risk.get("code") or "") not in decision_codes
     ]
     return {
         "risks": risks,
-        "waiting": waiting,
-        "requires_attention": requires_attention,
-        "blocking": hard_blocking,
-        "strict_may_fail": bool(risks or requires_attention),
-        "delete_disabled": bool(hard_blocking),
+        "blocking": blocking,
+        "strict_may_fail": bool(risks or blocking),
+        "delete_disabled": bool(blocking),
     }
 
 
@@ -4362,101 +4326,48 @@ def delete_backup_sources(
     )
 
 
-def reevaluate_source_unregister_task(*, task_id: int) -> dict[str, Any]:
-    """Recheck one deferred task and dispatch it when all prerequisites resolve."""
-    from apps.source.tasks.source_unregister import execute_source_unregister_task
-
+def end_legacy_deferred_source_unregister_task(*, task_id: int) -> dict[str, Any]:
+    """End a legacy deferred request without executing its stale delete intent."""
+    task_snapshot = (
+        Task.objects.filter(pk=int(task_id))
+        .values("organization_id", "request_payload")
+        .first()
+    )
+    if task_snapshot is None:
+        return {"status": "missing"}
+    payload = (
+        task_snapshot["request_payload"]
+        if isinstance(task_snapshot["request_payload"], dict)
+        else {}
+    )
+    source_ids = [
+        str(value).strip()
+        for value in payload.get("source_ids") or []
+        if str(value).strip()
+    ]
+    source_ids.extend(
+        f"{resource_subtype}:{resource_id}"
+        for resource_subtype, resource_id in TaskResource.objects.filter(
+            task_id=int(task_id),
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype__in={"agent", "nas"},
+        ).values_list("resource_subtype", "resource_id")
+    )
     with transaction.atomic():
+        # Match normal submission's source -> task lock order. Otherwise a new
+        # request and a legacy queue message can deadlock while ending the same
+        # stale intent and restoring its NAS state.
+        _lock_delete_identities(
+            organization_id=int(task_snapshot["organization_id"]),
+            ids=source_ids,
+        )
         task = Task.objects.select_for_update().filter(pk=int(task_id)).first()
         if task is None:
             return {"status": "missing"}
-        if task.status not in {Task.Status.WAITING, Task.Status.BLOCKED}:
+        if not _is_legacy_deferred_unregister(task):
             return {"status": task.status, "unchanged": True}
-        payload = task.request_payload if isinstance(task.request_payload, dict) else {}
-        source_ids = [
-            str(value).strip()
-            for value in payload.get("source_ids") or []
-            if str(value).strip()
-        ]
-        org = Organization.objects.filter(pk=task.organization_id).first()
-        if org is None or not source_ids:
-            _complete_unregister_task(
-                task=task,
-                status=Task.Status.FAILED,
-                error_code="SOURCE_UNREGISTER_INVALID_REQUEST",
-                error_message="Source deregistration task has no valid organization or source.",
-            )
-            return {"status": Task.Status.FAILED}
-        _lock_delete_identities(
-            organization_id=int(task.organization_id),
-            ids=source_ids,
-        )
-        decision = evaluate_source_deregistration(
-            org=org,
-            selectable_id=source_ids[0],
-            force=bool(payload.get("force")),
-            executing_task_uuid=str(task.task_uuid),
-        )
-        if decision.disposition == "invalid":
-            invalid_codes = {reason.code for reason in decision.reasons}
-            if invalid_codes != {"source_not_found"}:
-                _resolve_unregister_dependencies(task=task)
-                _complete_unregister_task(
-                    task=task,
-                    status=Task.Status.FAILED,
-                    result_payload={
-                        "source_ids": source_ids,
-                        "reasons": [
-                            reason.as_dict() for reason in decision.reasons
-                        ],
-                    },
-                    error_code="SOURCE_UNREGISTER_INVALID_REQUEST",
-                    error_message="Source deregistration task has an invalid source identifier.",
-                )
-                return {"status": Task.Status.FAILED}
-            _resolve_unregister_dependencies(task=task)
-            _complete_unregister_task(
-                task=task,
-                status=Task.Status.SUCCESS,
-                result_payload={
-                    "source_ids": source_ids,
-                    "deleted": source_ids,
-                    "already_absent": True,
-                },
-            )
-            return {"status": Task.Status.SUCCESS, "already_absent": True}
-        if decision.disposition == "waiting":
-            _set_unregister_waiting(task=task, reasons=list(decision.reasons))
-            return {"status": Task.Status.WAITING}
-        if decision.disposition == "blocked":
-            _set_unregister_blocked(task=task, reasons=list(decision.reasons))
-            return {"status": Task.Status.BLOCKED}
-
-        _resolve_unregister_dependencies(task=task)
-        resume_waiting_task(
-            task_uuid=task.task_uuid,
-            organization_id=int(task.organization_id),
-        )
-        _set_unregister_step(
-            task=task,
-            step_name="prepare_source_unregister",
-            status=TaskStep.Status.SUCCESS,
-            progress=15,
-            message="Source deregistration prerequisites resolved",
-            metadata={"source_ids": source_ids},
-        )
-        _set_source_nas_removal_status(
-            organization_id=int(task.organization_id),
-            ids=source_ids,
-            status=ResourceStatus.REMOVING,
-            message="Source deregistration is in progress.",
-        )
-        transaction.on_commit(
-            lambda ready_task_id=int(task.id): execute_source_unregister_task.delay(
-                task_id=ready_task_id
-            )
-        )
-        return {"status": Task.Status.RUNNING, "resumed": True}
+        task = _terminalize_legacy_deferred_unregister(task)
+        return {"status": task.status, "legacy_deferred_ended": True}
 
 
 def retry_source_unregister_task(
@@ -4481,6 +4392,11 @@ def retry_source_unregister_task(
         )
         if existing is None:
             raise Task.DoesNotExist
+        if existing.error_code in _UNREGISTER_NOT_STARTED_ERROR_CODES:
+            raise ValidationError(
+                "This deregistration did not start. Resolve the prerequisite and "
+                "submit a new request."
+            )
 
         task = retry_task(
             task_uuid=task_uuid,
@@ -4540,12 +4456,11 @@ def retry_source_unregister_task(
                     error_message="Source deregistration task has an invalid source identifier.",
                 )
             return Task.objects.get(pk=task.pk)
-        if decision.disposition == "waiting":
-            _set_unregister_waiting(task=task, reasons=list(decision.reasons))
-            return Task.objects.get(pk=task.pk)
-        if decision.disposition == "blocked":
-            _set_unregister_blocked(task=task, reasons=list(decision.reasons))
-            return Task.objects.get(pk=task.pk)
+        if decision.disposition in {"waiting", "blocked"}:
+            return _fail_unregister_before_start(
+                task=task,
+                reasons=list(decision.reasons),
+            )
 
         _resolve_unregister_dependencies(task=task)
         task = start_task(
@@ -4579,52 +4494,27 @@ def reconcile_stuck_source_unregister_tasks(
     limit: int = 50,
     stale_seconds: int = 90,
 ) -> dict[str, int]:
-    """Resume unblocked unregister tasks and re-dispatch stuck executions."""
+    """End legacy deferred requests and re-dispatch stuck executions."""
     from apps.source.tasks.source_unregister import execute_source_unregister_task
 
-    now = timezone.now()
-    waiting_ids = list(
-        Task.objects.filter(
-            task_type=Task.Type.SOURCE_UNREGISTER,
-            status=Task.Status.WAITING,
-        )
-        .annotate(
-            active_dependency_count=Count(
-                "dependencies",
-                filter=Q(dependencies__is_active=True),
-                distinct=True,
-            ),
-            next_dependency_check=Min(
-                "dependencies__next_check_at",
-                filter=Q(
-                    dependencies__is_active=True,
-                    dependencies__auto_resumable=True,
-                ),
-            ),
-        )
+    deferred_ids = list(
+        Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER)
         .filter(
-            Q(active_dependency_count=0)
-            | Q(next_dependency_check__isnull=True)
-            | Q(next_dependency_check__lte=now)
+            Q(status__in={Task.Status.WAITING, Task.Status.BLOCKED})
+            | Q(
+                status=Task.Status.RUNNING,
+                current_step="prepare_source_unregister",
+                result_payload__has_any_keys=["waiting_reasons", "blocked_reasons"],
+            )
         )
-        .order_by("next_dependency_check", "id")
+        .order_by("id")
         .values_list("id", flat=True)[: max(1, int(limit))]
     )
-    resumed = 0
-    still_waiting = 0
-    blocked = 0
-    already_absent = 0
-    for task_id in waiting_ids:
-        result = reevaluate_source_unregister_task(task_id=int(task_id))
-        result_status = result.get("status")
-        if result_status == Task.Status.RUNNING:
-            resumed += 1
-        elif result_status == Task.Status.WAITING:
-            still_waiting += 1
-        elif result_status == Task.Status.BLOCKED:
-            blocked += 1
-        elif result.get("already_absent"):
-            already_absent += 1
+    deferred_ended = 0
+    for task_id in deferred_ids:
+        result = end_legacy_deferred_source_unregister_task(task_id=int(task_id))
+        if result.get("legacy_deferred_ended"):
+            deferred_ended += 1
 
     cutoff = timezone.now() - timedelta(seconds=max(30, int(stale_seconds)))
     stuck = list(
@@ -4654,11 +4544,8 @@ def reconcile_stuck_source_unregister_tasks(
     return {
         "scanned": len(stuck),
         "redispatched": redispatched,
-        "waiting_scanned": len(waiting_ids),
-        "resumed": resumed,
-        "still_waiting": still_waiting,
-        "blocked": blocked,
-        "already_absent": already_absent,
+        "deferred_scanned": len(deferred_ids),
+        "deferred_ended": deferred_ended,
     }
 
 
@@ -4669,7 +4556,7 @@ __all__ = [
     "preflight_delete_backup_sources",
     "queue_delete_backup_sources",
     "reconcile_stuck_source_unregister_tasks",
-    "reevaluate_source_unregister_task",
+    "end_legacy_deferred_source_unregister_task",
     "retry_source_unregister_task",
     "run_source_unregister_task",
     "source_needs_reset_protection",

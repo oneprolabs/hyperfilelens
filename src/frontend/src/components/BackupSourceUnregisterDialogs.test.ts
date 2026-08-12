@@ -273,40 +273,20 @@ describe.each([
     wrapper.unmount()
   })
 
-  it('allows a waiting request without emitting a local failure state', async () => {
+  it('blocks active operations until the user retries after they finish', async () => {
     preflightDeleteBackupSources.mockResolvedValue({
       risks: [],
-      waiting: [{ code: 'running_tasks', detail: 'Backup is running.' }],
-      blocking: [],
+      blocking: [{ code: 'running_tasks', detail: 'Backup is running.' }],
       strict_may_fail: false,
-      delete_disabled: false,
-    })
-    bulkDeleteBackupSources.mockResolvedValue({
-      result: 'pending',
-      warnings: [],
-      pending_removals: [],
-      deleted: [],
-      ok: true,
-      accepted: true,
-      status: 'waiting',
-      rejected: [{
-        source_id: 'nas:999',
-        reasons: [{ code: 'source_not_found', detail: 'Source does not exist.' }],
-      }],
+      delete_disabled: true,
     })
     const wrapper = mountDialog(component)
     await flushPromises()
 
     await wrapper.get('[data-test="strict-confirmation"]').trigger('click')
     await wrapper.get('[data-test="confirm-delete"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.emitted('started')).toBeUndefined()
-    expect(wrapper.emitted('failed')).toBeUndefined()
-    expect(wrapper.emitted('deleted')).toHaveLength(1)
-    expect(wrapper.emitted('deleted')?.[0]?.[0]).toMatchObject({
-      rejected: [{ source_id: 'nas:999' }],
-    })
+    expect(wrapper.get('[data-test="confirm-delete"]').attributes('disabled')).toBeDefined()
+    expect(bulkDeleteBackupSources).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

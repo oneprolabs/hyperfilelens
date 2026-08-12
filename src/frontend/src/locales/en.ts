@@ -2791,11 +2791,9 @@ export const en = {
         available: 'Available',
       },
       waitingTitle: 'Waiting for active operations',
-      waitingDescription: 'Source deregistration will continue automatically after these operations finish.',
+      waitingDescription: 'Resolve the active operations, then submit a new source deregistration request.',
       blockedTitle: 'Action required before deregistration',
-      blockedDescription: 'Resolve the following conditions, then recheck this task.',
-      btnRecheck: 'Recheck',
-      recheckComplete: 'Deregistration prerequisites rechecked',
+      blockedDescription: 'Resolve the following conditions, then submit a new source deregistration request.',
       viewBlockingTask: 'View task',
       step: {
         prepare: 'Prepare Task',

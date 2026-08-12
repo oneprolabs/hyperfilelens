@@ -15,12 +15,17 @@ export type SourceUnregisterTaskBinding = {
   status?: string
 }
 
-export type SourceUnregisterPendingKind = 'deleting' | 'delete_waiting' | 'delete_blocked'
+export type SourceUnregisterPendingKind =
+  | 'deleting'
+  | 'delete_waiting'
+  | 'delete_blocked'
+  | 'delete_failed'
 
 export function sourceUnregisterPendingKind(status?: string | null): SourceUnregisterPendingKind {
   const normalized = String(status || '').trim().toLowerCase()
   if (normalized === 'waiting') return 'delete_waiting'
   if (normalized === 'blocked') return 'delete_blocked'
+  if (['failed', 'timeout'].includes(normalized)) return 'delete_failed'
   return 'deleting'
 }
 

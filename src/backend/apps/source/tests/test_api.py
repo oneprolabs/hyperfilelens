@@ -28,10 +28,11 @@ from apps.source.services.internal.agent_host_sync import sync_agent_source_host
 from apps.source.services.internal.source_credentials import resolve_source_credentials
 from apps.source.tasks.connection_probe import run_source_resource_capacity_probe
 from apps.storage.repositories.models import Repository
-from apps.task.models import Task, TaskDependency, TaskResource, TaskStep
+from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import complete_task
 from apps.source.services.internal.backup_source_delete import (
     reconcile_stuck_source_unregister_tasks,
+    run_source_unregister_task,
 )
 
 MOUNTS_ROOT = agent_paths.agent_mounts_dir()
@@ -1930,11 +1931,11 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["strict_may_fail"])
-        self.assertFalse(response.data["delete_disabled"])
+        self.assertTrue(response.data["delete_disabled"])
         self.assertTrue(
             any(
                 row["code"] == "agent_offline"
-                for row in response.data["requires_attention"]
+                for row in response.data["blocking"]
             )
         )
 
@@ -1987,7 +1988,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
 
-    def test_bulk_delete_strict_accepts_offline_agent_as_blocked(self):
+    def test_bulk_delete_strict_fails_offline_agent_without_deferred_intent(self):
         agent_key = f"agent:{self.agent.id}"
         response = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
@@ -1997,12 +1998,64 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
-        self.assertEqual(unregister_task.status, Task.Status.BLOCKED)
-        dependency = unregister_task.dependencies.get(is_active=True)
-        self.assertEqual(dependency.code, "agent_offline")
-        self.assertFalse(dependency.auto_resumable)
+        self.assertEqual(unregister_task.status, Task.Status.FAILED)
+        self.assertEqual(unregister_task.error_code, "SOURCE_UNREGISTER_PREFLIGHT_FAILED")
+        self.assertEqual(unregister_task.result_payload["reasons"][0]["code"], "agent_offline")
+        self.assertFalse(unregister_task.dependencies.filter(is_active=True).exists())
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
+
+    @patch("apps.source.services.internal.backup_source_delete._delete_repository_snapshots")
+    @patch("apps.source.services.internal.backup_source_delete._purge_protection_db")
+    @patch("apps.source.services.internal.backup_source_delete._mark_tasks_orphaned")
+    def test_force_cleanup_can_follow_failed_strict_cleanup(
+        self,
+        mock_orphan,
+        mock_purge,
+        mock_snapshots,
+    ):
+        mock_snapshots.return_value = {
+            "snapshots_purged": 0,
+            "repository_blobs_deleted": 0,
+            "repository_purge_pending": 0,
+        }
+        mock_purge.return_value = {
+            "backup_configs_removed": 0,
+            "snapshots_removed": 0,
+            "restore_plans_removed": 0,
+            "restore_records_removed": 0,
+        }
+        mock_orphan.return_value = 0
+        agent_key = f"agent:{self.agent.id}"
+
+        strict = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"},
+            format="json",
+            **self._headers(),
+        )
+        forced = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {
+                "ids": [agent_key],
+                "force": True,
+                "confirmation": "FORCE DEREGISTER",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(strict.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(forced.status_code, status.HTTP_202_ACCEPTED)
+        tasks = list(
+            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).order_by("id")
+        )
+        self.assertEqual([task.status for task in tasks], [Task.Status.FAILED, Task.Status.SUCCESS])
+        self.assertFalse(tasks[0].request_payload["force"])
+        self.assertTrue(tasks[1].request_payload["force"])
+        self.assertNotEqual(strict.data["task_uuid"], forced.data["task_uuid"])
+        self.agent.refresh_from_db()
+        self.assertTrue(self.agent.is_deleted)
 
     def test_bulk_delete_idempotency_returns_the_same_task(self):
         agent_key = f"agent:{self.agent.id}"
@@ -2031,7 +2084,14 @@ class BackupSourceBulkDeleteTests(TestCase):
             1,
         )
 
+    @override_settings(SOURCE_UNREGISTER_EAGER=False)
     def test_completed_idempotent_replay_returns_terminal_result(self):
+        self.agent.availability = Node.Availability.ONLINE
+        self.agent.last_seen_at = timezone.now()
+        self.agent.metadata = {"capabilities": ["detached_uninstall_v2"]}
+        self.agent.save(
+            update_fields=["availability", "last_seen_at", "metadata", "updated_at"]
+        )
         agent_key = f"agent:{self.agent.id}"
         payload = {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"}
         headers = {**self._headers(), "HTTP_IDEMPOTENCY_KEY": "completed-replay"}
@@ -2066,7 +2126,14 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertEqual(replay.data["deleted"], [agent_key])
         self.assertEqual(replay.data["task_uuid"], str(task.task_uuid))
 
+    @override_settings(SOURCE_UNREGISTER_EAGER=False)
     def test_partial_cleanup_result_survives_idempotent_replay(self):
+        self.agent.availability = Node.Availability.ONLINE
+        self.agent.last_seen_at = timezone.now()
+        self.agent.metadata = {"capabilities": ["detached_uninstall_v2"]}
+        self.agent.save(
+            update_fields=["availability", "last_seen_at", "metadata", "updated_at"]
+        )
         agent_key = f"agent:{self.agent.id}"
         payload = {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"}
         headers = {**self._headers(), "HTTP_IDEMPOTENCY_KEY": "partial-replay"}
@@ -2100,7 +2167,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertEqual(replay.data["result"], "partial_success")
         self.assertEqual(replay.data["warnings"], [warning])
 
-    def test_mixed_existing_and_new_tasks_keep_individual_groups(self):
+    def test_new_submission_after_terminal_failure_creates_new_group(self):
         first_key = f"agent:{self.agent.id}"
         first = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
@@ -2129,10 +2196,10 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
 
         self.assertEqual(mixed.status_code, status.HTTP_202_ACCEPTED)
-        self.assertIsNone(mixed.data["group_uuid"])
+        self.assertIsNotNone(mixed.data["group_uuid"])
         tasks_by_source = {item["source_id"]: item for item in mixed.data["tasks"]}
-        self.assertEqual(tasks_by_source[first_key]["task_uuid"], first.data["task_uuid"])
-        self.assertNotEqual(
+        self.assertNotEqual(tasks_by_source[first_key]["task_uuid"], first.data["task_uuid"])
+        self.assertEqual(
             tasks_by_source[first_key]["group_uuid"],
             tasks_by_source[second_key]["group_uuid"],
         )
@@ -2159,7 +2226,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         tasks = list(Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER))
         self.assertEqual(len(tasks), 2)
-        self.assertTrue(all(task.status == Task.Status.BLOCKED for task in tasks))
+        self.assertTrue(all(task.status == Task.Status.FAILED for task in tasks))
         self.assertEqual({str(task.group_uuid) for task in tasks}, {response.data["group_uuid"]})
 
     def test_bulk_delete_accepts_valid_sources_independently(self):
@@ -2182,34 +2249,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertEqual(response.data["rejected"][0]["reasons"][0]["code"], "source_not_found")
         self.assertEqual(len(response.data["tasks"]), 1)
 
-    def test_blocked_unregister_can_be_rechecked_after_attention_is_resolved(self):
-        agent_key = f"agent:{self.agent.id}"
-        submitted = self.client.post(
-            "/api/v1/source/backup-selectable/bulk-delete/",
-            {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"},
-            format="json",
-            **self._headers(),
-        )
-        task = Task.objects.get(task_uuid=submitted.data["task_uuid"])
-        self.agent.availability = Node.Availability.ONLINE
-        self.agent.last_seen_at = timezone.now()
-        self.agent.save(
-            update_fields=["availability", "last_seen_at", "updated_at"]
-        )
-
-        response = self.client.post(
-            f"/api/v1/tasks/{task.task_uuid}/recheck/",
-            {},
-            format="json",
-            **self._headers(),
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        task.refresh_from_db()
-        self.assertEqual(task.status, Task.Status.RUNNING)
-        self.assertFalse(task.dependencies.filter(is_active=True).exists())
-
-    def test_failed_unregister_retry_returns_to_waiting_when_backup_is_active(self):
+    def test_failed_unregister_retry_stays_failed_when_backup_is_active(self):
         source_id = f"agent:{self.agent.id}"
         unregister_task = Task.objects.create(
             organization_id=self.org.id,
@@ -2253,49 +2293,9 @@ class BackupSourceBulkDeleteTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
         unregister_task.refresh_from_db()
-        self.assertEqual(unregister_task.status, Task.Status.WAITING)
-        dependency = unregister_task.dependencies.get(is_active=True)
-        self.assertEqual(dependency.blocking_task, backup_task)
-        self.assertEqual(dependency.code, "running_tasks")
-
-    @patch(
-        "apps.source.services.internal.backup_source_delete."
-        "reevaluate_source_unregister_task",
-        return_value={"status": Task.Status.WAITING},
-    )
-    def test_waiting_reconcile_rotates_past_first_batch(self, mock_reevaluate):
-        due_at = timezone.now() - timedelta(minutes=1)
-        waiting_tasks: list[Task] = []
-        for index in range(51):
-            task = Task.objects.create(
-                organization_id=self.org.id,
-                task_type=Task.Type.SOURCE_UNREGISTER,
-                display_name=f"Waiting deregistration {index}",
-                status=Task.Status.WAITING,
-            )
-            TaskDependency.objects.create(
-                task=task,
-                code="source_operation_in_progress",
-                detail="Source operation is active.",
-                auto_resumable=True,
-                next_check_at=due_at,
-            )
-            waiting_tasks.append(task)
-
-        reconcile_stuck_source_unregister_tasks(limit=50)
-        first_batch_ids = {
-            call.kwargs["task_id"] for call in mock_reevaluate.call_args_list
-        }
-        self.assertEqual(len(first_batch_ids), 50)
-        self.assertNotIn(waiting_tasks[-1].id, first_batch_ids)
-
-        TaskDependency.objects.filter(task_id__in=first_batch_ids).update(
-            next_check_at=timezone.now() + timedelta(minutes=1)
-        )
-        mock_reevaluate.reset_mock()
-        reconcile_stuck_source_unregister_tasks(limit=1)
-
-        mock_reevaluate.assert_called_once_with(task_id=waiting_tasks[-1].id)
+        self.assertEqual(unregister_task.status, Task.Status.FAILED)
+        self.assertEqual(unregister_task.result_payload["reasons"][0]["code"], "running_tasks")
+        self.assertFalse(unregister_task.dependencies.filter(is_active=True).exists())
 
     @patch(
         "apps.source.tasks.source_unregister."
@@ -2317,6 +2317,110 @@ class BackupSourceBulkDeleteTests(TestCase):
 
         self.assertEqual(summary["redispatched"], 1)
         mock_delay.assert_called_once_with(task_id=unregister_task.id)
+
+    @patch(
+        "apps.source.tasks.source_unregister."
+        "execute_source_unregister_task.delay"
+    )
+    def test_reconcile_ends_legacy_task_resumed_before_cleanup(self, mock_delay):
+        resource = SourceResource.objects.create(
+            organization=self.org,
+            name="Legacy resumed NAS",
+            resource_type="nas",
+            status="removing",
+        )
+        unregister_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Legacy resumed deregistration",
+            status=Task.Status.RUNNING,
+            current_step="prepare_source_unregister",
+            request_payload={"source_ids": [f"nas:{resource.id}"]},
+            result_payload={
+                "waiting_reasons": [
+                    {"code": "running_tasks", "detail": "Backup is active."}
+                ]
+            },
+        )
+        TaskResource.objects.create(
+            task=unregister_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="nas",
+            resource_id=resource.id,
+            is_primary=True,
+        )
+        TaskStep.objects.create(
+            task=unregister_task,
+            step_index=1,
+            step_name="prepare_source_unregister",
+            status=TaskStep.Status.SUCCESS,
+        )
+
+        summary = reconcile_stuck_source_unregister_tasks(stale_seconds=30)
+
+        unregister_task.refresh_from_db()
+        resource.refresh_from_db()
+        self.assertEqual(summary["deferred_ended"], 1)
+        self.assertEqual(unregister_task.status, Task.Status.FAILED)
+        self.assertEqual(
+            unregister_task.error_code,
+            "SOURCE_UNREGISTER_DEFERRED_CANCELLED",
+        )
+        self.assertEqual(resource.status, "active")
+        mock_delay.assert_not_called()
+
+    @patch(
+        "apps.source.services.internal.backup_source_delete."
+        "_execute_source_unregister_work"
+    )
+    def test_direct_execution_ends_legacy_task_without_cleanup(self, execute_cleanup):
+        resource = SourceResource.objects.create(
+            organization=self.org,
+            name="Legacy direct NAS",
+            resource_type="nas",
+            status="removing",
+        )
+        unregister_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Legacy direct deregistration",
+            status=Task.Status.RUNNING,
+            current_step="prepare_source_unregister",
+            request_payload={"source_ids": [f"nas:{resource.id}"]},
+            result_payload={
+                "blocked_reasons": [
+                    {"code": "agent_offline", "detail": "Agent is offline."}
+                ]
+            },
+        )
+        TaskResource.objects.create(
+            task=unregister_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="nas",
+            resource_id=resource.id,
+            is_primary=True,
+        )
+        TaskStep.objects.create(
+            task=unregister_task,
+            step_index=1,
+            step_name="prepare_source_unregister",
+            status=TaskStep.Status.SUCCESS,
+        )
+
+        result = run_source_unregister_task(
+            organization_id=self.org.id,
+            task_uuid=str(unregister_task.task_uuid),
+        )
+
+        unregister_task.refresh_from_db()
+        resource.refresh_from_db()
+        self.assertEqual(result["result"], "failed")
+        self.assertEqual(
+            unregister_task.error_code,
+            "SOURCE_UNREGISTER_DEFERRED_CANCELLED",
+        )
+        self.assertEqual(resource.status, "active")
+        execute_cleanup.assert_not_called()
 
     def test_bulk_delete_force_does_not_bypass_running_backup(self):
         backup_task = Task.objects.create(
@@ -2341,9 +2445,10 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
         self.assertEqual(preflight.status_code, status.HTTP_200_OK)
         self.assertEqual(
-            [item["code"] for item in preflight.data["waiting"]],
+            [item["code"] for item in preflight.data["blocking"]],
             ["running_tasks"],
         )
+        self.assertTrue(preflight.data["delete_disabled"])
 
         response = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
@@ -2358,29 +2463,18 @@ class BackupSourceBulkDeleteTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
         unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
-        self.assertEqual(unregister_task.status, Task.Status.WAITING)
-        dependency = TaskDependency.objects.get(task=unregister_task, is_active=True)
-        self.assertEqual(dependency.blocking_task, backup_task)
-        self.assertEqual(dependency.code, "running_tasks")
+        self.assertEqual(unregister_task.status, Task.Status.FAILED)
+        self.assertEqual(unregister_task.result_payload["reasons"][0]["code"], "running_tasks")
         self.assertEqual(response.data["task_uuid"], str(unregister_task.task_uuid))
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
 
-        complete_task(
-            task_uuid=backup_task.task_uuid,
-            organization_id=self.org.id,
-            status=Task.Status.SUCCESS,
-        )
-        dependency.next_check_at = timezone.now() - timedelta(seconds=1)
-        dependency.save(update_fields=["next_check_at"])
-        summary = reconcile_stuck_source_unregister_tasks()
+        complete_task(task_uuid=backup_task.task_uuid, organization_id=self.org.id)
+        reconcile_stuck_source_unregister_tasks()
         unregister_task.refresh_from_db()
-        dependency.refresh_from_db()
-        self.assertEqual(summary["resumed"], 1)
-        self.assertEqual(unregister_task.status, Task.Status.RUNNING)
-        self.assertFalse(dependency.is_active)
+        self.assertEqual(unregister_task.status, Task.Status.FAILED)
 
-    def test_snapshot_delete_blocks_with_linked_waiting_task(self):
+    def test_snapshot_delete_fails_unregister_without_deferred_task(self):
         snapshot_task = Task.objects.create(
             organization_id=self.org.id,
             task_type=Task.Type.SNAPSHOT_DELETE,
@@ -2411,51 +2505,12 @@ class BackupSourceBulkDeleteTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
         unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
-        dependency = TaskDependency.objects.get(task=unregister_task, is_active=True)
-        self.assertEqual(unregister_task.status, Task.Status.WAITING)
-        self.assertEqual(dependency.reference_type, TaskDependency.ReferenceType.TASK)
-        self.assertEqual(dependency.blocking_task, snapshot_task)
-        self.assertEqual(dependency.reference_task_type, "snapshot.delete")
-
-    @patch("apps.source.signals._queue_unregister_rechecks")
-    def test_terminal_node_task_wakes_exact_parent_task_dependency(self, mock_queue):
-        snapshot_task = Task.objects.create(
-            organization_id=self.org.id,
-            task_type=Task.Type.SNAPSHOT_DELETE,
-            display_name="Remove snapshot",
-            status=Task.Status.RUNNING,
+        self.assertEqual(unregister_task.status, Task.Status.FAILED)
+        self.assertEqual(
+            unregister_task.result_payload["reasons"][0]["reference_task_type"],
+            "snapshot.delete",
         )
-        unregister_task = Task.objects.create(
-            organization_id=self.org.id,
-            task_type=Task.Type.SOURCE_UNREGISTER,
-            display_name="Deregister source",
-            status=Task.Status.WAITING,
-        )
-        TaskDependency.objects.create(
-            task=unregister_task,
-            blocking_task=snapshot_task,
-            reference_type=TaskDependency.ReferenceType.TASK,
-            reference_id=str(snapshot_task.task_uuid),
-            code="running_tasks",
-            detail="Snapshot removal is active.",
-        )
-        node_task = NodeTask.objects.create(
-            organization=self.org,
-            requesting_organization_id=self.org.id,
-            node=self.agent,
-            parent_task=snapshot_task,
-            kind="snapshot.delete",
-            correlation_type="protection.snapshot_delete",
-            correlation_id=str(snapshot_task.task_uuid),
-            status=NodeTask.Status.RUNNING,
-            watchdog_deadline_at=timezone.now() + timedelta(minutes=5),
-        )
-
-        with self.captureOnCommitCallbacks(execute=True):
-            node_task.status = NodeTask.Status.SUCCESS
-            node_task.save(update_fields=["status", "updated_at"])
-
-        mock_queue.assert_called_once_with((unregister_task.id,))
+        self.assertFalse(unregister_task.dependencies.filter(is_active=True).exists())
 
     def test_bulk_delete_force_does_not_bypass_source_nas_probe(self):
         proxy = Node.objects.create(
@@ -2486,9 +2541,9 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
 
         self.assertEqual(preflight.status_code, status.HTTP_200_OK)
-        self.assertFalse(preflight.data["delete_disabled"])
+        self.assertTrue(preflight.data["delete_disabled"])
         self.assertEqual(
-            [item["code"] for item in preflight.data["waiting"]],
+            [item["code"] for item in preflight.data["blocking"]],
             ["source_operation_in_progress"],
         )
 
@@ -2505,9 +2560,11 @@ class BackupSourceBulkDeleteTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
         unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
-        self.assertEqual(unregister_task.status, Task.Status.WAITING)
-        dependency = TaskDependency.objects.get(task=unregister_task, is_active=True)
-        self.assertEqual(dependency.code, "source_operation_in_progress")
+        self.assertEqual(unregister_task.status, Task.Status.FAILED)
+        self.assertEqual(
+            unregister_task.result_payload["reasons"][0]["code"],
+            "source_operation_in_progress",
+        )
         resource.refresh_from_db()
         self.assertFalse(resource.is_deleted)
         self.assertNotEqual(resource.status, "removing")
@@ -2844,6 +2901,59 @@ class BackupSourceBulkDeleteTests(TestCase):
 
 
 class SourceUnregisterCeleryTests(TestCase):
+    @patch(
+        "apps.source.services.internal.backup_source_delete."
+        "run_source_unregister_task"
+    )
+    def test_execute_ends_legacy_resumed_task_without_cleanup(self, run_unregister):
+        from apps.source.tasks.source_unregister import execute_source_unregister_task
+
+        org = Organization.objects.create(
+            key="source-unregister-legacy-message",
+            name="Source Unregister Legacy Message",
+        )
+        resource = SourceResource.objects.create(
+            organization=org,
+            name="Legacy message NAS",
+            resource_type="nas",
+            status="removing",
+        )
+        task = Task.objects.create(
+            organization_id=org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Legacy resumed deregistration",
+            status=Task.Status.RUNNING,
+            current_step="prepare_source_unregister",
+            request_payload={"source_ids": [f"nas:{resource.id}"]},
+            result_payload={
+                "blocked_reasons": [
+                    {"code": "agent_offline", "detail": "Agent is offline."}
+                ]
+            },
+        )
+        TaskResource.objects.create(
+            task=task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="nas",
+            resource_id=resource.id,
+            is_primary=True,
+        )
+        TaskStep.objects.create(
+            task=task,
+            step_index=1,
+            step_name="prepare_source_unregister",
+            status=TaskStep.Status.SUCCESS,
+        )
+
+        result = execute_source_unregister_task.run(task_id=task.id)
+
+        task.refresh_from_db()
+        resource.refresh_from_db()
+        self.assertTrue(result["legacy_deferred_ended"])
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(resource.status, "active")
+        run_unregister.assert_not_called()
+
     def test_unregister_lease_renewal_is_owner_fenced(self):
         from apps.source.tasks.source_unregister import (
             _acquire_source_unregister_lease,

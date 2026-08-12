@@ -48,7 +48,7 @@ import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../../lib/taskSte
 import TaskStatusTag from '../../../components/TaskStatusTag.vue'
 import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
-import { cancelTask, getTask, listTaskEvents, recheckTask, type TaskEventRow, type TaskResourceRow, type TaskRow } from '../../../lib/taskApi'
+import { cancelTask, getTask, listTaskEvents, type TaskEventRow, type TaskResourceRow, type TaskRow } from '../../../lib/taskApi'
 
 const props = withDefaults(defineProps<{
   modelValue: boolean
@@ -183,22 +183,13 @@ const usesTargetRepositoryResources = computed(() => props.resourceListMode === 
 const canCancel = computed(() => {
   if (props.readOnly) return false
   if (activeTask.value?.actions) return activeTask.value.actions.can_cancel
-  if (activeTask.value?.task_type === 'source_unregister') {
-    return activeTask.value.status === 'waiting' || activeTask.value.status === 'blocked'
-  }
+  if (activeTask.value?.task_type === 'source_unregister') return false
   if (activeTask.value?.task_type === 'repository_operation') {
     return canCancelRepositoryTask(activeTask.value)
   }
   const status = activeTask.value?.status
   return status === 'pending' || status === 'waiting' || status === 'running'
 })
-const canRecheck = computed(() => !props.readOnly && Boolean(
-  activeTask.value?.actions?.can_recheck
-  ?? (
-    activeTask.value?.task_type === 'source_unregister'
-    && ['waiting', 'blocked'].includes(activeTask.value?.status || '')
-  ),
-))
 const {
   pending: repositoryCancellationPending,
   stop: stopRepositoryCancellation,
@@ -638,24 +629,6 @@ async function cancelActiveTask() {
   }
 }
 
-async function recheckActiveTask() {
-  if (!activeTask.value || !canRecheck.value) return
-  actionBusy.value = true
-  try {
-    const updated = await recheckTask(activeTask.value.task_uuid)
-    activeTask.value = updated
-    emit('task-updated', updated)
-    const events = await listTaskEvents(updated.task_uuid, { page: 1, page_size: 300 })
-    detailEvents.value = events.results
-    initExpandedSteps(updated)
-    ElMessage.success(t('ops.task.recheckComplete'))
-  } catch (err) {
-    ElMessage.error(apiErrorMessageI18n(err, t))
-  } finally {
-    actionBusy.value = false
-  }
-}
-
 function refreshActiveTask() {
   if (!activeTask.value?.task_uuid) return
   void loadTaskDetail(activeTask.value.task_uuid)
@@ -715,15 +688,6 @@ watch(
         </div>
         <h2 v-else class="hfl-task-drawer__header-title">{{ t('ops.task.detailTitle') }}</h2>
         <div class="hfl-task-drawer__header-actions">
-          <ElButton
-            v-if="canRecheck"
-            :loading="actionBusy"
-            :disabled="actionBusy || detailRefreshing"
-            @click="recheckActiveTask"
-          >
-            <RefreshCw :size="15" />
-            <span>{{ t('ops.task.btnRecheck') }}</span>
-          </ElButton>
           <ElButton
             v-if="canCancel"
             class="hfl-task-drawer__cancel-button"

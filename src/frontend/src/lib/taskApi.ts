@@ -194,12 +194,3 @@ export async function retryTask(taskUuid: string, reason?: string) {
     }),
   )
 }
-
-export async function recheckTask(taskUuid: string) {
-  return unwrapApiPayload<TaskRow>(
-    await api<unknown>(`${base}/${taskUuid}/recheck/`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }),
-  )
-}

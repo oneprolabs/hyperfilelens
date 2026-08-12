@@ -129,21 +129,31 @@ class TaskSerializer(serializers.ModelSerializer):
         return str(replacement.task_uuid)
 
     def get_actions(self, obj: Task) -> dict[str, bool]:
-        waiting = obj.status in {Task.Status.WAITING, Task.Status.BLOCKED}
+        source_unregister_not_started = (
+            obj.task_type == Task.Type.SOURCE_UNREGISTER
+            and obj.error_code
+            in {
+                "SOURCE_UNREGISTER_PREFLIGHT_FAILED",
+                "SOURCE_UNREGISTER_DEFERRED_CANCELLED",
+                "SOURCE_UNREGISTER_INVALID_REQUEST",
+                "TASK_CANCELLED",
+            }
+        )
         return {
-            "can_cancel": waiting if obj.task_type == Task.Type.SOURCE_UNREGISTER else (
+            "can_cancel": False if obj.task_type == Task.Type.SOURCE_UNREGISTER else (
                 obj.status in {Task.Status.PENDING, Task.Status.RUNNING}
                 and obj.task_type not in {
                     Task.Type.NODE_LIFECYCLE,
                     Task.Type.REPOSITORY_OPERATION,
                 }
             ),
-            "can_recheck": obj.task_type == Task.Type.SOURCE_UNREGISTER and waiting,
+            "can_recheck": False,
             "can_retry": (
                 obj.task_type not in {
                     Task.Type.NODE_LIFECYCLE,
                     Task.Type.REPOSITORY_OPERATION,
                 }
+                and not source_unregister_not_started
                 and obj.status
                 in {Task.Status.FAILED, Task.Status.TIMEOUT, Task.Status.CANCELLED}
             ),

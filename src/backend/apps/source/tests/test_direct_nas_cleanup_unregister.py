@@ -81,9 +81,9 @@ class DirectNasCleanupUnregisterTests(TestCase):
             ids=[f"agent:{self.agent.id}"],
         )
 
-        self.assertFalse(preflight["delete_disabled"])
+        self.assertTrue(preflight["delete_disabled"])
         self.assertEqual(
-            [reason["code"] for reason in preflight["waiting"]],
+            [reason["code"] for reason in preflight["blocking"]],
             ["repository_cleanup_blocked"],
         )
         with self.assertRaises(BackupSourceDeleteFailed) as raised:
@@ -131,9 +131,9 @@ class DirectNasCleanupUnregisterTests(TestCase):
             ids=[f"agent:{self.agent.id}"],
         )
 
-        self.assertFalse(preflight["delete_disabled"])
+        self.assertTrue(preflight["delete_disabled"])
         self.assertEqual(
-            [reason["code"] for reason in preflight["waiting"]],
+            [reason["code"] for reason in preflight["blocking"]],
             ["repository_cleanup_blocked"],
         )
         with self.assertRaises(BackupSourceDeleteFailed):
