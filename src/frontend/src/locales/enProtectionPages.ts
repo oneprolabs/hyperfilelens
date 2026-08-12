@@ -3,8 +3,8 @@ export const enProtectionPages = {
   taskProgress: {
     bytesTransferred: '{size} transferred',
     bytesCapacity: '{done} / {total}',
-    bytesCapacityEst: '{done} / {total} (est.)',
-    bytesCapacityRef: '{done} / {total} (ref.)',
+    bytesCapacityEst: 'Incremental transfer: {done} / est. {total}',
+    bytesCapacityRef: 'Transferred: {done} / source data: {total}',
     etaSeconds: '{n}s left',
     etaMinutes: '{n} min left',
     etaHours: '{n}h left',

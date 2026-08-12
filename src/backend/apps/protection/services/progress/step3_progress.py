@@ -52,10 +52,33 @@ def du_total_for_task(
     task,
     source_snapshot: BackupSourceSnapshot | None = None,
 ) -> int:
+    result_payload = task.result_payload if isinstance(task.result_payload, dict) else {}
+    if result_payload.get("du_total_known"):
+        return _int(result_payload.get("du_total"))
+    request_payload = task.request_payload if isinstance(task.request_payload, dict) else {}
+    if request_payload.get("du_total_known"):
+        return _int(request_payload.get("du_total"))
+    transfer = result_payload.get("transfer_progress")
+    if isinstance(transfer, dict):
+        stored = _int(transfer.get("du_total"))
+        if stored > 0:
+            return stored
+
     config = _backup_config_for_task(task=task, source_snapshot=source_snapshot)
     if config is None:
-        stored = _int((task.result_payload or {}).get("du_total") if isinstance(task.result_payload, dict) else 0)
-        return stored
+        return _int(result_payload.get("du_total"))
+
+    if request_payload.get("directory_size_refresh_required"):
+        directories = list(config.directories.all())
+        task_created_at = getattr(task, "created_at", None)
+        if not directories or task_created_at is None:
+            return 0
+        if any(
+            directory.size_estimated_at is None
+            or directory.size_estimated_at < task_created_at
+            for directory in directories
+        ):
+            return 0
     return du_total_for_backup_config(config)
 
 
@@ -280,18 +303,39 @@ def enrich_step3_backup_transfer(
     prev = previous if isinstance(previous, dict) else {}
     current_now = now or timezone.now()
 
-    uploaded_bytes = _int(aggregate.get("uploaded_bytes"))
-    if uploaded_bytes <= 0:
-        uploaded_bytes = _int(merged.get("uploaded_bytes"))
-    estimated_bytes = _int(aggregate.get("estimated_bytes"))
-    if estimated_bytes <= 0:
-        estimated_bytes = _int(merged.get("estimated_bytes"))
+    # Agent reconnect snapshots can temporarily contain zeroed counters. Keep
+    # task-scoped cumulative values monotonic instead of letting a transient
+    # snapshot reset the Step 3 row while its display percent stays latched.
+    uploaded_bytes = max(
+        _int(aggregate.get("uploaded_bytes")),
+        _int(merged.get("uploaded_bytes")),
+        _int(prev.get("uploaded_bytes")),
+        _int(prev.get("bytes_done")),
+    )
+    uploaded_count = max(
+        _int(aggregate.get("uploaded_count")),
+        _int(merged.get("uploaded_count")),
+        _int(prev.get("uploaded_count")),
+    )
+    hashed_count = max(
+        _int(aggregate.get("hashed_count")),
+        _int(merged.get("hashed_count")),
+        _int(prev.get("hashed_count")),
+    )
+    estimated_bytes = max(
+        _int(aggregate.get("estimated_bytes")),
+        _int(merged.get("estimated_bytes")),
+        _int(prev.get("estimated_bytes")),
+    )
 
     merged["uploaded_bytes"] = uploaded_bytes
-    merged["uploaded_count"] = _int(aggregate.get("uploaded_count"))
-    merged["hashed_count"] = _int(aggregate.get("hashed_count"))
+    merged["uploaded_count"] = uploaded_count
+    merged["hashed_count"] = hashed_count
     merged["estimated_bytes"] = estimated_bytes
-    merged["du_total"] = du_total
+    frozen_du_total = _int(prev.get("du_total"))
+    if frozen_du_total <= 0:
+        frozen_du_total = du_total
+    merged["du_total"] = frozen_du_total
 
     switch_latched = bool(prev.get("switch_latched"))
     kopia_total_locked = _int(prev.get("kopia_total_locked"))
@@ -318,8 +362,8 @@ def enrich_step3_backup_transfer(
             effective_total = kopia_total_locked
         merged["bytes_total_estimated"] = False
     else:
-        effective_total = du_total
-        merged["bytes_total_estimated"] = du_total > 0
+        effective_total = frozen_du_total
+        merged["bytes_total_estimated"] = frozen_du_total > 0
 
     merged["bytes_done"] = uploaded_bytes
     if effective_total > 0:

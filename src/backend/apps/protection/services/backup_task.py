@@ -621,8 +621,9 @@ def start_backup_tasks(
                         source_ref_id=source.source_ref_id,
                         repository_id=repository.id,
                     )
-                # Directory size (du) is pre-cached asynchronously on config save.
-                # Progress degrades when estimates are still missing. Never block Backup Now.
+                # Directory size is refreshed asynchronously for every new
+                # backup because configured path contents can change without a
+                # config edit. Never block the Backup Now request on path.size.
             except ValidationError as exc:
                 skipped_count += 1
                 results.append(
@@ -716,6 +717,7 @@ def start_backup_tasks(
                                 "backup_config_id": locked_config.id,
                                 "repository_id": locked_config.repository_id,
                                 "directory_count": directory_count,
+                                "directory_size_refresh_required": True,
                             },
                             resources=[
                                 {
@@ -749,6 +751,17 @@ def start_backup_tasks(
                             metadata={"task_display_name": task.display_name},
                         )
 
+                        from apps.protection.tasks.directory_size_estimate import (
+                            refresh_backup_config_directory_estimates_task,
+                        )
+
+                        transaction.on_commit(
+                            lambda config_id=locked_config.id, task_uuid=str(task.task_uuid): refresh_backup_config_directory_estimates_task.delay(
+                                config_id=config_id,
+                                force_refresh=True,
+                                task_uuid=task_uuid,
+                            )
+                        )
                         transaction.on_commit(
                             lambda org_id=organization_id, task_uuid=str(task.task_uuid), snapshot_id=snapshot.id: _queue_backup_execution(
                                 organization_id=org_id,

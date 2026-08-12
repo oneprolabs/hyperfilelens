@@ -262,7 +262,15 @@ class ProtectionBackupTaskApiTests(TestCase):
         mock_cache_add.assert_called_once()
 
     @patch("apps.protection.services.backup_task._queue_backup_execution")
-    def test_start_backup_task_api_creates_task_and_source_snapshot(self, mock_queue):
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "refresh_backup_config_directory_estimates_task.delay"
+    )
+    def test_start_backup_task_api_creates_task_and_source_snapshot(
+        self,
+        mock_size_refresh,
+        mock_queue,
+    ):
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.post(
                 "/api/v1/protection/backup-tasks/",
@@ -292,11 +300,22 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(source_resource.resource_subtype, "agent")
         self.assertEqual(source_resource.resource_id, self.agent.id)
         mock_queue.assert_called_once()
+        mock_size_refresh.assert_called_once_with(
+            config_id=self.config.id,
+            force_refresh=True,
+            task_uuid=str(task.task_uuid),
+        )
+        self.assertTrue(task.request_payload["directory_size_refresh_required"])
 
     @patch("apps.protection.services.directory_size_estimate.run_agent_task_sync")
     @patch("apps.protection.services.backup_task._queue_backup_execution")
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "refresh_backup_config_directory_estimates_task.delay"
+    )
     def test_start_backup_task_does_not_sync_directory_size_estimate(
         self,
+        mock_size_refresh,
         mock_queue,
         mock_path_size,
     ):
@@ -314,6 +333,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
         self.assertEqual(response.data["created_count"], 1)
         mock_queue.assert_called_once()
+        mock_size_refresh.assert_called_once()
         mock_path_size.assert_not_called()
 
     @patch("apps.protection.services.backup_task._queue_backup_execution")
@@ -518,7 +538,15 @@ class ProtectionBackupTaskApiTests(TestCase):
         mock_queue.assert_called_once()
 
     @patch("apps.protection.services.backup_task._queue_backup_execution")
-    def test_start_backup_task_api_reuses_item_when_idempotency_key_repeated(self, mock_queue):
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "refresh_backup_config_directory_estimates_task.delay"
+    )
+    def test_start_backup_task_api_reuses_item_when_idempotency_key_repeated(
+        self,
+        mock_size_refresh,
+        mock_queue,
+    ):
         payload = {
             "source_ids": [f"agent:{self.agent.id}"],
             "trigger_type": "manual",
@@ -548,6 +576,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(Task.objects.count(), 1)
         self.assertEqual(BackupSourceSnapshot.objects.count(), 1)
         mock_queue.assert_called_once()
+        mock_size_refresh.assert_called_once()
 
     def test_start_backup_task_api_rejects_running_duplicate(self):
         Task.objects.create(

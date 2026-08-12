@@ -4,6 +4,7 @@ export type KopiaProgressAggregate = {
   bytes_total: number | null
   bytes_total_known: boolean
   bytes_total_reference?: boolean
+  bytes_total_estimated?: boolean
   speed_bps: number | null
   hash_speed_bps?: number | null
   upload_speed_bps?: number | null
@@ -161,6 +162,12 @@ export function transferCapacityText(t: TranslateFn, transfer?: TransferProgress
   const done = formatBytes(transfer.bytes_done)
   if (transfer.bytes_total_known && transfer.bytes_total != null) {
     const total = formatBytes(transfer.bytes_total)
+    if (transfer.bytes_total_reference) {
+      return t('protection.taskProgress.bytesCapacityRef', { done, total })
+    }
+    if (transfer.bytes_total_estimated || (transfer.estimated_bytes || 0) > 0) {
+      return t('protection.taskProgress.bytesCapacityEst', { done, total })
+    }
     return t('protection.taskProgress.bytesCapacity', { done, total })
   }
   if ((transfer.bytes_done || 0) > 0) {

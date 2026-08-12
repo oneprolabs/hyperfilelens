@@ -133,6 +133,13 @@ def _du_total(config: BackupConfig) -> int:
     return _du_total_from_directories(config.directories.all())
 
 
+def _all_directory_estimates_verified(config: BackupConfig) -> bool:
+    directories = list(config.directories.all())
+    return bool(directories) and all(
+        directory.size_estimated_at is not None for directory in directories
+    )
+
+
 def backup_config_needs_directory_estimate_refresh(config: BackupConfig) -> bool:
     """True when at least one directory still needs a path.size attempt."""
     return any(
@@ -270,6 +277,7 @@ def refresh_backup_config_directory_estimates_by_id(
     *,
     config_id: int,
     attempt: int = 1,
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
     """Celery entry: pre-cache missing estimates for one backup config."""
     attempt_n = max(1, int(attempt or 1))
@@ -282,6 +290,12 @@ def refresh_backup_config_directory_estimates_by_id(
             "attempt": attempt_n,
             "should_requeue": False,
         }
+
+    # A newly created backup must not reuse a size cached when the configured
+    # path contained different files. Invalidate once, then let the existing
+    # bounded retry flow handle every directory as a normal pending estimate.
+    if force_refresh and attempt_n == 1:
+        invalidate_backup_config_directory_estimates(config=config)
 
     timed_out = False
     resolve_failed = False
@@ -331,6 +345,7 @@ def refresh_backup_config_directory_estimates_by_id(
         "config_id": int(config.id),
         "status": status,
         "du_total": int(du_total),
+        "du_total_known": _all_directory_estimates_verified(config),
         "attempt": attempt_n,
         "should_requeue": should_requeue,
     }
