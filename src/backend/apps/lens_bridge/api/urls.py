@@ -10,6 +10,8 @@ from apps.lens_bridge.api.views import (
     LensCopilotReadinessView,
     LensCopilotRunStreamView,
     LensCopilotSessionViewSet,
+    LensCopilotSnapshotBrowseTaskView,
+    LensCopilotSnapshotBrowseView,
     LensCopilotUsageView,
     LensGatewayViewSet,
     LensKnowledgeSourceViewSet,
@@ -46,6 +48,16 @@ urlpatterns = [
     path("copilot/gateway-options/", LensCopilotGatewayOptionsView.as_view(), name="lens-copilot-gateway-options"),
     path("copilot/knowledge-sources/", LensCopilotKnowledgeSourceView.as_view(), name="lens-copilot-ks"),
     path("copilot/readiness/", LensCopilotReadinessView.as_view(), name="lens-copilot-readiness"),
+    path(
+        "copilot/snapshot-browse/",
+        LensCopilotSnapshotBrowseView.as_view(),
+        name="lens-copilot-snapshot-browse",
+    ),
+    path(
+        "copilot/snapshot-browse/<uuid:task_id>/",
+        LensCopilotSnapshotBrowseTaskView.as_view(),
+        name="lens-copilot-snapshot-browse-task",
+    ),
     path("copilot/usage/", LensCopilotUsageView.as_view(), name="lens-copilot-usage"),
     path(
         "copilot/usage/<uuid:run_uuid>/",

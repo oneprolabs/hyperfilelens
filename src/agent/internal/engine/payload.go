@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -114,6 +115,14 @@ func payloadIntValue(v any) (int, bool) {
 	case int64:
 		return int(x), true
 	case float64:
+		if math.IsNaN(x) || math.IsInf(x, 0) || math.Trunc(x) != x {
+			return 0, false
+		}
+		maxInt := int64(^uint(0) >> 1)
+		minInt := -maxInt - 1
+		if x < float64(minInt) || x > float64(maxInt) {
+			return 0, false
+		}
 		return int(x), true
 	case string:
 		s := strings.TrimSpace(x)
@@ -121,7 +130,8 @@ func payloadIntValue(v any) (int, bool) {
 			return 0, false
 		}
 		var out int
-		if _, err := fmt.Sscanf(s, "%d", &out); err == nil {
+		var trailing string
+		if count, err := fmt.Sscanf(s, "%d%s", &out, &trailing); err == nil && count == 1 {
 			return out, true
 		}
 	}
@@ -152,6 +162,10 @@ func NormalizeKind(kind string) string {
 		return "snapshot.list"
 	case "snapshot.browse", "kopia.snapshot.browse":
 		return "snapshot.browse"
+	case "lens.snapshot.browse":
+		return "lens.snapshot.browse"
+	case "lens.snapshot.scope.resolve":
+		return "lens.snapshot.scope.resolve"
 	case "snapshot.download", "kopia.snapshot.download":
 		return "snapshot.download"
 	case "snapshot.delete", "snapshot.remove", "kopia.snapshot.delete", "kopia.snapshot.remove":

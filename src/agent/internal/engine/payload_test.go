@@ -26,6 +26,12 @@ func TestNormalizeKind(t *testing.T) {
 	if got := NormalizeKind("snapshot.list"); got != "snapshot.list" {
 		t.Fatalf("got %q", got)
 	}
+	if got := NormalizeKind("lens.snapshot.scope.resolve"); got != "lens.snapshot.scope.resolve" {
+		t.Fatalf("got %q", got)
+	}
+	if got := NormalizeKind("lens.snapshot.browse"); got != "lens.snapshot.browse" {
+		t.Fatalf("got %q", got)
+	}
 	if got := NormalizeKind("repo.policy.apply"); got != "repository.policy.apply" {
 		t.Fatalf("got %q", got)
 	}
@@ -80,6 +86,14 @@ func TestParsePayloadBrowseOptions(t *testing.T) {
 	}
 	if p.Cursor != "200" {
 		t.Fatalf("cursor = %q", p.Cursor)
+	}
+}
+
+func TestPayloadIntValueRejectsFractionalAndTrailingInput(t *testing.T) {
+	for _, value := range []any{1.5, "10items", "1.5"} {
+		if _, ok := payloadIntValue(value); ok {
+			t.Fatalf("expected invalid integer payload %v to be rejected", value)
+		}
 	}
 }
 

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
 import type { LensIngestPolicy } from './lensApi'
 import {
+  browseCopilotSnapshotDirectory,
   createKnowledgeSource,
   patchKnowledgeSource,
   setLensApiScope,
@@ -46,6 +47,65 @@ vi.mock('../composables/useAuth', () => ({
 afterEach(() => {
   setLensApiScope('tenant')
   vi.clearAllMocks()
+})
+
+describe('Insight snapshot browsing', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('polls the bounded Insight task and returns its result', async () => {
+    vi.mocked(api)
+      .mockResolvedValueOnce({ task_id: 'browse-1', status: 'pending' })
+      .mockResolvedValueOnce({
+        task_id: 'browse-1',
+        status: 'success',
+        has_more: true,
+        entries: [{ name: 'reports', path: 'reports', type: 'dir' }],
+      })
+
+    const request = browseCopilotSnapshotDirectory(31, { path: 'docs', limit: 10 })
+    await vi.runAllTimersAsync()
+
+    await expect(request).resolves.toMatchObject({
+      has_more: true,
+      entries: [{ path: 'reports' }],
+    })
+    expect(api).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/lens/copilot/snapshot-browse/',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ directory_id: 31, path: 'docs', limit: 10 }),
+      }),
+    )
+  })
+
+  it('stops polling a task that never reaches a terminal state', async () => {
+    vi.mocked(api).mockResolvedValue({ task_id: 'browse-stuck', status: 'pending' })
+
+    const request = browseCopilotSnapshotDirectory(31)
+    const rejection = expect(request).rejects.toThrow('Snapshot browsing timed out')
+    await vi.runAllTimersAsync()
+
+    await rejection
+    expect(api).toHaveBeenCalledTimes(241)
+  })
+
+  it('honors a signal that is already aborted before polling', async () => {
+    vi.mocked(api).mockResolvedValue({ task_id: 'browse-1', status: 'pending' })
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      browseCopilotSnapshotDirectory(31, undefined, controller.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(api).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('saved AI model connectivity', () => {

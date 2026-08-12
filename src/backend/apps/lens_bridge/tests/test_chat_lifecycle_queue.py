@@ -54,9 +54,7 @@ class CopilotLifecycleQueueTests(SimpleTestCase):
         _claim,
         release_claim,
     ):
-        result = chat_lifecycle.run_copilot_chat_provision(
-            session_link_id=42
-        )
+        result = chat_lifecycle.run_copilot_chat_provision(session_link_id=42)
 
         self.assertEqual(result["status"], "waiting")
         release_claim.assert_called_once_with(42, "claim-token")
@@ -88,7 +86,9 @@ class CopilotLifecycleQueueTests(SimpleTestCase):
             "database schema mismatch",
         )
 
-    @patch("apps.lens_bridge.tasks.chat_lifecycle.execute_copilot_chat_provision_task.delay")
+    @patch(
+        "apps.lens_bridge.tasks.chat_lifecycle.execute_copilot_chat_provision_task.delay"
+    )
     def test_provision_dispatches_to_celery(self, delay):
         queue_copilot_chat_provision(session_link_id=42)
 
@@ -139,7 +139,10 @@ class CopilotDefaultTitleTests(SimpleTestCase):
 
     @patch("apps.lens_bridge.services.chat_lifecycle.LensSessionLink.objects.filter")
     def test_duplicate_titles_use_parenthesized_number(self, filter_sessions):
-        filter_sessions.return_value.values_list.return_value = ["Reports", "Reports (2)"]
+        filter_sessions.return_value.values_list.return_value = [
+            "Reports",
+            "Reports (2)",
+        ]
 
         title = chat_lifecycle._unique_session_title(
             object(),
@@ -150,9 +153,54 @@ class CopilotDefaultTitleTests(SimpleTestCase):
         self.assertEqual(title, "Reports (3)")
 
 
+class CopilotTrustedScopeSummaryTests(SimpleTestCase):
+    def test_accepts_complete_nonnegative_summary(self):
+        self.assertTrue(
+            chat_lifecycle._scope_has_trusted_summary(
+                {"path_type": "dir", "file_count": 2, "size_bytes": 42}
+            )
+        )
+
+    def test_rejects_negative_or_non_numeric_summary(self):
+        self.assertFalse(
+            chat_lifecycle._scope_has_trusted_summary(
+                {"path_type": "file", "file_count": 1, "size_bytes": -1}
+            )
+        )
+        self.assertFalse(
+            chat_lifecycle._scope_has_trusted_summary(
+                {"path_type": "dir", "file_count": "invalid", "size_bytes": 42}
+            )
+        )
+        self.assertFalse(
+            chat_lifecycle._scope_has_trusted_summary(
+                {"path_type": "dir", "file_count": 1.5, "size_bytes": 42}
+            )
+        )
+        self.assertFalse(
+            chat_lifecycle._scope_has_trusted_summary(
+                {"path_type": "dir", "file_count": 1, "size_bytes": 2**63}
+            )
+        )
+
+    def test_rejects_file_summary_without_exactly_one_file(self):
+        self.assertFalse(
+            chat_lifecycle._scope_has_trusted_summary(
+                {"path_type": "file", "file_count": 0, "size_bytes": 0}
+            )
+        )
+        self.assertFalse(
+            chat_lifecycle._scope_has_trusted_summary(
+                {"path_type": "file", "file_count": 2, "size_bytes": 42}
+            )
+        )
+
+
 class CopilotRetryTests(TestCase):
     def setUp(self):
-        self.organization = Organization.objects.create(key="copilot-retry", name="Copilot Retry")
+        self.organization = Organization.objects.create(
+            key="copilot-retry", name="Copilot Retry"
+        )
         self.user = get_user_model().objects.create_user(
             username="copilot-retry",
             email="copilot-retry@example.com",
@@ -174,7 +222,9 @@ class CopilotRetryTests(TestCase):
         with self.captureOnCommitCallbacks(execute=True):
             updated = chat_lifecycle.retry_copilot_chat_provision(session)
 
-        self.assertEqual(updated.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING)
+        self.assertEqual(
+            updated.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING
+        )
         self.assertEqual(updated.provision_phase, LensSessionLink.ProvisionPhase.QUEUED)
         queue_provision.assert_called_once_with(session.id)
 
@@ -185,7 +235,9 @@ class CopilotRetryTests(TestCase):
         with self.captureOnCommitCallbacks(execute=True):
             updated = chat_lifecycle.retry_copilot_chat_provision(session)
 
-        self.assertEqual(updated.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING)
+        self.assertEqual(
+            updated.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING
+        )
         queue_provision.assert_called_once_with(session.id)
 
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
@@ -217,7 +269,9 @@ class CopilotRetryTests(TestCase):
 
         updated = chat_lifecycle.retry_copilot_chat_provision(session)
 
-        self.assertEqual(updated.lifecycle_status, LensSessionLink.LifecycleStatus.READY)
+        self.assertEqual(
+            updated.lifecycle_status, LensSessionLink.LifecycleStatus.READY
+        )
         queue_provision.assert_not_called()
 
     def test_deleting_session_is_not_retryable(self):
@@ -292,21 +346,16 @@ class CopilotChatModelBindingTests(TestCase):
             ],
             gateway_mode=LensSessionLink.GatewaySelectionMode.MANUAL,
             gateway_link_id=self.gateway_link.id,
+            idempotency_key="copilot-model-binding-create",
         )
 
     @patch(
         "apps.lens_bridge.services.chat_lifecycle."
-        "provisioning.default_model_refs_for_org",
+        "provisioning.configured_default_model_refs_for_org",
         return_value=(None, None),
     )
-    @patch(
-        "apps.lens_bridge.services.chat_lifecycle."
-        "platform_lens.resolve_gateway_link_for_copilot"
-    )
-    @patch(
-        "apps.lens_bridge.services.gateway_execution."
-        "context_for_gateway_link"
-    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._configured_gateway_link_for_chat")
+    @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
     def test_missing_agent_model_blocks_chat_creation(
         self,
         _context,
@@ -319,27 +368,16 @@ class CopilotChatModelBindingTests(TestCase):
             self._create_chat()
 
         self.assertFalse(
-            LensSessionLink.objects.filter(
-                organization=self.organization
-            ).exists()
+            LensSessionLink.objects.filter(organization=self.organization).exists()
         )
 
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
     @patch(
         "apps.lens_bridge.services.chat_lifecycle."
-        "_queue_provision_or_mark_failed"
+        "provisioning.configured_default_model_refs_for_org"
     )
-    @patch(
-        "apps.lens_bridge.services.chat_lifecycle."
-        "provisioning.default_model_refs_for_org"
-    )
-    @patch(
-        "apps.lens_bridge.services.chat_lifecycle."
-        "platform_lens.resolve_gateway_link_for_copilot"
-    )
-    @patch(
-        "apps.lens_bridge.services.gateway_execution."
-        "context_for_gateway_link"
-    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._configured_gateway_link_for_chat")
+    @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
     def test_missing_multimodal_model_keeps_text_chat_available(
         self,
         _context,
@@ -357,3 +395,297 @@ class CopilotChatModelBindingTests(TestCase):
         self.assertEqual(str(session.agent_model_ref), str(agent_uuid))
         self.assertIsNone(session.multimodal_model_ref)
         queue_provision.assert_called_once_with(session.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "provisioning.configured_default_model_refs_for_org",
+    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._configured_gateway_link_for_chat")
+    @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
+    def test_same_create_key_returns_the_original_chat(
+        self,
+        _context,
+        resolve_gateway,
+        default_models,
+        queue_provision,
+    ):
+        resolve_gateway.return_value = self.gateway_link
+        default_models.return_value = (str(uuid.uuid4()), None)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            first = self._create_chat()
+        second = self._create_chat()
+
+        self.assertEqual(second.id, first.id)
+        self.assertEqual(
+            LensSessionLink.objects.filter(organization=self.organization).count(),
+            1,
+        )
+        queue_provision.assert_called_once_with(first.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "provisioning.configured_default_model_refs_for_org",
+    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._configured_gateway_link_for_chat")
+    @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
+    def test_same_create_key_replays_after_snapshot_directory_becomes_unavailable(
+        self,
+        _context,
+        resolve_gateway,
+        default_models,
+        queue_provision,
+    ):
+        resolve_gateway.return_value = self.gateway_link
+        default_models.return_value = (str(uuid.uuid4()), None)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            first = self._create_chat()
+        self.directory.status = BackupSourceSnapshotDirectory.Status.FAILED
+        self.directory.save(update_fields=["status", "updated_at"])
+
+        replay = self._create_chat()
+
+        self.assertEqual(replay.id, first.id)
+        queue_provision.assert_called_once_with(first.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "provisioning.configured_default_model_refs_for_org",
+        return_value=("fd1bd1fc-8856-4d3f-aae0-d0d289ddca98", None),
+    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._configured_gateway_link_for_chat")
+    @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
+    def test_same_create_key_rejects_a_different_request(
+        self,
+        _context,
+        resolve_gateway,
+        _default_models,
+        _queue_provision,
+    ):
+        resolve_gateway.return_value = self.gateway_link
+        self._create_chat()
+
+        with self.assertRaises(chat_lifecycle.ChatCreateIdempotencyConflict):
+            chat_lifecycle.create_copilot_chat(
+                self.organization,
+                user=self.user,
+                backup_config_id=self.config.id,
+                backup_source_snapshot_id=self.snapshot.id,
+                source_scopes=[
+                    {
+                        "source_path": "/documents/reports",
+                        "backup_snapshot_directory_id": self.directory.id,
+                        "path_type": "dir",
+                    }
+                ],
+                gateway_mode=LensSessionLink.GatewaySelectionMode.MANUAL,
+                gateway_link_id=self.gateway_link.id,
+                idempotency_key="copilot-model-binding-create",
+            )
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "provisioning.configured_default_model_refs_for_org",
+        return_value=("fd1bd1fc-8856-4d3f-aae0-d0d289ddca98", None),
+    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._configured_gateway_link_for_chat")
+    @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
+    @patch("apps.protection.services.snapshot_browser.browse_snapshot_directory")
+    @patch("apps.node.services.interface.run_agent_task_sync")
+    @patch("apps.lens_bridge.services.sl_client.request_json")
+    def test_nested_scope_create_is_local_and_returns_pending(
+        self,
+        sl_request,
+        run_agent_sync,
+        browse_snapshot,
+        _context,
+        resolve_gateway,
+        _default_models,
+        _queue_provision,
+    ):
+        resolve_gateway.return_value = self.gateway_link
+
+        session = chat_lifecycle.create_copilot_chat(
+            self.organization,
+            user=self.user,
+            backup_config_id=self.config.id,
+            backup_source_snapshot_id=self.snapshot.id,
+            source_scopes=[
+                {
+                    "source_path": "/documents/reports",
+                    "backup_snapshot_directory_id": self.directory.id,
+                    "path_type": "dir",
+                }
+            ],
+            gateway_mode=LensSessionLink.GatewaySelectionMode.MANUAL,
+            gateway_link_id=self.gateway_link.id,
+            idempotency_key="nested-local-create",
+        )
+
+        self.assertEqual(
+            session.scope_resolution_status,
+            LensSessionLink.ScopeResolutionStatus.PENDING,
+        )
+        self.assertEqual(
+            session.capacity_reservation_status,
+            LensSessionLink.CapacityReservationStatus.PENDING,
+        )
+        browse_snapshot.assert_not_called()
+        run_agent_sync.assert_not_called()
+        sl_request.assert_not_called()
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "provisioning.configured_default_model_refs_for_org",
+        return_value=("fd1bd1fc-8856-4d3f-aae0-d0d289ddca98", None),
+    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._configured_gateway_link_for_chat")
+    @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
+    def test_root_file_scope_is_always_counted_as_one_file(
+        self,
+        _context,
+        resolve_gateway,
+        _default_models,
+        _queue_provision,
+    ):
+        resolve_gateway.return_value = self.gateway_link
+        self.directory.path_type = BackupSourceSnapshotDirectory.PathType.FILE
+        self.directory.file_count = 0
+        self.directory.size_bytes = 42
+        self.directory.save(
+            update_fields=["path_type", "file_count", "size_bytes", "updated_at"]
+        )
+
+        session = self._create_chat()
+
+        self.assertEqual(session.source_scopes_json[0]["path_type"], "file")
+        self.assertEqual(session.source_scopes_json[0]["file_count"], 1)
+        self.assertEqual(session.source_scopes_json[0]["size_bytes"], 42)
+        self.assertEqual(
+            session.scope_resolution_status,
+            LensSessionLink.ScopeResolutionStatus.RESOLVED,
+        )
+
+
+class CopilotScopeRecoveryTests(SimpleTestCase):
+    @patch("apps.lens_bridge.services.chat_lifecycle._set_phase")
+    @patch("apps.lens_bridge.services.chat_lifecycle._update_provision_claim")
+    def test_scope_resolution_recovers_dispatched_task_by_correlation(
+        self,
+        update_claim,
+        _set_phase,
+    ):
+        task_id = uuid.uuid4()
+        recovered_task = type(
+            "RecoveredTask",
+            (),
+            {"id": task_id, "status": "pending"},
+        )()
+        link = type(
+            "ScopeLink",
+            (),
+            {
+                "id": 9,
+                "organization": object(),
+                "scope_resolution_status": "pending",
+                "provision_state_json": {
+                    "scope_resolution": {
+                        "scope_index": 0,
+                        "correlation_id": "chat:9:scope:0:dispatch-token",
+                    }
+                },
+            },
+        )()
+
+        with patch(
+            "apps.lens_bridge.services.snapshot_scope_tasks.scope_task_for_correlation",
+            return_value=recovered_task,
+        ) as recover_task:
+            result = chat_lifecycle._resolve_chat_scopes(
+                link=link,
+                claim_token="claim-token",
+                scopes=[{"path_type": "unknown"}],
+            )
+
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(result["scope_task_id"], str(task_id))
+        recover_task.assert_called_once_with(
+            organization=link.organization,
+            correlation_id="chat:9:scope:0:dispatch-token",
+        )
+        update_claim.assert_called_once_with(
+            link,
+            "claim-token",
+            "provision_state_json",
+        )
+        self.assertEqual(
+            link.provision_state_json["scope_resolution"]["task_id"],
+            str(task_id),
+        )
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._set_phase")
+    @patch("apps.lens_bridge.services.chat_lifecycle._update_provision_claim")
+    def test_scope_resolution_ignores_a_mismatched_stored_task_id(
+        self,
+        update_claim,
+        _set_phase,
+    ):
+        task_id = uuid.uuid4()
+        recovered_task = type(
+            "RecoveredTask",
+            (),
+            {"id": task_id, "status": "pending"},
+        )()
+        link = type(
+            "ScopeLink",
+            (),
+            {
+                "id": 9,
+                "organization": object(),
+                "scope_resolution_status": "pending",
+                "provision_state_json": {
+                    "scope_resolution": {
+                        "scope_index": 0,
+                        "task_id": "wrong-task",
+                        "correlation_id": "chat:9:scope:0:dispatch-token",
+                    }
+                },
+            },
+        )()
+
+        with (
+            patch(
+                "apps.lens_bridge.services.snapshot_scope_tasks."
+                "scope_task_for_reference",
+                return_value=None,
+            ) as task_for_reference,
+            patch(
+                "apps.lens_bridge.services.snapshot_scope_tasks."
+                "scope_task_for_correlation",
+                return_value=recovered_task,
+            ) as task_for_correlation,
+        ):
+            result = chat_lifecycle._resolve_chat_scopes(
+                link=link,
+                claim_token="claim-token",
+                scopes=[{"source_path": "/documents/reports"}],
+            )
+
+        self.assertEqual(result["status"], "waiting")
+        task_for_reference.assert_called_once()
+        task_for_correlation.assert_called_once()
+        update_claim.assert_called_once_with(
+            link,
+            "claim-token",
+            "provision_state_json",
+        )
+        self.assertEqual(
+            link.provision_state_json["scope_resolution"]["task_id"],
+            str(task_id),
+        )

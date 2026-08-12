@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -717,6 +718,155 @@ func TestParseSnapshotBrowseOutputHandlesKopiaModeAndNestedPath(t *testing.T) {
 	}
 	if rows[1]["path"] != "docs/logo.png" {
 		t.Fatalf("expected nested file path docs/logo.png, got %#v", rows[1]["path"])
+	}
+}
+
+func TestSnapshotScopeRecursiveLinesProduceTrustedTotals(t *testing.T) {
+	stdout := `drwx------            5 2026-08-12 11:15:59 CST object-dir sub/
+-rw-------            5 2026-08-12 11:15:59 CST object-file sub/b.txt
+-rw-------            3 2026-08-12 11:15:59 CST object-root a.txt`
+
+	var files int64
+	var directories int64
+	var sizeBytes int64
+	for _, line := range strings.Split(stdout, "\n") {
+		mode, size, _, _, ok := parseInsightSnapshotLongLine(line)
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(mode), "d") {
+			directories++
+			continue
+		}
+		files++
+		sizeBytes += size
+	}
+
+	if files != 2 || directories != 1 || sizeBytes != 8 {
+		t.Fatalf(
+			"unexpected totals files=%d directories=%d size=%d",
+			files,
+			directories,
+			sizeBytes,
+		)
+	}
+}
+
+func TestInsightSnapshotResultContainsOnlyBusinessIdentity(t *testing.T) {
+	result := newInsightSnapshotResult(" snapshot-1 ", " /reports/quarterly/ ")
+
+	if result["snapshot_id"] != "snapshot-1" || result["path"] != "reports/quarterly" {
+		t.Fatalf("unexpected Insight result identity: %#v", result)
+	}
+	for _, key := range []string{
+		"config_file",
+		"repository_status",
+		"repository_connect",
+		"repository_create",
+	} {
+		if _, exists := result[key]; exists {
+			t.Fatalf("Insight result must not contain %q: %#v", key, result)
+		}
+	}
+}
+
+func TestSnapshotScopeLongLineRejectsInvalidSize(t *testing.T) {
+	line := "-rw------- not-a-size 2026-08-12 11:15:59 CST object-file report.txt"
+	if _, _, _, _, ok := parseInsightSnapshotLongLine(line); ok {
+		t.Fatal("expected invalid size to be rejected")
+	}
+	if _, size, _, _, ok := parseSnapshotBrowseLongLine(line); !ok || size != 0 {
+		t.Fatal("shared snapshot browsing parser behavior must remain unchanged")
+	}
+}
+
+func TestExactInt64ValueRejectsInvalidJSONNumbers(t *testing.T) {
+	for _, value := range []any{1.5, math.NaN(), math.Inf(1), float64(math.MaxInt64)} {
+		if _, ok := exactInt64Value(value); ok {
+			t.Fatalf("expected invalid exact integer %v to be rejected", value)
+		}
+	}
+	if value, ok := exactInt64Value(float64(42)); !ok || value != 42 {
+		t.Fatalf("expected exact JSON integer, got value=%d ok=%v", value, ok)
+	}
+}
+
+func TestSnapshotScopeSelectionIgnoresOtherEntries(t *testing.T) {
+	selection := snapshotScopeSelection{name: "report.pdf"}
+	selection.inspectLine(
+		"-rw------- 12 2026-08-12 11:15:59 CST object-other other.pdf",
+	)
+	selection.inspectLine(
+		"-rw------- 42 2026-08-12 11:15:59 CST object-report report.pdf",
+	)
+
+	if !selection.found || selection.invalidType {
+		t.Fatalf("expected a valid selected file, got %#v", selection)
+	}
+	if selection.pathType != "file" || selection.sizeBytes != 42 {
+		t.Fatalf("unexpected selected file summary: %#v", selection)
+	}
+	if selection.modifiedAt != "2026-08-12 11:15:59 CST" {
+		t.Fatalf("unexpected selected file timestamp: %#v", selection)
+	}
+}
+
+func TestSnapshotScopeSelectionRejectsInvalidFileSize(t *testing.T) {
+	selection := snapshotScopeSelection{name: "report.pdf"}
+	selection.inspectLine(
+		"-rw------- -1 2026-08-12 11:15:59 CST object-report report.pdf",
+	)
+
+	if !selection.found || !selection.invalidType {
+		t.Fatalf("expected invalid selected file size, got %#v", selection)
+	}
+}
+
+func TestSnapshotScopeSelectionRejectsUnsupportedEntryType(t *testing.T) {
+	selection := snapshotScopeSelection{name: "latest"}
+	selection.inspectLine(
+		"lrwx------ 12 2026-08-12 11:15:59 CST object-link latest",
+	)
+
+	if !selection.found || !selection.invalidType {
+		t.Fatalf("expected unsupported selected path type, got %#v", selection)
+	}
+}
+
+func TestInsightSnapshotLongLinePreservesNegativeSizeForValidation(t *testing.T) {
+	line := "drwx------ -1 2026-08-12 11:15:59 CST object-dir reports/"
+	_, size, _, _, ok := parseInsightSnapshotLongLine(line)
+	if !ok || size != -1 {
+		t.Fatalf("expected a parsed negative size for fail-closed validation, got %d", size)
+	}
+}
+
+func TestInsightSnapshotBrowseCollectorBoundsAndNormalizesEntries(t *testing.T) {
+	collector := newInsightSnapshotBrowseCollector("reports", 2)
+	collector.consume("drwx------ 0 2026-08-12 11:15:59 CST object-dir quarterly/")
+	collector.consume("-rw------- 12 2026-08-12 11:15:59 CST object-one one.pdf")
+	continueReading := collector.consume(
+		"-rw------- 18 2026-08-12 11:15:59 CST object-two two.pdf",
+	)
+
+	if continueReading || len(collector.entries) != 2 || !collector.hasMore {
+		t.Fatalf("expected two bounded entries and has_more, got %#v", collector)
+	}
+	if collector.entries[0]["path"] != "reports/quarterly" || collector.entries[0]["type"] != "dir" {
+		t.Fatalf("unexpected directory entry: %#v", collector.entries[0])
+	}
+	if collector.entries[1]["path"] != "reports/one.pdf" || collector.entries[1]["size_bytes"] != int64(12) {
+		t.Fatalf("unexpected file entry: %#v", collector.entries[1])
+	}
+}
+
+func TestInsightSnapshotBrowseCollectorRejectsMalformedOutput(t *testing.T) {
+	collector := newInsightSnapshotBrowseCollector("reports", 2)
+	collector.consume("unexpected kopia output")
+	collector.consume("lrwx------ 4 2026-08-12 11:15:59 CST object-link latest")
+
+	if !collector.invalid || len(collector.entries) != 0 {
+		t.Fatalf("expected malformed output to invalidate the result, got %#v", collector)
 	}
 }
 

@@ -24,6 +24,31 @@ func RunStreaming(
 	workDir string,
 	onLine OutputLineHandler,
 ) (Result, error) {
+	return runStreaming(ctx, bin, args, extraEnv, workDir, onLine, true)
+}
+
+// RunStreamingDiscardStdout streams stdout without retaining it in memory.
+// Stderr remains captured so callers can return a useful command failure.
+func RunStreamingDiscardStdout(
+	ctx context.Context,
+	bin string,
+	args []string,
+	extraEnv map[string]string,
+	workDir string,
+	onLine OutputLineHandler,
+) (Result, error) {
+	return runStreaming(ctx, bin, args, extraEnv, workDir, onLine, false)
+}
+
+func runStreaming(
+	ctx context.Context,
+	bin string,
+	args []string,
+	extraEnv map[string]string,
+	workDir string,
+	onLine OutputLineHandler,
+	captureStdout bool,
+) (Result, error) {
 	if bin == "" {
 		return Result{}, fmt.Errorf("empty binary path")
 	}
@@ -57,7 +82,11 @@ func RunStreaming(
 	}
 
 	wg.Add(2)
-	go capture(stdoutPipe, false, &stdoutBuf)
+	if captureStdout {
+		go capture(stdoutPipe, false, &stdoutBuf)
+	} else {
+		go capture(stdoutPipe, false, nil)
+	}
 	go capture(stderrPipe, true, &stderrBuf)
 
 	stopKill := startContextProcessGroupKill(ctx, cmd)
@@ -92,8 +121,10 @@ func captureProgressLines(
 	for {
 		line, err := readProgressLine(br)
 		if line != "" {
-			buf.WriteString(line)
-			buf.WriteByte('\n')
+			if buf != nil {
+				buf.WriteString(line)
+				buf.WriteByte('\n')
+			}
 			if onLine != nil {
 				onLine(line, stderr)
 			}

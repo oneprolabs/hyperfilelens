@@ -1,9 +1,12 @@
 import { getEffectiveOrgKey } from '../composables/useAuth'
 import { api, isAbortError } from './api'
 import type { DocumentConversion, SessionDataContext } from './conversionSummary'
+import type { BackupSnapshotBrowserEntry } from './protectionBackupConfigApi'
 import { asList, unwrapApiPayload } from './parse'
 
 const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
+const COPILOT_SNAPSHOT_BROWSE_POLL_MS = 500
+const COPILOT_SNAPSHOT_BROWSE_MAX_POLLS = 240
 
 export type LensApiScope = 'tenant' | 'platform'
 
@@ -865,6 +868,7 @@ export async function fetchCopilotUsageDetail(runUuid: string): Promise<LensCopi
 }
 
 export type CreateCopilotSessionPayload = {
+  idempotency_key: string
   title?: string
   backup_config_id: number
   backup_source_snapshot_id: number
@@ -884,6 +888,83 @@ export async function createCopilotSession(body: CreateCopilotSessionPayload): P
     body: JSON.stringify(body),
   })
   return lensPayload<LensSessionLink>(raw)
+}
+
+export type LensSnapshotBrowseTask = {
+  task_id: string
+  status: 'pending' | 'running' | 'success' | 'failed' | 'timeout' | 'canceled' | string
+  error?: string
+  entries?: BackupSnapshotBrowserEntry[]
+  has_more?: boolean
+}
+
+export async function startCopilotSnapshotBrowse(
+  directoryId: number,
+  params?: { path?: string; limit?: number },
+  signal?: AbortSignal,
+): Promise<LensSnapshotBrowseTask> {
+  const raw = await api(lensUrl('copilot/snapshot-browse/'), {
+    method: 'POST',
+    headers: lensHeaders(),
+    signal,
+    body: JSON.stringify({
+      directory_id: directoryId,
+      path: params?.path || '',
+      limit: Math.max(1, Math.min(params?.limit || 500, 500)),
+    }),
+  })
+  return lensPayload<LensSnapshotBrowseTask>(raw)
+}
+
+export async function fetchCopilotSnapshotBrowse(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<LensSnapshotBrowseTask> {
+  const raw = await api(lensUrl(`copilot/snapshot-browse/${taskId}/`), {
+    headers: lensHeaders(),
+    signal,
+  })
+  return lensPayload<LensSnapshotBrowseTask>(raw)
+}
+
+export async function browseCopilotSnapshotDirectory(
+  directoryId: number,
+  params?: { path?: string; limit?: number },
+  signal?: AbortSignal,
+): Promise<{ entries: BackupSnapshotBrowserEntry[]; has_more: boolean }> {
+  const started = await startCopilotSnapshotBrowse(directoryId, params, signal)
+  let task = started
+  let polls = 0
+  while (task.status === 'pending' || task.status === 'running') {
+    if (polls >= COPILOT_SNAPSHOT_BROWSE_MAX_POLLS) {
+      throw new Error('Snapshot browsing timed out. Try again.')
+    }
+    polls += 1
+    await new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'))
+        return
+      }
+      let timer: number
+      const onAbort = () => {
+        window.clearTimeout(timer)
+        reject(new DOMException('Aborted', 'AbortError'))
+      }
+      timer = window.setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort)
+        resolve()
+      }, COPILOT_SNAPSHOT_BROWSE_POLL_MS)
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
+    task = await fetchCopilotSnapshotBrowse(task.task_id, signal)
+  }
+  if (task.status !== 'success') {
+    throw new Error(task.error || 'Unable to browse the selected snapshot.')
+  }
+  return {
+    entries: (task.entries || []).slice(0, params?.limit || 500),
+    has_more: Boolean(task.has_more),
+  }
 }
 
 export async function retryCopilotSession(sessionId: number): Promise<LensSessionLink> {

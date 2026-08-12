@@ -46,3 +46,32 @@ func TestRunStreamingEmitsCarriageReturnProgress(t *testing.T) {
 		t.Fatalf("expected captured stderr, got %q", res.Stderr)
 	}
 }
+
+func TestRunStreamingDiscardStdoutStillEmitsLinesAndCapturesStderr(t *testing.T) {
+	ctx := context.Background()
+	var stdoutLines []string
+	res, err := RunStreamingDiscardStdout(
+		ctx,
+		"bash",
+		[]string{"-c", `printf 'one\ntwo\n'; printf 'warning\n' 1>&2`},
+		nil,
+		"",
+		func(line string, stderr bool) {
+			if !stderr {
+				stdoutLines = append(stdoutLines, line)
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunStreamingDiscardStdout failed: %v", err)
+	}
+	if res.Stdout != "" {
+		t.Fatalf("expected discarded stdout, got %q", res.Stdout)
+	}
+	if strings.Join(stdoutLines, ",") != "one,two" {
+		t.Fatalf("unexpected streamed stdout lines: %#v", stdoutLines)
+	}
+	if res.Stderr != "warning" {
+		t.Fatalf("expected captured stderr, got %q", res.Stderr)
+	}
+}

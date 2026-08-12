@@ -160,6 +160,69 @@ def default_model_refs_for_org(
     return agent_ref, multimodal_ref
 
 
+def configured_default_model_refs_for_org(
+    org: Organization,
+) -> tuple[str | None, str | None]:
+    """Resolve HFL-owned model defaults without calling SourceLens."""
+
+    from apps.lens_bridge.services import platform_lens
+
+    platform_org = platform_lens.get_or_create_platform_org()
+    org_defaults = get_or_create_org_link(org)
+    platform_defaults = (
+        org_defaults
+        if org.pk == platform_org.pk
+        else get_or_create_org_link(platform_org)
+    )
+
+    def _owned_default(owner: Organization, model_ref) -> str | None:
+        if not model_ref:
+            return None
+        exists = org_models.org_model_links(owner).filter(
+            sl_config_uuid=model_ref,
+            is_deployment_history=False,
+        ).exists()
+        return str(model_ref) if exists else None
+
+    agent_ref = None
+    if org.pk != platform_org.pk:
+        agent_ref = _owned_default(org, org_defaults.default_agent_model_ref)
+    if agent_ref is None:
+        agent_ref = _owned_default(
+            platform_org,
+            platform_defaults.default_agent_model_ref,
+        )
+    if agent_ref is None:
+        managed_agent = org_models.deployment_managed_model_uuid(
+            platform_org,
+            role="agent",
+        )
+        agent_ref = str(managed_agent) if managed_agent is not None else None
+
+    multimodal_ref = None
+    if org.pk != platform_org.pk:
+        multimodal_ref = _owned_default(
+            org,
+            org_defaults.default_multimodal_model_ref,
+        )
+    if multimodal_ref is None:
+        multimodal_ref = _owned_default(
+            platform_org,
+            platform_defaults.default_multimodal_model_ref,
+        )
+    if multimodal_ref is None:
+        managed_multimodal = org_models.deployment_managed_model_uuid(
+            platform_org,
+            role="multimodal",
+        )
+        multimodal_ref = (
+            str(managed_multimodal)
+            if managed_multimodal is not None
+            else None
+        )
+    return agent_ref, multimodal_ref
+
+
 def default_model_ref_for_org(org: Organization) -> str | None:
     """Resolve the effective Agent model for an organization."""
 

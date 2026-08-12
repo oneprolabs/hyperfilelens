@@ -1,7 +1,7 @@
-from django.http import JsonResponse, StreamingHttpResponse
 import uuid
 
 from django.db import transaction
+from django.http import JsonResponse, StreamingHttpResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException, NotFound, ValidationError
@@ -9,7 +9,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.iam.permissions_org import IsOrgOperator, IsOrgStaffReader, IsOrgWriter
+from apps.iam.permissions_org import (
+    IsOrgOperator,
+    IsOrgStaffReader,
+    IsOrgWriter,
+    get_membership,
+)
 from apps.lens_bridge.api.serializers import (
     LensChatBindingEnsureSerializer,
     LensCopilotGatewayOptionSerializer,
@@ -20,6 +25,7 @@ from apps.lens_bridge.api.serializers import (
     LensOrgSettingsSerializer,
     LensRunCreateSerializer,
     LensSessionCreateSerializer,
+    LensSnapshotBrowseCreateSerializer,
     LensSessionLinkSerializer,
     LensSessionTitleSerializer,
     LensSessionUpdateSerializer,
@@ -36,7 +42,6 @@ from apps.lens_bridge.services import (
     sl_client,
     usage,
 )
-from apps.iam.permissions_org import get_membership
 from apps.lens_bridge.services import (
     assistant_access,
     chat_binding as chat_binding_service,
@@ -79,6 +84,72 @@ class CopilotRunConflict(APIException):
     status_code = status.HTTP_409_CONFLICT
     default_detail = "This chat already has an active response."
     default_code = "copilot_run_active"
+
+
+class LensCopilotSnapshotBrowseView(OrgScopedMixin, APIView):
+    """Dispatch and inspect snapshot browsing for Insight without blocking API."""
+
+    permission_classes = [IsAuthenticated, IsOrgOperator]
+
+    def post(self, request):
+        body = LensSnapshotBrowseCreateSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        from apps.lens_bridge.services import snapshot_scope_tasks
+
+        task = snapshot_scope_tasks.dispatch_snapshot_browse(
+            organization_id=self.org.id,
+            directory_id=body.validated_data["directory_id"],
+            path=body.validated_data.get("path", ""),
+            limit=body.validated_data["limit"],
+            correlation_id=f"user:{request.user.id}:{uuid.uuid4()}",
+        )
+        return Response(
+            {"task_id": str(task.id), "status": str(task.status)},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class LensCopilotSnapshotBrowseTaskView(OrgScopedMixin, APIView):
+    """Return only Insight browse tasks owned by the active organization."""
+
+    permission_classes = [IsAuthenticated, IsOrgStaffReader]
+
+    def get(self, request, task_id):
+        from apps.lens_bridge.services import snapshot_scope_tasks
+        from apps.node.models import NodeTask
+
+        try:
+            task = snapshot_scope_tasks.task_for_org(
+                organization=self.org,
+                task_id=str(task_id),
+            )
+        except ValidationError as exc:
+            raise NotFound("Insight snapshot operation was not found.") from exc
+        if (
+            task.correlation_type != snapshot_scope_tasks.BROWSE_CORRELATION_TYPE
+            or task.kind != "lens.snapshot.browse"
+            or not str(task.correlation_id or "").startswith(f"user:{request.user.id}:")
+        ):
+            raise NotFound("Insight snapshot operation was not found.")
+        payload = {
+            "task_id": str(task.id),
+            "status": str(task.status),
+            "error": (
+                "Unable to browse the selected snapshot. Try again."
+                if task.status
+                in {
+                    NodeTask.Status.FAILED,
+                    NodeTask.Status.TIMEOUT,
+                    NodeTask.Status.CANCELED,
+                }
+                else ""
+            ),
+        }
+        if task.status == NodeTask.Status.SUCCESS:
+            payload["entries"] = snapshot_scope_tasks.normalized_browse_entries(task)
+            result = task.result if isinstance(task.result, dict) else {}
+            payload["has_more"] = bool(result.get("has_more"))
+        return Response(payload)
 
 
 def _lens_error_response(exc: sl_client.LensBridgeError) -> Response:
@@ -852,6 +923,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                 source_scopes=body.validated_data["source_scopes"],
                 gateway_mode=body.validated_data["gateway_mode"],
                 gateway_link_id=body.validated_data.get("gateway_link_id"),
+                idempotency_key=body.validated_data["idempotency_key"],
                 title=body.validated_data.get("title"),
             )
         except ValidationError:

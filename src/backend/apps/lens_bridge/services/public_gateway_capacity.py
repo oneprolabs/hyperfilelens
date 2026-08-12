@@ -8,9 +8,14 @@ Layers:
 
 from __future__ import annotations
 
+import math
+from typing import Any
+
 from common.errors import AppError
 
 _GIB = 1024**3
+_MAX_BIGINT = 2**63 - 1
+_MIN_BIGINT = -(2**63)
 
 # Legacy instance-wide runtime setting (migrated onto LensGatewayLink.capacity_gb).
 KEY_PUBLIC_GATEWAY_CAPACITY_GB = "gateway.public_total_capacity_gb"
@@ -19,6 +24,24 @@ _CAPACITY_FULL_MESSAGE = (
     "Public Data Gateway capacity is full. Contact your platform administrator "
     "to raise the workspace limit on this gateway."
 )
+
+
+def _exact_stored_int(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("boolean is not an integer value")
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            raise ValueError("stored value must be an exact integer")
+        parsed = int(value)
+    elif isinstance(value, str):
+        parsed = int(value.strip())
+    else:
+        raise TypeError("stored value must be an integer")
+    if parsed < _MIN_BIGINT or parsed > _MAX_BIGINT:
+        raise OverflowError("stored value is outside the database integer range")
+    return parsed
 
 
 def _normalize_capacity_gb(capacity_gb: int) -> int:
@@ -62,10 +85,58 @@ def lock_public_gateway_capacity(*, gateway_link):
 
 def session_scope_occupancy(*, session) -> tuple[int, bool]:
     """Bytes + unknown flag for a session's stored source_scopes_json."""
+    if getattr(session, "capacity_reservation_status", "") == "reserved":
+        try:
+            reserved_bytes = _exact_stored_int(
+                getattr(session, "capacity_reserved_bytes", 0) or 0
+            )
+        except (TypeError, ValueError, OverflowError):
+            return 0, True
+        if reserved_bytes < 0:
+            return 0, True
+        return reserved_bytes, False
     return _occupancy_from_scope_dicts(
         organization_id=int(getattr(session, "organization_id", 0) or 0),
         scopes=list(getattr(session, "source_scopes_json", None) or []),
         re_resolve=False,
+    )
+
+
+def _metered_managed_restore_bindings(
+    *,
+    gateway_link_ids: list[int],
+    organization_id: int | None = None,
+):
+    """Return workspaces not currently represented by a Chat reservation."""
+
+    from django.db.models import Exists, OuterRef
+
+    from apps.lens_bridge.models import LensSessionLink, LensWorkspaceBinding
+
+    active_reservation = LensSessionLink.objects.filter(
+        organization_id=OuterRef("organization_id"),
+        knowledge_source_id=OuterRef("knowledge_source_id"),
+        gateway_link_id=OuterRef("gateway_link_id"),
+        lifecycle_status__in=(
+            LensSessionLink.LifecycleStatus.PROVISIONING,
+            LensSessionLink.LifecycleStatus.DELETING,
+        ),
+        capacity_reservation_status=(
+            LensSessionLink.CapacityReservationStatus.RESERVED
+        ),
+    )
+    filters = {
+        "gateway_link_id__in": gateway_link_ids,
+        "workspace_kind": LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE,
+    }
+    if organization_id is not None:
+        filters["organization_id"] = int(organization_id)
+    return (
+        LensWorkspaceBinding.objects.filter(**filters)
+        .exclude(state=LensWorkspaceBinding.State.DELETED)
+        .annotate(has_chat_reservation=Exists(active_reservation))
+        .filter(has_chat_reservation=False)
+        .select_related("knowledge_source")
     )
 
 
@@ -75,12 +146,10 @@ def _occupancy_from_scope_dicts(
     scopes: list[dict],
     re_resolve: bool,
 ) -> tuple[int, bool]:
-    """Return (bytes, has_unknown) for a list of scope dicts."""
+    """Return stored (bytes, has_unknown) without Agent or browser I/O."""
+    del re_resolve  # retained for compatibility with current callers
     from apps.protection.models import BackupSourceSnapshotDirectory
-    from apps.subscription.services.quota import (
-        resolve_scope_entry,
-        summarize_gateway_select_scopes,
-    )
+    from apps.subscription.services.quota import summarize_gateway_select_scopes
 
     scope_entries = [scope for scope in scopes if isinstance(scope, dict)]
     if not scope_entries:
@@ -95,33 +164,75 @@ def _occupancy_from_scope_dicts(
         except (TypeError, ValueError):
             any_unknown = True
             continue
-        directory = BackupSourceSnapshotDirectory.objects.filter(id=directory_id).first()
+        directory_filters = {"id": directory_id}
+        if organization_id > 0:
+            directory_filters["organization_id"] = organization_id
+        directory = BackupSourceSnapshotDirectory.objects.filter(
+            **directory_filters
+        ).first()
         if directory is None:
             any_unknown = True
             continue
         path = str(scope.get("source_path") or directory.source_path or "")
-        if re_resolve:
-            path_type, size_bytes = resolve_scope_entry(
-                organization_id=organization_id or int(directory.organization_id),
-                directory=directory,
-                source_path=path,
-                claimed_type=str(scope.get("path_type") or "unknown"),
+        resolved = {
+            "source_path": path,
+            "path_type": str(scope.get("path_type") or "unknown"),
+        }
+        has_summary = (
+            scope.get("size_bytes") is not None
+            and scope.get("file_count") is not None
+        )
+        if has_summary:
+            try:
+                size_bytes = _exact_stored_int(scope["size_bytes"])
+                file_count = _exact_stored_int(scope["file_count"])
+            except (TypeError, ValueError, OverflowError):
+                any_unknown = True
+                continue
+            summary_valid = (
+                resolved["path_type"] in {"file", "dir"}
+                and size_bytes >= 0
+                and file_count >= 0
+                and (
+                    resolved["path_type"] != "file"
+                    or file_count == 1
+                )
             )
-            resolved: dict = {"source_path": path, "path_type": path_type}
-            if size_bytes is not None:
-                resolved["size_bytes"] = int(size_bytes)
-        else:
-            resolved = {
-                "source_path": path,
-                "path_type": str(scope.get("path_type") or "unknown"),
-            }
-            if "size_bytes" in scope and scope.get("size_bytes") is not None:
-                resolved["size_bytes"] = int(scope["size_bytes"])
+            if not summary_valid:
+                any_unknown = True
+                continue
+            resolved["size_bytes"] = size_bytes
+            resolved["file_count"] = file_count
+        elif "size_bytes" in scope and scope.get("size_bytes") is not None:
+            try:
+                legacy_size_bytes = _exact_stored_int(scope["size_bytes"])
+            except (TypeError, ValueError, OverflowError):
+                any_unknown = True
+            else:
+                if legacy_size_bytes < 0:
+                    any_unknown = True
+                else:
+                    resolved["size_bytes"] = legacy_size_bytes
         paired_scopes.append(resolved)
         paired_dirs.append(directory)
     if not paired_scopes:
         return 0, True
-    _files, nbytes, unknown = summarize_gateway_select_scopes(paired_scopes, paired_dirs)
+    trusted_bytes = sum(
+        max(0, int(scope.get("size_bytes") or 0))
+        for scope in paired_scopes
+        if "file_count" in scope
+    )
+    legacy_scopes = [scope for scope in paired_scopes if "file_count" not in scope]
+    legacy_dirs = [
+        directory
+        for scope, directory in zip(paired_scopes, paired_dirs, strict=True)
+        if "file_count" not in scope
+    ]
+    _files, legacy_bytes, unknown = summarize_gateway_select_scopes(
+        legacy_scopes,
+        legacy_dirs,
+    )
+    nbytes = trusted_bytes + legacy_bytes
     return int(nbytes or 0), bool(any_unknown or unknown)
 
 
@@ -131,10 +242,10 @@ def bulk_public_gateway_used_bytes(
     """
     Logical occupancy keyed by gateway_link_id.
 
-    Counts managed-restore workspace bindings + PROVISIONING sessions that have
-    not yet linked a knowledge_source (reservation without double-count).
+    Counts managed-restore workspaces, except while a PROVISIONING Chat's
+    durable reservation is authoritative for that workspace.
     """
-    from apps.lens_bridge.models import LensSessionLink, LensWorkspaceBinding
+    from apps.lens_bridge.models import LensSessionLink
     from apps.lens_bridge.services import platform_lens
 
     if link_ids is None:
@@ -147,13 +258,8 @@ def bulk_public_gateway_used_bytes(
     totals: dict[int, int] = {link_id: 0 for link_id in ids}
     unknowns: dict[int, bool] = {link_id: False for link_id in ids}
 
-    bindings = (
-        LensWorkspaceBinding.objects.filter(
-            gateway_link_id__in=ids,
-            workspace_kind=LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE,
-        )
-        .exclude(state=LensWorkspaceBinding.State.DELETED)
-        .select_related("knowledge_source")
+    bindings = _metered_managed_restore_bindings(
+        gateway_link_ids=ids,
     )
     for binding in bindings:
         link_id = int(binding.gateway_link_id)
@@ -171,17 +277,17 @@ def bulk_public_gateway_used_bytes(
 
     provisioning = LensSessionLink.objects.filter(
         gateway_link_id__in=ids,
-        lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
-        status=LensSessionLink.Status.ACTIVE,
-        knowledge_source_id__isnull=True,
-    ).only("id", "organization_id", "source_scopes_json", "gateway_link_id")
+        lifecycle_status__in=(
+            LensSessionLink.LifecycleStatus.PROVISIONING,
+            LensSessionLink.LifecycleStatus.DELETING,
+        ),
+        capacity_reservation_status=(
+            LensSessionLink.CapacityReservationStatus.RESERVED
+        ),
+    ).only("id", "capacity_reserved_bytes", "gateway_link_id")
     for session in provisioning:
         link_id = int(session.gateway_link_id)
-        nbytes, unknown = _occupancy_from_scope_dicts(
-            organization_id=int(session.organization_id),
-            scopes=list(session.source_scopes_json or []),
-            re_resolve=False,
-        )
+        nbytes, unknown = session_scope_occupancy(session=session)
         totals[link_id] = totals.get(link_id, 0) + nbytes
         unknowns[link_id] = bool(unknowns.get(link_id) or unknown)
 
@@ -205,28 +311,25 @@ def org_public_gateway_used_bytes(*, organization_id: int) -> tuple[int, bool]:
 
     Sums managed-restore bindings + provisioning reservations for this org.
     """
-    from apps.lens_bridge.models import LensSessionLink, LensWorkspaceBinding
+    from apps.lens_bridge.models import LensSessionLink
     from apps.lens_bridge.services import platform_lens
 
     org_id = int(organization_id)
     if org_id <= 0:
         return 0, False
 
-    platform_ids = list(platform_lens.platform_gateway_links().values_list("id", flat=True))
+    platform_ids = list(
+        platform_lens.platform_gateway_links().values_list("id", flat=True)
+    )
     if not platform_ids:
         return 0, False
 
     total = 0
     any_unknown = False
 
-    bindings = (
-        LensWorkspaceBinding.objects.filter(
-            organization_id=org_id,
-            gateway_link_id__in=platform_ids,
-            workspace_kind=LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE,
-        )
-        .exclude(state=LensWorkspaceBinding.State.DELETED)
-        .select_related("knowledge_source")
+    bindings = _metered_managed_restore_bindings(
+        gateway_link_ids=platform_ids,
+        organization_id=org_id,
     )
     for binding in bindings:
         ks = binding.knowledge_source
@@ -243,16 +346,16 @@ def org_public_gateway_used_bytes(*, organization_id: int) -> tuple[int, bool]:
     provisioning = LensSessionLink.objects.filter(
         organization_id=org_id,
         gateway_link_id__in=platform_ids,
-        lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
-        status=LensSessionLink.Status.ACTIVE,
-        knowledge_source_id__isnull=True,
-    ).only("id", "organization_id", "source_scopes_json", "gateway_link_id")
+        lifecycle_status__in=(
+            LensSessionLink.LifecycleStatus.PROVISIONING,
+            LensSessionLink.LifecycleStatus.DELETING,
+        ),
+        capacity_reservation_status=(
+            LensSessionLink.CapacityReservationStatus.RESERVED
+        ),
+    ).only("id", "capacity_reserved_bytes", "gateway_link_id")
     for session in provisioning:
-        nbytes, unknown = _occupancy_from_scope_dicts(
-            organization_id=org_id,
-            scopes=list(session.source_scopes_json or []),
-            re_resolve=False,
-        )
+        nbytes, unknown = session_scope_occupancy(session=session)
         total += nbytes
         any_unknown = bool(any_unknown or unknown)
 
@@ -261,7 +364,9 @@ def org_public_gateway_used_bytes(*, organization_id: int) -> tuple[int, bool]:
 
 def org_public_gateway_capacity_used_gb(*, organization_id: int) -> float:
     """GiB used by one org across Public Gateways (for EffectiveQuota meters)."""
-    used_bytes, _unknown = org_public_gateway_used_bytes(organization_id=organization_id)
+    used_bytes, _unknown = org_public_gateway_used_bytes(
+        organization_id=organization_id
+    )
     return round(float(used_bytes) / float(_GIB), 6)
 
 
@@ -319,7 +424,9 @@ def assert_public_gateway_capacity(
 
 def public_gateway_capacity_payload(*, gateway_link) -> dict:
     limit_gb = get_public_gateway_capacity_gb(gateway_link=gateway_link)
-    used_bytes, used_unknown = public_gateway_used_bytes(gateway_link_id=int(gateway_link.pk))
+    used_bytes, used_unknown = public_gateway_used_bytes(
+        gateway_link_id=int(gateway_link.pk)
+    )
     gateway = getattr(gateway_link, "gateway", None)
     return {
         "gateway_link_id": int(gateway_link.pk),
@@ -338,7 +445,9 @@ def list_public_gateway_capacity_payloads() -> list[dict]:
     """Capacity payload for every platform Public Gateway link."""
     from apps.lens_bridge.services import platform_lens
 
-    links = list(platform_lens.platform_gateway_links().select_related("gateway").order_by("id"))
+    links = list(
+        platform_lens.platform_gateway_links().select_related("gateway").order_by("id")
+    )
     used_map = bulk_public_gateway_used_bytes([int(link.id) for link in links])
     payloads = []
     for link in links:

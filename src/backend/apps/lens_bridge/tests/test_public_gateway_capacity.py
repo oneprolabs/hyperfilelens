@@ -6,7 +6,12 @@ from unittest.mock import MagicMock, patch
 from django.contrib.auth.models import User
 from django.test import TestCase
 
-from apps.lens_bridge.models import LensGatewayLink, LensSessionLink
+from apps.lens_bridge.models import (
+    LensGatewayLink,
+    LensKnowledgeSource,
+    LensSessionLink,
+    LensWorkspaceBinding,
+)
 from apps.lens_bridge.services import platform_lens
 from apps.lens_bridge.services.public_gateway_capacity import (
     assert_public_gateway_capacity,
@@ -90,7 +95,9 @@ class PublicGatewayCapacityServiceTests(TestCase):
                 additional_bytes=3 * 1024**3,
             )
         self.assertEqual(ctx.exception.code, "SUBSCRIPTION.QUOTA_EXCEEDED")
-        self.assertEqual(ctx.exception.meta.get("quota_type"), "gateway.public_capacity_gb")
+        self.assertEqual(
+            ctx.exception.meta.get("quota_type"), "gateway.public_capacity_gb"
+        )
 
     @patch(
         "apps.lens_bridge.services.public_gateway_capacity.public_gateway_used_bytes",
@@ -128,6 +135,121 @@ class PublicGatewayCapacityServiceTests(TestCase):
         self.assertEqual(nbytes, 0)
         self.assertTrue(unknown)
 
+    def test_corrupt_scope_summary_fails_closed_without_crashing(self):
+        from apps.lens_bridge.services import public_gateway_capacity as cap
+        from apps.protection.models import BackupSourceSnapshotDirectory
+
+        directory = SimpleNamespace(
+            source_path="/root",
+            file_count=1,
+            size_bytes=42,
+        )
+        with patch.object(
+            BackupSourceSnapshotDirectory.objects,
+            "filter",
+        ) as directory_filter:
+            directory_filter.return_value.first.return_value = directory
+            nbytes, unknown = cap._occupancy_from_scope_dicts(
+                organization_id=1,
+                scopes=[
+                    {
+                        "source_path": "/root/file.txt",
+                        "backup_snapshot_directory_id": 31,
+                        "path_type": "file",
+                        "file_count": 0,
+                        "size_bytes": "not-a-number",
+                    }
+                ],
+                re_resolve=False,
+            )
+
+        self.assertEqual(nbytes, 0)
+        self.assertTrue(unknown)
+
+    def test_negative_legacy_scope_size_fails_closed(self):
+        from apps.lens_bridge.services import public_gateway_capacity as cap
+        from apps.protection.models import BackupSourceSnapshotDirectory
+
+        directory = SimpleNamespace(
+            source_path="/root",
+            file_count=1,
+            size_bytes=42,
+        )
+        with patch.object(
+            BackupSourceSnapshotDirectory.objects,
+            "filter",
+        ) as directory_filter:
+            directory_filter.return_value.first.return_value = directory
+            nbytes, unknown = cap._occupancy_from_scope_dicts(
+                organization_id=1,
+                scopes=[
+                    {
+                        "source_path": "/root/file.txt",
+                        "backup_snapshot_directory_id": 31,
+                        "path_type": "file",
+                        "size_bytes": -1,
+                    }
+                ],
+                re_resolve=False,
+            )
+
+        self.assertEqual(nbytes, 0)
+        self.assertTrue(unknown)
+
+    def test_fractional_scope_summary_fails_closed(self):
+        from apps.lens_bridge.services import public_gateway_capacity as cap
+        from apps.protection.models import BackupSourceSnapshotDirectory
+
+        directory = SimpleNamespace(source_path="/root", file_count=1, size_bytes=42)
+        with patch.object(
+            BackupSourceSnapshotDirectory.objects,
+            "filter",
+        ) as directory_filter:
+            directory_filter.return_value.first.return_value = directory
+            nbytes, unknown = cap._occupancy_from_scope_dicts(
+                organization_id=1,
+                scopes=[
+                    {
+                        "source_path": "/root/file.txt",
+                        "backup_snapshot_directory_id": 31,
+                        "path_type": "file",
+                        "file_count": 1.5,
+                        "size_bytes": 42,
+                    }
+                ],
+                re_resolve=False,
+            )
+
+        self.assertEqual(nbytes, 0)
+        self.assertTrue(unknown)
+
+    def test_scope_directory_is_resolved_within_the_session_organization(self):
+        from apps.lens_bridge.services import public_gateway_capacity as cap
+        from apps.protection.models import BackupSourceSnapshotDirectory
+
+        with patch.object(
+            BackupSourceSnapshotDirectory.objects,
+            "filter",
+        ) as directory_filter:
+            directory_filter.return_value.first.return_value = None
+            nbytes, unknown = cap._occupancy_from_scope_dicts(
+                organization_id=17,
+                scopes=[
+                    {
+                        "source_path": "/root/file.txt",
+                        "backup_snapshot_directory_id": 31,
+                        "path_type": "file",
+                        "file_count": 1,
+                        "size_bytes": 42,
+                    }
+                ],
+                re_resolve=False,
+            )
+
+        directory_filter.assert_called_once_with(id=31, organization_id=17)
+        self.assertEqual(nbytes, 0)
+        self.assertTrue(unknown)
+
     def test_org_usage_includes_provisioning_reservation(self):
         from apps.iam.models import Organization
 
@@ -154,12 +276,12 @@ class PublicGatewayCapacityServiceTests(TestCase):
             status=LensSessionLink.Status.ACTIVE,
             lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
             knowledge_source=None,
+            capacity_reservation_status=(
+                LensSessionLink.CapacityReservationStatus.RESERVED
+            ),
+            capacity_reserved_bytes=2 * gib,
         )
-        with patch(
-            "apps.lens_bridge.services.public_gateway_capacity._occupancy_from_scope_dicts",
-            return_value=(2 * gib, False),
-        ):
-            used_gb = org_public_gateway_capacity_used_gb(organization_id=tenant.id)
+        used_gb = org_public_gateway_capacity_used_gb(organization_id=tenant.id)
         self.assertAlmostEqual(used_gb, 2.0, places=3)
 
     @patch(
@@ -172,14 +294,14 @@ class PublicGatewayCapacityServiceTests(TestCase):
         gateway_qs = MagicMock()
         gateway_qs.values_list.return_value = [self.link_a.id, self.link_b.id]
         session_a = SimpleNamespace(
-            organization_id=5,
             gateway_link_id=self.link_a.id,
-            source_scopes_json=[{"source_path": "/a", "backup_snapshot_directory_id": 1}],
+            capacity_reservation_status="reserved",
+            capacity_reserved_bytes=2 * 1024**3,
         )
         session_b = SimpleNamespace(
-            organization_id=5,
             gateway_link_id=self.link_b.id,
-            source_scopes_json=[{"source_path": "/b", "backup_snapshot_directory_id": 2}],
+            capacity_reservation_status="reserved",
+            capacity_reserved_bytes=2 * 1024**3,
         )
         session_qs = MagicMock()
         session_qs.only.return_value = [session_a, session_b]
@@ -206,4 +328,196 @@ class PublicGatewayCapacityServiceTests(TestCase):
 
         self.assertEqual(used_map[self.link_a.id][0], 2 * 1024**3)
         self.assertEqual(used_map[self.link_b.id][0], 2 * 1024**3)
-        self.assertEqual(mock_occ.call_count, 2)
+        mock_occ.assert_not_called()
+
+    def test_unresolved_session_does_not_reserve_capacity(self):
+        from apps.iam.models import Organization
+
+        tenant = Organization.objects.create(
+            key="cap-unresolved",
+            name="Cap Unresolved",
+        )
+        user = User.objects.create_user(username="cap-unresolved@test.local")
+        LensSessionLink.objects.create(
+            organization=tenant,
+            hfl_user=user,
+            title="pending",
+            gateway_link=self.link_a,
+            source_scopes_json=[
+                {
+                    "source_path": "/root/nested",
+                    "backup_snapshot_directory_id": 1,
+                    "path_type": "unknown",
+                }
+            ],
+            status=LensSessionLink.Status.ACTIVE,
+            lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+            scope_resolution_status=LensSessionLink.ScopeResolutionStatus.PENDING,
+            capacity_reservation_status=(
+                LensSessionLink.CapacityReservationStatus.PENDING
+            ),
+        )
+
+        self.assertEqual(
+            org_public_gateway_capacity_used_gb(organization_id=tenant.id),
+            0,
+        )
+
+    def test_corrupt_negative_reservation_fails_closed(self):
+        from apps.lens_bridge.services import public_gateway_capacity as cap
+
+        used, unknown = cap.session_scope_occupancy(
+            session=SimpleNamespace(
+                capacity_reservation_status="reserved",
+                capacity_reserved_bytes=-1,
+            )
+        )
+
+        self.assertEqual(used, 0)
+        self.assertTrue(unknown)
+
+    def test_deleting_chat_keeps_its_reservation_until_cleanup_finishes(self):
+        from apps.iam.models import Organization
+
+        tenant = Organization.objects.create(
+            key="cap-deleting",
+            name="Cap Deleting",
+        )
+        user = User.objects.create_user(username="cap-deleting@test.local")
+        gib = 1024**3
+        LensSessionLink.objects.create(
+            organization=tenant,
+            hfl_user=user,
+            title="deleting",
+            gateway_link=self.link_a,
+            status=LensSessionLink.Status.ARCHIVED,
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            capacity_reservation_status=(
+                LensSessionLink.CapacityReservationStatus.RESERVED
+            ),
+            capacity_reserved_bytes=2 * gib,
+        )
+
+        self.assertEqual(
+            org_public_gateway_capacity_used_gb(organization_id=tenant.id),
+            2,
+        )
+
+    def test_provisioning_chat_reservation_is_not_double_counted_with_workspace(
+        self,
+    ):
+        from apps.iam.models import Organization
+        from apps.lens_bridge.services import public_gateway_capacity as cap
+
+        tenant = Organization.objects.create(
+            key="cap-transition",
+            name="Cap Transition",
+        )
+        user = User.objects.create_user(username="cap-transition@test.local")
+        gib = 1024**3
+        knowledge_source = LensKnowledgeSource.objects.create(
+            organization=tenant,
+            name="Transitioning workspace",
+            gateway=self.link_a.gateway,
+            gateway_link=self.link_a,
+            source_scopes_json=[
+                {
+                    "source_path": "/root",
+                    "backup_snapshot_directory_id": 1,
+                    "path_type": "file",
+                    "file_count": 1,
+                    "size_bytes": 2 * gib,
+                }
+            ],
+            created_by=user,
+        )
+        LensWorkspaceBinding.objects.create(
+            organization=tenant,
+            knowledge_source=knowledge_source,
+            gateway_link=self.link_a,
+            execution_organization_id=self.link_a.organization_id,
+            execution_node_id=self.link_a.gateway_id,
+            workspace_kind=LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE,
+            workspace_root="/workspace",
+            relative_path="hfl-ks-transition",
+        )
+        LensSessionLink.objects.create(
+            organization=tenant,
+            hfl_user=user,
+            title="transitioning",
+            gateway_link=self.link_a,
+            knowledge_source=knowledge_source,
+            status=LensSessionLink.Status.ACTIVE,
+            lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+            capacity_reservation_status=(
+                LensSessionLink.CapacityReservationStatus.RESERVED
+            ),
+            capacity_reserved_bytes=2 * gib,
+        )
+
+        with patch.object(
+            cap,
+            "_occupancy_from_scope_dicts",
+            wraps=cap._occupancy_from_scope_dicts,
+        ) as occupancy:
+            used, unknown = cap.public_gateway_used_bytes(
+                gateway_link_id=self.link_a.id,
+            )
+
+        self.assertEqual(used, 2 * gib)
+        self.assertFalse(unknown)
+        occupancy.assert_not_called()
+
+    def test_reservation_on_another_gateway_does_not_hide_workspace_usage(self):
+        from apps.iam.models import Organization
+        from apps.lens_bridge.services import public_gateway_capacity as cap
+
+        tenant = Organization.objects.create(
+            key="cap-cross-gateway",
+            name="Cap Cross Gateway",
+        )
+        user = User.objects.create_user(username="cap-cross-gateway@test.local")
+        gib = 1024**3
+        knowledge_source = LensKnowledgeSource.objects.create(
+            organization=tenant,
+            name="Gateway A workspace",
+            gateway=self.link_a.gateway,
+            gateway_link=self.link_a,
+            source_scopes_json=[],
+            created_by=user,
+        )
+        LensWorkspaceBinding.objects.create(
+            organization=tenant,
+            knowledge_source=knowledge_source,
+            gateway_link=self.link_a,
+            execution_organization_id=self.link_a.organization_id,
+            execution_node_id=self.link_a.gateway_id,
+            workspace_kind=LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE,
+            workspace_root="/workspace",
+            relative_path="hfl-ks-cross-gateway",
+        )
+        LensSessionLink.objects.create(
+            organization=tenant,
+            hfl_user=user,
+            title="mismatched reservation",
+            gateway_link=self.link_b,
+            knowledge_source=knowledge_source,
+            lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+            capacity_reservation_status=(
+                LensSessionLink.CapacityReservationStatus.RESERVED
+            ),
+            capacity_reserved_bytes=2 * gib,
+        )
+
+        with patch.object(
+            cap,
+            "_occupancy_from_scope_dicts",
+            return_value=(3 * gib, False),
+        ) as occupancy:
+            used_map = cap.bulk_public_gateway_used_bytes(
+                [self.link_a.id, self.link_b.id]
+            )
+
+        self.assertEqual(used_map[self.link_a.id][0], 3 * gib)
+        self.assertEqual(used_map[self.link_b.id][0], 2 * gib)
+        occupancy.assert_called_once()

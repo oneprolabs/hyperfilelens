@@ -21,6 +21,7 @@ from apps.lens_bridge.services import sl_client
 class LensSessionCreateSerializerTests(SimpleTestCase):
     def _payload(self, **overrides):
         payload = {
+            "idempotency_key": "session-create-test",
             "backup_config_id": 1,
             "backup_source_snapshot_id": 1,
             "source_scopes": [
@@ -43,6 +44,14 @@ class LensSessionCreateSerializerTests(SimpleTestCase):
             str(serializer.errors["gateway_link_id"][0]),
             "Select a Private Data Gateway.",
         )
+
+    def test_create_requires_an_idempotency_key(self):
+        serializer = LensSessionCreateSerializer(
+            data=self._payload(idempotency_key=None)
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("idempotency_key", serializer.errors)
 
     def test_public_gateway_option_rejects_a_specific_gateway(self):
         serializer = LensSessionCreateSerializer(
