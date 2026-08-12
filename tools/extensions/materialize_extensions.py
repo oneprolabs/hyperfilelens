@@ -81,8 +81,8 @@ def _git_env(url: str, *, require_https_auth: bool = False) -> dict[str, str]:
     """Env for git subprocesses: HTTPS auth via GIT_CONFIG_* (not argv / .git/config)."""
     env = os.environ.copy()
     env.setdefault("GIT_TERMINAL_PROMPT", "0")
-    # Drop inherited Actions checkout auth slots so a packaging token is the only
-    # http.*.extraheader applied (GITHUB_TOKEN cannot read private sibling repos).
+    # Drop inherited process-level config slots before constructing an isolated
+    # auth configuration for the extension request.
     for key in list(env):
         if key == "GIT_CONFIG_COUNT" or key.startswith("GIT_CONFIG_KEY_") or key.startswith(
             "GIT_CONFIG_VALUE_"
@@ -103,11 +103,16 @@ def _git_env(url: str, *, require_https_auth: bool = False) -> dict[str, str]:
             )
         return env
     basic = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
-    # Ephemeral config through the environment — avoids token-in-URL remotes and
-    # keeps the secret out of `ps` argv (unlike `git -c ...extraheader=...`).
-    env["GIT_CONFIG_COUNT"] = "1"
-    env["GIT_CONFIG_KEY_0"] = f"http.https://{parts.hostname}/.extraheader"
-    env["GIT_CONFIG_VALUE_0"] = f"AUTHORIZATION: basic {basic}"
+    # actions/checkout persists its GITHUB_TOKEN extraheader in the repository's
+    # local config by default. An empty value resets lower-priority extraheaders;
+    # the following value then supplies the private-repository credential exactly
+    # once. Keep both entries ephemeral so credentials never enter argv or .git.
+    extraheader_key = f"http.https://{parts.hostname}/.extraheader"
+    env["GIT_CONFIG_COUNT"] = "2"
+    env["GIT_CONFIG_KEY_0"] = extraheader_key
+    env["GIT_CONFIG_VALUE_0"] = ""
+    env["GIT_CONFIG_KEY_1"] = extraheader_key
+    env["GIT_CONFIG_VALUE_1"] = f"AUTHORIZATION: basic {basic}"
     return env
 
 
