@@ -230,7 +230,10 @@ recover_upgrade_services() {
 			&& -n "${UPGRADE_LEGACY_API_CID}" \
 			&& "$(docker inspect --format '{{.State.Running}}' "${UPGRADE_LEGACY_API_CID}" 2>/dev/null || true)" == "true" ]]; then
 			compose_in_root up -d --no-build --no-recreate postgres redis
-			compose_in_root up -d --no-build worker scheduler
+			# The pre-upgrade singleton containers still carry the previous image.
+			# Starting them preserves one coherent rollback release; `up` would
+			# recreate them from the already-staged target image metadata.
+			compose_in_root start worker scheduler
 			[[ $? -eq 0 ]] || recovered=0
 			restore_previous_hfl_color legacy "${UPGRADE_TARGET_COLOR}"
 			[[ $? -eq 0 ]] || recovered=0
@@ -238,14 +241,19 @@ recover_upgrade_services() {
 			# Files and APP_VERSION already describe the target release.  `up`
 			# would therefore recreate the still-valid previous-color containers
 			# with the target image and destroy the rollback path.  Start only
-			# existing stable/color containers; worker and scheduler are singleton
-			# consumers and may safely converge to the target release.
+			# existing stable/color containers. Before commit, worker and scheduler
+			# must also remain on the previous release so API and background code do
+			# not run different schema/application contracts.
 			compose_in_root start postgres redis nginx
 			[[ $? -eq 0 ]] || recovered=0
 			compose_color "${recovery_color}" start \
 				"api-${recovery_color}" "web-${recovery_color}"
 			[[ $? -eq 0 ]] || recovered=0
-			compose_in_root up -d --no-build worker scheduler
+			if [[ "${UPGRADE_HFL_COMMITTED}" == "1" ]]; then
+				compose_in_root up -d --no-build worker scheduler
+			else
+				compose_in_root start worker scheduler
+			fi
 			[[ $? -eq 0 ]] || recovered=0
 			if [[ "${UPGRADE_HFL_COMMITTED}" == "1" ]]; then
 				render_active_upstreams "${recovery_color}"
