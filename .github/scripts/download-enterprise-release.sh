@@ -6,6 +6,7 @@ set -euo pipefail
 incoming=${1:-}
 download_proxy=${2:-}
 plan_base64=${3:-}
+mode=${4:-download}
 
 [[ "${incoming}" =~ ^/root/hfl-release/\.incoming/[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
 	printf 'ERROR: Enterprise incoming directory is invalid\n' >&2
@@ -20,9 +21,25 @@ proxy_port=${download_proxy##*:}
 	printf 'ERROR: Enterprise download proxy port is out of range\n' >&2
 	exit 2
 }
-[[ -n "${plan_base64}" ]] || { printf 'ERROR: download plan is missing\n' >&2; exit 2; }
+[[ "${mode}" =~ ^(download|verify)$ ]] || {
+	printf 'ERROR: invalid Enterprise staging mode\n' >&2
+	exit 2
+}
 
 install -d -m 0700 "${incoming}"
+if [[ "${mode}" == "verify" ]]; then
+	(
+		cd "${incoming}"
+		[[ -s SHA256SUMS && -s MANIFEST.json ]] || {
+			printf 'ERROR: Enterprise release metadata is incomplete\n' >&2
+			exit 1
+		}
+		sha256sum -c SHA256SUMS
+	)
+	exit 0
+fi
+
+[[ -n "${plan_base64}" ]] || { printf 'ERROR: download plan is missing\n' >&2; exit 2; }
 plan="${incoming}/.download-plan"
 trap 'rm -f "${plan}"' EXIT
 printf '%s' "${plan_base64}" | base64 -d >"${plan}"
@@ -50,8 +67,3 @@ while IFS=$'\t' read -r name url; do
 	}
 	download "${name}" "${url}"
 done <"${plan}"
-
-(
-	cd "${incoming}"
-	sha256sum -c SHA256SUMS
-)
