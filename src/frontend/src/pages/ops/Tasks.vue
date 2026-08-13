@@ -166,6 +166,7 @@ type ResourceDetailRow = {
   endpointName?: string
   endpointIp?: string
   registeredAt?: string
+  availability?: 'online' | 'offline'
   flowSource?: Awaited<ReturnType<typeof resolveTaskBackupSourceResource>>['flowSource']
 }
 
@@ -600,6 +601,16 @@ function resourceSummary(raw: unknown) {
   ].filter(Boolean).join(' · ')
 }
 
+function backupSourceConnectivityLabel(value?: string) {
+  return value === 'online'
+    ? t('protection.sourceResources.nodeStatusOnline')
+    : t('protection.sourceResources.nodeStatusOffline')
+}
+
+function backupSourceConnectivityTagType(value?: string): 'success' | 'danger' {
+  return value === 'online' ? 'success' : 'danger'
+}
+
 function normalizeResourceDetail(type: string, id: number, raw: unknown, source?: Awaited<ReturnType<typeof resolveTaskBackupSourceResource>>): ResourceDetailRow {
   const record = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
   const rawType = objectValue(record, ['resource_type', 'repo_type', 'role', 'snapshot_type'])
@@ -617,6 +628,7 @@ function normalizeResourceDetail(type: string, id: number, raw: unknown, source?
     endpointName: source?.endpointName || objectValue(record, ['hostname', 'name', 'display_name']),
     endpointIp: source?.endpointIp || objectValue(record, ['ip_address', 'endpoint']),
     registeredAt: source?.registeredAt || objectValue(record, ['created_at']),
+    availability: source?.availability,
     flowSource: source?.flowSource,
   }
 }
@@ -1719,9 +1731,25 @@ watch(
                   </ElTag>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('ops.task.colStatus')" :width="isRepositoryResourceType ? 165 : 110">
+              <el-table-column
+                :label="selectedResourceType === 'backup_source'
+                  ? t('protection.sourceResources.colConnectivity')
+                  : t('ops.task.colStatus')"
+                :width="isRepositoryResourceType ? 165 : 110"
+              >
                 <template #default="{ row }">
-                  <ElTag v-if="row.status" v-bind="lifecycleStatusTagAttrs(row.statusValue)" size="small">
+                  <ElTag
+                    v-if="selectedResourceType === 'backup_source' && row.availability"
+                    :type="backupSourceConnectivityTagType(row.availability)"
+                    size="small"
+                  >
+                    {{ backupSourceConnectivityLabel(row.availability) }}
+                  </ElTag>
+                  <ElTag
+                    v-else-if="selectedResourceType !== 'backup_source' && row.status"
+                    v-bind="lifecycleStatusTagAttrs(row.statusValue)"
+                    size="small"
+                  >
                     {{ row.status }}
                   </ElTag>
                   <span v-else class="hfl-empty-mark">—</span>
