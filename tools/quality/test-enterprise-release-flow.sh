@@ -95,8 +95,8 @@ awk '
 	inside && /timeout-minutes: 120/ { found = 1 }
 	END { exit(found ? 0 : 1) }
 ' "${workflow}"
-grep -F '.github/scripts/stage-enterprise-release.sh build/release/dist "$incoming"' \
-	"${workflow}" >/dev/null
+grep -F 'Upload Enterprise candidate to temporary draft' "${workflow}" >/dev/null
+grep -F '.github/scripts/stage-enterprise-release.sh "$incoming"' "${workflow}" >/dev/null
 if grep -F 'HFL_RELEASE_MAX_SINGLE_BYTES:' "${workflow}" >/dev/null \
 	|| grep -F 'HFL_RELEASE_PART_BYTES:' "${workflow}" >/dev/null; then
 	printf 'ERROR: Enterprise staging must retain the canonical single archive\n' >&2
@@ -104,7 +104,10 @@ if grep -F 'HFL_RELEASE_MAX_SINGLE_BYTES:' "${workflow}" >/dev/null \
 fi
 transfer="${ROOT}/.github/scripts/stage-enterprise-release.sh"
 grep -F 'TEST_RELEASE_DOWNLOAD_PROXY_URL' "${workflow}" >/dev/null
-grep -F 'gh-release-upload.sh "${ARTIFACT_ID}"' "${transfer}" >/dev/null
+if grep -F 'gh-release-upload.sh' "${transfer}" >/dev/null; then
+	printf 'ERROR: TEST staging must not upload the candidate before verification\n' >&2
+	exit 1
+fi
 grep -F 'release-assets.githubusercontent.com' "${transfer}" >/dev/null
 grep -F 'ServerAliveInterval=30' "${transfer}" >/dev/null
 grep -F '<.github/scripts/download-enterprise-release.sh' "${transfer}" >/dev/null
@@ -118,6 +121,34 @@ grep -F -- '--continue-at -' "${downloader}" >/dev/null
 grep -F -- '--max-time 3000' "${downloader}" >/dev/null
 grep -F 'sha256sum -c SHA256SUMS' "${downloader}" >/dev/null
 grep -F 'Download release candidate from temporary draft' "${workflow}" >/dev/null
+python3 - "${workflow}" <<'PY'
+import pathlib
+import sys
+
+workflow = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+verify = workflow.index("  verify-release:")
+publish = workflow.index("  publish-release:")
+stage = workflow.index('.github/scripts/stage-enterprise-release.sh "$incoming"')
+deploy = workflow.index("  deploy-test:")
+production = workflow.index("  promote-production:")
+if not verify < publish < stage < deploy < production:
+    raise SystemExit("Enterprise release order must be verify, TEST stage, TEST deploy, PROD promotion")
+publish_block = workflow[publish:deploy]
+if "needs: [prepare, verify-release]" not in publish_block:
+    raise SystemExit("Enterprise TEST staging must depend on successful Runner verification")
+deploy_block = workflow[deploy:production]
+if "needs: [prepare, publish-release]" not in deploy_block:
+    raise SystemExit("Enterprise TEST deployment must depend on successful TEST storage")
+production_block = workflow[production:]
+if "needs: [prepare, deploy-test]" not in production_block:
+    raise SystemExit("Enterprise PROD promotion must depend on successful TEST deployment")
+PY
+awk '
+	/^  publish-release:$/ { inside = 1; next }
+	inside && /^  [a-z0-9-]+:$/ { inside = 0 }
+	inside && /timeout-minutes: 90/ { found = 1 }
+	END { exit(found ? 0 : 1) }
+' "${workflow}"
 if grep -F 'Download Enterprise release candidate from TEST host' "${workflow}" >/dev/null; then
 	printf 'ERROR: Enterprise verification must not copy the package back over SCP\n' >&2
 	exit 1
