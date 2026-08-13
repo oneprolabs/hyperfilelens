@@ -10,6 +10,10 @@ class Task(models.Model):
     class Type(models.TextChoices):
         BACKUP = "backup", "Backup"
         RESTORE = "restore", "Restore"
+        INSIGHT_WORKSPACE_RESTORE = (
+            "insight_workspace_restore",
+            "Insight workspace restore",
+        )
         SNAPSHOT_DOWNLOAD = "snapshot_download", "Snapshot download"
         SNAPSHOT_DELETE = "snapshot_delete", "Snapshot delete"
         BACKUP_CONFIG_RESET = "backup_config_reset", "Backup config reset"
@@ -48,7 +52,9 @@ class Task(models.Model):
         default=Status.PENDING,
         db_index=True,
     )
-    progress = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"))
+    progress = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal("0.00")
+    )
     current_step = models.CharField(max_length=64, blank=True, null=True, db_index=True)
     retry_count = models.IntegerField(default=0)
     recovery_attempt = models.PositiveIntegerField(default=0)
@@ -80,9 +86,18 @@ class Task(models.Model):
         db_table = "task"
         ordering = ["-created_at", "-id"]
         indexes = [
-            models.Index(fields=["organization_id", "status", "created_at"], name="task_org_status_created_idx"),
-            models.Index(fields=["organization_id", "task_type", "status"], name="task_org_type_status_idx"),
-            models.Index(fields=["organization_id", "trigger_type", "created_at"], name="task_org_trigger_created_idx"),
+            models.Index(
+                fields=["organization_id", "status", "created_at"],
+                name="task_org_status_created_idx",
+            ),
+            models.Index(
+                fields=["organization_id", "task_type", "status"],
+                name="task_org_type_status_idx",
+            ),
+            models.Index(
+                fields=["organization_id", "trigger_type", "created_at"],
+                name="task_org_trigger_created_idx",
+            ),
         ]
         constraints = [
             models.CheckConstraint(

@@ -5,6 +5,7 @@ from decimal import Decimal
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
+from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.models import Task, TaskDependency, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import create_task
 
@@ -140,16 +141,21 @@ class TaskSerializer(serializers.ModelSerializer):
             }
         )
         return {
-            "can_cancel": False if obj.task_type == Task.Type.SOURCE_UNREGISTER else (
+            "can_cancel": False
+            if obj.task_type == Task.Type.SOURCE_UNREGISTER
+            else (
                 obj.status in {Task.Status.PENDING, Task.Status.RUNNING}
-                and obj.task_type not in {
+                and obj.task_type
+                not in {
                     Task.Type.NODE_LIFECYCLE,
                     Task.Type.REPOSITORY_OPERATION,
                 }
             ),
             "can_recheck": False,
             "can_retry": (
-                obj.task_type not in {
+                obj.task_type not in RESTORE_TASK_TYPES
+                and obj.task_type
+                not in {
                     Task.Type.NODE_LIFECYCLE,
                     Task.Type.REPOSITORY_OPERATION,
                 }
@@ -230,10 +236,14 @@ class TaskSerializer(serializers.ModelSerializer):
         operation = self._repository_operation(obj)
         if operation is None:
             return None
-        supported = operation.owner_type == "controller" and operation.operation_type in {
-            "maintenance.quick",
-            "maintenance.full",
-        }
+        supported = (
+            operation.owner_type == "controller"
+            and operation.operation_type
+            in {
+                "maintenance.quick",
+                "maintenance.full",
+            }
+        )
         return {
             "supported": supported,
             "requested_at": (
@@ -246,7 +256,9 @@ class TaskSerializer(serializers.ModelSerializer):
 
 class TaskResourceInputSerializer(serializers.Serializer):
     resource_type = serializers.ChoiceField(choices=TaskResource.Type.choices)
-    resource_subtype = serializers.CharField(required=False, allow_blank=True, max_length=32)
+    resource_subtype = serializers.CharField(
+        required=False, allow_blank=True, max_length=32
+    )
     resource_id = serializers.IntegerField(min_value=1)
     is_primary = serializers.BooleanField(required=False, default=False)
 
@@ -275,6 +287,7 @@ class TaskCreateSerializer(serializers.Serializer):
             for choice in Task.Type.choices
             if choice[0]
             not in {
+                *RESTORE_TASK_TYPES,
                 Task.Type.NODE_LIFECYCLE,
                 Task.Type.REPOSITORY_OPERATION,
                 Task.Type.STORAGE_PROVIDER_VALIDATION,
@@ -292,7 +305,9 @@ class TaskCreateSerializer(serializers.Serializer):
 
     def validate_resources(self, resources):
         if sum(1 for resource in resources if resource.get("is_primary")) > 1:
-            raise serializers.ValidationError("A task can have at most one primary resource.")
+            raise serializers.ValidationError(
+                "A task can have at most one primary resource."
+            )
         return resources
 
     def create(self, validated_data):

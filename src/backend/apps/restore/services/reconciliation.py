@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import logging
+
+from django.db import transaction
 from django.db.models import CharField, Exists, OuterRef, Subquery
 from django.db.models.functions import Cast
 
 from apps.node.models import NodeTask
 from apps.restore.models import RestoreRecord, RestoreRecordItem
+from apps.restore.services.task_classification import normalize_restore_task_type
 from apps.restore.signals import sync_restore_record_from_node_task
+from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.models import Task
 from apps.task.services.interface import TERMINAL_STATUSES
+
+
+logger = logging.getLogger(__name__)
 
 
 _RESTORE_CORRELATIONS = ("restore.record", "restore.repository_server")
@@ -26,15 +34,91 @@ _ACTIVE_ITEM_STATUSES = (
 
 
 def reconcile_restore_node_task_projections(*, limit: int = 200) -> dict[str, int]:
-    """Repair item projections and nonterminal product tasks without starvation."""
-    candidates = _candidate_terminal_node_tasks(limit=max(1, int(limit)))
+    """Converge legacy task types and repair incomplete restore projections."""
+    batch_size = max(1, int(limit))
+    candidates = _candidate_terminal_node_tasks(limit=batch_size)
     replayed = 0
+    replay_failed = 0
     for node_task in candidates:
-        if not _projection_needs_replay(node_task=node_task):
+        try:
+            if not _projection_needs_replay(node_task=node_task):
+                continue
+            sync_restore_record_from_node_task(NodeTask, node_task)
+        except Exception:
+            replay_failed += 1
+            logger.exception(
+                "restore projection reconciliation failed node_task_id=%s",
+                node_task.id,
+            )
             continue
-        sync_restore_record_from_node_task(NodeTask, node_task)
         replayed += 1
-    return {"candidates": len(candidates), "replayed": replayed}
+    classified, classification_failed = _classify_terminal_legacy_insight_tasks(
+        limit=batch_size
+    )
+    return {
+        "candidates": len(candidates),
+        "replayed": replayed,
+        "replay_failed": replay_failed,
+        "classified": classified,
+        "classification_failed": classification_failed,
+    }
+
+
+def _classify_terminal_legacy_insight_tasks(*, limit: int) -> tuple[int, int]:
+    """Converge tasks completed by an adjacent pre-classification release."""
+    from apps.source.services.internal.source_pipeline import (
+        sync_task_pipeline_projection,
+    )
+
+    task_ids = (
+        RestoreRecord.objects.filter(purpose=RestoreRecord.Purpose.LENS_WORKSPACE)
+        .order_by()
+        .values("task_id")
+    )
+    candidate_ids = list(
+        Task.objects.filter(
+            id__in=Subquery(task_ids),
+            task_type=Task.Type.RESTORE,
+            status__in=TERMINAL_STATUSES,
+        )
+        .order_by("updated_at", "id")
+        .values_list("id", flat=True)[:limit]
+    )
+    classified = 0
+    failed = 0
+    for task_id in candidate_ids:
+        # Keep classification and its Protection read-model repair atomic. If
+        # projection repair fails, the legacy type remains eligible for retry.
+        try:
+            with transaction.atomic():
+                task = (
+                    Task.objects.select_for_update()
+                    .filter(
+                        id=task_id,
+                        task_type=Task.Type.RESTORE,
+                        status__in=TERMINAL_STATUSES,
+                    )
+                    .first()
+                )
+                if task is None:
+                    continue
+                record = RestoreRecord.objects.filter(
+                    task_id=task.id,
+                    purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+                ).first()
+                if record is None:
+                    continue
+                normalize_restore_task_type(record=record, task=task)
+                sync_task_pipeline_projection(task_id=task.id)
+        except Exception:
+            failed += 1
+            logger.exception(
+                "legacy insight restore classification failed task_id=%s",
+                task_id,
+            )
+            continue
+        classified += 1
+    return classified, failed
 
 
 def _candidate_terminal_node_tasks(*, limit: int) -> list[NodeTask]:
@@ -61,7 +145,7 @@ def _candidate_terminal_node_tasks(*, limit: int) -> list[NodeTask]:
 
     active_task_uuids = (
         Task.objects.filter(
-            task_type=Task.Type.RESTORE,
+            task_type__in=RESTORE_TASK_TYPES,
             status__in=(Task.Status.PENDING, Task.Status.RUNNING),
         )
         .order_by()
@@ -108,10 +192,14 @@ def _projection_needs_replay(*, node_task: NodeTask) -> bool:
             item_id = int(payload.get("restore_record_item_id"))
         except (TypeError, ValueError):
             return False
-        item = RestoreRecordItem.objects.select_related("restore_record").filter(
-            id=item_id,
-            node_task_id=node_task.id,
-        ).first()
+        item = (
+            RestoreRecordItem.objects.select_related("restore_record")
+            .filter(
+                id=item_id,
+                node_task_id=node_task.id,
+            )
+            .first()
+        )
         if item is None:
             return False
         task = Task.objects.filter(

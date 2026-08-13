@@ -19,6 +19,7 @@ const { t } = useI18n()
 const typeIcons = {
   backup: Archive,
   restore: RotateCcw,
+  insight_workspace_restore: RotateCcw,
   snapshot_download: Download,
   snapshot_delete: Trash2,
   backup_config_reset: Settings2,

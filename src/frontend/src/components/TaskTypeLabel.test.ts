@@ -20,6 +20,7 @@ function mountLabel(props: {
             emptyMark: '—',
             taskType: {
               backup: 'Backup',
+              insight_workspace_restore: 'Insight Workspace Restore',
               repository_operation: 'Repository Operation',
             },
             operationType: {
@@ -79,5 +80,12 @@ describe('TaskTypeLabel', () => {
 
     expect(wrapper.find('.hfl-task-type-stack').exists()).toBe(false)
     expect(wrapper.text()).toBe('Repository Operation')
+  })
+
+  it('uses the restore icon for insight workspace restores', () => {
+    const wrapper = mountLabel({ type: 'insight_workspace_restore' })
+
+    expect(wrapper.text()).toBe('Insight Workspace Restore')
+    expect(wrapper.find('svg').exists()).toBe(true)
   })
 })

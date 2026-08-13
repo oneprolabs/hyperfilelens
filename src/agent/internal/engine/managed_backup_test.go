@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/process"
@@ -253,6 +254,171 @@ func TestRepositoryCommandFailureMessage(t *testing.T) {
 	}
 	if got := repositoryCommandFailureMessage(process.Result{}, fmt.Errorf("exit 1")); got != "exit 1" {
 		t.Fatalf("expected fallback error, got %q", got)
+	}
+}
+
+func TestManagedRestoreFailureMessage(t *testing.T) {
+	spec := repositorySpec{
+		SecretAccessKey: "s3-secret",
+		KopiaPassword:   "repo-secret",
+		ServerPassword:  "server-secret",
+		TargetNAS: &nassvc.Spec{
+			Password: "nas-secret",
+		},
+	}
+	got := managedRestoreFailureMessage(
+		process.Result{
+			Stdout: "stdout fallback",
+			Stderr: "permission denied for repo-secret, s3-secret, nas-secret, and target-secret",
+		},
+		fmt.Errorf("exit status 1"),
+		spec,
+		Payload{Extra: map[string]any{"nas": map[string]any{
+			"protocol":    "smb",
+			"server":      "nas.example.test",
+			"share":       "restore",
+			"mount_point": "/mnt/restore",
+			"username":    "restore-user",
+			"password":    "target-secret",
+		}}},
+	)
+	if got != "Restore failed: permission denied for <redacted>, <redacted>, <redacted>, and <redacted>" {
+		t.Fatalf("expected sanitized stderr reason, got %q", got)
+	}
+	if fallback := managedRestoreFailureMessage(
+		process.Result{},
+		fmt.Errorf("exit status 1"),
+		repositorySpec{},
+		Payload{},
+	); fallback != "Restore failed: exit status 1" {
+		t.Fatalf("expected process fallback, got %q", fallback)
+	}
+	result := managedRestoreCommandResult(
+		process.Result{
+			Stdout: "repository repo-secret",
+			Stderr: "credentials s3-secret server-secret",
+		},
+		spec,
+		Payload{},
+	)
+	for _, key := range []string{"stdout", "stderr", "stdout_tail", "stderr_tail"} {
+		value, _ := result[key].(string)
+		if strings.Contains(value, "secret") {
+			t.Fatalf("expected %s to be sanitized, got %q", key, value)
+		}
+	}
+}
+
+func TestManagedRestorePreparationFailureSanitizesNestedResult(t *testing.T) {
+	payload := Payload{
+		Env: map[string]string{"KOPIA_PASSWORD": "env-secret"},
+		Extra: map[string]any{
+			"repository": map[string]any{
+				"password": "payload-secret",
+				"credentials": map[string]any{
+					"access_token": map[string]any{"value": "nested-token"},
+				},
+			},
+		},
+	}
+	result := map[string]any{
+		"repository_connect": map[string]any{
+			"stderr":        "connect rejected payload-secret, env-secret, and nested-token",
+			"access_token":  "opaque-value-not-mentioned-in-payload",
+			"numeric_token": 123456,
+		},
+		"attempts": []map[string]any{
+			{
+				"message":      "retry rejected list-secret",
+				"access_token": "list-secret",
+			},
+		},
+	}
+	payload.Extra["attempts"] = []map[string]any{
+		{"access_token": "list-secret"},
+	}
+	message := managedRestorePreparationFailureMessage(
+		result,
+		"exit status 1",
+		repositorySpec{},
+		payload,
+	)
+	if message != "Restore repository preparation failed: connect rejected <redacted>, <redacted>, and <redacted>" {
+		t.Fatalf("expected actionable sanitized preparation error, got %q", message)
+	}
+	redacted := managedRestoreResult(result, repositorySpec{}, payload)
+	connect := redacted["repository_connect"].(map[string]any)
+	if got := connect["stderr"]; got != "connect rejected <redacted>, <redacted>, and <redacted>" {
+		t.Fatalf("expected nested command result to be sanitized, got %q", got)
+	}
+	if got := connect["access_token"]; got != "<redacted>" {
+		t.Fatalf("expected secret-shaped result field to be sanitized, got %q", got)
+	}
+	if got := connect["numeric_token"]; got != "<redacted>" {
+		t.Fatalf("expected numeric secret-shaped result field to be sanitized, got %q", got)
+	}
+	attempts := redacted["attempts"].([]map[string]any)
+	if got := attempts[0]["message"]; got != "retry rejected <redacted>" {
+		t.Fatalf("expected typed map slice message to be sanitized, got %q", got)
+	}
+	if got := attempts[0]["access_token"]; got != "<redacted>" {
+		t.Fatalf("expected typed map slice secret field to be sanitized, got %q", got)
+	}
+}
+
+func TestSnapshotRestoreInspectFailureMessageSanitizesOutput(t *testing.T) {
+	got := snapshotRestoreInspectFailureMessage(
+		process.Result{Stderr: "inspect failed with repo-secret"},
+		fmt.Errorf("exit status 1"),
+		repositorySpec{KopiaPassword: "repo-secret"},
+		Payload{},
+	)
+	if got != "Snapshot restore inspect failed: inspect failed with <redacted>" {
+		t.Fatalf("expected sanitized inspect failure, got %q", got)
+	}
+}
+
+func TestRedactManagedRestoreSecretsReplacesOverlappingValuesLongestFirst(t *testing.T) {
+	got := redactManagedRestoreSecrets(
+		"credentials abcdef and abc",
+		repositorySpec{
+			SecretAccessKey: "abc",
+			KopiaPassword:   "abcdef",
+			ServerPassword:  "abc",
+		},
+		Payload{},
+	)
+	if got != "credentials <redacted> and <redacted>" {
+		t.Fatalf("expected overlapping secrets to be fully redacted, got %q", got)
+	}
+}
+
+func TestManagedRestoreFailureMessageKeepsBoundedTail(t *testing.T) {
+	prefix := strings.Repeat("old context ", 300)
+	got := managedRestoreFailureMessage(
+		process.Result{Stderr: prefix + "actionable final reason"},
+		fmt.Errorf("exit status 1"),
+		repositorySpec{},
+		Payload{},
+	)
+	if len(got) > 2000 {
+		t.Fatalf("expected bounded message, got %d bytes", len(got))
+	}
+	if !strings.HasSuffix(got, "actionable final reason") {
+		t.Fatalf("expected actionable tail, got %q", got)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("expected valid UTF-8, got %q", got)
+	}
+
+	got = managedRestoreFailureMessage(
+		process.Result{Stderr: strings.Repeat("上下文", 1000) + "最终原因"},
+		fmt.Errorf("exit status 1"),
+		repositorySpec{},
+		Payload{},
+	)
+	if len(got) > 2000 || !utf8.ValidString(got) || !strings.HasSuffix(got, "最终原因") {
+		t.Fatalf("expected bounded valid UTF-8 tail, got bytes=%d value=%q", len(got), got)
 	}
 }
 

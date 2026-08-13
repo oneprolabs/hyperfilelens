@@ -21,7 +21,7 @@ from apps.protection.models import (
     BackupSourceSnapshot,
     FileFilterRule,
 )
-from apps.restore.models import RestorePlan
+from apps.restore.models import RestorePlan, RestoreRecord
 from apps.source.constants import PipelineStep
 from apps.source.models import SourceBackupPipelineEntry, SourceResource
 from apps.source.services.internal.agent_host_sync import sync_agent_source_host
@@ -51,7 +51,9 @@ class SourceResourceApiTests(TestCase):
             email="source-api@test.local",
             password="test-pass",
         )
-        self.org = Organization.objects.create(key="source-test-org", name="Source Test Org")
+        self.org = Organization.objects.create(
+            key="source-test-org", name="Source Test Org"
+        )
         Membership.objects.create(
             user=self.user,
             organization=self.org,
@@ -61,14 +63,17 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="proxy-1",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         self.client.force_authenticate(user=self.user)
 
     def _headers(self):
         return {"HTTP_X_ORG_KEY": self.org.key}
 
-    def _create_backup_config_for_agent(self, agent: Node, *, name: str = "backup-config") -> BackupConfig:
+    def _create_backup_config_for_agent(
+        self, agent: Node, *, name: str = "backup-config"
+    ) -> BackupConfig:
         repository = Repository.objects.create(
             organization_id=self.org.id,
             name=f"{name}-repo",
@@ -239,7 +244,9 @@ class SourceResourceApiTests(TestCase):
         )
         unbound_local.soft_delete()
 
-        other_org = Organization.objects.create(key="other-summary-org", name="Other Summary Org")
+        other_org = Organization.objects.create(
+            key="other-summary-org", name="Other Summary Org"
+        )
         Node.objects.create(
             organization=other_org,
             name="other-agent",
@@ -255,19 +262,24 @@ class SourceResourceApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data, {
-            "total": 4,
-            "available": 2,
-            "unavailable": 2,
-            "hosts": {"total": 2, "available": 1, "unavailable": 1},
-            "nas": {"total": 2, "available": 1, "unavailable": 1},
-        })
+        self.assertEqual(
+            response.data,
+            {
+                "total": 4,
+                "available": 2,
+                "unavailable": 2,
+                "hosts": {"total": 2, "available": 1, "unavailable": 1},
+                "nas": {"total": 2, "available": 1, "unavailable": 1},
+            },
+        )
+
     def test_test_connection(self):
         agent = Node.objects.create(
             organization=self.org,
             name="agent-local-connection",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         create = self.client.post(
             "/api/v1/source/resources/",
@@ -337,7 +349,9 @@ class SourceResourceApiTests(TestCase):
         self.assertTrue(payload["cleanup_after_test"])
         self.assertIn("/mounts/validations/", payload["mount_point"])
         self.assertIn(f"source-draft-node-{self.node.id}", payload["mount_point"])
-        self.assertNotEqual(payload["mount_point"], custom_mount("final-path-must-not-be-used"))
+        self.assertNotEqual(
+            payload["mount_point"], custom_mount("final-path-must-not-be-used")
+        )
 
     @patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
     def test_smb_draft_test_normalizes_unstructured_charset_error(
@@ -714,7 +728,8 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-host-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.21",
             os_name="darwin arm64",
             metadata={
@@ -745,12 +760,14 @@ class SourceResourceApiTests(TestCase):
             **self._headers(),
         )
         self.assertEqual(nas.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(SourceBackupPipelineEntry.objects.filter(
-            organization=self.org,
-            source_kind="nas",
-            ref_id=nas.data["id"],
-            step=1,
-        ).exists())
+        self.assertTrue(
+            SourceBackupPipelineEntry.objects.filter(
+                organization=self.org,
+                source_kind="nas",
+                ref_id=nas.data["id"],
+                step=1,
+            ).exists()
+        )
 
         listing = self.client.get(
             "/api/v1/source/backup-selectable/?page=1&page_size=10",
@@ -809,7 +826,8 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="query-contract-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="198.51.100.42",
             metadata={"inventory": {"hostname": "contract-host"}},
         )
@@ -861,7 +879,8 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-step3-expand-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.25",
         )
         repository = Repository.objects.create(
@@ -952,12 +971,27 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(row["pipeline_step"], 3)
         self.assertEqual(row["backup_configs"]["count"], 1)
         self.assertEqual(row["backup_configs"]["ids"], [config.id])
-        self.assertEqual(row["backup_configs"]["configs"][0]["directories"][0]["path"], "/data")
-        self.assertEqual(row["backup_configs"]["configs"][0]["recovery_plans"][0]["scope"], "snapshot")
-        self.assertIsNone(row["backup_configs"]["configs"][0]["recovery_plans"][0]["backup_config_dir_id"])
-        self.assertEqual(row["backup_configs"]["configs"][0]["recovery_plans"][0]["source_path"], "")
-        self.assertEqual(row["backup_configs"]["repos_preview"][0]["repository_id"], repository.id)
-        self.assertEqual(row["backup_configs"]["repos_preview"][0]["repo_type"], repository.repo_type)
+        self.assertEqual(
+            row["backup_configs"]["configs"][0]["directories"][0]["path"], "/data"
+        )
+        self.assertEqual(
+            row["backup_configs"]["configs"][0]["recovery_plans"][0]["scope"],
+            "snapshot",
+        )
+        self.assertIsNone(
+            row["backup_configs"]["configs"][0]["recovery_plans"][0][
+                "backup_config_dir_id"
+            ]
+        )
+        self.assertEqual(
+            row["backup_configs"]["configs"][0]["recovery_plans"][0]["source_path"], ""
+        )
+        self.assertEqual(
+            row["backup_configs"]["repos_preview"][0]["repository_id"], repository.id
+        )
+        self.assertEqual(
+            row["backup_configs"]["repos_preview"][0]["repo_type"], repository.repo_type
+        )
         self.assertEqual(row["policies"]["names"], ["step3-expand-policy"])
         self.assertEqual(row["filters"]["names"], ["step3-expand-filter"])
         policy_item = row["policies"]["items"][0]
@@ -989,14 +1023,16 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-runtime-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.26",
         )
         other_agent = Node.objects.create(
             organization=self.org,
             name="agent-runtime-2",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.27",
         )
         task = Task.objects.create(
@@ -1043,7 +1079,8 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-runtime-history",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.28",
         )
         failed_task = Task.objects.create(
@@ -1088,15 +1125,94 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(runtime["progress"], 35)
         self.assertEqual(runtime["latest_task"]["id"], running_task.id)
 
+    def test_backup_selectable_runtime_excludes_insight_workspace_restore(self):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-runtime-restore-purpose",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.30",
+        )
+        insight_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.INSIGHT_WORKSPACE_RESTORE,
+            display_name="Insight workspace restore",
+            status=Task.Status.RUNNING,
+            trigger_type=Task.TriggerType.SYSTEM,
+        )
+        RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=agent.id,
+            purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+            idempotency_key="source-runtime-insight-restore",
+            workspace_binding_id=101,
+            restore_uid="source-runtime-insight-restore",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=insight_task.id,
+            task_uuid=insight_task.task_uuid,
+            source_type=RestoreRecord.EndpointType.AGENT,
+            source_ref_id=agent.id,
+            source_snapshot_id=301,
+            target_type=RestoreRecord.EndpointType.AGENT,
+            target_ref_id=agent.id,
+            target_path="/workspace",
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
+        )
+        user_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="User data restore",
+            status=Task.Status.RUNNING,
+            trigger_type=Task.TriggerType.MANUAL,
+        )
+        RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=agent.id,
+            purpose=RestoreRecord.Purpose.USER_DATA,
+            restore_uid="source-runtime-user-restore",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=user_task.id,
+            task_uuid=user_task.task_uuid,
+            source_type=RestoreRecord.EndpointType.AGENT,
+            source_ref_id=agent.id,
+            source_snapshot_id=302,
+            target_type=RestoreRecord.EndpointType.AGENT,
+            target_ref_id=agent.id,
+            target_path="/restore",
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
+        )
+
+        response = self.client.get(
+            f"/api/v1/source/backup-selectable/?ids=agent:{agent.id}&expand=runtime",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        runtime = response.data["results"][0]["runtime"]["restore"]
+        self.assertTrue(runtime["running"])
+        self.assertEqual(runtime["running_count"], 1)
+        self.assertEqual(runtime["total"], 1)
+        self.assertEqual(runtime["latest_task"]["id"], user_task.id)
+
     def test_backup_selectable_runtime_reports_historical_restorable_snapshot(self):
         agent = Node.objects.create(
             organization=self.org,
             name="agent-runtime-restorable",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.29",
         )
-        config = self._create_backup_config_for_agent(agent, name="runtime-restorable-config")
+        config = self._create_backup_config_for_agent(
+            agent, name="runtime-restorable-config"
+        )
         available_snapshot = self._create_source_snapshot(
             config,
             uid="runtime-restorable-available",
@@ -1136,7 +1252,9 @@ class SourceResourceApiTests(TestCase):
         self.assertFalse(runtime["latest_snapshot"]["recoverable"])
         self.assertTrue(runtime["has_restorable_snapshot"])
         self.assertEqual(runtime["restorable_snapshot_count"], 1)
-        self.assertEqual(runtime["latest_restorable_snapshot"]["id"], available_snapshot.id)
+        self.assertEqual(
+            runtime["latest_restorable_snapshot"]["id"], available_snapshot.id
+        )
         self.assertTrue(runtime["latest_restorable_snapshot"]["recoverable"])
 
     def test_backup_selectable_runtime_restorable_snapshot_boundaries(self):
@@ -1144,25 +1262,32 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-runtime-partial",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.30",
         )
         failed_agent = Node.objects.create(
             organization=self.org,
             name="agent-runtime-failed-only",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.31",
         )
         empty_agent = Node.objects.create(
             organization=self.org,
             name="agent-runtime-empty",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.32",
         )
-        partial_config = self._create_backup_config_for_agent(partial_agent, name="runtime-partial-config")
-        failed_config = self._create_backup_config_for_agent(failed_agent, name="runtime-failed-config")
+        partial_config = self._create_backup_config_for_agent(
+            partial_agent, name="runtime-partial-config"
+        )
+        failed_config = self._create_backup_config_for_agent(
+            failed_agent, name="runtime-failed-config"
+        )
         partial_snapshot = self._create_source_snapshot(
             partial_config,
             uid="runtime-restorable-partial",
@@ -1191,7 +1316,9 @@ class SourceResourceApiTests(TestCase):
         empty_runtime = rows_by_id[f"agent:{empty_agent.id}"]["runtime"]
         self.assertTrue(partial_runtime["has_restorable_snapshot"])
         self.assertEqual(partial_runtime["restorable_snapshot_count"], 1)
-        self.assertEqual(partial_runtime["latest_restorable_snapshot"]["id"], partial_snapshot.id)
+        self.assertEqual(
+            partial_runtime["latest_restorable_snapshot"]["id"], partial_snapshot.id
+        )
         self.assertFalse(failed_runtime["has_restorable_snapshot"])
         self.assertEqual(failed_runtime["restorable_snapshot_count"], 0)
         self.assertIsNone(failed_runtime["latest_restorable_snapshot"])
@@ -1204,7 +1331,8 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-mac-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             os_name="darwin arm64",
             metadata={"inventory": {"os": "darwin", "arch": "arm64"}},
         )
@@ -1214,7 +1342,9 @@ class SourceResourceApiTests(TestCase):
         self.assertIsNotNone(resource)
         self.assertEqual(resource.config["platform"], "macos")
 
-    def test_sync_agent_source_host_clears_legacy_capacity_while_inventory_pending(self):
+    def test_sync_agent_source_host_clears_legacy_capacity_while_inventory_pending(
+        self,
+    ):
         agent = Node.objects.create(
             organization=self.org,
             name="agent-storage-pending",
@@ -1268,7 +1398,8 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-dir-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.41",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1299,13 +1430,16 @@ class SourceResourceApiTests(TestCase):
         _, kwargs = mock_run_task.call_args
         self.assertEqual(kwargs["node_id"], agent.id)
         self.assertEqual(kwargs["kind"], "explorer.list")
-        self.assertEqual(kwargs["payload"], {
-            "path": "/",
-            "list_mounts": False,
-            "dirs_only": True,
-            "include_metadata": False,
-            "limit": 200,
-        })
+        self.assertEqual(
+            kwargs["payload"],
+            {
+                "path": "/",
+                "list_mounts": False,
+                "dirs_only": True,
+                "include_metadata": False,
+                "limit": 200,
+            },
+        )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_agent_directory_can_include_files(self, mock_run_task):
@@ -1313,7 +1447,8 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-file-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.43",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1337,26 +1472,35 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data["count"], 2)
         self.assertEqual(
-            [(entry["path"], entry["path_type"], entry["isLeaf"]) for entry in resp.data["entries"]],
+            [
+                (entry["path"], entry["path_type"], entry["isLeaf"])
+                for entry in resp.data["entries"]
+            ],
             [("/data", "directory", False), ("/README", "file", True)],
         )
         mock_run_task.assert_called_once()
         _, kwargs = mock_run_task.call_args
-        self.assertEqual(kwargs["payload"], {
-            "path": "/",
-            "list_mounts": False,
-            "dirs_only": False,
-            "include_metadata": True,
-            "limit": 200,
-        })
+        self.assertEqual(
+            kwargs["payload"],
+            {
+                "path": "/",
+                "list_mounts": False,
+                "dirs_only": False,
+                "include_metadata": True,
+                "limit": 200,
+            },
+        )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
-    def test_backup_selectable_agent_directory_normalizes_type_fields(self, mock_run_task):
+    def test_backup_selectable_agent_directory_normalizes_type_fields(
+        self, mock_run_task
+    ):
         agent = Node.objects.create(
             organization=self.org,
             name="agent-type-fields-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.45",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1365,7 +1509,12 @@ class SourceResourceApiTests(TestCase):
             task_id="task-agent-type-fields",
             result={
                 "entries": [
-                    {"name": "bin", "path": "/bin", "is_dir": False, "path_type": "directory"},
+                    {
+                        "name": "bin",
+                        "path": "/bin",
+                        "is_dir": False,
+                        "path_type": "directory",
+                    },
                     {"name": "opt", "path": "/opt", "type": "dir"},
                     {"name": "var", "path": "/var", "mode": "drwxr-xr-x"},
                     {"name": "README", "path": "/README", "path_type": "file"},
@@ -1382,7 +1531,10 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data["count"], 3)
         self.assertEqual(
-            [(entry["path"], entry["path_type"], entry["is_dir"], entry["isLeaf"]) for entry in resp.data["entries"]],
+            [
+                (entry["path"], entry["path_type"], entry["is_dir"], entry["isLeaf"])
+                for entry in resp.data["entries"]
+            ],
             [
                 ("/bin", "directory", True, False),
                 ("/opt", "directory", True, False),
@@ -1391,12 +1543,15 @@ class SourceResourceApiTests(TestCase):
         )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
-    def test_backup_selectable_path_info_validates_manual_file_path(self, mock_run_task):
+    def test_backup_selectable_path_info_validates_manual_file_path(
+        self, mock_run_task
+    ):
         agent = Node.objects.create(
             organization=self.org,
             name="agent-path-info",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.44",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1435,7 +1590,8 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-path-info-lite",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.46",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1450,7 +1606,9 @@ class SourceResourceApiTests(TestCase):
                 "size": 4096,
                 "mod_time": "2026-06-24T01:02:03Z",
             },
-            task=SimpleNamespace(id="task-path-info-lite", last_error="", status="success"),
+            task=SimpleNamespace(
+                id="task-path-info-lite", last_error="", status="success"
+            ),
         )
 
         resp = self.client.get(
@@ -1467,12 +1625,15 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(kwargs["payload"], {"path": "/tmp", "include_metadata": False})
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
-    def test_backup_selectable_agent_directory_root_uses_mount_listing(self, mock_run_task):
+    def test_backup_selectable_agent_directory_root_uses_mount_listing(
+        self, mock_run_task
+    ):
         agent = Node.objects.create(
             organization=self.org,
             name="agent-dir-root",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.42",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1496,21 +1657,27 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         mock_run_task.assert_called_once()
         _, kwargs = mock_run_task.call_args
-        self.assertEqual(kwargs["payload"], {
-            "path": "",
-            "list_mounts": True,
-            "dirs_only": True,
-            "include_metadata": False,
-            "limit": 200,
-        })
+        self.assertEqual(
+            kwargs["payload"],
+            {
+                "path": "",
+                "list_mounts": True,
+                "dirs_only": True,
+                "include_metadata": False,
+                "limit": 200,
+            },
+        )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
-    def test_backup_selectable_agent_directory_root_include_files_stays_lightweight(self, mock_run_task):
+    def test_backup_selectable_agent_directory_root_include_files_stays_lightweight(
+        self, mock_run_task
+    ):
         agent = Node.objects.create(
             organization=self.org,
             name="agent-dir-root-files",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.45",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1528,13 +1695,16 @@ class SourceResourceApiTests(TestCase):
 
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         _, kwargs = mock_run_task.call_args
-        self.assertEqual(kwargs["payload"], {
-            "path": "",
-            "list_mounts": True,
-            "dirs_only": True,
-            "include_metadata": False,
-            "limit": 500,
-        })
+        self.assertEqual(
+            kwargs["payload"],
+            {
+                "path": "",
+                "list_mounts": True,
+                "dirs_only": True,
+                "include_metadata": False,
+                "limit": 500,
+            },
+        )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_proxy_directory_uses_proxy_task(self, mock_run_task):
@@ -1561,13 +1731,16 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(resp.data["entries"][0]["path"], "/repos")
         _, kwargs = mock_run_task.call_args
         self.assertEqual(kwargs["node_id"], self.node.id)
-        self.assertEqual(kwargs["payload"], {
-            "path": "/",
-            "list_mounts": False,
-            "dirs_only": True,
-            "include_metadata": False,
-            "limit": 200,
-        })
+        self.assertEqual(
+            kwargs["payload"],
+            {
+                "path": "/",
+                "list_mounts": False,
+                "dirs_only": True,
+                "include_metadata": False,
+                "limit": 200,
+            },
+        )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_nas_directory_uses_proxy_mount_only(self, mock_run_task):
@@ -1605,7 +1778,9 @@ class SourceResourceApiTests(TestCase):
         mock_run_task.assert_not_called()
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
-    def test_backup_selectable_nas_directory_lists_share_relative_children(self, mock_run_task):
+    def test_backup_selectable_nas_directory_lists_share_relative_children(
+        self, mock_run_task
+    ):
         create = self.client.post(
             "/api/v1/source/resources/",
             {
@@ -1660,7 +1835,10 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(resp.data["mount_path"], root_path)
         self.assertEqual(resp.data["path"], "/")
         self.assertEqual(
-            [(entry["path"], entry["path_type"], entry["isLeaf"]) for entry in resp.data["entries"]],
+            [
+                (entry["path"], entry["path_type"], entry["isLeaf"])
+                for entry in resp.data["entries"]
+            ],
             [
                 ("/projects", "directory", False),
                 ("/note.txt", "file", True),
@@ -1684,7 +1862,8 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-dir-limit",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         mock_run_task.return_value = SimpleNamespace(
             timed_out=False,
@@ -1709,13 +1888,16 @@ class SourceResourceApiTests(TestCase):
         self.assertTrue(resp.data["has_more"])
         self.assertEqual(resp.data["next_cursor"], "1")
         _, kwargs = mock_run_task.call_args
-        self.assertEqual(kwargs["payload"], {
-            "path": "/",
-            "list_mounts": False,
-            "dirs_only": True,
-            "include_metadata": False,
-            "limit": 1,
-        })
+        self.assertEqual(
+            kwargs["payload"],
+            {
+                "path": "/",
+                "list_mounts": False,
+                "dirs_only": True,
+                "include_metadata": False,
+                "limit": 1,
+            },
+        )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_directory_cursor_is_forwarded(self, mock_run_task):
@@ -1723,7 +1905,8 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-dir-cursor",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         mock_run_task.return_value = SimpleNamespace(
             timed_out=False,
@@ -1740,17 +1923,22 @@ class SourceResourceApiTests(TestCase):
 
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         _, kwargs = mock_run_task.call_args
-        self.assertEqual(kwargs["payload"], {
-            "path": "/data",
-            "list_mounts": False,
-            "dirs_only": False,
-            "include_metadata": False,
-            "limit": 500,
-            "cursor": "500",
-        })
+        self.assertEqual(
+            kwargs["payload"],
+            {
+                "path": "/data",
+                "list_mounts": False,
+                "dirs_only": False,
+                "include_metadata": False,
+                "limit": 500,
+                "cursor": "500",
+            },
+        )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
-    def test_backup_selectable_nas_directory_dispatches_agent_without_mount_status(self, mock_run_task):
+    def test_backup_selectable_nas_directory_dispatches_agent_without_mount_status(
+        self, mock_run_task
+    ):
         create = self.client.post(
             "/api/v1/source/resources/",
             {
@@ -1789,18 +1977,25 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(payload["nas"]["export_path"], "/export/data")
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
-    def test_backup_selectable_nas_directory_requires_proxy_binding(self, mock_run_task):
+    def test_backup_selectable_nas_directory_requires_proxy_binding(
+        self, mock_run_task
+    ):
         agent = Node.objects.create(
             organization=self.org,
             name="agent-for-nas",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         resource = SourceResource.objects.create(
             organization=self.org,
             name="nas-agent-bound",
             resource_type="nas",
-            config={"protocol": "nfs", "server": "192.168.1.62", "export_path": "/export/data"},
+            config={
+                "protocol": "nfs",
+                "server": "192.168.1.62",
+                "export_path": "/export/data",
+            },
             bound_node=agent,
             mount_status="mounted",
             mount_point=custom_mount("agent-bound"),
@@ -1822,17 +2017,20 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-pipeline-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.31",
         )
         sync_agent_source_host(node=agent)
         agent_key = f"agent:{agent.id}"
-        self.assertTrue(SourceBackupPipelineEntry.objects.filter(
-            organization=self.org,
-            source_kind="agent",
-            ref_id=agent.id,
-            step=1,
-        ).exists())
+        self.assertTrue(
+            SourceBackupPipelineEntry.objects.filter(
+                organization=self.org,
+                source_kind="agent",
+                ref_id=agent.id,
+                step=1,
+            ).exists()
+        )
 
         step1 = self.client.get(
             "/api/v1/source/backup-selectable/?step=1&page=1&page_size=10",
@@ -1886,19 +2084,24 @@ class SourceResourceApiTests(TestCase):
             "/api/v1/source/backup-selectable/?step=1&page=1&page_size=10",
             **self._headers(),
         )
-        self.assertNotIn(agent_key, {row["id"] for row in step1_not_restored.data["results"]})
+        self.assertNotIn(
+            agent_key, {row["id"] for row in step1_not_restored.data["results"]}
+        )
 
     def test_backup_selectable_pipeline_revert_step2_to_step1(self):
         agent = Node.objects.create(
             organization=self.org,
             name="agent-pipeline-revert-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.32",
         )
         sync_agent_source_host(node=agent)
         agent_key = f"agent:{agent.id}"
-        source_host = SourceResource.objects.get(bound_node=agent, resource_type="local")
+        source_host = SourceResource.objects.get(
+            bound_node=agent, resource_type="local"
+        )
 
         advance = self.client.post(
             "/api/v1/source/backup-selectable/pipeline/",
@@ -1952,7 +2155,9 @@ class BackupSourceBulkDeleteTests(TestCase):
             email="bulk-delete@test.local",
             password="test-pass",
         )
-        self.org = Organization.objects.create(key="bulk-delete-org", name="Bulk Delete Org")
+        self.org = Organization.objects.create(
+            key="bulk-delete-org", name="Bulk Delete Org"
+        )
         Membership.objects.create(
             user=self.user,
             organization=self.org,
@@ -1962,7 +2167,8 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="agent-offline-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
         )
         self.client.force_authenticate(user=self.user)
 
@@ -1981,10 +2187,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertTrue(response.data["strict_may_fail"])
         self.assertTrue(response.data["delete_disabled"])
         self.assertTrue(
-            any(
-                row["code"] == "agent_offline"
-                for row in response.data["blocking"]
-            )
+            any(row["code"] == "agent_offline" for row in response.data["blocking"])
         )
 
     def test_delete_preflight_flags_proxy_unbound_for_needs_proxy_nas(self):
@@ -1992,7 +2195,11 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="needs-proxy-nas",
             resource_type="nas",
-            config={"protocol": "nfs", "server": "192.168.99.11", "export_path": "/data2"},
+            config={
+                "protocol": "nfs",
+                "server": "192.168.99.11",
+                "export_path": "/data2",
+            },
             mount_status="unmounted",
             status_message="needs_proxy",
         )
@@ -2005,7 +2212,9 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["strict_may_fail"])
-        self.assertTrue(any(row["code"] == "proxy_unbound" for row in response.data["risks"]))
+        self.assertTrue(
+            any(row["code"] == "proxy_unbound" for row in response.data["risks"])
+        )
 
     def test_bulk_delete_requires_exact_deregister_confirmation(self):
         agent_key = f"agent:{self.agent.id}"
@@ -2047,13 +2256,19 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
         self.assertEqual(unregister_task.status, Task.Status.FAILED)
-        self.assertEqual(unregister_task.error_code, "SOURCE_UNREGISTER_PREFLIGHT_FAILED")
-        self.assertEqual(unregister_task.result_payload["reasons"][0]["code"], "agent_offline")
+        self.assertEqual(
+            unregister_task.error_code, "SOURCE_UNREGISTER_PREFLIGHT_FAILED"
+        )
+        self.assertEqual(
+            unregister_task.result_payload["reasons"][0]["code"], "agent_offline"
+        )
         self.assertFalse(unregister_task.dependencies.filter(is_active=True).exists())
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
 
-    @patch("apps.source.services.internal.backup_source_delete._delete_repository_snapshots")
+    @patch(
+        "apps.source.services.internal.backup_source_delete._delete_repository_snapshots"
+    )
     @patch("apps.source.services.internal.backup_source_delete._purge_protection_db")
     @patch("apps.source.services.internal.backup_source_delete._mark_tasks_orphaned")
     def test_force_cleanup_can_follow_failed_strict_cleanup(
@@ -2098,7 +2313,9 @@ class BackupSourceBulkDeleteTests(TestCase):
         tasks = list(
             Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).order_by("id")
         )
-        self.assertEqual([task.status for task in tasks], [Task.Status.FAILED, Task.Status.SUCCESS])
+        self.assertEqual(
+            [task.status for task in tasks], [Task.Status.FAILED, Task.Status.SUCCESS]
+        )
         self.assertFalse(tasks[0].request_payload["force"])
         self.assertTrue(tasks[1].request_payload["force"])
         self.assertNotEqual(strict.data["task_uuid"], forced.data["task_uuid"])
@@ -2246,7 +2463,9 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertEqual(mixed.status_code, status.HTTP_202_ACCEPTED)
         self.assertIsNotNone(mixed.data["group_uuid"])
         tasks_by_source = {item["source_id"]: item for item in mixed.data["tasks"]}
-        self.assertNotEqual(tasks_by_source[first_key]["task_uuid"], first.data["task_uuid"])
+        self.assertNotEqual(
+            tasks_by_source[first_key]["task_uuid"], first.data["task_uuid"]
+        )
         self.assertEqual(
             tasks_by_source[first_key]["group_uuid"],
             tasks_by_source[second_key]["group_uuid"],
@@ -2275,7 +2494,9 @@ class BackupSourceBulkDeleteTests(TestCase):
         tasks = list(Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER))
         self.assertEqual(len(tasks), 2)
         self.assertTrue(all(task.status == Task.Status.FAILED for task in tasks))
-        self.assertEqual({str(task.group_uuid) for task in tasks}, {response.data["group_uuid"]})
+        self.assertEqual(
+            {str(task.group_uuid) for task in tasks}, {response.data["group_uuid"]}
+        )
 
     def test_bulk_delete_accepts_valid_sources_independently(self):
         accepted_key = f"agent:{self.agent.id}"
@@ -2294,7 +2515,9 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(response.data["source_ids"], [accepted_key])
         self.assertEqual(response.data["rejected"][0]["source_id"], missing_key)
-        self.assertEqual(response.data["rejected"][0]["reasons"][0]["code"], "source_not_found")
+        self.assertEqual(
+            response.data["rejected"][0]["reasons"][0]["code"], "source_not_found"
+        )
         self.assertEqual(len(response.data["tasks"]), 1)
 
     def test_failed_unregister_retry_stays_failed_when_backup_is_active(self):
@@ -2342,13 +2565,12 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
         unregister_task.refresh_from_db()
         self.assertEqual(unregister_task.status, Task.Status.FAILED)
-        self.assertEqual(unregister_task.result_payload["reasons"][0]["code"], "running_tasks")
+        self.assertEqual(
+            unregister_task.result_payload["reasons"][0]["code"], "running_tasks"
+        )
         self.assertFalse(unregister_task.dependencies.filter(is_active=True).exists())
 
-    @patch(
-        "apps.source.tasks.source_unregister."
-        "execute_source_unregister_task.delay"
-    )
+    @patch("apps.source.tasks.source_unregister.execute_source_unregister_task.delay")
     def test_reconcile_redispatches_task_stuck_before_cleanup(self, mock_delay):
         unregister_task = Task.objects.create(
             organization_id=self.org.id,
@@ -2366,10 +2588,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertEqual(summary["redispatched"], 1)
         mock_delay.assert_called_once_with(task_id=unregister_task.id)
 
-    @patch(
-        "apps.source.tasks.source_unregister."
-        "execute_source_unregister_task.delay"
-    )
+    @patch("apps.source.tasks.source_unregister.execute_source_unregister_task.delay")
     def test_reconcile_ends_legacy_task_resumed_before_cleanup(self, mock_delay):
         resource = SourceResource.objects.create(
             organization=self.org,
@@ -2509,10 +2728,14 @@ class BackupSourceBulkDeleteTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
         self.assertEqual(unregister_task.status, Task.Status.FAILED)
-        self.assertEqual(unregister_task.result_payload["reasons"][0]["code"], "running_tasks")
+        self.assertEqual(
+            unregister_task.result_payload["reasons"][0]["code"], "running_tasks"
+        )
         self.assertEqual(response.data["task_uuid"], str(unregister_task.task_uuid))
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
@@ -2551,7 +2774,9 @@ class BackupSourceBulkDeleteTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
         self.assertEqual(unregister_task.status, Task.Status.FAILED)
         self.assertEqual(
@@ -2565,7 +2790,8 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="probe-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         resource = SourceResource.objects.create(
             organization=self.org,
@@ -2606,7 +2832,9 @@ class BackupSourceBulkDeleteTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
         self.assertEqual(unregister_task.status, Task.Status.FAILED)
         self.assertEqual(
@@ -2633,7 +2861,9 @@ class BackupSourceBulkDeleteTests(TestCase):
         else:
             self.assertIn("reasons", response.data)
 
-    @patch("apps.source.services.internal.backup_source_delete._delete_repository_snapshots")
+    @patch(
+        "apps.source.services.internal.backup_source_delete._delete_repository_snapshots"
+    )
     @patch("apps.source.services.internal.backup_source_delete._purge_protection_db")
     @patch("apps.source.services.internal.backup_source_delete._mark_tasks_orphaned")
     def test_bulk_delete_force_succeeds_for_offline_agent(
@@ -2664,7 +2894,10 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.assertTrue(response.data["ok"])
-        self.assertEqual(response.data["task_uuid"], str(Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER).task_uuid))
+        self.assertEqual(
+            response.data["task_uuid"],
+            str(Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER).task_uuid),
+        )
         self.assertEqual(response.data["task_uuids"], [response.data["task_uuid"]])
         self.assertEqual(len(response.data["tasks"]), 1)
         task_result = response.data["tasks"][0]
@@ -2679,7 +2912,9 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.agent.refresh_from_db()
         self.assertTrue(self.agent.is_deleted)
 
-    @patch("apps.source.services.internal.backup_source_delete._delete_repository_snapshots")
+    @patch(
+        "apps.source.services.internal.backup_source_delete._delete_repository_snapshots"
+    )
     @patch("apps.source.services.internal.backup_source_delete._purge_protection_db")
     @patch("apps.source.services.internal.backup_source_delete._mark_tasks_orphaned")
     def test_bulk_delete_creates_one_primary_task_per_source(
@@ -2704,7 +2939,8 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="agent-offline-2",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
         )
 
         response = self.client.post(
@@ -2718,18 +2954,29 @@ class BackupSourceBulkDeleteTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         self.assertEqual(len(response.data["task_uuids"]), 2)
         self.assertEqual(
             [item["source_id"] for item in response.data["tasks"]],
             [f"agent:{self.agent.id}", f"agent:{second_agent.id}"],
         )
-        tasks = Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).order_by("id")
+        tasks = Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).order_by(
+            "id"
+        )
         self.assertEqual(tasks.count(), 2)
-        self.assertTrue(all(task.resources.count() == 1 and task.resources.get().is_primary for task in tasks))
+        self.assertTrue(
+            all(
+                task.resources.count() == 1 and task.resources.get().is_primary
+                for task in tasks
+            )
+        )
 
     @patch("apps.source.services.internal.backup_source_delete._strict_nas_umount")
-    @patch("apps.source.services.internal.backup_source_delete._delete_repository_snapshots")
+    @patch(
+        "apps.source.services.internal.backup_source_delete._delete_repository_snapshots"
+    )
     @patch("apps.source.services.internal.backup_source_delete._purge_protection_db")
     @patch("apps.source.services.internal.backup_source_delete._mark_tasks_orphaned")
     def test_nas_bulk_delete_soft_deletes_and_allows_recreate(
@@ -2757,7 +3004,8 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="proxy-nas-delete",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         resource = SourceResource.objects.create(
             organization=self.org,
@@ -2823,7 +3071,8 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="delete-nas-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         resource = SourceResource.objects.create(
             organization=self.org,
@@ -2854,7 +3103,9 @@ class BackupSourceBulkDeleteTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         self.assertIn(nas_key, response.data["deleted"])
         task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
         self.assertEqual(task.status, Task.Status.SUCCESS)
@@ -2895,7 +3146,8 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="strict-unmount-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         resource = SourceResource.objects.create(
             organization=self.org,
@@ -2950,8 +3202,7 @@ class BackupSourceBulkDeleteTests(TestCase):
 
 class SourceUnregisterCeleryTests(TestCase):
     @patch(
-        "apps.source.services.internal.backup_source_delete."
-        "run_source_unregister_task"
+        "apps.source.services.internal.backup_source_delete.run_source_unregister_task"
     )
     def test_execute_ends_legacy_resumed_task_without_cleanup(self, run_unregister):
         from apps.source.tasks.source_unregister import execute_source_unregister_task

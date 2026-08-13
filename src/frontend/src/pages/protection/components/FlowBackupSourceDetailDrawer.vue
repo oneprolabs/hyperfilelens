@@ -2230,6 +2230,7 @@ async function loadTasksForSource() {
       search: appliedTaskFilterId.value.trim(),
       search_field: taskFilterSearchField.value,
       task_type: taskFilterType.value,
+      exclude_insight_workspace_restores: 'true',
       status: taskFilterStatus.value,
       created_after: timeParams.created_after,
       created_before: timeParams.created_before,
@@ -3655,7 +3656,7 @@ function onClosed() {
               </el-table-column>
               <el-table-column
                 :label="t('protection.backupsPage.flowRestoreRecordColMode')"
-                width="88"
+                width="132"
               >
                 <template #default="{ row }">
                   <ElTag size="small" effect="plain" :title="restoreRecordModeTitle(row)">

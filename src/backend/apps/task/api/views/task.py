@@ -10,6 +10,7 @@ from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.iam.permissions_org import IsOrgOperator, IsOrgReader, get_membership
+from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.api.serializers import (
     TaskCancelSerializer,
     TaskCreateSerializer,
@@ -58,16 +59,26 @@ class TaskViewSet(viewsets.ModelViewSet):
         params = self.request.query_params
         search_field = (params.get("search_field") or "").strip().lower()
         if search_field not in {"", "name", "uuid"}:
-            raise ValidationError({"search_field": "search_field must be one of: name, uuid."})
+            raise ValidationError(
+                {"search_field": "search_field must be one of: name, uuid."}
+            )
         resource_id = params.get("resource_id")
         try:
-            resource_id_int = int(resource_id) if resource_id not in (None, "") else None
+            resource_id_int = (
+                int(resource_id) if resource_id not in (None, "") else None
+            )
         except ValueError as exc:
-            raise ValidationError({"resource_id": "resource_id must be an integer."}) from exc
+            raise ValidationError(
+                {"resource_id": "resource_id must be an integer."}
+            ) from exc
         return list_tasks(
             organization_id=self._organization_id(),
             status=params.get("status") or None,
             task_type=params.get("task_type") or None,
+            exclude_insight_workspace_restores=(
+                (params.get("exclude_insight_workspace_restores") or "").strip().lower()
+                == "true"
+            ),
             trigger_type=params.get("trigger_type") or None,
             resource_type=params.get("resource_type") or None,
             resource_subtype=params.get("resource_subtype") or None,
@@ -122,8 +133,14 @@ class TaskViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         task = self.get_object()
         task_type = task.task_type
+        if task_type in RESTORE_TASK_TYPES:
+            raise ValidationError(
+                {"detail": "Restore tasks must be stopped from the restore workflow."}
+            )
         if task_type == Task.Type.REPOSITORY_OPERATION:
-            raise ValidationError({"detail": "Repository tasks are managed by the server scheduler."})
+            raise ValidationError(
+                {"detail": "Repository tasks are managed by the server scheduler."}
+            )
         if task_type == Task.Type.SOURCE_UNREGISTER:
             raise ValidationError(
                 {
@@ -150,8 +167,19 @@ class TaskViewSet(viewsets.ModelViewSet):
         serializer = TaskRetrySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         current_task = self.get_object()
+        if current_task.task_type in RESTORE_TASK_TYPES:
+            raise ValidationError(
+                {
+                    "detail": (
+                        "Restore tasks must be restarted from their originating "
+                        "restore workflow."
+                    )
+                }
+            )
         if current_task.task_type == Task.Type.REPOSITORY_OPERATION:
-            raise ValidationError({"detail": "Repository tasks are retried by the server scheduler."})
+            raise ValidationError(
+                {"detail": "Repository tasks are retried by the server scheduler."}
+            )
         if (
             current_task.task_type == Task.Type.SOURCE_UNREGISTER
             and current_task.error_code
@@ -206,7 +234,9 @@ class TaskViewSet(viewsets.ModelViewSet):
         try:
             after_seq_int = int(after_seq) if after_seq not in (None, "") else None
         except ValueError as exc:
-            raise ValidationError({"after_seq": "after_seq must be an integer."}) from exc
+            raise ValidationError(
+                {"after_seq": "after_seq must be an integer."}
+            ) from exc
         queryset = list_task_events(
             task=task,
             level=params.get("level") or None,

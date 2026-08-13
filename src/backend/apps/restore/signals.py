@@ -10,7 +10,10 @@ from django.utils import timezone
 from apps.node.models import NodeTask
 from apps.restore.models import RestoreRecord, RestoreRecordItem
 from apps.restore.services.task_events import append_restore_item_terminal_event
-from apps.protection.services.progress.orchestrated_progress import RESTORE_FINALIZE_START
+from apps.restore.services.task_classification import normalize_restore_task_type
+from apps.protection.services.progress.orchestrated_progress import (
+    RESTORE_FINALIZE_START,
+)
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskEvent, TaskStep
 from apps.task.services.interface import (
@@ -26,12 +29,23 @@ _TERMINAL_NODE_STATUSES = {
     NodeTask.Status.TIMEOUT,
     NodeTask.Status.CANCELED,
 }
+_TERMINAL_RESTORE_ITEM_STATUSES = {
+    RestoreRecordItem.Status.SUCCESS,
+    RestoreRecordItem.Status.FAILED,
+    RestoreRecordItem.Status.SKIPPED,
+    RestoreRecordItem.Status.CANCELLED,
+}
 
 
 @receiver(post_save, sender=NodeTask)
 @transaction.atomic
-def sync_restore_record_from_node_task(sender: type[NodeTask], instance: NodeTask, **kwargs: Any) -> None:
-    if instance.correlation_type == "restore.repository_server" and instance.correlation_id:
+def sync_restore_record_from_node_task(
+    sender: type[NodeTask], instance: NodeTask, **kwargs: Any
+) -> None:
+    if (
+        instance.correlation_type == "restore.repository_server"
+        and instance.correlation_id
+    ):
         _handle_restore_repository_server_task(node_task=instance)
         return
     if instance.correlation_type != "restore.record" or not instance.correlation_id:
@@ -53,10 +67,14 @@ def sync_restore_record_from_node_task(sender: type[NodeTask], instance: NodeTas
         or record.target_execution_node_id != instance.node_id
     ):
         return
-    product_task = Task.objects.select_for_update().filter(
-        organization_id=record.organization_id,
-        task_uuid=record.task_uuid,
-    ).first()
+    product_task = (
+        Task.objects.select_for_update()
+        .filter(
+            organization_id=record.organization_id,
+            task_uuid=record.task_uuid,
+        )
+        .first()
+    )
     if product_task is None:
         return
     # Cancellation owns the product Task lock before mutating items. Following
@@ -70,14 +88,16 @@ def sync_restore_record_from_node_task(sender: type[NodeTask], instance: NodeTas
             product_task=product_task,
         )
         return
-    if (
-        product_task.status in TERMINAL_STATUSES
-        and instance.status not in _TERMINAL_NODE_STATUSES
+    if product_task.status in TERMINAL_STATUSES and (
+        instance.status not in _TERMINAL_NODE_STATUSES
+        or item.terminal_projection_at is not None
     ):
         return
     if instance.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}:
         _ensure_product_task_running(product_task)
-        from apps.restore.services.restore_progress import maybe_trigger_restore_progress
+        from apps.restore.services.restore_progress import (
+            maybe_trigger_restore_progress,
+        )
 
         maybe_trigger_restore_progress(node_task=instance)
         _set_step_status(
@@ -113,11 +133,21 @@ def _handle_restore_repository_server_task(*, node_task: NodeTask) -> None:
     ).first()
     if record is None:
         return
-    product_task = Task.objects.select_for_update().filter(
-        organization_id=record.organization_id,
-        task_uuid=record.task_uuid,
-    ).first()
+    product_task = (
+        Task.objects.select_for_update()
+        .filter(
+            organization_id=record.organization_id,
+            task_uuid=record.task_uuid,
+        )
+        .first()
+    )
     if product_task is None:
+        return
+    # The product task is authoritative. A repository-server start callback
+    # can arrive synchronously while cancellation is sealing its NodeTask, or
+    # late after another terminal outcome. It must not overwrite restore items
+    # or append a contradictory repository failure after that boundary.
+    if product_task.status in TERMINAL_STATUSES:
         return
     if node_task.status == NodeTask.Status.SUCCESS:
         from apps.restore.services.interface import _dispatch_restore_items
@@ -205,23 +235,21 @@ def _project_cancelled_restore_item(
     """Complete a cancelled item projection without applying a late result."""
     if not item_id:
         return
-    item = RestoreRecordItem.objects.select_for_update().filter(
-        organization_id=record.organization_id,
-        restore_record=record,
-        id=item_id,
-    ).first()
+    item = (
+        RestoreRecordItem.objects.select_for_update()
+        .filter(
+            organization_id=record.organization_id,
+            restore_record=record,
+            id=item_id,
+        )
+        .first()
+    )
     if item is None:
         return
     previous_status = item.status
-    if item.status not in {
-        RestoreRecordItem.Status.SUCCESS,
-        RestoreRecordItem.Status.SKIPPED,
-        RestoreRecordItem.Status.CANCELLED,
-    }:
+    if item.status not in _TERMINAL_RESTORE_ITEM_STATUSES:
         message = str(
-            product_task.error_message
-            or item.error_message
-            or "Restore stopped."
+            product_task.error_message or item.error_message or "Restore stopped."
         ).strip()[:2000]
         item.status = RestoreRecordItem.Status.CANCELLED
         item.error_code = "TASK_CANCELLED"
@@ -252,11 +280,15 @@ def _sync_restore_item(
     node_task: NodeTask,
     product_task: Task,
 ) -> None:
-    item = RestoreRecordItem.objects.select_for_update().filter(
-        organization_id=record.organization_id,
-        restore_record=record,
-        id=item_id,
-    ).first()
+    item = (
+        RestoreRecordItem.objects.select_for_update()
+        .filter(
+            organization_id=record.organization_id,
+            restore_record=record,
+            id=item_id,
+        )
+        .first()
+    )
     if item is None:
         return
     previous_status = item.status
@@ -274,7 +306,9 @@ def _sync_restore_item(
         item.status = RestoreRecordItem.Status.FAILED
         item.result_payload = node_task.result or {}
         item.error_code = "RESTORE_AGENT_FAILED"
-        item.error_message = (node_task.last_error or node_task.status or "Restore agent task failed.")[:2000]
+        item.error_message = (
+            node_task.last_error or node_task.status or "Restore agent task failed."
+        )[:2000]
     item.save(
         update_fields=[
             "status",
@@ -305,15 +339,17 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
     if product_task.status in TERMINAL_STATUSES:
         return
     statuses = list(record.items.values_list("status", flat=True))
-    if not statuses or any(status in {RestoreRecordItem.Status.PENDING, RestoreRecordItem.Status.RUNNING} for status in statuses):
+    if not statuses or any(
+        status in {RestoreRecordItem.Status.PENDING, RestoreRecordItem.Status.RUNNING}
+        for status in statuses
+    ):
         return
+    normalize_restore_task_type(record=record, task=product_task)
     from apps.restore.services.interface import stop_restore_repository_servers
 
     stop_restore_repository_servers(task=product_task)
     failed = [
-        status
-        for status in statuses
-        if status not in {RestoreRecordItem.Status.SUCCESS, RestoreRecordItem.Status.CANCELLED}
+        status for status in statuses if status != RestoreRecordItem.Status.SUCCESS
     ]
     result_payload = {
         "restore_record_id": record.id,
@@ -326,17 +362,12 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
             task=product_task,
             step_name="restore",
             status=TaskStep.Status.FAILED,
-            progress=100,
-            task_progress=RESTORE_FINALIZE_START,
             current_step="restore",
         )
         _set_step_status(
             task=product_task,
             step_name="finalize",
             status=TaskStep.Status.FAILED,
-            progress=100,
-            task_progress=RESTORE_FINALIZE_START,
-            current_step="finalize",
         )
         _append_finalize_event_once(
             task=product_task,
@@ -349,7 +380,7 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
             task_uuid=product_task.task_uuid,
             organization_id=product_task.organization_id,
             status=Task.Status.FAILED,
-            progress=RESTORE_FINALIZE_START,
+            progress=product_task.progress,
             result_payload=result_payload,
             error_code="RESTORE_FAILED",
             error_message=error_message,
@@ -408,11 +439,7 @@ def _append_finalize_event_once(
             [
                 status
                 for status in statuses
-                if status
-                not in {
-                    RestoreRecordItem.Status.SUCCESS,
-                    RestoreRecordItem.Status.CANCELLED,
-                }
+                if status != RestoreRecordItem.Status.SUCCESS
             ]
         ),
         "object_name": record.restore_uid,

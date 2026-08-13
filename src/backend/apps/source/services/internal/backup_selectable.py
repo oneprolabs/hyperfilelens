@@ -56,7 +56,11 @@ from apps.source.services.internal.source_pipeline import (
 from apps.storage.models import Repository
 from apps.task.models import Task, TaskResource
 
-__all__ = ["fetch_backup_selectable_by_ids", "list_backup_selectable_sources", "parse_selectable_id"]
+__all__ = [
+    "fetch_backup_selectable_by_ids",
+    "list_backup_selectable_sources",
+    "parse_selectable_id",
+]
 
 _EXPAND_BACKUP_CONFIGS = "backup_configs"
 _EXPAND_POLICIES = "policies"
@@ -113,7 +117,9 @@ def _sort_key(item: dict[str, Any]) -> datetime:
 
 def _agent_platform(node: Node) -> str | None:
     inv = _merged_inventory(node)
-    raw = str(inv.get("os") or inv.get("platform") or node.os_name or "").strip().lower()
+    raw = (
+        str(inv.get("os") or inv.get("platform") or node.os_name or "").strip().lower()
+    )
     if "darwin" in raw or "mac" in raw:
         return "macos"
     if "windows" in raw or raw in {"win32", "win64"} or raw.startswith("win "):
@@ -178,25 +184,29 @@ def _nas_item(resource: SourceResource) -> dict[str, Any]:
         "type": "nas",
         "name": resource.name,
         "hostname": str(cfg.get("server") or "").strip(),
-        "node_name": (node.name if node else "") or str(cfg.get("server") or "").strip(),
+        "node_name": (node.name if node else "")
+        or str(cfg.get("server") or "").strip(),
         "node_ip": str(node.ip_address or "").strip() if node else "",
         "status": str(resource.status or Availability.OFFLINE),
         "availability": str(resource.availability or Availability.OFFLINE),
         "protocol": _nas_protocol(cfg),
         "mount_options": str(cfg.get("options") or "").strip(),
-        "connection_uri": nas_mount_source_uri(resource_type=resource.resource_type, config=cfg),
+        "connection_uri": nas_mount_source_uri(
+            resource_type=resource.resource_type, config=cfg
+        ),
         "bound_node_id": node.id if node else None,
         "mount_status": resource.mount_status,
         "mount_point": resource.mount_point,
-        "registered_at": resource.created_at.isoformat() if resource.created_at else None,
+        "registered_at": resource.created_at.isoformat()
+        if resource.created_at
+        else None,
     }
 
 
 def _build_catalog(*, organization_id: int) -> list[dict[str, Any]]:
-    agents = (
-        Node.objects.filter(organization_id=organization_id, role=NodeRole.AGENT, is_deleted=False)
-        .order_by("-created_at", "-id")
-    )
+    agents = Node.objects.filter(
+        organization_id=organization_id, role=NodeRole.AGENT, is_deleted=False
+    ).order_by("-created_at", "-id")
     nas_resources = (
         SourceResource.objects.filter(
             organization_id=organization_id,
@@ -217,13 +227,19 @@ def _source_key(source_type: str, source_ref_id: int) -> str:
 
 
 def _configured_source_keys(*, organization_id: int) -> set[str]:
-    rows = BackupConfig.objects.filter(organization_id=organization_id).values("source_type", "source_ref_id")
-    return {_source_key(str(row["source_type"]), int(row["source_ref_id"])) for row in rows}
+    rows = BackupConfig.objects.filter(organization_id=organization_id).values(
+        "source_type", "source_ref_id"
+    )
+    return {
+        _source_key(str(row["source_type"]), int(row["source_ref_id"])) for row in rows
+    }
 
 
 def _parse_expand(expand: str | None) -> set[str]:
     allowed = {_EXPAND_BACKUP_CONFIGS, _EXPAND_POLICIES, _EXPAND_RUNTIME}
-    return {part.strip() for part in str(expand or "").split(",") if part.strip() in allowed}
+    return {
+        part.strip() for part in str(expand or "").split(",") if part.strip() in allowed
+    }
 
 
 def _iso(value: Any) -> str | None:
@@ -254,13 +270,17 @@ def _repository_location(repo: Repository) -> str:
     config = repo.config if isinstance(repo.config, dict) else {}
     repo_type = str(repo.repo_type or "").lower()
     if repo_type == Repository.Type.S3:
-        bucket = str(repo.s3_bucket or _config_string(config, "bucket") or repo.name or "").strip()
+        bucket = str(
+            repo.s3_bucket or _config_string(config, "bucket") or repo.name or ""
+        ).strip()
         prefix = _config_string(config, "prefix").lstrip("/")
         if not bucket:
             return ""
         return f"s3://{bucket}/{prefix}" if prefix else f"s3://{bucket}"
     if repo_type == Repository.Type.PROXY_FS:
-        return _config_string(config, "proxy_node_dir") or _config_string(config, "mount_path")
+        return _config_string(config, "proxy_node_dir") or _config_string(
+            config, "mount_path"
+        )
 
     mount_path = _config_string(config, "mount_path")
     server_address = _config_string(config, "server_address")
@@ -269,7 +289,11 @@ def _repository_location(repo: Repository) -> str:
     if mount_path:
         return mount_path
     if server_address and share_path:
-        return f"//{server_address}/{share_path.lstrip('/')}" if protocol == "smb" else f"{server_address}:{share_path}"
+        return (
+            f"//{server_address}/{share_path.lstrip('/')}"
+            if protocol == "smb"
+            else f"{server_address}:{share_path}"
+        )
     return ""
 
 
@@ -321,7 +345,9 @@ def _config_payload(
         "directory_count": len(directories),
         "compression_level": config.compression_level,
         "status": config.status,
-        "reset_task_uuid": str(config.reset_task_uuid) if config.reset_task_uuid else None,
+        "reset_task_uuid": str(config.reset_task_uuid)
+        if config.reset_task_uuid
+        else None,
         "recovery_plan_enabled": config.recovery_plan_enabled,
         "directories": [_directory_payload(directory) for directory in directories],
         "recovery_plans": [_recovery_plan_payload(plan) for plan in recovery_plans],
@@ -330,7 +356,9 @@ def _config_payload(
     }
 
 
-def _repository_payload(config: BackupConfig, repo: Repository | None) -> dict[str, Any]:
+def _repository_payload(
+    config: BackupConfig, repo: Repository | None
+) -> dict[str, Any]:
     return {
         "id": f"{config.id}:{config.repository_id}",
         "config_id": config.id,
@@ -477,7 +505,15 @@ def _matches_search(item: dict[str, Any], search: str) -> bool:
         return True
     haystack = " ".join(
         str(item.get(key) or "")
-        for key in ("id", "name", "hostname", "node_name", "node_ip", "protocol", "type")
+        for key in (
+            "id",
+            "name",
+            "hostname",
+            "node_name",
+            "node_ip",
+            "protocol",
+            "type",
+        )
     ).lower()
     return term in haystack
 
@@ -485,7 +521,11 @@ def _matches_search(item: dict[str, Any], search: str) -> bool:
 def _source_filters_for_items(items: list[dict[str, Any]]) -> Q:
     query = Q(pk__in=[])
     for item in items:
-        source_type = "agent" if item.get("kind") == "agent" else str(item.get("kind") or item.get("type") or "")
+        source_type = (
+            "agent"
+            if item.get("kind") == "agent"
+            else str(item.get("kind") or item.get("type") or "")
+        )
         ref_id = int(item.get("ref_id") or 0)
         if source_type and ref_id:
             query |= Q(source_type=source_type, source_ref_id=ref_id)
@@ -493,14 +533,22 @@ def _source_filters_for_items(items: list[dict[str, Any]]) -> Q:
 
 
 def _item_key(item: dict[str, Any]) -> str:
-    source_type = "agent" if item.get("kind") == "agent" else str(item.get("kind") or item.get("type") or "")
+    source_type = (
+        "agent"
+        if item.get("kind") == "agent"
+        else str(item.get("kind") or item.get("type") or "")
+    )
     return _source_key(source_type, int(item.get("ref_id") or 0))
 
 
 def _task_resource_filters_for_items(items: list[dict[str, Any]]) -> Q:
     query = Q(pk__in=[])
     for item in items:
-        source_type = "agent" if item.get("kind") == "agent" else str(item.get("kind") or item.get("type") or "")
+        source_type = (
+            "agent"
+            if item.get("kind") == "agent"
+            else str(item.get("kind") or item.get("type") or "")
+        )
         ref_id = int(item.get("ref_id") or 0)
         if not source_type or not ref_id:
             continue
@@ -548,29 +596,55 @@ def _attach_backup_config_expansion(
         for plan in plans:
             plans_by_config[plan.backup_config_id].append(plan)
 
-    repository_ids = {config.repository_id for config in configs if config.repository_id}
-    repositories = {
-        repo.id: repo
-        for repo in Repository.objects.filter(
-            organization_id=organization_id,
-            id__in=repository_ids,
-        )
-    } if repository_ids else {}
+    repository_ids = {
+        config.repository_id for config in configs if config.repository_id
+    }
+    repositories = (
+        {
+            repo.id: repo
+            for repo in Repository.objects.filter(
+                organization_id=organization_id,
+                id__in=repository_ids,
+            )
+        }
+        if repository_ids
+        else {}
+    )
 
-    policy_ids = {int(config.backup_policy_id) for config in configs if config.backup_policy_id}
-    filter_ids = {int(config.file_filter_rule_id) for config in configs if config.file_filter_rule_id}
-    policies = {
-        policy.id: policy
-        for policy in BackupPolicy.objects.filter(organization_id=organization_id, id__in=policy_ids)
-    } if include_policies and policy_ids else {}
-    filters = {
-        rule.id: rule
-        for rule in FileFilterRule.objects.filter(organization_id=organization_id, id__in=filter_ids)
-    } if include_policies and filter_ids else {}
+    policy_ids = {
+        int(config.backup_policy_id) for config in configs if config.backup_policy_id
+    }
+    filter_ids = {
+        int(config.file_filter_rule_id)
+        for config in configs
+        if config.file_filter_rule_id
+    }
+    policies = (
+        {
+            policy.id: policy
+            for policy in BackupPolicy.objects.filter(
+                organization_id=organization_id, id__in=policy_ids
+            )
+        }
+        if include_policies and policy_ids
+        else {}
+    )
+    filters = (
+        {
+            rule.id: rule
+            for rule in FileFilterRule.objects.filter(
+                organization_id=organization_id, id__in=filter_ids
+            )
+        }
+        if include_policies and filter_ids
+        else {}
+    )
 
     configs_by_source: dict[str, list[BackupConfig]] = defaultdict(list)
     for config in configs:
-        configs_by_source[_source_key(config.source_type, config.source_ref_id)].append(config)
+        configs_by_source[_source_key(config.source_type, config.source_ref_id)].append(
+            config
+        )
 
     for item in items:
         key = _item_key(item)
@@ -588,14 +662,18 @@ def _attach_backup_config_expansion(
         policy_rows: list[dict[str, Any]] = []
         filter_rows: list[dict[str, Any]] = []
         for config in source_configs:
-            repo_rows.append(_repository_payload(config, repositories.get(config.repository_id)))
+            repo_rows.append(
+                _repository_payload(config, repositories.get(config.repository_id))
+            )
             for directory in directories_by_config.get(config.id, []):
-                dir_rows.append({
-                    "config_id": config.id,
-                    "config_name": config.name,
-                    "path": directory.path,
-                    "path_type": directory.path_type,
-                })
+                dir_rows.append(
+                    {
+                        "config_id": config.id,
+                        "config_name": config.name,
+                        "path": directory.path,
+                        "path_type": directory.path_type,
+                    }
+                )
             if config.backup_policy_id and config.backup_policy_id in policies:
                 policy_rows.append(_policy_payload(policies[config.backup_policy_id]))
             if config.file_filter_rule_id and config.file_filter_rule_id in filters:
@@ -636,7 +714,12 @@ def _task_source_keys(task: Task) -> list[str]:
 
 
 def _task_time(task: Task) -> datetime:
-    return task.finished_at or task.started_at or task.created_at or datetime.min.replace(tzinfo=datetime_timezone.utc)
+    return (
+        task.finished_at
+        or task.started_at
+        or task.created_at
+        or datetime.min.replace(tzinfo=datetime_timezone.utc)
+    )
 
 
 def _restore_record_status(record: RestoreRecord, task: Task | None) -> str:
@@ -671,7 +754,9 @@ def _product_task_is_stopping(*, organization_id: int, task: Task | None) -> boo
     ).exists()
 
 
-def _attach_runtime_expansion(*, organization_id: int, items: list[dict[str, Any]]) -> None:
+def _attach_runtime_expansion(
+    *, organization_id: int, items: list[dict[str, Any]]
+) -> None:
     if not items:
         return
 
@@ -682,7 +767,9 @@ def _attach_runtime_expansion(*, organization_id: int, items: list[dict[str, Any
     restorable_snapshots_by_source: dict[str, BackupSourceSnapshot] = {}
     restorable_snapshot_counts_by_source: dict[str, int] = defaultdict(int)
     snapshots = (
-        BackupSourceSnapshot.objects.filter(organization_id=organization_id, deleted_at__isnull=True)
+        BackupSourceSnapshot.objects.filter(
+            organization_id=organization_id, deleted_at__isnull=True
+        )
         .exclude(status=BackupSourceSnapshot.Status.DELETED)
         .filter(source_query)
         .order_by("-created_at", "-id")
@@ -718,28 +805,38 @@ def _attach_runtime_expansion(*, organization_id: int, items: list[dict[str, Any
 
     records_by_source: dict[str, list[RestoreRecord]] = defaultdict(list)
     restore_records = (
-        RestoreRecord.objects.filter(organization_id=organization_id)
+        RestoreRecord.objects.filter(
+            organization_id=organization_id,
+            purpose=RestoreRecord.Purpose.USER_DATA,
+        )
         .filter(source_query)
         .prefetch_related("items")
         .order_by("-created_at", "-id")
     )
     task_uuids = [record.task_uuid for record in restore_records if record.task_uuid]
-    restore_tasks_by_uuid = {
-        str(task.task_uuid): task
-        for task in Task.objects.filter(
-            organization_id=organization_id,
-            task_uuid__in=task_uuids,
-        )
-    } if task_uuids else {}
+    restore_tasks_by_uuid = (
+        {
+            str(task.task_uuid): task
+            for task in Task.objects.filter(
+                organization_id=organization_id,
+                task_uuid__in=task_uuids,
+            )
+        }
+        if task_uuids
+        else {}
+    )
     for record in restore_records:
-        records_by_source[_source_key(record.source_type, record.source_ref_id)].append(record)
+        records_by_source[_source_key(record.source_type, record.source_ref_id)].append(
+            record
+        )
 
     for item in items:
         key = _item_key(item)
         runtime = _empty_runtime()
         backup_tasks_for_source = backup_tasks_by_source.get(key, [])
         running_backup = [
-            task for task in backup_tasks_for_source
+            task
+            for task in backup_tasks_for_source
             if task.status in (Task.Status.PENDING, Task.Status.RUNNING)
         ]
         from apps.node.services.internal.task_offline_reconcile import (
@@ -747,8 +844,12 @@ def _attach_runtime_expansion(*, organization_id: int, items: list[dict[str, Any
             task_execution_state,
         )
 
-        running_backup = [task for task in running_backup if product_task_blocks_cleanup(task=task)]
-        latest_backup_task = backup_tasks_for_source[0] if backup_tasks_for_source else None
+        running_backup = [
+            task for task in running_backup if product_task_blocks_cleanup(task=task)
+        ]
+        latest_backup_task = (
+            backup_tasks_for_source[0] if backup_tasks_for_source else None
+        )
         latest_snapshot = snapshots_by_source.get(key)
         latest_restorable_snapshot = restorable_snapshots_by_source.get(key)
         execution_node = None
@@ -761,19 +862,31 @@ def _attach_runtime_expansion(*, organization_id: int, items: list[dict[str, Any
             runtime["backup"]["running"] = True
             runtime["backup"]["running_count"] = len(running_backup)
             primary_task = running_backup[0]
-            runtime["backup"]["progress"] = max(_number(task.progress) for task in running_backup)
+            runtime["backup"]["progress"] = max(
+                _number(task.progress) for task in running_backup
+            )
             runtime["backup"]["execution_state"] = task_execution_state(
                 node=execution_node,
                 task=primary_task,
             )
             try:
-                from apps.protection.services.progress.backup_runtime import build_backup_kopia_progress
+                from apps.protection.services.progress.backup_runtime import (
+                    build_backup_kopia_progress,
+                )
 
                 kopia_payload = build_backup_kopia_progress(task=primary_task)
-                runtime["backup"]["transfer_progress"] = kopia_payload.get("transfer_progress")
+                runtime["backup"]["transfer_progress"] = kopia_payload.get(
+                    "transfer_progress"
+                )
                 if not runtime["backup"]["transfer_progress"]:
-                    result_payload = primary_task.result_payload if isinstance(primary_task.result_payload, dict) else {}
-                    runtime["backup"]["transfer_progress"] = result_payload.get("transfer_progress")
+                    result_payload = (
+                        primary_task.result_payload
+                        if isinstance(primary_task.result_payload, dict)
+                        else {}
+                    )
+                    runtime["backup"]["transfer_progress"] = result_payload.get(
+                        "transfer_progress"
+                    )
                 runtime["backup"]["kopia_progress"] = kopia_payload
             except Exception:
                 pass
@@ -781,7 +894,9 @@ def _attach_runtime_expansion(*, organization_id: int, items: list[dict[str, Any
         backup_stopping = (
             not running_backup
             and latest_backup_task is not None
-            and _product_task_is_stopping(organization_id=organization_id, task=latest_backup_task)
+            and _product_task_is_stopping(
+                organization_id=organization_id, task=latest_backup_task
+            )
         )
         runtime["backup"]["stopping"] = backup_stopping
         runtime["backup"]["cancelled"] = (
@@ -798,13 +913,26 @@ def _attach_runtime_expansion(*, organization_id: int, items: list[dict[str, Any
         )
         runtime["backup"]["latest_task"] = _task_payload(latest_backup_task)
         runtime["backup"]["last_backup_at"] = (
-            _iso(latest_snapshot.finished_at or latest_snapshot.started_at or latest_snapshot.created_at)
-            if latest_snapshot else _iso(_task_time(latest_backup_task)) if latest_backup_task else None
+            _iso(
+                latest_snapshot.finished_at
+                or latest_snapshot.started_at
+                or latest_snapshot.created_at
+            )
+            if latest_snapshot
+            else _iso(_task_time(latest_backup_task))
+            if latest_backup_task
+            else None
         )
         runtime["latest_snapshot"] = _snapshot_payload(latest_snapshot)
-        runtime["has_restorable_snapshot"] = restorable_snapshot_counts_by_source.get(key, 0) > 0
-        runtime["restorable_snapshot_count"] = restorable_snapshot_counts_by_source.get(key, 0)
-        runtime["latest_restorable_snapshot"] = _snapshot_payload(latest_restorable_snapshot)
+        runtime["has_restorable_snapshot"] = (
+            restorable_snapshot_counts_by_source.get(key, 0) > 0
+        )
+        runtime["restorable_snapshot_count"] = restorable_snapshot_counts_by_source.get(
+            key, 0
+        )
+        runtime["latest_restorable_snapshot"] = _snapshot_payload(
+            latest_restorable_snapshot
+        )
 
         restore_records_for_source = records_by_source.get(key, [])
         running_restore: list[tuple[RestoreRecord, Task | None]] = []
@@ -820,22 +948,36 @@ def _attach_runtime_expansion(*, organization_id: int, items: list[dict[str, Any
             runtime["restore"]["running"] = True
             runtime["restore"]["running_count"] = len(running_restore)
             record, task = running_restore[0]
-            runtime["restore"]["progress"] = max(_number(task.progress) if task else 0 for _, task in running_restore)
+            runtime["restore"]["progress"] = max(
+                _number(task.progress) if task else 0 for _, task in running_restore
+            )
             restore_node = None
             if str(record.target_type or "") == "agent":
                 restore_node = Node.objects.filter(
                     pk=int(record.target_ref_id or 0),
                     organization_id=organization_id,
                 ).first()
-            runtime["restore"]["execution_state"] = task_execution_state(node=restore_node, task=task)
+            runtime["restore"]["execution_state"] = task_execution_state(
+                node=restore_node, task=task
+            )
             try:
-                from apps.protection.services.progress.restore_runtime import build_restore_kopia_progress
+                from apps.protection.services.progress.restore_runtime import (
+                    build_restore_kopia_progress,
+                )
 
                 kopia_payload = build_restore_kopia_progress(record=record, task=task)
-                runtime["restore"]["transfer_progress"] = kopia_payload.get("transfer_progress")
+                runtime["restore"]["transfer_progress"] = kopia_payload.get(
+                    "transfer_progress"
+                )
                 if not runtime["restore"]["transfer_progress"] and task is not None:
-                    result_payload = task.result_payload if isinstance(task.result_payload, dict) else {}
-                    runtime["restore"]["transfer_progress"] = result_payload.get("transfer_progress")
+                    result_payload = (
+                        task.result_payload
+                        if isinstance(task.result_payload, dict)
+                        else {}
+                    )
+                    runtime["restore"]["transfer_progress"] = result_payload.get(
+                        "transfer_progress"
+                    )
                 runtime["restore"]["kopia_progress"] = kopia_payload
             except Exception:
                 pass
@@ -849,7 +991,9 @@ def _attach_runtime_expansion(*, organization_id: int, items: list[dict[str, Any
             not running_restore
             and latest_restore_pair is not None
             and latest_restore_pair[1] is not None
-            and _product_task_is_stopping(organization_id=organization_id, task=latest_restore_pair[1])
+            and _product_task_is_stopping(
+                organization_id=organization_id, task=latest_restore_pair[1]
+            )
         )
         runtime["restore"]["stopping"] = restore_stopping
         runtime["restore"]["cancelled"] = (
@@ -865,11 +1009,17 @@ def _attach_runtime_expansion(*, organization_id: int, items: list[dict[str, Any
         if latest_restore_pair:
             record, task = latest_restore_pair
             runtime["restore"]["latest_task"] = _task_payload(task)
-            runtime["restore"]["last_restore_at"] = _iso((task.finished_at if task else None) or record.updated_at or record.created_at)
+            runtime["restore"]["last_restore_at"] = _iso(
+                (task.finished_at if task else None)
+                or record.updated_at
+                or record.created_at
+            )
         item["runtime"] = runtime
 
 
-def _attach_expansions(*, organization_id: int, items: list[dict[str, Any]], expand: str | None) -> None:
+def _attach_expansions(
+    *, organization_id: int, items: list[dict[str, Any]], expand: str | None
+) -> None:
     expands = _parse_expand(expand)
     if not expands:
         return
@@ -883,7 +1033,9 @@ def _attach_expansions(*, organization_id: int, items: list[dict[str, Any]], exp
         _attach_runtime_expansion(organization_id=organization_id, items=items)
 
 
-def fetch_backup_selectable_by_ids(*, organization_id: int, ids: list[str], expand: str | None = None) -> list[dict[str, Any]]:
+def fetch_backup_selectable_by_ids(
+    *, organization_id: int, ids: list[str], expand: str | None = None
+) -> list[dict[str, Any]]:
     wanted: dict[str, int] = {}
     for value in ids:
         parsed = parse_selectable_id(value)
@@ -893,8 +1045,16 @@ def fetch_backup_selectable_by_ids(*, organization_id: int, ids: list[str], expa
     if not wanted:
         return []
 
-    agent_ids = [parsed[1] for parsed in (parse_selectable_id(v) for v in ids) if parsed and parsed[0] == "agent"]
-    nas_ids = [parsed[1] for parsed in (parse_selectable_id(v) for v in ids) if parsed and parsed[0] == "nas"]
+    agent_ids = [
+        parsed[1]
+        for parsed in (parse_selectable_id(v) for v in ids)
+        if parsed and parsed[0] == "agent"
+    ]
+    nas_ids = [
+        parsed[1]
+        for parsed in (parse_selectable_id(v) for v in ids)
+        if parsed and parsed[0] == "nas"
+    ]
 
     items: list[dict[str, Any]] = []
     if agent_ids:
@@ -922,7 +1082,9 @@ def fetch_backup_selectable_by_ids(*, organization_id: int, ids: list[str], expa
     return items
 
 
-def _filter_pipeline_ip(queryset: QuerySet, value: str, *, field: str = "source_ip") -> QuerySet:
+def _filter_pipeline_ip(
+    queryset: QuerySet, value: str, *, field: str = "source_ip"
+) -> QuerySet:
     term = value.strip().lower()
     if not term:
         return queryset
@@ -963,7 +1125,9 @@ def _pipeline_queryset(
     if pipeline_step in PipelineStep.VALID:
         queryset = queryset.filter(step=pipeline_step)
     if source_type:
-        source_kind = SelectableSourceKind.AGENT if source_type == "host" else source_type
+        source_kind = (
+            SelectableSourceKind.AGENT if source_type == "host" else source_type
+        )
         queryset = queryset.filter(source_kind=source_kind)
 
     excluded: dict[str, list[int]] = defaultdict(list)
@@ -975,11 +1139,15 @@ def _pipeline_queryset(
         queryset = queryset.exclude(source_kind=source_kind, ref_id__in=ref_ids)
 
     if search and search.strip():
-        selected_field = _SEARCH_FIELDS.get(search_field or "source_name", "source_name")
+        selected_field = _SEARCH_FIELDS.get(
+            search_field or "source_name", "source_name"
+        )
         if selected_field == "source_ip":
             queryset = _filter_pipeline_ip(queryset, search, field=selected_field)
         else:
-            queryset = queryset.filter(**{f"{selected_field}__icontains": search.strip()})
+            queryset = queryset.filter(
+                **{f"{selected_field}__icontains": search.strip()}
+            )
     if source_name:
         queryset = queryset.filter(source_name__icontains=source_name.strip())
     if source_hostname:
@@ -998,27 +1166,44 @@ def _pipeline_queryset(
         if value == "running":
             return queryset.filter(**{f"{field}__in": _ACTIVE_PIPELINE_TASK_STATUSES})
         if value == "failed":
-            return queryset.filter(**{f"{field}__in": ("failed", "timeout", "cancelled")})
+            return queryset.filter(
+                **{f"{field}__in": ("failed", "timeout", "cancelled")}
+            )
         return queryset.filter(**{field: value})
 
     if backup_task_status:
-        queryset = filter_task_status(queryset, field="last_backup_status", value=backup_task_status)
+        queryset = filter_task_status(
+            queryset, field="last_backup_status", value=backup_task_status
+        )
     else:
         backup_is_running = backup_running is True or running_task == "backup"
         if backup_is_running:
-            queryset = queryset.filter(last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+            queryset = queryset.filter(
+                last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES
+            )
         elif backup_running is False:
-            queryset = queryset.exclude(last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+            queryset = queryset.exclude(
+                last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES
+            )
     if restore_task_status:
-        queryset = filter_task_status(queryset, field="last_restore_status", value=restore_task_status)
+        queryset = filter_task_status(
+            queryset, field="last_restore_status", value=restore_task_status
+        )
     else:
         restore_is_running = restore_running is True or running_task == "restore"
         if restore_is_running:
-            queryset = queryset.filter(last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+            queryset = queryset.filter(
+                last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES
+            )
         elif restore_running is False:
-            queryset = queryset.exclude(last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+            queryset = queryset.exclude(
+                last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES
+            )
 
-    if any(value is not None for value in (backup_policy_id, file_filter_rule_id, repository_id)):
+    if any(
+        value is not None
+        for value in (backup_policy_id, file_filter_rule_id, repository_id)
+    ):
         configs = BackupConfig.objects.filter(
             organization_id=organization_id,
             source_type=OuterRef("source_kind"),
@@ -1042,8 +1227,16 @@ def _materialize_pipeline_page(
     entries: list[SourceBackupPipelineEntry],
     expand: str | None,
 ) -> list[dict[str, Any]]:
-    agent_ids = [entry.ref_id for entry in entries if entry.source_kind == SelectableSourceKind.AGENT]
-    nas_ids = [entry.ref_id for entry in entries if entry.source_kind == SelectableSourceKind.NAS]
+    agent_ids = [
+        entry.ref_id
+        for entry in entries
+        if entry.source_kind == SelectableSourceKind.AGENT
+    ]
+    nas_ids = [
+        entry.ref_id
+        for entry in entries
+        if entry.source_kind == SelectableSourceKind.NAS
+    ]
     items_by_id: dict[str, dict[str, Any]] = {}
     if agent_ids:
         agents = Node.objects.filter(
@@ -1060,7 +1253,9 @@ def _materialize_pipeline_page(
             id__in=nas_ids,
             is_deleted=False,
         ).select_related("bound_node")
-        items_by_id.update((str(item["id"]), item) for item in map(_nas_item, resources))
+        items_by_id.update(
+            (str(item["id"]), item) for item in map(_nas_item, resources)
+        )
 
     items: list[dict[str, Any]] = []
     for entry in entries:
@@ -1092,7 +1287,9 @@ def _list_pipeline_backup_selectable_sources(
     ), total
 
 
-def _pipeline_filter_is_requested(filters: dict[str, Any], *, search: str | None) -> bool:
+def _pipeline_filter_is_requested(
+    filters: dict[str, Any], *, search: str | None
+) -> bool:
     return bool(search and filters.get("search_field")) or any(
         filters.get(name) not in (None, "", [])
         for name in (
@@ -1126,7 +1323,9 @@ def _list_legacy_backup_selectable_sources(
     expand: str | None,
     **filters: Any,
 ) -> tuple[list[dict[str, Any]], int]:
-    exclude = {value.strip() for value in (exclude_ids or []) if value and value.strip()}
+    exclude = {
+        value.strip() for value in (exclude_ids or []) if value and value.strip()
+    }
     items = _build_catalog(organization_id=organization_id)
     pipeline_map = load_pipeline_step_map(organization_id=organization_id)
     items = attach_pipeline_steps(items, pipeline_map=pipeline_map)
@@ -1135,8 +1334,10 @@ def _list_legacy_backup_selectable_sources(
         if pipeline_step == PipelineStep.READY:
             configured = _configured_source_keys(organization_id=organization_id)
             items = [
-                item for item in items
-                if int(item.get("pipeline_step", PipelineStep.SOURCE_POOL)) == PipelineStep.READY
+                item
+                for item in items
+                if int(item.get("pipeline_step", PipelineStep.SOURCE_POOL))
+                == PipelineStep.READY
                 or str(item.get("id")) in configured
             ]
             for item in items:
@@ -1158,16 +1359,26 @@ def _list_legacy_backup_selectable_sources(
             pipeline_step=None,
             **filters,
         ).values_list("source_kind", "ref_id")
-        matching_keys = {_source_key(str(kind), int(ref_id)) for kind, ref_id in matching_rows}
+        matching_keys = {
+            _source_key(str(kind), int(ref_id)) for kind, ref_id in matching_rows
+        }
         items = [item for item in items if str(item.get("id")) in matching_keys]
     elif search and search.strip():
         items = [item for item in items if _matches_search(item, search)]
     if status and status.strip():
         expected_status = status.strip().lower()
-        items = [item for item in items if str(item.get("status") or "").lower() == expected_status]
+        items = [
+            item
+            for item in items
+            if str(item.get("status") or "").lower() == expected_status
+        ]
     if source_type and source_type.strip():
         expected_type = source_type.strip().lower()
-        items = [item for item in items if str(item.get("type") or "").lower() == expected_type]
+        items = [
+            item
+            for item in items
+            if str(item.get("type") or "").lower() == expected_type
+        ]
 
     total = len(items)
     page = max(1, page)
@@ -1179,7 +1390,9 @@ def _list_legacy_backup_selectable_sources(
 
 
 def _query_mode() -> str:
-    mode = str(getattr(settings, "SOURCE_BACKUP_SELECTABLE_QUERY_MODE", "legacy") or "legacy").lower()
+    mode = str(
+        getattr(settings, "SOURCE_BACKUP_SELECTABLE_QUERY_MODE", "legacy") or "legacy"
+    ).lower()
     return mode if mode in _QUERY_MODES else "legacy"
 
 
@@ -1250,7 +1463,9 @@ def list_backup_selectable_sources(
                 **filters,
             )
         finally:
-            BACKUP_SELECTABLE_QUERY_DURATION.labels(engine="pipeline").observe(time.monotonic() - started)
+            BACKUP_SELECTABLE_QUERY_DURATION.labels(engine="pipeline").observe(
+                time.monotonic() - started
+            )
 
     started = time.monotonic()
     legacy_items, legacy_total = _list_legacy_backup_selectable_sources(
@@ -1260,7 +1475,9 @@ def list_backup_selectable_sources(
         expand=expand,
         **filters,
     )
-    BACKUP_SELECTABLE_QUERY_DURATION.labels(engine="legacy").observe(time.monotonic() - started)
+    BACKUP_SELECTABLE_QUERY_DURATION.labels(engine="legacy").observe(
+        time.monotonic() - started
+    )
     if mode != "shadow":
         return legacy_items, legacy_total
 

@@ -67,6 +67,7 @@ import {
   type TaskStatistics,
 } from '../../lib/taskApi'
 import type { TaskResourceRow } from '../../lib/taskApi'
+import { isRestoreTaskType } from '../../lib/taskType'
 
 const { t, te } = useI18n()
 const stopConfirmDialog = useProtectionStopConfirmDialog()
@@ -171,7 +172,7 @@ type ResourceDetailRow = {
 }
 
 const statusOptions = ['pending', 'waiting', 'blocked', 'running', 'success', 'failed', 'cancelled', 'timeout']
-const taskTypeOptions = ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'backup_config_reset', 'source_unregister', 'node_lifecycle', 'repository_operation']
+const taskTypeOptions = ['backup', 'restore', 'insight_workspace_restore', 'snapshot_download', 'snapshot_delete', 'backup_config_reset', 'source_unregister', 'node_lifecycle', 'repository_operation']
 const DEFAULT_TRIGGER_TYPE_OPTIONS = ['manual', 'system']
 const triggerTypeOptions = computed(() => Array.from(new Set([
   ...DEFAULT_TRIGGER_TYPE_OPTIONS,
@@ -941,7 +942,7 @@ async function cancelActiveTask() {
   if (task.task_type === 'backup') {
     const confirmed = await stopConfirmDialog.confirmStopBackup([buildStopConfirmItemFromTask(task)])
     if (!confirmed) return
-  } else if (task.task_type === 'restore') {
+  } else if (isRestoreTaskType(task.task_type)) {
     const confirmed = await stopConfirmDialog.confirmStopRestore([buildStopConfirmItemFromTask(task)])
     if (!confirmed) return
   } else if (task.task_type === 'repository_operation') {
@@ -957,7 +958,7 @@ async function cancelActiveTask() {
           const result = await cancelProtectionBackupTask(task.task_uuid)
           return getTask(result.task_uuid)
         })()
-      : task.task_type === 'restore'
+      : isRestoreTaskType(task.task_type)
         ? await (async () => {
             const result = await cancelProtectionRestoreTask(task.task_uuid)
             return getTask(result.task_uuid)

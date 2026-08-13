@@ -488,7 +488,11 @@ export async function loadDashboardOverview(
       usage: {},
     })),
     taskStatistics().catch(() => emptyTaskStatistics),
-    taskStatistics({ task_type: 'restore', created_after: recoveryDrillStartedAfter }).catch(() => emptyTaskStatistics),
+    taskStatistics({
+      task_type: 'restore',
+      created_after: recoveryDrillStartedAfter,
+      exclude_insight_workspace_restores: 'true',
+    }).catch(() => emptyTaskStatistics),
     Promise.all(taskOutcomeRanges.map((range) => taskStatistics({
       finished_after: range.finishedAfter,
       finished_before: range.finishedBefore,
@@ -520,7 +524,11 @@ export async function loadDashboardOverview(
     api<unknown>('/api/v1/notifications/logs/stats/').then((raw) => unwrapApiPayload<{ failed?: number }>(raw)).catch(() => ({ failed: 0 })),
     listBackupConfigs({ page_size: 200 }).catch(() => ({ count: 0, results: [] })),
     listRestorePlans({ enabled: true, page_size: 1 }).catch(() => ({ count: 0, results: [] })),
-    listTasks({ task_type: 'restore', page_size: 30 }).catch(() => ({ count: 0, results: [] })),
+    listTasks({
+      task_type: 'restore',
+      page_size: 30,
+      exclude_insight_workspace_restores: 'true',
+    }).catch(() => ({ count: 0, results: [] })),
     loadAttentionPage().catch(() => ({ count: 0, results: [] })),
   ])
 

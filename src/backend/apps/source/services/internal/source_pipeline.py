@@ -10,7 +10,9 @@ from apps.node.models.base import NodeRole
 from apps.source.constants import PipelineStep, ResourceType, SelectableSourceKind
 from apps.source.models import SourceBackupPipelineEntry, SourceResource
 from apps.source.services.internal.selectable_ids import parse_selectable_id
-from apps.source.services.internal.source_pipeline_projection import build_source_projection
+from apps.source.services.internal.source_pipeline_projection import (
+    build_source_projection,
+)
 
 
 def _selectable_key(source_kind: str, ref_id: int) -> str:
@@ -22,19 +24,30 @@ def load_pipeline_step_map(*, organization_id: int) -> dict[str, int]:
         organization_id=organization_id,
         is_deleted=False,
     ).values("source_kind", "ref_id", "step")
-    return {_selectable_key(str(row["source_kind"]), int(row["ref_id"])): int(row["step"]) for row in rows}
+    return {
+        _selectable_key(str(row["source_kind"]), int(row["ref_id"])): int(row["step"])
+        for row in rows
+    }
 
 
-def attach_pipeline_steps(items: list[dict], *, pipeline_map: dict[str, int]) -> list[dict]:
+def attach_pipeline_steps(
+    items: list[dict], *, pipeline_map: dict[str, int]
+) -> list[dict]:
     for item in items:
-        item["pipeline_step"] = pipeline_map.get(str(item["id"]), PipelineStep.SOURCE_POOL)
+        item["pipeline_step"] = pipeline_map.get(
+            str(item["id"]), PipelineStep.SOURCE_POOL
+        )
     return items
 
 
 def filter_items_by_pipeline_step(items: list[dict], step: int | None) -> list[dict]:
     if step is None or step not in PipelineStep.VALID:
         return items
-    return [item for item in items if int(item.get("pipeline_step", PipelineStep.SOURCE_POOL)) == step]
+    return [
+        item
+        for item in items
+        if int(item.get("pipeline_step", PipelineStep.SOURCE_POOL)) == step
+    ]
 
 
 def _source_exists(*, organization_id: int, source_kind: str, ref_id: int) -> bool:
@@ -55,7 +68,9 @@ def _source_exists(*, organization_id: int, source_kind: str, ref_id: int) -> bo
     return False
 
 
-def _backup_config_exists(*, organization_id: int, source_kind: str, ref_id: int) -> bool:
+def _backup_config_exists(
+    *, organization_id: int, source_kind: str, ref_id: int
+) -> bool:
     from apps.protection.models import BackupConfig
 
     source_type = "agent" if source_kind == SelectableSourceKind.AGENT else source_kind
@@ -66,17 +81,42 @@ def _backup_config_exists(*, organization_id: int, source_kind: str, ref_id: int
     ).exists()
 
 
+def _latest_user_restore_task(tasks, *, organization_id: int):
+    """Return the latest Protection restore without projecting Insight work."""
+    from apps.restore.models import RestoreRecord
+    from apps.task.models import Task
+
+    insight_task_ids = RestoreRecord.objects.filter(
+        organization_id=organization_id,
+        purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+    ).values_list("task_id", flat=True)
+    return (
+        tasks.filter(task_type=Task.Type.RESTORE)
+        .exclude(id__in=insight_task_ids)
+        .first()
+    )
+
+
 def _source_and_tasks(*, organization_id: int, source_kind: str, ref_id: int):
     source = None
     if source_kind == SelectableSourceKind.AGENT:
-        source = Node.objects.filter(organization_id=organization_id, role=NodeRole.AGENT, id=ref_id).first()
-    elif source_kind == SelectableSourceKind.NAS:
-        source = SourceResource.objects.select_related("bound_node").filter(
-            organization_id=organization_id, resource_type=ResourceType.NAS, id=ref_id
+        source = Node.objects.filter(
+            organization_id=organization_id, role=NodeRole.AGENT, id=ref_id
         ).first()
+    elif source_kind == SelectableSourceKind.NAS:
+        source = (
+            SourceResource.objects.select_related("bound_node")
+            .filter(
+                organization_id=organization_id,
+                resource_type=ResourceType.NAS,
+                id=ref_id,
+            )
+            .first()
+        )
     if source is None:
         return None, None, None
     from apps.task.models import Task, TaskResource
+
     source_type = "agent" if source_kind == SelectableSourceKind.AGENT else source_kind
     tasks = Task.objects.filter(
         organization_id=organization_id,
@@ -84,7 +124,11 @@ def _source_and_tasks(*, organization_id: int, source_kind: str, ref_id: int):
         resources__resource_subtype=source_type,
         resources__resource_id=ref_id,
     ).order_by("-created_at", "-id")
-    return source, tasks.filter(task_type=Task.Type.BACKUP).first(), tasks.filter(task_type=Task.Type.RESTORE).first()
+    return (
+        source,
+        tasks.filter(task_type=Task.Type.BACKUP).first(),
+        _latest_user_restore_task(tasks, organization_id=organization_id),
+    )
 
 
 def _projection_values(*, organization_id: int, source_kind: str, ref_id: int):
@@ -94,7 +138,10 @@ def _projection_values(*, organization_id: int, source_kind: str, ref_id: int):
     if source is None:
         return None, None
     values, _inconsistency = build_source_projection(
-        source_kind=source_kind, source=source, backup_task=backup_task, restore_task=restore_task
+        source_kind=source_kind,
+        source=source,
+        backup_task=backup_task,
+        restore_task=restore_task,
     )
     return source, values
 
@@ -102,31 +149,43 @@ def _projection_values(*, organization_id: int, source_kind: str, ref_id: int):
 def _locked_source(*, organization_id: int, source_kind: str, ref_id: int):
     """Load a source using the projection service lock order."""
     if source_kind == SelectableSourceKind.AGENT:
-        return Node.objects.select_for_update().filter(
-            organization_id=organization_id,
-            role=NodeRole.AGENT,
-            id=ref_id,
-            is_deleted=False,
-        ).first()
+        return (
+            Node.objects.select_for_update()
+            .filter(
+                organization_id=organization_id,
+                role=NodeRole.AGENT,
+                id=ref_id,
+                is_deleted=False,
+            )
+            .first()
+        )
     if source_kind != SelectableSourceKind.NAS:
         return None
 
-    binding = SourceResource.objects.filter(
-        organization_id=organization_id,
-        resource_type=ResourceType.NAS,
-        id=ref_id,
-        is_deleted=False,
-    ).values("bound_node_id").first()
+    binding = (
+        SourceResource.objects.filter(
+            organization_id=organization_id,
+            resource_type=ResourceType.NAS,
+            id=ref_id,
+            is_deleted=False,
+        )
+        .values("bound_node_id")
+        .first()
+    )
     if binding is None:
         return None
     if binding["bound_node_id"]:
         Node.objects.select_for_update().filter(pk=binding["bound_node_id"]).first()
-    return SourceResource.objects.select_for_update().filter(
-        organization_id=organization_id,
-        resource_type=ResourceType.NAS,
-        id=ref_id,
-        is_deleted=False,
-    ).first()
+    return (
+        SourceResource.objects.select_for_update()
+        .filter(
+            organization_id=organization_id,
+            resource_type=ResourceType.NAS,
+            id=ref_id,
+            is_deleted=False,
+        )
+        .first()
+    )
 
 
 def sync_pipeline_projection(
@@ -148,14 +207,20 @@ def sync_pipeline_projection(
         )
         if source is None:
             return None
-        entry = SourceBackupPipelineEntry.all_objects.select_for_update().filter(
-            organization_id=organization_id,
-            source_kind=source_kind,
-            ref_id=ref_id,
-        ).first()
+        entry = (
+            SourceBackupPipelineEntry.all_objects.select_for_update()
+            .filter(
+                organization_id=organization_id,
+                source_kind=source_kind,
+                ref_id=ref_id,
+            )
+            .first()
+        )
         from apps.task.models import Task, TaskResource
 
-        source_type = "agent" if source_kind == SelectableSourceKind.AGENT else source_kind
+        source_type = (
+            "agent" if source_kind == SelectableSourceKind.AGENT else source_kind
+        )
         tasks = Task.objects.filter(
             organization_id=organization_id,
             resources__resource_type=TaskResource.Type.BACKUP_SOURCE,
@@ -166,7 +231,10 @@ def sync_pipeline_projection(
             source_kind=source_kind,
             source=source,
             backup_task=tasks.filter(task_type=Task.Type.BACKUP).first(),
-            restore_task=tasks.filter(task_type=Task.Type.RESTORE).first(),
+            restore_task=_latest_user_restore_task(
+                tasks,
+                organization_id=organization_id,
+            ),
         )
         current_step = (
             int(entry.step)
@@ -188,37 +256,53 @@ def sync_pipeline_projection(
         entry.deleted_at = None
         for field, value in values.items():
             setattr(entry, field, value)
-        entry.save(update_fields=["step", "is_deleted", "deleted_at", *values.keys(), "updated_at"])
+        entry.save(
+            update_fields=[
+                "step",
+                "is_deleted",
+                "deleted_at",
+                *values.keys(),
+                "updated_at",
+            ]
+        )
         return entry
 
 
-def sync_bound_proxy_pipeline_projections(*, proxy_id: int, limit: int = 200) -> dict[str, int]:
+def sync_bound_proxy_pipeline_projections(
+    *, proxy_id: int, limit: int = 200
+) -> dict[str, int]:
     """Refresh bounded NAS projections whose displayed identity comes from a Proxy."""
     rows = list(
         SourceResource.objects.filter(
             bound_node_id=proxy_id,
             resource_type=ResourceType.NAS,
             is_deleted=False,
-        ).order_by("id").values_list("organization_id", "id")[: max(1, limit)]
+        )
+        .order_by("id")
+        .values_list("organization_id", "id")[: max(1, limit)]
     )
     updated = 0
     for organization_id, ref_id in rows:
-        if sync_pipeline_projection(
-            organization_id=organization_id,
-            source_kind=SelectableSourceKind.NAS,
-            ref_id=ref_id,
-        ) is not None:
+        if (
+            sync_pipeline_projection(
+                organization_id=organization_id,
+                source_kind=SelectableSourceKind.NAS,
+                ref_id=ref_id,
+            )
+            is not None
+        ):
             updated += 1
     return {"candidates": len(rows), "updated": updated}
 
 
 def sync_task_pipeline_projection(*, task_id: int) -> int:
-    """Project Backup/Restore task state without permitting an older task to win."""
+    """Recompute Protection state for a backup or shared-framework restore."""
+    from apps.task.constants import RESTORE_TASK_TYPES
     from apps.task.models import Task, TaskResource
 
     task = Task.objects.filter(
         id=task_id,
-        task_type__in=(Task.Type.BACKUP, Task.Type.RESTORE),
+        task_type__in=(Task.Type.BACKUP, *RESTORE_TASK_TYPES),
     ).first()
     if task is None:
         return 0
@@ -228,14 +312,19 @@ def sync_task_pipeline_projection(*, task_id: int) -> int:
     ).values_list("resource_subtype", "resource_id")
     updated = 0
     for source_type, ref_id in resources:
-        source_kind = SelectableSourceKind.AGENT if source_type in {"", "agent"} else source_type
+        source_kind = (
+            SelectableSourceKind.AGENT if source_type in {"", "agent"} else source_type
+        )
         if source_kind not in {SelectableSourceKind.AGENT, SelectableSourceKind.NAS}:
             continue
-        if sync_pipeline_projection(
-            organization_id=task.organization_id,
-            source_kind=source_kind,
-            ref_id=int(ref_id),
-        ) is not None:
+        if (
+            sync_pipeline_projection(
+                organization_id=task.organization_id,
+                source_kind=source_kind,
+                ref_id=int(ref_id),
+            )
+            is not None
+        ):
             updated += 1
     return updated
 
@@ -249,7 +338,9 @@ def reconcile_pipeline_projections(*, limit: int = 200) -> dict[str, int]:
         for organization_id, ref_id in Node.objects.filter(
             role=NodeRole.AGENT,
             is_deleted=False,
-        ).order_by("id").values_list("organization_id", "id")[:batch_size]
+        )
+        .order_by("id")
+        .values_list("organization_id", "id")[:batch_size]
     )
     remaining = max(0, batch_size - len(candidates))
     if remaining:
@@ -258,14 +349,17 @@ def reconcile_pipeline_projections(*, limit: int = 200) -> dict[str, int]:
             for organization_id, ref_id in SourceResource.objects.filter(
                 resource_type=ResourceType.NAS,
                 is_deleted=False,
-            ).order_by("id").values_list("organization_id", "id")[:remaining]
+            )
+            .order_by("id")
+            .values_list("organization_id", "id")[:remaining]
         )
     repaired = sum(
         sync_pipeline_projection(
             organization_id=organization_id,
             source_kind=source_kind,
             ref_id=ref_id,
-        ) is not None
+        )
+        is not None
         for organization_id, source_kind, ref_id in candidates
     )
     stale = 0
@@ -340,7 +434,9 @@ def _upsert_pipeline_step(
 ) -> str:
     key = _selectable_key(source_kind, ref_id)
     if step < current_step and not allow_backwards:
-        raise ValueError(f"pipeline step cannot move backwards for {key}: {current_step} -> {step}")
+        raise ValueError(
+            f"pipeline step cannot move backwards for {key}: {current_step} -> {step}"
+        )
 
     entry = SourceBackupPipelineEntry.all_objects.filter(
         organization_id=organization_id,
@@ -368,7 +464,15 @@ def _upsert_pipeline_step(
         entry.updated_at = timezone.now()
         for field, value in values.items():
             setattr(entry, field, value)
-        entry.save(update_fields=["step", "is_deleted", "deleted_at", *values.keys(), "updated_at"])
+        entry.save(
+            update_fields=[
+                "step",
+                "is_deleted",
+                "deleted_at",
+                *values.keys(),
+                "updated_at",
+            ]
+        )
     return key
 
 
@@ -382,7 +486,9 @@ def set_pipeline_steps(*, organization_id: int, ids: list[str], step: int) -> li
         if not parsed:
             continue
         source_kind, ref_id = parsed
-        if not _source_exists(organization_id=organization_id, source_kind=source_kind, ref_id=ref_id):
+        if not _source_exists(
+            organization_id=organization_id, source_kind=source_kind, ref_id=ref_id
+        ):
             continue
         if _pipeline_operation_fenced(
             organization_id=organization_id,
@@ -408,14 +514,16 @@ def set_pipeline_steps(*, organization_id: int, ids: list[str], step: int) -> li
             if entry is not None and not entry.is_deleted
             else PipelineStep.SOURCE_POOL
         )
-        updated.append(_upsert_pipeline_step(
-            organization_id=organization_id,
-            source_kind=source_kind,
-            ref_id=ref_id,
-            step=step,
-            current_step=current_step,
-            allow_backwards=False,
-        ))
+        updated.append(
+            _upsert_pipeline_step(
+                organization_id=organization_id,
+                source_kind=source_kind,
+                ref_id=ref_id,
+                step=step,
+                current_step=current_step,
+                allow_backwards=False,
+            )
+        )
     return updated
 
 
@@ -435,7 +543,9 @@ def force_set_pipeline_steps(
         if not parsed:
             continue
         source_kind, ref_id = parsed
-        if not _source_exists(organization_id=organization_id, source_kind=source_kind, ref_id=ref_id):
+        if not _source_exists(
+            organization_id=organization_id, source_kind=source_kind, ref_id=ref_id
+        ):
             continue
         if _pipeline_operation_fenced(
             organization_id=organization_id,
@@ -462,14 +572,16 @@ def force_set_pipeline_steps(
             if entry is not None and not entry.is_deleted
             else PipelineStep.SOURCE_POOL
         )
-        updated.append(_upsert_pipeline_step(
-            organization_id=organization_id,
-            source_kind=source_kind,
-            ref_id=ref_id,
-            step=step,
-            current_step=current_step,
-            allow_backwards=True,
-        ))
+        updated.append(
+            _upsert_pipeline_step(
+                organization_id=organization_id,
+                source_kind=source_kind,
+                ref_id=ref_id,
+                step=step,
+                current_step=current_step,
+                allow_backwards=True,
+            )
+        )
     return updated
 
 
@@ -483,7 +595,9 @@ def revert_backup_flow_sources(
     if target_step not in (PipelineStep.SOURCE_POOL, PipelineStep.CONFIG):
         raise ValueError("revert target_step must be 1 or 2")
 
-    from apps.protection.services.backup_config import purge_backup_config_data_for_source
+    from apps.protection.services.backup_config import (
+        purge_backup_config_data_for_source,
+    )
 
     updated: list[str] = []
     for value in ids:
@@ -492,24 +606,30 @@ def revert_backup_flow_sources(
             continue
         source_kind, ref_id = parsed
         key = _selectable_key(source_kind, ref_id)
-        if not _source_exists(organization_id=organization_id, source_kind=source_kind, ref_id=ref_id):
+        if not _source_exists(
+            organization_id=organization_id, source_kind=source_kind, ref_id=ref_id
+        ):
             continue
 
         if target_step == PipelineStep.CONFIG:
-            source_type = "agent" if source_kind == SelectableSourceKind.AGENT else source_kind
+            source_type = (
+                "agent" if source_kind == SelectableSourceKind.AGENT else source_kind
+            )
             purge_backup_config_data_for_source(
                 organization_id=organization_id,
                 source_type=source_type,
                 source_ref_id=ref_id,
             )
-            updated.append(_upsert_pipeline_step(
-                organization_id=organization_id,
-                source_kind=source_kind,
-                ref_id=ref_id,
-                step=PipelineStep.CONFIG,
-                current_step=PipelineStep.READY,
-                allow_backwards=True,
-            ))
+            updated.append(
+                _upsert_pipeline_step(
+                    organization_id=organization_id,
+                    source_kind=source_kind,
+                    ref_id=ref_id,
+                    step=PipelineStep.CONFIG,
+                    current_step=PipelineStep.READY,
+                    allow_backwards=True,
+                )
+            )
         else:
             _upsert_pipeline_step(
                 organization_id=organization_id,
@@ -533,7 +653,9 @@ def ensure_pipeline_entry(
     """Create the explicit pipeline row for a source without moving it backwards."""
     if step not in PipelineStep.VALID:
         raise ValueError(f"invalid pipeline step: {step}")
-    if not _source_exists(organization_id=organization_id, source_kind=source_kind, ref_id=ref_id):
+    if not _source_exists(
+        organization_id=organization_id, source_kind=source_kind, ref_id=ref_id
+    ):
         return None
 
     entry = SourceBackupPipelineEntry.all_objects.filter(
@@ -555,7 +677,9 @@ def ensure_pipeline_entry(
     )
 
 
-def delete_pipeline_entry(*, organization_id: int, source_kind: str, ref_id: int) -> None:
+def delete_pipeline_entry(
+    *, organization_id: int, source_kind: str, ref_id: int
+) -> None:
     for entry in SourceBackupPipelineEntry.all_objects.filter(
         organization_id=organization_id,
         source_kind=source_kind,
@@ -565,7 +689,9 @@ def delete_pipeline_entry(*, organization_id: int, source_kind: str, ref_id: int
             entry.soft_delete()
 
 
-def purge_pipeline_entry(*, organization_id: int, source_kind: str, ref_id: int) -> None:
+def purge_pipeline_entry(
+    *, organization_id: int, source_kind: str, ref_id: int
+) -> None:
     """Hard-delete pipeline rows when the backing source identity is removed."""
     SourceBackupPipelineEntry.all_objects.filter(
         organization_id=organization_id,

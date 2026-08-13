@@ -17,10 +17,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	agentdisk "hyperfilelens/agent/internal/platform/disk"
 	"hyperfilelens/agent/internal/platform/kopia"
@@ -1859,10 +1861,11 @@ func (e *Engine) runManagedRestore(
 	if err != nil {
 		return "failed", nil, err.Error()
 	}
-	configFile, env, result, _, prepErr := e.prepareManagedRepository(ctx, rep, taskID, p, repositoryPrepareConnect)
+	configFile, env, result, spec, prepErr := e.prepareManagedRepository(ctx, rep, taskID, p, repositoryPrepareConnect)
 	if prepErr != "" {
-		return "failed", result, prepErr
+		return "failed", managedRestoreResult(result, spec, p), managedRestorePreparationFailureMessage(result, prepErr, spec, p)
 	}
+	result = managedRestoreResult(result, spec, p)
 	selectedPaths := restoreSelectedPaths(p)
 	if len(selectedPaths) == 0 {
 		selectedPaths = []string{""}
@@ -1898,13 +1901,13 @@ func (e *Engine) runManagedRestore(
 			"target_path":        restoreTarget,
 			"source_is_dir":      sourceIsDir,
 			"source_object_type": sourceObjectType,
-			"snapshot_inspect":   commandResult(inspectRes),
+			"snapshot_inspect":   managedRestoreCommandResult(inspectRes, spec, p),
 		}
 		if inspectErr != nil {
 			restored = append(restored, restoreEntry)
 			result["restore_results"] = restored
-			result["restore_inspect"] = commandResult(inspectRes)
-			return "failed", result, snapshotRestoreInspectFailureMessage(inspectRes, inspectErr)
+			result["restore_inspect"] = managedRestoreCommandResult(inspectRes, spec, p)
+			return "failed", result, snapshotRestoreInspectFailureMessage(inspectRes, inspectErr, spec, p)
 		}
 		preparePath := restorePrepareTargetPathForSelection(p, targetPath, len(selectedPaths), sourceIsDir)
 		restoreEntry["prepare_path"] = preparePath
@@ -1953,7 +1956,7 @@ func (e *Engine) runManagedRestore(
 			restoreTarget,
 		}
 		res, runErr := process.RunStreaming(runCtx, bin, restoreArgs, env, "", onProgressLine)
-		restoreEntry["result"] = commandResult(res)
+		restoreEntry["result"] = managedRestoreCommandResult(res, spec, p)
 		restored = append(restored, restoreEntry)
 		if runErr != nil {
 			if runCtx.Err() != nil && ctx.Err() == nil && progressState.stallExceeded(stallSeconds) {
@@ -1961,8 +1964,8 @@ func (e *Engine) runManagedRestore(
 				return "failed", result, "kopia progress stall"
 			}
 			result["restore_results"] = restored
-			result["restore"] = commandResult(res)
-			return "failed", result, runErr.Error()
+			result["restore"] = managedRestoreCommandResult(res, spec, p)
+			return "failed", result, managedRestoreFailureMessage(res, runErr, spec, p)
 		}
 		if lastPathTotal > 0 {
 			completedBytes += lastPathTotal
@@ -2015,19 +2018,270 @@ func restoreTargetPath(p Payload) string {
 	return strings.TrimSpace(p.Path)
 }
 
-func snapshotRestoreInspectFailureMessage(res process.Result, runErr error) string {
-	stderr := strings.TrimSpace(res.Stderr)
-	stdout := strings.TrimSpace(res.Stdout)
-	switch {
-	case stderr != "":
-		return truncateSnapshotBrowseError("Snapshot restore inspect failed: "+stderr, 2000)
-	case stdout != "":
-		return truncateSnapshotBrowseError("Snapshot restore inspect failed: "+stdout, 2000)
-	case runErr != nil:
-		return runErr.Error()
-	default:
-		return "Snapshot restore inspect failed"
+func snapshotRestoreInspectFailureMessage(
+	res process.Result,
+	runErr error,
+	spec repositorySpec,
+	p Payload,
+) string {
+	message := ""
+	for _, output := range []string{res.Stderr, res.Stdout} {
+		if trimmed := strings.TrimSpace(output); trimmed != "" {
+			message = tailLines(trimmed, 20)
+			break
+		}
 	}
+	if message == "" && runErr != nil {
+		message = runErr.Error()
+	}
+	if message == "" {
+		message = "Kopia snapshot inspection failed"
+	}
+	message = redactManagedRestoreSecrets(message, spec, p)
+	return truncateFailureTail("Snapshot restore inspect failed: ", message, 2000)
+}
+
+func managedRestoreFailureMessage(
+	res process.Result,
+	runErr error,
+	spec repositorySpec,
+	p Payload,
+) string {
+	message := ""
+	for _, output := range []string{res.Stderr, res.Stdout} {
+		if trimmed := strings.TrimSpace(output); trimmed != "" {
+			message = tailLines(trimmed, 20)
+			break
+		}
+	}
+	if message == "" && runErr != nil {
+		message = runErr.Error()
+	}
+	if message == "" {
+		message = "Kopia restore command failed"
+	}
+	message = redactManagedRestoreSecrets(message, spec, p)
+	const prefix = "Restore failed: "
+	return truncateFailureTail(prefix, message, 2000)
+}
+
+func managedRestoreCommandResult(
+	res process.Result,
+	spec repositorySpec,
+	p Payload,
+) map[string]any {
+	result := commandResult(res)
+	for _, key := range []string{"stdout", "stderr", "stdout_tail", "stderr_tail"} {
+		if value, ok := result[key].(string); ok {
+			result[key] = redactManagedRestoreSecrets(value, spec, p)
+		}
+	}
+	return result
+}
+
+func managedRestorePreparationFailureMessage(
+	result map[string]any,
+	fallback string,
+	spec repositorySpec,
+	p Payload,
+) string {
+	for _, key := range []string{"repository_status", "repository_connect", "repository_create"} {
+		command, ok := result[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, outputKey := range []string{"stderr", "stdout"} {
+			if output := strings.TrimSpace(stringValue(command[outputKey])); output != "" {
+				message := redactManagedRestoreSecrets(tailLines(output, 20), spec, p)
+				return truncateFailureTail("Restore repository preparation failed: ", message, 2000)
+			}
+		}
+	}
+	message := redactManagedRestoreSecrets(strings.TrimSpace(fallback), spec, p)
+	if message == "" {
+		message = "repository preparation failed"
+	}
+	return truncateFailureTail("Restore repository preparation failed: ", message, 2000)
+}
+
+func managedRestoreResult(
+	result map[string]any,
+	spec repositorySpec,
+	p Payload,
+) map[string]any {
+	if result == nil {
+		return nil
+	}
+	redacted, _ := redactManagedRestoreValue(result, spec, p).(map[string]any)
+	return redacted
+}
+
+func redactManagedRestoreValue(value any, spec repositorySpec, p Payload) any {
+	switch typed := value.(type) {
+	case string:
+		return redactManagedRestoreSecrets(typed, spec, p)
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if restoreSecretKey(key) {
+				result[key] = redactManagedRestoreSecretValue(item)
+			} else {
+				result[key] = redactManagedRestoreValue(item, spec, p)
+			}
+		}
+		return result
+	case []any:
+		result := make([]any, len(typed))
+		for index, item := range typed {
+			result[index] = redactManagedRestoreValue(item, spec, p)
+		}
+		return result
+	case []map[string]any:
+		result := make([]map[string]any, len(typed))
+		for index, item := range typed {
+			result[index], _ = redactManagedRestoreValue(item, spec, p).(map[string]any)
+		}
+		return result
+	default:
+		return value
+	}
+}
+
+func redactManagedRestoreSecretValue(value any) any {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case string:
+		if typed == "" {
+			return typed
+		}
+		return "<redacted>"
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			result[key] = redactManagedRestoreSecretValue(item)
+		}
+		return result
+	case []any:
+		result := make([]any, len(typed))
+		for index, item := range typed {
+			result[index] = redactManagedRestoreSecretValue(item)
+		}
+		return result
+	case []map[string]any:
+		result := make([]map[string]any, len(typed))
+		for index, item := range typed {
+			redacted, _ := redactManagedRestoreSecretValue(item).(map[string]any)
+			result[index] = redacted
+		}
+		return result
+	default:
+		return "<redacted>"
+	}
+}
+
+func redactManagedRestoreSecrets(
+	message string,
+	spec repositorySpec,
+	p Payload,
+) string {
+	secretSet := make(map[string]struct{})
+	secretsToRedact := []string{
+		spec.SecretAccessKey,
+		spec.KopiaPassword,
+		spec.ServerPassword,
+	}
+	if spec.TargetNAS != nil {
+		secretsToRedact = append(secretsToRedact, spec.TargetNAS.Password)
+	}
+	if targetNAS, ok, err := parseNASSpec(p.Extra["nas"]); err == nil && ok {
+		secretsToRedact = append(secretsToRedact, targetNAS.Password)
+	}
+	for key, value := range p.Env {
+		if restoreSecretKey(key) {
+			secretsToRedact = append(secretsToRedact, value)
+		}
+	}
+	collectManagedRestorePayloadSecrets(p.Extra, &secretsToRedact)
+	for _, secret := range secretsToRedact {
+		if value := strings.TrimSpace(secret); value != "" {
+			secretSet[value] = struct{}{}
+		}
+	}
+	secrets := make([]string, 0, len(secretSet))
+	for secret := range secretSet {
+		secrets = append(secrets, secret)
+	}
+	sort.Slice(secrets, func(i, j int) bool {
+		return len(secrets[i]) > len(secrets[j])
+	})
+	for _, secret := range secrets {
+		message = strings.ReplaceAll(message, secret, "<redacted>")
+	}
+	return message
+}
+
+func collectManagedRestorePayloadSecrets(value any, secrets *[]string) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			if restoreSecretKey(key) {
+				collectManagedRestoreSecretValues(item, secrets)
+				continue
+			}
+			collectManagedRestorePayloadSecrets(item, secrets)
+		}
+	case []any:
+		for _, item := range typed {
+			collectManagedRestorePayloadSecrets(item, secrets)
+		}
+	case []map[string]any:
+		for _, item := range typed {
+			collectManagedRestorePayloadSecrets(item, secrets)
+		}
+	}
+}
+
+func collectManagedRestoreSecretValues(value any, secrets *[]string) {
+	switch typed := value.(type) {
+	case string:
+		*secrets = append(*secrets, typed)
+	case map[string]any:
+		for _, item := range typed {
+			collectManagedRestoreSecretValues(item, secrets)
+		}
+	case []any:
+		for _, item := range typed {
+			collectManagedRestoreSecretValues(item, secrets)
+		}
+	case []map[string]any:
+		for _, item := range typed {
+			collectManagedRestoreSecretValues(item, secrets)
+		}
+	}
+}
+
+func restoreSecretKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	return strings.Contains(normalized, "password") ||
+		strings.Contains(normalized, "secret") ||
+		strings.Contains(normalized, "token")
+}
+
+func truncateFailureTail(prefix string, message string, limit int) string {
+	value := prefix + strings.TrimSpace(message)
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	remaining := limit - len(prefix) - len("...")
+	if remaining <= 0 {
+		return value[:limit]
+	}
+	start := len(value) - remaining
+	for start < len(value) && !utf8.RuneStart(value[start]) {
+		start++
+	}
+	return prefix + "..." + value[start:]
 }
 
 func restoreTargetPathSemantics(p Payload) string {

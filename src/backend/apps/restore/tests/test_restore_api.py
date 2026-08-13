@@ -23,6 +23,7 @@ from apps.protection.models import (
 )
 from apps.restore.models import RestorePlan, RestoreRecord, RestoreRecordItem
 from apps.restore.services import interface as restore_service
+from apps.restore.services.reconciliation import reconcile_restore_node_task_projections
 from apps.restore.services.task_events import (
     RESTORE_EVENT_SCHEMA_KEY,
     RESTORE_EVENT_SCHEMA_VERSION,
@@ -44,20 +45,26 @@ class RestoreApiTests(TestCase):
             email="restore-api@test.local",
             password="test-pass",
         )
-        self.org = Organization.objects.create(key="restore-test-org", name="Restore Test Org")
-        Membership.objects.create(user=self.user, organization=self.org, role=Membership.Role.ADMIN)
+        self.org = Organization.objects.create(
+            key="restore-test-org", name="Restore Test Org"
+        )
+        Membership.objects.create(
+            user=self.user, organization=self.org, role=Membership.Role.ADMIN
+        )
         self.agent = Node.objects.create(
             organization=self.org,
             name="restore-agent-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.51",
         )
         self.target = Node.objects.create(
             organization=self.org,
             name="restore-target-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.52",
         )
         self.repository = Repository.objects.create(
@@ -176,7 +183,8 @@ class RestoreApiTests(TestCase):
             organization=self.org,
             name=f"private-{repository_type}-lens-gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         repository_proxy = Node.objects.create(
             organization=self.org,
@@ -236,14 +244,17 @@ class RestoreApiTests(TestCase):
         )
         return record, server_task, repository_proxy
 
-    @patch("apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway")
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
     def test_lens_workspace_restore_uses_platform_execution_identity(self, _ready):
         platform_org = platform_lens.get_or_create_platform_org()
         platform_gateway = Node.objects.create(
             organization=platform_org,
             name="platform-restore-gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
             organization=platform_org,
@@ -281,6 +292,11 @@ class RestoreApiTests(TestCase):
         self.assertEqual(record.target_execution_node_id, platform_gateway.id)
         product_task = Task.objects.get(pk=record.task_id)
         self.assertEqual(product_task.organization_id, self.org.id)
+        self.assertEqual(
+            product_task.task_type,
+            Task.Type.INSIGHT_WORKSPACE_RESTORE,
+        )
+        self.assertEqual(product_task.trigger_type, Task.TriggerType.SYSTEM)
         node_task = NodeTask.objects.get(
             kind="restore.run",
             correlation_id=str(record.task_uuid),
@@ -300,6 +316,9 @@ class RestoreApiTests(TestCase):
             ).count(),
             1,
         )
+        # Simulate an in-flight restore created before the task type migration.
+        product_task.task_type = Task.Type.RESTORE
+        product_task.save(update_fields=["task_type", "updated_at"])
         node_task.status = NodeTask.Status.SUCCESS
         node_task.result = {"restored": True}
         node_task.save(update_fields=["status", "result", "updated_at"])
@@ -308,6 +327,120 @@ class RestoreApiTests(TestCase):
         self.assertEqual(item.status, RestoreRecordItem.Status.SUCCESS)
         product_task.refresh_from_db()
         self.assertEqual(product_task.status, Task.Status.SUCCESS)
+        self.assertEqual(
+            product_task.task_type,
+            Task.Type.INSIGHT_WORKSPACE_RESTORE,
+        )
+
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
+    def test_legacy_active_lens_restore_is_classified_after_failure(self, _ready):
+        platform_org = platform_lens.get_or_create_platform_org()
+        platform_gateway = Node.objects.create(
+            organization=platform_org,
+            name="platform-failed-restore-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=platform_org,
+            gateway=platform_gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+        )
+        workspace_binding = self._workspace_binding(gateway_link)
+        payload = self._manual_restore_payload()
+        payload.update(
+            {
+                "target_ref_id": platform_gateway.id,
+                "target_path": workspace_binding.resolved_path(),
+                "idempotency_key": "lens-workspace:legacy-failure",
+            }
+        )
+        record = restore_service.create_lens_workspace_restore_record(
+            organization_id=self.org.id,
+            workspace_binding_id=workspace_binding.id,
+            data=payload,
+        )
+        product_task = Task.objects.get(pk=record.task_id)
+        product_task.task_type = Task.Type.RESTORE
+        product_task.save(update_fields=["task_type", "updated_at"])
+        node_task = NodeTask.objects.get(
+            kind="restore.run",
+            correlation_id=str(record.task_uuid),
+        )
+
+        node_task.status = NodeTask.Status.FAILED
+        node_task.last_error = "workspace restore failed"
+        node_task.save(update_fields=["status", "last_error", "updated_at"])
+
+        product_task.refresh_from_db()
+        self.assertEqual(product_task.status, Task.Status.FAILED)
+        self.assertEqual(
+            product_task.task_type,
+            Task.Type.INSIGHT_WORKSPACE_RESTORE,
+        )
+
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
+    def test_reconciler_classifies_lens_restore_completed_by_legacy_release(
+        self, _ready
+    ):
+        record, _server_task, _repository_proxy = self._bound_repository_lens_restore(
+            repository_type=Repository.Type.PROXY_FS,
+        )
+        product_task = Task.objects.get(id=record.task_id)
+        Task.objects.filter(id=product_task.id).update(
+            task_type=Task.Type.RESTORE,
+            status=Task.Status.SUCCESS,
+        )
+
+        result = reconcile_restore_node_task_projections(limit=20)
+
+        product_task.refresh_from_db()
+        self.assertEqual(result["classified"], 1)
+        self.assertEqual(
+            product_task.task_type,
+            Task.Type.INSIGHT_WORKSPACE_RESTORE,
+        )
+
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
+    def test_reconciler_retries_classification_when_projection_repair_fails(
+        self, _ready
+    ):
+        record, _server_task, _repository_proxy = self._bound_repository_lens_restore(
+            repository_type=Repository.Type.PROXY_FS,
+        )
+        product_task = Task.objects.get(id=record.task_id)
+        Task.objects.filter(id=product_task.id).update(
+            task_type=Task.Type.RESTORE,
+            status=Task.Status.SUCCESS,
+        )
+
+        with patch(
+            "apps.source.services.internal.source_pipeline.sync_task_pipeline_projection",
+            side_effect=RuntimeError("projection unavailable"),
+        ):
+            failed_result = reconcile_restore_node_task_projections(limit=20)
+
+        product_task.refresh_from_db()
+        self.assertEqual(failed_result["classified"], 0)
+        self.assertEqual(failed_result["classification_failed"], 1)
+        self.assertEqual(product_task.task_type, Task.Type.RESTORE)
+
+        result = reconcile_restore_node_task_projections(limit=20)
+
+        product_task.refresh_from_db()
+        self.assertEqual(result["classified"], 1)
+        self.assertEqual(
+            product_task.task_type,
+            Task.Type.INSIGHT_WORKSPACE_RESTORE,
+        )
 
     def test_public_restore_cannot_target_platform_gateway(self):
         platform_org = platform_lens.get_or_create_platform_org()
@@ -315,7 +448,8 @@ class RestoreApiTests(TestCase):
             organization=platform_org,
             name="forbidden-platform-target",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         payload = self._manual_restore_payload()
         payload["target_ref_id"] = platform_gateway.id
@@ -330,14 +464,17 @@ class RestoreApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(RestoreRecord.objects.exists())
 
-    @patch("apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway")
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
     def test_lens_workspace_restore_rejects_nonbinding_target_path(self, _ready):
         platform_org = platform_lens.get_or_create_platform_org()
         platform_gateway = Node.objects.create(
             organization=platform_org,
             name="platform-path-boundary-gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
             organization=platform_org,
@@ -367,13 +504,16 @@ class RestoreApiTests(TestCase):
 
         self.assertFalse(RestoreRecord.objects.exists())
 
-    @patch("apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway")
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
     def test_lens_workspace_restore_on_private_gateway_remains_in_tenant(self, _ready):
         private_gateway = Node.objects.create(
             organization=self.org,
             name="private-lens-gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
             organization=self.org,
@@ -525,7 +665,8 @@ class RestoreApiTests(TestCase):
             organization=self.org,
             name="restore-nas-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.53",
         )
         target_nas = SourceResource.objects.create(
@@ -556,7 +697,9 @@ class RestoreApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
         node_task = NodeTask.objects.get(kind="restore.run")
         mount_root = target_nas.effective_mount_point()
         self.assertEqual(node_task.organization_id, self.org.id)
@@ -585,13 +728,20 @@ class RestoreApiTests(TestCase):
 
         self.assertEqual(detail.status_code, status.HTTP_200_OK, detail.content)
         self.assertEqual(detail.data["target_path"], "/restored/manual")
-        self.assertEqual(detail.data["target_display_path"], "/nasshare/restored/manual")
+        self.assertEqual(
+            detail.data["target_display_path"], "/nasshare/restored/manual"
+        )
         self.assertEqual(
             detail.data["items"][0]["target_display_path"],
             "/nasshare/restored/manual/file.txt",
         )
 
-    def _active_restore_task(self, *, source_ref_id: int | None = None, status_value: str = Task.Status.RUNNING) -> Task:
+    def _active_restore_task(
+        self,
+        *,
+        source_ref_id: int | None = None,
+        status_value: str = Task.Status.RUNNING,
+    ) -> Task:
         task = Task.objects.create(
             organization_id=self.org.id,
             task_type=Task.Type.RESTORE,
@@ -608,7 +758,9 @@ class RestoreApiTests(TestCase):
         return task
 
     def _assert_restore_already_running(self, response, task: Task) -> None:
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_409_CONFLICT, response.content
+        )
         problem = response.data["data"]
         self.assertEqual(problem["code"], "RESTORE.ALREADY_RUNNING")
         self.assertEqual(problem["meta"]["task_uuid"], str(task.task_uuid))
@@ -654,7 +806,9 @@ class RestoreApiTests(TestCase):
         self.assertEqual(create.data["sort_order"], 0)
         self.assertEqual(create.data["source_path"], "/data/subdir")
 
-    def test_snapshot_list_filters_restorable_statuses_and_includes_directory_snapshots(self):
+    def test_snapshot_list_filters_restorable_statuses_and_includes_directory_snapshots(
+        self,
+    ):
         BackupSourceSnapshot.objects.create(
             organization_id=self.org.id,
             snapshot_uid="snap-failed",
@@ -684,7 +838,10 @@ class RestoreApiTests(TestCase):
         row = response.data["results"][0]
         self.assertEqual(row["id"], self.snapshot.id)
         self.assertEqual(row["directories"][0]["source_path"], "/data")
-        self.assertEqual(row["directories"][0]["status"], BackupSourceSnapshotDirectory.Status.AVAILABLE)
+        self.assertEqual(
+            row["directories"][0]["status"],
+            BackupSourceSnapshotDirectory.Status.AVAILABLE,
+        )
 
     def test_create_restore_plan_rejects_relative_source_path(self):
         payload = self._plan_payload()
@@ -783,12 +940,16 @@ class RestoreApiTests(TestCase):
         self.assertEqual(task.trigger_type, Task.TriggerType.MANUAL)
         self.assertEqual(task.status, Task.Status.RUNNING)
         self.assertEqual(task.request_payload["restore_record_id"], record.id)
-        node_task = NodeTask.objects.get(correlation_type="restore.record", correlation_id=str(record.task_uuid))
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record", correlation_id=str(record.task_uuid)
+        )
         self.assertEqual(node_task.payload["repository"]["type"], Repository.Type.S3)
         self.assertEqual(node_task.payload["target_path"], "/restore/data/data")
         self.assertEqual(node_task.payload["target_path_semantics"], "final")
 
-    def test_create_whole_snapshot_restore_plan_and_run_source_expands_snapshot_directories(self):
+    def test_create_whole_snapshot_restore_plan_and_run_source_expands_snapshot_directories(
+        self,
+    ):
         file_dir = BackupConfigDirectory.objects.create(
             organization_id=self.org.id,
             backup_config=self.config,
@@ -837,7 +998,9 @@ class RestoreApiTests(TestCase):
 
         self.assertEqual(run.status_code, status.HTTP_201_CREATED, run.content)
         self.assertEqual(run.data["record_count"], 1)
-        record = RestoreRecord.objects.get(id=run.data["records"][0]["restore_record_id"])
+        record = RestoreRecord.objects.get(
+            id=run.data["records"][0]["restore_record_id"]
+        )
         self.assertEqual(record.items.count(), 2)
         self.assertEqual(
             set(record.items.values_list("source_snapshot_directory_id", flat=True)),
@@ -850,12 +1013,15 @@ class RestoreApiTests(TestCase):
         self.assertEqual(target_paths[self.snapshot_dir.id], "/restore/data/data")
         self.assertEqual(target_paths[file_snapshot_dir.id], "/restore/data/readme.txt")
 
-    def test_run_restore_plan_to_proxy_bound_nas_repository_uses_proxy_for_direct_restore(self):
+    def test_run_restore_plan_to_proxy_bound_nas_repository_uses_proxy_for_direct_restore(
+        self,
+    ):
         proxy = Node.objects.create(
             organization=self.org,
             name="restore-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.53",
         )
         self.repository.repo_type = Repository.Type.NAS
@@ -891,19 +1057,27 @@ class RestoreApiTests(TestCase):
 
         self.assertEqual(run.status_code, status.HTTP_201_CREATED, run.content)
         record = RestoreRecord.objects.get(id=run.data["restore_record_id"])
-        node_task = NodeTask.objects.get(correlation_type="restore.record", correlation_id=str(record.task_uuid))
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record", correlation_id=str(record.task_uuid)
+        )
         self.assertEqual(node_task.node_id, proxy.id)
         self.assertEqual(node_task.payload["repository"]["type"], Repository.Type.NAS)
-        self.assertEqual(node_task.payload["repository"]["subdir"], f"hp-repos/storage-{self.repository.id}")
+        self.assertEqual(
+            node_task.payload["repository"]["subdir"],
+            f"hp-repos/storage-{self.repository.id}",
+        )
         self.assertEqual(node_task.payload["repository_reader_node_id"], proxy.id)
-        self.assertEqual(node_task.payload["restore_transfer_mode"], "direct_proxy_restore")
+        self.assertEqual(
+            node_task.payload["restore_transfer_mode"], "direct_proxy_restore"
+        )
 
     def test_run_restore_plan_to_other_agent_uses_proxy_repository_server(self):
         proxy = Node.objects.create(
             organization=self.org,
             name="restore-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.53",
         )
         self.repository.repo_type = Repository.Type.NAS
@@ -947,7 +1121,9 @@ class RestoreApiTests(TestCase):
         )
         self.snapshot_dir.node_task_id = backup_node_task.id
         self.snapshot_dir.save(update_fields=["node_task_id", "updated_at"])
-        plan = RestorePlan.objects.create(organization_id=self.org.id, **self._plan_payload())
+        plan = RestorePlan.objects.create(
+            organization_id=self.org.id, **self._plan_payload()
+        )
 
         run = self.client.post(
             f"/api/v1/restore/plans/{plan.id}/run/",
@@ -958,13 +1134,21 @@ class RestoreApiTests(TestCase):
 
         self.assertEqual(run.status_code, status.HTTP_201_CREATED, run.content)
         record = RestoreRecord.objects.get(id=run.data["restore_record_id"])
-        server_task = NodeTask.objects.get(kind="repository.server.start", correlation_id=str(record.task_uuid))
+        server_task = NodeTask.objects.get(
+            kind="repository.server.start", correlation_id=str(record.task_uuid)
+        )
         self.assertEqual(server_task.node_id, proxy.id)
         self.assertEqual(server_task.correlation_type, "restore.repository_server")
         self.assertEqual(server_task.payload["public_host"], "10.0.0.65")
-        self.assertEqual(server_task.payload["username"], "hfl-backup-6020@hfl-proxy-74")
+        self.assertEqual(
+            server_task.payload["username"], "hfl-backup-6020@hfl-proxy-74"
+        )
         self.assertEqual(server_task.payload["repository"]["type"], Repository.Type.NAS)
-        self.assertFalse(NodeTask.objects.filter(kind="restore.run", correlation_id=str(record.task_uuid)).exists())
+        self.assertFalse(
+            NodeTask.objects.filter(
+                kind="restore.run", correlation_id=str(record.task_uuid)
+            ).exists()
+        )
 
         server_task.status = NodeTask.Status.SUCCESS
         server_task.result = {
@@ -976,15 +1160,29 @@ class RestoreApiTests(TestCase):
         }
         server_task.save(update_fields=["status", "result", "updated_at"])
 
-        node_task = NodeTask.objects.get(kind="restore.run", correlation_id=str(record.task_uuid))
+        node_task = NodeTask.objects.get(
+            kind="restore.run", correlation_id=str(record.task_uuid)
+        )
         self.assertEqual(node_task.node_id, self.target.id)
         self.assertEqual(node_task.payload["repository"]["type"], "kopia_server")
-        self.assertEqual(node_task.payload["repository"]["url"], "https://10.0.0.65:51515")
-        self.assertEqual(node_task.payload["repository"]["username"], "hfl-backup-6020@hfl-proxy-74")
-        self.assertEqual(node_task.payload["restore_transfer_mode"], "proxy_repository_server_restore")
+        self.assertEqual(
+            node_task.payload["repository"]["url"], "https://10.0.0.65:51515"
+        )
+        self.assertEqual(
+            node_task.payload["repository"]["username"], "hfl-backup-6020@hfl-proxy-74"
+        )
+        self.assertEqual(
+            node_task.payload["restore_transfer_mode"],
+            "proxy_repository_server_restore",
+        )
 
         server_task.save(update_fields=["status", "result", "updated_at"])
-        self.assertEqual(NodeTask.objects.filter(kind="restore.run", correlation_id=str(record.task_uuid)).count(), 1)
+        self.assertEqual(
+            NodeTask.objects.filter(
+                kind="restore.run", correlation_id=str(record.task_uuid)
+            ).count(),
+            1,
+        )
 
         node_task.status = NodeTask.Status.SUCCESS
         node_task.result = {
@@ -1002,7 +1200,9 @@ class RestoreApiTests(TestCase):
         self.assertEqual(task.current_step, "finalize")
         self.assertEqual(task.steps.get(step_name="dispatch_agent").status, "success")
 
-        stop_task = NodeTask.objects.get(kind="repository.server.stop", correlation_id=str(record.task_uuid))
+        stop_task = NodeTask.objects.get(
+            kind="repository.server.stop", correlation_id=str(record.task_uuid)
+        )
         stop_task.status = NodeTask.Status.SUCCESS
         stop_task.result = {"session_id": "restore-server-session"}
         stop_task.save(update_fields=["status", "result", "updated_at"])
@@ -1011,7 +1211,12 @@ class RestoreApiTests(TestCase):
         self.assertEqual(float(task.progress), 100.0)
         self.assertEqual(task.current_step, "finalize")
         self.assertEqual(task.steps.get(step_name="dispatch_agent").status, "success")
-        self.assertEqual(NodeTask.objects.filter(kind="restore.run", correlation_id=str(record.task_uuid)).count(), 1)
+        self.assertEqual(
+            NodeTask.objects.filter(
+                kind="restore.run", correlation_id=str(record.task_uuid)
+            ).count(),
+            1,
+        )
 
     def test_run_restore_plan_accepts_partial_snapshot(self):
         self.snapshot.status = BackupSourceSnapshot.Status.PARTIAL
@@ -1079,7 +1284,9 @@ class RestoreApiTests(TestCase):
             kopia_snapshot_id="",
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
-        plan = RestorePlan.objects.create(organization_id=self.org.id, **self._plan_payload())
+        plan = RestorePlan.objects.create(
+            organization_id=self.org.id, **self._plan_payload()
+        )
 
         run = self.client.post(
             f"/api/v1/restore/plans/{plan.id}/run/",
@@ -1092,7 +1299,9 @@ class RestoreApiTests(TestCase):
         record = RestoreRecord.objects.get(id=run.data["restore_record_id"])
         self.assertEqual(record.source_snapshot_id, self.snapshot.id)
 
-    def test_run_restore_plan_batch_creates_one_record_for_file_and_directory_plans(self):
+    def test_run_restore_plan_batch_creates_one_record_for_file_and_directory_plans(
+        self,
+    ):
         file_dir = BackupConfigDirectory.objects.create(
             organization_id=self.org.id,
             backup_config=self.config,
@@ -1154,7 +1363,10 @@ class RestoreApiTests(TestCase):
             RESTORE_EVENT_SCHEMA_VERSION,
         )
         self.assertEqual(record.items.count(), 2)
-        self.assertEqual(record.request_payload["plan_ids"], list(RestorePlan.objects.values_list("id", flat=True)))
+        self.assertEqual(
+            record.request_payload["plan_ids"],
+            list(RestorePlan.objects.values_list("id", flat=True)),
+        )
         self.assertEqual(
             set(record.items.values_list("source_snapshot_directory_id", flat=True)),
             {self.snapshot_dir.id, file_snapshot_dir.id},
@@ -1165,10 +1377,18 @@ class RestoreApiTests(TestCase):
         }
         self.assertEqual(target_paths[self.snapshot_dir.id], "/restore/data/data")
         self.assertEqual(target_paths[file_snapshot_dir.id], "/restore/data/readme.txt")
-        node_tasks = NodeTask.objects.filter(correlation_type="restore.record", correlation_id=str(record.task_uuid))
+        node_tasks = NodeTask.objects.filter(
+            correlation_type="restore.record", correlation_id=str(record.task_uuid)
+        )
         self.assertEqual(node_tasks.count(), 2)
-        self.assertEqual(set(node_tasks.values_list("payload__source_path_type", flat=True)), {"directory", "file"})
-        self.assertEqual(set(node_tasks.values_list("payload__target_path_semantics", flat=True)), {"final"})
+        self.assertEqual(
+            set(node_tasks.values_list("payload__source_path_type", flat=True)),
+            {"directory", "file"},
+        )
+        self.assertEqual(
+            set(node_tasks.values_list("payload__target_path_semantics", flat=True)),
+            {"final"},
+        )
         start_event = TaskEvent.objects.get(
             task=task,
             step__step_name="restore",
@@ -1262,18 +1482,28 @@ class RestoreApiTests(TestCase):
         )
 
         self.assertEqual(run.status_code, status.HTTP_201_CREATED, run.content)
-        record = RestoreRecord.objects.get(id=run.data["records"][0]["restore_record_id"])
+        record = RestoreRecord.objects.get(
+            id=run.data["records"][0]["restore_record_id"]
+        )
         target_paths = {
             item.source_snapshot_directory_id: item.target_path
             for item in record.items.all()
         }
-        self.assertEqual(target_paths[first_snapshot_dir.id], "/restore/logs--from-root_a")
-        self.assertEqual(target_paths[second_snapshot_dir.id], "/restore/logs--from-root_b")
-        node_task_targets = set(
-            NodeTask.objects.filter(correlation_type="restore.record", correlation_id=str(record.task_uuid))
-            .values_list("payload__target_path", flat=True)
+        self.assertEqual(
+            target_paths[first_snapshot_dir.id], "/restore/logs--from-root_a"
         )
-        self.assertEqual(node_task_targets, {"/restore/logs--from-root_a", "/restore/logs--from-root_b"})
+        self.assertEqual(
+            target_paths[second_snapshot_dir.id], "/restore/logs--from-root_b"
+        )
+        node_task_targets = set(
+            NodeTask.objects.filter(
+                correlation_type="restore.record", correlation_id=str(record.task_uuid)
+            ).values_list("payload__target_path", flat=True)
+        )
+        self.assertEqual(
+            node_task_targets,
+            {"/restore/logs--from-root_a", "/restore/logs--from-root_b"},
+        )
 
     def test_run_restore_plans_for_source_suffixes_same_named_files(self):
         first_file = BackupConfigDirectory.objects.create(
@@ -1335,13 +1565,19 @@ class RestoreApiTests(TestCase):
         )
 
         self.assertEqual(run.status_code, status.HTTP_201_CREATED, run.content)
-        record = RestoreRecord.objects.get(id=run.data["records"][0]["restore_record_id"])
+        record = RestoreRecord.objects.get(
+            id=run.data["records"][0]["restore_record_id"]
+        )
         target_paths = {
             item.source_snapshot_directory_id: item.target_path
             for item in record.items.all()
         }
-        self.assertEqual(target_paths[first_snapshot_file.id], "/restore/test--from-root_a.txt")
-        self.assertEqual(target_paths[second_snapshot_file.id], "/restore/test--from-root_b.txt")
+        self.assertEqual(
+            target_paths[first_snapshot_file.id], "/restore/test--from-root_a.txt"
+        )
+        self.assertEqual(
+            target_paths[second_snapshot_file.id], "/restore/test--from-root_b.txt"
+        )
 
     def test_run_restore_plans_for_source_suffixes_same_named_selected_files(self):
         for sort_order, source_path in enumerate(
@@ -1370,20 +1606,31 @@ class RestoreApiTests(TestCase):
         )
 
         self.assertEqual(run.status_code, status.HTTP_201_CREATED, run.content)
-        record = RestoreRecord.objects.get(id=run.data["records"][0]["restore_record_id"])
+        record = RestoreRecord.objects.get(
+            id=run.data["records"][0]["restore_record_id"]
+        )
         target_paths = {
-            tuple(item.selected_paths): item.target_path
-            for item in record.items.all()
+            tuple(item.selected_paths): item.target_path for item in record.items.all()
         }
-        self.assertEqual(target_paths[("inner_dir1/test.txt",)], "/restore/test--from-data_inner_dir1.txt")
-        self.assertEqual(target_paths[("inner_dir2/test.txt",)], "/restore/test--from-data_inner_dir2.txt")
+        self.assertEqual(
+            target_paths[("inner_dir1/test.txt",)],
+            "/restore/test--from-data_inner_dir1.txt",
+        )
+        self.assertEqual(
+            target_paths[("inner_dir2/test.txt",)],
+            "/restore/test--from-data_inner_dir2.txt",
+        )
         node_task_targets = set(
-            NodeTask.objects.filter(correlation_type="restore.record", correlation_id=str(record.task_uuid))
-            .values_list("payload__target_path", flat=True)
+            NodeTask.objects.filter(
+                correlation_type="restore.record", correlation_id=str(record.task_uuid)
+            ).values_list("payload__target_path", flat=True)
         )
         self.assertEqual(
             node_task_targets,
-            {"/restore/test--from-data_inner_dir1.txt", "/restore/test--from-data_inner_dir2.txt"},
+            {
+                "/restore/test--from-data_inner_dir1.txt",
+                "/restore/test--from-data_inner_dir2.txt",
+            },
         )
 
     def test_run_restore_plans_for_source_numbers_duplicate_sanitized_suffixes(self):
@@ -1413,14 +1660,21 @@ class RestoreApiTests(TestCase):
         )
 
         self.assertEqual(run.status_code, status.HTTP_201_CREATED, run.content)
-        record = RestoreRecord.objects.get(id=run.data["records"][0]["restore_record_id"])
+        record = RestoreRecord.objects.get(
+            id=run.data["records"][0]["restore_record_id"]
+        )
         target_paths = {
-            tuple(item.selected_paths): item.target_path
-            for item in record.items.all()
+            tuple(item.selected_paths): item.target_path for item in record.items.all()
         }
-        self.assertEqual(target_paths[("a b/test.txt",)], "/restore/test--from-data_a_b.txt")
-        self.assertEqual(target_paths[("a:b/test.txt",)], "/restore/test--from-data_a_b-2.txt")
-        self.assertEqual(target_paths[("a/b/test.txt",)], "/restore/test--from-data_a_b-3.txt")
+        self.assertEqual(
+            target_paths[("a b/test.txt",)], "/restore/test--from-data_a_b.txt"
+        )
+        self.assertEqual(
+            target_paths[("a:b/test.txt",)], "/restore/test--from-data_a_b-2.txt"
+        )
+        self.assertEqual(
+            target_paths[("a/b/test.txt",)], "/restore/test--from-data_a_b-3.txt"
+        )
 
     def test_safe_restore_name_normalizes_cross_platform_source_slug(self):
         name = restore_service._safe_restore_name(
@@ -1430,7 +1684,9 @@ class RestoreApiTests(TestCase):
 
         self.assertEqual(name, "t--from-root_d_logs.log")
 
-    def test_run_restore_plans_for_source_keeps_distinct_selected_file_names_unsuffixed(self):
+    def test_run_restore_plans_for_source_keeps_distinct_selected_file_names_unsuffixed(
+        self,
+    ):
         for sort_order, source_path in enumerate(
             ["/data/inner_dir1/a.txt", "/data/inner_dir2/b.txt"],
             start=1,
@@ -1457,10 +1713,11 @@ class RestoreApiTests(TestCase):
         )
 
         self.assertEqual(run.status_code, status.HTTP_201_CREATED, run.content)
-        record = RestoreRecord.objects.get(id=run.data["records"][0]["restore_record_id"])
+        record = RestoreRecord.objects.get(
+            id=run.data["records"][0]["restore_record_id"]
+        )
         target_paths = {
-            tuple(item.selected_paths): item.target_path
-            for item in record.items.all()
+            tuple(item.selected_paths): item.target_path for item in record.items.all()
         }
         self.assertEqual(target_paths[("inner_dir1/a.txt",)], "/restore/a.txt")
         self.assertEqual(target_paths[("inner_dir2/b.txt",)], "/restore/b.txt")
@@ -1616,7 +1873,9 @@ class RestoreApiTests(TestCase):
         record = RestoreRecord.objects.get(id=run.data["restore_record_id"])
         self.assertEqual(record.source_snapshot_id, self.snapshot.id)
 
-    def test_run_restore_plan_batch_rejects_selected_snapshot_that_does_not_cover_plan(self):
+    def test_run_restore_plan_batch_rejects_selected_snapshot_that_does_not_cover_plan(
+        self,
+    ):
         uncovered_snapshot = BackupSourceSnapshot.objects.create(
             organization_id=self.org.id,
             snapshot_uid="snap-uncovered",
@@ -1712,10 +1971,14 @@ class RestoreApiTests(TestCase):
         )
         self.assertEqual(start_event.metadata["item_count"], 1)
         self.assertEqual(start_event.metadata["object_names"], ["/data"])
-        source_resource = task.resources.get(resource_type=TaskResource.Type.BACKUP_SOURCE)
+        source_resource = task.resources.get(
+            resource_type=TaskResource.Type.BACKUP_SOURCE
+        )
         self.assertEqual(source_resource.resource_subtype, "agent")
         self.assertEqual(source_resource.resource_id, self.agent.id)
-        node_task = NodeTask.objects.get(correlation_type="restore.record", correlation_id=str(record.task_uuid))
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record", correlation_id=str(record.task_uuid)
+        )
         self.assertEqual(node_task.payload["repository"]["type"], Repository.Type.S3)
         self.assertEqual(node_task.payload["selected_paths"], ["subdir/file.txt"])
         node_task.status = NodeTask.Status.SUCCESS
@@ -1908,12 +2171,15 @@ class RestoreApiTests(TestCase):
         self.assertEqual(RestoreRecord.objects.count(), 1)
 
     def test_create_manual_restore_record_allows_different_source_restore(self):
-        self._active_restore_task(source_ref_id=self.agent.id, status_value=Task.Status.RUNNING)
+        self._active_restore_task(
+            source_ref_id=self.agent.id, status_value=Task.Status.RUNNING
+        )
         other_agent = Node.objects.create(
             organization=self.org,
             name="restore-agent-2",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.53",
         )
         other_config = BackupConfig.objects.create(
@@ -1957,11 +2223,13 @@ class RestoreApiTests(TestCase):
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
         payload = self._manual_restore_payload()
-        payload.update({
-            "source_snapshot_id": other_snapshot.id,
-            "source_ref_id": other_agent.id,
-            "items": [{"source_snapshot_directory_id": other_snapshot_dir.id}],
-        })
+        payload.update(
+            {
+                "source_snapshot_id": other_snapshot.id,
+                "source_ref_id": other_agent.id,
+                "items": [{"source_snapshot_directory_id": other_snapshot_dir.id}],
+            }
+        )
 
         create = self.client.post(
             "/api/v1/restore/records/",
@@ -2073,8 +2341,12 @@ class RestoreApiTests(TestCase):
 
         self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
         record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
-        self.assertEqual(record.expanded_payload["items"][0]["source_path_type"], "file")
-        node_task = NodeTask.objects.get(correlation_type="restore.record", correlation_id=str(record.task_uuid))
+        self.assertEqual(
+            record.expanded_payload["items"][0]["source_path_type"], "file"
+        )
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record", correlation_id=str(record.task_uuid)
+        )
         self.assertEqual(node_task.payload["source_path_type"], "file")
         self.assertEqual(node_task.payload["path_type"], "file")
 
@@ -2098,17 +2370,24 @@ class RestoreApiTests(TestCase):
         )
         self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
         record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
-        node_task = NodeTask.objects.get(correlation_type="restore.record", correlation_id=str(record.task_uuid))
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record", correlation_id=str(record.task_uuid)
+        )
 
         node_task.status = NodeTask.Status.FAILED
         node_task.last_error = "open repository: repository is not connected"
         node_task.result = {"stderr": node_task.last_error}
+        task = Task.objects.get(id=record.task_id)
+        task.progress = 37
+        task.save(update_fields=["progress", "updated_at"])
         node_task.save(update_fields=["status", "last_error", "result", "updated_at"])
 
-        task = Task.objects.get(id=record.task_id)
+        task.refresh_from_db()
         item = record.items.get()
         self.assertEqual(item.status, item.Status.FAILED)
         self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(task.task_type, Task.Type.RESTORE)
+        self.assertEqual(float(task.progress), 37)
         self.assertIn("repository is not connected", task.error_message)
         self.assertEqual(task.steps.get(step_name="restore").status, "failed")
         self.assertEqual(task.steps.get(step_name="finalize").status, "failed")
@@ -2121,7 +2400,9 @@ class RestoreApiTests(TestCase):
         self.assertEqual(failed_event.metadata["object_id"], item.kopia_snapshot_id)
         self.assertEqual(failed_event.metadata["object_name"], item.source_path)
         self.assertEqual(failed_event.metadata["error_code"], "RESTORE_AGENT_FAILED")
-        self.assertIn("repository is not connected", failed_event.metadata["error_message"])
+        self.assertIn(
+            "repository is not connected", failed_event.metadata["error_message"]
+        )
         self.assertTrue(
             TaskEvent.objects.filter(
                 task=task,
@@ -2129,6 +2410,31 @@ class RestoreApiTests(TestCase):
                 message="Restore finished with failed items",
             ).exists()
         )
+
+    def test_agent_cancellation_without_product_cancellation_fails_restore(self):
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record",
+            correlation_id=str(record.task_uuid),
+        )
+
+        node_task.status = NodeTask.Status.CANCELED
+        node_task.last_error = "Agent restore was cancelled unexpectedly"
+        node_task.save(update_fields=["status", "last_error", "updated_at"])
+
+        task = Task.objects.get(id=record.task_id)
+        item = record.items.get()
+        self.assertEqual(item.status, RestoreRecordItem.Status.CANCELLED)
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(task.error_code, "RESTORE_FAILED")
+        self.assertEqual(task.result_payload["failed_item_count"], 1)
 
     def test_run_restore_plan_rejects_missing_kopia_snapshot_id(self):
         self.snapshot_dir.kopia_snapshot_id = ""
@@ -2149,7 +2455,9 @@ class RestoreApiTests(TestCase):
         self.assertFalse(RestoreRecord.objects.exists())
 
     def test_cross_tenant_snapshot_is_rejected(self):
-        other_org = Organization.objects.create(key="restore-other-org", name="Restore Other Org")
+        other_org = Organization.objects.create(
+            key="restore-other-org", name="Restore Other Org"
+        )
         other_snapshot = BackupSourceSnapshot.objects.create(
             organization_id=other_org.id,
             snapshot_uid="snap-other",
@@ -2184,7 +2492,9 @@ class RestoreApiTests(TestCase):
         self.assertFalse(RestoreRecord.objects.exists())
 
     @patch("apps.restore.services.snapshot_browser.run_agent_task_sync")
-    def test_browse_restore_snapshot_directory_uses_target_node(self, mock_run_agent_task_sync):
+    def test_browse_restore_snapshot_directory_uses_target_node(
+        self, mock_run_agent_task_sync
+    ):
         mock_run_agent_task_sync.return_value = SimpleNamespace(
             ok=True,
             timed_out=False,
@@ -2221,8 +2531,12 @@ class RestoreApiTests(TestCase):
         self.assertEqual(response.data["entries"][1]["type"], "file")
         self.assertTrue(response.data["entries"][1]["downloadable"])
         mock_run_agent_task_sync.assert_called_once()
-        self.assertEqual(mock_run_agent_task_sync.call_args.kwargs["node_id"], self.target.id)
-        self.assertNotEqual(mock_run_agent_task_sync.call_args.kwargs["node_id"], self.agent.id)
+        self.assertEqual(
+            mock_run_agent_task_sync.call_args.kwargs["node_id"], self.target.id
+        )
+        self.assertNotEqual(
+            mock_run_agent_task_sync.call_args.kwargs["node_id"], self.agent.id
+        )
         payload = mock_run_agent_task_sync.call_args.kwargs["payload"]
         self.assertEqual(payload["snapshot_id"], "kopia-snapshot-1")
         self.assertEqual(payload["path"], "docs")
@@ -2294,11 +2608,15 @@ class RestoreApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_400_BAD_REQUEST, response.content
+        )
         mock_run_agent_task_sync.assert_not_called()
 
     @patch("apps.restore.services.snapshot_browser.run_agent_task_sync")
-    def test_restore_snapshot_directory_path_info_uses_target_node(self, mock_run_agent_task_sync):
+    def test_restore_snapshot_directory_path_info_uses_target_node(
+        self, mock_run_agent_task_sync
+    ):
         mock_run_agent_task_sync.return_value = SimpleNamespace(
             ok=True,
             timed_out=False,
@@ -2327,7 +2645,9 @@ class RestoreApiTests(TestCase):
         self.assertEqual(response.data["type"], "file")
         self.assertFalse(response.data["is_dir"])
         mock_run_agent_task_sync.assert_called_once()
-        self.assertEqual(mock_run_agent_task_sync.call_args.kwargs["node_id"], self.target.id)
+        self.assertEqual(
+            mock_run_agent_task_sync.call_args.kwargs["node_id"], self.target.id
+        )
         payload = mock_run_agent_task_sync.call_args.kwargs["payload"]
         self.assertEqual(payload["path"], "docs")
 
@@ -2353,7 +2673,8 @@ class RestoreApiTests(TestCase):
             steps=["prepare_restore", "dispatch_agent", "restore", "finalize"],
         )
         task.status = Task.Status.RUNNING
-        task.save(update_fields=["status", "updated_at"])
+        task.progress = 34
+        task.save(update_fields=["status", "progress", "updated_at"])
         record = RestoreRecord.objects.create(
             organization_id=self.org.id,
             requesting_organization_id=self.org.id,
@@ -2399,6 +2720,7 @@ class RestoreApiTests(TestCase):
         self.assertIsNotNone(item)
         item.refresh_from_db()
         self.assertEqual(task.status, Task.Status.CANCELLED)
+        self.assertEqual(float(task.progress), 34)
         self.assertEqual(item.status, RestoreRecordItem.Status.CANCELLED)
         cancelled_event = TaskEvent.objects.get(
             task=task,
@@ -2409,7 +2731,164 @@ class RestoreApiTests(TestCase):
         self.assertEqual(cancelled_event.metadata["object_id"], "kopia-snapshot-1")
         self.assertEqual(cancelled_event.metadata["object_name"], "/data")
         self.assertEqual(cancelled_event.metadata["error_code"], "TASK_CANCELLED")
-        self.assertEqual(cancelled_event.metadata["error_message"], "Stopped from console")
+        self.assertEqual(
+            cancelled_event.metadata["error_message"], "Stopped from console"
+        )
+
+    def test_cancel_pending_agent_task_cannot_finalize_restore_as_success(self):
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        task = Task.objects.get(id=record.task_id)
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record",
+            correlation_id=str(record.task_uuid),
+        )
+        node_task.status = NodeTask.Status.PENDING
+        node_task.save(update_fields=["status", "updated_at"])
+
+        response = self.client.post(
+            f"/api/v1/restore/tasks/{record.task_uuid}/cancel/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        task.refresh_from_db()
+        node_task.refresh_from_db()
+        item = record.items.get()
+        self.assertEqual(task.status, Task.Status.CANCELLED)
+        self.assertEqual(node_task.status, NodeTask.Status.CANCELED)
+        self.assertEqual(item.status, RestoreRecordItem.Status.CANCELLED)
+        self.assertFalse(
+            TaskEvent.objects.filter(
+                task=task,
+                message="Restore finished successfully",
+            ).exists()
+        )
+
+    def test_cancel_restore_preserves_already_failed_item(self):
+        from apps.task.services.interface import create_task
+
+        task = create_task(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Partially failed restore",
+            trigger_type=Task.TriggerType.MANUAL,
+            request_payload={
+                "restore_uid": "rst-cancel-preserve-failure",
+                RESTORE_EVENT_SCHEMA_KEY: RESTORE_EVENT_SCHEMA_VERSION,
+            },
+            resources=[
+                {
+                    "resource_type": TaskResource.Type.BACKUP_SOURCE,
+                    "resource_subtype": "agent",
+                    "resource_id": self.agent.id,
+                }
+            ],
+            steps=["prepare_restore", "dispatch_agent", "restore", "finalize"],
+        )
+        task.status = Task.Status.RUNNING
+        task.save(update_fields=["status", "updated_at"])
+        record = RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=self.target.id,
+            restore_uid="rst-cancel-preserve-failure",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=task.id,
+            task_uuid=task.task_uuid,
+            source_type=RestoreRecord.EndpointType.AGENT,
+            source_ref_id=self.agent.id,
+            source_snapshot_id=self.snapshot.id,
+            target_type=RestoreRecord.EndpointType.AGENT,
+            target_ref_id=self.target.id,
+            target_path="/restore/data",
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
+        )
+        failed_item = RestoreRecordItem.objects.create(
+            organization_id=self.org.id,
+            restore_record=record,
+            source_snapshot_directory_id=self.snapshot_dir.id,
+            backup_config_dir_id=self.config_dir.id,
+            repository_id=self.repository.id,
+            kopia_snapshot_id="kopia-failed",
+            source_path="/failed",
+            target_path="/restore/data/failed",
+            conflict_mode=RestoreRecordItem.ConflictMode.OVERWRITE,
+            status=RestoreRecordItem.Status.FAILED,
+            error_code="RESTORE_AGENT_FAILED",
+            error_message="Original restore failure",
+            terminal_projection_at=timezone.now(),
+        )
+        running_item = RestoreRecordItem.objects.create(
+            organization_id=self.org.id,
+            restore_record=record,
+            source_snapshot_directory_id=self.snapshot_dir.id + 1,
+            backup_config_dir_id=self.config_dir.id + 1,
+            repository_id=self.repository.id,
+            kopia_snapshot_id="kopia-running",
+            source_path="/running",
+            target_path="/restore/data/running",
+            conflict_mode=RestoreRecordItem.ConflictMode.OVERWRITE,
+            status=RestoreRecordItem.Status.RUNNING,
+        )
+
+        response = self.client.post(
+            f"/api/v1/restore/tasks/{record.task_uuid}/cancel/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        failed_item.refresh_from_db()
+        running_item.refresh_from_db()
+        self.assertEqual(failed_item.status, RestoreRecordItem.Status.FAILED)
+        self.assertEqual(failed_item.error_code, "RESTORE_AGENT_FAILED")
+        self.assertEqual(failed_item.error_message, "Original restore failure")
+        self.assertEqual(running_item.status, RestoreRecordItem.Status.CANCELLED)
+
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
+    def test_cancel_pending_repository_server_does_not_record_restore_failure(
+        self, _ready
+    ):
+        record, server_task, _repository_proxy = self._bound_repository_lens_restore(
+            repository_type=Repository.Type.PROXY_FS,
+        )
+        task = Task.objects.get(id=record.task_id)
+        self.assertEqual(server_task.status, NodeTask.Status.PENDING)
+
+        response = self.client.post(
+            f"/api/v1/restore/tasks/{record.task_uuid}/cancel/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        task.refresh_from_db()
+        server_task.refresh_from_db()
+        item = record.items.get()
+        self.assertEqual(task.status, Task.Status.CANCELLED)
+        self.assertEqual(server_task.status, NodeTask.Status.CANCELED)
+        self.assertEqual(item.status, RestoreRecordItem.Status.CANCELLED)
+        self.assertFalse(
+            TaskEvent.objects.filter(
+                task=task,
+                message="Restore repository server failed",
+            ).exists()
+        )
 
     def test_legacy_restore_task_does_not_receive_new_restore_step_events(self):
         create = self.client.post(
@@ -2459,10 +2938,14 @@ class RestoreApiTests(TestCase):
                 previous_status=previous_status,
             )
         )
-        self.assertFalse(TaskEvent.objects.filter(task=task, message__in=new_messages).exists())
+        self.assertFalse(
+            TaskEvent.objects.filter(task=task, message__in=new_messages).exists()
+        )
 
     def test_run_restore_plan_rejects_when_restore_already_running(self):
-        plan = RestorePlan.objects.create(organization_id=self.org.id, **self._plan_payload())
+        plan = RestorePlan.objects.create(
+            organization_id=self.org.id, **self._plan_payload()
+        )
         first = self.client.post(
             f"/api/v1/restore/plans/{plan.id}/run/",
             {},

@@ -9,6 +9,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
+from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.models import Task, TaskDependency, TaskEvent, TaskResource, TaskStep
 from apps.task.signals import (
     task_cancelled,
@@ -37,6 +38,7 @@ BACKUP_SOURCE_ONLY_TASK_TYPES = frozenset(
     {
         Task.Type.BACKUP,
         Task.Type.RESTORE,
+        Task.Type.INSIGHT_WORKSPACE_RESTORE,
         Task.Type.SNAPSHOT_DOWNLOAD,
         Task.Type.SNAPSHOT_DELETE,
         Task.Type.BACKUP_CONFIG_RESET,
@@ -61,7 +63,7 @@ def _default_steps(task_type: str) -> list[str]:
             "refresh_repository_usage",
             "finalize_repository_operation",
         ]
-    if task_type == Task.Type.RESTORE:
+    if task_type in RESTORE_TASK_TYPES:
         return ["restore", "finalize"]
     return ["snapshot", "scan", "chunk", "upload", "finalize"]
 
@@ -91,7 +93,11 @@ def append_task_event(
 def _task_step(task: Task, step_name: str | None) -> TaskStep | None:
     if not step_name:
         return None
-    return TaskStep.objects.filter(task=task, step_name=step_name).order_by("step_index", "id").first()
+    return (
+        TaskStep.objects.filter(task=task, step_name=step_name)
+        .order_by("step_index", "id")
+        .first()
+    )
 
 
 def _first_task_step(task: Task) -> TaskStep | None:
@@ -142,32 +148,53 @@ def create_task(
     if trigger_type not in {value for value, _label in Task.TriggerType.choices}:
         raise ValidationError({"trigger_type": "Unsupported trigger type."})
     if normalize_trigger_type:
-        trigger_type = TASK_CREATION_TRIGGER_MAP.get(trigger_type, Task.TriggerType.MANUAL)
+        trigger_type = TASK_CREATION_TRIGGER_MAP.get(
+            trigger_type, Task.TriggerType.MANUAL
+        )
     clean_name = display_name.strip()
     if not clean_name:
         raise ValidationError({"display_name": "Display name is required."})
     if replaces_task is not None:
         if replaces_task.pk is None:
-            raise ValidationError({"replaces_task": "The interrupted task must be persisted."})
+            raise ValidationError(
+                {"replaces_task": "The interrupted task must be persisted."}
+            )
         replaces_task = Task.objects.select_for_update().get(pk=replaces_task.pk)
         if replaces_task.organization_id != organization_id:
-            raise ValidationError({"replaces_task": "Replacement tasks must belong to the same organization."})
+            raise ValidationError(
+                {
+                    "replaces_task": "Replacement tasks must belong to the same organization."
+                }
+            )
         if replaces_task.task_type != task_type:
-            raise ValidationError({"replaces_task": "Replacement tasks must use the same task type."})
+            raise ValidationError(
+                {"replaces_task": "Replacement tasks must use the same task type."}
+            )
         if replaces_task.status != Task.Status.FAILED:
-            raise ValidationError({"replaces_task": "The interrupted task must be failed before replacement."})
+            raise ValidationError(
+                {
+                    "replaces_task": "The interrupted task must be failed before replacement."
+                }
+            )
         if Task.objects.filter(replaces_task_id=replaces_task.id).exists():
-            raise ValidationError({"replaces_task": "The interrupted task already has a replacement."})
+            raise ValidationError(
+                {"replaces_task": "The interrupted task already has a replacement."}
+            )
 
     resource_defs = resources or []
-    primary_resources = [resource for resource in resource_defs if resource.get("is_primary")]
+    primary_resources = [
+        resource for resource in resource_defs if resource.get("is_primary")
+    ]
     if len(primary_resources) > 1:
-        raise ValidationError({"resources": "A task can have at most one primary resource."})
+        raise ValidationError(
+            {"resources": "A task can have at most one primary resource."}
+        )
     if task_type in BACKUP_SOURCE_ONLY_TASK_TYPES:
         resource_defs = [
             resource
             for resource in resource_defs
-            if str(resource.get("resource_type") or "") == TaskResource.Type.BACKUP_SOURCE
+            if str(resource.get("resource_type") or "")
+            == TaskResource.Type.BACKUP_SOURCE
         ]
 
     step_defs = steps or _default_steps(task_type)
@@ -186,7 +213,9 @@ def create_task(
         request_payload=request_payload or None,
         current_step=str(first_step) if first_step else None,
         replaces_task=replaces_task,
-        recovery_attempt=(int(replaces_task.recovery_attempt) + 1 if replaces_task else 0),
+        recovery_attempt=(
+            int(replaces_task.recovery_attempt) + 1 if replaces_task else 0
+        ),
         group_uuid=group_uuid,
         idempotency_key=(idempotency_key.strip() if idempotency_key else None),
     )
@@ -274,7 +303,9 @@ def create_restore_task(
     return create_task(
         organization_id=organization_id,
         task_type=Task.Type.RESTORE,
-        display_name=f"Restore plan #{restore_plan_id}" if restore_plan_id else "Restore task",
+        display_name=f"Restore plan #{restore_plan_id}"
+        if restore_plan_id
+        else "Restore task",
         trigger_type=Task.TriggerType.MANUAL,
         request_payload=payload,
         resources=resources,
@@ -283,7 +314,9 @@ def create_restore_task(
 
 
 @transaction.atomic
-def cancel_task(*, task_uuid: UUID | str, organization_id: int, reason: str = "") -> Task:
+def cancel_task(
+    *, task_uuid: UUID | str, organization_id: int, reason: str = ""
+) -> Task:
     task = (
         Task.objects.select_for_update()
         .filter(task_uuid=task_uuid, organization_id=organization_id)
@@ -293,6 +326,10 @@ def cancel_task(*, task_uuid: UUID | str, organization_id: int, reason: str = ""
         raise Task.DoesNotExist
     if task.status in TERMINAL_STATUSES:
         raise ValidationError("Finished tasks cannot be cancelled.")
+    if task.task_type in RESTORE_TASK_TYPES:
+        raise ValidationError(
+            "Restore tasks must be cancelled through the restore service."
+        )
     if task.task_type == Task.Type.SOURCE_UNREGISTER:
         raise ValidationError(
             "Source deregistration tasks cannot be cancelled. Submit a new request "
@@ -302,6 +339,12 @@ def cancel_task(*, task_uuid: UUID | str, organization_id: int, reason: str = ""
         raise ValidationError(
             "Node lifecycle tasks are controlled by the authoritative Agent task."
         )
+
+    return finalize_task_cancellation(task=task, reason=reason)
+
+
+def finalize_task_cancellation(*, task: Task, reason: str = "") -> Task:
+    """Finalize cancellation after the owning domain has locked its task."""
 
     task.status = Task.Status.CANCELLED
     task.error_code = "TASK_CANCELLED"
@@ -348,7 +391,9 @@ def cancel_task(*, task_uuid: UUID | str, organization_id: int, reason: str = ""
 
 
 @transaction.atomic
-def retry_task(*, task_uuid: UUID | str, organization_id: int, reason: str = "") -> Task:
+def retry_task(
+    *, task_uuid: UUID | str, organization_id: int, reason: str = ""
+) -> Task:
     task = (
         Task.objects.select_for_update()
         .filter(task_uuid=task_uuid, organization_id=organization_id)
@@ -356,6 +401,10 @@ def retry_task(*, task_uuid: UUID | str, organization_id: int, reason: str = "")
     )
     if task is None:
         raise Task.DoesNotExist
+    if task.task_type in RESTORE_TASK_TYPES:
+        raise ValidationError(
+            "Restore tasks must be restarted from their originating restore workflow."
+        )
     if task.task_type == Task.Type.NODE_LIFECYCLE:
         raise ValidationError(
             "Node lifecycle tasks cannot be retried from Operations. Retry the node removal instead."
@@ -365,7 +414,9 @@ def retry_task(*, task_uuid: UUID | str, organization_id: int, reason: str = "")
         Task.Status.TIMEOUT,
         Task.Status.CANCELLED,
     }:
-        raise ValidationError("Only failed, timeout, or cancelled tasks can be retried.")
+        raise ValidationError(
+            "Only failed, timeout, or cancelled tasks can be retried."
+        )
 
     first_step = task.steps.order_by("step_index", "id").first()
     task.status = Task.Status.PENDING
@@ -522,7 +573,9 @@ def complete_task(
             "updated_at",
         ]
     )
-    level = TaskEvent.Level.INFO if status == Task.Status.SUCCESS else TaskEvent.Level.ERROR
+    level = (
+        TaskEvent.Level.INFO if status == Task.Status.SUCCESS else TaskEvent.Level.ERROR
+    )
     append_task_event(
         task=task,
         step=_current_task_step(task),
@@ -543,8 +596,20 @@ def complete_task(
 
 def emit_task_terminal_signal(task: Task) -> None:
     if task.status == Task.Status.SUCCESS:
-        task_succeeded.send(sender=Task, task_uuid=str(task.task_uuid), organization_id=task.organization_id)
+        task_succeeded.send(
+            sender=Task,
+            task_uuid=str(task.task_uuid),
+            organization_id=task.organization_id,
+        )
     elif task.status == Task.Status.FAILED:
-        task_failed.send(sender=Task, task_uuid=str(task.task_uuid), organization_id=task.organization_id)
+        task_failed.send(
+            sender=Task,
+            task_uuid=str(task.task_uuid),
+            organization_id=task.organization_id,
+        )
     elif task.status == Task.Status.TIMEOUT:
-        task_timed_out.send(sender=Task, task_uuid=str(task.task_uuid), organization_id=task.organization_id)
+        task_timed_out.send(
+            sender=Task,
+            task_uuid=str(task.task_uuid),
+            organization_id=task.organization_id,
+        )

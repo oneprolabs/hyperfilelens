@@ -17,6 +17,7 @@ from apps.node.services.internal.node_registry import (
 )
 from apps.node.services.internal import redis_store
 from apps.protection import conf as protection_conf
+from apps.task.constants import RESTORE_TASK_TYPES, is_restore_task_type
 from apps.task.models import Task
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,9 @@ def is_node_offline_stale(node: Node) -> bool:
     reference = node.last_seen_at or node.updated_at
     if reference is None:
         return True
-    return (timezone.now() - reference).total_seconds() >= offline_stale_threshold_seconds()
+    return (
+        timezone.now() - reference
+    ).total_seconds() >= offline_stale_threshold_seconds()
 
 
 def task_execution_state(*, node: Node | None, task: Task | None) -> str:
@@ -75,12 +78,16 @@ def sync_platform_tasks_for_node_task(*, node_task: NodeTask) -> None:
         project_node_lifecycle_task(node_task=node_task)
         return
     if node_task.correlation_type == protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE:
-        from apps.protection.services.backup_orchestrator import maybe_trigger_backup_advance
+        from apps.protection.services.backup_orchestrator import (
+            maybe_trigger_backup_advance,
+        )
 
         maybe_trigger_backup_advance(node_task=node_task)
         return
     if node_task.correlation_type == "restore.record":
-        from apps.restore.services.restore_progress import maybe_trigger_restore_progress
+        from apps.restore.services.restore_progress import (
+            maybe_trigger_restore_progress,
+        )
 
         maybe_trigger_restore_progress(node_task=node_task)
 
@@ -146,7 +153,7 @@ def reconcile_offline_stale_node_tasks(*, limit: int = 100) -> dict[str, int]:
         }
     node_ids = list(
         Node.objects.filter(
-            role__in=(NodeRole.AGENT, NodeRole.PROXY),
+            role__in=(NodeRole.AGENT, NodeRole.PROXY, NodeRole.GATEWAY),
             is_deleted=False,
         )
         .order_by("last_seen_at", "id")
@@ -188,7 +195,7 @@ def reconcile_execution_state_for_active_tasks(*, limit: int = 200) -> dict[str,
     updated = 0
     tasks = Task.objects.filter(
         status__in=_ACTIVE_PRODUCT_TASK,
-        task_type__in=[Task.Type.BACKUP, Task.Type.RESTORE],
+        task_type__in=[Task.Type.BACKUP, *RESTORE_TASK_TYPES],
     ).order_by("updated_at", "id")[: max(1, int(limit))]
     for task in tasks:
         node = _execution_node_for_product_task(task=task)
@@ -222,19 +229,19 @@ def _execution_node_for_product_task(*, task: Task) -> Node | None:
             organization_id=task.organization_id,
             role=NodeRole.AGENT,
         ).first()
-    if str(task.task_type or "") == Task.Type.RESTORE:
+    if is_restore_task_type(task.task_type):
         from apps.restore.models import RestoreRecord
 
         record = RestoreRecord.objects.filter(
             organization_id=task.organization_id,
             task_uuid=task.task_uuid,
         ).first()
-        if record is None or str(record.target_type or "") != "agent":
+        if record is None:
             return None
         return Node.objects.filter(
-            pk=int(record.target_ref_id or 0),
-            organization_id=task.organization_id,
-            role=NodeRole.AGENT,
+            pk=int(record.target_execution_node_id or 0),
+            organization_id=record.target_execution_organization_id,
+            role__in=(NodeRole.AGENT, NodeRole.PROXY, NodeRole.GATEWAY),
         ).first()
     return None
 
