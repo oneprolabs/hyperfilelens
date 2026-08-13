@@ -237,6 +237,38 @@ class ProtectionPolicyApiTests(TestCase):
         )
         self.assertEqual(retention_res.status_code, status.HTTP_400_BAD_REQUEST)
 
+        missing_enabled_period = self._policy_payload("Missing enabled period")
+        missing_enabled_period["retention"].pop("daily_days")
+        missing_period_res = self.client.post(
+            "/api/v1/protection/policies/",
+            missing_enabled_period,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(missing_period_res.status_code, status.HTTP_400_BAD_REQUEST)
+
+        disabled_retention = self._policy_payload("Disabled tiers omit periods")
+        disabled_retention["retention"].update(
+            {
+                "hourly_enabled": False,
+                "daily_enabled": False,
+                "weekly_enabled": False,
+                "monthly_enabled": False,
+                "annual_enabled": False,
+            }
+        )
+        for field in ("hourly_hours", "daily_days", "weekly_weeks", "monthly_months", "annual_years"):
+            disabled_retention["retention"].pop(field)
+        disabled_res = self.client.post(
+            "/api/v1/protection/policies/",
+            disabled_retention,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(disabled_res.status_code, status.HTTP_201_CREATED, disabled_res.content)
+        for field in ("hourly_hours", "daily_days", "weekly_weeks", "monthly_months", "annual_years"):
+            self.assertNotIn(field, disabled_res.data["retention"])
+
         legacy_hourly = self._policy_payload("Legacy hourly days")
         legacy_hourly["retention"].pop("hourly_hours", None)
         legacy_hourly["retention"]["hourly_days"] = 2

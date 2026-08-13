@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import {
   getSimpleIntervalUnitMeta,
+  formatScheduleStartForDisplay,
   humanizeCronExpression,
   summarizeSchedule,
   type BackupPolicyForm,
@@ -161,7 +162,10 @@ function enabledText(enabled: boolean) {
           </div>
           <div class="hfl-detail-row policy-detail-editor__pair-item">
             <span class="hfl-detail-row__label">{{ policyForm.freqMode === 'advanced' ? t('protection.policiesPage.cronLabel') : t('protection.policiesPage.scheduleCycle') }}</span>
-            <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
+            <span
+              class="hfl-detail-row__value"
+              :class="{ 'hfl-detail-row__value--stacked': policyForm.freqMode === 'advanced' }"
+            >
               <code v-if="policyForm.freqMode === 'advanced'" class="policy-detail-overview__code">{{ policyForm.cronExpr }}</code>
               <span v-else class="hfl-detail-row__text">{{ quickScheduleLabel }}</span>
               <span v-if="policyForm.freqMode === 'advanced'" class="hfl-detail-row__hint">{{ cronDescription }}</span>
@@ -175,7 +179,7 @@ function enabledText(enabled: boolean) {
           </div>
           <div class="hfl-detail-row policy-detail-editor__pair-item">
             <span class="hfl-detail-row__label">{{ t('protection.policiesPage.scheduleStartsAt') }}</span>
-            <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !policyForm.scheduleStartsAt }">{{ policyForm.scheduleStartsAt || emptyText }}</span>
+            <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !policyForm.scheduleStartsAt }">{{ formatScheduleStartForDisplay(policyForm.scheduleStartsAt, emptyText) }}</span>
           </div>
         </div>
         <div v-if="policyForm.sectionScheduleEnabled" class="hfl-detail-row hfl-detail-row--full">

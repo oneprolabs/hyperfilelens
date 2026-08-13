@@ -28,17 +28,17 @@ export type BackupPolicyRetention = {
   recent_points: number
   hourly_enabled: boolean
   /** Maps to Kopia --keep-hourly (hours). Legacy hourly_days is migrated on read. */
-  hourly_hours: number
+  hourly_hours?: number
   /** @deprecated Migrated to hourly_hours (days × 24) on read. */
   hourly_days?: number
   daily_enabled: boolean
-  daily_days: number
+  daily_days?: number
   weekly_enabled: boolean
-  weekly_weeks: number
+  weekly_weeks?: number
   monthly_enabled: boolean
-  monthly_months: number
+  monthly_months?: number
   annual_enabled: boolean
-  annual_years: number
+  annual_years?: number
 }
 
 export type BackupPolicyThrottling = {
