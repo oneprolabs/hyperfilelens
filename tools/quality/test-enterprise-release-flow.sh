@@ -183,6 +183,11 @@ grep -F 'Enterprise release package has an invalid extension_commit' \
 grep -F '"ls-remote"' "${workflow}" >/dev/null
 grep -F 'f"refs/tags/{tag}"' "${workflow}" >/dev/null
 grep -F 'gh release delete "$ARTIFACT_ID"' "${workflow}" >/dev/null
+if grep -F 'gh release delete "$ARTIFACT_ID"' "${workflow}" \
+	| grep -F -- '--cleanup-tag' >/dev/null; then
+	printf 'ERROR: temporary Enterprise releases have no Git tag to clean up\n' >&2
+	exit 1
+fi
 
 # Exercise the target-side downloader without network access. The fake curl
 # records its arguments and materializes the two expected assets, proving that
