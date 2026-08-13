@@ -42,7 +42,12 @@ func Run(
 	if err := cmd.Start(); err != nil {
 		return Result{}, err
 	}
-	stopKill := startContextProcessGroupKill(ctx, cmd)
+	stopKill, err := startContextProcessGroupKill(ctx, cmd)
+	if err != nil {
+		killProcessGroup(cmd.Process)
+		_ = cmd.Wait()
+		return Result{}, err
+	}
 	defer stopKill()
 	waitErr := cmd.Wait()
 	res := Result{

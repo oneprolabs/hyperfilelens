@@ -3,8 +3,10 @@ package process
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCaptureProgressLinesSplitsOnCarriageReturn(t *testing.T) {
@@ -73,5 +75,29 @@ func TestRunStreamingDiscardStdoutStillEmitsLinesAndCapturesStderr(t *testing.T)
 	}
 	if res.Stderr != "warning" {
 		t.Fatalf("expected captured stderr, got %q", res.Stderr)
+	}
+}
+
+func TestRunCancellationKillsDescendantProcessGroup(t *testing.T) {
+	if _, err := os.Stat("/bin/bash"); err != nil {
+		t.Skip("bash is required for the Unix process-group contract")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+
+	_, err := Run(
+		ctx,
+		"bash",
+		[]string{"-c", "sleep 30 & wait"},
+		nil,
+		"",
+	)
+
+	if err == nil || ctx.Err() == nil {
+		t.Fatalf("Run error = %v, context error = %v; want cancellation", err, ctx.Err())
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("process group shutdown took %s", elapsed)
 	}
 }

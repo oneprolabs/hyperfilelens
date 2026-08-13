@@ -69,19 +69,36 @@ def _watch_changes(
 
 
 def _stop_process(process: subprocess.Popen[bytes], *, timeout: float = 10.0) -> None:
-    if process.poll() is not None:
-        return
-    process.terminate()
+    process_group = process.pid
     try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        process.kill()
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    if process.poll() is None:
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            pass
+
+    # The session leader can exit before descendants. Always fence the owned
+    # process group before launching a replacement; ProcessLookupError means it
+    # already drained cleanly.
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if process.poll() is None:
         process.wait(timeout=5)
 
 
 def _start_process(command: list[str]) -> subprocess.Popen[bytes]:
     LOGGER.info("starting child: %s", " ".join(command))
-    return subprocess.Popen(command, env=os.environ.copy())
+    return subprocess.Popen(
+        command,
+        env=os.environ.copy(),
+        start_new_session=True,
+    )
 
 
 def supervise(
@@ -150,6 +167,9 @@ def supervise(
                     failures = 0
                 continue
             exit_code = current_exit
+            # The session leader may exit before a descendant. Always clean the
+            # owned process group before starting a replacement.
+            _stop_process(process)
 
             runtime = time.monotonic() - process_started_at
             failures = 1 if runtime >= stable_seconds else failures + 1

@@ -89,7 +89,13 @@ func runStreaming(
 	}
 	go capture(stderrPipe, true, &stderrBuf)
 
-	stopKill := startContextProcessGroupKill(ctx, cmd)
+	stopKill, err := startContextProcessGroupKill(ctx, cmd)
+	if err != nil {
+		killProcessGroup(cmd.Process)
+		_ = cmd.Wait()
+		wg.Wait()
+		return Result{}, err
+	}
 	runErr := cmd.Wait()
 	stopKill()
 	wg.Wait()

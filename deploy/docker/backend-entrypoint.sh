@@ -126,20 +126,33 @@ run_worker_dev() {
   ensure_log_dir
   wait_for_postgres
   require_watchfiles
-  echo "[entrypoint] watch backend source and restart celery worker"
-  exec watchfiles --filter python --ignore-paths "${DEV_WATCH_IGNORE_PATHS}" \
-    "celery -A common worker --loglevel=INFO -Q backend,node.lifecycle,node.ingest,source.remote-io,storage.provider-validation" \
-    /opt/backend
+  echo "[entrypoint] supervise celery worker with hot reload"
+  exec python /dev-process-supervisor.py \
+    --watch /opt/backend \
+    --ignore /opt/backend/media \
+    --ignore /opt/backend/staticfiles \
+    --ignore /opt/backend/lang-packs \
+    --max-restarts "${DEV_WORKER_MAX_RESTARTS:-5}" \
+    --stable-seconds "${DEV_WORKER_STABLE_SECONDS:-30}" \
+    --base-delay "${DEV_WORKER_RESTART_DELAY_SECONDS:-1}" \
+    -- celery -A common worker --loglevel=INFO \
+    -Q backend,node.lifecycle,node.ingest,source.remote-io,storage.provider-validation
 }
 
 run_scheduler_dev() {
   ensure_log_dir
   wait_for_postgres
   require_watchfiles
-  echo "[entrypoint] watch backend source and restart celery scheduler"
-  exec watchfiles --filter python --ignore-paths "${DEV_WATCH_IGNORE_PATHS}" \
-    "celery -A common beat --scheduler django_celery_beat.schedulers:DatabaseScheduler --loglevel=INFO" \
-    /opt/backend
+  echo "[entrypoint] supervise cluster-safe celery scheduler with hot reload"
+  exec python /dev-process-supervisor.py \
+    --watch /opt/backend \
+    --ignore /opt/backend/media \
+    --ignore /opt/backend/staticfiles \
+    --ignore /opt/backend/lang-packs \
+    --max-restarts "${DEV_SCHEDULER_MAX_RESTARTS:-5}" \
+    --stable-seconds "${DEV_SCHEDULER_STABLE_SECONDS:-30}" \
+    --base-delay "${DEV_SCHEDULER_RESTART_DELAY_SECONDS:-1}" \
+    -- python manage.py run_scheduler_leader
 }
 
 case "${1:-api}" in

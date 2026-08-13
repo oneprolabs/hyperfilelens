@@ -274,7 +274,7 @@ func TestTaskRepoRepairAndFlush(t *testing.T) {
 	}
 }
 
-func TestTaskRepoRepairFailsInterruptedBackupsButKeepsRestoreResumable(t *testing.T) {
+func TestTaskRepoRepairFailsInterruptedBackupAndRestoreAttempts(t *testing.T) {
 	ctx := t.Context()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
@@ -298,20 +298,13 @@ func TestTaskRepoRepairFailsInterruptedBackupsButKeepsRestoreResumable(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(repaired) != 3 {
-		t.Fatalf("expected three backup tasks repaired, got %d", len(repaired))
+	if len(repaired) != 4 {
+		t.Fatalf("expected four data tasks repaired, got %d", len(repaired))
 	}
 	for _, task := range repaired {
 		if task.Status != model.TaskStatusFailed || task.Error != repairError {
 			t.Fatalf("repaired task = (%q, %q), want restart failure", task.Status, task.Error)
 		}
-	}
-	restore, err := repo.Get(ctx, "task-restore.run")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if restore.Status != model.TaskStatusRunning {
-		t.Fatalf("restore status = %q, want running", restore.Status)
 	}
 }
 

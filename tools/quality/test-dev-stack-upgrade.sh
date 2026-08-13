@@ -165,10 +165,14 @@ grep -F 'for svc in ("migration", "api", "worker", "scheduler"):' \
 backend_entrypoint="${ROOT_REPO}/deploy/docker/backend-entrypoint.sh"
 grep -F 'DEV_WATCH_IGNORE_PATHS="/opt/backend/media,/opt/backend/staticfiles,/opt/backend/lang-packs"' \
 	"${backend_entrypoint}" >/dev/null
-grep -F 'python /dev-process-supervisor.py' "${backend_entrypoint}" >/dev/null
+[[ "$(grep -Fc 'python /dev-process-supervisor.py' "${backend_entrypoint}")" -eq 3 ]]
 grep -F 'deploy/docker/dev-process-supervisor.py deploy/bootstrap' \
 	"${ROOT_REPO}/dev/stack.sh" >/dev/null
-[[ "$(grep -Fc -- '--ignore-paths "${DEV_WATCH_IGNORE_PATHS}"' "${backend_entrypoint}")" -eq 2 ]]
+[[ "$(grep -Fc -- '--watch /opt/backend' "${backend_entrypoint}")" -eq 3 ]]
+if grep -F 'exec watchfiles' "${backend_entrypoint}" >/dev/null; then
+	echo 'Development processes must be supervised through their real child process' >&2
+	exit 1
+fi
 worker_dev_entrypoint="$(sed -n '/^run_worker_dev()/,/^}/p' "${backend_entrypoint}")"
 if grep -F 'run_migrations_and_register' <<<"${worker_dev_entrypoint}" >/dev/null; then
 	echo 'Development worker must not run singleton migrations' >&2

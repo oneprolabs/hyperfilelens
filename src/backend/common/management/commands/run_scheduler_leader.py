@@ -56,7 +56,7 @@ class Command(BaseCommand):
                 "common",
                 "beat",
                 "--scheduler",
-                "django_celery_beat.schedulers:DatabaseScheduler",
+                "common.scheduling.scheduler:CoalescingDatabaseScheduler",
                 "--loglevel=INFO",
             ]
             child = subprocess.Popen(command, env=os.environ.copy(), text=True)
