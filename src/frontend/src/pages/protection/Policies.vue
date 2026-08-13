@@ -548,16 +548,16 @@ function policyRetentionDetailLines(row: PolicyRow): PolicyRetentionDetailLine[]
       ),
     },
   ]
-  if (f.retentionHourlyEnabled) {
+  if (f.retentionShortHourly) {
     lines.push({
       label: `${t('protection.policiesPage.hourlyTitle')}:`,
-      text: t('protection.policiesPage.retentionHourlyDetail', { n: f.retentionHourlyHours }),
+      text: t('protection.policiesPage.retentionHourlyDetail', { n: Number(f.retentionShortDaysMax) * 24 }),
     })
   }
-  if (f.retentionDailyEnabled) {
+  if (f.retentionMidDaily) {
     lines.push({
       label: `${t('protection.policiesPage.dailyTitle')}:`,
-      text: t('protection.policiesPage.retentionDailyDetail', { n: f.retentionDailyDays }),
+      text: t('protection.policiesPage.retentionDailyDetail', { n: f.retentionMidDaysMax }),
     })
   }
   if (f.retentionWeeklyEnabled) {
@@ -566,10 +566,10 @@ function policyRetentionDetailLines(row: PolicyRow): PolicyRetentionDetailLine[]
       text: t('protection.policiesPage.retentionWeeklyDetail', { n: f.retentionWeeklyWeeks }),
     })
   }
-  if (f.retentionMonthlyEnabled) {
+  if (f.retentionLongMonthly) {
     lines.push({
       label: `${t('protection.policiesPage.monthlyTitle')}:`,
-      text: t('protection.policiesPage.retentionMonthlyDetail', { n: f.retentionMonthlyMonths }),
+      text: t('protection.policiesPage.retentionMonthlyDetail', { n: f.retentionLongMonths }),
     })
   }
   if (f.retentionAnnualEnabled) {

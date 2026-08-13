@@ -229,7 +229,7 @@ def _resolve_hourly_hours(value: dict[str, Any]) -> int:
         return _int(value, "hourly_hours")
     if "hourly_days" in value:
         return _int(value, "hourly_days") * 24
-    return 48
+    return 0
 
 
 def normalize_retention(value: Any) -> dict[str, Any]:
@@ -238,11 +238,6 @@ def normalize_retention(value: Any) -> dict[str, Any]:
     value = _coerce_retention_input(value)
     enabled = _bool(value, "enabled", True)
     recent_points = _int(value, "recent_points")
-    hourly_hours = _resolve_hourly_hours(value)
-    daily_days = _int(value, "daily_days")
-    weekly_weeks = _int(value, "weekly_weeks")
-    monthly_months = _int(value, "monthly_months")
-    annual_years = _int(value, "annual_years")
     hourly_enabled = _bool(value, "hourly_enabled", True)
     daily_enabled = _bool(value, "daily_enabled", True)
     weekly_enabled = _bool(value, "weekly_enabled", True)
@@ -250,40 +245,32 @@ def normalize_retention(value: Any) -> dict[str, Any]:
     annual_enabled = _bool(value, "annual_enabled", True)
     if recent_points < 1:
         raise ValidationError({"retention": "recent_points must be at least 1."})
-    if hourly_enabled and hourly_hours < 1:
-        raise ValidationError({"retention": "hourly_hours must be at least 1 when hourly retention is enabled."})
-    if daily_enabled and daily_days < 1:
-        raise ValidationError({"retention": "daily_days must be at least 1 when daily retention is enabled."})
-    if weekly_enabled and weekly_weeks < 1:
-        raise ValidationError({"retention": "weekly_weeks must be at least 1 when weekly retention is enabled."})
-    if monthly_enabled and monthly_months < 1:
-        raise ValidationError({"retention": "monthly_months must be at least 1 when monthly retention is enabled."})
-    if annual_enabled and annual_years < 1:
-        raise ValidationError({"retention": "annual_years must be at least 1 when annual retention is enabled."})
-    if not 1 <= hourly_hours <= 87600:
-        raise ValidationError({"retention": "hourly_hours must be between 1 and 87600."})
-    if not 1 <= daily_days <= 3650:
-        raise ValidationError({"retention": "daily_days must be between 1 and 3650."})
-    if not 1 <= weekly_weeks <= 520:
-        raise ValidationError({"retention": "weekly_weeks must be between 1 and 520."})
-    if not 1 <= monthly_months <= 120:
-        raise ValidationError({"retention": "monthly_months must be between 1 and 120."})
-    if not 1 <= annual_years <= 100:
-        raise ValidationError({"retention": "annual_years must be between 1 and 100."})
-    return {
+    normalized = {
         "enabled": enabled,
         "recent_points": recent_points,
         "hourly_enabled": hourly_enabled,
-        "hourly_hours": hourly_hours,
         "daily_enabled": daily_enabled,
-        "daily_days": daily_days,
         "weekly_enabled": weekly_enabled,
-        "weekly_weeks": weekly_weeks,
         "monthly_enabled": monthly_enabled,
-        "monthly_months": monthly_months,
         "annual_enabled": annual_enabled,
-        "annual_years": annual_years,
     }
+    tier_specs = (
+        ("hourly", "hourly_hours", hourly_enabled, _resolve_hourly_hours, 87600),
+        ("daily", "daily_days", daily_enabled, lambda raw: _int(raw, "daily_days"), 3650),
+        ("weekly", "weekly_weeks", weekly_enabled, lambda raw: _int(raw, "weekly_weeks"), 520),
+        ("monthly", "monthly_months", monthly_enabled, lambda raw: _int(raw, "monthly_months"), 120),
+        ("annual", "annual_years", annual_enabled, lambda raw: _int(raw, "annual_years"), 100),
+    )
+    for label, field, tier_enabled, parse, maximum in tier_specs:
+        if not tier_enabled:
+            continue
+        amount = parse(value)
+        if amount < 1:
+            raise ValidationError({"retention": f"{field} must be at least 1 when {label} retention is enabled."})
+        if amount > maximum:
+            raise ValidationError({"retention": f"{field} must be between 1 and {maximum}."})
+        normalized[field] = amount
+    return normalized
 
 
 def normalize_throttling(value: Any) -> dict[str, Any]:

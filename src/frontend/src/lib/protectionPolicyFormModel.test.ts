@@ -3,10 +3,12 @@ import type { BackupPolicy } from './protectionPolicyApi'
 import {
   backupPolicyToForm,
   createEmptyPolicyForm,
+  formatScheduleStartForDisplay,
   getScheduleTimezoneOptions,
   policyFormToWritePayload,
   quickScheduleToCron,
   summarizeSchedule,
+  validateRetentionForm,
   validateScheduleForm,
 } from './protectionPolicyFormModel'
 
@@ -46,6 +48,42 @@ function policyWithSchedule(schedule: BackupPolicy['schedule']): BackupPolicy {
 }
 
 describe('protection policy schedule mapping', () => {
+  it('rejects an empty enabled retention period and omits disabled periods from writes', () => {
+    const form = createEmptyPolicyForm()
+    form.retentionShortHourly = true
+    form.retentionShortDaysMax = undefined
+
+    expect(validateRetentionForm(form)).toBe('hourly retention must be at least 1 when enabled.')
+
+    form.retentionShortHourly = false
+    form.retentionMidDaily = false
+    form.retentionLongMonthly = false
+    form.retentionShortDaysMax = undefined
+    form.retentionMidDaysMax = undefined
+    form.retentionLongMonths = undefined
+
+    expect(validateRetentionForm(form)).toBe('')
+    expect(policyFormToWritePayload(form).retention).toMatchObject({
+      hourly_enabled: false,
+      daily_enabled: false,
+      monthly_enabled: false,
+    })
+    expect(policyFormToWritePayload(form).retention).not.toHaveProperty('hourly_hours')
+    expect(policyFormToWritePayload(form).retention).not.toHaveProperty('daily_days')
+    expect(policyFormToWritePayload(form).retention).not.toHaveProperty('monthly_months')
+  })
+
+  it('ignores stale disabled retention periods when loading a policy', () => {
+    const form = backupPolicyToForm(policyWithSchedule({ enabled: true, cron_expr: '0 2 * * *' }))
+
+    expect(form.retentionShortHourly).toBe(false)
+    expect(form.retentionShortDaysMax).toBeUndefined()
+    expect(form.retentionMidDaily).toBe(false)
+    expect(form.retentionMidDaysMax).toBeUndefined()
+    expect(form.retentionLongMonthly).toBe(false)
+    expect(form.retentionLongMonths).toBeUndefined()
+  })
+
   it('labels timezones with their current GMT offsets and sorts by offset', () => {
     const options = getScheduleTimezoneOptions('Asia/Shanghai', new Date('2026-08-08T00:00:00Z'))
     const shanghai = options.find((option) => option.value === 'Asia/Shanghai')
@@ -57,6 +95,15 @@ describe('protection policy schedule mapping', () => {
     expect(utc).toMatchObject({ label: '(GMT+00:00) UTC', offsetMinutes: 0 })
     expect(options.indexOf(newYork!)).toBeLessThan(options.indexOf(utc!))
     expect(options.indexOf(utc!)).toBeLessThan(options.indexOf(shanghai!))
+  })
+
+  it('formats schedule wall-clock start times without changing their timezone meaning', () => {
+    const form = createEmptyPolicyForm()
+    form.scheduleStartsAt = '2026-08-13T14:30'
+
+    expect(formatScheduleStartForDisplay(form.scheduleStartsAt)).toBe('2026-08-13 14:30')
+    expect(summarizeSchedule(form)).toContain('starts 2026-08-13 14:30')
+    expect(summarizeSchedule(form)).not.toContain('2026-08-13T14:30')
   })
 
   it('serializes hour and day intervals through the shared mapper', () => {

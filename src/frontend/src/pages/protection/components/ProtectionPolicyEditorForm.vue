@@ -77,12 +77,57 @@ const cronErrorText = computed(() => {
 const scheduleErrorText = computed(() => validateScheduleForm(policyForm.value))
 const midRetentionError = computed(() => validateMidRetention(policyForm.value, messageLocale.value))
 const longVsShortRetentionError = computed(() => validateLongVsShortRetention(policyForm.value, messageLocale.value))
+const hourlyRetentionError = computed(() =>
+  policyForm.value.sectionRetentionEnabled && policyForm.value.retentionShortHourly
+  && (typeof policyForm.value.retentionShortDaysMax !== 'number' || policyForm.value.retentionShortDaysMax < 1)
+    ? t('protection.policiesPage.retentionHourlyRequired')
+    : '',
+)
+const dailyRetentionError = computed(() =>
+  policyForm.value.sectionRetentionEnabled && policyForm.value.retentionMidDaily
+  && (typeof policyForm.value.retentionMidDaysMax !== 'number' || policyForm.value.retentionMidDaysMax < 1)
+    ? t('protection.policiesPage.retentionDailyRequired')
+    : '',
+)
+const monthlyRetentionError = computed(() =>
+  policyForm.value.sectionRetentionEnabled && policyForm.value.retentionLongMonthly
+  && (typeof policyForm.value.retentionLongMonths !== 'number' || policyForm.value.retentionLongMonths < 1)
+    ? t('protection.policiesPage.retentionMonthlyRequired')
+    : '',
+)
 const recentRetentionError = computed(() =>
   policyForm.value.sectionRetentionEnabled &&
   (typeof policyForm.value.retentionRecentPoints !== 'number' || policyForm.value.retentionRecentPoints < 1)
     ? 'Latest restore points must be at least 1.'
     : '',
 )
+
+function toggleHourlyRetention(enabled: boolean) {
+  policyForm.value.retentionShortHourly = enabled
+  policyForm.value.retentionHourlyEnabled = enabled
+  if (!enabled) {
+    policyForm.value.retentionShortDaysMax = undefined
+    policyForm.value.retentionHourlyHours = undefined
+  }
+}
+
+function toggleDailyRetention(enabled: boolean) {
+  policyForm.value.retentionMidDaily = enabled
+  policyForm.value.retentionDailyEnabled = enabled
+  if (!enabled) {
+    policyForm.value.retentionMidDaysMax = undefined
+    policyForm.value.retentionDailyDays = undefined
+  }
+}
+
+function toggleMonthlyRetention(enabled: boolean) {
+  policyForm.value.retentionLongMonthly = enabled
+  policyForm.value.retentionMonthlyEnabled = enabled
+  if (!enabled) {
+    policyForm.value.retentionLongMonths = undefined
+    policyForm.value.retentionMonthlyMonths = undefined
+  }
+}
 
 const formClass = computed(() =>
   props.variant === 'fullscreen'
@@ -533,21 +578,25 @@ function toggleScheduleMonthDay(day: number) {
         <div>
           <div v-if="variant === 'fullscreen'" class="policy-option-title policy-option-title--with-desc">
             {{ t('protection.policiesPage.shortTitle') }}
-            <span class="policy-inline-desc">
+            <span v-if="policyForm.retentionShortHourly" class="policy-inline-desc">
               {{ t('protection.policiesPage.shortDesc', { days: policyForm.retentionShortDaysMax }) }}
             </span>
           </div>
           <div class="retention-tier-row">
             <el-switch
-              v-model="policyForm.retentionShortHourly"
+              :model-value="policyForm.retentionShortHourly"
+              @update:model-value="toggleHourlyRetention"
             />
-            <div class="retention-tier-input-wrap">
+            <div :class="['retention-tier-input-wrap', { 'is-invalid': !!hourlyRetentionError }]">
               <ElInputNumber
                 v-model="policyForm.retentionShortDaysMax"
                 :min="1"
                 :max="30"
                 :disabled="!policyForm.retentionShortHourly"
               />
+              <p v-if="hourlyRetentionError" class="fullscreen-form-inline-error retention-input-wrap__error">
+                {{ hourlyRetentionError }}
+              </p>
             </div>
             <span class="retention-tier-unit policy-inline-label">{{ t('protection.policiesPage.unitDays') }}</span>
           </div>
@@ -555,22 +604,25 @@ function toggleScheduleMonthDay(day: number) {
         <div>
           <div v-if="variant === 'fullscreen'" class="policy-option-title policy-option-title--with-desc">
             {{ t('protection.policiesPage.midTitle') }}
-            <span class="policy-inline-desc">
-              {{ t('protection.policiesPage.midDesc', { short: policyForm.retentionShortDaysMax, mid: policyForm.retentionMidDaysMax }) }}
+            <span v-if="policyForm.retentionMidDaily" class="policy-inline-desc">
+              {{ t('protection.policiesPage.midDesc', { mid: policyForm.retentionMidDaysMax }) }}
             </span>
           </div>
           <div class="retention-tier-row">
             <el-switch
-              v-model="policyForm.retentionMidDaily"
+              :model-value="policyForm.retentionMidDaily"
+              @update:model-value="toggleDailyRetention"
             />
-            <div class="retention-tier-input-wrap">
+            <div :class="['retention-tier-input-wrap', { 'is-invalid': !!dailyRetentionError || !!midRetentionError }]">
               <ElInputNumber
                 v-model="policyForm.retentionMidDaysMax"
                 :min="1"
                 :max="365"
                 :disabled="!policyForm.retentionMidDaily"
-                :class="{ 'policy-input--error': !!midRetentionError }"
               />
+              <p v-if="dailyRetentionError" class="fullscreen-form-inline-error retention-input-wrap__error">
+                {{ dailyRetentionError }}
+              </p>
             </div>
             <span class="retention-tier-unit policy-inline-label">{{ t('protection.policiesPage.unitDays') }}</span>
           </div>
@@ -579,22 +631,25 @@ function toggleScheduleMonthDay(day: number) {
         <div>
           <div v-if="variant === 'fullscreen'" class="policy-option-title policy-option-title--with-desc">
             {{ t('protection.policiesPage.longTitle') }}
-            <span class="policy-inline-desc">
-              {{ t('protection.policiesPage.longDesc', { mid: policyForm.retentionMidDaysMax, months: policyForm.retentionLongMonths }) }}
+            <span v-if="policyForm.retentionLongMonthly" class="policy-inline-desc">
+              {{ t('protection.policiesPage.longDesc', { months: policyForm.retentionLongMonths }) }}
             </span>
           </div>
           <div class="retention-tier-row">
             <el-switch
-              v-model="policyForm.retentionLongMonthly"
+              :model-value="policyForm.retentionLongMonthly"
+              @update:model-value="toggleMonthlyRetention"
             />
-            <div class="retention-tier-input-wrap">
+            <div :class="['retention-tier-input-wrap', { 'is-invalid': !!monthlyRetentionError || !!longVsShortRetentionError }]">
               <ElInputNumber
                 v-model="policyForm.retentionLongMonths"
                 :min="1"
                 :max="120"
                 :disabled="!policyForm.retentionLongMonthly"
-                :class="{ 'policy-input--error': !!longVsShortRetentionError }"
               />
+              <p v-if="monthlyRetentionError" class="fullscreen-form-inline-error retention-input-wrap__error">
+                {{ monthlyRetentionError }}
+              </p>
             </div>
             <span class="retention-tier-unit policy-inline-label">{{ t('protection.policiesPage.unitMonths') }}</span>
           </div>
@@ -1253,11 +1308,13 @@ function toggleScheduleMonthDay(day: number) {
   width: 140px;
 }
 
-.retention-recent-input-wrap.is-invalid :deep(.el-input__wrapper) {
+.retention-recent-input-wrap.is-invalid :deep(.el-input__wrapper),
+.retention-tier-input-wrap.is-invalid :deep(.el-input__wrapper) {
   box-shadow: 0 0 0 1px var(--el-color-danger) inset;
 }
 
-.retention-recent-input-wrap__error {
+.retention-recent-input-wrap__error,
+.retention-input-wrap__error {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;

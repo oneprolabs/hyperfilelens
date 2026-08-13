@@ -291,7 +291,7 @@ onMounted(() => {
 
 <template>
   <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen policy-editor-fullscreen">
-    <div class="fullscreen-form-page add-s3-page">
+    <div class="fullscreen-form-page add-s3-page policy-editor-page">
       <header class="fullscreen-form-header">
         <button
           type="button"

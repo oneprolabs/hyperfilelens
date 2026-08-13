@@ -3215,10 +3215,10 @@ function flowPolicyRetentionDetailLines(policy: BackupPolicy | null | undefined)
   }
   const hasRetentionValues =
     Number(f.retentionRecentPoints) > 0 ||
-    f.retentionHourlyEnabled ||
-    f.retentionDailyEnabled ||
+    f.retentionShortHourly ||
+    f.retentionMidDaily ||
     f.retentionWeeklyEnabled ||
-    f.retentionMonthlyEnabled ||
+    f.retentionLongMonthly ||
     f.retentionAnnualEnabled
   if (!hasRetentionValues && policy.retention_summary) {
     return [{ text: policy.retention_summary }]
@@ -3227,27 +3227,27 @@ function flowPolicyRetentionDetailLines(policy: BackupPolicy | null | undefined)
   if (messageLocale.value === 'en') {
     const latestSuffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
     const lines: FlowPolicyRetentionDetailLine[] = [{ text: `Keep latest ${f.retentionRecentPoints} restore ${latestSuffix}.` }]
-    if (f.retentionHourlyEnabled) {
-      lines.push({ label: 'Hourly:', text: `Keep one restore point per hour for ${f.retentionHourlyHours} hour(s).` })
+    if (f.retentionShortHourly) {
+      lines.push({ label: 'Hourly:', text: `Keep one restore point per hour for ${Number(f.retentionShortDaysMax) * 24} hour(s).` })
     }
-    if (f.retentionDailyEnabled) {
-      lines.push({ label: 'Daily:', text: `Keep one restore point per day for ${f.retentionDailyDays} day(s).` })
+    if (f.retentionMidDaily) {
+      lines.push({ label: 'Daily:', text: `Keep one restore point per day for ${f.retentionMidDaysMax} day(s).` })
     }
-    if (f.retentionMonthlyEnabled) {
-      lines.push({ label: 'Monthly:', text: `Keep one restore point per month for ${f.retentionMonthlyMonths} month(s).` })
+    if (f.retentionLongMonthly) {
+      lines.push({ label: 'Monthly:', text: `Keep one restore point per month for ${f.retentionLongMonths} month(s).` })
     }
     return lines
   }
 
   const lines: FlowPolicyRetentionDetailLine[] = [{ text: `Keep the latest ${f.retentionRecentPoints} restore points.` }]
-  if (f.retentionHourlyEnabled) {
-    lines.push({ label: 'Hourly:', text: `Keep one restore point per hour for ${f.retentionHourlyHours} hours.` })
+  if (f.retentionShortHourly) {
+    lines.push({ label: 'Hourly:', text: `Keep one restore point per hour for ${Number(f.retentionShortDaysMax) * 24} hours.` })
   }
-  if (f.retentionDailyEnabled) {
-    lines.push({ label: 'Daily:', text: `Keep one restore point per day for ${f.retentionDailyDays} days.` })
+  if (f.retentionMidDaily) {
+    lines.push({ label: 'Daily:', text: `Keep one restore point per day for ${f.retentionMidDaysMax} days.` })
   }
-  if (f.retentionMonthlyEnabled) {
-    lines.push({ label: 'Monthly:', text: `Keep one restore point per month for ${f.retentionMonthlyMonths} months.` })
+  if (f.retentionLongMonthly) {
+    lines.push({ label: 'Monthly:', text: `Keep one restore point per month for ${f.retentionLongMonths} months.` })
   }
   return lines
 }

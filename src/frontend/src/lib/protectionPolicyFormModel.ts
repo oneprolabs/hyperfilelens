@@ -161,21 +161,21 @@ export interface BackupPolicyForm {
   scheduleMonthEnd: boolean
   retentionRecentPoints: number
   retentionHourlyEnabled: boolean
-  retentionHourlyHours: number
+  retentionHourlyHours: number | undefined
   retentionDailyEnabled: boolean
-  retentionDailyDays: number
+  retentionDailyDays: number | undefined
   retentionWeeklyEnabled: boolean
-  retentionWeeklyWeeks: number
+  retentionWeeklyWeeks: number | undefined
   retentionMonthlyEnabled: boolean
-  retentionMonthlyMonths: number
+  retentionMonthlyMonths: number | undefined
   retentionAnnualEnabled: boolean
-  retentionAnnualYears: number
+  retentionAnnualYears: number | undefined
   /** Legacy UI compatibility: short-term hourly window in days. */
-  retentionShortDaysMax: number
+  retentionShortDaysMax: number | undefined
   /** Legacy UI compatibility: mid-term daily window in days. */
-  retentionMidDaysMax: number
+  retentionMidDaysMax: number | undefined
   /** Legacy UI compatibility: long-term monthly retention in months. */
-  retentionLongMonths: number
+  retentionLongMonths: number | undefined
   /** Legacy UI compatibility: hourly retention toggle. */
   retentionShortHourly: boolean
   /** Legacy UI compatibility: daily retention toggle. */
@@ -377,8 +377,15 @@ export function summarizeSchedule(f: BackupPolicyForm, locale: MessageLocale = '
     summary = humanizeCronExpression(f.cronExpr, locale)
   }
   summary = `${summary} (${f.scheduleTimezone || 'UTC'})`
-  if (f.scheduleStartsAt) summary = `${summary}, starts ${f.scheduleStartsAt}`
+  if (f.scheduleStartsAt) summary = `${summary}, starts ${formatScheduleStartForDisplay(f.scheduleStartsAt)}`
   return summary
+}
+
+/** Format a schedule wall-clock value without applying browser timezone conversion. */
+export function formatScheduleStartForDisplay(value: string, fallback = '—'): string {
+  const normalized = String(value || '').trim()
+  if (!normalized) return fallback
+  return normalized.replace(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/, '$1 $2')
 }
 
 function resolveHourlyHours(raw: Partial<BackupPolicyRetention>, fallback: number): number {
@@ -447,27 +454,32 @@ export function applyRetentionFromApi(
   | 'retentionLongMonthly'
 > {
   const normalized = normalizeLegacyRetention(retention || {})
-  const hourlyHours = resolveHourlyHours(normalized, base.retentionHourlyHours)
-  const dailyDays = Number(normalized.daily_days) || base.retentionDailyDays
-  const monthlyMonths = Number(normalized.monthly_months) || base.retentionMonthlyMonths
+  const hourlyEnabled = normalized.hourly_enabled ?? false
+  const dailyEnabled = normalized.daily_enabled ?? false
+  const weeklyEnabled = normalized.weekly_enabled ?? false
+  const monthlyEnabled = normalized.monthly_enabled ?? false
+  const annualEnabled = normalized.annual_enabled ?? false
+  const hourlyHours = hourlyEnabled ? resolveHourlyHours(normalized, base.retentionHourlyHours || 48) : undefined
+  const dailyDays = dailyEnabled ? Number(normalized.daily_days) || base.retentionDailyDays : undefined
+  const monthlyMonths = monthlyEnabled ? Number(normalized.monthly_months) || base.retentionMonthlyMonths : undefined
   return {
     sectionRetentionEnabled: Boolean(normalized.enabled),
     retentionRecentPoints: Number(normalized.recent_points) || base.retentionRecentPoints,
-    retentionHourlyEnabled: normalized.hourly_enabled ?? false,
+    retentionHourlyEnabled: hourlyEnabled,
     retentionHourlyHours: hourlyHours,
-    retentionDailyEnabled: normalized.daily_enabled ?? false,
+    retentionDailyEnabled: dailyEnabled,
     retentionDailyDays: dailyDays,
-    retentionWeeklyEnabled: normalized.weekly_enabled ?? false,
-    retentionWeeklyWeeks: Number(normalized.weekly_weeks) || base.retentionWeeklyWeeks,
-    retentionMonthlyEnabled: normalized.monthly_enabled ?? false,
+    retentionWeeklyEnabled: weeklyEnabled,
+    retentionWeeklyWeeks: weeklyEnabled ? Number(normalized.weekly_weeks) || base.retentionWeeklyWeeks : undefined,
+    retentionMonthlyEnabled: monthlyEnabled,
     retentionMonthlyMonths: monthlyMonths,
-    retentionAnnualEnabled: normalized.annual_enabled ?? false,
-    retentionAnnualYears: Number(normalized.annual_years) || base.retentionAnnualYears,
-    retentionShortHourly: normalized.hourly_enabled ?? false,
-    retentionShortDaysMax: hourlyHoursToLegacyDays(hourlyHours),
-    retentionMidDaily: normalized.daily_enabled ?? false,
+    retentionAnnualEnabled: annualEnabled,
+    retentionAnnualYears: annualEnabled ? Number(normalized.annual_years) || base.retentionAnnualYears : undefined,
+    retentionShortHourly: hourlyEnabled,
+    retentionShortDaysMax: hourlyHours === undefined ? undefined : hourlyHoursToLegacyDays(hourlyHours),
+    retentionMidDaily: dailyEnabled,
     retentionMidDaysMax: dailyDays,
-    retentionLongMonthly: normalized.monthly_enabled ?? false,
+    retentionLongMonthly: monthlyEnabled,
     retentionLongMonths: monthlyMonths,
   }
 }
@@ -477,29 +489,21 @@ export function hourlyHoursToLegacyDays(hours: number): number {
 }
 
 export function retentionFormToApi(f: BackupPolicyForm): BackupPolicyRetention {
-  const hourlyHours = Math.max(
-    1,
-    Number.isFinite(Number(f.retentionShortDaysMax))
-      ? Math.ceil(Math.max(1, Number(f.retentionShortDaysMax)) * 24)
-      : Number(f.retentionHourlyHours) || 1,
-  )
-  const dailyDays = Math.max(1, Number(f.retentionMidDaysMax) || Number(f.retentionDailyDays) || 1)
-  const monthlyMonths = Math.max(1, Number(f.retentionLongMonths) || Number(f.retentionMonthlyMonths) || 1)
-  return {
+  const retention: BackupPolicyRetention = {
     enabled: f.sectionRetentionEnabled,
-    recent_points: Math.max(1, Number(f.retentionRecentPoints) || 1),
+    recent_points: f.retentionRecentPoints,
     hourly_enabled: f.retentionShortHourly,
-    hourly_hours: hourlyHours,
-    hourly_days: hourlyHoursToLegacyDays(hourlyHours),
     daily_enabled: f.retentionMidDaily,
-    daily_days: dailyDays,
     weekly_enabled: f.retentionWeeklyEnabled,
-    weekly_weeks: Math.max(1, Number(f.retentionWeeklyWeeks) || 1),
     monthly_enabled: f.retentionLongMonthly,
-    monthly_months: monthlyMonths,
     annual_enabled: f.retentionAnnualEnabled,
-    annual_years: Math.max(1, Number(f.retentionAnnualYears) || 1),
   }
+  if (f.retentionShortHourly) retention.hourly_hours = Math.ceil(Number(f.retentionShortDaysMax) * 24)
+  if (f.retentionMidDaily) retention.daily_days = Number(f.retentionMidDaysMax)
+  if (f.retentionWeeklyEnabled) retention.weekly_weeks = Number(f.retentionWeeklyWeeks)
+  if (f.retentionLongMonthly) retention.monthly_months = Number(f.retentionLongMonths)
+  if (f.retentionAnnualEnabled) retention.annual_years = Number(f.retentionAnnualYears)
+  return retention
 }
 
 export function throttlingFormToApi(f: BackupPolicyForm): {
@@ -542,29 +546,23 @@ export function summarizeRetention(f: BackupPolicyForm, _locale: MessageLocale =
   ) {
     const recent = `Last ${f.retentionRecentPoints} restore point(s)`
     const parts: string[] = [recent]
-    if (f.retentionShortHourly) {
-      parts.push(`0-${f.retentionShortDaysMax} d -> hourly tier`)
-    }
-    if (f.retentionMidDaily) {
-      parts.push(`${f.retentionShortDaysMax}-${f.retentionMidDaysMax} d -> daily tier`)
-    }
-    if (f.retentionLongMonthly) {
-      parts.push(`>${f.retentionMidDaysMax} d -> monthly, keep ${f.retentionLongMonths} month(s)`)
-    }
+    if (f.retentionShortHourly) parts.push(`hourly for ${f.retentionShortDaysMax} day(s)`)
+    if (f.retentionMidDaily) parts.push(`daily for ${f.retentionMidDaysMax} day(s)`)
+    if (f.retentionLongMonthly) parts.push(`monthly for ${f.retentionLongMonths} month(s)`)
     return parts.join('; ')
   }
   const parts: string[] = [`Latest ${f.retentionRecentPoints}`]
-  if (f.retentionHourlyEnabled) {
-    parts.push(`H ${f.retentionHourlyHours}h`)
+  if (f.retentionShortHourly) {
+    parts.push(`H ${Number(f.retentionShortDaysMax) * 24}h`)
   }
-  if (f.retentionDailyEnabled) {
-    parts.push(`D ${f.retentionDailyDays}d`)
+  if (f.retentionMidDaily) {
+    parts.push(`D ${f.retentionMidDaysMax}d`)
   }
   if (f.retentionWeeklyEnabled) {
     parts.push(`W ${f.retentionWeeklyWeeks}w`)
   }
-  if (f.retentionMonthlyEnabled) {
-    parts.push(`M ${f.retentionMonthlyMonths}mo`)
+  if (f.retentionLongMonthly) {
+    parts.push(`M ${f.retentionLongMonths}mo`)
   }
   if (f.retentionAnnualEnabled) {
     parts.push(`Y ${f.retentionAnnualYears}y`)
@@ -578,11 +576,11 @@ export function validateRetentionForm(f: BackupPolicyForm, locale: MessageLocale
   if (midRetentionError) return midRetentionError
   const longVsShortRetentionError = validateLongVsShortRetention(f, locale)
   if (longVsShortRetentionError) return longVsShortRetentionError
-  const checks: Array<[boolean, number, string]> = [
-    [f.retentionHourlyEnabled, f.retentionHourlyHours, 'hourly'],
-    [f.retentionDailyEnabled, f.retentionDailyDays, 'daily'],
+  const checks: Array<[boolean, number | undefined, string]> = [
+    [f.retentionShortHourly, f.retentionShortDaysMax, 'hourly'],
+    [f.retentionMidDaily, f.retentionMidDaysMax, 'daily'],
     [f.retentionWeeklyEnabled, f.retentionWeeklyWeeks, 'weekly'],
-    [f.retentionMonthlyEnabled, f.retentionMonthlyMonths, 'monthly'],
+    [f.retentionLongMonthly, f.retentionLongMonths, 'monthly'],
     [f.retentionAnnualEnabled, f.retentionAnnualYears, 'annual'],
   ]
   for (const [enabled, value, label] of checks) {
@@ -601,9 +599,8 @@ export function validateRetentionForm(f: BackupPolicyForm, locale: MessageLocale
 export function validateMidRetention(f: BackupPolicyForm, _locale: MessageLocale = 'en'): string {
   void _locale
   if (!f.sectionRetentionEnabled) return ''
-  if (typeof f.retentionMidDaysMax !== 'number' || typeof f.retentionShortDaysMax !== 'number') {
-    return ''
-  }
+  if (!f.retentionMidDaily) return ''
+  if (typeof f.retentionMidDaysMax !== 'number' || typeof f.retentionShortDaysMax !== 'number') return ''
   if (f.retentionMidDaysMax <= f.retentionShortDaysMax) {
     return `Mid-term upper limit must exceed short-term upper limit (current short-term: ${f.retentionShortDaysMax} days).`
   }
