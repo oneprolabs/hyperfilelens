@@ -167,7 +167,7 @@ class VerifyAccessApiTests(TestCase):
         self.assertEqual(kwargs["endpoint"], "s3.amazonaws.com")
 
     @mock.patch("apps.storage.repositories.views.verify_s3_bucket_access")
-    def test_verify_access_failure_returns_sanitized_detail(self, verify_s3_bucket_access):
+    def test_verify_access_failure_returns_stable_safe_error(self, verify_s3_bucket_access):
         verify_s3_bucket_access.side_effect = RepositoryInitializationError(
             "Unable to access bucket hfl-primary: 403"
         )
@@ -179,11 +179,13 @@ class VerifyAccessApiTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         problem = response.data["data"]
-        self.assertEqual(problem["code"], "VALIDATION.FAILED")
-        self.assertIn(
-            "Unable to access bucket",
-            str(problem["meta"].get("diagnostic", "")),
+        self.assertEqual(problem["code"], "STORAGE.S3_VALIDATION_FAILED")
+        self.assertEqual(
+            problem["title"],
+            "Object storage validation failed. Check the connection settings and IAM permissions, then try again.",
         )
+        self.assertNotIn("diagnostic", problem["meta"])
+        self.assertNotIn("hfl-primary", str(response.data))
 
     @mock.patch("apps.storage.repositories.views.verify_s3_bucket_access")
     def test_verify_access_merges_draft_overrides(self, verify_s3_bucket_access):

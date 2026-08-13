@@ -2,8 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElDialog, ElMessage } from 'element-plus'
-import { ArrowLeft, CircleAlert, CircleCheck, Loader2, Lock, ShieldCheck, Wrench } from 'lucide-vue-next'
+import { ElMessage } from 'element-plus'
+import { ArrowLeft, CircleAlert, Lock, ShieldCheck, Wrench } from 'lucide-vue-next'
 import {
   getStorageRepository,
   updateStorageRepository,
@@ -75,96 +75,6 @@ const originUseTls = ref(true)
 type VerifyStatus = 'idle' | 'verifying' | 'success' | 'failed'
 const verifyStatus = ref<VerifyStatus>('idle')
 const verifyDetail = ref('')
-const verifyBucket = ref('')
-/**
- * Sanitized backend message (e.g. "Validation failed"). Safe to display as
- * the "original error" in the dialog.
- */
-const verifyErrorMessage = ref('')
-/**
- * Underlying backend reason (raw S3 client error, network message, ...).
- * Displayed in a constrained error block and also used by summarizeVerifyError
- * to derive a human-readable hint.
- */
-const verifyErrorDetail = ref('')
-const verifyErrorHuman = ref('')
-const showVerifyDialog = ref(false)
-const verifyDialogClosable = ref(true)
-
-const verifyOriginalErrorTitle = computed(() => (
-  verifyErrorDetail.value
-    ? t('repositoriesPage.editS3Repo.verifyOriginalErrorWithDetail')
-    : t('repositoriesPage.editS3Repo.verifyOriginalError')
-))
-
-function closeVerifyDialog() {
-  if (!verifyDialogClosable.value) return
-  showVerifyDialog.value = false
-}
-
-function summarizeVerifyError(raw: string): string {
-  // Keyword matching against the underlying backend reason (data.detail).
-  // This text is intentionally not surfaced to end users.
-  const text = (raw || '').toLowerCase()
-  if (!text) return ''
-  if (text.includes('invalidaccesskeyid') || text.includes('invalid access key') || text.includes('access key')) {
-    return t('repositoriesPage.editS3Repo.verifyHumanInvalidKey')
-  }
-  if (text.includes('signaturedoesnotmatch') || text.includes('signature')) {
-    return t('repositoriesPage.editS3Repo.verifyHumanSignature')
-  }
-  if (text.includes('nosuchbucket') || text.includes('bucket')) {
-    return t('repositoriesPage.editS3Repo.verifyHumanBucket')
-  }
-  if (text.includes('timeout') || text.includes('timed out')) {
-    return t('repositoriesPage.editS3Repo.verifyHumanTimeout')
-  }
-  if (text.includes('host') || text.includes('endpoint') || text.includes('connect') || text.includes('enotfound') || text.includes('econnrefused')) {
-    return t('repositoriesPage.editS3Repo.verifyHumanEndpoint')
-  }
-  if (text.includes('tls') || text.includes('ssl') || text.includes('certificate')) {
-    return t('repositoriesPage.editS3Repo.verifyHumanTls')
-  }
-  return t('repositoriesPage.editS3Repo.verifyHumanGeneric')
-}
-
-function stringifyErrorDetail(detail: unknown): string {
-  if (detail == null) return ''
-  if (typeof detail === 'string') return detail.trim()
-  if (Array.isArray(detail)) {
-    return detail
-      .map((part) => stringifyErrorDetail(part))
-      .filter(Boolean)
-      .join('\n')
-  }
-  if (typeof detail === 'object') {
-    const obj = detail as Record<string, unknown>
-    for (const key of ['detail', 'message', 'error']) {
-      const text = stringifyErrorDetail(obj[key])
-      if (text) return text
-    }
-  }
-  return ''
-}
-
-function extractBackendError(err: unknown, fallback = t('repositoriesPage.editS3Repo.verifyFailed')) {
-  const apiErr = err as { message?: unknown; detail?: unknown } | null
-  const message = typeof apiErr?.message === 'string' && apiErr.message.trim()
-    ? apiErr.message.trim()
-    : apiErrorMessage(err, fallback)
-  let dataDetail = ''
-  if (apiErr?.detail && typeof apiErr.detail === 'object') {
-    const wrapped = apiErr.detail as Record<string, unknown>
-    const data = wrapped.data
-    if (data && typeof data === 'object') {
-      dataDetail = stringifyErrorDetail((data as Record<string, unknown>).detail)
-    }
-    if (!dataDetail) {
-      dataDetail = stringifyErrorDetail(wrapped.detail)
-    }
-  }
-  return { message, dataDetail }
-}
 
 const authChanged = computed(() => {
   if (accessKeyRewriting.value || secretRewriting.value) return true
@@ -240,7 +150,6 @@ function hydrate(data: StorageRepository) {
   originUseTls.value = useTls.value
   verifyStatus.value = 'idle'
   verifyDetail.value = ''
-  verifyBucket.value = bucket.value
   savingPhase.value = null
 }
 
@@ -318,28 +227,17 @@ function buildVerifyOverrides(): {
 }
 
 async function runVerify(): Promise<boolean> {
-  // Pre-save credential probe. The onSave flow keeps the dialog hidden during
-  // this step — we only fill the failure fields so a later onSave catch can
-  // surface the dialog once. The dialog is only opened from onSave's failure
-  // branch to avoid a second flash of the same dialog after verification.
-  verifyErrorMessage.value = ''
-  verifyErrorDetail.value = ''
-  verifyErrorHuman.value = ''
+  // Keep the draft in place and surface a stable failure beside the fields.
+  verifyDetail.value = ''
   try {
     const result = await verifyStorageRepositoryAccess(repositoryId.value, buildVerifyOverrides())
     if (result.ok) {
-      verifyBucket.value = result.bucket || bucket.value
       return true
     }
-    verifyErrorMessage.value = result.message || t('repositoriesPage.editS3Repo.verifyFailed')
-    verifyErrorDetail.value = result.dataDetail || ''
-    verifyErrorHuman.value = summarizeVerifyError(verifyErrorDetail.value)
+    verifyDetail.value = result.message || t('repositoriesPage.editS3Repo.verifyFailed')
     return false
   } catch (err) {
-    const { message, dataDetail } = extractBackendError(err)
-    verifyErrorMessage.value = message
-    verifyErrorDetail.value = dataDetail
-    verifyErrorHuman.value = summarizeVerifyError(verifyErrorDetail.value)
+    verifyDetail.value = apiErrorMessage(err, t('repositoriesPage.editS3Repo.verifyFailed'))
     return false
   }
 }
@@ -360,12 +258,7 @@ async function onSave() {
     savingPhase.value = 'verifying'
     const ok = await runVerify()
     if (!ok) {
-      // Surface the verify failure in the same dialog; the save call is
-      // skipped so we never get a duplicate dialog flash.
       verifyStatus.value = 'failed'
-      verifyDetail.value = verifyErrorMessage.value
-      showVerifyDialog.value = true
-      verifyDialogClosable.value = true
       busy.value = false
       savingPhase.value = null
       return
@@ -595,6 +488,15 @@ watch(repositoryId, (id) => {
                       </span>
                     </div>
                   </div>
+                </div>
+
+                <div
+                  v-if="verifyStatus === 'failed' && verifyDetail"
+                  class="edit-s3-auth-error"
+                  role="alert"
+                >
+                  <CircleAlert :size="18" />
+                  <span>{{ verifyDetail }}</span>
                 </div>
               </section>
             </div>
@@ -916,97 +818,6 @@ watch(repositoryId, (id) => {
     </div>
   </div>
 
-  <ElDialog
-    v-model="showVerifyDialog"
-    :title="t('repositoriesPage.editS3Repo.verifyDialogTitle')"
-    :width="520"
-    :close-on-click-modal="verifyDialogClosable"
-    :close-on-press-escape="verifyDialogClosable"
-    :show-close="verifyDialogClosable"
-    align-center
-    class="edit-s3-verify-dialog"
-    @close="closeVerifyDialog"
-  >
-    <div
-      v-if="verifyStatus === 'verifying'"
-      class="edit-s3-verify-dialog__body"
-    >
-      <Loader2
-        class="edit-s3-verify-dialog__icon edit-s3-verify-dialog__icon--spinning"
-        :size="22"
-      />
-      <div class="edit-s3-verify-dialog__text">
-        {{ t('repositoriesPage.editS3Repo.verifyingAuth') }}
-      </div>
-    </div>
-    <div
-      v-else-if="verifyStatus === 'success'"
-      class="edit-s3-verify-dialog__body"
-    >
-      <CircleCheck
-        class="edit-s3-verify-dialog__icon edit-s3-verify-dialog__icon--success"
-        :size="22"
-      />
-      <div class="edit-s3-verify-dialog__text">
-        {{ t('repositoriesPage.editS3Repo.verifySuccess', { bucket: verifyBucket }) }}
-      </div>
-    </div>
-    <div
-      v-else
-      class="edit-s3-verify-dialog__body edit-s3-verify-dialog__body--column"
-    >
-      <div class="edit-s3-verify-dialog__row">
-        <CircleAlert
-          class="edit-s3-verify-dialog__icon edit-s3-verify-dialog__icon--failed"
-          :size="22"
-        />
-        <div class="edit-s3-verify-dialog__text">
-          {{ t('repositoriesPage.editS3Repo.verifyFailedTitle') }}
-        </div>
-      </div>
-      <div class="edit-s3-verify-dialog__section">
-        <div class="edit-s3-verify-dialog__section-label">
-          {{ t('repositoriesPage.editS3Repo.verifyHumanError') }}
-        </div>
-        <div class="edit-s3-verify-dialog__section-text">
-          {{ verifyErrorHuman || t('repositoriesPage.editS3Repo.verifyHumanGeneric') }}
-        </div>
-      </div>
-      <div class="edit-s3-verify-dialog__section">
-        <div class="edit-s3-verify-dialog__section-label">
-          {{ verifyOriginalErrorTitle }}
-        </div>
-        <div
-          v-if="verifyErrorMessage"
-          class="edit-s3-verify-dialog__error-summary"
-        >
-          <span class="edit-s3-verify-dialog__error-summary-label">
-            {{ t('repositoriesPage.editS3Repo.verifyErrorMessageLabel') }}
-          </span>
-          <span class="edit-s3-verify-dialog__error-summary-text">{{ verifyErrorMessage }}</span>
-        </div>
-        <pre
-          v-if="verifyErrorDetail"
-          class="edit-s3-verify-dialog__raw"
-        >{{ verifyErrorDetail }}</pre>
-        <pre
-          v-else-if="!verifyErrorMessage"
-          class="edit-s3-verify-dialog__raw"
-        >{{ t('repositoriesPage.editS3Repo.verifyUnknownRawError') }}</pre>
-      </div>
-    </div>
-    <template
-      v-if="verifyStatus === 'failed'"
-      #footer
-    >
-      <ElButton
-        type="primary"
-        @click="closeVerifyDialog"
-      >
-        {{ t('repositoriesPage.editS3Repo.verifyDialogClose') }}
-      </ElButton>
-    </template>
-  </ElDialog>
 </template>
 
 <style src="../../styles/fullscreen-form-shell.css"></style>
@@ -1015,6 +826,21 @@ watch(repositoryId, (id) => {
 /* Override add-s3 layout paddings to suit edit page; reuse add-s3-platform-btn styling */
 .edit-s3-page .fullscreen-form-main { padding-bottom: 0; }
 .edit-s3-loading { padding: 32px; color: var(--el-text-color-secondary); }
+
+.edit-s3-auth-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  color: var(--el-color-danger);
+  background: var(--color-danger-light);
+  border: 1px solid color-mix(in srgb, var(--el-color-danger) 35%, transparent);
+  border-radius: 8px;
+  line-height: 1.5;
+}
+
+.edit-s3-auth-error svg { flex: 0 0 auto; margin-top: 2px; }
 
 .edit-s3-locked-label {
   display: inline-flex;

@@ -94,7 +94,7 @@ def list_s3_buckets(
     )
     try:
         response = client.list_buckets()
-    except (BotoCoreError, ClientError) as exc:
+    except (BotoCoreError, ClientError, TypeError) as exc:
         raise S3ClientError(_error_message("Unable to list S3 buckets", exc)) from exc
     return [
         str(bucket.get("Name") or "")

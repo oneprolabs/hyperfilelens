@@ -80,6 +80,26 @@ class S3ClientUrlStyleTests(TestCase):
         config = boto_client.call_args.kwargs["config"]
         self.assertEqual(config.s3["addressing_style"], "virtual")
 
+    @mock.patch("apps.storage.services.internal.s3_client.boto3.client")
+    def test_list_s3_buckets_wraps_sdk_redirect_type_error(self, boto_client):
+        client = mock.Mock()
+        client.list_buckets.side_effect = TypeError(
+            "expected string or bytes-like object, got 'NoneType'"
+        )
+        boto_client.return_value = client
+
+        with self.assertRaises(S3ClientError) as ctx:
+            list_s3_buckets(
+                endpoint="192.168.8.81:10443",
+                region="",
+                access_key_id="002",
+                secret_access_key="not-a-real-secret",
+                s3_url_style="auto",
+                use_tls=False,
+            )
+
+        self.assertIsInstance(ctx.exception.__cause__, TypeError)
+
 
 class HuaweiBucketLocationAddressingTests(TestCase):
     def test_get_bucket_location_uses_virtual_hosted_addressing(self):

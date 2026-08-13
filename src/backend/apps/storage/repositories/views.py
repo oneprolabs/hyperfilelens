@@ -65,6 +65,7 @@ from apps.storage.services.internal.repository_operations import (
     request_repository_operation_cancel,
 )
 from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
+from apps.storage.services.internal.s3_validation_errors import s3_validation_app_error
 from apps.task.api.serializers.task import TaskSerializer
 from apps.task.models import Task
 
@@ -528,7 +529,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                 use_tls=use_tls,
             )
         except RepositoryInitializationError as exc:
-            raise ValidationError({"detail": str(exc), "buckets": []}) from exc
+            raise s3_validation_app_error(exc, operation="list_buckets") from exc
         limited_buckets = buckets[:bucket_limit]
         return Response(
             {"buckets": limited_buckets, "count": len(limited_buckets), "total_count": len(buckets)},
@@ -590,7 +591,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                 use_tls=use_tls,
             )
         except RepositoryInitializationError as exc:
-            raise ValidationError({"ok": False, "detail": str(exc)}) from exc
+            raise s3_validation_app_error(exc, operation="bucket_access") from exc
         return Response({"ok": True, **result}, status=status.HTTP_200_OK)
     @action(detail=True, methods=["post"])
     def check(self, request, pk=None):

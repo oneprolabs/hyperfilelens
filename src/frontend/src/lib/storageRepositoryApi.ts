@@ -425,15 +425,7 @@ export type StorageRepositoryVerifyAccessResult = {
   ok: boolean
   bucket?: string
   probe_key?: string
-  /**
-   * Short backend message (e.g. "Validation failed"). Safe to surface to users.
-   * Backend wraps errors into {code, error_code, message, data:{detail}} where
-   * `message` is a generic, sanitized short description and `data.detail` is
-   * the underlying reason (e.g. raw S3 client error). The edit UI shows both
-   * fields in a structured failure dialog.
-   */
   message?: string
-  dataDetail?: string
 }
 
 /**
@@ -452,7 +444,7 @@ export type StorageRepositoryVerifyAccessOverrides = {
 /**
  * Verify that the saved S3 credentials can read/write/delete a probe object in
  * the bucket. Returns {ok: true, bucket, probe_key} on success, or
- * {ok: false, detail} on failure (HTTP 400 with detail).
+ * a stable, user-facing message on failure.
  */
 export async function verifyStorageRepositoryAccess(
   id: number,
@@ -471,47 +463,15 @@ export async function verifyStorageRepositoryAccess(
       },
     )
     if (data?.ok === false) {
-      return { ok: false, message: 'Verify access failed', dataDetail: stringifyDetail(data?.detail) }
+      return { ok: false, message: 'Object storage validation failed. Check the connection settings and IAM permissions, then try again.' }
     }
     return { ok: true, bucket: data?.bucket, probe_key: data?.probe_key }
   } catch (err) {
-    const { message, dataDetail } = splitBackendError(err)
     return {
       ok: false,
-      message: message || apiErrorMessage(err, 'Request failed'),
-      dataDetail,
+      message: apiErrorMessage(err, 'Object storage validation failed. Check the connection settings and IAM permissions, then try again.'),
     }
   }
-}
-
-/**
- * Backend errors are wrapped into {code, error_code, message, data: {detail}}.
- * - `message` is the sanitized, user-facing short reason ("Validation failed", etc.).
- *   It is safe to display in the UI.
- * - `dataDetail` is the underlying reason (raw S3 error, network message, etc.).
- *   The edit UI displays it in a constrained detail block and also uses it for
- *   keyword-based hints.
- */
-function splitBackendError(err: unknown): { message?: string; dataDetail?: string } {
-  if (!err || typeof err !== 'object') return {}
-  const o = err as { message?: unknown; detail?: unknown }
-  let message: string | undefined
-  if (typeof o.message === 'string') {
-    const m = o.message.trim()
-    if (m) message = m
-  }
-  let dataDetail: string | undefined
-  if (o.detail && typeof o.detail === 'object') {
-    const wrapped = o.detail as Record<string, unknown>
-    const inner = wrapped.data
-    if (inner && typeof inner === 'object') {
-      dataDetail = stringifyDetail((inner as Record<string, unknown>).detail)
-    }
-    if (!dataDetail) {
-      dataDetail = stringifyDetail(wrapped.detail)
-    }
-  }
-  return { message, dataDetail }
 }
 
 function stringifyDetail(detail: unknown): string | undefined {

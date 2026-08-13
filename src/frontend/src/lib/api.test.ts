@@ -107,3 +107,25 @@ describe('repository conflict errors', () => {
     expect(message).toBe(copy)
   })
 })
+
+describe('object storage validation errors', () => {
+  it.each([
+    ['STORAGE.S3_CREDENTIALS_INVALID', 'errors.codes.storageS3CredentialsInvalid'],
+    ['STORAGE.S3_PERMISSION_DENIED', 'errors.codes.storageS3PermissionDenied'],
+    ['STORAGE.S3_BUCKET_ACCESS_DENIED', 'errors.codes.storageS3BucketAccessDenied'],
+    ['STORAGE.S3_BUCKET_NOT_FOUND', 'errors.codes.storageS3BucketNotFound'],
+    ['STORAGE.S3_CONFIGURATION_INVALID', 'errors.codes.storageS3ConfigurationInvalid'],
+    ['STORAGE.S3_NETWORK_UNAVAILABLE', 'errors.codes.storageS3NetworkUnavailable'],
+    ['STORAGE.S3_TIMEOUT', 'errors.codes.storageS3Timeout'],
+    ['STORAGE.S3_TLS_FAILED', 'errors.codes.storageS3TlsFailed'],
+    ['STORAGE.S3_VALIDATION_FAILED', 'errors.codes.storageS3ValidationFailed'],
+  ])('maps %s without exposing the backend diagnostic', (errorCode, expectedKey) => {
+    const message = apiErrorMessageI18n(
+      { status: 400, message: 'secret upstream diagnostic', errorCode },
+      (key) => key,
+    )
+
+    expect(message).toBe(expectedKey)
+    expect(message).not.toContain('secret upstream diagnostic')
+  })
+})

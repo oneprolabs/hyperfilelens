@@ -56,6 +56,9 @@ from apps.storage.services.internal.repository_usage import (
     enqueue_repository_usage_refresh,
     sync_repository_usage,
 )
+from apps.storage.services.internal.s3_validation_errors import (
+    classify_s3_validation_error,
+)
 from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import complete_task, create_task, start_task
 
@@ -366,6 +369,10 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
     except Exception as exc:
         message = _safe_error_message(repository, _exception_message(exc))
         error_code = _create_error_code(exc)
+        if isinstance(exc, RepositoryInitializationError):
+            failure = classify_s3_validation_error(exc, operation="bucket_access")
+            message = failure.message
+            error_code = failure.code
         _fail_create_keep_row(
             repository_task,
             error_code=error_code,
@@ -810,7 +817,7 @@ def _create_error_code(exc: Exception) -> str:
     if isinstance(exc, RepositoryAlreadyExistsError):
         return REPOSITORY_ALREADY_EXISTS_CODE
     if isinstance(exc, RepositoryInitializationError):
-        return "REPOSITORY_S3_CREATE_FAILED"
+        return classify_s3_validation_error(exc, operation="bucket_access").code
     if isinstance(exc, NASRepositoryError):
         return exc.error_code
     if isinstance(exc, ProxyFSRepositoryError):
