@@ -10703,10 +10703,12 @@ function preserveShallowestPathOrder(paths: string[]) {
 .create-recovery-dir-plan-row__index {
   display: inline-flex;
   flex: 0 0 auto;
+  align-self: start;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 22px;
+  margin-top: 6px;
   border-radius: 6px;
   background: rgb(226 232 240);
   color: rgb(71 85 105);
@@ -10716,6 +10718,8 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 .create-recovery-dir-plan-cell--actions {
   display: flex;
+  min-height: 34px;
+  align-items: center;
   justify-content: center;
 }
 
