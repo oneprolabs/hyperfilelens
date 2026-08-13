@@ -305,10 +305,17 @@ def _sync_restore_item(
     else:
         item.status = RestoreRecordItem.Status.FAILED
         item.result_payload = node_task.result or {}
-        item.error_code = "RESTORE_AGENT_FAILED"
-        item.error_message = (
-            node_task.last_error or node_task.status or "Restore agent task failed."
+        error_message = str(
+            node_task.last_error
+            or node_task.status
+            or "Restore agent task failed."
         )[:2000]
+        item.error_code = (
+            "AGENT_RESTARTED"
+            if "agent restarted before task completed" in error_message.lower()
+            else "RESTORE_AGENT_FAILED"
+        )
+        item.error_message = error_message
     item.save(
         update_fields=[
             "status",

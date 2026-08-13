@@ -2436,6 +2436,31 @@ class RestoreApiTests(TestCase):
         self.assertEqual(task.error_code, "RESTORE_FAILED")
         self.assertEqual(task.result_payload["failed_item_count"], 1)
 
+    def test_restore_agent_restart_reaches_clear_terminal_state(self):
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record",
+            correlation_id=str(record.task_uuid),
+        )
+
+        node_task.status = NodeTask.Status.FAILED
+        node_task.last_error = "agent restarted before task completed"
+        node_task.save(update_fields=["status", "last_error", "updated_at"])
+
+        task = Task.objects.get(id=record.task_id)
+        item = record.items.get()
+        self.assertEqual(item.status, item.Status.FAILED)
+        self.assertEqual(item.error_code, "AGENT_RESTARTED")
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertIn("agent restarted", task.error_message.lower())
+
     def test_run_restore_plan_rejects_missing_kopia_snapshot_id(self):
         self.snapshot_dir.kopia_snapshot_id = ""
         self.snapshot_dir.save(update_fields=["kopia_snapshot_id"])

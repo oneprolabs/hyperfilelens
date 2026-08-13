@@ -10,6 +10,8 @@ delivery-safety fields such as ``expire_seconds``.
 import json
 import logging
 
+from common.scheduling.periodic_wakeup import PERIODIC_WAKEUP_COALESCE_HEADER
+
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,7 @@ class TaskRegistry:
         queue: str | None = None,
         enabled: bool = True,
         expire_seconds: int | None = None,
+        coalesce_wakeup: bool = True,
     ) -> None:
         if expire_seconds is not None and int(expire_seconds) < 1:
             raise ValueError("expire_seconds must be positive when configured")
@@ -92,6 +95,7 @@ class TaskRegistry:
             "expire_seconds": (
                 int(expire_seconds) if expire_seconds is not None else None
             ),
+            "coalesce_wakeup": bool(coalesce_wakeup),
         }
 
     def _apply_one(self, name: str, entry: dict) -> bool:
@@ -120,6 +124,9 @@ class TaskRegistry:
             "kwargs": json.dumps(entry["kwargs"]),
             "queue": entry["queue"],
             "enabled": entry["enabled"],
+            "headers": json.dumps(
+                {PERIODIC_WAKEUP_COALESCE_HEADER: entry["coalesce_wakeup"]}
+            ),
         }
         if entry["expire_seconds"] is not None:
             defaults["expire_seconds"] = entry["expire_seconds"]
@@ -134,16 +141,34 @@ class TaskRegistry:
             name=name, defaults=defaults
         )
         if not created:
+            headers = json.loads(obj.headers or "{}")
+            expected_coalescing = entry["coalesce_wakeup"]
+            headers_changed = (
+                headers.get(PERIODIC_WAKEUP_COALESCE_HEADER)
+                is not expected_coalescing
+            )
+            if headers_changed:
+                headers[PERIODIC_WAKEUP_COALESCE_HEADER] = expected_coalescing
+                obj.headers = json.dumps(headers)
             expire_seconds = entry["expire_seconds"]
-            if expire_seconds is None or obj.expire_seconds == expire_seconds:
+            expiry_changed = (
+                expire_seconds is not None
+                and obj.expire_seconds != expire_seconds
+            )
+            if not headers_changed and not expiry_changed:
                 logger.debug("Periodic task exists, skipping update: %s", name)
                 return False
-            obj.expire_seconds = expire_seconds
-            obj.save(update_fields=["expire_seconds"])
+            update_fields = ["headers"] if headers_changed else []
+            if expiry_changed:
+                obj.expire_seconds = expire_seconds
+                update_fields.append("expire_seconds")
+            obj.save(update_fields=update_fields)
             logger.info(
-                "Updated periodic task expiry: %s expire_seconds=%s",
+                "Updated periodic task delivery contract: %s "
+                "expire_seconds=%s coalesce_wakeup=%s",
                 name,
                 expire_seconds,
+                expected_coalescing,
             )
 
         PeriodicTasks.update_changed()

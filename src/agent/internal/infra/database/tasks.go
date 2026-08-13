@@ -303,13 +303,10 @@ FROM tasks WHERE status=?
 				continue
 			}
 		}
-		// A WebSocket reconnect can reattach an in-process backup, but after an
-		// actual Agent process restart the Kopia child cannot be proven alive.
-		// Report that interruption so the control plane can retry within the same
-		// logical snapshot instead of advertising a zombie running task.
-		if strings.EqualFold(strings.TrimSpace(repaired[i].Kind), "restore.run") {
-			continue
-		}
+		// A WebSocket reconnect can reattach in-process work, but after an actual
+		// Agent process restart the Kopia child cannot be proven alive. Report the
+		// interrupted execution attempt instead of advertising zombie backup or
+		// restore work. The control plane owns any safe product-level retry.
 		if install.InterruptedLifecycleStillRunning(repaired[i].Kind, opts.DataDir) {
 			continue
 		}
