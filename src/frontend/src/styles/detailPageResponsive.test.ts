@@ -13,8 +13,12 @@ describe('responsive detail rows', () => {
     expect(styles).toContain('.hfl-empty-mark {')
     expect(styles).toContain('align-self: flex-start')
     expect(capacityCell).toContain('<span v-else class="hfl-empty-mark">{{ emptyLabel }}</span>')
-    expect(repositoryPage).toContain("'hfl-detail-row__value--stacked':")
-    expect(repositoryPage).toContain('hasRepositoryUsageData(detailRow),')
+    const stackedRepositoryUsageRows = repositoryPage.match(
+      /class="hfl-detail-row__value hfl-detail-row__value--stacked"/g,
+    )
+    expect(stackedRepositoryUsageRows?.length).toBeGreaterThanOrEqual(3)
+    expect(repositoryPage).toContain('<RepositoryUsageCell')
+    expect(repositoryPage).toContain('variant="detail"')
   })
 
   it('uses the same label width for regular and full rows in single-column layouts', () => {
