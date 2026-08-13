@@ -93,7 +93,7 @@ jobs:
           source="/root/hfl-release/${tag}"
           incoming="/root/hfl-release/.incoming/promotion-${tag#v}"
           cleanup() {
-            ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes \
               -o UserKnownHostsFile="$hop/prod-known-hosts" -p "$prod_port" \
               "$prod_user@$prod_host" "rm -rf -- '$incoming'" >/dev/null 2>&1 || true
             rm -rf -- "$hop"
@@ -104,7 +104,9 @@ jobs:
           flock -s 9
           cd "$source"
           sha256sum -c SHA256SUMS
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+          # This shell itself arrives on stdin. Commands that do not explicitly
+          # receive a script must not consume the remaining promotion program.
+          ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$hop/prod-known-hosts" -p "$prod_port" \
             "$prod_user@$prod_host" "rm -rf -- '$incoming' && install -d -m 0700 '$incoming'"
           scp -o BatchMode=yes -o StrictHostKeyChecking=yes \
@@ -116,6 +118,12 @@ jobs:
             "$prod_user@$prod_host" \
             "bash -s -- '$tag' '$incoming' /root/hfl-release 0" \
             < "$hop/store-enterprise-release.sh"
+          # Do not let cleanup or the deploy job run until the immutable PROD
+          # package has independently passed its retained checksum contract.
+          ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$hop/prod-known-hosts" -p "$prod_port" \
+            "$prod_user@$prod_host" \
+            "cd '/root/hfl-release/$tag' && sha256sum -c SHA256SUMS && test -f 'hyperfilelens-${version}-ee.tar.gz'"
           REMOTE
 
       - name: Remove promotion staging from TEST
