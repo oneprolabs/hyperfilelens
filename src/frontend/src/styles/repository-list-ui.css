@@ -26,6 +26,17 @@
   max-width: 100%;
 }
 
+.repo-table-header-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.repo-table-header-with-help svg {
+  color: rgb(100 116 139);
+  cursor: help;
+}
+
 .hfl-list-table .source-os-cell--repo-platform {
   gap: 5px;
 }
@@ -260,6 +271,244 @@
 
 .repo-usage-cell--unlimited .repo-usage-cell__capacity {
   color: rgb(71 85 105);
+}
+
+.repository-estimated-usage {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.repository-estimated-usage__numbers {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.repository-estimated-usage__used {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgb(15 23 42);
+}
+
+.repository-estimated-usage__limit,
+.repository-estimated-usage__supporting {
+  font-size: 11px;
+  color: rgb(100 116 139);
+}
+
+.repository-estimated-usage__supporting {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repository-estimated-usage__state {
+  font-size: 12px;
+  color: rgb(100 116 139);
+}
+
+.repository-estimated-usage__warning {
+  flex: 0 0 auto;
+  color: rgb(217 119 6);
+  cursor: help;
+}
+
+.el-popper.repository-info-popper {
+  max-width: min(360px, calc(100vw - 32px));
+}
+
+.el-popper.repository-warning-popper {
+  width: min(440px, calc(100vw - 32px)) !important;
+  max-width: min(440px, calc(100vw - 32px));
+}
+
+.repository-info-popover {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  color: rgb(71 85 105);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.repository-info-popover__head {
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgb(226 232 240);
+}
+
+.repository-info-popover__title {
+  overflow-wrap: anywhere;
+  color: rgb(15 23 42);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 20px;
+}
+
+.repository-info-popover__rows {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.repository-info-popover__row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.repository-info-popover__row dt {
+  color: rgb(100 116 139);
+}
+
+.repository-info-popover__row dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: rgb(30 41 59);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.repository-info-popover__note {
+  padding-top: 10px;
+  border-top: 1px solid rgb(226 232 240);
+  color: rgb(30 41 59);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.repository-capacity-popover__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -12px -12px 0;
+  padding: 11px 12px;
+  border-bottom-color: var(--color-warning-border);
+  border-radius: 4px 4px 0 0;
+  background: var(--color-warning-light);
+}
+
+.repository-capacity-popover__icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-warning-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--color-warning);
+}
+
+.repository-capacity-popover__metrics {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 6px;
+  background: rgb(248 250 252);
+}
+
+.repository-capacity-popover__metrics .repository-info-popover__row {
+  grid-template-columns: 190px minmax(0, 1fr);
+  padding: 8px 10px;
+}
+
+.repository-capacity-popover__metrics .repository-info-popover__row + .repository-info-popover__row {
+  border-top: 1px solid rgb(226 232 240);
+}
+
+.repository-capacity-popover__metrics dt {
+  color: rgb(71 85 105);
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.repository-capacity-popover__metrics dd {
+  color: rgb(120 75 12);
+  font-weight: 650;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.repository-capacity-popover__risk {
+  display: block;
+  padding: 10px 0 0;
+  border: 0;
+  border-top: 1px solid rgb(226 232 240);
+  border-radius: 0;
+  background: transparent;
+  color: rgb(120 75 12);
+}
+
+.repository-capacity-popover__risk > span {
+  display: grid;
+  gap: 3px;
+}
+
+.repository-capacity-popover__formula {
+  white-space: nowrap;
+}
+
+.repository-capacity-alert__content {
+  display: grid;
+  gap: 10px;
+  color: rgb(120 53 15);
+  line-height: 1.5;
+}
+
+.repository-capacity-alert__metrics {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px 18px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(217, 119, 6, 0.28);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.repository-capacity-alert__metrics > div {
+  display: grid;
+  grid-template-columns: minmax(135px, 1fr) auto;
+  gap: 10px;
+}
+
+.repository-capacity-alert__metrics dt {
+  color: rgb(146 64 14);
+}
+
+.repository-capacity-alert__metrics dd {
+  margin: 0;
+  font-weight: 650;
+  color: rgb(120 53 15);
+}
+
+.repository-capacity-alert__note {
+  color: rgb(146 64 14);
+}
+
+.repository-capacity-alert .el-alert__title {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 20px;
+}
+
+.repository-estimated-usage--detail {
+  width: 100%;
+  gap: 7px;
+}
+
+.repository-estimated-usage--detail .repository-estimated-usage__used {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .repo-usage-bar {

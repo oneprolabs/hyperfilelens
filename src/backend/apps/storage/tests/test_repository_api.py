@@ -575,6 +575,50 @@ class StorageRepositoryApiTests(TestCase):
         repository.refresh_from_db()
         self.assertEqual(repository.config["region"], "us-east-1")
 
+    @mock.patch("apps.storage.services.interface.enqueue_repository_usage_refresh")
+    def test_s3_quota_update_does_not_revalidate_saved_region_against_catalog(
+        self, enqueue_usage
+    ):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="legacy-managed-s3",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.HUAWEICLOUD,
+            s3_bucket="legacy-bucket",
+            config={
+                "region": "legacy-region-no-longer-in-catalog",
+                "endpoint": "obs.legacy.example.com",
+                "prefix": "hfl/repository",
+                "s3_url_style": "virtual_hosted",
+                "use_tls": True,
+                "quota_gb": 5,
+            },
+        )
+
+        response = self.client.patch(
+            f"/api/v1/storage/repositories/{repository.id}/",
+            {
+                "name": "legacy-managed-s3-renamed",
+                "config": {
+                    "quota_gb": 10,
+                    "quota_alert_enabled": True,
+                    "quota_alert_threshold": 80,
+                },
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        repository.refresh_from_db()
+        self.assertEqual(repository.name, "legacy-managed-s3-renamed")
+        self.assertEqual(repository.config["quota_gb"], 10)
+        self.assertEqual(repository.config["region"], "legacy-region-no-longer-in-catalog")
+        self.assertEqual(repository.config["endpoint"], "obs.legacy.example.com")
+        enqueue_usage.assert_called_once()
+
     def test_associated_sources_lists_direct_nas_agent_health(self):
         agent = Node.objects.create(
             organization=self.org,

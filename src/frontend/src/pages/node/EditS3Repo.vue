@@ -68,7 +68,6 @@ const accessKeyMasked = computed(() => (hasAccessKey.value ? credentialMask : '\
 const secretMasked = computed(() => (hasSecret.value ? credentialMask : '\u2014'))
 
 /* original values for change detection */
-const originRegion = ref('')
 const originS3UrlStyle = ref<S3UrlStyle>(defaultS3UrlStyle('custom'))
 const originUseTls = ref(true)
 
@@ -169,7 +168,6 @@ function extractBackendError(err: unknown, fallback = t('repositoriesPage.editS3
 
 const authChanged = computed(() => {
   if (accessKeyRewriting.value || secretRewriting.value) return true
-  if (region.value.trim() !== originRegion.value) return true
   if (s3UrlStyle.value !== originS3UrlStyle.value) return true
   if (useTls.value !== originUseTls.value) return true
   return false
@@ -238,7 +236,6 @@ function hydrate(data: StorageRepository) {
   secretRewriting.value = false
   accessKeyDraft.value = ''
   secretDraft.value = ''
-  originRegion.value = region.value
   originS3UrlStyle.value = s3UrlStyle.value
   originUseTls.value = useTls.value
   verifyStatus.value = 'idle'
@@ -266,12 +263,15 @@ function cancelRewriteSecret() {
 
 function buildPayload() {
   const config: Record<string, unknown> = {
-    region: region.value.trim() || undefined,
-    s3_url_style: s3UrlStyle.value,
-    use_tls: useTls.value,
     quota_gb: quotaGb.value || 0,
     quota_alert_enabled: quotaAlertEnabled.value,
     quota_alert_threshold: quotaAlertEnabled.value ? Number(quotaAlertThreshold.value || 0) : 0,
+  }
+  if (s3UrlStyle.value !== originS3UrlStyle.value) {
+    config.s3_url_style = s3UrlStyle.value
+  }
+  if (useTls.value !== originUseTls.value) {
+    config.use_tls = useTls.value
   }
   if (accessKeyRewriting.value && accessKeyDraft.value.trim()) {
     config.access_key_id = accessKeyDraft.value.trim()
@@ -379,14 +379,10 @@ async function onSave() {
     ElMessage.success({ message: t('repositoriesPage.editS3Repo.msgUpdated'), grouping: true })
     router.push({ path: '/node/repositories', query: { tab: 's3' } })
   } catch (err) {
-    const { message, dataDetail } = extractBackendError(err)
-    verifyErrorMessage.value = message
-    verifyErrorDetail.value = dataDetail
-    verifyErrorHuman.value = summarizeVerifyError(verifyErrorDetail.value)
-    verifyDetail.value = verifyErrorMessage.value
-    verifyStatus.value = 'failed'
-    showVerifyDialog.value = true
-    verifyDialogClosable.value = true
+    ElMessage.error({
+      message: apiErrorMessage(err, t('repositoriesPage.editS3Repo.saveFailed')),
+      grouping: true,
+    })
   } finally {
     busy.value = false
     savingPhase.value = null
@@ -467,15 +463,20 @@ watch(repositoryId, (id) => {
                     />
                   </div>
 
-                  <!-- Region (editable) -->
+                  <!-- Region (locked) -->
                   <div class="fullscreen-form-field">
-                    <label class="fullscreen-form-field__label">
+                    <label class="fullscreen-form-field__label edit-s3-locked-label">
                       {{ t('addS3Repo.fieldRegion') }}
+                      <span class="edit-s3-locked-badge edit-s3-locked-badge--inline">
+                        <Lock :size="11" />
+                        {{ t('repositoriesPage.editS3Repo.lockedBadge') }}
+                      </span>
                     </label>
                     <ElInput
-                      v-model="region"
-                      class="add-s3-element-field"
-                      :placeholder="t('addS3Repo.phRegion')"
+                      :model-value="region"
+                      class="add-s3-element-field edit-s3-locked-input"
+                      readonly
+                      disabled
                     />
                     <p class="fullscreen-form-field__hint">
                       {{ t('addS3Repo.hintRegion') }}

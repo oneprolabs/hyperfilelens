@@ -36,3 +36,21 @@ export function repositoryStorageParts(row: RepositoryCapacityLike): {
     total: Math.max(0, Number(row.storage_total_bytes || 0)),
   }
 }
+
+export function remainingLimitExceedsAvailableStorage(params: {
+  configuredLimitBytes: number
+  estimatedUsageBytes: number
+  storageAvailableBytes: number
+  usageProbeStatus?: string
+  capacityProbeStatus?: string
+  supportsBackingStorage?: boolean
+}): boolean {
+  if (params.supportsBackingStorage === false) return false
+  if (String(params.usageProbeStatus || 'pending').toLowerCase() !== 'success') return false
+  if (String(params.capacityProbeStatus || 'pending').toLowerCase() !== 'success') return false
+  const limit = Math.max(0, Number(params.configuredLimitBytes || 0))
+  const usage = Math.max(0, Number(params.estimatedUsageBytes || 0))
+  const available = Math.max(0, Number(params.storageAvailableBytes || 0))
+  const remaining = Math.max(0, limit - usage)
+  return limit > 0 && remaining > available
+}
