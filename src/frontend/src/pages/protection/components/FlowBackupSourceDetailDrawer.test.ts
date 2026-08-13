@@ -45,6 +45,15 @@ describe('FlowBackupSourceDetailDrawer task columns', () => {
 
     expect(275 + 205 + 115 + 165 + 105 + 160).toBeLessThanOrEqual(1040)
   })
+
+  it('keeps insight workspace restores out of the Protection task list', () => {
+    const loader = sourceBetween(
+      'async function loadTasksForSource()',
+      'function refreshSourceDetailData()',
+    )
+
+    expect(loader).toContain("exclude_insight_workspace_restores: 'true'")
+  })
 })
 
 describe('FlowBackupSourceDetailDrawer source status', () => {

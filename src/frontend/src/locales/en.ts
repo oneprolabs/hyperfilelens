@@ -2784,6 +2784,7 @@ export const en = {
       taskType: {
         backup: 'Backup',
         restore: 'Restore',
+        insight_workspace_restore: 'Insight Workspace Restore',
         snapshot_download: 'Download',
         snapshot_delete: 'Snapshot Remove',
         backup_config_reset: 'Backup Config Reset',

@@ -11,6 +11,7 @@ from apps.node.selectors.internal.node_task_query import active_node_tasks_for_n
 from apps.node.services.internal.task_offline_reconcile import (
     product_task_blocks_cleanup,
 )
+from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.models import Task, TaskResource
 
 _ACTIVE_TASK_STATUSES = frozenset({Task.Status.PENDING, Task.Status.RUNNING})
@@ -55,30 +56,30 @@ def _backup_tasks_for_agent(*, organization_id: int, node_id: int):
         ):
             yield task
 
-    yield from Task.objects.filter(
-        organization_id=organization_id,
-        task_type=Task.Type.BACKUP,
-        status__in=_ACTIVE_TASK_STATUSES,
-        resources__resource_type=TaskResource.Type.BACKUP_SOURCE,
-        resources__resource_subtype="agent",
-        resources__resource_id=node_id,
-    ).order_by("-created_at", "-id").distinct()
+    yield from (
+        Task.objects.filter(
+            organization_id=organization_id,
+            task_type=Task.Type.BACKUP,
+            status__in=_ACTIVE_TASK_STATUSES,
+            resources__resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resources__resource_subtype="agent",
+            resources__resource_id=node_id,
+        )
+        .order_by("-created_at", "-id")
+        .distinct()
+    )
 
 
-def _restore_tasks_for_agent(*, organization_id: int, node_id: int):
+def _restore_tasks_for_execution_node(*, organization_id: int, node_id: int):
     from apps.restore.models import RestoreRecord
 
     task_ids = RestoreRecord.objects.filter(
-        organization_id=organization_id,
-        target_type="agent",
-        target_ref_id=node_id,
+        target_execution_organization_id=organization_id,
+        target_execution_node_id=node_id,
     ).values_list("task_id", flat=True)
-    if not task_ids:
-        return
     yield from Task.objects.filter(
         pk__in=task_ids,
-        organization_id=organization_id,
-        task_type=Task.Type.RESTORE,
+        task_type__in=RESTORE_TASK_TYPES,
         status__in=_ACTIVE_TASK_STATUSES,
     ).order_by("-created_at", "-id")
 
@@ -97,13 +98,43 @@ def _backup_tasks_for_proxy(*, organization_id: int, node_id: int):
     )
     if not repo_ids:
         return
+    yield from (
+        Task.objects.filter(
+            organization_id=organization_id,
+            task_type=Task.Type.BACKUP,
+            status__in=_ACTIVE_TASK_STATUSES,
+            resources__resource_type=TaskResource.Type.REPOSITORY,
+            resources__resource_id__in=repo_ids,
+        )
+        .order_by("-created_at", "-id")
+        .distinct()
+    )
+
+
+def _restore_tasks_for_proxy_repository(*, organization_id: int, node_id: int):
+    """Return active restores reading through repositories bound to a Proxy."""
+    from apps.restore.models import RestoreRecordItem
+    from apps.storage.repositories.models import Repository
+
+    repository_ids = (
+        Repository.objects.filter(
+            organization_id=organization_id,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=node_id,
+        )
+        .exclude(status=Repository.Status.REMOVED)
+        .values("id")
+    )
+    task_ids = RestoreRecordItem.objects.filter(
+        organization_id=organization_id,
+        repository_id__in=repository_ids,
+    ).values("restore_record__task_id")
     yield from Task.objects.filter(
         organization_id=organization_id,
-        task_type=Task.Type.BACKUP,
+        pk__in=task_ids,
+        task_type__in=RESTORE_TASK_TYPES,
         status__in=_ACTIVE_TASK_STATUSES,
-        resources__resource_type=TaskResource.Type.REPOSITORY,
-        resources__resource_id__in=repo_ids,
-    ).order_by("-created_at", "-id").distinct()
+    ).order_by("-created_at", "-id")
 
 
 def _execution_node_tasks(*, org, node_id: int):
@@ -136,16 +167,41 @@ def get_node_workload_blockers(*, node: Node) -> list[NodeWorkloadBlocker]:
         )
 
     if node.role == NodeRole.AGENT:
-        for task in _backup_tasks_for_agent(organization_id=organization_id, node_id=node_id):
+        for task in _backup_tasks_for_agent(
+            organization_id=organization_id, node_id=node_id
+        ):
             if product_task_blocks_cleanup(task=task):
                 add_task_blocker(task=task, code="backup_running")
-        for task in _restore_tasks_for_agent(organization_id=organization_id, node_id=node_id):
+        for task in _restore_tasks_for_execution_node(
+            organization_id=organization_id,
+            node_id=node_id,
+        ):
             if product_task_blocks_cleanup(task=task):
                 add_task_blocker(task=task, code="restore_running")
     elif node.role == NodeRole.PROXY:
-        for task in _backup_tasks_for_proxy(organization_id=organization_id, node_id=node_id):
+        for task in _backup_tasks_for_proxy(
+            organization_id=organization_id, node_id=node_id
+        ):
             if product_task_blocks_cleanup(task=task):
                 add_task_blocker(task=task, code="backup_running")
+        for task in _restore_tasks_for_execution_node(
+            organization_id=organization_id,
+            node_id=node_id,
+        ):
+            if product_task_blocks_cleanup(task=task):
+                add_task_blocker(task=task, code="restore_running")
+        for task in _restore_tasks_for_proxy_repository(
+            organization_id=organization_id,
+            node_id=node_id,
+        ):
+            add_task_blocker(task=task, code="restore_running")
+    elif node.role == NodeRole.GATEWAY:
+        for task in _restore_tasks_for_execution_node(
+            organization_id=organization_id,
+            node_id=node_id,
+        ):
+            if product_task_blocks_cleanup(task=task):
+                add_task_blocker(task=task, code="restore_running")
 
     for node_task in _execution_node_tasks(org=org, node_id=node_id):
         blockers.append(
@@ -177,7 +233,7 @@ def get_node_remove_blockers(*, node: Node) -> list[NodeWorkloadBlocker]:
             code="knowledge_source_bound",
             task_uuid=f"knowledge_source:{source.id}",
             task_type="lens_knowledge_source",
-            label=f'Knowledge Source · {source.name}',
+            label=f"Knowledge Source · {source.name}",
         )
         for source in knowledge_sources
     )

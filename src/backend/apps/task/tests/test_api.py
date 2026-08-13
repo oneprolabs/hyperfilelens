@@ -9,9 +9,15 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
+from apps.restore.models import RestoreRecord
 from apps.task.api.serializers.task import TaskStepInputSerializer
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
-from apps.task.services.interface import cancel_task, complete_task, create_task
+from apps.task.services.interface import (
+    cancel_task,
+    complete_task,
+    create_task,
+    retry_task,
+)
 
 
 class TaskStepInputSerializerTests(SimpleTestCase):
@@ -47,7 +53,9 @@ class TaskApiTests(TestCase):
             email="task-api@test.local",
             password="test-pass",
         )
-        self.org = Organization.objects.create(key="task-test-org", name="Task Test Org")
+        self.org = Organization.objects.create(
+            key="task-test-org", name="Task Test Org"
+        )
         Membership.objects.create(
             user=self.user,
             organization=self.org,
@@ -78,9 +86,15 @@ class TaskApiTests(TestCase):
             display_name="Old restore",
             status=Task.Status.SUCCESS,
         )
-        Task.objects.filter(pk=recent_restore.pk).update(created_at=now - timedelta(hours=1))
-        Task.objects.filter(pk=recent_failure.pk).update(created_at=now - timedelta(hours=2))
-        Task.objects.filter(pk=old_restore.pk).update(created_at=now - timedelta(days=2))
+        Task.objects.filter(pk=recent_restore.pk).update(
+            created_at=now - timedelta(hours=1)
+        )
+        Task.objects.filter(pk=recent_failure.pk).update(
+            created_at=now - timedelta(hours=2)
+        )
+        Task.objects.filter(pk=old_restore.pk).update(
+            created_at=now - timedelta(days=2)
+        )
         Task.objects.create(
             organization_id=self.org.id,
             task_type=Task.Type.BACKUP,
@@ -139,7 +153,9 @@ class TaskApiTests(TestCase):
             "finished_before": now.isoformat(),
             "terminal_only": "true",
         }
-        listing = self.client.get("/api/v1/tasks/", params, follow=True, **self._headers())
+        listing = self.client.get(
+            "/api/v1/tasks/", params, follow=True, **self._headers()
+        )
         self.assertEqual(listing.status_code, status.HTTP_200_OK, listing.content)
         self.assertEqual(listing.data["data"]["pagination"]["total"], 2)
         self.assertEqual(
@@ -220,7 +236,9 @@ class TaskApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
         task_uuid = response.data["task_uuid"]
 
         listing = self.client.get("/api/v1/tasks/", **self._headers())
@@ -233,7 +251,9 @@ class TaskApiTests(TestCase):
         self.assertEqual(detail.data["display_name"], "Daily backup")
         self.assertEqual(len(detail.data["resources"]), 1)
         source_resource = next(
-            row for row in detail.data["resources"] if row["resource_type"] == TaskResource.Type.BACKUP_SOURCE
+            row
+            for row in detail.data["resources"]
+            if row["resource_type"] == TaskResource.Type.BACKUP_SOURCE
         )
         self.assertEqual(source_resource["resource_subtype"], "agent")
         self.assertTrue(source_resource["is_primary"])
@@ -251,7 +271,9 @@ class TaskApiTests(TestCase):
             **self._headers(),
         )
         self.assertEqual(filtered.status_code, status.HTTP_200_OK)
-        self.assertIn(task_uuid, [row["task_uuid"] for row in filtered.data["data"]["list"]])
+        self.assertIn(
+            task_uuid, [row["task_uuid"] for row in filtered.data["data"]["list"]]
+        )
 
     def test_create_task_rejects_multiple_primary_resources(self):
         response = self.client.post(
@@ -260,8 +282,16 @@ class TaskApiTests(TestCase):
                 "task_type": Task.Type.BACKUP,
                 "display_name": "Invalid task",
                 "resources": [
-                    {"resource_type": TaskResource.Type.BACKUP_SOURCE, "resource_id": 1, "is_primary": True},
-                    {"resource_type": TaskResource.Type.REPOSITORY, "resource_id": 2, "is_primary": True},
+                    {
+                        "resource_type": TaskResource.Type.BACKUP_SOURCE,
+                        "resource_id": 1,
+                        "is_primary": True,
+                    },
+                    {
+                        "resource_type": TaskResource.Type.REPOSITORY,
+                        "resource_id": 2,
+                        "is_primary": True,
+                    },
                 ],
             },
             format="json",
@@ -271,18 +301,24 @@ class TaskApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["data"]["errors"][0]["field"], "resources")
 
-    def test_create_task_rejects_system_managed_node_lifecycle_type(self):
-        response = self.client.post(
-            "/api/v1/tasks/",
-            {
-                "task_type": Task.Type.NODE_LIFECYCLE,
-                "display_name": "Forged node removal",
-            },
-            format="json",
-            **self._headers(),
-        )
+    def test_create_task_rejects_domain_managed_types(self):
+        for task_type in (
+            Task.Type.RESTORE,
+            Task.Type.INSIGHT_WORKSPACE_RESTORE,
+            Task.Type.NODE_LIFECYCLE,
+        ):
+            with self.subTest(task_type=task_type):
+                response = self.client.post(
+                    "/api/v1/tasks/",
+                    {
+                        "task_type": task_type,
+                        "display_name": f"Forged {task_type}",
+                    },
+                    format="json",
+                    **self._headers(),
+                )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_new_source_scoped_tasks_only_persist_backup_source_resources(self):
         source_scoped_types = (
@@ -380,7 +416,9 @@ class TaskApiTests(TestCase):
             username="task-other@test.local",
             password="test-pass",
         )
-        other_org = Organization.objects.create(key="task-other-org", name="Task Other Org")
+        other_org = Organization.objects.create(
+            key="task-other-org", name="Task Other Org"
+        )
         Membership.objects.create(
             user=other_user,
             organization=other_org,
@@ -436,14 +474,17 @@ class TaskApiTests(TestCase):
             [row["task_uuid"] for row in uuid_response.data["data"]["list"]],
             [str(named_task.task_uuid)],
         )
-        self.assertNotIn(str(other_task.task_uuid), [row["task_uuid"] for row in uuid_response.data["data"]["list"]])
+        self.assertNotIn(
+            str(other_task.task_uuid),
+            [row["task_uuid"] for row in uuid_response.data["data"]["list"]],
+        )
 
-    def test_cancel_and_retry_task(self):
+    def test_cancel_and_retry_generic_task(self):
         created = self.client.post(
             "/api/v1/tasks/",
             {
-                "task_type": Task.Type.RESTORE,
-                "display_name": "Restore files",
+                "task_type": Task.Type.BACKUP,
+                "display_name": "Back up files",
                 "trigger_type": Task.TriggerType.API,
             },
             format="json",
@@ -482,6 +523,141 @@ class TaskApiTests(TestCase):
             TaskEvent.objects.get(task=task, message="Task queued for retry").step_id,
             first_step.id,
         )
+
+    def test_restore_task_family_rejects_generic_cancel_and_retry(self):
+        for task_type in (
+            Task.Type.RESTORE,
+            Task.Type.INSIGHT_WORKSPACE_RESTORE,
+        ):
+            with self.subTest(task_type=task_type):
+                running = Task.objects.create(
+                    organization_id=self.org.id,
+                    task_type=task_type,
+                    display_name=f"Running {task_type}",
+                    status=Task.Status.RUNNING,
+                )
+                detail = self.client.get(
+                    f"/api/v1/tasks/{running.task_uuid}/",
+                    **self._headers(),
+                )
+                cancelled = self.client.post(
+                    f"/api/v1/tasks/{running.task_uuid}/cancel/",
+                    {"reason": "generic cancel"},
+                    format="json",
+                    **self._headers(),
+                )
+
+                self.assertEqual(detail.status_code, status.HTTP_200_OK)
+                self.assertTrue(detail.data["actions"]["can_cancel"])
+                self.assertEqual(cancelled.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertIn("restore workflow", str(cancelled.data))
+                with self.assertRaisesMessage(
+                    DjangoValidationError,
+                    "restore service",
+                ):
+                    cancel_task(
+                        task_uuid=running.task_uuid,
+                        organization_id=self.org.id,
+                        reason="direct service call",
+                    )
+                running.refresh_from_db()
+                self.assertEqual(running.status, Task.Status.RUNNING)
+
+                failed = Task.objects.create(
+                    organization_id=self.org.id,
+                    task_type=task_type,
+                    display_name=f"Failed {task_type}",
+                    status=Task.Status.FAILED,
+                )
+                detail = self.client.get(
+                    f"/api/v1/tasks/{failed.task_uuid}/",
+                    **self._headers(),
+                )
+                retried = self.client.post(
+                    f"/api/v1/tasks/{failed.task_uuid}/retry/",
+                    {"reason": "generic retry"},
+                    format="json",
+                    **self._headers(),
+                )
+
+                self.assertEqual(detail.status_code, status.HTTP_200_OK)
+                self.assertFalse(detail.data["actions"]["can_retry"])
+                self.assertEqual(retried.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertIn("originating restore workflow", str(retried.data))
+                with self.assertRaisesMessage(
+                    DjangoValidationError,
+                    "originating restore workflow",
+                ):
+                    retry_task(
+                        task_uuid=failed.task_uuid,
+                        organization_id=self.org.id,
+                        reason="direct service call",
+                    )
+                failed.refresh_from_db()
+                self.assertEqual(failed.status, Task.Status.FAILED)
+                self.assertEqual(failed.retry_count, 0)
+
+    def test_list_tasks_can_exclude_insight_workspace_restores(self):
+        user_restore = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="User data restore",
+        )
+        Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.INSIGHT_WORKSPACE_RESTORE,
+            display_name="Insight workspace restore",
+            trigger_type=Task.TriggerType.SYSTEM,
+        )
+        legacy_insight_restore = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Legacy active insight workspace restore",
+            trigger_type=Task.TriggerType.SYSTEM,
+        )
+        RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=100,
+            purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+            idempotency_key="task-list-legacy-insight",
+            workspace_binding_id=200,
+            restore_uid="task-list-legacy-insight",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=legacy_insight_restore.id,
+            task_uuid=legacy_insight_restore.task_uuid,
+            source_type=RestoreRecord.EndpointType.AGENT,
+            source_ref_id=300,
+            source_snapshot_id=400,
+            target_type=RestoreRecord.EndpointType.AGENT,
+            target_ref_id=100,
+            target_path="/tmp/legacy-insight",
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
+        )
+        other_org = Organization.objects.create(
+            key="task-exclude-other-org",
+            name="Task Exclude Other Org",
+        )
+        other_restore = Task.objects.create(
+            organization_id=other_org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Other organization restore",
+        )
+
+        response = self.client.get(
+            "/api/v1/tasks/",
+            {"exclude_insight_workspace_restores": "true"},
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        task_uuids = {row["task_uuid"] for row in response.data["data"]["list"]}
+        self.assertIn(str(user_restore.task_uuid), task_uuids)
+        self.assertNotIn(str(legacy_insight_restore.task_uuid), task_uuids)
+        self.assertNotIn(str(other_restore.task_uuid), task_uuids)
+        self.assertEqual(len(task_uuids), 1)
 
     def test_source_unregister_task_cannot_be_cancelled_generically(self):
         task = Task.objects.create(
@@ -661,7 +837,12 @@ class TaskApiTests(TestCase):
             progress=87,
             trigger_type=Task.TriggerType.MANUAL,
         )
-        step = TaskStep.objects.create(task=task, step_index=1, step_name="snapshot", status=TaskStep.Status.RUNNING)
+        step = TaskStep.objects.create(
+            task=task,
+            step_index=1,
+            step_name="snapshot",
+            status=TaskStep.Status.RUNNING,
+        )
         task.current_step = "snapshot"
         task.save(update_fields=["current_step", "updated_at"])
 
@@ -677,6 +858,8 @@ class TaskApiTests(TestCase):
         self.assertEqual(updated.status, Task.Status.FAILED)
         self.assertEqual(float(updated.progress), 45)
         self.assertEqual(
-            TaskEvent.objects.get(task=task, message="Task finished with status failed").step_id,
+            TaskEvent.objects.get(
+                task=task, message="Task finished with status failed"
+            ).step_id,
             step.id,
         )

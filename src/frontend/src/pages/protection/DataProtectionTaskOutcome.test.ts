@@ -21,4 +21,8 @@ describe('Data Protection task outcome columns', () => {
     expect(page).toContain("sourceRestoreCellPhase(row.id) === 'running'")
     expect(page).toContain("sourceRestoreCellPhase(row.id) === 'stopping'")
   })
+
+  it('keeps Insight workspace restores out of Protection task state', () => {
+    expect(page).toContain("exclude_insight_workspace_restores: 'true'")
+  })
 })

@@ -485,7 +485,12 @@ async function refreshBackupConfigs(signal?: AbortSignal): Promise<boolean> {
         if (pageRequests.isAbortError(e)) throw e
         return { count: 0, results: [] as TaskRow[] }
       }),
-      listTasks({ task_type: 'restore', page: 1, page_size: 500 }, { signal }).catch((e) => {
+      listTasks({
+        task_type: 'restore',
+        page: 1,
+        page_size: 500,
+        exclude_insight_workspace_restores: 'true',
+      }, { signal }).catch((e) => {
         if (pageRequests.isAbortError(e)) throw e
         return { count: 0, results: [] as TaskRow[] }
       }),

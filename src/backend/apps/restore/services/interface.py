@@ -19,11 +19,14 @@ from apps.node.models import Node, NodeTask
 from apps.node.services.internal.node_registry import node_is_available_for_work
 from apps.node.services.interface import cancel_agent_task, run_agent_task_async
 from apps.node.models.base import NodeRole
-from apps.node.services.internal.agent_log import log_agent_dispatch, log_agent_exception, task_log_context
+from apps.node.services.internal.agent_log import (
+    log_agent_dispatch,
+    log_agent_exception,
+    task_log_context,
+)
 from apps.protection import conf as protection_conf
 from apps.protection.services.progress.orchestrated_progress import (
     RESTORE_ESTIMATE_END,
-    RESTORE_FINALIZE_START,
     RESTORE_PREPARE_END,
 )
 from apps.protection.services.snapshot_repository_locator import (
@@ -42,14 +45,22 @@ from apps.restore.services.task_events import (
     append_restore_execution_started_event,
     append_restore_item_terminal_event,
 )
+from apps.restore.services.task_classification import normalize_restore_task_type
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.repository_access import (
     explicit_repository_server_host,
 )
+from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
-from apps.task.services.interface import append_task_step_event, cancel_task, complete_task, create_task, start_task
+from apps.task.services.interface import (
+    append_task_step_event,
+    complete_task,
+    create_task,
+    finalize_task_cancellation,
+    start_task,
+)
 
 SOURCE_TYPES = {"agent", "nas"}
 CONFLICT_MODES = {"skip", "overwrite"}
@@ -72,6 +83,7 @@ _TASK_TERMINAL = frozenset(
 )
 _ACTIVE_NODE_STATUSES = frozenset({NodeTask.Status.PENDING, NodeTask.Status.RUNNING})
 
+
 def _has_active_restore_task(
     *,
     organization_id: int,
@@ -80,7 +92,7 @@ def _has_active_restore_task(
 ) -> Task | None:
     active_tasks = Task.objects.filter(
         organization_id=organization_id,
-        task_type=Task.Type.RESTORE,
+        task_type__in=RESTORE_TASK_TYPES,
         status__in=[Task.Status.PENDING, Task.Status.RUNNING],
     ).order_by("-created_at", "-id")
     for task in active_tasks:
@@ -120,7 +132,9 @@ def _ensure_no_active_restore_for_source(
 
 def create_restore_plan(*, organization_id: int, data: dict[str, Any]) -> RestorePlan:
     payload = _plan_payload(organization_id=organization_id, data=data)
-    _validate_restore_plan_configuration(organization_id=organization_id, payload=payload)
+    _validate_restore_plan_configuration(
+        organization_id=organization_id, payload=payload
+    )
     return RestorePlan.objects.create(organization_id=organization_id, **payload)
 
 
@@ -141,7 +155,9 @@ def update_restore_plan(*, plan: RestorePlan, data: dict[str, Any]) -> RestorePl
     }
     merged.update(data)
     payload = _plan_payload(organization_id=plan.organization_id, data=merged)
-    _validate_restore_plan_configuration(organization_id=plan.organization_id, payload=payload, exclude_plan_id=plan.id)
+    _validate_restore_plan_configuration(
+        organization_id=plan.organization_id, payload=payload, exclude_plan_id=plan.id
+    )
     for field, value in payload.items():
         setattr(plan, field, value)
     plan.save()
@@ -184,7 +200,11 @@ def run_restore_plan(
         source_snapshot_id=source_snapshot_id,
     )
     if snapshot is None:
-        raise ValidationError({"source_snapshot_id": "No restorable source snapshot found for restore plan."})
+        raise ValidationError(
+            {
+                "source_snapshot_id": "No restorable source snapshot found for restore plan."
+            }
+        )
     _ensure_no_active_restore_for_source(
         organization_id=organization_id,
         source_type=plan.source_type,
@@ -206,7 +226,9 @@ def run_restore_plan(
         target_type=plan.target_type,
         target_ref_id=plan.target_ref_id,
         target_path=plan.restore_dir,
-        scope=RestoreRecord.Scope.SNAPSHOT if plan.scope == RestorePlan.Scope.SNAPSHOT else RestoreRecord.Scope.PATHS,
+        scope=RestoreRecord.Scope.SNAPSHOT
+        if plan.scope == RestorePlan.Scope.SNAPSHOT
+        else RestoreRecord.Scope.PATHS,
         conflict_mode=plan.conflict_mode,
         item_inputs=item_inputs,
         request_payload={
@@ -249,10 +271,20 @@ def run_restore_plans_for_source(
             source_type=source_type,
             source_ref_id=source_ref_id,
             enabled=True,
-        ).order_by("backup_config_id", "target_type", "target_ref_id", "restore_dir", "conflict_mode", "sort_order", "id")
+        ).order_by(
+            "backup_config_id",
+            "target_type",
+            "target_ref_id",
+            "restore_dir",
+            "conflict_mode",
+            "sort_order",
+            "id",
+        )
     )
     if not plans:
-        raise ValidationError({"plans": "No enabled restore plans found for this source."})
+        raise ValidationError(
+            {"plans": "No enabled restore plans found for this source."}
+        )
     for plan in plans:
         _validate_plan_source_path_absolute(plan)
     records: list[RestoreRecord] = []
@@ -266,8 +298,17 @@ def run_restore_plans_for_source(
         )
         plan_groups.setdefault(key, []).append(plan)
     if len(plan_groups) > 1:
-        raise ValidationError({"plans": "Multiple restore groups would create multiple restore tasks for the same source."})
-    for (backup_config_id, target_type, target_ref_id, restore_dir), group_plans in plan_groups.items():
+        raise ValidationError(
+            {
+                "plans": "Multiple restore groups would create multiple restore tasks for the same source."
+            }
+        )
+    for (
+        backup_config_id,
+        target_type,
+        target_ref_id,
+        restore_dir,
+    ), group_plans in plan_groups.items():
         snapshot = _restore_plan_snapshot(
             organization_id=organization_id,
             source_type=source_type,
@@ -276,7 +317,11 @@ def run_restore_plans_for_source(
             source_snapshot_id=source_snapshot_id,
         )
         if snapshot is None:
-            raise ValidationError({"source_snapshot_id": "No restorable source snapshot found for restore plan."})
+            raise ValidationError(
+                {
+                    "source_snapshot_id": "No restorable source snapshot found for restore plan."
+                }
+            )
         item_inputs = _restore_plan_item_inputs_for_plans(
             organization_id=organization_id,
             snapshot=snapshot,
@@ -284,29 +329,33 @@ def run_restore_plans_for_source(
             restore_dir=restore_dir,
         )
         first_plan = group_plans[0]
-        records.append(_create_restore_record(
-            organization_id=organization_id,
-            source_mode=RestoreRecord.SourceMode.PLAN,
-            plan_id=first_plan.id,
-            source_type=source_type,
-            source_ref_id=source_ref_id,
-            backup_config_id=backup_config_id,
-            source_snapshot=snapshot,
-            target_type=target_type,
-            target_ref_id=target_ref_id,
-            target_path=restore_dir,
-            scope=RestoreRecord.Scope.SNAPSHOT if any(plan.scope == RestorePlan.Scope.SNAPSHOT for plan in group_plans) else RestoreRecord.Scope.PATHS,
-            conflict_mode=first_plan.conflict_mode,
-            item_inputs=item_inputs,
-            request_payload={
-                "plan_id": first_plan.id,
-                "plan_ids": [plan.id for plan in group_plans],
-                "backup_config_id": backup_config_id,
-                "source_snapshot_id": snapshot.id,
-                "idempotency_key": idempotency_key or "",
-            },
-            created_by_id=user_id,
-        ))
+        records.append(
+            _create_restore_record(
+                organization_id=organization_id,
+                source_mode=RestoreRecord.SourceMode.PLAN,
+                plan_id=first_plan.id,
+                source_type=source_type,
+                source_ref_id=source_ref_id,
+                backup_config_id=backup_config_id,
+                source_snapshot=snapshot,
+                target_type=target_type,
+                target_ref_id=target_ref_id,
+                target_path=restore_dir,
+                scope=RestoreRecord.Scope.SNAPSHOT
+                if any(plan.scope == RestorePlan.Scope.SNAPSHOT for plan in group_plans)
+                else RestoreRecord.Scope.PATHS,
+                conflict_mode=first_plan.conflict_mode,
+                item_inputs=item_inputs,
+                request_payload={
+                    "plan_id": first_plan.id,
+                    "plan_ids": [plan.id for plan in group_plans],
+                    "backup_config_id": backup_config_id,
+                    "source_snapshot_id": snapshot.id,
+                    "idempotency_key": idempotency_key or "",
+                },
+                created_by_id=user_id,
+            )
+        )
     return records
 
 
@@ -323,7 +372,9 @@ def run_restore_plan_batch(
     restore_dir = _path(data, "restore_dir")
     conflict_mode = _choice(data, "conflict_mode", CONFLICT_MODES)
     source_snapshot_id = _optional_int(data, "source_snapshot_id")
-    config = BackupConfig.objects.filter(organization_id=organization_id, pk=backup_config_id).first()
+    config = BackupConfig.objects.filter(
+        organization_id=organization_id, pk=backup_config_id
+    ).first()
     if config is None:
         raise ValidationError({"backup_config_id": "Backup config not found."})
     _ensure_no_active_restore_for_source(
@@ -343,14 +394,18 @@ def run_restore_plan_batch(
         ).order_by("sort_order", "id")
     )
     if not plans:
-        raise ValidationError({"plans": "No enabled restore plans found for this restore group."})
+        raise ValidationError(
+            {"plans": "No enabled restore plans found for this restore group."}
+        )
     for plan in plans:
         _validate_plan_source_path_absolute(plan)
     source_type = str(config.source_type)
     source_ref_id = int(config.source_ref_id)
     for plan in plans:
         if plan.source_type != source_type or plan.source_ref_id != source_ref_id:
-            raise ValidationError({"source_ref_id": "Restore plan source does not match backup config."})
+            raise ValidationError(
+                {"source_ref_id": "Restore plan source does not match backup config."}
+            )
     snapshot = _restore_plan_snapshot(
         organization_id=organization_id,
         source_type=source_type,
@@ -359,7 +414,11 @@ def run_restore_plan_batch(
         source_snapshot_id=source_snapshot_id,
     )
     if snapshot is None:
-        raise ValidationError({"source_snapshot_id": "No restorable source snapshot found for restore plan."})
+        raise ValidationError(
+            {
+                "source_snapshot_id": "No restorable source snapshot found for restore plan."
+            }
+        )
     item_inputs = _restore_plan_item_inputs_for_plans(
         organization_id=organization_id,
         snapshot=snapshot,
@@ -378,7 +437,9 @@ def run_restore_plan_batch(
         target_type=target_type,
         target_ref_id=target_ref_id,
         target_path=restore_dir,
-        scope=RestoreRecord.Scope.SNAPSHOT if any(plan.scope == RestorePlan.Scope.SNAPSHOT for plan in plans) else RestoreRecord.Scope.PATHS,
+        scope=RestoreRecord.Scope.SNAPSHOT
+        if any(plan.scope == RestorePlan.Scope.SNAPSHOT for plan in plans)
+        else RestoreRecord.Scope.PATHS,
         conflict_mode=conflict_mode,
         item_inputs=item_inputs,
         request_payload={
@@ -433,7 +494,10 @@ def _create_manual_restore_record(
         field="source_ref_id",
     )
     if purpose == RestoreRecord.Purpose.USER_DATA:
-        if target_execution_organization_id is not None or target_execution_node_id is not None:
+        if (
+            target_execution_organization_id is not None
+            or target_execution_node_id is not None
+        ):
             raise ValueError("public restore cannot override its execution identity")
         _validate_endpoint_exists(
             organization_id=organization_id,
@@ -452,24 +516,40 @@ def _create_manual_restore_record(
         if purpose != RestoreRecord.Purpose.LENS_WORKSPACE:
             raise ValueError("unsupported restore purpose")
         if target_execution_organization_id is None or target_execution_node_id is None:
-            raise ValueError("lens workspace restore requires a validated execution binding")
+            raise ValueError(
+                "lens workspace restore requires a validated execution binding"
+            )
         if workspace_binding_id is None or expected_target_path is None:
-            raise ValueError("lens workspace restore requires an authoritative workspace binding")
+            raise ValueError(
+                "lens workspace restore requires an authoritative workspace binding"
+            )
         if target_type != RestoreRecord.EndpointType.AGENT:
-            raise ValidationError({"target_type": "Lens workspace restore requires a data gateway."})
+            raise ValidationError(
+                {"target_type": "Lens workspace restore requires a data gateway."}
+            )
         if target_execution_node_id != target_ref_id:
-            raise ValidationError({"target_ref_id": "Lens workspace target does not match its gateway binding."})
+            raise ValidationError(
+                {
+                    "target_ref_id": "Lens workspace target does not match its gateway binding."
+                }
+            )
         if target_path != expected_target_path:
-            raise ValidationError({"target_path": "Lens workspace target path is not authoritative."})
+            raise ValidationError(
+                {"target_path": "Lens workspace target path is not authoritative."}
+            )
     snapshot = BackupSourceSnapshot.objects.filter(
         organization_id=organization_id,
         pk=source_snapshot_id,
         status__in=RESTORABLE_SNAPSHOT_STATUSES,
     ).first()
     if snapshot is None:
-        raise ValidationError({"source_snapshot_id": "No restorable source snapshot found."})
+        raise ValidationError(
+            {"source_snapshot_id": "No restorable source snapshot found."}
+        )
     if snapshot.source_type != source_type or snapshot.source_ref_id != source_ref_id:
-        raise ValidationError({"source_snapshot_id": "Source snapshot does not match restore source."})
+        raise ValidationError(
+            {"source_snapshot_id": "Source snapshot does not match restore source."}
+        )
     _ensure_no_active_restore_for_source(
         organization_id=organization_id,
         source_type=source_type,
@@ -485,17 +565,23 @@ def _create_manual_restore_record(
         selected_paths = _selected_paths(item.get("selected_paths", []))
         item_inputs.append(
             {
-                "source_snapshot_directory_id": _int(item, "source_snapshot_directory_id"),
+                "source_snapshot_directory_id": _int(
+                    item, "source_snapshot_directory_id"
+                ),
                 "selected_paths": selected_paths,
                 "target_path": _path(item, "target_path", default=target_path),
-                "conflict_mode": _choice(item, "conflict_mode", CONFLICT_MODES, default=conflict_mode),
+                "conflict_mode": _choice(
+                    item, "conflict_mode", CONFLICT_MODES, default=conflict_mode
+                ),
             }
         )
     if purpose == RestoreRecord.Purpose.LENS_WORKSPACE and any(
         item["target_path"] != expected_target_path for item in item_inputs
     ):
         raise ValidationError(
-            {"items": "Lens workspace restore item paths must match the workspace binding."}
+            {
+                "items": "Lens workspace restore item paths must match the workspace binding."
+            }
         )
     logger.info(
         "restore manual create started org_id=%s source_snapshot_id=%s source_type=%s source_ref_id=%s target_type=%s target_ref_id=%s item_count=%s user_id=%s",
@@ -553,9 +639,9 @@ def create_lens_workspace_restore_record(
 ) -> RestoreRecord:
     """Create the only restore type allowed to execute on a Platform gateway."""
 
-    tenant_organization = Organization.objects.select_for_update().filter(
-        pk=organization_id
-    ).first()
+    tenant_organization = (
+        Organization.objects.select_for_update().filter(pk=organization_id).first()
+    )
     if tenant_organization is None:
         raise ValidationError({"organization_id": "Organization is not available."})
     from apps.lens_bridge.services.gateway_execution import (
@@ -569,7 +655,9 @@ def create_lens_workspace_restore_record(
     expected_target_path = workspace_binding.resolved_path()
     idempotency_key = str(data.get("idempotency_key") or "").strip()
     if not idempotency_key:
-        raise ValidationError({"idempotency_key": "Lens workspace restore requires an idempotency key."})
+        raise ValidationError(
+            {"idempotency_key": "Lens workspace restore requires an idempotency key."}
+        )
     existing = RestoreRecord.objects.filter(
         organization_id=organization_id,
         purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
@@ -592,7 +680,9 @@ def create_lens_workspace_restore_record(
         )
         if actual != expected:
             raise ValidationError(
-                {"idempotency_key": "Lens workspace idempotency key is bound to another execution request."}
+                {
+                    "idempotency_key": "Lens workspace idempotency key is bound to another execution request."
+                }
             )
         return existing
     try:
@@ -631,7 +721,9 @@ def create_lens_workspace_restore_record(
         )
         if actual != expected:
             raise ValidationError(
-                {"idempotency_key": "Lens workspace idempotency key is bound to another execution request."}
+                {
+                    "idempotency_key": "Lens workspace idempotency key is bound to another execution request."
+                }
             )
         return existing
 
@@ -691,11 +783,25 @@ def _create_restore_record(
         item_inputs=item_inputs,
     )
     restore_uid = f"rst-{uuid4().hex[:16]}"
+    task_type = (
+        Task.Type.INSIGHT_WORKSPACE_RESTORE
+        if purpose == RestoreRecord.Purpose.LENS_WORKSPACE
+        else Task.Type.RESTORE
+    )
+    trigger_type = (
+        Task.TriggerType.SYSTEM
+        if purpose == RestoreRecord.Purpose.LENS_WORKSPACE
+        else Task.TriggerType.MANUAL
+    )
     task = create_task(
         organization_id=organization_id,
-        task_type=Task.Type.RESTORE,
-        display_name=f"Restore {restore_uid}",
-        trigger_type=Task.TriggerType.MANUAL,
+        task_type=task_type,
+        display_name=(
+            f"Insight workspace restore {restore_uid}"
+            if purpose == RestoreRecord.Purpose.LENS_WORKSPACE
+            else f"Restore {restore_uid}"
+        ),
+        trigger_type=trigger_type,
         request_payload={"restore_uid": restore_uid, "restore_record_id": None},
         resources=[
             {
@@ -810,14 +916,19 @@ def _expanded_directories(
                 pk=item["source_snapshot_directory_id"],
             ).first()
             if directory is None:
-                raise ValidationError({"items": "Snapshot directory does not belong to the source snapshot."})
+                raise ValidationError(
+                    {
+                        "items": "Snapshot directory does not belong to the source snapshot."
+                    }
+                )
             _ensure_directory_usable(directory)
             raw_items.append(
                 {
                     "source_snapshot_directory_id": directory.id,
                     "selected_paths": item.get("selected_paths") or [],
                     "target_source_path": directory.source_path,
-                    "source_path_type": directory.path_type or BackupSourceSnapshotDirectory.PathType.UNKNOWN,
+                    "source_path_type": directory.path_type
+                    or BackupSourceSnapshotDirectory.PathType.UNKNOWN,
                     "restore_dir": item["target_path"],
                     "conflict_mode": item["conflict_mode"],
                 }
@@ -833,7 +944,9 @@ def _expanded_directories(
             pk=item["source_snapshot_directory_id"],
         ).first()
         if directory is None:
-            raise ValidationError({"items": "Snapshot directory does not belong to the source snapshot."})
+            raise ValidationError(
+                {"items": "Snapshot directory does not belong to the source snapshot."}
+            )
         _ensure_directory_usable(directory)
         target_path = item["target_path"]
         selected_paths = item.get("selected_paths") or []
@@ -848,7 +961,8 @@ def _expanded_directories(
                 "repository_id": directory.repository_id,
                 "kopia_snapshot_id": directory.kopia_snapshot_id,
                 "source_path": directory.source_path,
-                "source_path_type": directory.path_type or BackupSourceSnapshotDirectory.PathType.UNKNOWN,
+                "source_path_type": directory.path_type
+                or BackupSourceSnapshotDirectory.PathType.UNKNOWN,
                 "selected_paths": selected_paths,
                 "target_path": target_path,
                 "target_path_semantics": "final",
@@ -866,28 +980,46 @@ def _plan_payload(*, organization_id: int, data: dict[str, Any]) -> dict[str, An
     target_type = _choice(data, "target_type", SOURCE_TYPES)
     source_ref_id = _int(data, "source_ref_id")
     target_ref_id = _int(data, "target_ref_id")
-    source_path = "" if scope == RestorePlan.Scope.SNAPSHOT else _path(data, "source_path")
+    source_path = (
+        "" if scope == RestorePlan.Scope.SNAPSHOT else _path(data, "source_path")
+    )
     restore_dir = _path(data, "restore_dir")
     conflict_mode = _choice(data, "conflict_mode", CONFLICT_MODES)
-    config = BackupConfig.objects.filter(organization_id=organization_id, pk=backup_config_id).first()
+    config = BackupConfig.objects.filter(
+        organization_id=organization_id, pk=backup_config_id
+    ).first()
     if config is None:
         raise ValidationError({"backup_config_id": "Backup config not found."})
     if config.source_type != source_type or config.source_ref_id != source_ref_id:
-        raise ValidationError({"source_ref_id": "Restore plan source does not match backup config."})
+        raise ValidationError(
+            {"source_ref_id": "Restore plan source does not match backup config."}
+        )
     if scope == RestorePlan.Scope.PATHS:
         if backup_config_dir_id is None:
-            raise ValidationError({"backup_config_dir_id": "Backup config directory is required for path restore plans."})
+            raise ValidationError(
+                {
+                    "backup_config_dir_id": "Backup config directory is required for path restore plans."
+                }
+            )
         if not _is_absolute_source_path(source_path):
-            raise ValidationError({"source_path": "Restore plan source path must be absolute."})
+            raise ValidationError(
+                {"source_path": "Restore plan source path must be absolute."}
+            )
         directory = BackupConfigDirectory.objects.filter(
             organization_id=organization_id,
             backup_config_id=backup_config_id,
             pk=backup_config_dir_id,
         ).first()
         if directory is None:
-            raise ValidationError({"backup_config_dir_id": "Backup config directory not found."})
+            raise ValidationError(
+                {"backup_config_dir_id": "Backup config directory not found."}
+            )
         if not _same_or_ancestor_path(directory.path, source_path):
-            raise ValidationError({"source_path": "Restore plan source path must be inside backup config directory."})
+            raise ValidationError(
+                {
+                    "source_path": "Restore plan source path must be inside backup config directory."
+                }
+            )
     else:
         backup_config_dir_id = None
     _validate_endpoint_exists(
@@ -940,15 +1072,27 @@ def _validate_restore_plan_configuration(
         return
     if payload["scope"] == RestorePlan.Scope.SNAPSHOT:
         if queryset.filter(scope=RestorePlan.Scope.SNAPSHOT).exists():
-            raise ValidationError({"restore_dir": "Duplicate whole-snapshot restore plan for the same destination."})
+            raise ValidationError(
+                {
+                    "restore_dir": "Duplicate whole-snapshot restore plan for the same destination."
+                }
+            )
         return
-    if queryset.filter(scope=RestorePlan.Scope.PATHS, source_path=payload["source_path"]).exists():
-        raise ValidationError({"source_path": "Duplicate restore plan source and destination."})
+    if queryset.filter(
+        scope=RestorePlan.Scope.PATHS, source_path=payload["source_path"]
+    ).exists():
+        raise ValidationError(
+            {"source_path": "Duplicate restore plan source and destination."}
+        )
 
 
 def _validate_plan_source_path_absolute(plan: RestorePlan) -> None:
-    if plan.scope == RestorePlan.Scope.PATHS and not _is_absolute_source_path(plan.source_path):
-        raise ValidationError({"source_path": "Restore plan source path must be absolute."})
+    if plan.scope == RestorePlan.Scope.PATHS and not _is_absolute_source_path(
+        plan.source_path
+    ):
+        raise ValidationError(
+            {"source_path": "Restore plan source path must be absolute."}
+        )
 
 
 def _latest_restorable_snapshot(
@@ -958,15 +1102,12 @@ def _latest_restorable_snapshot(
     source_ref_id: int,
     plans: list[RestorePlan] | None = None,
 ) -> BackupSourceSnapshot | None:
-    snapshots = (
-        BackupSourceSnapshot.objects.filter(
-            organization_id=organization_id,
-            source_type=source_type,
-            source_ref_id=source_ref_id,
-            status__in=RESTORABLE_SNAPSHOT_STATUSES,
-        )
-        .order_by("-finished_at", "-created_at", "-id")
-    )
+    snapshots = BackupSourceSnapshot.objects.filter(
+        organization_id=organization_id,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+        status__in=RESTORABLE_SNAPSHOT_STATUSES,
+    ).order_by("-finished_at", "-created_at", "-id")
     if not plans:
         return snapshots.first()
     for snapshot in snapshots:
@@ -1005,7 +1146,9 @@ def _restore_plan_snapshot(
         status__in=RESTORABLE_SNAPSHOT_STATUSES,
     ).first()
     if snapshot is None:
-        raise ValidationError({"source_snapshot_id": "Selected source snapshot is not restorable."})
+        raise ValidationError(
+            {"source_snapshot_id": "Selected source snapshot is not restorable."}
+        )
     if not all(
         _restore_plan_item_input_or_none(
             organization_id=organization_id,
@@ -1014,7 +1157,11 @@ def _restore_plan_snapshot(
         )
         for plan in plans
     ):
-        raise ValidationError({"source_snapshot_id": "Selected source snapshot does not cover the restore plan."})
+        raise ValidationError(
+            {
+                "source_snapshot_id": "Selected source snapshot does not cover the restore plan."
+            }
+        )
     return snapshot
 
 
@@ -1040,11 +1187,13 @@ def _restore_plan_item_inputs_for_plans(
 ) -> list[dict[str, Any]]:
     raw_items: list[dict[str, Any]] = []
     for plan in plans:
-        raw_items.extend(_restore_plan_raw_item_inputs(
-            organization_id=organization_id,
-            snapshot=snapshot,
-            plan=plan,
-        ))
+        raw_items.extend(
+            _restore_plan_raw_item_inputs(
+                organization_id=organization_id,
+                snapshot=snapshot,
+                plan=plan,
+            )
+        )
     return _finalize_restore_item_targets(raw_items, restore_dir=restore_dir)
 
 
@@ -1079,19 +1228,24 @@ def _restore_plan_raw_item_inputs(
             .order_by("id")
         )
         if not directories:
-            raise ValidationError({"source_snapshot_id": "No restorable snapshot directories found."})
+            raise ValidationError(
+                {"source_snapshot_id": "No restorable snapshot directories found."}
+            )
         return [
             {
                 "source_snapshot_directory_id": directory.id,
                 "selected_paths": [],
                 "target_source_path": directory.source_path,
-                "source_path_type": directory.path_type or BackupSourceSnapshotDirectory.PathType.UNKNOWN,
+                "source_path_type": directory.path_type
+                or BackupSourceSnapshotDirectory.PathType.UNKNOWN,
                 "conflict_mode": plan.conflict_mode,
             }
             for directory in directories
         ]
     if plan.backup_config_dir_id is None:
-        raise ValidationError({"backup_config_dir_id": "Restore plan directory is required."})
+        raise ValidationError(
+            {"backup_config_dir_id": "Restore plan directory is required."}
+        )
     _validate_plan_source_path_absolute(plan)
     directory = _snapshot_directory(
         organization_id=organization_id,
@@ -1099,30 +1253,43 @@ def _restore_plan_raw_item_inputs(
         backup_config_dir_id=int(plan.backup_config_dir_id),
     )
     if directory is None:
-        raise ValidationError({"backup_config_dir_id": "Restore plan directory snapshot not found."})
+        raise ValidationError(
+            {"backup_config_dir_id": "Restore plan directory snapshot not found."}
+        )
     if not _same_or_ancestor_path(directory.source_path, plan.source_path):
-        raise ValidationError({"source_path": "Restore plan source path must be inside snapshot directory."})
+        raise ValidationError(
+            {
+                "source_path": "Restore plan source path must be inside snapshot directory."
+            }
+        )
     _ensure_directory_usable(directory)
     selected_paths = []
     if directory.source_path != plan.source_path:
         selected_paths = [_relative_path(directory.source_path, plan.source_path)]
-    return [{
-        "source_snapshot_directory_id": directory.id,
-        "selected_paths": selected_paths,
-        "target_source_path": plan.source_path,
-        "source_path_type": directory.path_type or BackupSourceSnapshotDirectory.PathType.UNKNOWN,
-        "conflict_mode": plan.conflict_mode,
-    }]
+    return [
+        {
+            "source_snapshot_directory_id": directory.id,
+            "selected_paths": selected_paths,
+            "target_source_path": plan.source_path,
+            "source_path_type": directory.path_type
+            or BackupSourceSnapshotDirectory.PathType.UNKNOWN,
+            "conflict_mode": plan.conflict_mode,
+        }
+    ]
 
 
-def _finalize_restore_item_targets(raw_items: list[dict[str, Any]], *, restore_dir: str | None = None) -> list[dict[str, Any]]:
+def _finalize_restore_item_targets(
+    raw_items: list[dict[str, Any]], *, restore_dir: str | None = None
+) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
     seen_sources: set[tuple[int, tuple[str, ...], str, str]] = set()
     natural_groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     for item in raw_items:
         source_path = _normalize_path(str(item["target_source_path"]))
         selected_paths = tuple(item.get("selected_paths") or [])
-        effective_source_path = _restore_item_effective_source_path(source_path, selected_paths)
+        effective_source_path = _restore_item_effective_source_path(
+            source_path, selected_paths
+        )
         raw_target_root = item.get("restore_dir") or restore_dir
         if raw_target_root is None or str(raw_target_root).strip() == "":
             raise ValidationError({"restore_dir": "Restore directory is required."})
@@ -1169,7 +1336,10 @@ def _finalize_restore_item_targets(raw_items: list[dict[str, Any]], *, restore_d
                         selected_paths=tuple(item["selected_paths"]),
                     ),
                 )
-            final_key = (int(item["source_snapshot_directory_id"]), tuple(item["selected_paths"]))
+            final_key = (
+                int(item["source_snapshot_directory_id"]),
+                tuple(item["selected_paths"]),
+            )
             base_target_path = target_path
             existing = final_targets.get(target_path)
             counter = 2
@@ -1184,17 +1354,23 @@ def _finalize_restore_item_targets(raw_items: list[dict[str, Any]], *, restore_d
                 existing = final_targets.get(target_path)
                 counter += 1
             final_targets[target_path] = final_key
-            final_items.append({
-                "source_snapshot_directory_id": item["source_snapshot_directory_id"],
-                "selected_paths": item["selected_paths"],
-                "target_path": target_path,
-                "target_path_semantics": "final",
-                "conflict_mode": item["conflict_mode"],
-            })
+            final_items.append(
+                {
+                    "source_snapshot_directory_id": item[
+                        "source_snapshot_directory_id"
+                    ],
+                    "selected_paths": item["selected_paths"],
+                    "target_path": target_path,
+                    "target_path_semantics": "final",
+                    "conflict_mode": item["conflict_mode"],
+                }
+            )
     return final_items
 
 
-def _restore_item_effective_source_path(source_path: str, selected_paths: tuple[str, ...]) -> str:
+def _restore_item_effective_source_path(
+    source_path: str, selected_paths: tuple[str, ...]
+) -> str:
     if len(selected_paths) != 1:
         return source_path
     selected_path = str(selected_paths[0] or "").strip()
@@ -1223,12 +1399,20 @@ def _restore_plan_item_input_or_none(
 
 def _ensure_directory_usable(directory: BackupSourceSnapshotDirectory) -> None:
     if directory.status != BackupSourceSnapshotDirectory.Status.AVAILABLE:
-        raise ValidationError({"source_snapshot_directory_id": "Snapshot directory is not available."})
+        raise ValidationError(
+            {"source_snapshot_directory_id": "Snapshot directory is not available."}
+        )
     if not directory.kopia_snapshot_id:
-        raise ValidationError({"source_snapshot_directory_id": "Snapshot directory has no Kopia snapshot id."})
+        raise ValidationError(
+            {
+                "source_snapshot_directory_id": "Snapshot directory has no Kopia snapshot id."
+            }
+        )
 
 
-def _validate_endpoint_exists(*, organization_id: int, endpoint_type: str, ref_id: int, field: str) -> None:
+def _validate_endpoint_exists(
+    *, organization_id: int, endpoint_type: str, ref_id: int, field: str
+) -> None:
     if endpoint_type == "agent":
         roles = [NodeRole.AGENT]
         if field == "target_ref_id":
@@ -1250,7 +1434,9 @@ def _validate_endpoint_exists(*, organization_id: int, endpoint_type: str, ref_i
         raise ValidationError({field: "Endpoint not found."})
 
 
-def _lock_restore_source_endpoint(*, organization_id: int, source_type: str, source_ref_id: int) -> None:
+def _lock_restore_source_endpoint(
+    *, organization_id: int, source_type: str, source_ref_id: int
+) -> None:
     if source_type == "agent":
         exists = (
             Node.objects.select_for_update()
@@ -1277,11 +1463,13 @@ def _lock_restore_source_endpoint(*, organization_id: int, source_type: str, sou
         raise ValidationError({"source_ref_id": "Endpoint not found."})
 
 
-def _active_restore_task_for_source(*, organization_id: int, source_type: str, source_ref_id: int) -> Task | None:
+def _active_restore_task_for_source(
+    *, organization_id: int, source_type: str, source_ref_id: int
+) -> Task | None:
     return (
         Task.objects.filter(
             organization_id=organization_id,
-            task_type=Task.Type.RESTORE,
+            task_type__in=RESTORE_TASK_TYPES,
             status__in=ACTIVE_RESTORE_TASK_STATUSES,
             resources__resource_type=TaskResource.Type.BACKUP_SOURCE,
             resources__resource_subtype=source_type,
@@ -1292,7 +1480,9 @@ def _active_restore_task_for_source(*, organization_id: int, source_type: str, s
     )
 
 
-def _ensure_no_active_restore_for_source(*, organization_id: int, source_type: str, source_ref_id: int) -> None:
+def _ensure_no_active_restore_for_source(
+    *, organization_id: int, source_type: str, source_ref_id: int
+) -> None:
     from apps.source.services.internal.source_operation_fence import (
         assert_source_product_operation_allowed,
     )
@@ -1309,10 +1499,14 @@ def _ensure_no_active_restore_for_source(*, organization_id: int, source_type: s
     )
     if active_task is None:
         return
-    record = RestoreRecord.objects.filter(
-        organization_id=organization_id,
-        task_id=active_task.id,
-    ).only("id").first()
+    record = (
+        RestoreRecord.objects.filter(
+            organization_id=organization_id,
+            task_id=active_task.id,
+        )
+        .only("id")
+        .first()
+    )
     raise AppError(
         code="RESTORE.ALREADY_RUNNING",
         status=409,
@@ -1327,7 +1521,9 @@ def _ensure_no_active_restore_for_source(*, organization_id: int, source_type: s
             "status": active_task.status,
             "source_type": source_type,
             "source_ref_id": source_ref_id,
-            "created_at": active_task.created_at.isoformat() if active_task.created_at else "",
+            "created_at": active_task.created_at.isoformat()
+            if active_task.created_at
+            else "",
         },
     )
 
@@ -1370,7 +1566,9 @@ def _set_step_status(
         task.save(update_fields=task_updates)
 
 
-def _target_execution_node(*, organization_id: int, target_type: str, target_ref_id: int) -> Node:
+def _target_execution_node(
+    *, organization_id: int, target_type: str, target_ref_id: int
+) -> Node:
     if target_type == "agent":
         node = Node.objects.filter(
             organization_id=organization_id,
@@ -1381,7 +1579,9 @@ def _target_execution_node(*, organization_id: int, target_type: str, target_ref
         if node is None:
             raise ValidationError({"target_ref_id": "Target agent not found."})
         if not node_is_available_for_work(node):
-            raise ValidationError({"target_ref_id": "Target agent is unavailable or busy."})
+            raise ValidationError(
+                {"target_ref_id": "Target agent is unavailable or busy."}
+            )
         return node
     resource = (
         SourceResource.objects.filter(
@@ -1396,22 +1596,36 @@ def _target_execution_node(*, organization_id: int, target_type: str, target_ref
     if resource is None:
         raise ValidationError({"target_ref_id": "Target NAS not found."})
     if resource.bound_node is None or resource.bound_node.role != NodeRole.PROXY:
-        raise ValidationError({"target_ref_id": "Target NAS is not bound to a proxy node."})
-    if resource.availability != "online" or not node_is_available_for_work(resource.bound_node):
-        raise ValidationError({"target_ref_id": "Target NAS or proxy node is unavailable or busy."})
+        raise ValidationError(
+            {"target_ref_id": "Target NAS is not bound to a proxy node."}
+        )
+    if resource.availability != "online" or not node_is_available_for_work(
+        resource.bound_node
+    ):
+        raise ValidationError(
+            {"target_ref_id": "Target NAS or proxy node is unavailable or busy."}
+        )
     return resource.bound_node
 
 
-def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task: Task) -> None:
+def _dispatch_restore_items(
+    *, organization_id: int, record: RestoreRecord, task: Task
+) -> None:
     managed_workspace_payload: dict[str, Any] = {}
     if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE:
         if record.workspace_binding_id is None:
             raise ValidationError(
-                {"workspace_binding_id": "Lens workspace restore has no execution binding."}
+                {
+                    "workspace_binding_id": "Lens workspace restore has no execution binding."
+                }
             )
-        tenant_organization = Organization.objects.filter(pk=record.organization_id).first()
+        tenant_organization = Organization.objects.filter(
+            pk=record.organization_id
+        ).first()
         if tenant_organization is None:
-            raise ValidationError({"organization_id": "Restore organization is not available."})
+            raise ValidationError(
+                {"organization_id": "Restore organization is not available."}
+            )
         from apps.lens_bridge.services.gateway_execution import (
             context_for_workspace_binding,
             workspace_identity_payload,
@@ -1432,7 +1646,9 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
             )
         ):
             raise ValidationError(
-                {"workspace_binding_id": "Restore execution no longer matches its workspace binding."}
+                {
+                    "workspace_binding_id": "Restore execution no longer matches its workspace binding."
+                }
             )
         managed_workspace_payload = {
             "managed_workspace_path": workspace_binding.resolved_path(),
@@ -1446,21 +1662,22 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
     if node is None:
         raise ValidationError({"target_ref_id": "Restore execution node not found."})
     if not node_is_available_for_work(node):
-        raise ValidationError({"target_ref_id": "Restore execution node is unavailable or busy."})
+        raise ValidationError(
+            {"target_ref_id": "Restore execution node is unavailable or busy."}
+        )
     target_nas_payload: dict[str, Any] = {}
     if record.target_type == RestoreRecord.EndpointType.NAS:
-        target_nas = (
-            SourceResource.objects.filter(
-                organization_id=record.organization_id,
-                resource_type=ResourceType.NAS,
-                id=record.target_ref_id,
-                bound_node_id=node.id,
-                is_deleted=False,
-            )
-            .first()
-        )
+        target_nas = SourceResource.objects.filter(
+            organization_id=record.organization_id,
+            resource_type=ResourceType.NAS,
+            id=record.target_ref_id,
+            bound_node_id=node.id,
+            is_deleted=False,
+        ).first()
         if target_nas is None:
-            raise ValidationError({"target_ref_id": "Restore target NAS is not available."})
+            raise ValidationError(
+                {"target_ref_id": "Restore target NAS is not available."}
+            )
         from apps.source.services.internal.nas_agent import nas_payload_for_resource
 
         target_nas_payload = {"nas": nas_payload_for_resource(target_nas)}
@@ -1469,7 +1686,8 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
         item
         for item in all_items
         if item.node_task_id is None
-        and item.status in {RestoreRecordItem.Status.PENDING, RestoreRecordItem.Status.RUNNING}
+        and item.status
+        in {RestoreRecordItem.Status.PENDING, RestoreRecordItem.Status.RUNNING}
     ]
     if not items:
         logger.info(
@@ -1502,7 +1720,9 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
             id__in=[item.repository_id for item in items],
         )
     }
-    RestoreRecordItem.objects.filter(id__in=[item.id for item in items]).update(status=RestoreRecordItem.Status.RUNNING)
+    RestoreRecordItem.objects.filter(id__in=[item.id for item in items]).update(
+        status=RestoreRecordItem.Status.RUNNING
+    )
     logger.info(
         "restore dispatch started restore_record_id=%s restore_uid=%s task_uuid=%s item_count=%s %s",
         record.id,
@@ -1527,7 +1747,9 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
             repository = repositories.get(item.repository_id)
             if repository is None:
                 raise ValidationError({"repository_id": "Repository not found."})
-            snapshot_directory = snapshot_directories.get(item.source_snapshot_directory_id)
+            snapshot_directory = snapshot_directories.get(
+                item.source_snapshot_directory_id
+            )
             source_path_type = (
                 snapshot_directory.path_type
                 if snapshot_directory is not None
@@ -1545,7 +1767,11 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
                 source_ref_id=record.target_ref_id,
             )
             repository_payload = repository_access.repository_payload
-            restore_transfer_mode = "direct_proxy_restore" if repository_access.mode == "bound_proxy" else "direct_restore"
+            restore_transfer_mode = (
+                "direct_proxy_restore"
+                if repository_access.mode == "bound_proxy"
+                else "direct_restore"
+            )
             if repository_access.node.id != node.id:
                 repository_payload = _ensure_restore_repository_server_payload(
                     task=task,
@@ -1597,9 +1823,7 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
                 node_id=node.id,
                 kind="restore.run",
                 payload=payload,
-                persisted_payload=(
-                    persisted_payload if target_nas_payload else None
-                ),
+                persisted_payload=(persisted_payload if target_nas_payload else None),
                 correlation_type="restore.record",
                 correlation_id=str(record.task_uuid),
                 requesting_organization_id=record.requesting_organization_id,
@@ -1672,7 +1896,9 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
             correlation_id=str(record.task_uuid),
             restore_record_id=record.id,
         )
-        RestoreRecordItem.objects.filter(restore_record=record, status=RestoreRecordItem.Status.RUNNING).update(
+        RestoreRecordItem.objects.filter(
+            restore_record=record, status=RestoreRecordItem.Status.RUNNING
+        ).update(
             status=RestoreRecordItem.Status.FAILED,
             error_code="RESTORE_DISPATCH_FAILED",
             error_message=error_message,
@@ -1721,7 +1947,11 @@ def _save_task_result_payload(task: Task, payload: dict[str, Any]) -> None:
 
 def _restore_repository_servers(task: Task) -> list[dict[str, Any]]:
     servers = _task_result_payload(task).get("repository_servers")
-    return [server for server in servers if isinstance(server, dict)] if isinstance(servers, list) else []
+    return (
+        [server for server in servers if isinstance(server, dict)]
+        if isinstance(servers, list)
+        else []
+    )
 
 
 def _repository_public_host(*, repository: Repository, node: Node) -> tuple[str, str]:
@@ -1735,7 +1965,9 @@ def _repository_server_payload_from_result(result: dict[str, Any]) -> dict[str, 
         "url": str(result.get("server_url") or result.get("url") or "").strip(),
         "username": str(result.get("username") or "").strip(),
         "password": str(result.get("password") or "").strip(),
-        "server_cert_fingerprint": str(result.get("server_cert_fingerprint") or "").strip(),
+        "server_cert_fingerprint": str(
+            result.get("server_cert_fingerprint") or ""
+        ).strip(),
         "kopia_password": str(result.get("kopia_password") or "").strip(),
         "session_id": str(result.get("session_id") or "").strip(),
     }
@@ -1785,7 +2017,9 @@ def _snapshot_source_server_username(result: Any) -> str:
     return f"{user}@{host}".lower()
 
 
-def _restore_repository_server_session_id(*, task: Task, repository: Repository, server_username: str) -> str:
+def _restore_repository_server_session_id(
+    *, task: Task, repository: Repository, server_username: str
+) -> str:
     username_hash = hashlib.sha256(server_username.encode("utf-8")).hexdigest()[:12]
     return f"restore-{task.task_uuid}-repo-{repository.id}-{username_hash}"
 
@@ -1825,12 +2059,16 @@ def _ensure_restore_repository_server_payload(
             return None
         if node_task.status == NodeTask.Status.SUCCESS:
             result = node_task.result if isinstance(node_task.result, dict) else {}
-            result["kopia_password"] = str(repository_payload.get("kopia_password") or "")
+            result["kopia_password"] = str(
+                repository_payload.get("kopia_password") or ""
+            )
             result["repository_id"] = repository.id
             result["repository_node_id"] = repository_node.id
             result["node_task_id"] = str(node_task.id)
             result["status"] = node_task.status
-            result["session_id"] = str(result.get("session_id") or state.get("session_id") or "")
+            result["session_id"] = str(
+                result.get("session_id") or state.get("session_id") or ""
+            )
             result["server_username"] = server_username
             result["public_host"] = str(state.get("public_host") or "")
             result["public_host_source"] = str(state.get("public_host_source") or "")
@@ -1838,14 +2076,24 @@ def _ensure_restore_repository_server_payload(
             if payload["url"] and payload["username"] and payload["password"]:
                 task_payload = _task_result_payload(task)
                 servers = [
-                    result if int(existing.get("repository_id") or 0) == int(repository.id) else existing
+                    result
+                    if int(existing.get("repository_id") or 0) == int(repository.id)
+                    else existing
                     for existing in _restore_repository_servers(task)
                 ]
                 task_payload["repository_servers"] = servers
                 _save_task_result_payload(task, task_payload)
                 return payload
-            raise ValidationError({"target_ref_id": "Restore repository server start returned incomplete connection info."})
-        if node_task.status in {NodeTask.Status.FAILED, NodeTask.Status.TIMEOUT, NodeTask.Status.CANCELED}:
+            raise ValidationError(
+                {
+                    "target_ref_id": "Restore repository server start returned incomplete connection info."
+                }
+            )
+        if node_task.status in {
+            NodeTask.Status.FAILED,
+            NodeTask.Status.TIMEOUT,
+            NodeTask.Status.CANCELED,
+        }:
             message = str(node_task.last_error or "").strip()
             if not message and isinstance(node_task.result, dict):
                 message = str(node_task.result.get("error") or "").strip()
@@ -1859,9 +2107,15 @@ def _ensure_restore_repository_server_payload(
             )
         return None
 
-    public_host, public_host_source = _repository_public_host(repository=repository, node=repository_node)
+    public_host, public_host_source = _repository_public_host(
+        repository=repository, node=repository_node
+    )
     if not public_host:
-        raise ValidationError({"target_ref_id": "Proxy node has no reachable IP address for restore repository server."})
+        raise ValidationError(
+            {
+                "target_ref_id": "Proxy node has no reachable IP address for restore repository server."
+            }
+        )
     session_id = _restore_repository_server_session_id(
         task=task,
         repository=repository,
@@ -1948,17 +2202,22 @@ def stop_restore_repository_servers(*, task: Task) -> None:
                 correlation_id=str(task.task_uuid),
             )
         except Exception:
-            logger.exception("failed to dispatch restore repository server cleanup task_uuid=%s", task.task_uuid)
+            logger.exception(
+                "failed to dispatch restore repository server cleanup task_uuid=%s",
+                task.task_uuid,
+            )
 
 
 @transaction.atomic
-def cancel_restore(*, organization_id: int, task_uuid: str, reason: str = "") -> dict[str, Any]:
+def cancel_restore(
+    *, organization_id: int, task_uuid: str, reason: str = ""
+) -> dict[str, Any]:
     task = (
         Task.objects.select_for_update()
         .filter(
             organization_id=organization_id,
             task_uuid=task_uuid,
-            task_type=Task.Type.RESTORE,
+            task_type__in=RESTORE_TASK_TYPES,
         )
         .first()
     )
@@ -1971,7 +2230,9 @@ def cancel_restore(*, organization_id: int, task_uuid: str, reason: str = "") ->
             "restore_record_id": RestoreRecord.objects.filter(
                 organization_id=organization_id,
                 task_uuid=task.task_uuid,
-            ).values_list("id", flat=True).first(),
+            )
+            .values_list("id", flat=True)
+            .first(),
         }
 
     record = (
@@ -1984,10 +2245,18 @@ def cancel_restore(*, organization_id: int, task_uuid: str, reason: str = "") ->
     )
     message = str(reason or "Stopped from console").strip() or "Stopped from console"
 
+    # Publish the product-level cancellation while holding its row lock before
+    # a pending NodeTask can synchronously project a terminal Agent result.
+    # This makes late or immediate Agent callbacks cancellation-only.
+    if record is not None:
+        normalize_restore_task_type(record=record, task=task)
+    task = finalize_task_cancellation(task=task, reason=message)
+
     if record is not None:
         for item in record.items.all():
             if item.status in {
                 RestoreRecordItem.Status.SUCCESS,
+                RestoreRecordItem.Status.FAILED,
                 RestoreRecordItem.Status.SKIPPED,
                 RestoreRecordItem.Status.CANCELLED,
             }:
@@ -2039,7 +2308,6 @@ def cancel_restore(*, organization_id: int, task_uuid: str, reason: str = "") ->
                 task.task_uuid,
             )
 
-    task = cancel_task(task_uuid=task.task_uuid, organization_id=organization_id, reason=message)
     stop_restore_repository_servers(task=task)
 
     append_task_step_event(
@@ -2058,9 +2326,6 @@ def cancel_restore(*, organization_id: int, task_uuid: str, reason: str = "") ->
             task=task,
             step_name=step_name,
             status=TaskStep.Status.SKIPPED,
-            progress=100,
-            task_progress=RESTORE_FINALIZE_START,
-            current_step="finalize",
         )
 
     task.refresh_from_db()
@@ -2088,7 +2353,9 @@ def restore_task_is_stopping(*, task: Task) -> bool:
     ).exists()
 
 
-def _choice(data: dict[str, Any], key: str, choices: set[str], default: str | None = None) -> str:
+def _choice(
+    data: dict[str, Any], key: str, choices: set[str], default: str | None = None
+) -> str:
     raw = data.get(key, default)
     value = str(raw or "").strip().lower()
     if value not in choices:
@@ -2109,7 +2376,11 @@ def _int(
     except (TypeError, ValueError) as exc:
         raise ValidationError({key: f"{key} must be an integer."}) from exc
     if value < min_value:
-        message = "Must be a non-negative integer." if min_value == 0 else "Must be a positive integer."
+        message = (
+            "Must be a non-negative integer."
+            if min_value == 0
+            else "Must be a positive integer."
+        )
         raise ValidationError({key: message})
     return value
 
@@ -2180,7 +2451,11 @@ def _safe_restore_name(
         return f"{display_name}--from-{source_slug}{ext}"
 
     display_name = _restore_slug(basename) or "snapshot"
-    source_slug = _restore_slug("/".join(parent_parts)) or _restore_slug("/".join(parts)) or "root"
+    source_slug = (
+        _restore_slug("/".join(parent_parts))
+        or _restore_slug("/".join(parts))
+        or "root"
+    )
     return f"{display_name}--from-{source_slug}"
 
 
@@ -2200,7 +2475,7 @@ def _numbered_restore_target_path(
         selected_paths=selected_paths,
     )
     if ext and leaf.endswith(ext):
-        leaf = f"{leaf[:-len(ext)]}-{counter}{ext}"
+        leaf = f"{leaf[: -len(ext)]}-{counter}{ext}"
     else:
         leaf = f"{leaf}-{counter}"
     return _join_target_path(parent, leaf)
@@ -2276,9 +2551,13 @@ def _same_or_ancestor_path(ancestor_path: str, child_path: str) -> bool:
 
 def _relative_path(ancestor_path: str, child_path: str) -> str:
     if _is_windows_path(ancestor_path) or _is_windows_path(child_path):
-        relative = ntpath.relpath(ntpath.normpath(child_path), ntpath.normpath(ancestor_path))
+        relative = ntpath.relpath(
+            ntpath.normpath(child_path), ntpath.normpath(ancestor_path)
+        )
         return "" if relative == "." else relative
-    relative = posixpath.relpath(posixpath.normpath(child_path), posixpath.normpath(ancestor_path))
+    relative = posixpath.relpath(
+        posixpath.normpath(child_path), posixpath.normpath(ancestor_path)
+    )
     return "" if relative == "." else relative
 
 
@@ -2293,8 +2572,14 @@ def _selected_paths(raw: Any) -> list[str]:
         if not path:
             raise ValidationError({"selected_paths": "selected path cannot be empty."})
         normalized = posixpath.normpath(path)
-        if normalized.startswith("/") or normalized == ".." or normalized.startswith("../"):
-            raise ValidationError({"selected_paths": "selected path must be relative to source_path."})
+        if (
+            normalized.startswith("/")
+            or normalized == ".."
+            or normalized.startswith("../")
+        ):
+            raise ValidationError(
+                {"selected_paths": "selected path must be relative to source_path."}
+            )
         result.append(normalized)
     return result
 

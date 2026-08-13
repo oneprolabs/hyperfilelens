@@ -35,8 +35,8 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
             target_execution_organization_id=22,
             target_execution_node_id=7,
         )
-        item_objects.select_related.return_value.filter.return_value.first.return_value = (
-            SimpleNamespace(restore_record=record)
+        item_objects.select_related.return_value.filter.return_value.first.return_value = SimpleNamespace(
+            restore_record=record
         )
         product_task = SimpleNamespace(status=Task.Status.CANCELLED)
         task_objects.select_for_update.return_value.filter.return_value.first.return_value = product_task
@@ -106,7 +106,7 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
     @patch("apps.restore.signals.timezone.now", return_value="projected-at")
     @patch("apps.restore.signals.append_restore_item_terminal_event")
     @patch("apps.restore.signals.RestoreRecordItem.objects")
-    def test_cancelled_projection_preserves_completed_item(
+    def test_cancelled_projection_preserves_terminal_item(
         self,
         item_objects,
         append_event,
@@ -115,7 +115,7 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
         record = SimpleNamespace(organization_id=11)
         item = SimpleNamespace(
             id=31,
-            status=RestoreRecordItem.Status.SUCCESS,
+            status=RestoreRecordItem.Status.FAILED,
             node_task_id="node-task-id",
             error_code="",
             error_message="",
@@ -133,7 +133,7 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
             product_task=product_task,
         )
 
-        self.assertEqual(item.status, RestoreRecordItem.Status.SUCCESS)
+        self.assertEqual(item.status, RestoreRecordItem.Status.FAILED)
         self.assertEqual(item.terminal_projection_at, "projected-at")
         append_event.assert_called_once()
         item.save.assert_called_once_with(
@@ -141,10 +141,14 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
         )
 
     @patch("apps.restore.services.reconciliation.sync_restore_record_from_node_task")
+    @patch(
+        "apps.restore.services.reconciliation._classify_terminal_legacy_insight_tasks",
+        return_value=(1, 0),
+    )
     @patch("apps.restore.services.reconciliation._projection_needs_replay")
     @patch("apps.restore.services.reconciliation._candidate_terminal_node_tasks")
     def test_replays_only_incomplete_durable_projections(
-        self, candidates, needs_replay, projector
+        self, candidates, needs_replay, classify, projector
     ):
         first = SimpleNamespace(id="first")
         second = SimpleNamespace(id="second")
@@ -153,8 +157,89 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
 
         result = reconcile_restore_node_task_projections(limit=20)
 
-        self.assertEqual(result, {"candidates": 2, "replayed": 1})
+        self.assertEqual(
+            result,
+            {
+                "candidates": 2,
+                "replayed": 1,
+                "replay_failed": 0,
+                "classified": 1,
+                "classification_failed": 0,
+            },
+        )
+        classify.assert_called_once_with(limit=20)
         self.assertEqual(projector.call_args_list, [call(NodeTask, first)])
+
+    @patch("apps.restore.services.reconciliation.logger.exception")
+    @patch(
+        "apps.restore.services.reconciliation._classify_terminal_legacy_insight_tasks",
+        return_value=(2, 1),
+    )
+    @patch(
+        "apps.restore.services.reconciliation._projection_needs_replay",
+        return_value=True,
+    )
+    @patch("apps.restore.services.reconciliation._candidate_terminal_node_tasks")
+    @patch("apps.restore.services.reconciliation.sync_restore_record_from_node_task")
+    def test_one_projection_failure_does_not_block_remaining_reconciliation(
+        self,
+        projector,
+        candidates,
+        _needs_replay,
+        classify,
+        log_exception,
+    ):
+        first = SimpleNamespace(id="first")
+        second = SimpleNamespace(id="second")
+        candidates.return_value = [first, second]
+        projector.side_effect = (RuntimeError("projection unavailable"), None)
+
+        result = reconcile_restore_node_task_projections(limit=20)
+
+        self.assertEqual(
+            result,
+            {
+                "candidates": 2,
+                "replayed": 1,
+                "replay_failed": 1,
+                "classified": 2,
+                "classification_failed": 1,
+            },
+        )
+        self.assertEqual(
+            projector.call_args_list,
+            [call(NodeTask, first), call(NodeTask, second)],
+        )
+        classify.assert_called_once_with(limit=20)
+        log_exception.assert_called_once()
+
+    @patch("apps.restore.services.reconciliation.logger.exception")
+    @patch(
+        "apps.restore.services.reconciliation._classify_terminal_legacy_insight_tasks",
+        return_value=(0, 0),
+    )
+    @patch("apps.restore.services.reconciliation._projection_needs_replay")
+    @patch("apps.restore.services.reconciliation._candidate_terminal_node_tasks")
+    @patch("apps.restore.services.reconciliation.sync_restore_record_from_node_task")
+    def test_one_replay_check_failure_does_not_block_remaining_reconciliation(
+        self,
+        projector,
+        candidates,
+        needs_replay,
+        _classify,
+        log_exception,
+    ):
+        first = SimpleNamespace(id="first")
+        second = SimpleNamespace(id="second")
+        candidates.return_value = [first, second]
+        needs_replay.side_effect = (RuntimeError("relation unavailable"), True)
+
+        result = reconcile_restore_node_task_projections(limit=20)
+
+        self.assertEqual(result["replayed"], 1)
+        self.assertEqual(result["replay_failed"], 1)
+        projector.assert_called_once_with(NodeTask, second)
+        log_exception.assert_called_once()
 
     @patch("apps.restore.services.reconciliation.NodeTask.objects")
     @patch("apps.restore.services.reconciliation.RestoreRecordItem.objects")
@@ -165,7 +250,9 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
         item_objects.filter.return_value = item_queryset
         item_queryset.order_by.return_value.values.return_value = MagicMock()
         node = SimpleNamespace(id="node-1")
-        node_objects.filter.return_value.order_by.return_value.__getitem__.return_value = [node]
+        node_objects.filter.return_value.order_by.return_value.__getitem__.return_value = [
+            node
+        ]
 
         result = _candidate_terminal_node_tasks(limit=1)
 
@@ -175,7 +262,9 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
             terminal_projection_at__isnull=True,
         )
         item_queryset.order_by.assert_called_once_with()
-        item_queryset.order_by.return_value.values.assert_called_once_with("node_task_id")
+        item_queryset.order_by.return_value.values.assert_called_once_with(
+            "node_task_id"
+        )
 
     @patch("apps.restore.services.reconciliation.Task.objects")
     @patch("apps.restore.services.reconciliation.RestoreRecordItem.objects")

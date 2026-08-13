@@ -1,5 +1,6 @@
 import type { TaskRow } from './taskApi'
 import { formatTaskProgressPercent } from './kopiaProgress'
+import { isRestoreTaskType } from './taskType'
 
 export type ProtectionStopConfirmItem = {
   name: string
@@ -16,7 +17,7 @@ export function restoreTargetPathFromTask(task: TaskRow): string {
 
 export function buildStopConfirmItemFromTask(task: TaskRow): ProtectionStopConfirmItem {
   const progress = formatTaskProgressPercent(task.progress)
-  if (task.task_type === 'restore') {
+  if (isRestoreTaskType(task.task_type)) {
     const target = restoreTargetPathFromTask(task)
     return {
       name: task.display_name || task.task_uuid,

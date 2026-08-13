@@ -14,6 +14,7 @@ def list_tasks(
     organization_id: int,
     status: str | None = None,
     task_type: str | None = None,
+    exclude_insight_workspace_restores: bool = False,
     trigger_type: str | None = None,
     resource_type: str | None = None,
     resource_subtype: str | None = None,
@@ -41,6 +42,17 @@ def list_tasks(
         queryset = queryset.filter(status=status)
     if task_type:
         queryset = queryset.filter(task_type=task_type)
+    if exclude_insight_workspace_restores:
+        from apps.restore.models import RestoreRecord
+
+        legacy_insight_task_ids = RestoreRecord.objects.filter(
+            organization_id=organization_id,
+            purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+        ).values_list("task_id", flat=True)
+        queryset = queryset.exclude(
+            Q(task_type=Task.Type.INSIGHT_WORKSPACE_RESTORE)
+            | Q(id__in=legacy_insight_task_ids)
+        )
     if trigger_type:
         queryset = queryset.filter(trigger_type=trigger_type)
     if resource_type:
@@ -61,7 +73,9 @@ def list_tasks(
                 except ValueError:
                     search_filter = Q(pk__in=[])
             else:
-                search_filter = Q(display_name__icontains=text) | Q(error_code__icontains=text)
+                search_filter = Q(display_name__icontains=text) | Q(
+                    error_code__icontains=text
+                )
                 try:
                     search_filter |= Q(task_uuid=UUID(text))
                 except ValueError:
@@ -110,7 +124,9 @@ def list_task_steps(*, task: Task) -> QuerySet[TaskStep]:
     return task.steps.order_by("step_index", "id")
 
 
-def list_task_events(*, task: Task, level: str | None = None, after_seq: int | None = None) -> QuerySet[TaskEvent]:
+def list_task_events(
+    *, task: Task, level: str | None = None, after_seq: int | None = None
+) -> QuerySet[TaskEvent]:
     queryset = task.events.order_by("seq", "id")
     if level:
         queryset = queryset.filter(level=level)
@@ -119,8 +135,14 @@ def list_task_events(*, task: Task, level: str | None = None, after_seq: int | N
     return queryset
 
 
-def task_statistics(*, organization_id: int, queryset: QuerySet[Task] | None = None) -> dict:
-    queryset = queryset if queryset is not None else Task.objects.filter(organization_id=organization_id)
+def task_statistics(
+    *, organization_id: int, queryset: QuerySet[Task] | None = None
+) -> dict:
+    queryset = (
+        queryset
+        if queryset is not None
+        else Task.objects.filter(organization_id=organization_id)
+    )
     counts = {
         row["status"]: row["count"]
         for row in queryset.order_by().values("status").annotate(count=Count("id"))
@@ -166,7 +188,9 @@ def recent_failed_tasks(*, limit: int = 10) -> QuerySet[Task]:
 
 
 def task_resource_options(*, organization_id: int, limit: int = 300) -> list[dict]:
-    rows = Task.objects.filter(organization_id=organization_id).order_by("-created_at", "-id")[:limit]
+    rows = Task.objects.filter(organization_id=organization_id).order_by(
+        "-created_at", "-id"
+    )[:limit]
     return [
         {
             "id": str(row.task_uuid),

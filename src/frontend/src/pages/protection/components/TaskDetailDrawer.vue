@@ -49,6 +49,7 @@ import TaskStatusTag from '../../../components/TaskStatusTag.vue'
 import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
 import { cancelTask, getTask, listTaskEvents, type TaskEventRow, type TaskResourceRow, type TaskRow } from '../../../lib/taskApi'
+import { isRestoreTaskType } from '../../../lib/taskType'
 
 const props = withDefaults(defineProps<{
   modelValue: boolean
@@ -604,7 +605,7 @@ async function cancelActiveTask() {
   if (task.task_type === 'backup') {
     const confirmed = await stopConfirmDialog.confirmStopBackup([buildStopConfirmItemFromTask(task)])
     if (!confirmed) return
-  } else if (task.task_type === 'restore') {
+  } else if (isRestoreTaskType(task.task_type)) {
     const confirmed = await stopConfirmDialog.confirmStopRestore([buildStopConfirmItemFromTask(task)])
     if (!confirmed) return
   } else if (task.task_type === 'repository_operation') {
@@ -620,7 +621,7 @@ async function cancelActiveTask() {
           const result = await cancelProtectionBackupTask(task.task_uuid)
           return getTask(result.task_uuid)
         })()
-      : task.task_type === 'restore'
+      : isRestoreTaskType(task.task_type)
         ? await (async () => {
             const result = await cancelProtectionRestoreTask(task.task_uuid)
             return getTask(result.task_uuid)
