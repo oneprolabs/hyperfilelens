@@ -187,8 +187,7 @@
 .fullscreen-form-main--wizard {
   height: 100%;
   box-sizing: border-box;
-  padding-bottom: 84px;
-  scroll-padding: 16px 0 84px;
+  scroll-padding: 16px 0;
 }
 
 .fullscreen-form-step-stack {

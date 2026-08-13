@@ -5609,6 +5609,7 @@ async function initializeFixedSnapshotRestore() {
     snapshotState.count = Math.max(snapshotState.count, snapshotState.items.length)
     snapshotState.loaded = true
     recEntryMode.value = 'manual'
+    recEntryStage.value = 'wizard'
     recSnapshotMap.value = { [backupId]: String(detail.id) }
     recSnapshotId.value = String(detail.id)
     recStep.value = 1
@@ -8432,19 +8433,26 @@ function cancelRecDirDrawer() {
 
 function startManualRecoveryWizard() {
   recEntryMode.value = 'manual'
+  recEntryStage.value = 'wizard'
   recStep.value = 0
   ensureRecoverableRecoverySnapshots()
+  ensureInitialRecoveryDirStepRows()
   void ensureManualRecoverySnapshotDefaults().catch((e) => showApiError(e))
+  void loadRecoveryTargetHostOptions({ reset: true })
 }
 
 function onRecoveryEntryModeChange(mode: string | number | boolean | undefined) {
-  recStep.value = 0
   if (mode === 'manual') {
-    ensureRecoverableRecoverySnapshots()
-    ensureInitialRecoveryDirStepRows()
-    void ensureManualRecoverySnapshotDefaults().catch((e) => showApiError(e))
-    void loadRecoveryTargetHostOptions({ reset: true })
+    startManualRecoveryWizard()
+    return
   }
+  recStep.value = 0
+}
+
+function returnToRecoveryEntryChooser() {
+  recEntryStage.value = 'chooser'
+  recEntryMode.value = 'plan'
+  recStep.value = 0
 }
 
 
@@ -10789,11 +10797,11 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
     <Teleport to="body">
       <div
         v-if="isFixedSnapshotRestore && !recOpen"
-        class="fullscreen-form-fullscreen fullscreen-form-animated create-backup-fullscreen create-restore-fullscreen"
+        class="fullscreen-form-fullscreen fullscreen-form-animated"
         role="dialog"
         aria-modal="true"
       >
-        <div class="fullscreen-form-page create-backup-page">
+        <div class="fullscreen-form-page">
           <div class="fullscreen-form-header">
             <button type="button" class="fullscreen-form-header__back" @click="closeRecoveryWizard">
               <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
@@ -10802,21 +10810,27 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               <h1 class="fullscreen-form-header__title">{{ t('protection.backupsPage.snapshotRestoreTitle') }}</h1>
             </div>
           </div>
-          <main class="fixed-restore-route-state">
-            <el-skeleton v-if="fixedRestoreInitializing" :rows="6" animated />
-            <el-result
-              v-else
-              icon="error"
-              :title="t('protection.backupsPage.snapshotRestoreUnavailableTitle')"
-              :sub-title="fixedRestoreInitError"
-            >
-              <template #extra>
-                <ElButton type="primary" @click="closeRecoveryWizard">
-                  {{ t('protection.backupsPage.snapshotRestoreBack') }}
-                </ElButton>
-              </template>
-            </el-result>
-          </main>
+          <div class="fullscreen-form-layout">
+            <main class="fullscreen-form-main">
+              <section class="fullscreen-form-card">
+                <div class="fullscreen-form-section">
+                  <el-skeleton v-if="fixedRestoreInitializing" :rows="6" animated />
+                  <el-result
+                    v-else
+                    icon="error"
+                    :title="t('protection.backupsPage.snapshotRestoreUnavailableTitle')"
+                    :sub-title="fixedRestoreInitError"
+                  >
+                    <template #extra>
+                      <ElButton type="primary" @click="closeRecoveryWizard">
+                        {{ t('protection.backupsPage.snapshotRestoreBack') }}
+                      </ElButton>
+                    </template>
+                  </el-result>
+                </div>
+              </section>
+            </main>
+          </div>
         </div>
       </div>
     </Teleport>
@@ -10824,12 +10838,11 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
     <Teleport to="body">
       <div
         v-if="recOpen"
-        class="fullscreen-form-fullscreen fullscreen-form-animated create-backup-fullscreen create-restore-fullscreen"
-        :class="{ 'create-restore-fullscreen--manual': recEntryMode === 'manual' }"
+        class="fullscreen-form-fullscreen fullscreen-form-animated"
         role="dialog"
         aria-modal="true"
       >
-        <div class="fullscreen-form-page create-backup-page">
+        <div class="fullscreen-form-page">
           <div class="fullscreen-form-header">
             <button type="button" class="fullscreen-form-header__back" @click="closeRecoveryWizard">
               <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
@@ -10846,11 +10859,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             </div>
           </div>
 
-          <div class="fullscreen-form-layout create-backup-layout create-backup-layout--steps">
+          <div class="fullscreen-form-layout">
             <WizardSteps
               v-if="recEntryStage === 'wizard'"
               as="aside"
-              class="create-backup-steps"
               :steps="recWizardStepItems"
               :current-step="recStep"
               :is-done="isRecStepDone"
@@ -10858,8 +10870,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               :aria-label="t('protection.backupsPage.createRestoreWizardAria')"
             />
 
-            <main class="fullscreen-form-main create-backup-main">
-              <div class="create-backup-step-body dp-process-page dp-restore-wizard-body">
+            <main class="fullscreen-form-main fullscreen-form-main--wizard">
+              <section class="fullscreen-form-card fullscreen-form-step-section fullscreen-form-step-section--active dp-restore-wizard-card">
+                <div class="fullscreen-form-section dp-restore-wizard-body">
         <template v-if="recEntryStage === 'chooser'">
           <div class="recovery-entry-panel space-y-4">
             <ElRadioGroup v-if="!isFixedSnapshotRestore" v-model="recEntryMode" class="recovery-entry-options" @change="onRecoveryEntryModeChange">
@@ -11123,19 +11136,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               {{ t('protection.backupsPage.msgRecoveryPlanUnavailable') }}
             </div>
 
-            <div v-if="recEntryMode === 'manual'" class="create-backup-layout create-backup-layout--steps recovery-manual-inline-layout">
-              <WizardSteps
-                as="aside"
-                class="create-backup-steps recovery-manual-inline-layout__steps"
-                :steps="recWizardStepItems"
-                :current-step="recStep"
-                :is-done="isRecStepDone"
-                :clickable="false"
-                :aria-label="t('protection.backupsPage.createRestoreWizardAria')"
-              />
-              <div class="fullscreen-form-main create-backup-main recovery-manual-inline-layout__main">
-                <div class="create-backup-step-body recovery-manual-inline-layout__content">
-
+          </div>
+        </template>
+        <template v-else>
         <div v-show="recStep === 0" class="dp-wizard-pane">
           <p class="text-sm text-slate-500 mb-3">{{ t('protection.backupsPage.recStepBackupAndSnapshotLead') }}</p>
           <div class="recovery-manual-table-shell">
@@ -11143,7 +11146,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           v-table-overflow-title
               :data="recBackupSnapshotHostRows"
               :header-cell-style="TABLE_HEADER_STYLE"
-              max-height="calc(var(--app-viewport-height) - 390px)"
               stripe
               class="recovery-plan-preview-table recovery-manual-table"
               row-key="rowKey"
@@ -11248,7 +11250,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           v-table-overflow-title
               :data="recRecoveryDestSourceRows"
               row-key="hostId"
-              max-height="calc(var(--app-viewport-height) - 390px)"
               stripe
               :header-cell-style="TABLE_HEADER_STYLE"
               class="hfl-list-table recovery-manual-table"
@@ -11293,7 +11294,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               </el-table-column>
               <el-table-column :label="t('protection.backupsPage.recStepDest')" min-width="360">
                 <template #default="{ row }">
-                  <div class="recovery-target-host-control">
+                  <div class="recovery-target-host-control hfl-table-no-tooltip">
                     <ElTooltip
                       :disabled="Boolean(recoverySourceHostButtonOption(row.hostId))"
                       :content="t('protection.backupsPage.recoverySourceHostUnavailable')"
@@ -11451,7 +11452,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               ref="recRecoveryDirSourceTableRef"
               :data="recRecoveryDirSourceRows"
               row-key="hostId"
-              max-height="calc(var(--app-viewport-height) - 390px)"
               stripe
               :expand-row-keys="recExpandedRecDirHostIds"
               :header-cell-style="TABLE_HEADER_STYLE"
@@ -11832,7 +11832,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   </span>
                 </template>
                 <template #default="{ row }">
-                  <div class="recovery-conflict-policy-cell">
+                  <div class="recovery-conflict-policy-cell hfl-table-no-tooltip">
                     <el-select
                       :model-value="recConflictPolicyForSource(row.hostId)"
                       size="small"
@@ -12031,7 +12031,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               ref="recRecoveryConfirmTableRef"
               :data="recRecoveryConfirmSourceRows"
               row-key="hostId"
-              max-height="calc(var(--app-viewport-height) - 390px)"
               stripe
               :expand-row-keys="recExpandedRecConfirmHostIds"
               :header-cell-style="TABLE_HEADER_STYLE"
@@ -12193,18 +12192,14 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             </el-table>
           </div>
         </div>
-                </div>
-              </div>
-            </div>
-          </div>
         </template>
-              </div>
+                </div>
+              </section>
             </main>
           </div>
 
-          <div class="fullscreen-form-footer create-backup-footer">
-            <div class="create-backup-footer__inner">
-              <div class="create-backup-footer__actions">
+          <div class="fullscreen-form-footer">
+            <div class="fullscreen-form-footer__actions">
                 <template v-if="recEntryStage === 'chooser' && recEntryMode === 'plan'">
                   <ElButton class="hfl-btn-with-icon" :disabled="recSubmitting" @click="closeRecoveryWizard">
                     <X :size="14" />
@@ -12236,10 +12231,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     <span>{{ t('protection.backupsPage.btnPrev') }}</span>
                   </ElButton>
                   <ElButton
-                    v-else-if="recEntryStage === 'wizard'"
+                    v-else-if="recEntryStage === 'wizard' && !isFixedSnapshotRestore"
                     class="hfl-btn-with-icon"
                     :disabled="recSubmitting"
-                    @click="recEntryStage = 'chooser'"
+                    @click="returnToRecoveryEntryChooser"
                   >
                     <ArrowLeft :size="14" />
                     <span>{{ t('protection.backupsPage.btnBackToRecoveryChoice') }}</span>
@@ -12259,7 +12254,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     <span>{{ t('protection.backupsPage.btnConfirmRecovery') }}</span>
                   </ElButton>
                 </template>
-              </div>
             </div>
           </div>
         </div>
@@ -13501,52 +13495,8 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   font-weight: 650;
 }
 
-.recovery-manual-inline-layout {
-  min-width: 0;
-  padding-top: 0;
-  overflow: visible;
-}
-
-:deep(.recovery-manual-inline-layout__steps.wizard-steps) {
-  width: 214px;
-  padding-top: 8px;
-}
-
-.recovery-manual-inline-layout__steps :deep(.wizard-steps__label) {
-  font-size: 13px;
-}
-
-.recovery-manual-inline-layout__steps :deep(.wizard-steps__connector) {
-  height: 22px;
-  min-height: 22px;
-  flex-basis: 22px;
-}
-
-.recovery-manual-inline-layout__content {
-  display: flex;
-  min-height: 0;
-  min-width: 0;
-  flex: 1 1 auto;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.recovery-manual-inline-layout__main {
-  --create-backup-primary: var(--color-primary);
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--create-backup-primary) 55%, transparent);
-  border-radius: 8px;
-  background: rgb(255 255 255);
-  box-shadow:
-    inset 3px 0 0 color-mix(in srgb, var(--create-backup-primary) 85%, transparent),
-    0 8px 20px rgba(15, 23, 42, 0.04);
-}
-
 .recovery-manual-table-shell {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   max-width: 100%;
   min-width: 0;
   min-height: 0;
@@ -13557,12 +13507,11 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   width: 100%;
 }
 
-.recovery-manual-inline-layout__content > .dp-wizard-pane {
+.dp-restore-wizard-body > .dp-wizard-pane {
   display: flex;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   flex-direction: column;
-  overflow: hidden;
 }
 
 .recovery-manual-table :deep(.el-table__inner-wrapper::before) {
@@ -14074,7 +14023,7 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   grid-template-columns:
     minmax(180px, 1fr)
     minmax(200px, 1.08fr)
-    72px !important;
+    44px !important;
   column-gap: 10px;
   row-gap: 8px;
 }
@@ -14128,6 +14077,12 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 .recovery-dir-selection-row .create-recovery-path-input :deep(.el-input__wrapper),
 .recovery-dir-selection-row .create-recovery-path-input :deep(.el-input-group__append) {
   background: #ffffff;
+}
+
+.recovery-dir-selection-row .create-recovery-dir-plan-actions {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
 }
 
 .recovery-dir-selection-add-wrap {
@@ -15124,9 +15079,6 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
     grid-template-columns: 1fr;
   }
 
-  :deep(.recovery-manual-inline-layout__steps.wizard-steps) {
-    width: 100%;
-  }
 }
 
 
@@ -16274,7 +16226,7 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
     grid-template-columns:
       minmax(140px, 1fr)
       minmax(160px, 1.08fr)
-      72px !important;
+      44px !important;
   }
 
   .target-batch-panel__header {
@@ -16390,83 +16342,6 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   overflow-y: auto;
 }
 
-.create-restore-fullscreen > .fullscreen-form-page {
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.create-restore-fullscreen > .fullscreen-form-page > .fullscreen-form-layout {
-  flex: 0 0 auto;
-  overflow: visible;
-}
-
-.create-restore-fullscreen > .fullscreen-form-page > .fullscreen-form-layout > .create-backup-main {
-  flex: 1 1 auto;
-  height: auto;
-  max-height: none;
-  overflow: visible;
-}
-
-.fixed-restore-route-state {
-  width: min(760px, calc(100% - 48px));
-  margin: 72px auto;
-  padding: 32px;
-  border: 1px solid var(--color-border, #e2e8f0);
-  border-radius: var(--radius-card, 12px);
-  background: #fff;
-}
-
-.create-restore-fullscreen--manual > .fullscreen-form-page {
-  overflow: hidden;
-}
-
-.create-restore-fullscreen--manual > .fullscreen-form-page > .fullscreen-form-layout {
-  flex: 1 1 auto;
-  overflow: hidden;
-}
-
-.create-restore-fullscreen--manual > .fullscreen-form-page > .fullscreen-form-layout > .create-backup-main,
-.create-restore-fullscreen--manual .dp-restore-wizard-body,
-.create-restore-fullscreen--manual .recovery-entry-panel {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.create-restore-fullscreen--manual .recovery-entry-panel {
-  flex-direction: column;
-}
-
-.create-restore-fullscreen--manual .recovery-entry-options {
-  flex: 0 0 auto;
-}
-
-.create-restore-fullscreen--manual .recovery-manual-inline-layout {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.create-restore-fullscreen--manual .recovery-manual-inline-layout__main {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: 100%;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-@media (min-width: 1024px) {
-  .create-restore-fullscreen > .fullscreen-form-page > .fullscreen-form-layout {
-    align-items: stretch;
-  }
-
-  .create-restore-fullscreen--manual .recovery-manual-inline-layout {
-    align-items: stretch;
-  }
-}
-
 .create-backup-step-body {
   display: flex;
   flex-direction: column;
@@ -16474,24 +16349,18 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   min-height: 0;
 }
 
-.create-backup-footer__inner,
-.create-backup-footer__actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  width: 100%;
-}
-
-.create-backup-footer__actions :deep(.el-button + .el-button) {
-  margin-left: 0;
-}
-
 .dp-restore-wizard-body {
   display: flex;
+  flex: 1 0 auto;
   flex-direction: column;
   width: 100%;
   min-height: 0;
+}
+
+.dp-restore-wizard-card {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
 }
 
 .dp-wizard-pane {
