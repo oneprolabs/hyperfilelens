@@ -5,7 +5,8 @@
 name: hyperfilelens
 
 x-backend-image: &backend-image
-  image: hyperfilelens-backend:${APP_VERSION:-latest}
+  image: ${HFL_BACKEND_IMAGE:-hyperfilelens-backend:${APP_VERSION:-latest}}
+  pull_policy: never
   platform: linux/amd64
   restart: unless-stopped
   env_file:
@@ -59,7 +60,8 @@ x-api: &api
       max-file: "10"
 
 x-web: &web
-  image: hyperfilelens-frontend:${APP_VERSION:-latest}
+  image: ${HFL_FRONTEND_IMAGE:-hyperfilelens-frontend:${APP_VERSION:-latest}}
+  pull_policy: never
   platform: linux/amd64
   restart: unless-stopped
   environment:
@@ -197,6 +199,7 @@ services:
 
   postgres:
     image: hyperfilelens-postgres:17
+    pull_policy: never
     restart: unless-stopped
     env_file:
       - ${HFL_ENV_FILE:-./.env}
@@ -225,6 +228,7 @@ services:
 
   redis:
     image: hyperfilelens-redis:alpine
+    pull_policy: never
     restart: unless-stopped
     volumes:
       - ./data/redis:/data
@@ -245,6 +249,7 @@ services:
     # The stable entry has an independently pinned lifecycle. Application
     # upgrades reload its configuration but cannot recreate it unexpectedly.
     image: hyperfilelens-frontend:${HFL_GATEWAY_VERSION:-latest}
+    pull_policy: never
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"

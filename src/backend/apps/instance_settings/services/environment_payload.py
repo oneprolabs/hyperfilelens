@@ -106,7 +106,11 @@ def deploy_profile_staff_payload() -> dict:
         "password_reset_available": password_reset_available(),
         "tenant_public_url": tenant_public_url(),
         "platform_ops_allowed_cidrs": platform_ops_allowed_cidrs(),
-        "app_version": os.getenv("APP_VERSION", "").strip() or None,
+        "app_version": (
+            os.getenv("HFL_PRODUCT_VERSION", "").strip()
+            or os.getenv("APP_VERSION", "").strip()
+            or None
+        ),
         "agent_version": os.getenv("AGENT_VERSION", "").strip() or None,
         "django_debug": bool(getattr(settings, "DEBUG", False)),
         "sentry_enabled": bool(getattr(settings, "SENTRY_ENABLED", False)),

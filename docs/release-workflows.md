@@ -33,6 +33,12 @@ TEST and PROD deployment are enabled unless `TEST_AUTO_DEPLOY` or
 `PROD_AUTO_DEPLOY` is explicitly set to `false`. Automatic PROD promotion runs
 only after TEST deployment succeeds in the same workflow run.
 
+The package manifest and SHA-256 are the release identity; the archive filename
+is only a human-facing convention. Deployment never derives runtime image tags
+from the product version and never pulls a missing image from a registry. The
+manifest supplies complete Backend and Frontend image references, and every
+Compose start uses only verified offline image archives.
+
 `HFL - Enterprise PROD Promotion` is the manual promotion path. It accepts a
 valid Enterprise version already present on the TEST host, validates its
 manifest and checksum, copies that package from TEST to PROD, and deploys it.
@@ -40,6 +46,21 @@ It is not controlled by `PROD_AUTO_DEPLOY` and does not require an additional
 status marker. Package deployment still follows the installer's compatibility
 rules; database rollback uses a verified managed backup rather than installing
 an older package over newer data.
+
+## Upgrade transactions
+
+Each package SHA-256 owns one upgrade transaction under
+`deploy/upgrades/<sha256>/`. The transaction records validation, image loading,
+the managed backup, migration, HFL cutover, SourceLens convergence, Gateway
+verification, and completion. Retrying the same package reuses its verified
+backup and safely replays idempotent gates instead of creating another large
+backup. Backups referenced by unfinished transactions are excluded from
+retention cleanup. Reapplying an already-completed identical package returns
+success without touching running services.
+
+Release packages declare `minimum_upgrade_version` in `MANIFEST.json`, keeping
+compatibility policy with the target release rather than hard-coding it in the
+installed bootstrap. The current supported upgrade baseline is `0.1.34`.
 
 ## Community
 

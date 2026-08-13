@@ -201,7 +201,9 @@ if [[ -z "${HFL_EXTENSIONS_RUNTIME}" && -n "${HFL_EXTENSION_SOURCES:-}" ]]; then
 fi
 export HFL_EXTENSIONS_RUNTIME
 HFL_IMAGE_VERSION="${version}${edition_suffix}"
-export HFL_IMAGE_VERSION
+HFL_VERSION="${version}"
+HFL_RELEASE_EDITION="${edition}"
+export HFL_IMAGE_VERSION HFL_VERSION HFL_RELEASE_EDITION
 stage_release_env_example "${pkg_root}"
 cp "${ROOT}/LICENSE" "${pkg_root}/LICENSE"
 mkdir -p \

@@ -529,7 +529,9 @@ stage_release_env_example() {
 	local example="${pkg_root}/.env.example"
 	cp "${ROOT}/.env.example" "${example}"
 	HFL_EXTENSIONS_RUNTIME="${HFL_EXTENSIONS_RUNTIME:-}" \
-		HFL_IMAGE_VERSION="${HFL_IMAGE_VERSION:-}" python3 - "${example}" <<'PY'
+		HFL_IMAGE_VERSION="${HFL_IMAGE_VERSION:-}" \
+		HFL_RELEASE_EDITION="${HFL_RELEASE_EDITION:-community}" \
+		HFL_VERSION="${HFL_VERSION:-}" python3 - "${example}" <<'PY'
 import os
 import pathlib
 import re
@@ -540,8 +542,20 @@ text = path.read_text(encoding="utf-8")
 text = re.sub(r"(?m)^[ \t]*HFL_EXTENSIONS=.*\n?", "", text)
 runtime = os.environ.get("HFL_EXTENSIONS_RUNTIME", "").strip()
 image_version = os.environ.get("HFL_IMAGE_VERSION", "").strip()
+product_version = os.environ.get("HFL_VERSION", "").strip()
+edition = os.environ.get("HFL_RELEASE_EDITION", "community").strip()
 if image_version:
-    text = re.sub(r"(?m)^APP_VERSION=.*$", f"APP_VERSION={image_version}", text, count=1)
+    replacements = {
+        "APP_VERSION": image_version,
+        "HFL_PRODUCT_VERSION": product_version,
+        "HFL_EDITION": edition,
+        "HFL_BACKEND_IMAGE": f"hyperfilelens-backend:{image_version}",
+        "HFL_FRONTEND_IMAGE": f"hyperfilelens-frontend:{image_version}",
+    }
+    for key, value in replacements.items():
+        text = re.sub(
+            rf"(?m)^{re.escape(key)}=.*$", f"{key}={value}", text, count=1
+        )
 if runtime:
     block = (
         "\n# Baked into this release's control-plane images (Open Core).\n"
@@ -1105,9 +1119,14 @@ manifest = {
     "product": "hyperfilelens",
     "edition": edition,
     "image_version": image_version,
+    "runtime_images": {
+        "backend": f"hyperfilelens-backend:{image_version}",
+        "frontend": f"hyperfilelens-frontend:{image_version}",
+    },
     "channel": "main" if version.startswith("main-") else "release",
     "artifact_id": version if version.startswith("main-") else f"v{version}",
     "built_at": built_at,
+    "minimum_upgrade_version": "0.1.34",
     "git_commit": commit,
     "host_runtime": {
         "os_id": "ubuntu",
@@ -1131,11 +1150,8 @@ manifest = {
 }
 if edition not in {"community", "enterprise"}:
     raise SystemExit(f"invalid release edition: {edition}")
-expected_image_version = version + ("-ee" if edition == "enterprise" else "")
-if image_version != expected_image_version:
-    raise SystemExit(
-        f"image version {image_version} does not match {edition} release {version}"
-    )
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", image_version):
+    raise SystemExit(f"invalid image version: {image_version}")
 if edition == "enterprise":
     if not re.fullmatch(r"[0-9a-f]{40}", extension_commit):
         raise SystemExit("Enterprise release requires an immutable extension commit")

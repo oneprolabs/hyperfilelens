@@ -175,11 +175,11 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	else
 		if [[ "${edition}" == enterprise ]]; then
 			jq -e --arg version "${version}" \
-				'.channel == "release" and .artifact_id == ("v" + $version) and .version == $version and .edition == "enterprise" and .image_version == ($version + "-ee") and .extension_commit == "89abcdef0123456789abcdef0123456789abcdef"' \
+				'.channel == "release" and .artifact_id == ("v" + $version) and .version == $version and .edition == "enterprise" and .image_version == ($version + "-ee") and .runtime_images.backend == ("hyperfilelens-backend:" + $version + "-ee") and .runtime_images.frontend == ("hyperfilelens-frontend:" + $version + "-ee") and .minimum_upgrade_version == "0.1.34" and .extension_commit == "89abcdef0123456789abcdef0123456789abcdef"' \
 				MANIFEST.json >/dev/null
 		else
 			jq -e --arg version "${version}" \
-				'.channel == "release" and .artifact_id == ("v" + $version) and .version == $version and .edition == "community" and .image_version == $version and (has("extension_commit") | not)' \
+				'.channel == "release" and .artifact_id == ("v" + $version) and .version == $version and .edition == "community" and .image_version == $version and .runtime_images.backend == ("hyperfilelens-backend:" + $version) and .runtime_images.frontend == ("hyperfilelens-frontend:" + $version) and .minimum_upgrade_version == "0.1.34" and (has("extension_commit") | not)' \
 				MANIFEST.json >/dev/null
 		fi
 	fi
@@ -189,6 +189,16 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	[[ -n "${first}" ]]
 	archive="${first%.part-000}"
 	cat "${archive}.part-"* >"${archive}"
+	env_example="$(tar -xOzf "${archive}" --wildcards '*/.env.example')"
+	grep -Fx "HFL_PRODUCT_VERSION=${version}" <<<"${env_example}" >/dev/null
+	grep -Fx "HFL_EDITION=${edition}" <<<"${env_example}" >/dev/null
+	image_suffix=""
+	[[ "${edition}" == enterprise ]] && image_suffix="-ee"
+	grep -Fx "APP_VERSION=${version}${image_suffix}" <<<"${env_example}" >/dev/null
+	grep -Fx "HFL_BACKEND_IMAGE=hyperfilelens-backend:${version}${image_suffix}" \
+		<<<"${env_example}" >/dev/null
+	grep -Fx "HFL_FRONTEND_IMAGE=hyperfilelens-frontend:${version}${image_suffix}" \
+		<<<"${env_example}" >/dev/null
 	tar -tzf "${archive}" | grep -E '/sync-env\.py$' >/dev/null
 	tar -tzf "${archive}" | grep -E '/apply-runtime-config\.py$' >/dev/null
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/tls\.crt$' >/dev/null

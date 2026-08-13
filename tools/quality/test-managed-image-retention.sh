@@ -8,6 +8,7 @@ trap 'rm -rf "${tmp}"' EXIT
 
 ROOT="${tmp}/install"
 mkdir -p "${ROOT}/backup/upgrade-20260727-010000" "${tmp}/bin"
+printf 'HFL_GATEWAY_VERSION=0.1.5\n' >"${ROOT}/.env"
 cat >"${ROOT}/MANIFEST.json" <<'JSON'
 {"images":[{"refs":["hyperfilelens-backend:0.1.8","hyperfilelens-backend:latest"]}]}
 JSON
@@ -31,6 +32,7 @@ case "$*" in
 		hyperfilelens-backend:0.1.6 \
 		hyperfilelens-backend:0.1.5 \
 		hyperfilelens-backend:0.1.4 \
+		hyperfilelens-frontend:0.1.5 \
 		customer-backend:0.1.5
 	;;
 "image inspect hyperfilelens-backend:0.1.5 --format {{.Id}}") printf 'sha256:unused\n' ;;
