@@ -111,6 +111,10 @@ fi
 grep -F 'release-assets.githubusercontent.com' "${transfer}" >/dev/null
 grep -F 'ServerAliveInterval=30' "${transfer}" >/dev/null
 grep -F '<.github/scripts/download-enterprise-release.sh' "${transfer}" >/dev/null
+grep -F 'for attempt in 1 2 3' "${transfer}" >/dev/null
+grep -F 'refreshing URL' "${transfer}" >/dev/null
+grep -F 'run_remote verify' "${transfer}" >/dev/null
+grep -F 'if name not in archives:' "${transfer}" >/dev/null
 if grep -F 'scp ' "${transfer}" >/dev/null; then
 	printf 'ERROR: Enterprise package staging must not copy release assets over SSH\n' >&2
 	exit 1
@@ -184,8 +188,12 @@ trap 'rm -rf "${download_test}"' EXIT
 mkdir -p "${download_test}/bin" "${download_test}/.incoming/candidate"
 archive_name=hyperfilelens-1.2.3-ee.tar.gz
 printf 'enterprise archive\n' >"${download_test}/${archive_name}"
+printf '{"edition":"enterprise"}\n' >"${download_test}/MANIFEST.json"
 archive_digest="$(sha256sum "${download_test}/${archive_name}" | awk '{print $1}')"
-printf '%s  %s\n' "${archive_digest}" "${archive_name}" >"${download_test}/SHA256SUMS"
+manifest_digest="$(sha256sum "${download_test}/MANIFEST.json" | awk '{print $1}')"
+printf '%s  %s\n%s  %s\n' \
+	"${archive_digest}" "${archive_name}" \
+	"${manifest_digest}" MANIFEST.json >"${download_test}/SHA256SUMS"
 # Preserve the production downloader verbatim except for its fixed TEST-store
 # root, which an unprivileged CI contract test cannot create under /root.
 sed "s#/root/hfl-release#${download_test}#g" "${downloader}" \
@@ -211,13 +219,18 @@ SH
 chmod +x "${download_test}/bin/curl"
 plan="${archive_name}"$'\t'"https://release-assets.githubusercontent.com/${archive_name}"$'\n'
 plan+="SHA256SUMS"$'\t'"https://release-assets.githubusercontent.com/SHA256SUMS"$'\n'
+plan+="MANIFEST.json"$'\t'"https://release-assets.githubusercontent.com/MANIFEST.json"$'\n'
 PATH="${download_test}/bin:${PATH}" \
 	HFL_FAKE_ASSET_ROOT="${download_test}" \
 	HFL_FAKE_CURL_LOG="${download_test}/curl.log" \
 	"${download_test}/downloader" \
 	"${download_test}/.incoming/candidate" \
 	http://192.0.2.10:7890 \
-	"$(printf '%s' "${plan}" | base64 -w 0)" >/dev/null
+	"$(printf '%s' "${plan}" | base64 -w 0)" \
+	download >/dev/null
+"${download_test}/downloader" \
+	"${download_test}/.incoming/candidate" \
+	http://192.0.2.10:7890 '' verify >/dev/null
 cmp "${download_test}/${archive_name}" \
 	"${download_test}/.incoming/candidate/${archive_name}"
 grep -F -- '--proxy http://192.0.2.10:7890' "${download_test}/curl.log" >/dev/null

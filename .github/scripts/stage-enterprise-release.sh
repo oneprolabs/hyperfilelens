@@ -62,10 +62,30 @@ if len(archives) != 1 or not required.issubset(names):
 for name in names:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
         raise SystemExit(f"unsafe Enterprise release asset name: {name}")
+for name in names:
+    if name not in archives:
+        print(name)
+for name in archives:
     print(name)
 PY
 )
 (( ${#assets[@]} >= 3 )) || { printf 'ERROR: Enterprise asset list is empty\n' >&2; exit 1; }
+
+install -d -m 0700 ~/.ssh
+printf '%s\n' "${TEST_SSH_KNOWN_HOSTS}" >~/.ssh/known_hosts
+printf '%s\n' "${TEST_SSH_PRIVATE_KEY}" >~/.ssh/hyperfilelens_test
+chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
+
+run_remote() {
+	local mode=$1 encoded_plan=${2:-} remote_command
+	printf -v remote_command '%q ' bash -s -- \
+		"${incoming}" "${TEST_RELEASE_DOWNLOAD_PROXY_URL}" "${encoded_plan}" "${mode}"
+	ssh -i ~/.ssh/hyperfilelens_test \
+		-o BatchMode=yes -o StrictHostKeyChecking=yes \
+		-o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+		-p "${TEST_SSH_PORT}" "${TEST_SSH_USER}@${TEST_SSH_HOST}" \
+		"${remote_command}" <.github/scripts/download-enterprise-release.sh
+}
 
 for asset in "${assets[@]}"; do
 	api_url="$(python3 - "${assets_json}" "${asset}" <<'PY'
@@ -80,12 +100,14 @@ if len(matches) != 1:
 print(matches[0])
 PY
 )"
-	signed_url="$(curl -fsSI \
-		-H 'Accept: application/octet-stream' \
-		-H "Authorization: Bearer ${GH_TOKEN}" \
-		"${api_url}" \
-		| awk 'BEGIN { IGNORECASE=1 } /^location:/ { sub(/\r$/, "", $2); print $2; exit }')"
-	python3 - "${asset}" "${signed_url}" >>"${plan}" <<'PY'
+	asset_staged=false
+	for attempt in 1 2 3; do
+		signed_url="$(curl -fsSI \
+			-H 'Accept: application/octet-stream' \
+			-H "Authorization: Bearer ${GH_TOKEN}" \
+			"${api_url}" \
+			| awk 'BEGIN { IGNORECASE=1 } /^location:/ { sub(/\r$/, "", $2); print $2; exit }')"
+		python3 - "${asset}" "${signed_url}" >"${plan}" <<'PY'
 import sys
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -105,17 +127,19 @@ if expires_at < datetime.now(timezone.utc) + timedelta(minutes=50):
     raise SystemExit("GitHub asset download URL expires too soon")
 print(f"{asset}\t{url}")
 PY
+		plan_base64="$(base64 -w 0 "${plan}")"
+		if run_remote download "${plan_base64}"; then
+			asset_staged=true
+			break
+		fi
+		printf 'WARN: Enterprise download attempt %d/3 failed for %s; refreshing URL\n' \
+			"${attempt}" "${asset}" >&2
+	done
+	[[ "${asset_staged}" == "true" ]] || {
+		printf 'ERROR: Enterprise asset download failed after URL refresh: %s\n' \
+			"${asset}" >&2
+		exit 1
+	}
 done
 
-plan_base64="$(base64 -w 0 "${plan}")"
-install -d -m 0700 ~/.ssh
-printf '%s\n' "${TEST_SSH_KNOWN_HOSTS}" >~/.ssh/known_hosts
-printf '%s\n' "${TEST_SSH_PRIVATE_KEY}" >~/.ssh/hyperfilelens_test
-chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
-printf -v remote_command '%q ' bash -s -- \
-	"${incoming}" "${TEST_RELEASE_DOWNLOAD_PROXY_URL}" "${plan_base64}"
-ssh -i ~/.ssh/hyperfilelens_test \
-	-o BatchMode=yes -o StrictHostKeyChecking=yes \
-	-o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
-	-p "${TEST_SSH_PORT}" "${TEST_SSH_USER}@${TEST_SSH_HOST}" \
-	"${remote_command}" <.github/scripts/download-enterprise-release.sh
+run_remote verify
