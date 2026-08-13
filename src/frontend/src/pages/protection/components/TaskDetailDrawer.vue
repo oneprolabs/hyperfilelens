@@ -41,7 +41,6 @@ import {
   canCancelRepositoryTask,
 } from '../../../lib/repositoryTaskCancellation'
 import { taskResourceSnapshot } from '../../../lib/taskOutcomeDisplay'
-import { lifecycleStatusTagAttrs } from '../../../lib/statusTag'
 import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../../lib/taskBackupSourceResource'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../../lib/taskStepExpansion'
@@ -90,6 +89,7 @@ const backupSourceRows = ref<Array<{
   endpointIp: string
   status: string
   statusValue: string
+  availability?: 'online' | 'offline'
   registeredAt: string
   flowSource: Awaited<ReturnType<typeof resolveTaskBackupSourceResource>>['flowSource']
 }>>([])
@@ -222,6 +222,16 @@ function valueLabel(value?: string | null) {
   if (!value) return t('ops.task.emptyMark')
   const key = `ops.task.resourceValue.${value}`
   return te(key) ? t(key) : t('ops.task.unknownValue')
+}
+
+function backupSourceConnectivityLabel(value?: string) {
+  return value === 'online'
+    ? t('protection.sourceResources.nodeStatusOnline')
+    : t('protection.sourceResources.nodeStatusOffline')
+}
+
+function backupSourceConnectivityTagType(value?: string): 'success' | 'danger' {
+  return value === 'online' ? 'success' : 'danger'
 }
 
 function progressValue(row: TaskRow) {
@@ -1027,9 +1037,15 @@ watch(
               <FlowSourceConnectionCell :row="row.flowSource" />
             </template>
           </el-table-column>
-          <el-table-column :label="t('ops.task.colStatus')" width="110">
+          <el-table-column :label="t('protection.sourceResources.colConnectivity')" width="110">
             <template #default="{ row }">
-              <ElTag v-if="row.status" v-bind="lifecycleStatusTagAttrs(row.statusValue)" size="small">{{ row.status }}</ElTag>
+              <ElTag
+                v-if="row.availability"
+                :type="backupSourceConnectivityTagType(row.availability)"
+                size="small"
+              >
+                {{ backupSourceConnectivityLabel(row.availability) }}
+              </ElTag>
               <span v-else class="hfl-empty-mark">{{ t('ops.task.emptyMark') }}</span>
             </template>
           </el-table-column>

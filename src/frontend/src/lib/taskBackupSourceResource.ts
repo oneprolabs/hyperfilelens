@@ -10,6 +10,7 @@ export type TaskBackupSourceResourceDisplay = {
   registeredAt: string
   status: string
   statusValue: string
+  availability?: 'online' | 'offline'
   flowSource: FlowSourceRow
 }
 
@@ -55,7 +56,7 @@ export function resolveTaskBackupSourceResourceFromPayload(
       hostname: sourceName,
       nodeName: sourceName,
       nodeIp: '',
-      status: 'offline',
+      status: 'removed',
       registeredAt: String(cleanupSource.registered_at || ''),
       type: sourceKind === 'agent' ? 'host' : 'nas',
     }
@@ -66,6 +67,7 @@ export function resolveTaskBackupSourceResourceFromPayload(
       registeredAt: String(cleanupSource.registered_at || ''),
       status: 'unregistered',
       statusValue: 'unregistered',
+      availability: undefined,
       flowSource,
     }
   }
@@ -83,7 +85,7 @@ export function resolveTaskBackupSourceResourceFromPayload(
       hostname: orphanName,
       nodeName: orphanName,
       nodeIp: '',
-      status: 'offline',
+      status: 'removed',
       registeredAt: '',
       type: sourceKind === 'agent' ? 'host' : 'nas',
     }
@@ -94,6 +96,7 @@ export function resolveTaskBackupSourceResourceFromPayload(
       registeredAt: '',
       status: 'unregistered',
       statusValue: 'unregistered',
+      availability: undefined,
       flowSource,
     }
   }
@@ -113,7 +116,7 @@ export function resolveTaskBackupSourceResourceFromPayload(
       hostname: sourceName,
       nodeName: sourceName,
       nodeIp: '',
-      status: 'offline',
+      status: 'removed',
       registeredAt: '',
       type: sourceKind === 'agent' ? 'host' : 'nas',
     }
@@ -124,6 +127,7 @@ export function resolveTaskBackupSourceResourceFromPayload(
       registeredAt: '',
       status: 'unregistered',
       statusValue: 'unregistered',
+      availability: undefined,
       flowSource,
     }
   }
@@ -155,7 +159,8 @@ export async function resolveTaskBackupSourceResource(
       hostname,
       nodeName: node.name || EMPTY,
       nodeIp: node.ip_address || '',
-      status: node.status === 'online' ? 'online' : 'offline',
+      status: node.status,
+      availability: node.availability,
       registeredAt: node.created_at || '',
       type: 'host',
       platform,
@@ -167,6 +172,7 @@ export async function resolveTaskBackupSourceResource(
       registeredAt: node.created_at || '',
       status: node.status || '',
       statusValue: node.status || '',
+      availability: node.availability,
       flowSource,
     }
   }
@@ -182,7 +188,8 @@ export async function resolveTaskBackupSourceResource(
     hostname: source.name || EMPTY,
     nodeName: boundNode?.name || source.bound_node_name || '',
     nodeIp: boundNode?.ip_address || '',
-    status: source.status === 'online' || source.status === 'active' ? 'online' : 'offline',
+    status: (source.status || 'inactive') as FlowSourceRow['status'],
+    availability: source.availability,
     registeredAt: source.created_at || '',
     type: 'nas',
     protocol,
@@ -197,6 +204,7 @@ export async function resolveTaskBackupSourceResource(
     registeredAt: source.created_at || '',
     status: source.status_display || source.status || '',
     statusValue: source.status || '',
+    availability: source.availability,
     flowSource,
   }
 }

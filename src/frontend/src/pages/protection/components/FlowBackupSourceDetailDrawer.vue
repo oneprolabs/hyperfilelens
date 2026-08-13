@@ -158,6 +158,7 @@ type ResourceDetailRow = {
   endpointName?: string
   endpointIp?: string
   registeredAt?: string
+  availability?: 'online' | 'offline'
   flowSource?: Awaited<ReturnType<typeof resolveTaskBackupSourceResource>>['flowSource']
 }
 
@@ -1118,6 +1119,7 @@ function normalizeResourceDetail(type: string, id: number, raw: unknown, source?
     endpointName: source?.endpointName,
     endpointIp: source?.endpointIp,
     registeredAt: source?.registeredAt,
+    availability: source?.availability,
     flowSource: source?.flowSource,
   }
 }
@@ -4267,9 +4269,26 @@ function onClosed() {
                 </ElTag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.task.colStatus')" width="120">
+            <el-table-column
+              :label="selectedResourceType === 'backup_source'
+                ? t('protection.sourceResources.colConnectivity')
+                : t('ops.task.colStatus')"
+              width="120"
+            >
               <template #default="{ row }">
-                <ElTag v-if="row.status" v-bind="lifecycleStatusTagAttrs(row.statusValue)" size="small">
+                <ElTag
+                  v-if="selectedResourceType === 'backup_source' && row.availability"
+                  :type="flowSourceStatusTagType(row.availability)"
+                  :class="{ 'hfl-tag--neutral': flowSourceStatusTag(row.availability) === 'neutral' }"
+                  size="small"
+                >
+                  {{ flowSourceStatusLabel(row.availability) }}
+                </ElTag>
+                <ElTag
+                  v-else-if="selectedResourceType !== 'backup_source' && row.status"
+                  v-bind="lifecycleStatusTagAttrs(row.statusValue)"
+                  size="small"
+                >
                   {{ row.status }}
                 </ElTag>
                 <span v-else class="hfl-empty-mark">—</span>
