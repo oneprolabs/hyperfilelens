@@ -282,6 +282,50 @@ class RepositoryUsageTests(TestCase):
 
         repo.refresh_from_db()
         self.assertEqual(repo.estimated_usage_bytes, 128)
+        self.assertEqual(repo.usage_probe_status, Repository.MetricProbeStatus.FAILED)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage.kopia_repository_estimated_usage_bytes",
+        return_value=256,
+    )
+    def test_s3_sync_records_successful_usage_probe(self, _kopia_estimated):
+        repo = Repository.objects.create(
+            organization_id=1,
+            name="s3-success",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.AWS,
+            s3_bucket="bucket",
+        )
+
+        sync_repository_usage(repo)
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.estimated_usage_bytes, 256)
+        self.assertEqual(repo.usage_probe_status, Repository.MetricProbeStatus.SUCCESS)
+        self.assertIsNotNone(repo.usage_last_success_at)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage.kopia_repository_estimated_usage_bytes",
+        return_value=0,
+    )
+    def test_s3_sync_records_empty_repository_as_success(self, _kopia_estimated):
+        repo = Repository.objects.create(
+            organization_id=1,
+            name="s3-empty",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.AWS,
+            s3_bucket="bucket",
+        )
+
+        sync_repository_usage(repo)
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.estimated_usage_bytes, 0)
+        self.assertEqual(repo.usage_probe_status, Repository.MetricProbeStatus.SUCCESS)
 
     @mock.patch("apps.storage.services.internal.repository_usage._run_repository_usage_probe")
     def test_unbound_nas_sync_aggregates_direct_agent_shards(self, run_probe):

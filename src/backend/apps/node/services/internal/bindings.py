@@ -67,6 +67,10 @@ def _serialize_repository(repo: Repository) -> dict[str, Any]:
         "storage_available_bytes": int(repo.storage_available_bytes or 0),
         "storage_pool_key": str(repo.storage_pool_key or ""),
         "storage_mount_point": str(repo.storage_mount_point or ""),
+        "usage_probe_status": repo.usage_probe_status,
+        "capacity_probe_status": repo.capacity_probe_status,
+        "usage_last_success_at": repo.usage_last_success_at.isoformat() if repo.usage_last_success_at else None,
+        "capacity_last_success_at": repo.capacity_last_success_at.isoformat() if repo.capacity_last_success_at else None,
     }
 
 

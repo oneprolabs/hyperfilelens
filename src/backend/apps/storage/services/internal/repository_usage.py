@@ -157,8 +157,6 @@ def kopia_repository_estimated_usage_bytes(repository: Repository) -> int | None
         connect_s3_repository(repository)
         result = kopia_content_stats(repository)
         packed = parse_kopia_content_stats(result.stdout)
-        if packed <= 0:
-            return None
         return kopia_estimated_usage_from_packed(packed)
     except KopiaCliError as exc:
         logger.info("kopia content stats unavailable for repository %s: %s", repository.id, exc)
@@ -861,14 +859,19 @@ def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Re
     if usage_changed:
         update_fields.append("estimated_usage_bytes")
     update_fields.extend(storage_metric_fields)
+    if estimated_usage_bytes is not None:
+        repository.usage_probe_status = Repository.MetricProbeStatus.SUCCESS
+        repository.usage_last_success_at = checked_at
+        repository.usage_last_error = ""
+    else:
+        repository.usage_probe_status = Repository.MetricProbeStatus.FAILED
+        repository.usage_last_error = str(usage_error or "Unable to read repository usage.")[:1000]
+    update_fields.extend([
+        "usage_probe_status",
+        "usage_last_success_at",
+        "usage_last_error",
+    ])
     if repository.repo_type in (Repository.Type.NAS, Repository.Type.PROXY_FS):
-        if estimated_usage_bytes is not None:
-            repository.usage_probe_status = Repository.MetricProbeStatus.SUCCESS
-            repository.usage_last_success_at = checked_at
-            repository.usage_last_error = ""
-        else:
-            repository.usage_probe_status = Repository.MetricProbeStatus.FAILED
-            repository.usage_last_error = str(usage_error or "Unable to read repository usage.")[:1000]
         if fs_capacity is not None and fs_capacity > 0:
             repository.capacity_probe_status = Repository.MetricProbeStatus.SUCCESS
             repository.capacity_last_success_at = checked_at
@@ -877,9 +880,6 @@ def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Re
             repository.capacity_probe_status = Repository.MetricProbeStatus.FAILED
             repository.capacity_last_error = str(capacity_error or "Unable to read filesystem capacity.")[:1000]
         update_fields.extend([
-            "usage_probe_status",
-            "usage_last_success_at",
-            "usage_last_error",
             "capacity_probe_status",
             "capacity_last_success_at",
             "capacity_last_error",

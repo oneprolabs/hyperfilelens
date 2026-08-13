@@ -119,6 +119,10 @@ export type NodeBindingsRepository = {
   storage_available_bytes?: number
   storage_pool_key?: string
   storage_mount_point?: string
+  usage_probe_status?: string
+  capacity_probe_status?: string
+  usage_last_success_at?: string | null
+  capacity_last_success_at?: string | null
 }
 
 export type NodeBindingsSourceNas = {

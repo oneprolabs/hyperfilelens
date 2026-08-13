@@ -50,6 +50,17 @@ FORBIDDEN_CONFIG_FIELDS = {
     "internal_endpoint",
 }
 
+# These fields do not affect how an existing S3 repository is reached or
+# authenticated. Updating them must not revalidate the repository's immutable
+# location against today's Provider Catalog: a catalog entry can be renamed or
+# removed after the repository was created while the saved endpoint remains
+# valid.
+S3_NON_CONNECTION_CONFIG_FIELDS = {
+    "quota_gb",
+    "quota_alert_enabled",
+    "quota_alert_threshold",
+}
+
 
 # Fields that an S3 repository cannot change once it has been created.
 # Enforced in RepositoryWriteSerializer.validate() for update/partial_update.
@@ -268,6 +279,7 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         instance = self.instance
+        incoming_config = attrs.get("config") or {}
         if instance is not None and self.context.get("request_action") in {
             "update",
             "partial_update",
@@ -281,7 +293,6 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                 locked_errors["s3_bucket"] = "S3 bucket cannot be modified."
             if "s3_bucket_mode" in attrs:
                 locked_errors["s3_bucket_mode"] = "S3 bucket mode cannot be modified."
-            incoming_config = attrs.get("config") or {}
             if isinstance(incoming_config, dict):
                 if instance.repo_type == Repository.Type.S3:
                     for field in (
@@ -321,6 +332,17 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                 locked_errors["nas_protocol"] = "NAS protocol cannot be modified."
             if locked_errors:
                 raise serializers.ValidationError(locked_errors)
+
+            if (
+                instance.repo_type == Repository.Type.S3
+                and set(attrs).issubset({"name", "config"})
+                and set(incoming_config).issubset(S3_NON_CONNECTION_CONFIG_FIELDS)
+                and not attrs.get("credential_payload")
+            ):
+                # Keep this as a partial config. update_repository() performs
+                # the shallow merge, preserving the validated connection
+                # snapshot from repository creation.
+                return attrs
 
         repo_type = attrs.get("repo_type") or getattr(instance, "repo_type", None)
         config = {

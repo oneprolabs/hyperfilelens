@@ -177,6 +177,8 @@ class ProxyBindingsTests(TestCase):
             storage_available_bytes=17 * 1024**3,
             storage_pool_key="nas:nfs:10.0.0.10:/backup",
             storage_mount_point="/mnt/hfl/target-nas",
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            capacity_probe_status=Repository.MetricProbeStatus.SUCCESS,
         )
         Repository.objects.create(
             organization_id=self.org.id,
@@ -210,6 +212,14 @@ class ProxyBindingsTests(TestCase):
         self.assertEqual(
             response.data["target_nas_repositories"][0]["storage_total_bytes"],
             20 * 1024**3,
+        )
+        self.assertEqual(
+            response.data["target_nas_repositories"][0]["usage_probe_status"],
+            Repository.MetricProbeStatus.SUCCESS,
+        )
+        self.assertEqual(
+            response.data["target_nas_repositories"][0]["capacity_probe_status"],
+            Repository.MetricProbeStatus.SUCCESS,
         )
         self.assertEqual(response.data["totals"], {
             "target_nas_repositories": 1,

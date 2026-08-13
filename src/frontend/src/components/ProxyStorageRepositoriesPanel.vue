@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Info } from 'lucide-vue-next'
 import { getNodeBindings, type NodeBindings, type NodeBindingsRepository } from '../lib/nodeApi'
 import {
   formatNodeBytes,
@@ -11,6 +12,8 @@ import {
 } from '../lib/nodeInventoryDisplay'
 import { usePageRequestScope } from '../composables/usePageRequestScope'
 import HflCapacityCell from './HflCapacityCell.vue'
+import RepositoryUsageCell from './RepositoryUsageCell.vue'
+import { remainingLimitExceedsAvailableStorage } from '../lib/repositoryCapacityDisplay'
 import type { ApiNode, NodeStoragePoolRow } from '../types/node'
 
 const props = defineProps<{
@@ -113,6 +116,22 @@ function repositoryLocation(repository: NodeBindingsRepository) {
       || config.repo_dir
       || '',
   ).trim() || '—'
+}
+
+function repositoryCapacityWarning(repository: NodeBindingsRepository) {
+  return remainingLimitExceedsAvailableStorage({
+    configuredLimitBytes: nonNegativeBytes(repository.planned_limit_bytes),
+    estimatedUsageBytes: nonNegativeBytes(repository.estimated_usage_bytes),
+    storageAvailableBytes: nonNegativeBytes(repository.storage_available_bytes),
+    usageProbeStatus: repositoryUsageProbeStatus(repository),
+    capacityProbeStatus: repository.capacity_probe_status,
+  })
+}
+
+function repositoryUsageProbeStatus(repository: NodeBindingsRepository) {
+  const status = String(repository.usage_probe_status || 'pending').toLowerCase()
+  if (status === 'pending' && nonNegativeBytes(repository.estimated_usage_bytes) > 0) return 'success'
+  return status
 }
 
 function repositoryHealthType(repository: NodeBindingsRepository): 'success' | 'danger' | 'warning' | 'info' {
@@ -407,16 +426,24 @@ watch(
           </template>
         </ElTableColumn>
         <ElTableColumn
-          :label="t('repositoriesPage.colRepositoryUsage')"
-          min-width="190"
+          min-width="220"
         >
+          <template #header>
+            <span class="repo-table-header-with-help">
+              {{ t('repositoriesPage.colRepositoryUsage') }}
+              <ElTooltip :content="t('repositoriesPage.repositoryUsageHelp')" placement="top">
+                <Info :size="13" aria-hidden="true" />
+              </ElTooltip>
+            </span>
+          </template>
           <template #default="{ row }">
-            <HflCapacityCell
+            <RepositoryUsageCell
               :used-bytes="Number(row.estimated_usage_bytes || 0)"
-              :total-bytes="Number(row.planned_limit_bytes || 0)"
+              :limit-bytes="Number(row.planned_limit_bytes || 0)"
+              :probe-status="repositoryUsageProbeStatus(row)"
               :format-bytes="formatNodeBytes"
-              :unlimited-total-label="t('repositoriesPage.noConfiguredLimit')"
-              variant="compact"
+              :warning="repositoryCapacityWarning(row)"
+              :storage-available-bytes="Number(row.storage_available_bytes || 0)"
             />
           </template>
         </ElTableColumn>

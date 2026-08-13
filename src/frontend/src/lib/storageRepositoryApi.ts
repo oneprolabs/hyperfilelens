@@ -53,6 +53,10 @@ export type StorageRepository = {
   storage_pool_key?: string
   storage_mount_point?: string
   last_checked_at?: string | null
+  usage_probe_status?: string
+  capacity_probe_status?: string
+  usage_last_success_at?: string | null
+  capacity_last_success_at?: string | null
   removed_at?: string | null
   cleanup_result?: 'deleted' | 'force_skipped' | 'preserved' | string
   created_at?: string | null
@@ -114,10 +118,10 @@ export type StorageRepositoryCreatePayload = {
  * PATCH payload for editing an existing storage repository.
  * Only the following are mutable after creation:
  *   - name (display name)
- *   - config.region / s3_url_style / use_tls / quota_gb / quota_alert_*
+ *   - config.s3_url_style / use_tls / quota_gb / quota_alert_*
  *   - config.access_key_id / secret_access_key (omitting keeps the existing value)
- * repo_type, s3_platform, s3_bucket, config.endpoint, config.prefix are rejected
- * by the backend when present.
+ * repo_type, s3_platform, s3_bucket, config.endpoint, config.region and
+ * config.prefix are rejected by the backend when present.
  */
 export type StorageRepositoryUpdatePayload = {
   name?: string
