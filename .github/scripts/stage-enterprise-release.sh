@@ -1,16 +1,11 @@
 #!/usr/bin/env bash
-# Upload an Enterprise candidate to its temporary Draft Release, then ask the
-# TEST host to download it through the configured target-side proxy.
+# After Runner verification succeeds, ask the TEST host to download the
+# Enterprise candidate from its temporary Draft Release through the configured
+# target-side proxy. Repository credentials never leave the Runner.
 set -euo pipefail
 
-source_dir=${1:-}
-incoming=${2:-}
-asset_list="$(dirname "${source_dir}")/release-assets.txt"
+incoming=${1:-}
 
-[[ -d "${source_dir}" && ! -L "${source_dir}" ]] || {
-	printf 'ERROR: Enterprise release source directory is invalid\n' >&2
-	exit 2
-}
 [[ "${incoming}" =~ ^/root/hfl-release/\.incoming/[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
 	printf 'ERROR: Enterprise incoming directory is invalid\n' >&2
 	exit 2
@@ -23,7 +18,6 @@ asset_list="$(dirname "${source_dir}")/release-assets.txt"
 	printf 'ERROR: GitHub repository identity is invalid\n' >&2
 	exit 2
 }
-[[ -s "${asset_list}" ]] || { printf 'ERROR: release asset list is missing\n' >&2; exit 2; }
 [[ "${TEST_RELEASE_DOWNLOAD_PROXY_URL:-}" =~ ^https?://[A-Za-z0-9.-]+:[0-9]{1,5}$ ]] || {
 	printf 'ERROR: TEST release download proxy is invalid\n' >&2
 	exit 2
@@ -47,39 +41,33 @@ proxy_port=${TEST_RELEASE_DOWNLOAD_PROXY_URL##*:}
 	printf 'ERROR: Enterprise staging credentials are missing\n' >&2
 	exit 2
 }
-
-(
-	cd "${source_dir}"
-	[[ -s SHA256SUMS && -s MANIFEST.json ]] || {
-		printf 'ERROR: Enterprise release metadata is incomplete\n' >&2
-		exit 1
-	}
-	sha256sum -c SHA256SUMS
-	archive_count="$(find . -mindepth 1 -maxdepth 1 -type f \
-		-name 'hyperfilelens-*-ee.tar.gz' -print | wc -l)"
-	[[ "${archive_count}" -eq 1 ]] || {
-		printf 'ERROR: Enterprise release must contain one canonical archive\n' >&2
-		exit 1
-	}
-)
-
-while IFS= read -r asset; do
-	[[ "${asset}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ \
-		&& -f "${source_dir}/${asset}" ]] || {
-		printf 'ERROR: unsafe or missing Enterprise release asset: %s\n' "${asset}" >&2
-		exit 1
-	}
-	./release/ci/gh-release-upload.sh "${ARTIFACT_ID}" \
-		"${source_dir}/${asset}" --clobber
-done <"${asset_list}"
-
 assets_json="$(mktemp)"
 plan="$(mktemp)"
 trap 'rm -f "${assets_json}" "${plan}"' EXIT
 gh release view "${ARTIFACT_ID}" --repo "${GITHUB_REPOSITORY}" \
 	--json assets >"${assets_json}"
 
-while IFS= read -r asset; do
+mapfile -t assets < <(python3 - "${assets_json}" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+names = sorted(item["name"] for item in payload["assets"] if not item["name"].startswith("_internal-"))
+archives = [name for name in names if re.fullmatch(r"hyperfilelens-[0-9]+\.[0-9]+\.[0-9]+-ee\.tar\.gz", name)]
+required = {"SHA256SUMS", "MANIFEST.json"}
+if len(archives) != 1 or not required.issubset(names):
+    raise SystemExit("temporary Enterprise candidate is incomplete or ambiguous")
+for name in names:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+        raise SystemExit(f"unsafe Enterprise release asset name: {name}")
+    print(name)
+PY
+)
+(( ${#assets[@]} >= 3 )) || { printf 'ERROR: Enterprise asset list is empty\n' >&2; exit 1; }
+
+for asset in "${assets[@]}"; do
 	api_url="$(python3 - "${assets_json}" "${asset}" <<'PY'
 import json
 import pathlib
@@ -117,7 +105,7 @@ if expires_at < datetime.now(timezone.utc) + timedelta(minutes=50):
     raise SystemExit("GitHub asset download URL expires too soon")
 print(f"{asset}\t{url}")
 PY
-done <"${asset_list}"
+done
 
 plan_base64="$(base64 -w 0 "${plan}")"
 install -d -m 0700 ~/.ssh

@@ -1030,8 +1030,6 @@ jobs:
       - export-runtime-images
     permissions:
       contents: write
-    outputs:
-      stored: ${{ steps.store-enterprise.outputs.stored }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -1078,25 +1076,18 @@ jobs:
             ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" \
               "build/release/dist/${asset}" --clobber
           done < build/release/release-assets.txt
-      - name: Stage Enterprise release on TEST host
-        id: store-enterprise
+      - name: Upload Enterprise candidate to temporary draft
         if: ${{ needs.prepare.outputs.edition == 'enterprise' }}
         env:
-          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           ARTIFACT_ID: ${{ needs.prepare.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
-          TEST_RELEASE_DOWNLOAD_PROXY_URL: ${{ vars.TEST_RELEASE_DOWNLOAD_PROXY_URL }}
-          TEST_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
-          TEST_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
-          TEST_SSH_USER: ${{ vars.TEST_SSH_USER }}
-          TEST_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
-          TEST_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          incoming="/root/hfl-release/.incoming/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          .github/scripts/stage-enterprise-release.sh build/release/dist "$incoming"
-          echo 'stored=true' >> "$GITHUB_OUTPUT"
+          while IFS= read -r asset; do
+            ./release/ci/gh-release-upload.sh "$ARTIFACT_ID" \
+              "build/release/dist/${asset}" --clobber
+          done < build/release/release-assets.txt
       - name: Disk report
         if: always()
         run: df -h
@@ -1172,10 +1163,10 @@ jobs:
           df -h
 
   publish-release:
-    name: Publish · Release
+    name: Distribute · Verified release
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 90
     needs: [prepare, verify-release]
     permissions:
       contents: write
@@ -1187,7 +1178,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare.outputs.commit }}
-      - name: Remove internal assets and publish release
+      - name: Store Enterprise candidate or publish Community release
         id: publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1200,15 +1191,17 @@ jobs:
           TEST_SSH_USER: ${{ vars.TEST_SSH_USER }}
           TEST_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
           TEST_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
+          TEST_RELEASE_DOWNLOAD_PROXY_URL: ${{ vars.TEST_RELEASE_DOWNLOAD_PROXY_URL }}
         shell: bash
         run: |
           set -euo pipefail
           if [[ "$RELEASE_EDITION" == "enterprise" ]]; then
+            incoming="/root/hfl-release/.incoming/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            .github/scripts/stage-enterprise-release.sh "$incoming"
             install -d -m 0700 ~/.ssh
             printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
             printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
             chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
-            incoming="/root/hfl-release/.incoming/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
             ssh -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
               -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
               "bash -s -- '$RELEASE_TAG' '$incoming' /root/hfl-release 10" \
