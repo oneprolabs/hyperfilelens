@@ -26,15 +26,22 @@ const props = withDefaults(defineProps<{
   variant?: 'fullscreen' | 'dialog'
   showCronHelp?: boolean
   cronInputId?: string
+  nameError?: string
+  scheduleError?: string
+  retentionError?: string
 }>(), {
   showBackup: true,
   showFilter: false,
   variant: 'fullscreen',
   showCronHelp: true,
   cronInputId: 'policy-cron-expr',
+  nameError: '',
+  scheduleError: '',
+  retentionError: '',
 })
 const policyForm = defineModel<BackupPolicyForm>('policyForm', { required: true })
 const filterForm = defineModel<FileFilterRuleForm>('filterForm', { required: true })
+defineEmits<{ 'clear-name-error': [] }>()
 
 const { t } = useI18n()
 const router = useRouter()
@@ -70,6 +77,12 @@ const cronErrorText = computed(() => {
 const scheduleErrorText = computed(() => validateScheduleForm(policyForm.value))
 const midRetentionError = computed(() => validateMidRetention(policyForm.value, messageLocale.value))
 const longVsShortRetentionError = computed(() => validateLongVsShortRetention(policyForm.value, messageLocale.value))
+const recentRetentionError = computed(() =>
+  policyForm.value.sectionRetentionEnabled &&
+  (typeof policyForm.value.retentionRecentPoints !== 'number' || policyForm.value.retentionRecentPoints < 1)
+    ? 'Latest restore points must be at least 1.'
+    : '',
+)
 
 const formClass = computed(() =>
   props.variant === 'fullscreen'
@@ -292,19 +305,21 @@ function toggleScheduleMonthDay(day: number) {
         {{ t('protection.policiesPage.tabBasic') }}
       </h3>
       <div class="policy-basic-grid">
-        <div class="policy-basic-row">
+        <div data-validation-field="name" class="policy-basic-row">
           <label class="policy-basic-row__label" for="policy-name-input">
             {{ t('protection.policiesPage.labelPolicyName') }}
             <span class="policy-basic-row__required">*</span>
           </label>
-          <div class="policy-basic-row__control">
+          <div class="policy-basic-row__control" :class="{ 'is-invalid': !!nameError }">
             <ElInput
               id="policy-name-input"
               v-model="policyForm.name"
               :placeholder="t('protection.policiesPage.phPolicyName')"
               maxlength="128"
               show-word-limit
+              @input="$emit('clear-name-error')"
             />
+            <p v-if="nameError" class="fullscreen-form-inline-error">{{ nameError }}</p>
           </div>
         </div>
         <div class="policy-basic-row">
@@ -316,13 +331,14 @@ function toggleScheduleMonthDay(day: number) {
       </div>
     </section>
 
-    <section :class="nestedSectionClass">
+    <section data-validation-field="schedule" :class="nestedSectionClass">
       <div class="policy-section-head">
         <el-checkbox v-model="policyForm.sectionScheduleEnabled" />
         <span class="policy-section-head__title">{{ t('protection.policiesPage.sectionCheckSchedule') }}</span>
       </div>
       <p v-if="!policyForm.sectionScheduleEnabled" class="policy-section-off-hint">{{ t('protection.policiesPage.sectionOffHint') }}</p>
-      <div v-else class="policy-section-nested">
+      <p v-if="scheduleError" class="fullscreen-form-inline-error">{{ scheduleError }}</p>
+      <div v-if="policyForm.sectionScheduleEnabled" class="policy-section-nested">
         <el-radio-group v-model="policyForm.freqMode" class="mb-3">
           <el-radio value="simple">{{ t('protection.policiesPage.freqSimple') }}</el-radio>
           <el-radio value="advanced">{{ t('protection.policiesPage.freqAdvanced') }}</el-radio>
@@ -447,7 +463,7 @@ function toggleScheduleMonthDay(day: number) {
         <div v-else class="space-y-3">
           <div class="cron-row">
             <label class="cron-row__label" :for="cronInputId">
-              <span class="cron-row__required">*</span>{{ t('protection.policiesPage.cronLabel') }}
+              {{ t('protection.policiesPage.cronLabel') }}<span class="cron-row__required">*</span>
             </label>
             <div class="cron-row__field">
               <ElInput
@@ -487,13 +503,14 @@ function toggleScheduleMonthDay(day: number) {
       </div>
     </section>
 
-    <section :class="nestedSectionClass">
+    <section data-validation-field="retention" :class="nestedSectionClass">
       <div class="policy-section-head">
         <el-checkbox v-model="policyForm.sectionRetentionEnabled" />
         <span class="policy-section-head__title">{{ t('protection.policiesPage.sectionCheckRetention') }}</span>
       </div>
       <p v-if="!policyForm.sectionRetentionEnabled" class="policy-section-off-hint">{{ t('protection.policiesPage.sectionOffHint') }}</p>
-      <div v-else class="policy-section-nested policy-retention-stack">
+      <p v-if="retentionError" class="fullscreen-form-inline-error">{{ retentionError }}</p>
+      <div v-if="policyForm.sectionRetentionEnabled" class="policy-section-nested policy-retention-stack">
         <div>
           <div class="policy-option-title policy-option-title--with-desc">
             {{ t('protection.policiesPage.recentTitle') }}
@@ -503,8 +520,11 @@ function toggleScheduleMonthDay(day: number) {
           </div>
           <div class="retention-recent-row">
             <span class="policy-inline-label">{{ t('protection.policiesPage.recentLine') }}</span>
-            <div :class="retentionInputWrapClass">
+            <div :class="[retentionInputWrapClass, { 'is-invalid': !!recentRetentionError }]">
               <ElInputNumber v-model="policyForm.retentionRecentPoints" :min="1" :max="9999" />
+              <p v-if="recentRetentionError" class="fullscreen-form-inline-error retention-recent-input-wrap__error">
+                {{ recentRetentionError }}
+              </p>
             </div>
             <span class="policy-inline-label">{{ t('protection.policiesPage.recentPoints') }}</span>
           </div>
@@ -614,19 +634,21 @@ function toggleScheduleMonthDay(day: number) {
         {{ t('protection.policiesPage.tabBasic') }}
       </h3>
       <div class="policy-basic-grid">
-        <div class="policy-basic-row">
+        <div data-validation-field="name" class="policy-basic-row">
           <label class="policy-basic-row__label" for="filter-rule-name-input">
             {{ t('protection.policiesPage.fieldFilterRuleName') }}
             <span class="policy-basic-row__required">*</span>
           </label>
-          <div class="policy-basic-row__control">
+          <div class="policy-basic-row__control" :class="{ 'is-invalid': !!nameError }">
             <ElInput
               id="filter-rule-name-input"
               v-model="filterForm.name"
               :placeholder="t('protection.policiesPage.phFilterName')"
               maxlength="128"
               show-word-limit
+              @input="$emit('clear-name-error')"
             />
+            <p v-if="nameError" class="fullscreen-form-inline-error">{{ nameError }}</p>
           </div>
         </div>
         <div class="policy-basic-row">
@@ -902,13 +924,63 @@ function toggleScheduleMonthDay(day: number) {
 }
 
 .policy-basic-row__control {
+  position: relative;
   min-width: 0;
+}
+
+.policy-basic-row__control.is-invalid :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+}
+
+.policy-basic-row__control .fullscreen-form-inline-error {
+  position: absolute;
+  margin-top: 2px;
+  left: 0;
+  z-index: 1;
 }
 
 .policy-basic-row__control--switch {
   display: flex;
   align-items: center;
   min-height: 32px;
+}
+
+.cron-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
+}
+
+.cron-row__label {
+  flex-shrink: 0;
+  color: rgb(51 65 85);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 32px;
+  white-space: nowrap;
+}
+
+.cron-row__required {
+  margin-left: 3px;
+  color: var(--el-color-danger);
+}
+
+.cron-row__field {
+  flex: 1 1 320px;
+  min-width: 0;
+  max-width: 460px;
+}
+
+.cron-input--error :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+}
+
+.cron-row__error {
+  margin: 4px 0 0;
+  color: var(--el-color-danger);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .policy-cron-help {
@@ -1064,6 +1136,7 @@ function toggleScheduleMonthDay(day: number) {
   line-height: 1.5;
 }
 
+
 .policy-retention-stack {
   display: flex;
   flex-direction: column;
@@ -1176,7 +1249,20 @@ function toggleScheduleMonthDay(day: number) {
 
 .retention-tier-input-wrap,
 .retention-recent-input-wrap {
+  position: relative;
   width: 140px;
+}
+
+.retention-recent-input-wrap.is-invalid :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+}
+
+.retention-recent-input-wrap__error {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max-content;
+  margin: 0;
 }
 
 .retention-tier-input-wrap :deep(.el-input-number),

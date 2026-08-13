@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Plus, Trash2 } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import { apiErrorMessage } from '../../lib/api'
+import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 import { routeLocationWithListRefresh } from '../../lib/listRouteRefresh'
 import {
   createLensMcpServer,
@@ -29,6 +30,8 @@ const isEditing = computed(() => Boolean(editingUuid.value))
 
 const loading = ref(false)
 const saving = ref(false)
+const pageRef = ref<HTMLElement | null>(null)
+const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 
 const name = ref('')
 const transport = ref<'url' | 'stdio'>('url')
@@ -131,7 +134,11 @@ function handleBack() {
 }
 
 async function handleSubmit() {
-  if (!canSubmit.value || saving.value) return
+  if (saving.value) return
+  if (!validateInline([
+    { field: 'name', message: t('insight.mcpServers.fieldName'), valid: !!name.value.trim() },
+    { field: 'endpoint', message: t('insight.mcpServers.fieldEndpoint'), valid: !!endpoint.value.trim() },
+  ])) return
   saving.value = true
   try {
     const payload = buildPayload()
@@ -160,7 +167,7 @@ watch(
 </script>
 
 <template>
-  <div class="fullscreen-form-fullscreen resource-add-fullscreen">
+  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen">
     <div class="fullscreen-form-page">
       <header class="fullscreen-form-header">
         <button type="button" class="fullscreen-form-header__back" @click="handleBack">
@@ -177,8 +184,8 @@ watch(
           <div class="fullscreen-form-step-stack">
             <section class="fullscreen-form-card fullscreen-form-section">
               <ElForm label-position="top" class="fullscreen-form-el-form">
-                <ElFormItem :label="t('insight.mcpServers.fieldName')" required>
-                  <ElInput v-model="name" :placeholder="t('insight.mcpServers.fieldNamePh')" />
+                <ElFormItem data-validation-field="name" :error="errors.name" :label="t('insight.mcpServers.fieldName')" required>
+                  <ElInput v-model="name" :placeholder="t('insight.mcpServers.fieldNamePh')" @input="clearFieldError('name')" />
                   <p class="mcp-field-hint">{{ t('insight.mcpServers.fieldNameHint') }}</p>
                 </ElFormItem>
 
@@ -190,8 +197,8 @@ watch(
                     </ElSelect>
                     <p class="mcp-field-hint">{{ t('insight.mcpServers.fieldTransportHint') }}</p>
                   </ElFormItem>
-                  <ElFormItem :label="t('insight.mcpServers.fieldEndpoint')" required>
-                    <ElInput v-model="endpoint" :placeholder="endpointPlaceholder" />
+                  <ElFormItem data-validation-field="endpoint" :error="errors.endpoint" :label="t('insight.mcpServers.fieldEndpoint')" required>
+                    <ElInput v-model="endpoint" :placeholder="endpointPlaceholder" @input="clearFieldError('endpoint')" />
                     <p class="mcp-field-hint">{{ t('insight.mcpServers.fieldEndpointHint') }}</p>
                   </ElFormItem>
                 </div>
@@ -235,7 +242,7 @@ watch(
         <ElButton
           type="primary"
           :loading="saving"
-          :disabled="saving || loading || !canSubmit"
+          :disabled="saving || loading"
           @click="handleSubmit"
         >
           {{ isEditing ? t('common.save') : t('insight.mcpServers.btnCreate') }}

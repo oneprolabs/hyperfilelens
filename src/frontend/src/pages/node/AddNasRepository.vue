@@ -20,6 +20,7 @@ import { preflightNasRepositoryCreate, showNasDraftPreflightGuidance } from '../
 import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
 import type { ApiNode } from '../../types/node'
 import NasProxyTopology from './NasProxyTopology.vue'
+import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 
 type NasProtocol = 'smb' | 'nfs'
 
@@ -48,6 +49,8 @@ const emit = defineEmits<{
 
 /* ---------- form state ---------- */
 const busy = ref(false)
+const pageRef = ref<HTMLElement | null>(null)
+const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 const proxyNodesRefreshing = ref(false)
 const proxyNodes = ref<ApiNode[]>([])
 
@@ -112,50 +115,17 @@ const validQuotaAlertThreshold = computed(() => {
 
 /* ---------- validation ---------- */
 function validateForm(): boolean {
-  if (!protocol.value) {
-    ElMessage.warning({ message: t('repositoriesPage.errProtocol'), grouping: true })
-    return false
-  }
-  if (protocol.value === 'smb') {
-    if (!smbHost.value.trim()) {
-      ElMessage.warning({ message: t('addNasRepo.errSmbHost'), grouping: true })
-      return false
-    }
-    if (!smbShare.value.trim()) {
-      ElMessage.warning({ message: t('addNasRepo.errSmbShare'), grouping: true })
-      return false
-    }
-    if (!smbUsername.value.trim()) {
-      ElMessage.warning({ message: t('repositoriesPage.errSmbUsername'), grouping: true })
-      return false
-    }
-    if (!smbPassword.value.trim()) {
-      ElMessage.warning({ message: t('repositoriesPage.errSmbPassword'), grouping: true })
-      return false
-    }
-  } else if (protocol.value === 'nfs') {
-    if (!nfsHost.value.trim()) {
-      ElMessage.warning({ message: t('repositoriesPage.errNfsHost'), grouping: true })
-      return false
-    }
-    if (!nfsExport.value.trim()) {
-      ElMessage.warning({ message: t('repositoriesPage.errNfsExport'), grouping: true })
-      return false
-    }
-  }
-  if (!hasProxyDecision.value) {
-    ElMessage.warning({ message: t('addNasRepo.errProxyDecisionRequired'), grouping: true })
-    return false
-  }
-  if (!repoName.value.trim()) {
-    ElMessage.warning({ message: t('repositoriesPage.errName'), grouping: true })
-    return false
-  }
-  if (enableQuotaAlert.value && !validQuotaAlertThreshold.value) {
-    ElMessage.warning({ message: t('repositoriesPage.hintQuotaAlertThreshold'), grouping: true })
-    return false
-  }
-  return true
+  return validateInline([
+    { field: 'smbHost', message: t('addNasRepo.errSmbHost'), valid: protocol.value !== 'smb' || !!smbHost.value.trim() },
+    { field: 'smbShare', message: t('addNasRepo.errSmbShare'), valid: protocol.value !== 'smb' || !!smbShare.value.trim() },
+    { field: 'smbUsername', message: t('repositoriesPage.errSmbUsername'), valid: protocol.value !== 'smb' || !!smbUsername.value.trim() },
+    { field: 'smbPassword', message: t('repositoriesPage.errSmbPassword'), valid: protocol.value !== 'smb' || !!smbPassword.value.trim() },
+    { field: 'nfsHost', message: t('repositoriesPage.errNfsHost'), valid: protocol.value !== 'nfs' || !!nfsHost.value.trim() },
+    { field: 'nfsExport', message: t('repositoriesPage.errNfsExport'), valid: protocol.value !== 'nfs' || !!nfsExport.value.trim() },
+    { field: 'proxyNode', message: t('addNasRepo.errProxyDecisionRequired'), valid: hasProxyDecision.value },
+    { field: 'repoName', message: t('repositoriesPage.errName'), valid: !!repoName.value.trim() },
+    { field: 'quotaThreshold', message: t('repositoriesPage.hintQuotaAlertThreshold'), valid: !enableQuotaAlert.value || validQuotaAlertThreshold.value },
+  ])
 }
 
 /* ---------- submit ---------- */
@@ -270,7 +240,7 @@ watch(enableQuotaAlert, (enabled) => {
 </script>
 
 <template>
-  <div class="fullscreen-form-fullscreen resource-add-fullscreen" :class="{ 'resource-add-fullscreen--embedded': embedded }">
+  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen" :class="{ 'resource-add-fullscreen--embedded': embedded }">
     <div class="fullscreen-form-page add-nas-page">
       <header v-if="!embedded" class="fullscreen-form-header">
         <button class="fullscreen-form-header__back" @click="handleBack">
@@ -332,23 +302,23 @@ watch(enableQuotaAlert, (enabled) => {
 
                 <ElForm label-position="top" class="fullscreen-form-el-form add-nas-form">
                   <div v-if="protocol === 'smb'" class="fullscreen-form-grid">
-                    <ElFormItem :label="t('addNasRepo.fieldSmbHost')" required class="flex-1">
-                      <ElInput v-model="smbHost" :placeholder="t('addNasRepo.phSmbHost')" />
+                    <ElFormItem data-validation-field="smbHost" :error="errors.smbHost" :label="t('addNasRepo.fieldSmbHost')" required class="flex-1">
+                      <ElInput v-model="smbHost" :placeholder="t('addNasRepo.phSmbHost')" @input="clearFieldError('smbHost')" />
                       <div class="mt-1 text-xs text-[rgb(100_116_139)]">{{ t('addNasRepo.hintSmbHost') }}</div>
                     </ElFormItem>
-                    <ElFormItem :label="t('addNasRepo.fieldSmbShare')" required class="flex-1">
-                      <ElInput v-model="smbShare" :placeholder="t('addNasRepo.phSmbShare')" />
+                    <ElFormItem data-validation-field="smbShare" :error="errors.smbShare" :label="t('addNasRepo.fieldSmbShare')" required class="flex-1">
+                      <ElInput v-model="smbShare" :placeholder="t('addNasRepo.phSmbShare')" @input="clearFieldError('smbShare')" />
                       <div class="mt-1 text-xs text-[rgb(100_116_139)]">{{ t('addNasRepo.hintSmbShare') }}</div>
                     </ElFormItem>
                   </div>
 
                   <div v-if="protocol === 'nfs'" class="fullscreen-form-grid">
-                    <ElFormItem :label="t('addNasRepo.fieldNfsHost')" required class="flex-1">
-                      <ElInput v-model="nfsHost" :placeholder="t('addNasRepo.phNfsHost')" />
+                    <ElFormItem data-validation-field="nfsHost" :error="errors.nfsHost" :label="t('addNasRepo.fieldNfsHost')" required class="flex-1">
+                      <ElInput v-model="nfsHost" :placeholder="t('addNasRepo.phNfsHost')" @input="clearFieldError('nfsHost')" />
                       <div class="mt-1 text-xs text-[rgb(100_116_139)]">{{ t('addNasRepo.hintNfsHost') }}</div>
                     </ElFormItem>
-                    <ElFormItem :label="t('addNasRepo.fieldNfsExport')" required class="flex-1">
-                      <ElInput v-model="nfsExport" :placeholder="t('addNasRepo.phNfsExport')" />
+                    <ElFormItem data-validation-field="nfsExport" :error="errors.nfsExport" :label="t('addNasRepo.fieldNfsExport')" required class="flex-1">
+                      <ElInput v-model="nfsExport" :placeholder="t('addNasRepo.phNfsExport')" @input="clearFieldError('nfsExport')" />
                       <div class="mt-1 text-xs text-[rgb(100_116_139)]">{{ t('addNasRepo.hintNfsExport') }}</div>
                     </ElFormItem>
                   </div>
@@ -389,14 +359,14 @@ watch(enableQuotaAlert, (enabled) => {
                   </h4>
                   <ElForm label-position="top" class="fullscreen-form-el-form add-nas-form">
                     <div class="fullscreen-form-grid">
-                      <ElFormItem :label="t('repositoriesPage.fieldSmbUsername')" required class="flex-1">
-                        <ElInput v-model="smbUsername" :placeholder="t('repositoriesPage.phSmbUsername')" />
+                      <ElFormItem data-validation-field="smbUsername" :error="errors.smbUsername" :label="t('repositoriesPage.fieldSmbUsername')" required class="flex-1">
+                        <ElInput v-model="smbUsername" :placeholder="t('repositoriesPage.phSmbUsername')" @input="clearFieldError('smbUsername')" />
                         <div class="mt-1 text-xs text-[rgb(100_116_139)]">
                           SMB user used to access the shared directory, e.g. backup_user.
                         </div>
                       </ElFormItem>
-                      <ElFormItem :label="t('repositoriesPage.fieldSmbPassword')" required class="flex-1">
-                        <ElInput v-model="smbPassword" type="password" show-password :placeholder="t('repositoriesPage.phSmbPassword')" />
+                      <ElFormItem data-validation-field="smbPassword" :error="errors.smbPassword" :label="t('repositoriesPage.fieldSmbPassword')" required class="flex-1">
+                        <ElInput v-model="smbPassword" type="password" show-password :placeholder="t('repositoriesPage.phSmbPassword')" @input="clearFieldError('smbPassword')" />
                         <div class="mt-1 text-xs text-[rgb(100_116_139)]">
                           Password for the shared directory; logs and errors are masked.
                         </div>
@@ -444,7 +414,7 @@ watch(enableQuotaAlert, (enabled) => {
                 <div class="add-nas-proxy-layout">
                   <div class="add-nas-proxy-form">
                     <ElForm label-position="top" class="fullscreen-form-el-form add-nas-form">
-                      <ElFormItem required class="add-nas-bind-form-item">
+                      <ElFormItem data-validation-field="proxyNode" :error="errors.proxyNode" required class="add-nas-bind-form-item">
                         <template #label>{{ t('addNasRepo.fieldSourceProxyNode') }}</template>
                         <div class="add-nas-select-row">
                           <ElSelect
@@ -453,7 +423,8 @@ watch(enableQuotaAlert, (enabled) => {
                             clearable
                             filterable
                             :placeholder="t('addNasRepo.phSourceProxyNode')"
-                            @clear="clearProxySelection"
+                            @clear="clearProxySelection(); clearFieldError('proxyNode')"
+                            @change="clearFieldError('proxyNode')"
                           >
                             <ElOption
                               v-for="n in availableProxyNodes"
@@ -532,8 +503,8 @@ watch(enableQuotaAlert, (enabled) => {
                   {{ t('repositoriesPage.stepRepo') }}
                 </h3>
                 <ElForm label-position="top" class="fullscreen-form-el-form add-nas-form">
-                  <ElFormItem :label="t('repositoriesPage.fieldRepoName')" required>
-                    <ElInput v-model="repoName" :placeholder="t('repositoriesPage.phRepoName')" />
+                  <ElFormItem data-validation-field="repoName" :error="errors.repoName" :label="t('repositoriesPage.fieldRepoName')" required>
+                    <ElInput v-model="repoName" :placeholder="t('repositoriesPage.phRepoName')" @input="clearFieldError('repoName')" />
                     <div class="mt-1 text-xs text-[rgb(100_116_139)]">
                       Display name used in repository lists and backup configs, e.g. Production NAS backup.
                     </div>
@@ -556,7 +527,7 @@ watch(enableQuotaAlert, (enabled) => {
                       <p class="fullscreen-form-field__hint">{{ t('repositoriesPage.hintQuota') }}</p>
                     </div>
 
-                    <div class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring">
+                    <div data-validation-field="quotaThreshold" class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring">
                       <div class="fullscreen-form-field__label repository-quota-head repository-quota-title-row">
                         <ElCheckbox v-model="enableQuotaAlert">{{ t('repositoriesPage.fieldQuotaAlert') }}</ElCheckbox>
                       </div>
@@ -569,11 +540,13 @@ watch(enableQuotaAlert, (enabled) => {
                             :max="100"
                             :disabled="!enableQuotaAlert"
                             controls-position="right"
+                            @change="clearFieldError('quotaThreshold')"
                           />
                           <div class="repository-quota-number__suffix">%</div>
                         </div>
                       </div>
                       <p class="fullscreen-form-field__hint">{{ t('repositoriesPage.hintQuotaAlertThreshold') }}</p>
+                      <p v-if="errors.quotaThreshold" class="el-form-item__error">{{ errors.quotaThreshold }}</p>
                     </div>
                   </div>
                 </ElForm>

@@ -12,6 +12,7 @@ import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Plus, RefreshCw } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import { apiErrorMessage } from '../../lib/api'
+import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 import { routeLocationWithListRefresh } from '../../lib/listRouteRefresh'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import {
@@ -41,6 +42,8 @@ const isEditing = computed(() => Boolean(editingUuid.value))
 
 const loading = ref(false)
 const saving = ref(false)
+const pageRef = ref<HTMLElement | null>(null)
+const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 const modelsRefreshing = ref(false)
 const formOptionsRefreshing = ref(false)
 const formOptions = ref<LensAssistantFormOptions | null>(null)
@@ -388,7 +391,14 @@ function buildPayload() {
 }
 
 async function handleSubmit() {
-  if (!canSubmit.value || saving.value) return
+  if (saving.value) return
+  if (!validateInline([
+    { field: 'name', message: t('insight.assistants.fieldName'), valid: !!name.value.trim() },
+    { field: 'agentModel', message: t('insight.assistants.fieldAgentModel'), valid: !!agentModelRef.value },
+    { field: 'maxConcurrency', message: t('insight.assistants.fieldMaxConcurrency'), valid: Number(maxConcurrency.value) >= 1 && Number(maxConcurrency.value) <= 50 },
+    { field: 'knowledgeSource', message: t('insight.assistants.fieldKnowledgeSource'), valid: !!knowledgeSourceId.value },
+    { field: 'scenario', message: t('insight.assistants.fieldScenario'), valid: !!selectedTask.value },
+  ])) return
   saving.value = true
   try {
     const payload = buildPayload()
@@ -421,7 +431,7 @@ watch(
 </script>
 
 <template>
-  <div class="fullscreen-form-fullscreen resource-add-fullscreen assistant-form-fullscreen">
+  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen assistant-form-fullscreen">
     <div class="fullscreen-form-page">
       <header class="fullscreen-form-header">
         <button type="button" class="fullscreen-form-header__back" @click="handleBack">
@@ -443,17 +453,18 @@ watch(
                 {{ t('insight.assistants.sectionBasics') }}
               </h3>
               <ElForm label-position="top" class="fullscreen-form-el-form">
-                <ElFormItem :label="t('insight.assistants.fieldName')" required>
+                <ElFormItem data-validation-field="name" :error="errors.name" :label="t('insight.assistants.fieldName')" required>
                   <ElInput
                     v-model="name"
                     maxlength="120"
                     :placeholder="t('insight.assistants.fieldNamePlaceholder')"
+                    @input="clearFieldError('name')"
                   />
                   <p class="assistant-field-hint">{{ t('insight.assistants.fieldNameHint') }}</p>
                 </ElFormItem>
 
                 <div class="fullscreen-form-grid">
-                  <ElFormItem :label="t('insight.assistants.fieldAgentModel')" required>
+                  <ElFormItem data-validation-field="agentModel" :error="errors.agentModel" :label="t('insight.assistants.fieldAgentModel')" required>
                     <div class="assistant-select-row">
                       <div class="assistant-select-row__controls">
                         <ElSelect
@@ -462,6 +473,7 @@ watch(
                           class="assistant-select-row__select"
                           :loading="modelsRefreshing"
                           :placeholder="t('insight.assistants.fieldAgentModel')"
+                          @change="clearFieldError('agentModel')"
                         >
                           <ElOption
                             v-for="row in activeModels"
@@ -532,8 +544,8 @@ watch(
                   </ElFormItem>
                 </div>
 
-                <ElFormItem :label="t('insight.assistants.fieldMaxConcurrency')" required>
-                  <ElInputNumber v-model="maxConcurrency" :min="1" :max="50" class="assistant-concurrency-input" />
+                <ElFormItem data-validation-field="maxConcurrency" :error="errors.maxConcurrency" :label="t('insight.assistants.fieldMaxConcurrency')" required>
+                  <ElInputNumber v-model="maxConcurrency" :min="1" :max="50" class="assistant-concurrency-input" @change="clearFieldError('maxConcurrency')" />
                   <p class="assistant-field-hint">{{ t('insight.assistants.maxConcurrencyHint') }}</p>
                 </ElFormItem>
 
@@ -565,7 +577,7 @@ watch(
               </h3>
               <ElForm label-position="top" class="fullscreen-form-el-form">
                 <div class="fullscreen-form-grid">
-                  <ElFormItem :label="t('insight.assistants.fieldKnowledgeSource')" required>
+                  <ElFormItem data-validation-field="knowledgeSource" :error="errors.knowledgeSource" :label="t('insight.assistants.fieldKnowledgeSource')" required>
                     <div class="assistant-select-row">
                       <div class="assistant-select-row__controls">
                         <ElSelect
@@ -575,6 +587,7 @@ watch(
                           :loading="formOptionsRefreshing"
                           :placeholder="t('insight.assistants.phSelectKnowledgeSource')"
                           :disabled="selectableKnowledgeSources.length === 0 && !formOptionsRefreshing"
+                          @change="clearFieldError('knowledgeSource')"
                         >
                           <ElOption
                             v-for="row in selectableKnowledgeSources"
@@ -623,13 +636,14 @@ watch(
                     <p v-else class="assistant-field-hint">{{ t('insight.assistants.fieldKnowledgeSourceHint') }}</p>
                   </ElFormItem>
 
-                  <ElFormItem :label="t('insight.assistants.fieldScenario')" required>
+                  <ElFormItem data-validation-field="scenario" :error="errors.scenario" :label="t('insight.assistants.fieldScenario')" required>
                     <ElSelect
                       v-model="selectedTask"
                       filterable
                       class="w-full"
                       :placeholder="t('insight.assistants.phSelectScenario')"
                       :disabled="!selectedKnowledgeSource"
+                      @change="clearFieldError('scenario')"
                     >
                       <ElOption
                         v-for="task in taskOptions"
@@ -874,7 +888,7 @@ watch(
         <ElButton
           type="primary"
           :loading="saving"
-          :disabled="saving || loading || !canSubmit"
+          :disabled="saving || loading"
           @click="handleSubmit"
         >
           {{ isEditing ? t('common.save') : t('insight.assistants.btnCreate') }}
