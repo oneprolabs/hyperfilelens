@@ -90,7 +90,7 @@ class S3ClientUrlStyleTests(TestCase):
 
         with self.assertRaises(S3ClientError) as ctx:
             list_s3_buckets(
-                endpoint="192.168.8.81:10443",
+                endpoint="192.0.2.81:9443",
                 region="",
                 access_key_id="002",
                 secret_access_key="not-a-real-secret",

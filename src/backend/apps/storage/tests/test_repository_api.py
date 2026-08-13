@@ -1349,7 +1349,7 @@ class StorageRepositoryApiTests(TestCase):
             "/api/v1/storage/repositories/validate/s3/",
             {
                 "platform": "other",
-                "endpoint": "192.168.8.81:10443",
+                "endpoint": "192.0.2.81:9443",
                 "region": "",
                 "access_key_id": "002",
                 "secret_access_key": "not-a-real-secret",
