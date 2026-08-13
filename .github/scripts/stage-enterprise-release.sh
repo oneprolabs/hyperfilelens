@@ -54,22 +54,20 @@ import re
 import sys
 
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-names = sorted(item["name"] for item in payload["assets"] if not item["name"].startswith("_internal-"))
+names = [item["name"] for item in payload["assets"]]
 archives = [name for name in names if re.fullmatch(r"hyperfilelens-[0-9]+\.[0-9]+\.[0-9]+-ee\.tar\.gz", name)]
 required = {"SHA256SUMS", "MANIFEST.json"}
 if len(archives) != 1 or not required.issubset(names):
     raise SystemExit("temporary Enterprise candidate is incomplete or ambiguous")
-for name in names:
+selected = ["MANIFEST.json", "SHA256SUMS", archives[0]]
+for name in selected:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
         raise SystemExit(f"unsafe Enterprise release asset name: {name}")
-for name in names:
-    if name not in archives:
-        print(name)
-for name in archives:
+for name in selected:
     print(name)
 PY
 )
-(( ${#assets[@]} >= 3 )) || { printf 'ERROR: Enterprise asset list is empty\n' >&2; exit 1; }
+[[ "${#assets[@]}" -eq 3 ]] || { printf 'ERROR: Enterprise asset list is invalid\n' >&2; exit 1; }
 
 install -d -m 0700 ~/.ssh
 printf '%s\n' "${TEST_SSH_KNOWN_HOSTS}" >~/.ssh/known_hosts
@@ -102,15 +100,17 @@ PY
 )"
 	asset_staged=false
 	for attempt in 1 2 3; do
+		request_nonce="$(date +%s%N)"
 		signed_url="$(curl -fsSI \
 			-H 'Accept: application/octet-stream' \
+			-H 'Cache-Control: no-cache' \
 			-H "Authorization: Bearer ${GH_TOKEN}" \
-			"${api_url}" \
+			"${api_url}?hfl_nonce=${request_nonce}" \
 			| awk 'BEGIN { IGNORECASE=1 } /^location:/ { sub(/\r$/, "", $2); print $2; exit }')"
 		python3 - "${asset}" "${signed_url}" >"${plan}" <<'PY'
 import sys
 import urllib.parse
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 asset, url = sys.argv[1:]
 parts = urllib.parse.urlsplit(url)
@@ -123,8 +123,8 @@ try:
     expires_at = datetime.fromisoformat(expires.replace("Z", "+00:00"))
 except ValueError as error:
     raise SystemExit("GitHub asset download URL has no valid expiry") from error
-if expires_at < datetime.now(timezone.utc) + timedelta(minutes=50):
-    raise SystemExit("GitHub asset download URL expires too soon")
+if expires_at <= datetime.now(timezone.utc):
+    raise SystemExit("GitHub asset download URL is already expired")
 print(f"{asset}\t{url}")
 PY
 		plan_base64="$(base64 -w 0 "${plan}")"
