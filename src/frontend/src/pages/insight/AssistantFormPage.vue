@@ -126,21 +126,6 @@ const pageTitle = computed(() => {
 
 const pageDesc = computed(() => t('insight.assistants.addPageDesc'))
 
-const AGENT_ROUNDS_VALUES = ['flash', 'fast', 'balanced', 'deep', 'max'] as const
-
-const canSubmit = computed(
-  () =>
-    name.value.trim().length > 0 &&
-    Boolean(agentModelRef.value) &&
-    Boolean(knowledgeSourceId.value) &&
-    Boolean(selectedTask.value) &&
-    ((selectedKnowledgeSource.value?.indexed_paths.length ?? 0) > 0 ||
-      (selectedKnowledgeSource.value?.scope_paths.length ?? 0) > 0) &&
-    AGENT_ROUNDS_VALUES.includes(agentRounds.value as (typeof AGENT_ROUNDS_VALUES)[number]) &&
-    Number(maxConcurrency.value) >= 1 &&
-    Number(maxConcurrency.value) <= 50,
-)
-
 function knowledgeSourceStatusLabel(status: string) {
   if (status === 'ready') return t('insight.kb.statusReady')
   if (status === 'degraded') return t('insight.kb.statusDegraded')

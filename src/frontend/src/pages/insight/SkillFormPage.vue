@@ -46,8 +46,6 @@ const pageTitle = computed(() => {
 
 const pageDesc = computed(() => t('insight.skills.addPageDesc'))
 
-const canSubmit = computed(() => Boolean(name.value.trim() && content.value.trim()))
-
 function applyRow(row: LensSkill) {
   name.value = row.name || ''
   description.value = skillDescription(row)

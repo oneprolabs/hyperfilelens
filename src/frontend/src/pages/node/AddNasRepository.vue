@@ -115,7 +115,7 @@ const validQuotaAlertThreshold = computed(() => {
 
 /* ---------- validation ---------- */
 function validateForm(): boolean {
-  return validateInline([
+  const rules = [
     { field: 'smbHost', message: t('addNasRepo.errSmbHost'), valid: protocol.value !== 'smb' || !!smbHost.value.trim() },
     { field: 'smbShare', message: t('addNasRepo.errSmbShare'), valid: protocol.value !== 'smb' || !!smbShare.value.trim() },
     { field: 'smbUsername', message: t('repositoriesPage.errSmbUsername'), valid: protocol.value !== 'smb' || !!smbUsername.value.trim() },
@@ -125,7 +125,12 @@ function validateForm(): boolean {
     { field: 'proxyNode', message: t('addNasRepo.errProxyDecisionRequired'), valid: hasProxyDecision.value },
     { field: 'repoName', message: t('repositoriesPage.errName'), valid: !!repoName.value.trim() },
     { field: 'quotaThreshold', message: t('repositoriesPage.hintQuotaAlertThreshold'), valid: !enableQuotaAlert.value || validQuotaAlertThreshold.value },
-  ])
+  ]
+  const valid = validateInline(rules)
+  if (!valid && rules.find(rule => !rule.valid)?.field === 'proxyNode') {
+    ElMessage.warning({ message: t('addNasRepo.errProxyDecisionRequired'), grouping: true })
+  }
+  return valid
 }
 
 /* ---------- submit ---------- */

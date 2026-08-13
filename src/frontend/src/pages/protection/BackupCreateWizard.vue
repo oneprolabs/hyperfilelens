@@ -808,7 +808,6 @@ type NasProtocol = 'smb' | 'nfs'
 const nasProtocol = ref<NasProtocol>('smb')
 const nasBindNodeId = ref<number | undefined>(undefined)
 const nasBindNodeError = ref('')
-const nasBindSectionRef = ref<HTMLElement | null>(null)
 const { clear: clearNasFieldError, errors: nasFieldErrors, validate: validateNasInline } = useInlineFormValidation(addSourceShellRef)
 const nasName = ref('')
 const nasNameTouched = ref(false)
@@ -847,53 +846,6 @@ const generatedNasName = computed(() =>
 
 function clearNasBindNodeError() {
   nasBindNodeError.value = ''
-}
-
-function validateNasBindNode(): boolean {
-  clearNasBindNodeError()
-  if (proxyNodes.value.length === 0) {
-    nasBindNodeError.value = t('protection.sourceResources.nasNoProxy')
-    ElMessage.warning({ message: t('protection.sourceResources.nasNoProxy'), grouping: true })
-    nasBindSectionRef.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-    return false
-  }
-  if (nasBindNodeId.value == null) {
-    nasBindNodeError.value = t('protection.sourceResources.errNasProxyRequired')
-    ElMessage.warning({ message: t('protection.sourceResources.errNasProxyRequired'), grouping: true })
-    nasBindSectionRef.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-    return false
-  }
-  return true
-}
-
-type NasWizardStep = 0 | 1 | 2
-
-function validateNasStep(step: NasWizardStep): boolean {
-  if (step === 0) {
-    if (!nasProtocol.value) {
-      ElMessage.warning({ message: t('repositoriesPage.errProtocol'), grouping: true })
-      return false
-    }
-    if (nasProtocol.value === 'smb') {
-      if (!nasSmbServer.value.trim()) { ElMessage.warning({ message: t('addNasRepo.errSmbHost'), grouping: true }); return false }
-      if (!nasSmbShare.value.trim()) { ElMessage.warning({ message: t('addNasRepo.errSmbShare'), grouping: true }); return false }
-      if (!nasSmbUsername.value.trim()) { ElMessage.warning({ message: t('repositoriesPage.errSmbUsername'), grouping: true }); return false }
-      if (!nasSmbPassword.value.trim()) { ElMessage.warning({ message: t('repositoriesPage.errSmbPassword'), grouping: true }); return false }
-    } else if (nasProtocol.value === 'nfs') {
-      if (!nasNfsHost.value.trim()) { ElMessage.warning({ message: t('repositoriesPage.errNfsHost'), grouping: true }); return false }
-      if (!nasNfsExport.value.trim()) { ElMessage.warning({ message: t('repositoriesPage.errNfsExport'), grouping: true }); return false }
-    }
-    return true
-  }
-  if (step === 1) {
-    return validateNasBindNode()
-  }
-  if (step === 2) {
-    if (!nasName.value.trim()) { ElMessage.warning({ message: t('repositoriesPage.errName'), grouping: true }); return false }
-    if (!nasDir.value.trim()) { ElMessage.warning({ message: t('repositoriesPage.errRepoDir'), grouping: true }); return false }
-    return true
-  }
-  return false
 }
 
 function validateNasForm(): boolean {

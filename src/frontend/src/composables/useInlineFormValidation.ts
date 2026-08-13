@@ -33,7 +33,7 @@ export function useInlineFormValidation(root: Ref<HTMLElement | null>) {
         return true
       })
       if (!fieldEl) return
-      fieldEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      fieldEl.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
       window.setTimeout(() => {
         fieldEl.querySelector<HTMLElement>(
           'input:not([type="hidden"]), textarea, button, [tabindex]:not([tabindex="-1"])',

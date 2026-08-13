@@ -46,10 +46,6 @@ const pageTitle = computed(() => {
 
 const pageDesc = computed(() => t('insight.mcpServers.addPageDesc'))
 
-const canSubmit = computed(
-  () => Boolean(name.value.trim() && endpoint.value.trim() && transport.value),
-)
-
 const endpointPlaceholder = computed(() =>
   transport.value === 'stdio'
     ? t('insight.mcpServers.fieldEndpointPhStdio')
