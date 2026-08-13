@@ -68,63 +68,31 @@ jobs:
           eval "$(ssh-agent -s)"
           trap 'ssh-agent -k >/dev/null 2>&1 || true' EXIT
           ssh-add "$RUNNER_TEMP/prod-key"
-          ssh -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
+          ssh -n -i ~/.ssh/hyperfilelens_test \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
             -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
             "rm -rf -- '$hop' && install -d -m 0700 '$hop'"
-          scp -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
+          scp -i ~/.ssh/hyperfilelens_test \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
             -P "$TEST_SSH_PORT" \
             "$RUNNER_TEMP/prod-known-hosts" \
+            .github/scripts/promote-enterprise-release.sh \
             .github/scripts/store-enterprise-release.sh \
             "$TEST_SSH_USER@$TEST_SSH_HOST:$hop/"
           printf -v remote_command '%q ' \
-            bash -s -- "$RELEASE_TAG" "$version" "$hop" \
+            bash "$hop/promote-enterprise-release.sh" \
+              "$RELEASE_TAG" "$version" "$hop" \
               "$PROD_SSH_HOST" "$PROD_SSH_PORT" "$PROD_SSH_USER"
-          ssh -A -i ~/.ssh/hyperfilelens_test -o IdentitiesOnly=yes \
+          ssh -n -A -i ~/.ssh/hyperfilelens_test -o IdentitiesOnly=yes \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
             -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
-            "$remote_command" <<'REMOTE'
-          set -euo pipefail
-          tag=$1
-          version=$2
-          hop=$3
-          prod_host=$4
-          prod_port=$5
-          prod_user=$6
-          source="/root/hfl-release/${tag}"
-          incoming="/root/hfl-release/.incoming/promotion-${tag#v}"
-          cleanup() {
-            ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes \
-              -o UserKnownHostsFile="$hop/prod-known-hosts" -p "$prod_port" \
-              "$prod_user@$prod_host" "rm -rf -- '$incoming'" >/dev/null 2>&1 || true
-            rm -rf -- "$hop"
-          }
-          trap cleanup EXIT
-          chmod 0600 "$hop/prod-known-hosts"
-          exec 9</root/hfl-release/.lock
-          flock -s 9
-          cd "$source"
-          sha256sum -c SHA256SUMS
-          # This shell itself arrives on stdin. Commands that do not explicitly
-          # receive a script must not consume the remaining promotion program.
-          ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$hop/prod-known-hosts" -p "$prod_port" \
-            "$prod_user@$prod_host" "rm -rf -- '$incoming' && install -d -m 0700 '$incoming'"
-          scp -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$hop/prod-known-hosts" -P "$prod_port" \
-            "hyperfilelens-${version}-ee.tar.gz" SHA256SUMS MANIFEST.json \
-            "$prod_user@$prod_host:$incoming/"
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$hop/prod-known-hosts" -p "$prod_port" \
-            "$prod_user@$prod_host" \
-            "bash -s -- '$tag' '$incoming' /root/hfl-release 0" \
-            < "$hop/store-enterprise-release.sh"
-          # Do not let cleanup or the deploy job run until the immutable PROD
-          # package has independently passed its retained checksum contract.
-          ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$hop/prod-known-hosts" -p "$prod_port" \
-            "$prod_user@$prod_host" \
-            "cd '/root/hfl-release/$tag' && sha256sum -c SHA256SUMS && test -f 'hyperfilelens-${version}-ee.tar.gz'"
-          REMOTE
+            "$remote_command"
 
       - name: Remove promotion staging from TEST
         if: ${{ always() }}
@@ -141,7 +109,10 @@ jobs:
           printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
           chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
-          ssh -i ~/.ssh/hyperfilelens_test -o BatchMode=yes -o StrictHostKeyChecking=yes \
+          ssh -n -i ~/.ssh/hyperfilelens_test \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
             -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
             "rm -rf -- '/var/tmp/hfl-prod-promotion-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}'"
 

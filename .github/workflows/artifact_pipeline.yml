@@ -450,6 +450,7 @@ jobs:
           ./tools/quality/test-agent-release-retention.sh
           ./tools/quality/test-managed-image-retention.sh
           ./tools/quality/test-enterprise-release-flow.sh
+          ./tools/quality/test-enterprise-promotion-transfer.sh
           ./tools/quality/test-shared-host-guard.sh
           ./tools/quality/test-release-download-proxy.sh
           ./tools/quality/test-public-endpoint-check.sh
