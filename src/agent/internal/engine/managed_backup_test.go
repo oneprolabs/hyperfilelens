@@ -411,13 +411,15 @@ func TestManagedRestoreFailureMessageKeepsBoundedTail(t *testing.T) {
 		t.Fatalf("expected valid UTF-8, got %q", got)
 	}
 
+	multibyteContext := string([]rune{0x4E0A, 0x4E0B, 0x6587})
+	multibyteFinalReason := string([]rune{0x6700, 0x7EC8, 0x539F, 0x56E0})
 	got = managedRestoreFailureMessage(
-		process.Result{Stderr: strings.Repeat("上下文", 1000) + "最终原因"},
+		process.Result{Stderr: strings.Repeat(multibyteContext, 1000) + multibyteFinalReason},
 		fmt.Errorf("exit status 1"),
 		repositorySpec{},
 		Payload{},
 	)
-	if len(got) > 2000 || !utf8.ValidString(got) || !strings.HasSuffix(got, "最终原因") {
+	if len(got) > 2000 || !utf8.ValidString(got) || !strings.HasSuffix(got, multibyteFinalReason) {
 		t.Fatalf("expected bounded valid UTF-8 tail, got bytes=%d value=%q", len(got), got)
 	}
 }
