@@ -51,10 +51,11 @@ grep -Fx 'LENS_GATEWAY_BASE_URL=https://app.example.invalid/sourcelens' \
 
 calls=()
 start_hfl_stack
-[[ " ${calls[*]} " == *" color:blue up -d --no-build api-blue web-blue "* ]]
+[[ " ${calls[*]} " == *" color:blue up -d --no-build --pull never api-blue web-blue "* ]]
 [[ " ${calls[*]} " == *" color-health:blue "* ]]
-[[ " ${calls[*]} " == *" compose:up -d --no-build nginx reload "* ]]
+[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never nginx reload "* ]]
 
+calls=()
 UPGRADE_HFL_WAS_RUNNING=1
 UPGRADE_SOURCELENS_WAS_RUNNING=0
 UPGRADE_PREVIOUS_COLOR=blue
@@ -65,14 +66,14 @@ recover_upgrade_services
 [[ " ${calls[*]} " == *" active:blue "* ]]
 [[ " ${calls[*]} " != *" active:green "* ]]
 [[ " ${calls[*]} " == *" compose:start worker scheduler "* ]]
-[[ " ${calls[*]} " != *" compose:up -d --no-build worker scheduler "* ]]
+[[ " ${calls[*]} " != *" compose:up -d --no-build --pull never worker scheduler "* ]]
 
 calls=()
 UPGRADE_HFL_COMMITTED=1
 recover_upgrade_services
 [[ " ${calls[*]} " == *" render:green "* ]]
 [[ " ${calls[*]} " == *" active:green "* ]]
-[[ " ${calls[*]} " == *" compose:up -d --no-build worker scheduler "* ]]
+[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never worker scheduler "* ]]
 
 calls=()
 UPGRADE_HFL_CUTOVER_ATTEMPTED=1

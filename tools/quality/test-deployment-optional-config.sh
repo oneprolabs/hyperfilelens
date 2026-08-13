@@ -249,7 +249,7 @@ assert start.index("wait_for_hfl_health") < start.index("sync_optional_identity_
 assert upgrade.index("apply_upgrade_files") < upgrade.index("apply_runtime_configuration")
 assert upgrade.index("apply_runtime_configuration") < upgrade.index("install_bundled_sourcelens")
 assert upgrade.index("apply_runtime_configuration") < upgrade.index(
-    "compose_in_root up -d --no-recreate postgres redis"
+    "compose_in_root up -d --no-build --pull never --no-recreate postgres redis"
 )
 assert upgrade.index("wait_for_services_health") < upgrade.index(
     "sync_optional_identity_settings"

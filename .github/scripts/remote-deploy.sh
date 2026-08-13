@@ -85,7 +85,10 @@ if [[ -n "${DOWNLOAD_PROXY_URL}" ]]; then
 	}
 fi
 if [[ -n "${PACKAGE_FILE}" ]]; then
-	[[ "${PACKAGE_FILE}" =~ ^/root/hfl-release/v[0-9]+\.[0-9]+\.[0-9]+/hyperfilelens-[0-9]+\.[0-9]+\.[0-9]+-ee\.tar\.gz$ ]] || {
+	package_dir="/root/hfl-release/${TAG}"
+	package_name="$(basename -- "${PACKAGE_FILE}")"
+	[[ "$(dirname -- "${PACKAGE_FILE}")" == "${package_dir}" \
+		&& "${package_name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz$ ]] || {
 		printf 'ERROR: invalid Enterprise package path\n' >&2
 		exit 2
 	}
@@ -485,6 +488,7 @@ package="$(find "${work}" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz' -pr
 	# End of the GitHub Release download path. Local Enterprise packages bypass it.
 fi
 package_name="$(basename "${package}")"
+artifact_sha256="$(sha256sum "${package}" | awk '{print $1}')"
 if [[ -z "${PACKAGE_FILE}" ]]; then
 	expected="$(awk -v file="${package_name}" '$2 == file || $2 == "*" file {print $1; exit}' "${work}/SHA256SUMS")"
 	if [[ -n "${expected}" ]]; then
@@ -507,7 +511,53 @@ if [[ -z "${PACKAGE_FILE}" ]]; then
 	fi
 fi
 
+validate_release_archive_layout() {
+	local archive=$1
+	python3 - "${archive}" <<'PY'
+import pathlib
+import posixpath
+import sys
+import tarfile
+
+archive = pathlib.Path(sys.argv[1])
+archive_size = archive.stat().st_size
+with tarfile.open(archive, mode="r:gz") as package:
+    members = package.getmembers()
+    if not members or len(members) > 100_000:
+        raise SystemExit("release archive is empty or contains too many entries")
+    roots = set()
+    expanded_size = 0
+    for member in members:
+        raw = member.name
+        path = pathlib.PurePosixPath(raw)
+        if (
+            not raw
+            or path.is_absolute()
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            raise SystemExit(f"release archive contains an unsafe path: {raw!r}")
+        roots.add(path.parts[0])
+        if not (member.isdir() or member.isreg() or member.issym() or member.islnk()):
+            raise SystemExit(f"release archive contains an unsupported entry: {raw!r}")
+        if member.isreg():
+            expanded_size += member.size
+        if member.issym() or member.islnk():
+            link = member.linkname
+            if not link or pathlib.PurePosixPath(link).is_absolute():
+                raise SystemExit(f"release archive contains an unsafe link: {raw!r}")
+            base = posixpath.dirname(raw) if member.issym() else ""
+            resolved = pathlib.PurePosixPath(posixpath.normpath(posixpath.join(base, link)))
+            if not resolved.parts or resolved.parts[0] != path.parts[0] or ".." in resolved.parts:
+                raise SystemExit(f"release archive link escapes its package root: {raw!r}")
+    if len(roots) != 1:
+        raise SystemExit("release archive must contain exactly one package root")
+    if expanded_size > archive_size * 4 + 4 * 1024**3:
+        raise SystemExit("release archive expands beyond the supported disk budget")
+PY
+}
+
 mkdir -p "${work}/extract"
+validate_release_archive_layout "${package}"
 tar -xzf "${package}" -C "${work}/extract"
 package_root="$(find "${work}/extract" -mindepth 1 -maxdepth 1 -type d -name 'hyperfilelens-*' -print -quit)"
 [[ -n "${package_root}" && -x "${package_root}/install.sh" ]] || {
@@ -537,9 +587,9 @@ version = expected_id[1:] if expected_id.startswith("v") else expected_id
 edition = str(manifest.get("edition") or "community")
 if edition != expected_edition:
     raise SystemExit(f"package edition mismatch: {edition} != {expected_edition}")
-expected_image_version = version + ("-ee" if edition == "enterprise" else "")
-if manifest.get("image_version", version) != expected_image_version:
-    raise SystemExit("package image identity mismatch")
+image_version = str(manifest.get("image_version") or "")
+if not image_version:
+    raise SystemExit("package image identity is missing")
 PY
 
 if [[ -f "${INSTALL_DIR}/.env" && -f "${INSTALL_DIR}/VERSION" ]]; then
@@ -556,6 +606,7 @@ if [[ -f "${INSTALL_DIR}/.env" && -f "${INSTALL_DIR}/VERSION" ]]; then
 		install_args+=(--runtime-env-file "${RUNTIME_ENV_FILE}")
 	fi
 	HFL_PUBLIC_HOST="${DIRECT_HOST}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
+		HFL_UPGRADE_ARTIFACT_SHA256="${artifact_sha256}" \
 		bash "${package_root}/install.sh" "${install_args[@]}"
 else
 	printf '[deploy] Installing HFL %s\n' "${TAG}"

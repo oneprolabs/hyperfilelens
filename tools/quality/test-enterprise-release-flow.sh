@@ -19,10 +19,30 @@ tmp_guard="$(mktemp -d)"
 trap 'rm -rf "${tmp_guard}"' EXIT
 touch "${tmp_guard}/hyperfilelens-1.2.3.tar.gz" \
 	"${tmp_guard}/hyperfilelens-1.2.3-ee.tar.gz" \
-	"${tmp_guard}/hyperfilelens-1.2.3-abcdef0.tar.gz"
+	"${tmp_guard}/hyperfilelens-1.2.3-abcdef0.tar.gz" \
+	"${tmp_guard}/customer-release.tar.gz"
 safe_assert_upgrade_package_file "${tmp_guard}/hyperfilelens-1.2.3.tar.gz"
 safe_assert_upgrade_package_file "${tmp_guard}/hyperfilelens-1.2.3-ee.tar.gz"
 safe_assert_upgrade_package_file "${tmp_guard}/hyperfilelens-1.2.3-abcdef0.tar.gz"
+safe_assert_upgrade_package_file "${tmp_guard}/customer-release.tar.gz"
+if (safe_assert_package_basename '../unsafe.tar.gz') >/dev/null 2>&1; then
+	printf 'ERROR: unsafe package basename passed validation\n' >&2
+	exit 1
+fi
+python3 - "${tmp_guard}/unsafe.tar.gz" <<'PY'
+import io
+import sys
+import tarfile
+
+with tarfile.open(sys.argv[1], "w:gz") as archive:
+    item = tarfile.TarInfo("../escape")
+    item.size = 1
+    archive.addfile(item, io.BytesIO(b"x"))
+PY
+if (validate_upgrade_archive_layout "${tmp_guard}/unsafe.tar.gz") >/dev/null 2>&1; then
+	printf 'ERROR: unsafe upgrade archive layout passed validation\n' >&2
+	exit 1
+fi
 rm -rf "${tmp_guard}"
 trap - EXIT
 
@@ -66,6 +86,7 @@ grep -F 'Community releases must be started from the main branch' \
 	"${entry_community}" >/dev/null
 grep -F "vars.TEST_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
 grep -F "vars.PROD_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
+grep -F 'needs.deploy-test.result == '\''success'\''' "${workflow}" >/dev/null
 grep -F "vars.COMMUNITY_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
 grep -F 'ENTERPRISE_EXTENSION_REPOSITORY' "${workflow}" >/dev/null
 grep -F 'secrets.ENTERPRISE_EXTENSION_GIT_TOKEN || secrets.HFL_EXTENSION_GIT_TOKEN' \
@@ -166,6 +187,13 @@ grep -F 'enterprise_commit: ${{ steps.enterprise-ref.outputs.commit }}' "${workf
 grep -F 'Check immutable Enterprise store' "${workflow}" >/dev/null
 grep -F 'ENTERPRISE_STORED: ${{ steps.enterprise-store.outputs.stored }}' "${workflow}" >/dev/null
 grep -F 'stored Enterprise release identity differs' "${workflow}" >/dev/null
+if grep -F '"image_version": f"{version}-ee"' "${workflow}" >/dev/null; then
+	printf 'ERROR: stored Enterprise package validation derives image identity from version\n' >&2
+	exit 1
+fi
+grep -F 'stored Enterprise runtime image identity is incomplete' "${workflow}" >/dev/null
+grep -F 'stored Enterprise {role} runtime image is not in the HFL archive' \
+	"${workflow}" >/dev/null
 grep -F 'flock -s 9' "${workflow}" >/dev/null
 grep -F -- '--expected-commit "$ENTERPRISE_COMMIT"' "${workflow}" >/dev/null
 grep -F 'validate_build_contract()' "${workflow}" >/dev/null
@@ -281,6 +309,7 @@ assert env["GIT_CONFIG_VALUE_1"].startswith("AUTHORIZATION: basic ")
 PY
 
 grep -F 'uses: ./.github/workflows/enterprise_promotion.yml' "${promotion}" >/dev/null
+grep -F 'workflow_dispatch:' "${promotion}" >/dev/null
 grep -F 'needs: validate-production-promotion' "${promotion}" >/dev/null
 grep -F '[[ "$GITHUB_REF" == "refs/heads/main" ]]' "${promotion}" >/dev/null
 grep -F "ref: \${{ inputs.automatic && inputs.tag || 'main' }}" \
@@ -291,6 +320,10 @@ grep -F "printf -v remote_command '%q '" \
 	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'expected_edition=enterprise' "${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
 grep -F 'flock -s 8' "${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
+grep -F 'validate_release_archive_layout "${package}"' \
+	"${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
+grep -F 'release archive link escapes its package root' \
+	"${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
 grep -F "printf -v remote_command '%q '" \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'release has multiple legacy package candidates' \
@@ -393,7 +426,7 @@ make_candidate() {
 	chmod +x "${root}/install.sh"
 	[[ -z "${marker}" ]] || printf '%s\n' "${marker}" >"${root}/BUILD-MARKER"
 	cat >"${root}/MANIFEST.json" <<JSON
-{"schema_version":2,"product":"hyperfilelens","edition":"enterprise","image_version":"${version}-ee","channel":"release","artifact_id":"${tag}","version":"${version}","git_commit":"0123456789abcdef0123456789abcdef01234567","extension_commit":"${extension_commit}"}
+{"schema_version":2,"product":"hyperfilelens","edition":"enterprise","image_version":"build-${number}","runtime_images":{"backend":"hyperfilelens-backend:build-${number}","frontend":"hyperfilelens-frontend:build-${number}"},"channel":"release","artifact_id":"${tag}","version":"${version}","git_commit":"0123456789abcdef0123456789abcdef01234567","extension_commit":"${extension_commit}","images":[{"file":"images/hfl.tar.gz","refs":["hyperfilelens-backend:build-${number}","hyperfilelens-frontend:build-${number}"],"role":"hyperfilelens"}]}
 JSON
 	cp "${root}/MANIFEST.json" "${incoming}/MANIFEST.json"
 	tar -C "$(dirname "${root}")" -czf "${archive}" "$(basename "${root}")"

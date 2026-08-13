@@ -88,7 +88,10 @@ def current_host_identity() -> dict:
         "platform": platform.platform(),
         "python_version": platform.python_version(),
         "ip_address": _primary_ip(),
-        "app_version": os.getenv("APP_VERSION", "").strip() or "",
+        "app_version": (
+            os.getenv("HFL_PRODUCT_VERSION", "").strip()
+            or os.getenv("APP_VERSION", "").strip()
+        ),
         "boot_time": system_boot_time(),
     }
 

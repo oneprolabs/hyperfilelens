@@ -32,6 +32,10 @@ SOURCELENS_UPGRADE_STARTED=0
 SOURCELENS_GATE_ADOPTION_SOURCE=""
 UPGRADE_HFL_COMMITTED=0
 UPGRADE_HFL_CUTOVER_ATTEMPTED=0
+UPGRADE_ARTIFACT_SHA256="${HFL_UPGRADE_ARTIFACT_SHA256:-}"
+UPGRADE_TRANSACTION_DIR=""
+UPGRADE_TRANSACTION_PHASE=""
+UPGRADE_TRANSACTION_INITIALIZED=0
 INSTALLER_LOCK_ACQUIRED=0
 DRAINED_WS_INSTANCES=""
 LOCAL_PLATFORM_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent"
@@ -73,7 +77,7 @@ Options:
     --runtime-env-file FILE Apply staged Turnstile settings from a root-only regular file
 
   upgrade:
-    --from PATH             Path to new package directory or hyperfilelens-*.tar.gz (required)
+    --from PATH             Path to a new package directory or .tar.gz release (required)
                             Creates a verified managed backup set under backup/ before upgrade
                             and retains the latest three valid sets
                             Extracts the new package to upgrade_tmp, merges keys from its .env.example into .env,
@@ -177,6 +181,9 @@ finish_session() {
 cleanup_upgrade_and_finish() {
 	local rc=$?
 	local recovery_rc=0
+	if [[ "${rc}" -ne 0 && "${UPGRADE_TRANSACTION_INITIALIZED}" == "1" ]]; then
+		mark_upgrade_transaction_status failed || true
+	fi
 	if [[ "${rc}" -ne 0 && "${UPGRADE_RECOVERY_ARMED}" == "1" ]]; then
 		record_deployment_phase failed "${UPGRADE_PREVIOUS_COLOR:-unknown}" \
 			"${UPGRADE_TARGET_COLOR:-unknown}" "${UPGRADE_TARGET_VERSION:-unknown}" || true
@@ -205,7 +212,7 @@ recover_upgrade_services() {
 	set +e
 	if [[ "${UPGRADE_SOURCELENS_WAS_RUNNING}" == "1" ]] && sourcelens_installed; then
 		if [[ "${SOURCELENS_UPGRADE_STARTED}" == "1" ]]; then
-			sourcelens_compose up -d --no-build
+			sourcelens_compose up -d --no-build --pull never
 		else
 			# Target SourceLens files may already be staged.  Starting existing
 			# containers avoids converging an unchanged live runtime before its
@@ -229,7 +236,7 @@ recover_upgrade_services() {
 			&& "${UPGRADE_PREVIOUS_COLOR}" == "legacy" \
 			&& -n "${UPGRADE_LEGACY_API_CID}" \
 			&& "$(docker inspect --format '{{.State.Running}}' "${UPGRADE_LEGACY_API_CID}" 2>/dev/null || true)" == "true" ]]; then
-			compose_in_root up -d --no-build --no-recreate postgres redis
+			compose_in_root up -d --no-build --pull never --no-recreate postgres redis
 			# The pre-upgrade singleton containers still carry the previous image.
 			# Starting them preserves one coherent rollback release; `up` would
 			# recreate them from the already-staged target image metadata.
@@ -250,7 +257,7 @@ recover_upgrade_services() {
 				"api-${recovery_color}" "web-${recovery_color}"
 			[[ $? -eq 0 ]] || recovered=0
 			if [[ "${UPGRADE_HFL_COMMITTED}" == "1" ]]; then
-				compose_in_root up -d --no-build worker scheduler
+				compose_in_root up -d --no-build --pull never worker scheduler
 			else
 				compose_in_root start worker scheduler
 			fi
@@ -340,16 +347,61 @@ safe_assert_env_file() {
 
 safe_assert_package_basename() {
 	local name=$1
-	[[ "${name}" =~ ^hyperfilelens-([0-9]+\.[0-9]+\.[0-9]+(-ee|-[0-9a-fA-F]{7})?|main-[0-9a-f]{7})\.tar\.gz$ ]] \
-		|| die "invalid release package basename: ${name}"
-	[[ "${name}" != */* ]] || die "package basename must not contain slashes: ${name}"
+	[[ "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz$ ]] \
+		|| die "unsafe release package basename: ${name}"
 }
 
 safe_assert_upgrade_package_file() {
 	local path=$1
 	safe_assert_absolute "${path}" "upgrade package file"
 	safe_assert_package_basename "$(basename "${path}")"
-	[[ -f "${path}" ]] || die "upgrade package not found: ${path}"
+	[[ -f "${path}" && ! -L "${path}" ]] \
+		|| die "upgrade package is missing or is not a regular file: ${path}"
+}
+
+validate_upgrade_archive_layout() {
+	local archive=$1
+	python3 - "${archive}" <<'PY'
+import pathlib
+import posixpath
+import sys
+import tarfile
+
+archive = pathlib.Path(sys.argv[1])
+archive_size = archive.stat().st_size
+with tarfile.open(archive, mode="r:gz") as package:
+    members = package.getmembers()
+    if not members or len(members) > 100_000:
+        raise SystemExit("upgrade archive is empty or contains too many entries")
+    roots = set()
+    expanded_size = 0
+    for member in members:
+        raw = member.name
+        path = pathlib.PurePosixPath(raw)
+        if (
+            not raw
+            or path.is_absolute()
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            raise SystemExit(f"upgrade archive contains an unsafe path: {raw!r}")
+        roots.add(path.parts[0])
+        if not (member.isdir() or member.isreg() or member.issym() or member.islnk()):
+            raise SystemExit(f"upgrade archive contains an unsupported entry: {raw!r}")
+        if member.isreg():
+            expanded_size += member.size
+        if member.issym() or member.islnk():
+            link = member.linkname
+            if not link or pathlib.PurePosixPath(link).is_absolute():
+                raise SystemExit(f"upgrade archive contains an unsafe link: {raw!r}")
+            base = posixpath.dirname(raw) if member.issym() else ""
+            resolved = pathlib.PurePosixPath(posixpath.normpath(posixpath.join(base, link)))
+            if not resolved.parts or resolved.parts[0] != path.parts[0] or ".." in resolved.parts:
+                raise SystemExit(f"upgrade archive link escapes its package root: {raw!r}")
+    if len(roots) != 1:
+        raise SystemExit("upgrade archive must contain exactly one package root")
+    if expanded_size > archive_size * 4 + 4 * 1024**3:
+        raise SystemExit("upgrade archive expands beyond the supported disk budget")
+PY
 }
 
 safe_assert_package_root() {
@@ -597,6 +649,193 @@ record_deployment_phase() {
 	mv "${temporary}" "${output}"
 }
 
+upgrade_artifact_sha256() {
+	local source=$1
+	if [[ -f "${source}" ]]; then
+		sha256sum "${source}" | awk '{print $1}'
+		return
+	fi
+	[[ -d "${source}" ]] || die "upgrade source is missing: ${source}"
+	# Directory upgrades are used by release verification. The canonical
+	# manifest identifies the same immutable images, payload and source commits.
+	sha256sum "${source}/MANIFEST.json" | awk '{print $1}'
+}
+
+initialize_upgrade_transaction() {
+	local artifact_sha=$1 version=$2
+	[[ "${artifact_sha}" =~ ^[0-9a-fA-F]{64}$ ]] \
+		|| die "upgrade artifact has an invalid SHA-256"
+	UPGRADE_ARTIFACT_SHA256="$(printf '%s' "${artifact_sha}" | tr 'A-F' 'a-f')"
+	artifact_sha="${UPGRADE_ARTIFACT_SHA256}"
+	UPGRADE_TRANSACTION_DIR="${ROOT}/deploy/upgrades/${artifact_sha}"
+	mkdir -p "${UPGRADE_TRANSACTION_DIR}"
+	chmod 700 "${ROOT}/deploy/upgrades" "${UPGRADE_TRANSACTION_DIR}"
+	if [[ -f "${UPGRADE_TRANSACTION_DIR}/state" ]]; then
+		local recorded_sha recorded_version
+		validate_upgrade_transaction_state || return $?
+		chmod 600 "${UPGRADE_TRANSACTION_DIR}/state"
+		recorded_sha="$(read_upgrade_transaction_value artifact_sha256)"
+		recorded_version="$(read_upgrade_transaction_value target_version)"
+		[[ "${recorded_sha}" == "${artifact_sha}" && "${recorded_version}" == "${version}" ]] \
+			|| die "upgrade transaction identity does not match the target package"
+		UPGRADE_TRANSACTION_PHASE="$(read_upgrade_transaction_value phase)"
+		log "Resuming upgrade transaction ${artifact_sha:0:12} from ${UPGRADE_TRANSACTION_PHASE:-validated}"
+	else
+		UPGRADE_TRANSACTION_PHASE=validated
+		write_upgrade_transaction_state active validated ""
+	fi
+	UPGRADE_TRANSACTION_INITIALIZED=1
+}
+
+validate_upgrade_transaction_state() {
+	local state="${UPGRADE_TRANSACTION_DIR}/state"
+	[[ -f "${state}" && ! -L "${state}" ]] \
+		|| die "upgrade transaction state is missing or unsafe"
+	python3 - "${state}" "${ROOT}/backup" <<'PY'
+import pathlib
+import re
+import sys
+
+state = pathlib.Path(sys.argv[1])
+backup_root = pathlib.Path(sys.argv[2])
+expected = {
+    "artifact_sha256",
+    "target_version",
+    "status",
+    "phase",
+    "backup_dir",
+    "updated_at",
+}
+values = {}
+for line in state.read_text(encoding="utf-8").splitlines():
+    if "=" not in line:
+        raise SystemExit("upgrade transaction state contains a malformed entry")
+    key, value = line.split("=", 1)
+    if key not in expected or key in values:
+        raise SystemExit("upgrade transaction state has unexpected or duplicate fields")
+    values[key] = value
+if set(values) != expected:
+    raise SystemExit("upgrade transaction state is incomplete")
+if not re.fullmatch(r"[0-9a-f]{64}", values["artifact_sha256"]):
+    raise SystemExit("upgrade transaction state has an invalid artifact identity")
+if not re.fullmatch(
+    r"(?:[0-9]+\.[0-9]+\.[0-9]+|main-[0-9a-f]{7})",
+    values["target_version"],
+):
+    raise SystemExit("upgrade transaction state has an invalid target version")
+if values["status"] not in {"active", "failed", "complete"}:
+    raise SystemExit("upgrade transaction state has an invalid status")
+phases = {
+    "validated",
+    "preflight_complete",
+    "backup_complete",
+    "images_loaded",
+    "background_paused",
+    "migrated",
+    "candidate_ready",
+    "hfl_switched",
+    "sourcelens_complete",
+    "gateway_verified",
+    "complete",
+}
+if values["phase"] not in phases:
+    raise SystemExit("upgrade transaction state has an invalid phase")
+backup_dir = values["backup_dir"]
+if backup_dir:
+    path = pathlib.Path(backup_dir)
+    if path.parent != backup_root or not re.fullmatch(
+        r"upgrade-[0-9]{8}-[0-9]{6}", path.name
+    ):
+        raise SystemExit("upgrade transaction state has an invalid backup path")
+if not re.fullmatch(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z",
+    values["updated_at"],
+):
+    raise SystemExit("upgrade transaction state has an invalid update time")
+PY
+}
+
+read_upgrade_transaction_value() {
+	local key=$1 state="${UPGRADE_TRANSACTION_DIR}/state"
+	[[ -f "${state}" ]] || return 0
+	grep -E "^${key}=" "${state}" 2>/dev/null | head -1 | cut -d= -f2- || true
+}
+
+write_upgrade_transaction_state() {
+	local status=$1 phase=$2 backup_dir=${3:-}
+	local output="${UPGRADE_TRANSACTION_DIR}/state" temporary="${UPGRADE_TRANSACTION_DIR}/state.tmp.$$"
+	case "${status}" in active | failed | complete) ;; *) die "invalid upgrade transaction status: ${status}" ;; esac
+	case "${phase}" in
+	validated | preflight_complete | backup_complete | images_loaded | background_paused | migrated | candidate_ready | hfl_switched | sourcelens_complete | gateway_verified | complete) ;;
+	*) die "invalid upgrade transaction phase: ${phase}" ;;
+	esac
+	[[ -n "${backup_dir}" ]] || backup_dir="$(read_upgrade_transaction_value backup_dir)"
+	if [[ -n "${backup_dir}" ]]; then
+		[[ "$(dirname -- "${backup_dir}")" == "${ROOT}/backup" \
+			&& "$(basename -- "${backup_dir}")" =~ ^upgrade-[0-9]{8}-[0-9]{6}$ ]] \
+			|| die "invalid upgrade transaction backup path: ${backup_dir}"
+	fi
+	{
+		printf 'artifact_sha256=%s\n' "${UPGRADE_ARTIFACT_SHA256}"
+		printf 'target_version=%s\n' "${UPGRADE_TARGET_VERSION}"
+		printf 'status=%s\n' "${status}"
+		printf 'phase=%s\n' "${phase}"
+		printf 'backup_dir=%s\n' "${backup_dir}"
+		printf 'updated_at=%s\n' "$(hfl_now)"
+	} >"${temporary}"
+	chmod 600 "${temporary}"
+	mv "${temporary}" "${output}"
+	UPGRADE_TRANSACTION_PHASE="${phase}"
+}
+
+record_upgrade_transaction_phase() {
+	write_upgrade_transaction_state active "$1" "${2:-}"
+}
+
+mark_upgrade_transaction_status() {
+	write_upgrade_transaction_state "$1" "${UPGRADE_TRANSACTION_PHASE:-validated}" ""
+}
+
+reusable_upgrade_backup() {
+	local backup_dir backup_name
+	backup_dir="$(read_upgrade_transaction_value backup_dir)"
+	backup_name="$(basename -- "${backup_dir:-.}")"
+	[[ "$(dirname -- "${backup_dir:-.}")" == "${ROOT}/backup" \
+		&& "${backup_name}" =~ ^upgrade-[0-9]{8}-[0-9]{6}$ \
+		&& -d "${backup_dir}" && ! -L "${backup_dir}" \
+		&& -s "${backup_dir}/backup-manifest.json" ]] || return 1
+	python3 - "${backup_dir}" <<'PY' || return 1
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads(
+    (root / "backup-manifest.json").read_text(encoding="utf-8")
+)
+if manifest.get("complete") is not True:
+    raise SystemExit(1)
+files = manifest.get("files") or []
+if not files:
+    raise SystemExit(1)
+for item in files:
+    name = str(item.get("name") or "")
+    if not name or pathlib.PurePath(name).name != name:
+        raise SystemExit(1)
+    path = root / name
+    if not path.is_file() or path.stat().st_size != int(item.get("size", -1)):
+        raise SystemExit(1)
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != item.get("sha256"):
+        raise SystemExit(1)
+PY
+	printf '%s' "${backup_dir}"
+}
+
 read_active_color() {
 	local color=""
 	[[ -f "$(active_color_file)" ]] && color="$(tr -d '[:space:]' < "$(active_color_file)")"
@@ -714,12 +953,12 @@ start_hfl_stack() {
 	local color
 	ensure_blue_green_state
 	color="$(read_active_color)"
-	compose_in_root up -d --no-build --no-recreate postgres redis
-	compose_in_root --profile tools run --rm --no-deps migration
-	compose_in_root up -d --no-build worker scheduler
-	compose_color "${color}" up -d --no-build "api-${color}" "web-${color}"
+	compose_in_root up -d --no-build --pull never --no-recreate postgres redis
+	compose_in_root --profile tools run --rm --no-deps --pull never migration
+	compose_in_root up -d --no-build --pull never worker scheduler
+	compose_color "${color}" up -d --no-build --pull never "api-${color}" "web-${color}"
 	wait_for_color_health "${color}" || return 1
-	compose_in_root up -d --no-build nginx
+	compose_in_root up -d --no-build --pull never nginx
 	# Compose may recreate an active-color container with a new address while the
 	# stable gateway itself stays running. Reload so Nginx resolves the current
 	# service addresses instead of retaining a stale upstream from its last start.
@@ -1120,6 +1359,48 @@ print((root / "VERSION").read_text(encoding="utf-8").strip())
 PY
 }
 
+read_runtime_image_from_dir() {
+	local dir=$1 role=$2
+	python3 - "${dir}/MANIFEST.json" "${role}" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+role = sys.argv[2]
+runtime_images = manifest.get("runtime_images") or {}
+value = str(runtime_images.get(role) or "").strip()
+if not value:
+    image_version = str(manifest.get("image_version") or "").strip()
+    value = f"hyperfilelens-{role}:{image_version}"
+print(value)
+PY
+}
+
+read_edition_from_dir() {
+	local dir=$1
+	python3 - "${dir}/MANIFEST.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(str(manifest.get("edition") or "community").strip())
+PY
+}
+
+read_minimum_upgrade_version_from_dir() {
+	local dir=$1
+	python3 - "${dir}/MANIFEST.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(str(manifest.get("minimum_upgrade_version") or "").strip())
+PY
+}
+
 validate_package_identity() {
 	local dir=$1
 	python3 - "${dir}" <<'PY'
@@ -1137,6 +1418,8 @@ version_file = (root / "VERSION").read_text(encoding="utf-8").strip()
 edition = str(manifest.get("edition") or "community").strip()
 image_version = str(manifest.get("image_version") or version_file).strip()
 extension_commit = str(manifest.get("extension_commit") or "").strip().lower()
+runtime_images = manifest.get("runtime_images") or {}
+minimum_upgrade_version = str(manifest.get("minimum_upgrade_version") or "").strip()
 
 if not re.fullmatch(r"[0-9a-f]{40}", commit):
     raise SystemExit("release manifest has an invalid git_commit")
@@ -1161,9 +1444,36 @@ if version_file != expected:
     raise SystemExit("VERSION does not match the release manifest identity")
 if edition not in {"community", "enterprise"}:
     raise SystemExit("release package has an invalid edition")
-expected_image_version = version_file + ("-ee" if edition == "enterprise" else "")
-if image_version != expected_image_version:
-    raise SystemExit("release package image_version does not match its edition")
+if minimum_upgrade_version and not re.fullmatch(
+    r"[0-9]+\.[0-9]+\.[0-9]+", minimum_upgrade_version
+):
+    raise SystemExit("release package has an invalid minimum_upgrade_version")
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", image_version):
+    raise SystemExit("release package has an invalid image_version")
+if not runtime_images:
+    runtime_images = {
+        "backend": f"hyperfilelens-backend:{image_version}",
+        "frontend": f"hyperfilelens-frontend:{image_version}",
+    }
+if set(runtime_images) != {"backend", "frontend"}:
+    raise SystemExit("release package runtime_images must identify backend and frontend")
+for role, ref in runtime_images.items():
+    if not re.fullmatch(
+        rf"hyperfilelens-{role}:[A-Za-z0-9][A-Za-z0-9._-]{{0,127}}",
+        str(ref),
+    ):
+        raise SystemExit(f"release package has an invalid {role} runtime image")
+runtime_refs = {
+    str(ref)
+    for entry in manifest.get("images", [])
+    if entry.get("role") == "hyperfilelens"
+    for ref in (entry.get("refs") or [])
+}
+for role, ref in runtime_images.items():
+    if ref not in runtime_refs:
+        raise SystemExit(
+            f"release package runtime image is absent from the HFL archive: {role}"
+        )
 if edition == "enterprise":
     if not re.fullmatch(r"[0-9a-f]{40}", extension_commit):
         raise SystemExit("Enterprise release package has an invalid extension_commit")
@@ -1438,9 +1748,12 @@ ensure_env_file() {
 		return 0
 	fi
 
-	local version image_version channel secret db_pass host
+	local version image_version edition backend_image frontend_image channel secret db_pass host
 	version="$(read_version)"
 	image_version="$(read_image_version_from_dir "${ROOT}")"
+	edition="$(read_edition_from_dir "${ROOT}")"
+	backend_image="$(read_runtime_image_from_dir "${ROOT}" backend)"
+	frontend_image="$(read_runtime_image_from_dir "${ROOT}" frontend)"
 	channel="$(read_channel_from_dir "${ROOT}")"
 	secret="$(random_hex)"
 	db_pass="$(random_hex | cut -c1-32)"
@@ -1453,13 +1766,24 @@ ensure_env_file() {
 	step "Creating .env from .env.example ..."
 	cp "${example}" "${env_file}"
 	chmod 600 "${env_file}"
-	python3 - "${env_file}" "${version}" "${image_version}" "${channel}" "${secret}" "${db_pass}" "${host}" <<'PY'
+	python3 - "${env_file}" "${version}" "${image_version}" "${edition}" \
+		"${backend_image}" "${frontend_image}" "${channel}" "${secret}" "${db_pass}" "${host}" <<'PY'
 import pathlib
 import re
 import sys
 
 path = pathlib.Path(sys.argv[1])
-version, image_version, channel, secret, db_pass, host = sys.argv[2:8]
+(
+    version,
+    image_version,
+    edition,
+    backend_image,
+    frontend_image,
+    channel,
+    secret,
+    db_pass,
+    host,
+) = sys.argv[2:11]
 text = path.read_text(encoding="utf-8")
 
 def sub_key(name, value):
@@ -1472,6 +1796,10 @@ def sub_key(name, value):
 
 sub_key("AGENT_VERSION", version)
 sub_key("APP_VERSION", image_version)
+sub_key("HFL_PRODUCT_VERSION", version)
+sub_key("HFL_EDITION", edition)
+sub_key("HFL_BACKEND_IMAGE", backend_image)
+sub_key("HFL_FRONTEND_IMAGE", frontend_image)
 sub_key("HFL_GATEWAY_VERSION", image_version)
 sub_key("HFL_RELEASE_CHANNEL", channel)
 sub_key("SECRET_KEY", secret)
@@ -1811,17 +2139,29 @@ update_env_versions() {
 	local version=$1
 	local channel=$2
 	local image_version=${3:-$1}
-	python3 - "${ROOT}" "${version}" "${channel}" "${image_version}" <<'PY'
+	local edition=${4:-community}
+	local backend_image=${5:-hyperfilelens-backend:${image_version}}
+	local frontend_image=${6:-hyperfilelens-frontend:${image_version}}
+	python3 - "${ROOT}" "${version}" "${channel}" "${image_version}" \
+		"${edition}" "${backend_image}" "${frontend_image}" <<'PY'
 import pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
 channel = sys.argv[3]
 image_version = sys.argv[4]
+edition, backend_image, frontend_image = sys.argv[5:8]
 env = root / ".env"
 if not env.exists():
     raise SystemExit(0)
 text = env.read_text(encoding="utf-8")
-for key, value in (("AGENT_VERSION", version), ("APP_VERSION", image_version)):
+for key, value in (
+    ("AGENT_VERSION", version),
+    ("APP_VERSION", image_version),
+    ("HFL_PRODUCT_VERSION", version),
+    ("HFL_EDITION", edition),
+    ("HFL_BACKEND_IMAGE", backend_image),
+    ("HFL_FRONTEND_IMAGE", frontend_image),
+):
     pattern = rf"^({re.escape(key)}=).*$"
     if re.search(pattern, text, flags=re.M):
         text = re.sub(pattern, lambda m, v=value: f"{m.group(1)}{v}", text, count=1, flags=re.M)
@@ -2011,7 +2351,8 @@ PY
 }
 
 prune_upgrade_backups() {
-	python3 - "${ROOT}/backup" <<'PY' || return 1
+	python3 - "${ROOT}/backup" "${ROOT}/deploy/upgrades" <<'PY' || return 1
+import json
 import pathlib
 import re
 import shutil
@@ -2019,8 +2360,28 @@ import sys
 import time
 
 root = pathlib.Path(sys.argv[1])
+transactions = pathlib.Path(sys.argv[2])
 if not root.is_dir():
     raise SystemExit(0)
+
+protected = set()
+if transactions.is_dir():
+    for state in transactions.glob("*/state"):
+        values = {}
+        for line in state.read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                values[key] = value
+        if values.get("status") == "complete":
+            continue
+        backup_dir = values.get("backup_dir", "")
+        backup_path = pathlib.Path(backup_dir)
+        try:
+            managed = backup_path.parent.resolve() == root.resolve()
+        except OSError:
+            managed = False
+        if managed and re.fullmatch(r"upgrade-\d{8}-\d{6}", backup_path.name):
+            protected.add(backup_path.name)
 
 now = time.time()
 for path in root.glob(".partial-*"):
@@ -2043,6 +2404,9 @@ for path in root.iterdir():
 
 for stamp in sorted(groups, reverse=True)[3:]:
     for path in groups[stamp]:
+        if path.name in protected:
+            print(f"[install.sh] retaining transaction backup {path.name}")
+            continue
         print(f"[install.sh] pruning expired managed backup {path.name}")
         shutil.rmtree(path) if path.is_dir() else path.unlink(missing_ok=True)
 PY
@@ -2180,14 +2544,18 @@ managed_image_ref_is_in_use() {
 }
 
 prune_old_managed_image_refs() {
-	local backup_manifest="" ref output
+	local backup_manifest="" gateway_version ref output
 	local -a removable=()
 	command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || return 0
+	gateway_version="$(grep -E '^HFL_GATEWAY_VERSION=' "${ROOT}/.env" 2>/dev/null \
+		| head -1 | cut -d= -f2- | tr -d ' "' || true)"
 	backup_manifest="$(find "${ROOT}/backup" -mindepth 2 -maxdepth 2 -type f \
 		-path '*/upgrade-*/MANIFEST.json' -print 2>/dev/null | sort -r | head -1)"
-	if ! output="$(python3 - "${ROOT}/MANIFEST.json" "${backup_manifest}" <<'PY'
+	if ! output="$(python3 - "${ROOT}/MANIFEST.json" "${backup_manifest}" \
+		"${gateway_version}" <<'PY'
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -2199,7 +2567,7 @@ managed_repositories = {
     "hyperfilelens-sourcelens-lensnode",
 }
 protected = set()
-for raw in sys.argv[1:]:
+for raw in sys.argv[1:3]:
     path = pathlib.Path(raw) if raw else None
     if not path or not path.is_file():
         continue
@@ -2209,6 +2577,10 @@ for raw in sys.argv[1:]:
         continue
     for image in manifest.get("images", []):
         protected.update(str(ref) for ref in image.get("refs", []) if ref)
+
+gateway_version = sys.argv[3]
+if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", gateway_version):
+    protected.add(f"hyperfilelens-frontend:{gateway_version}")
 
 containers = subprocess.run(
     ["docker", "ps", "-aq", "--no-trunc"],
@@ -2368,6 +2740,7 @@ prepare_upgrade_source() {
 	fi
 	if [[ -f "${from}" && "${from}" == *.tar.gz ]]; then
 		safe_assert_upgrade_package_file "${from}"
+		validate_upgrade_archive_layout "${from}"
 		safe_rm_dir "${UPGRADE_TMP}"
 		mkdir -p "${UPGRADE_TMP}"
 		step "Extracting ${from} -> ${UPGRADE_TMP} ..."
@@ -2378,7 +2751,7 @@ prepare_upgrade_source() {
 		printf '%s' "${inner}"
 		return 0
 	fi
-	die "upgrade --from must be a directory or hyperfilelens-*.tar.gz: ${from}"
+	die "upgrade --from must be a release directory or .tar.gz package: ${from}"
 }
 
 cleanup_upgrade_tmp() {
@@ -4155,7 +4528,9 @@ cmd_backup() {
 cmd_upgrade() {
 	local from="" allow_main_build=0
 	local sourcelens_mode=-1 remove_sourcelens=0 purge_sourcelens_data=0
-	local src_root new_version cur_version new_channel cur_channel upgrade_sourcelens=0 backup_stamp
+	local src_root new_version cur_version new_channel cur_channel minimum_upgrade_version
+	local upgrade_sourcelens=0 backup_stamp
+	local artifact_sha transaction_status reusable_backup
 	local target_color running_worker_ids
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -4187,13 +4562,30 @@ cmd_upgrade() {
 	log "======== HyperFileLens upgrade ${cur_version} ========"
 
 	trap cleanup_upgrade_and_finish EXIT
+	artifact_sha="${UPGRADE_ARTIFACT_SHA256:-}"
+	[[ -n "${artifact_sha}" ]] || artifact_sha="$(upgrade_artifact_sha256 "${from}")"
 	src_root="$(prepare_upgrade_source "${from}")"
 	validate_package_identity "${src_root}"
 	new_version="$(read_version_from_dir "${src_root}")"
+	minimum_upgrade_version="$(read_minimum_upgrade_version_from_dir "${src_root}")"
+	UPGRADE_TARGET_VERSION="${new_version}"
 	cur_channel="$(read_channel_from_dir "${ROOT}")"
 	new_channel="$(read_channel_from_dir "${src_root}")"
 	if [[ "${new_channel}" == "main" && "${allow_main_build}" -ne 1 ]]; then
 		die "main channel packages require --allow-main-build"
+	fi
+	if [[ -n "${minimum_upgrade_version}" && "${cur_channel}" == "release" ]] \
+		&& version_lt "${cur_version}" "${minimum_upgrade_version}"; then
+		die "installed version ${cur_version} is below this package's supported upgrade baseline ${minimum_upgrade_version}"
+	fi
+	initialize_upgrade_transaction "${artifact_sha}" "${new_version}"
+	transaction_status="$(read_upgrade_transaction_value status)"
+	if [[ "${transaction_status}" == "complete" && "${new_version}" == "${cur_version}" ]] \
+		&& cmp -s "${src_root}/MANIFEST.json" "${ROOT}/MANIFEST.json"; then
+		ok "Upgrade transaction ${artifact_sha:0:12} is already complete"
+		cleanup_upgrade_tmp
+		trap finish_session EXIT
+		return 0
 	fi
 
 	if [[ "${new_version}" == "${cur_version}" ]]; then
@@ -4211,12 +4603,19 @@ cmd_upgrade() {
 	# host recoverable when an older failed upgrade already removed the links.
 	repair_sourcelens_runtime_bindings
 	preflight_redis_recovery
+	record_upgrade_transaction_phase preflight_complete
 
 	step "[2/8] Backing up current config and data ..."
-	backup_stamp="$(date +%Y%m%d-%H%M%S)"
-	create_managed_backup "${backup_stamp}" 0 \
-		|| die "managed upgrade backup failed; existing services were not stopped"
-	UPGRADE_BACKUP_DIR="${ROOT}/backup/upgrade-${backup_stamp}"
+	if reusable_backup="$(reusable_upgrade_backup)"; then
+		UPGRADE_BACKUP_DIR="${reusable_backup}"
+		log "Reusing verified managed backup ${UPGRADE_BACKUP_DIR}"
+	else
+		backup_stamp="$(date +%Y%m%d-%H%M%S)"
+		create_managed_backup "${backup_stamp}" 1 \
+			|| die "managed upgrade backup failed; existing services were not stopped"
+		UPGRADE_BACKUP_DIR="${ROOT}/backup/upgrade-${backup_stamp}"
+	fi
+	record_upgrade_transaction_phase backup_complete "${UPGRADE_BACKUP_DIR}"
 
 	step "[3/8] Validating upgrade package ..."
 	preflight_blue_green_source "${src_root}"
@@ -4249,6 +4648,7 @@ cmd_upgrade() {
 
 	step "Preloading verified target images before the maintenance window ..."
 	load_images_from_manifest "$([[ "${upgrade_sourcelens}" -eq 0 ]] && echo 1 || echo 0)" "${src_root}"
+	record_upgrade_transaction_phase images_loaded
 
 	step "[5/8] Selecting the inactive color and pausing background execution ..."
 	if compose_in_root ps -q 2>/dev/null | grep -q .; then
@@ -4282,6 +4682,7 @@ cmd_upgrade() {
 	fi
 	[[ -z "${running_worker_ids}" ]] \
 		|| die "old worker is still running; refusing to apply task-state migrations"
+	record_upgrade_transaction_phase background_paused
 
 	step "[6/8] Applying target files, configuration, and singleton migration ..."
 	# Existing releases used APP_VERSION for stable Nginx. Pin that currently
@@ -4293,7 +4694,13 @@ cmd_upgrade() {
 		# Do not claim a blue active pool while the legacy API still owns traffic.
 		safe_rm_file "$(active_color_file)"
 	fi
-	update_env_versions "${new_version}" "${new_channel}" "$(read_image_version_from_dir "${src_root}")"
+	update_env_versions \
+		"${new_version}" \
+		"${new_channel}" \
+		"$(read_image_version_from_dir "${src_root}")" \
+		"$(read_edition_from_dir "${src_root}")" \
+		"$(read_runtime_image_from_dir "${src_root}" backend)" \
+		"$(read_runtime_image_from_dir "${src_root}" frontend)"
 	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] \
 		&& sourcelens_installed \
 		&& [[ "${remove_sourcelens}" -eq 0 ]]; then
@@ -4304,22 +4711,25 @@ cmd_upgrade() {
 
 	ensure_data_dirs
 	sync_runtime_media
-	compose_in_root up -d --no-recreate postgres redis
-	compose_in_root --profile tools run --rm --no-deps migration
+	compose_in_root up -d --no-build --pull never --no-recreate postgres redis
+	compose_in_root --profile tools run --rm --no-deps --pull never migration
 	record_deployment_phase migrated "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
+	record_upgrade_transaction_phase migrated
 
 	step "[7/8] Starting ${target_color}, switching stable traffic, and handing off workers ..."
-	compose_color "${target_color}" up -d --no-build \
+	compose_color "${target_color}" up -d --no-build --pull never \
 		"api-${target_color}" "web-${target_color}"
 	wait_for_color_health "${target_color}" \
 		|| die "inactive ${target_color} API/Web pool failed its readiness gate"
 	record_deployment_phase candidate_ready "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
+	record_upgrade_transaction_phase candidate_ready
 	cutover_hfl_color "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" \
 		|| die "blue/green cutover failed; previous traffic route was restored"
 	record_deployment_phase switched "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
+	record_upgrade_transaction_phase hfl_switched
 	# The active API/Web pool is now authoritative; start singleton consumers
 	# from the target release and recover any returned in-flight work.
-	compose_in_root up -d --no-build worker scheduler
+	compose_in_root up -d --no-build --pull never worker scheduler
 	wait_for_services_health "${HFL_HEALTH_TIMEOUT_SECONDS:-600}" \
 		postgres redis worker scheduler "api-${target_color}" "web-${target_color}" nginx \
 		&& wait_for_public_endpoints \
@@ -4360,11 +4770,14 @@ cmd_upgrade() {
 	if [[ "${SOURCELENS_PROXY_GATE_ARMED}" == "1" ]]; then
 		clear_sourcelens_proxy_gate
 	fi
+	record_upgrade_transaction_phase sourcelens_complete
 	sync_optional_identity_settings
 	check_local_platform_gateway_continuity
+	record_upgrade_transaction_phase gateway_verified
 	prune_agent_release_media
 	prune_old_managed_image_refs
 	record_deployment_phase complete "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
+	write_upgrade_transaction_state complete complete "${UPGRADE_BACKUP_DIR}"
 	UPGRADE_RECOVERY_ARMED=0
 
 	step "[8/8] Cleaning up temporary directory ..."

@@ -79,9 +79,11 @@ drain every old Daphne instance, and provide shared or object-backed media,
 static, language-pack, and Agent-release storage. Those fleet responsibilities
 must not be inferred from the local execution-cache files.
 
-Stable Nginx is deliberately outside `APP_VERSION`. `HFL_GATEWAY_VERSION` pins
-the image present at first installation (or the first blue/green upgrade), so a
-later `install.sh start` cannot unexpectedly replace the public entry. Updating
-that gateway image requires a separately planned entry-layer maintenance action;
-zero-downtime gateway-image replacement requires an external load balancer or a
-host-level dual-entry driver.
+The product version, application-image identity, and stable entry image have
+separate lifecycles. The release manifest supplies the Backend and Frontend
+image references, while `HFL_GATEWAY_VERSION` pins the stable Nginx image
+present at first installation (or the first blue/green upgrade). A later
+`install.sh start` therefore cannot unexpectedly replace the public entry.
+Updating that gateway image requires a separately planned entry-layer
+maintenance action; zero-downtime gateway-image replacement requires an
+external load balancer or a host-level dual-entry driver.

@@ -17,6 +17,8 @@ grep -F './tools/quality/test-sourcelens-submodule-recovery.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-dev-stack-upgrade.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F './tools/quality/test-upgrade-transaction.sh' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 
 # shellcheck source=../lib/version.sh
 source "${ROOT}/tools/lib/version.sh"
@@ -844,7 +846,7 @@ if grep -F 'compose_in_root down' <<<"${upgrade_body}" >/dev/null; then
 fi
 worker_stop_line="$(grep -n -F 'compose_in_root stop --timeout 600 worker' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
 worker_stopped_line="$(grep -n -F 'compose_in_root ps --status running -q worker' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
-migration_line="$(grep -n -F 'compose_in_root --profile tools run --rm --no-deps migration' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
+migration_line="$(grep -n -F 'compose_in_root --profile tools run --rm --no-deps --pull never migration' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
 if [[ -z "${worker_stop_line}" \
 	|| -z "${worker_stopped_line}" \
 	|| -z "${migration_line}" \

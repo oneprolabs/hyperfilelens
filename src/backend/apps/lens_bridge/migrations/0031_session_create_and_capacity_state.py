@@ -9,7 +9,6 @@ _MIN_BIGINT = -(2**63)
 def prepare_incomplete_session_reservations(apps, schema_editor):
     """Make every in-flight legacy Chat rebuild its trusted reservation."""
 
-    del schema_editor
     session_model = apps.get_model("lens_bridge", "LensSessionLink")
     # Every row present while this migration runs predates durable reservations.
     # Existing workspaces remain the usage authority until a new/retried Chat
@@ -35,6 +34,11 @@ def prepare_incomplete_session_reservations(apps, schema_editor):
             capacity_reserved_bytes=0,
             capacity_reserved_at=None,
         )
+    # Django creates indexes for the new db_index fields when the schema editor
+    # exits. Settle deferred foreign-key trigger events from the backfill first
+    # so PostgreSQL can create those indexes in this atomic migration.
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 def _has_nonnegative_summary(scope):

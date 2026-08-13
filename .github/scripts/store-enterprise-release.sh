@@ -44,6 +44,7 @@ flock 9
 	python3 - MANIFEST.json "${tag}" "${archive}" <<'PY'
 import json
 import pathlib
+import re
 import sys
 import tarfile
 
@@ -56,8 +57,27 @@ if manifest.get("edition") != "enterprise":
     raise SystemExit("release is not Enterprise edition")
 if manifest.get("version") != version or manifest.get("artifact_id") != tag:
     raise SystemExit("Enterprise release identity mismatch")
-if manifest.get("image_version") != f"{version}-ee":
-    raise SystemExit("Enterprise image identity mismatch")
+image_version = str(manifest.get("image_version") or "")
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", image_version):
+    raise SystemExit("Enterprise image identity is missing or invalid")
+runtime_images = manifest.get("runtime_images") or {
+    "backend": f"hyperfilelens-backend:{image_version}",
+    "frontend": f"hyperfilelens-frontend:{image_version}",
+}
+if set(runtime_images) != {"backend", "frontend"}:
+    raise SystemExit("Enterprise runtime image identity is incomplete")
+hfl_refs = {
+    str(ref)
+    for item in manifest.get("images", [])
+    if item.get("role") == "hyperfilelens"
+    for ref in (item.get("refs") or [])
+}
+for role, ref in runtime_images.items():
+    if not re.fullmatch(
+        rf"hyperfilelens-{role}:[A-Za-z0-9][A-Za-z0-9._-]{{0,127}}",
+        str(ref),
+    ) or ref not in hfl_refs:
+        raise SystemExit(f"Enterprise {role} runtime image is not in the HFL archive")
 extension_commit = manifest.get("extension_commit", "")
 if not isinstance(extension_commit, str) or len(extension_commit) != 40 or any(
     character not in "0123456789abcdef" for character in extension_commit
@@ -90,6 +110,7 @@ if [[ -e "${destination}" ]]; then
 		python3 - MANIFEST.json "${tag}" "hyperfilelens-${version}-ee.tar.gz" <<'PY'
 import json
 import pathlib
+import re
 import sys
 import tarfile
 
@@ -102,8 +123,27 @@ if manifest.get("edition") != "enterprise":
     raise SystemExit("stored release is not Enterprise edition")
 if manifest.get("version") != version or manifest.get("artifact_id") != tag:
     raise SystemExit("stored Enterprise release identity mismatch")
-if manifest.get("image_version") != f"{version}-ee":
-    raise SystemExit("stored Enterprise image identity mismatch")
+image_version = str(manifest.get("image_version") or "")
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", image_version):
+    raise SystemExit("stored Enterprise image identity is missing or invalid")
+runtime_images = manifest.get("runtime_images") or {
+    "backend": f"hyperfilelens-backend:{image_version}",
+    "frontend": f"hyperfilelens-frontend:{image_version}",
+}
+if set(runtime_images) != {"backend", "frontend"}:
+    raise SystemExit("stored Enterprise runtime image identity is incomplete")
+hfl_refs = {
+    str(ref)
+    for item in manifest.get("images", [])
+    if item.get("role") == "hyperfilelens"
+    for ref in (item.get("refs") or [])
+}
+for role, ref in runtime_images.items():
+    if not re.fullmatch(
+        rf"hyperfilelens-{role}:[A-Za-z0-9][A-Za-z0-9._-]{{0,127}}",
+        str(ref),
+    ) or ref not in hfl_refs:
+        raise SystemExit(f"stored Enterprise {role} runtime image is not in the HFL archive")
 extension_commit = manifest.get("extension_commit", "")
 if not isinstance(extension_commit, str) or len(extension_commit) != 40 or any(
     character not in "0123456789abcdef" for character in extension_commit
@@ -131,6 +171,7 @@ identity_fields = (
     "version",
     "artifact_id",
     "image_version",
+    "runtime_images",
     "git_commit",
     "extension_commit",
 )

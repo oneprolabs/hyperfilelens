@@ -193,6 +193,7 @@ jobs:
             python3 - MANIFEST.json "$tag" "$version" "$oss_commit" "$enterprise_commit" <<'PY'
           import json
           import pathlib
+          import re
           import sys
 
           path, tag, version, oss_commit, enterprise_commit = sys.argv[1:]
@@ -202,7 +203,6 @@ jobs:
               "edition": "enterprise",
               "version": version,
               "artifact_id": tag,
-              "image_version": f"{version}-ee",
               "git_commit": oss_commit,
               "extension_commit": enterprise_commit,
           }
@@ -211,6 +211,29 @@ jobs:
               raise SystemExit(
                   "stored Enterprise release identity differs for: " + ", ".join(differences)
               )
+          image_version = str(manifest.get("image_version") or "")
+          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", image_version):
+              raise SystemExit("stored Enterprise image identity is missing or invalid")
+          runtime_images = manifest.get("runtime_images") or {
+              "backend": f"hyperfilelens-backend:{image_version}",
+              "frontend": f"hyperfilelens-frontend:{image_version}",
+          }
+          if set(runtime_images) != {"backend", "frontend"}:
+              raise SystemExit("stored Enterprise runtime image identity is incomplete")
+          hfl_refs = {
+              str(ref)
+              for item in manifest.get("images", [])
+              if item.get("role") == "hyperfilelens"
+              for ref in (item.get("refs") or [])
+          }
+          for role, ref in runtime_images.items():
+              if not re.fullmatch(
+                  rf"hyperfilelens-{role}:[A-Za-z0-9][A-Za-z0-9._-]{{0,127}}",
+                  str(ref),
+              ) or ref not in hfl_refs:
+                  raise SystemExit(
+                      f"stored Enterprise {role} runtime image is not in the HFL archive"
+                  )
           PY
           )
           printf 'true\n'
@@ -419,6 +442,7 @@ jobs:
           ./tools/quality/test-gh-release-upload-retry.sh
           ./tools/quality/test-offline-docker-package-plan.sh
           ./tools/quality/test-upgrade-backup-retention.sh
+          ./tools/quality/test-upgrade-transaction.sh
           ./tools/quality/test-blue-green-recovery.sh
           ./tools/quality/test-sourcelens-runtime-sync.sh
           ./tools/quality/test-sourcelens-runtime-fingerprint.sh

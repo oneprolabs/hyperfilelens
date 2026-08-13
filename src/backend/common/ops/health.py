@@ -45,7 +45,11 @@ def readiness(_request) -> JsonResponse:
     payload: dict[str, Any] = {
         "ok": ok,
         "time": timezone.now().isoformat(),
-        "version": str(os.getenv("APP_VERSION", "")).strip() or "0.0.0",
+        "version": (
+            str(os.getenv("HFL_PRODUCT_VERSION", "")).strip()
+            or str(os.getenv("APP_VERSION", "")).strip()
+            or "0.0.0"
+        ),
         "checks": [asdict(r) for r in results],
     }
     return JsonResponse(payload, status=200 if ok else 503)
@@ -59,4 +63,3 @@ def liveness(_request) -> JsonResponse:
         },
         status=200,
     )
-
