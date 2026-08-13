@@ -1206,7 +1206,7 @@ jobs:
               -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
               "bash -s -- '$RELEASE_TAG' '$incoming' /root/hfl-release 10" \
               < .github/scripts/store-enterprise-release.sh
-            gh release delete "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            gh release delete "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" --yes
             {
               echo 'deployable=true'
               echo 'disposition=stored-on-test-host'
@@ -1418,5 +1418,5 @@ jobs:
             -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
             "rm -rf -- '/root/hfl-release/.incoming/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}'" \
             || true
-          gh release delete "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes \
+          gh release delete "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" --yes \
             || true
