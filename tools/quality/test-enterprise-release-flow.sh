@@ -315,17 +315,34 @@ grep -F '[[ "$GITHUB_REF" == "refs/heads/main" ]]' "${promotion}" >/dev/null
 grep -F "ref: \${{ inputs.automatic && inputs.tag || 'main' }}" \
 	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'ssh-agent -s' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
-grep -F 'flock -s 9' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+promotion_transfer="${ROOT}/.github/scripts/promote-enterprise-release.sh"
+[[ -x "${promotion_transfer}" ]]
+grep -F 'flock -s 9' "${promotion_transfer}" >/dev/null
 promotion_no_stdin_ssh_count="$(grep -c \
-	'^[[:space:]]*ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes' \
+	'^[[:space:]]*ssh -n ' \
 	"${ROOT}/.github/workflows/enterprise_promotion.yml")"
 [[ "${promotion_no_stdin_ssh_count}" -eq 3 ]] || {
 	printf 'ERROR: every non-script PROD promotion SSH must disable stdin (found %s/3)\n' \
 		"${promotion_no_stdin_ssh_count}" >&2
 	exit 1
 }
-grep -F "cd '/root/hfl-release/\$tag' && sha256sum -c SHA256SUMS" \
-	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+[[ "$(grep -c 'ServerAliveInterval=30' "${ROOT}/.github/workflows/enterprise_promotion.yml")" -eq 4 ]]
+grep -F 'ServerAliveCountMax=20' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+grep -F 'ServerAliveInterval=30' "${promotion_transfer}" >/dev/null
+grep -F 'ServerAliveCountMax=20' "${promotion_transfer}" >/dev/null
+grep -F 'rsync --archive --checksum --partial --partial-dir=.rsync-partial' \
+	"${promotion_transfer}" >/dev/null
+grep -F -- '--info=progress2' "${promotion_transfer}" >/dev/null
+grep -F 'for attempt in 1 2 3' "${promotion_transfer}" >/dev/null
+grep -F 'retaining partial data' "${promotion_transfer}" >/dev/null
+grep -F 'already retained on PROD' "${promotion_transfer}" >/dev/null
+if grep -F 'rm -rf -- "${incoming}"' "${promotion_transfer}" >/dev/null \
+	|| grep -F 'scp ' "${promotion_transfer}" >/dev/null; then
+	printf 'ERROR: PROD promotion must retain resumable partial data and must not copy the archive with scp\n' >&2
+	exit 1
+fi
+grep -F "cd '\${store_root}/\${tag}' && sha256sum -c SHA256SUMS" \
+	"${promotion_transfer}" >/dev/null
 grep -F "printf -v remote_command '%q '" \
 	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'expected_edition=enterprise' "${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null

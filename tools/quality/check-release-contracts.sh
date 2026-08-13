@@ -1247,6 +1247,7 @@ for executable in \
 	"${ROOT}/.github/scripts/check-release-freshness.sh" \
 	"${ROOT}/.github/scripts/check-public-endpoint.sh" \
 	"${ROOT}/.github/scripts/cleanup-main-builds.sh" \
+	"${ROOT}/.github/scripts/promote-enterprise-release.sh" \
 	"${ROOT}/.github/scripts/remote-deploy.sh" \
 	"${ROOT}/.github/scripts/store-enterprise-release.sh" \
 	"${ROOT}/tools/quality/check-python38-runtime.py" \
@@ -1259,6 +1260,7 @@ for executable in \
 	"${ROOT}/tools/quality/test-main-release-cleanup.sh" \
 	"${ROOT}/tools/quality/test-release-freshness.sh" \
 	"${ROOT}/tools/quality/test-enterprise-release-flow.sh" \
+	"${ROOT}/tools/quality/test-enterprise-promotion-transfer.sh" \
 	"${ROOT}/tools/quality/test-language-pack-runtime-index.sh" \
 	"${ROOT}/tools/quality/test-upgrade-backup-retention.sh" \
 	"${ROOT}/tools/quality/test-redis-rdb-preflight.sh" \
