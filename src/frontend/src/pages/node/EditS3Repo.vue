@@ -22,6 +22,7 @@ import {
   type S3StoragePlatform as StoragePlatform,
   type S3UrlStyle,
 } from '../../lib/s3ProviderProfiles'
+import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 
 
 const { t } = useI18n()
@@ -30,6 +31,8 @@ const router = useRouter()
 
 const repositoryId = computed(() => Number(route.params.id))
 const loading = ref(false)
+const pageRef = ref<HTMLElement | null>(null)
+const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 type SavingPhase = 'verifying' | 'saving'
 const busy = ref(false)
 const savingPhase = ref<SavingPhase | null>(null)
@@ -343,14 +346,10 @@ async function runVerify(): Promise<boolean> {
 
 async function onSave() {
   if (busy.value) return
-  if (!name.value.trim()) {
-    ElMessage.warning({ message: t('repositoriesPage.editS3Repo.errName'), grouping: true })
-    return
-  }
-  if (!quotaThresholdValid.value) {
-    ElMessage.warning({ message: t('repositoriesPage.editS3Repo.errQuotaAlertThreshold'), grouping: true })
-    return
-  }
+  if (!validateInline([
+    { field: 'name', message: t('repositoriesPage.editS3Repo.errName'), valid: !!name.value.trim() },
+    { field: 'quotaThreshold', message: t('repositoriesPage.editS3Repo.errQuotaAlertThreshold'), valid: quotaThresholdValid.value },
+  ])) return
 
   // When the connection or credentials changed, run an explicit verify step
   // user sees what is happening. On failure we keep the page editable and
@@ -405,7 +404,7 @@ watch(repositoryId, (id) => {
 </script>
 
 <template>
-  <div class="fullscreen-form-fullscreen resource-add-fullscreen">
+  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen">
     <div class="fullscreen-form-page add-s3-page edit-s3-page">
       <div class="fullscreen-form-header">
         <button
@@ -610,7 +609,7 @@ watch(repositoryId, (id) => {
                 <div class="fullscreen-form-grid">
                   <div class="add-s3-repo-primary-fields">
                     <!-- Repo Name -->
-                    <div class="fullscreen-form-field">
+                    <div data-validation-field="name" class="fullscreen-form-field">
                       <label class="fullscreen-form-field__label edit-s3-locked-label">
                         {{ t('addS3Repo.fieldRepoName') }}
                         <span class="fullscreen-form-field__required">*</span>
@@ -619,10 +618,12 @@ watch(repositoryId, (id) => {
                         v-model="name"
                         class="add-s3-element-field add-s3-repo-primary-input"
                         :placeholder="t('repositoriesPage.phRepoName')"
+                        @input="clearFieldError('name')"
                       />
                       <p class="fullscreen-form-field__hint">
                         {{ t('addS3Repo.hintRepoName') }}
                       </p>
+                      <p v-if="errors.name" class="el-form-item__error">{{ errors.name }}</p>
                     </div>
 
                     <!-- Bucket (locked) -->
@@ -693,7 +694,7 @@ watch(repositoryId, (id) => {
                       </p>
                     </div>
 
-                    <div class="fullscreen-form-field add-s3-quota-pair__col add-s3-quota-alert-field">
+                    <div data-validation-field="quotaThreshold" class="fullscreen-form-field add-s3-quota-pair__col add-s3-quota-alert-field">
                       <div class="fullscreen-form-field__label add-s3-quota-pair__head add-s3-quota-alert-head">
                         <ElCheckbox v-model="quotaAlertEnabled">
                           {{ t('addS3Repo.fieldQuotaAlert') }}
@@ -710,6 +711,7 @@ watch(repositoryId, (id) => {
                             :disabled="!quotaAlertEnabled"
                             :placeholder="t('repositoriesPage.phQuotaAlertThreshold')"
                             controls-position="right"
+                            @change="clearFieldError('quotaThreshold')"
                           />
                           <div class="hfl-detail-form-input__suffix">
                             %
@@ -719,6 +721,7 @@ watch(repositoryId, (id) => {
                       <p class="fullscreen-form-field__hint">
                         {{ t('addS3Repo.hintQuotaAlertThreshold') }}
                       </p>
+                      <p v-if="errors.quotaThreshold" class="el-form-item__error">{{ errors.quotaThreshold }}</p>
                     </div>
                   </div>
                 </div>

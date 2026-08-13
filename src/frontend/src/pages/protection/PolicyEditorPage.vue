@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Filter, ShieldCheck } from 'lucide-vue-next'
+import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 import ProtectionPolicyEditorForm from './components/ProtectionPolicyEditorForm.vue'
 import { apiErrorMessage } from '../../lib/api'
 import {
@@ -38,6 +39,8 @@ const form = ref<BackupPolicyForm>(createEmptyPolicyForm())
 const filterForm = ref<FileFilterRuleForm>(createEmptyFileFilterForm())
 const loading = ref(false)
 const saving = ref(false)
+const pageRef = ref<HTMLElement | null>(null)
+const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 
 const editingId = computed(() => {
   const raw = route.params.id
@@ -74,10 +77,7 @@ function handleBack() {
 
 async function saveFilterRule() {
   const name = filterForm.value.name.trim()
-  if (!name) {
-    ElMessage.warning({ message: t('protection.policiesPage.msgNameRequired'), grouping: true })
-    return
-  }
+  if (!validateInline([{ field: 'name', message: t('protection.policiesPage.msgNameRequired'), valid: !!name }])) return
   const snapshot = JSON.parse(JSON.stringify({ ...filterForm.value, name })) as FileFilterRuleForm
   saving.value = true
   try {
@@ -98,20 +98,15 @@ async function saveFilterRule() {
 
 async function savePolicy() {
   const name = form.value.name.trim()
-  if (!name) {
-    ElMessage.warning({ message: t('protection.policiesPage.msgPolicyNameRequired'), grouping: true })
-    return
-  }
   const scheduleError = validateScheduleForm(form.value)
-  if (scheduleError) {
-    ElMessage.warning({ message: scheduleError, grouping: true })
-    return
-  }
+  const showScheduleError = form.value.freqMode !== 'advanced' ? scheduleError : ''
   const retentionError = validateRetentionForm(form.value, messageLocale.value)
-  if (form.value.sectionRetentionEnabled && retentionError) {
-    ElMessage.warning({ message: retentionError, grouping: true })
-    return
-  }
+  const showRetentionError = retentionError === 'Latest restore points must be at least 1.' ? '' : retentionError
+  if (!validateInline([
+    { field: 'name', message: t('protection.policiesPage.msgPolicyNameRequired'), valid: !!name },
+    { field: 'schedule', message: showScheduleError || '', valid: !scheduleError },
+    { field: 'retention', message: showRetentionError || '', valid: !form.value.sectionRetentionEnabled || !retentionError },
+  ])) return
   const snapshot = JSON.parse(JSON.stringify({ ...form.value, name })) as BackupPolicyForm
   saving.value = true
   try {
@@ -171,6 +166,7 @@ const editorPreviewIcon = computed(() => isFilterEditor.value ? Filter : ShieldC
 const editorPreviewActive = computed(() =>
   isFilterEditor.value ? filterForm.value.policyActive : form.value.policyActive,
 )
+const previewNumber = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : '—'
 
 const backupRetentionPreviewRows = computed(() => {
   const f = form.value
@@ -186,26 +182,26 @@ const backupRetentionPreviewRows = computed(() => {
   return [
     {
       label: 'Latest',
-      value: `${f.retentionRecentPoints} restore point(s)`,
+      value: `${previewNumber(f.retentionRecentPoints)} restore point(s)`,
     },
     {
       label: t('protection.policiesPage.shortTitle'),
       value: f.retentionShortHourly
-          ? `First ${f.retentionShortDaysMax} days`
+          ? `First ${previewNumber(f.retentionShortDaysMax)} days`
         : t('protection.policiesPage.statusOff'),
       muted: !f.retentionShortHourly,
     },
     {
       label: t('protection.policiesPage.midTitle'),
       value: f.retentionMidDaily
-          ? `Day ${f.retentionShortDaysMax} to ${f.retentionMidDaysMax}`
+          ? `Day ${previewNumber(f.retentionShortDaysMax)} to ${previewNumber(f.retentionMidDaysMax)}`
         : t('protection.policiesPage.statusOff'),
       muted: !f.retentionMidDaily,
     },
     {
       label: t('protection.policiesPage.longTitle'),
       value: f.retentionLongMonthly
-          ? `After day ${f.retentionMidDaysMax}, ${f.retentionLongMonths} months`
+          ? `After day ${previewNumber(f.retentionMidDaysMax)}, ${previewNumber(f.retentionLongMonths)} months`
         : t('protection.policiesPage.statusOff'),
       muted: !f.retentionLongMonthly,
     },
@@ -294,7 +290,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="fullscreen-form-fullscreen resource-add-fullscreen policy-editor-fullscreen">
+  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen policy-editor-fullscreen">
     <div class="fullscreen-form-page add-s3-page">
       <header class="fullscreen-form-header">
         <button
@@ -320,6 +316,10 @@ onMounted(() => {
             :show-filter="isFilterEditor"
             variant="fullscreen"
             cron-input-id="policy-cron-expr"
+            :name-error="errors.name"
+            :schedule-error="errors.schedule"
+            :retention-error="errors.retention"
+            @clear-name-error="clearFieldError('name')"
           />
 
           <footer class="fullscreen-form-footer fullscreen-form-action-footer">

@@ -14,6 +14,7 @@ import {
   updateStorageRepository,
   type StorageRepository,
 } from '../../lib/storageRepositoryApi'
+import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -24,6 +25,8 @@ const repositoryId = computed(() => Number(route.params.id))
 
 /* ---------- form state ---------- */
 const loading = ref(false)
+const pageRef = ref<HTMLElement | null>(null)
+const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 const busy = ref(false)
 const repo = ref<StorageRepository | null>(null)
 
@@ -175,14 +178,10 @@ function buildPayload() {
 
 async function onSave() {
   if (busy.value) return
-  if (!name.value.trim()) {
-    ElMessage.warning({ message: t('repositoriesPage.editProxyFsRepo.errName'), grouping: true })
-    return
-  }
-  if (!validQuotaAlertThreshold.value) {
-    ElMessage.warning({ message: t('repositoriesPage.editProxyFsRepo.errQuotaAlertThreshold'), grouping: true })
-    return
-  }
+  if (!validateInline([
+    { field: 'name', message: t('repositoriesPage.editProxyFsRepo.errName'), valid: !!name.value.trim() },
+    { field: 'quotaThreshold', message: t('repositoriesPage.editProxyFsRepo.errQuotaAlertThreshold'), valid: validQuotaAlertThreshold.value },
+  ])) return
   busy.value = true
   try {
     await updateStorageRepository(repositoryId.value, buildPayload())
@@ -206,7 +205,7 @@ watch(repositoryId, (id) => {
 </script>
 
 <template>
-  <div class="fullscreen-form-fullscreen resource-add-fullscreen">
+  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen">
     <div class="fullscreen-form-page add-proxy-fs-page edit-proxy-fs-page">
       <header class="fullscreen-form-header">
         <button
@@ -258,12 +257,15 @@ watch(repositoryId, (id) => {
               class="add-proxy-fs-form"
             >
               <ElFormItem
+                data-validation-field="name"
+                :error="errors.name"
                 :label="t('repositoriesPage.editProxyFsRepo.fieldName')"
                 required
               >
                 <ElInput
                   v-model="name"
                   :placeholder="t('repositoriesPage.phRepoName')"
+                  @input="clearFieldError('name')"
                 />
               </ElFormItem>
 
@@ -335,7 +337,7 @@ watch(repositoryId, (id) => {
                   </p>
                 </div>
 
-                <div class="fullscreen-form-field add-proxy-fs-quota-col add-proxy-fs-quota-panel">
+                <div data-validation-field="quotaThreshold" class="fullscreen-form-field add-proxy-fs-quota-col add-proxy-fs-quota-panel">
                   <div class="fullscreen-form-field__label add-proxy-fs-quota-head add-proxy-fs-quota-title-row">
                     <ElCheckbox v-model="quotaAlertEnabled">
                       {{ t('repositoriesPage.fieldQuotaAlert') }}
@@ -350,6 +352,7 @@ watch(repositoryId, (id) => {
                         :max="100"
                         :disabled="!quotaAlertEnabled"
                         controls-position="right"
+                        @change="clearFieldError('quotaThreshold')"
                       />
                       <div class="hfl-detail-form-input__suffix">
                         %
@@ -359,6 +362,7 @@ watch(repositoryId, (id) => {
                   <p class="fullscreen-form-field__hint">
                     {{ t('repositoriesPage.hintQuotaAlertThreshold') }}
                   </p>
+                  <p v-if="errors.quotaThreshold" class="el-form-item__error">{{ errors.quotaThreshold }}</p>
                 </div>
               </div>
             </ElForm>

@@ -30,6 +30,7 @@ import {
   type S3UrlStyle,
 } from '../../lib/s3ProviderProfiles'
 import S3PlatformBrandIcon from '../../components/S3PlatformBrandIcon.vue'
+import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 import {
   ArrowLeft,
   RefreshCw,
@@ -53,6 +54,8 @@ const emit = defineEmits<{
   created: [payload: StorageRepository]
 }>()
 const busy = ref(false)
+const pageRef = ref<HTMLElement | null>(null)
+const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 const platformSearch = ref('')
 const regionSearch = ref('')
 
@@ -435,24 +438,16 @@ watch(
 watch([storagePlatform, platformLabel, bucket], syncAutoRepoName, { immediate: true })
 
 function validateForm(): boolean {
-  if (!validateAuthFields()) return false
-  if (!repoName.value.trim()) {
-    ElMessage.warning({ message: t('repositoriesPage.errName'), grouping: true })
-    return false
-  }
-  if (!bucket.value.trim()) {
-    ElMessage.warning({ message: t('repositoriesPage.errBucket'), grouping: true })
-    return false
-  }
-  if (!normalizeS3ObjectPrefix(prefix.value)) {
-    ElMessage.warning({ message: t('addS3Repo.errPrefix'), grouping: true })
-    return false
-  }
-  if (enableQuotaAlert.value && !validQuotaAlertThreshold.value) {
-    ElMessage.warning({ message: t('repositoriesPage.hintQuotaAlertThreshold'), grouping: true })
-    return false
-  }
-  return true
+  return validateInline([
+    { field: 'platform', message: t('repositoriesPage.errPlatform'), valid: !!storagePlatform.value },
+    { field: 'endpoint', message: t('addS3Repo.errEndpoint'), valid: !!endpoint.value.trim() },
+    { field: 'accessKey', message: t('addS3Repo.errAccessKey'), valid: !!accessKeyId.value.trim() },
+    { field: 'secretKey', message: t('addS3Repo.errSecretKey'), valid: !!accessKeySecret.value.trim() },
+    { field: 'repoName', message: t('repositoriesPage.errName'), valid: !!repoName.value.trim() },
+    { field: 'bucket', message: t('repositoriesPage.errBucket'), valid: !!bucket.value.trim() },
+    { field: 'prefix', message: t('addS3Repo.errPrefix'), valid: !!normalizeS3ObjectPrefix(prefix.value) },
+    { field: 'quotaThreshold', message: t('repositoriesPage.hintQuotaAlertThreshold'), valid: !enableQuotaAlert.value || validQuotaAlertThreshold.value },
+  ])
 }
 
 async function onSubmit() {
@@ -536,7 +531,7 @@ function handleBack() {
 </script>
 
 <template>
-  <div class="fullscreen-form-fullscreen resource-add-fullscreen" :class="{ 'resource-add-fullscreen--embedded': embedded }">
+  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen" :class="{ 'resource-add-fullscreen--embedded': embedded }">
     <div class="fullscreen-form-page add-s3-page">
 
       <!-- Header -->
@@ -609,6 +604,7 @@ function handleBack() {
                       {{ t('addS3Repo.emptyPlatforms') }}
                     </div>
                   </div>
+                  <p v-if="errors.platform" class="el-form-item__error">{{ errors.platform }}</p>
 
                   <!-- Region Selection -->
                   <template v-if="currentRegions.length > 0">
@@ -662,7 +658,7 @@ function handleBack() {
 
                   <div class="fullscreen-form-grid">
                     <!-- Endpoint -->
-                    <div class="fullscreen-form-field">
+                    <div data-validation-field="endpoint" class="fullscreen-form-field">
                       <label class="fullscreen-form-field__label">
                         {{ t('addS3Repo.fieldEndpoint') }} <span class="fullscreen-form-field__required">*</span>
                       </label>
@@ -672,8 +668,10 @@ function handleBack() {
                         :placeholder="endpointPlaceholder"
                         :disabled="!!platformRegionKey"
                         @blur="endpoint = normalizeS3EndpointInput(endpoint)"
+                        @input="clearFieldError('endpoint')"
                       />
                       <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintEndpoint') }}</p>
+                      <p v-if="errors.endpoint" class="el-form-item__error">{{ errors.endpoint }}</p>
                     </div>
 
                     <!-- Region -->
@@ -691,7 +689,7 @@ function handleBack() {
                     </div>
 
                     <!-- Access Key -->
-                    <div class="fullscreen-form-field">
+                    <div data-validation-field="accessKey" class="fullscreen-form-field">
                       <label class="fullscreen-form-field__label">
                         {{ t('addS3Repo.fieldAccessKey') }} <span class="fullscreen-form-field__required">*</span>
                       </label>
@@ -699,12 +697,14 @@ function handleBack() {
                         v-model="accessKeyId"
                         class="add-s3-element-field"
                         :placeholder="t('addS3Repo.phAccessKey')"
+                        @input="clearFieldError('accessKey')"
                       />
                       <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintAccessKey') }}</p>
+                      <p v-if="errors.accessKey" class="el-form-item__error">{{ errors.accessKey }}</p>
                     </div>
 
                     <!-- Secret Key -->
-                    <div class="fullscreen-form-field">
+                    <div data-validation-field="secretKey" class="fullscreen-form-field">
                       <label class="fullscreen-form-field__label">
                         {{ t('addS3Repo.fieldSecretKey') }} <span class="fullscreen-form-field__required">*</span>
                       </label>
@@ -714,8 +714,10 @@ function handleBack() {
                         show-password
                         class="add-s3-element-field"
                         :placeholder="t('addS3Repo.phSecretKey')"
+                        @input="clearFieldError('secretKey')"
                       />
                       <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintSecretKey') }}</p>
+                      <p v-if="errors.secretKey" class="el-form-item__error">{{ errors.secretKey }}</p>
                     </div>
 
                     <!-- Path Style -->
@@ -761,7 +763,7 @@ function handleBack() {
                 <div class="fullscreen-form-grid">
                   <div class="add-s3-repo-primary-fields">
                   <!-- Repo Name -->
-                  <div class="fullscreen-form-field">
+                  <div data-validation-field="repoName" class="fullscreen-form-field">
                     <label class="fullscreen-form-field__label">
                       {{ t('addS3Repo.fieldRepoName') }} <span class="fullscreen-form-field__required">*</span>
                     </label>
@@ -769,13 +771,14 @@ function handleBack() {
                       v-model="repoName"
                       class="add-s3-element-field add-s3-repo-primary-input"
                       :placeholder="t('addS3Repo.phRepoName')"
-                      @input="onRepoNameInput"
+                      @input="onRepoNameInput(); clearFieldError('repoName')"
                     />
                     <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintRepoName') }}</p>
+                    <p v-if="errors.repoName" class="el-form-item__error">{{ errors.repoName }}</p>
                   </div>
 
                   <!-- Bucket -->
-                  <div class="fullscreen-form-field">
+                  <div data-validation-field="bucket" class="fullscreen-form-field">
                     <label class="fullscreen-form-field__label">
                       {{ t('addS3Repo.fieldBucket') }} <span class="fullscreen-form-field__required">*</span>
                     </label>
@@ -801,6 +804,7 @@ function handleBack() {
                         :placeholder="refreshingBuckets ? t('addS3Repo.btnValidatingAuth') : t('addS3Repo.phBucketSelect')"
                         @focus="loadBucketsForSelect"
                         @visible-change="(open) => open && loadBucketsForSelect()"
+                        @change="clearFieldError('bucket')"
                       >
                         <ElOption v-for="item in bucketSelectOptions" :key="item" :label="item" :value="item" />
                       </ElSelect>
@@ -819,11 +823,13 @@ function handleBack() {
                       v-model="bucket"
                       class="add-s3-element-field add-s3-repo-primary-input"
                       :placeholder="t('addS3Repo.phBucketNew')"
+                      @input="clearFieldError('bucket')"
                     />
                     <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintBucket') }}</p>
+                    <p v-if="errors.bucket" class="el-form-item__error">{{ errors.bucket }}</p>
                   </div>
                   <!-- Prefix -->
-                  <div class="fullscreen-form-field">
+                  <div data-validation-field="prefix" class="fullscreen-form-field">
                     <label class="fullscreen-form-field__label">
                       {{ t('addS3Repo.fieldPrefix') }} <span class="fullscreen-form-field__required">*</span>
                     </label>
@@ -832,8 +838,10 @@ function handleBack() {
                       class="add-s3-element-field add-s3-repo-primary-input"
                       :placeholder="t('addS3Repo.phPrefix')"
                       @blur="prefix = normalizeS3ObjectPrefix(prefix)"
+                      @input="clearFieldError('prefix')"
                     />
                     <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintPrefix') }}</p>
+                    <p v-if="errors.prefix" class="el-form-item__error">{{ errors.prefix }}</p>
                   </div>
                   </div>
 
@@ -856,7 +864,7 @@ function handleBack() {
                       <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintQuota') }}</p>
                     </div>
 
-                    <div class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring">
+                    <div data-validation-field="quotaThreshold" class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring">
                       <div class="fullscreen-form-field__label repository-quota-head repository-quota-title-row">
                         <ElCheckbox v-model="enableQuotaAlert">{{ t('repositoriesPage.fieldQuotaAlert') }}</ElCheckbox>
                       </div>
@@ -868,11 +876,13 @@ function handleBack() {
                             :min="1"
                             :max="100"
                             controls-position="right"
+                            @change="clearFieldError('quotaThreshold')"
                           />
                           <div class="repository-quota-number__suffix">%</div>
                         </div>
                       </div>
                       <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintQuotaAlertThreshold') }}</p>
+                      <p v-if="errors.quotaThreshold" class="el-form-item__error">{{ errors.quotaThreshold }}</p>
                     </div>
                   </div>
                 </div>

@@ -16,6 +16,7 @@ import { shouldAutoExpandRefreshedDirectory } from '../../lib/backupSourceDirect
 import { listAllNodes } from '../../lib/nodeApi'
 import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
 import type { ApiNode } from '../../types/node'
+import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -31,6 +32,8 @@ const emit = defineEmits<{
 
 /* ---------- form state ---------- */
 const busy = ref(false)
+const pageRef = ref<HTMLElement | null>(null)
+const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 const proxyNodeId = ref<number | undefined>(undefined)
 const proxyNodeDir = ref('')
 const repoName = ref('')
@@ -412,23 +415,12 @@ onMounted(() => {
 
 /* ---------- validation ---------- */
 function validateForm(): boolean {
-  if (!repoName.value.trim()) {
-    ElMessage.warning({ message: t('repositoriesPage.errName'), grouping: true })
-    return false
-  }
-  if (!proxyNodeId.value) {
-    ElMessage.warning({ message: t('repositoriesPage.errProxyNode'), grouping: true })
-    return false
-  }
-  if (!proxyNodeDir.value.trim()) {
-    ElMessage.warning({ message: t('repositoriesPage.errProxyNodeDir'), grouping: true })
-    return false
-  }
-  if (enableQuotaAlert.value && !validQuotaAlertThreshold.value) {
-    ElMessage.warning({ message: t('repositoriesPage.hintQuotaAlertThreshold'), grouping: true })
-    return false
-  }
-  return true
+  return validateInline([
+    { field: 'repoName', message: t('repositoriesPage.errName'), valid: !!repoName.value.trim() },
+    { field: 'proxyNode', message: t('repositoriesPage.errProxyNode'), valid: !!proxyNodeId.value },
+    { field: 'proxyNodeDir', message: t('repositoriesPage.errProxyNodeDir'), valid: !!proxyNodeDir.value.trim() },
+    { field: 'quotaThreshold', message: t('repositoriesPage.hintQuotaAlertThreshold'), valid: !enableQuotaAlert.value || validQuotaAlertThreshold.value },
+  ])
 }
 
 /* ---------- submit ---------- */
@@ -598,7 +590,7 @@ watch(enableQuotaAlert, (enabled) => {
 </script>
 
 <template>
-  <div class="fullscreen-form-fullscreen resource-add-fullscreen" :class="{ 'resource-add-fullscreen--embedded': embedded }">
+  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen" :class="{ 'resource-add-fullscreen--embedded': embedded }">
     <div class="fullscreen-form-page add-proxy-fs-page">
       <header v-if="!embedded" class="fullscreen-form-header">
         <button class="fullscreen-form-header__back" @click="handleBack">
@@ -623,14 +615,14 @@ watch(enableQuotaAlert, (enabled) => {
                 {{ t('repositoriesPage.stepRepo') }}
               </h3>
               <ElForm label-position="top" class="fullscreen-form-el-form add-proxy-fs-form">
-                <ElFormItem :label="t('repositoriesPage.fieldRepoName')" required class="fullscreen-form-item--in-card">
-                  <ElInput v-model="repoName" :placeholder="t('repositoriesPage.phRepoName')" />
+                <ElFormItem data-validation-field="repoName" :error="errors.repoName" :label="t('repositoriesPage.fieldRepoName')" required class="fullscreen-form-item--in-card">
+                  <ElInput v-model="repoName" :placeholder="t('repositoriesPage.phRepoName')" @input="clearFieldError('repoName')" />
                   <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">
                     {{ t('repositoriesPage.hintRepoNameAuto') }}
                   </div>
                 </ElFormItem>
 
-                <ElFormItem required class="fullscreen-form-item--in-card add-proxy-fs-bind-form-item is-no-asterisk">
+                <ElFormItem data-validation-field="proxyNode" :error="errors.proxyNode" required class="fullscreen-form-item--in-card add-proxy-fs-bind-form-item is-no-asterisk">
                   <template #label>
                     <div class="add-proxy-fs-proxy-label">
                       <span class="add-proxy-fs-proxy-label__title">
@@ -647,6 +639,7 @@ watch(enableQuotaAlert, (enabled) => {
                       class="add-proxy-fs-select-row__select"
                       :placeholder="t('repositoriesPage.phProxyNode')"
                       filterable
+                      @change="clearFieldError('proxyNode')"
                     >
                       <ElOption
                         v-for="n in availableProxyNodes"
@@ -667,7 +660,7 @@ watch(enableQuotaAlert, (enabled) => {
                   </div>
                 </ElFormItem>
 
-                <ElFormItem :label="t('repositoriesPage.fieldProxyNodeBaseDir')" required class="fullscreen-form-item--in-card">
+                <ElFormItem data-validation-field="proxyNodeDir" :error="errors.proxyNodeDir" :label="t('repositoriesPage.fieldProxyNodeBaseDir')" required class="fullscreen-form-item--in-card">
                   <div class="dir-selector-container">
                     <div class="dir-selector-toggle">
                       <button
@@ -813,6 +806,7 @@ watch(enableQuotaAlert, (enabled) => {
                       v-model="proxyNodeDir"
                       :placeholder="t('repositoriesPage.phProxyNodeDir')"
                       class="dir-input"
+                      @input="clearFieldError('proxyNodeDir')"
                     />
                   </div>
                 </ElFormItem>
@@ -847,7 +841,7 @@ watch(enableQuotaAlert, (enabled) => {
                     <p class="fullscreen-form-field__hint">{{ t('repositoriesPage.hintQuota') }}</p>
                   </div>
 
-                  <div class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring">
+                  <div data-validation-field="quotaThreshold" class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring">
                     <div class="fullscreen-form-field__label repository-quota-head repository-quota-title-row">
                       <ElCheckbox v-model="enableQuotaAlert">{{ t('repositoriesPage.fieldQuotaAlert') }}</ElCheckbox>
                     </div>
@@ -860,11 +854,13 @@ watch(enableQuotaAlert, (enabled) => {
                           :max="100"
                           :disabled="!enableQuotaAlert"
                           controls-position="right"
+                          @change="clearFieldError('quotaThreshold')"
                         />
                         <div class="repository-quota-number__suffix">%</div>
                       </div>
                     </div>
-                    <p class="fullscreen-form-field__hint">{{ t('repositoriesPage.hintQuotaAlertThreshold') }}</p>
+                      <p class="fullscreen-form-field__hint">{{ t('repositoriesPage.hintQuotaAlertThreshold') }}</p>
+                      <p v-if="errors.quotaThreshold" class="el-form-item__error">{{ errors.quotaThreshold }}</p>
                   </div>
                 </div>
               </ElForm>

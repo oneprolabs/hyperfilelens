@@ -388,6 +388,16 @@
   line-height: 1.5;
 }
 
+/* Use when a custom field layout cannot host Element Plus's absolutely
+ * positioned .el-form-item__error. A layout may anchor it locally when the
+ * message must not affect row height. */
+.fullscreen-form-inline-error {
+  margin: 4px 0 0;
+  color: var(--el-color-danger);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .fullscreen-form-el-form {
   margin: 0;
 }

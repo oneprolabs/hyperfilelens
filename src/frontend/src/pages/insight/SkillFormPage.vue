@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Sparkles } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import { apiErrorMessage } from '../../lib/api'
+import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 import { routeLocationWithListRefresh } from '../../lib/listRouteRefresh'
 import {
   beautifyLensSkill,
@@ -30,6 +31,8 @@ const isEditing = computed(() => Boolean(editingUuid.value))
 const loading = ref(false)
 const saving = ref(false)
 const beautifying = ref(false)
+const pageRef = ref<HTMLElement | null>(null)
+const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 
 const name = ref('')
 const description = ref('')
@@ -114,7 +117,11 @@ async function handleBeautify() {
 }
 
 async function handleSubmit() {
-  if (!canSubmit.value || saving.value) return
+  if (saving.value) return
+  if (!validateInline([
+    { field: 'name', message: t('insight.skills.fieldName'), valid: !!name.value.trim() },
+    { field: 'content', message: t('insight.skills.fieldContent'), valid: !!content.value.trim() },
+  ])) return
   saving.value = true
   try {
     const payload = buildPayload()
@@ -143,7 +150,7 @@ watch(
 </script>
 
 <template>
-  <div class="fullscreen-form-fullscreen resource-add-fullscreen skill-form-fullscreen">
+  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen skill-form-fullscreen">
     <div class="fullscreen-form-page">
       <header class="fullscreen-form-header">
         <button type="button" class="fullscreen-form-header__back" @click="handleBack">
@@ -160,8 +167,8 @@ watch(
           <div class="fullscreen-form-step-stack">
             <section class="fullscreen-form-card fullscreen-form-section">
               <ElForm label-position="top" class="fullscreen-form-el-form">
-                <ElFormItem :label="t('insight.skills.fieldName')" required>
-                  <ElInput v-model="name" :placeholder="t('insight.skills.fieldNamePh')" />
+                <ElFormItem data-validation-field="name" :error="errors.name" :label="t('insight.skills.fieldName')" required>
+                  <ElInput v-model="name" :placeholder="t('insight.skills.fieldNamePh')" @input="clearFieldError('name')" />
                   <p class="skill-field-hint">{{ t('insight.skills.fieldNameHint') }}</p>
                 </ElFormItem>
 
@@ -173,7 +180,7 @@ watch(
                   <p class="skill-field-hint">{{ t('insight.skills.fieldDescriptionHint') }}</p>
                 </ElFormItem>
 
-                <ElFormItem required>
+                <ElFormItem data-validation-field="content" :error="errors.content" required>
                   <template #label>
                     <span class="skill-content-label">
                       <span>{{ t('insight.skills.fieldContent') }}</span>
@@ -195,6 +202,7 @@ watch(
                     :rows="11"
                     :placeholder="t('insight.skills.fieldContentPh')"
                     class="skill-content-textarea"
+                    @input="clearFieldError('content')"
                   />
                   <p class="skill-field-hint">{{ t('insight.skills.fieldContentHint') }}</p>
                 </ElFormItem>
@@ -216,7 +224,7 @@ watch(
         <ElButton
           type="primary"
           :loading="saving"
-          :disabled="saving || loading || !canSubmit"
+          :disabled="saving || loading"
           @click="handleSubmit"
         >
           {{ isEditing ? t('common.save') : t('insight.skills.btnCreate') }}

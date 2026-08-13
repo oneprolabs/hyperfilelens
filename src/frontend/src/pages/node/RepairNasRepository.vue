@@ -20,6 +20,7 @@ import {
 import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
 import type { ApiNode } from '../../types/node'
 import NasProxyTopology from './NasProxyTopology.vue'
+import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 
 type NasProtocol = 'smb' | 'nfs'
 
@@ -29,6 +30,8 @@ const route = useRoute()
 
 const repoId = computed(() => Number(route.params.id))
 const busy = ref(false)
+const pageRef = ref<HTMLElement | null>(null)
+const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 const loading = ref(true)
 const loadError = ref('')
 const original = ref<StorageRepository | null>(null)
@@ -266,6 +269,10 @@ async function focusMountOptions() {
 
 async function onSubmit() {
   if (!original.value) return
+  if (!validateInline([
+    { field: 'displayName', message: t('repositoriesPage.errName'), valid: !!displayName.value.trim() },
+    { field: 'quotaThreshold', message: t('repositoriesPage.hintQuotaAlertThreshold'), valid: !quotaAlertEnabled.value || (Number(quotaAlertThreshold.value || 0) >= 1 && Number(quotaAlertThreshold.value || 0) <= 100) },
+  ])) return
   const validationError = validateForm()
   if (validationError) {
     ElMessage.warning({ message: validationError, grouping: true })
@@ -381,7 +388,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="fullscreen-form-fullscreen resource-add-fullscreen">
+  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen">
     <div class="fullscreen-form-page add-nas-page">
       <header class="fullscreen-form-header">
         <button class="fullscreen-form-header__back" @click="handleBack">
@@ -529,8 +536,8 @@ onMounted(async () => {
                 {{ t('repairNasRepo.sectionRepo') }}
               </h3>
               <ElForm label-position="top" class="add-nas-form">
-                <ElFormItem :label="t('repairNasRepo.labelDisplayName')" required>
-                  <ElInput v-model="displayName" :placeholder="t('repairNasRepo.phDisplayName')" />
+                <ElFormItem data-validation-field="displayName" :error="errors.displayName" :label="t('repairNasRepo.labelDisplayName')" required>
+                  <ElInput v-model="displayName" :placeholder="t('repairNasRepo.phDisplayName')" @input="clearFieldError('displayName')" />
                 </ElFormItem>
                 <ElFormItem id="nas-mount-options" :label="t('repairNasRepo.labelMountOptions')">
                   <ElInput
@@ -589,7 +596,7 @@ onMounted(async () => {
                       </div>
                     </div>
                   </div>
-                  <div class="fullscreen-form-field add-nas-quota-col add-nas-quota-panel">
+                  <div data-validation-field="quotaThreshold" class="fullscreen-form-field add-nas-quota-col add-nas-quota-panel">
                     <div class="fullscreen-form-field__label add-nas-quota-head add-nas-quota-title-row">
                       <ElCheckbox v-model="quotaAlertEnabled">
                         {{ t('repairNasRepo.labelQuotaAlert') }}
@@ -604,6 +611,7 @@ onMounted(async () => {
                           :max="100"
                           :disabled="!quotaAlertEnabled"
                           controls-position="right"
+                          @change="clearFieldError('quotaThreshold')"
                         />
                         <div class="hfl-detail-form-input__suffix">%</div>
                       </div>
@@ -611,6 +619,7 @@ onMounted(async () => {
                     <p class="fullscreen-form-field__hint">
                       {{ t('repairNasRepo.labelQuotaAlertThreshold') }}
                     </p>
+                    <p v-if="errors.quotaThreshold" class="el-form-item__error">{{ errors.quotaThreshold }}</p>
                   </div>
                 </div>
               </ElForm>

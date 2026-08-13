@@ -44,6 +44,7 @@ import NasSourceDetailDrawer from './components/NasSourceDetailDrawer.vue'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useListSearch } from '../../composables/useListSearch'
 import { useRestoreTargetCatalog } from '../../composables/useRestoreTargetCatalog'
+import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 import {
   backupFlowSourceStepIcon,
   backupSourceTypeIcon,
@@ -808,6 +809,7 @@ const nasProtocol = ref<NasProtocol>('smb')
 const nasBindNodeId = ref<number | undefined>(undefined)
 const nasBindNodeError = ref('')
 const nasBindSectionRef = ref<HTMLElement | null>(null)
+const { clear: clearNasFieldError, errors: nasFieldErrors, validate: validateNasInline } = useInlineFormValidation(addSourceShellRef)
 const nasName = ref('')
 const nasNameTouched = ref(false)
 const nasDir = ref('')
@@ -895,7 +897,17 @@ function validateNasStep(step: NasWizardStep): boolean {
 }
 
 function validateNasForm(): boolean {
-  return validateNasStep(0) && validateNasStep(1) && validateNasStep(2)
+  return validateNasInline([
+    { field: 'smbServer', message: t('addNasRepo.errSmbHost'), valid: nasProtocol.value !== 'smb' || !!nasSmbServer.value.trim() },
+    { field: 'smbShare', message: t('addNasRepo.errSmbShare'), valid: nasProtocol.value !== 'smb' || !!nasSmbShare.value.trim() },
+    { field: 'smbUsername', message: t('repositoriesPage.errSmbUsername'), valid: nasProtocol.value !== 'smb' || !!nasSmbUsername.value.trim() },
+    { field: 'smbPassword', message: t('repositoriesPage.errSmbPassword'), valid: nasProtocol.value !== 'smb' || !!nasSmbPassword.value.trim() },
+    { field: 'nfsHost', message: t('repositoriesPage.errNfsHost'), valid: nasProtocol.value !== 'nfs' || !!nasNfsHost.value.trim() },
+    { field: 'nfsExport', message: t('repositoriesPage.errNfsExport'), valid: nasProtocol.value !== 'nfs' || !!nasNfsExport.value.trim() },
+    { field: 'bindNode', message: proxyNodes.value.length === 0 ? t('protection.sourceResources.nasNoProxy') : t('protection.sourceResources.errNasProxyRequired'), valid: !!nasBindNodeId.value },
+    { field: 'dir', message: t('repositoriesPage.errRepoDir'), valid: !!nasDir.value.trim() },
+    { field: 'name', message: t('repositoriesPage.errName'), valid: !!nasName.value.trim() },
+  ])
 }
 
 async function nasSubmit() {
@@ -1223,10 +1235,16 @@ const selGlobalFilter = ref('')
 const sourceFilterMap = ref<Record<string, string[]>>({})
 const sourceCompressionMap = ref<Record<string, CompressionLevel>>({})
 const addFilterOpen = ref(false)
+const addPolicyDialogRef = ref<HTMLElement | null>(null)
+const { clear: clearAddPolicyError, errors: addPolicyErrors, validate: validateAddPolicyInline } = useInlineFormValidation(addPolicyDialogRef)
 const addPolicyCreateKind = ref<'backup' | 'filter'>('backup')
 const addPolicyForm = ref<BackupPolicyForm>(createEmptyPolicyForm())
 const addFileFilterForm = ref<FileFilterRuleForm>(createEmptyFileFilterForm())
 const addPolicySaving = ref(false)
+watch(addPolicyForm, () => {
+  clearAddPolicyError('schedule')
+  clearAddPolicyError('retention')
+}, { deep: true })
 const createPhase = ref<'form' | 'waiting' | 'done'>('form')
 const createBootstrapping = ref(true)
 const editorWaitingText = computed(() => {
@@ -5201,15 +5219,13 @@ function filterSummaryLines(ids: string[]) {
 
 function closeAddFilterDialog() {
   addFilterOpen.value = false
+  for (const key of Object.keys(addPolicyErrors)) delete addPolicyErrors[key]
 }
 
 async function submitAddFilterDialog() {
   if (addPolicyCreateKind.value === 'filter') {
     const name = addFileFilterForm.value.name.trim()
-    if (!name) {
-      ElMessage.warning({ message: t('protection.policiesPage.msgNameRequired'), grouping: true })
-      return
-    }
+    if (!validateAddPolicyInline([{ field: 'name', message: t('protection.policiesPage.msgNameRequired'), valid: !!name }])) return
     addPolicySaving.value = true
     try {
       const snapshot = JSON.parse(JSON.stringify({ ...addFileFilterForm.value, name })) as FileFilterRuleForm
@@ -5229,19 +5245,16 @@ async function submitAddFilterDialog() {
   }
 
   const name = addPolicyForm.value.name.trim()
-  if (!name) {
-    ElMessage.warning({ message: t('protection.policiesPage.msgPolicyNameRequired'), grouping: true })
-    return
-  }
   const scheduleError = validateScheduleForm(addPolicyForm.value)
-  if (scheduleError) {
-    ElMessage.warning({ message: scheduleError, grouping: true })
-    return
-  }
-  if (addPolicyForm.value.sectionRetentionEnabled && addPolicyRetentionError.value) {
-    ElMessage.warning({ message: addPolicyRetentionError.value, grouping: true })
-    return
-  }
+  const showScheduleError = addPolicyForm.value.freqMode !== 'advanced' ? scheduleError : ''
+  const showRetentionError = addPolicyRetentionError.value === 'Latest restore points must be at least 1.'
+    ? ''
+    : addPolicyRetentionError.value
+  if (!validateAddPolicyInline([
+    { field: 'name', message: t('protection.policiesPage.msgPolicyNameRequired'), valid: !!name },
+    { field: 'schedule', message: showScheduleError || '', valid: !scheduleError },
+    { field: 'retention', message: showRetentionError || '', valid: !addPolicyForm.value.sectionRetentionEnabled || !addPolicyRetentionError.value },
+  ])) return
   addPolicySaving.value = true
   try {
     const snapshot = JSON.parse(JSON.stringify({ ...addPolicyForm.value, name })) as BackupPolicyForm
@@ -7123,6 +7136,7 @@ function preserveShallowestPathOrder(paths: string[]) {
         >
           <p class="create-policy-dialog__desc">{{ addPolicyDialogDesc }}</p>
 
+          <div ref="addPolicyDialogRef">
           <ProtectionPolicyEditorForm
             v-model:policy-form="addPolicyForm"
             v-model:filter-form="addFileFilterForm"
@@ -7131,7 +7145,12 @@ function preserveShallowestPathOrder(paths: string[]) {
             variant="dialog"
             :show-cron-help="false"
             cron-input-id="create-backup-policy-cron"
+            :name-error="addPolicyErrors.name"
+            :schedule-error="addPolicyErrors.schedule"
+            :retention-error="addPolicyErrors.retention"
+            @clear-name-error="clearAddPolicyError('name')"
           />
+          </div>
           <template #footer>
             <div class="flex justify-end gap-2">
               <ElButton @click="closeAddFilterDialog">{{ t('protection.backupsPage.btnCancel') }}</ElButton>
@@ -9396,6 +9415,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                   :nfs-options="nasNfsOptions"
                   :bind-node-id="nasBindNodeId"
                   :bind-node-error="nasBindNodeError"
+                  :validation-errors="nasFieldErrors"
                   :name="nasName"
                   :generated-name="generatedNasName"
                   :dir="nasDir"
@@ -9418,6 +9438,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                   @update:dir="nasDir = $event"
                   @dir-touched="nasDirTouched = true"
                   @clear-bind-node-error="clearNasBindNodeError"
+                  @clear-validation-error="clearNasFieldError"
                   @refresh-proxy-nodes="refreshProxyNodesManually"
                   @open-proxy-deploy="openProxyDeploy"
                   @cancel="closeAddSource"
