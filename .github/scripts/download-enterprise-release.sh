@@ -34,7 +34,31 @@ if [[ "${mode}" == "verify" ]]; then
 			printf 'ERROR: Enterprise release metadata is incomplete\n' >&2
 			exit 1
 		}
-		sha256sum -c SHA256SUMS
+		mapfile -t archives < <(find . -mindepth 1 -maxdepth 1 -type f \
+			-name 'hyperfilelens-*-ee.tar.gz' -printf '%f\n')
+		[[ "${#archives[@]}" -eq 1 ]] || {
+			printf 'ERROR: Enterprise archive is missing or ambiguous\n' >&2
+			exit 1
+		}
+		archive=${archives[0]}
+		python3 - SHA256SUMS "${archive}" MANIFEST.json <<'PY'
+import pathlib
+import re
+import sys
+
+lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+entries = {}
+for line in lines:
+    match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._-]*)", line)
+    if match:
+        entries[match.group(2)] = match.group(1)
+missing = [name for name in sys.argv[2:] if name not in entries]
+if missing:
+    raise SystemExit("no checksum for required Enterprise assets: " + ", ".join(missing))
+PY
+		sha256sum --ignore-missing -c SHA256SUMS
+		sha256sum "${archive}" MANIFEST.json >SHA256SUMS.stored
+		mv SHA256SUMS.stored SHA256SUMS
 	)
 	exit 0
 fi

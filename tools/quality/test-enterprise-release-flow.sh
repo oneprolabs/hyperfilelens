@@ -114,7 +114,10 @@ grep -F '<.github/scripts/download-enterprise-release.sh' "${transfer}" >/dev/nu
 grep -F 'for attempt in 1 2 3' "${transfer}" >/dev/null
 grep -F 'refreshing URL' "${transfer}" >/dev/null
 grep -F 'run_remote verify' "${transfer}" >/dev/null
-grep -F 'if name not in archives:' "${transfer}" >/dev/null
+grep -F 'selected = ["MANIFEST.json", "SHA256SUMS", archives[0]]' "${transfer}" >/dev/null
+grep -F -- "-H 'Cache-Control: no-cache'" "${transfer}" >/dev/null
+grep -F '?hfl_nonce=${request_nonce}' "${transfer}" >/dev/null
+grep -F 'GitHub asset download URL is already expired' "${transfer}" >/dev/null
 if grep -F 'scp ' "${transfer}" >/dev/null; then
 	printf 'ERROR: Enterprise package staging must not copy release assets over SSH\n' >&2
 	exit 1
@@ -123,7 +126,9 @@ downloader="${ROOT}/.github/scripts/download-enterprise-release.sh"
 grep -F -- '--proxy "${download_proxy}"' "${downloader}" >/dev/null
 grep -F -- '--continue-at -' "${downloader}" >/dev/null
 grep -F -- '--max-time 3000' "${downloader}" >/dev/null
-grep -F 'sha256sum -c SHA256SUMS' "${downloader}" >/dev/null
+grep -F 'sha256sum --ignore-missing -c SHA256SUMS' "${downloader}" >/dev/null
+grep -F 'sha256sum "${archive}" MANIFEST.json >SHA256SUMS.stored' \
+	"${downloader}" >/dev/null
 grep -F 'Download release candidate from temporary draft' "${workflow}" >/dev/null
 python3 - "${workflow}" <<'PY'
 import pathlib
