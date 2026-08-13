@@ -145,10 +145,6 @@ class Migration(migrations.Migration):
             name="capacity_reserved_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
-        migrations.RunPython(
-            prepare_incomplete_session_reservations,
-            migrations.RunPython.noop,
-        ),
         migrations.AddConstraint(
             model_name="lenssessionlink",
             constraint=models.UniqueConstraint(
@@ -159,5 +155,12 @@ class Migration(migrations.Migration):
                 fields=("organization", "hfl_user", "create_idempotency_key"),
                 name="uniq_lens_session_create_key",
             ),
+        ),
+        # PostgreSQL cannot create the constraint's backing index while the
+        # preceding data updates have pending deferred trigger events. Keep all
+        # schema DDL before the backfill so this migration remains atomic.
+        migrations.RunPython(
+            prepare_incomplete_session_reservations,
+            migrations.RunPython.noop,
         ),
     ]

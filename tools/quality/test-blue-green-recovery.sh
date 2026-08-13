@@ -64,12 +64,15 @@ recover_upgrade_services
 [[ " ${calls[*]} " == *" render:blue "* ]]
 [[ " ${calls[*]} " == *" active:blue "* ]]
 [[ " ${calls[*]} " != *" active:green "* ]]
+[[ " ${calls[*]} " == *" compose:start worker scheduler "* ]]
+[[ " ${calls[*]} " != *" compose:up -d --no-build worker scheduler "* ]]
 
 calls=()
 UPGRADE_HFL_COMMITTED=1
 recover_upgrade_services
 [[ " ${calls[*]} " == *" render:green "* ]]
 [[ " ${calls[*]} " == *" active:green "* ]]
+[[ " ${calls[*]} " == *" compose:up -d --no-build worker scheduler "* ]]
 
 calls=()
 UPGRADE_HFL_CUTOVER_ATTEMPTED=1
