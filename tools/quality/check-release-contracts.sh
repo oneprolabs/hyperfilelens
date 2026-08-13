@@ -846,7 +846,7 @@ if grep -F 'compose_in_root down' <<<"${upgrade_body}" >/dev/null; then
 fi
 worker_stop_line="$(grep -n -F 'compose_in_root stop --timeout 600 worker' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
 worker_stopped_line="$(grep -n -F 'compose_in_root ps --status running -q worker' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
-migration_line="$(grep -n -F 'compose_in_root --profile tools run --rm --no-deps --pull never migration' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
+migration_line="$(grep -n -F 'compose_in_root --profile tools run --rm --no-deps migration' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
 if [[ -z "${worker_stop_line}" \
 	|| -z "${worker_stopped_line}" \
 	|| -z "${migration_line}" \
@@ -855,6 +855,16 @@ if [[ -z "${worker_stop_line}" \
 	printf 'ERROR: upgrade must stop and verify the old worker before applying task-state migrations\n' >&2
 	exit 1
 fi
+if grep -F 'run --rm --no-deps --pull never migration' \
+	"${ROOT}/deploy/installer/install.sh" >/dev/null; then
+	printf 'ERROR: migration must not use the Docker Compose v2.27-incompatible run --pull flag\n' >&2
+	exit 1
+fi
+release_backend_image_block="$(sed -n '/^x-backend-image:/,/^x-backend-volumes:/p' "${release_compose}")"
+grep -F 'pull_policy: never' <<<"${release_backend_image_block}" >/dev/null || {
+	printf 'ERROR: release backend services must remain offline through pull_policy: never\n' >&2
+	exit 1
+}
 if sed -n "${worker_stop_line}p" <<<"${upgrade_body}" | grep -F '|| true' >/dev/null; then
 	printf 'ERROR: upgrade must fail closed when the old worker cannot be stopped\n' >&2
 	exit 1

@@ -954,7 +954,10 @@ start_hfl_stack() {
 	ensure_blue_green_state
 	color="$(read_active_color)"
 	compose_in_root up -d --no-build --pull never --no-recreate postgres redis
-	compose_in_root --profile tools run --rm --no-deps --pull never migration
+	# Compose v2.27 supports `up --pull` but not `run --pull`. The migration
+	# service inherits `pull_policy: never` from the release Compose model, so
+	# this remains offline without relying on a version-sensitive CLI flag.
+	compose_in_root --profile tools run --rm --no-deps migration
 	compose_in_root up -d --no-build --pull never worker scheduler
 	compose_color "${color}" up -d --no-build --pull never "api-${color}" "web-${color}"
 	wait_for_color_health "${color}" || return 1
@@ -4712,7 +4715,7 @@ cmd_upgrade() {
 	ensure_data_dirs
 	sync_runtime_media
 	compose_in_root up -d --no-build --pull never --no-recreate postgres redis
-	compose_in_root --profile tools run --rm --no-deps --pull never migration
+	compose_in_root --profile tools run --rm --no-deps migration
 	record_deployment_phase migrated "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	record_upgrade_transaction_phase migrated
 

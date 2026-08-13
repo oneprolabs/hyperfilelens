@@ -51,6 +51,8 @@ grep -Fx 'LENS_GATEWAY_BASE_URL=https://app.example.invalid/sourcelens' \
 
 calls=()
 start_hfl_stack
+[[ " ${calls[*]} " == *" compose:--profile tools run --rm --no-deps migration "* ]]
+[[ " ${calls[*]} " != *" run --rm --no-deps --pull never migration "* ]]
 [[ " ${calls[*]} " == *" color:blue up -d --no-build --pull never api-blue web-blue "* ]]
 [[ " ${calls[*]} " == *" color-health:blue "* ]]
 [[ " ${calls[*]} " == *" compose:up -d --no-build --pull never nginx reload "* ]]
