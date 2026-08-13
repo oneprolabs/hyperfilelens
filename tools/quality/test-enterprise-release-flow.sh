@@ -316,6 +316,16 @@ grep -F "ref: \${{ inputs.automatic && inputs.tag || 'main' }}" \
 	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'ssh-agent -s' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'flock -s 9' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+promotion_no_stdin_ssh_count="$(grep -c \
+	'^[[:space:]]*ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes' \
+	"${ROOT}/.github/workflows/enterprise_promotion.yml")"
+[[ "${promotion_no_stdin_ssh_count}" -eq 3 ]] || {
+	printf 'ERROR: every non-script PROD promotion SSH must disable stdin (found %s/3)\n' \
+		"${promotion_no_stdin_ssh_count}" >&2
+	exit 1
+}
+grep -F "cd '/root/hfl-release/\$tag' && sha256sum -c SHA256SUMS" \
+	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F "printf -v remote_command '%q '" \
 	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'expected_edition=enterprise' "${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
