@@ -16,6 +16,7 @@ from apps.storage.services.internal.repository_errors import (
     RepositoryAlreadyExistsError,
 )
 from apps.storage.services.internal.repository_initializer import RepositoryInitializationError
+from apps.storage.services.internal.s3_client import S3ClientError
 from apps.storage.services.internal.nas_repository import NASRepositoryError
 from apps.task.models import Task
 
@@ -141,11 +142,34 @@ class RepositoryCreateTaskTests(TestCase):
         result = run_repository_create_task(repository_task_id=repository_task.id)
 
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error_code"], "REPOSITORY_S3_CREATE_FAILED")
+        self.assertEqual(result["error_code"], "STORAGE.S3_VALIDATION_FAILED")
+        self.assertEqual(
+            result["error"],
+            "Object storage validation failed. Check the connection settings and IAM permissions, then try again.",
+        )
         repository.refresh_from_db()
         self.assertEqual(repository.status, Repository.Status.CREATE_FAILED)
         self.assertEqual(repository.health, Repository.Health.OFFLINE)
         self.assertTrue(Repository.objects.filter(id=repository.id).exists())
+
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    def test_run_create_task_s3_failure_does_not_store_upstream_detail(self, initialize):
+        try:
+            raise S3ClientError("AccessDenied: secret-token-value")
+        except S3ClientError as upstream:
+            initialize.side_effect = RepositoryInitializationError(
+                "unsafe wrapper text"
+            )
+            initialize.side_effect.__cause__ = upstream
+        repository = self._s3_repository()
+        repository_task = self._enqueue_create(repository)
+
+        result = run_repository_create_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["error_code"], "STORAGE.S3_VALIDATION_FAILED")
+        self.assertNotIn("secret-token-value", result["error"])
+        repository_task.task.refresh_from_db()
+        self.assertNotIn("secret-token-value", repository_task.task.error_message)
 
     @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
     def test_run_create_task_s3_already_exists_deletes_row(self, initialize):

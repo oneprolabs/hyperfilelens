@@ -1308,6 +1308,65 @@ class StorageRepositoryApiTests(TestCase):
             use_tls=True,
         )
 
+    @mock.patch("apps.storage.repositories.views.validate_s3_connection")
+    def test_validate_s3_failure_returns_stable_safe_error(self, validate_s3_connection):
+        validate_s3_connection.side_effect = RepositoryInitializationError(
+            "InvalidAccessKeyId: secret-token-value"
+        )
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/validate/s3/",
+            {
+                "endpoint": "s3.example.com",
+                "access_key_id": "AKIA_SECRET",
+                "secret_access_key": "super-secret",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        problem = response.data["data"]
+        self.assertEqual(problem["code"], "STORAGE.S3_VALIDATION_FAILED")
+        self.assertNotIn("diagnostic", problem["meta"])
+        self.assertNotIn("AKIA_SECRET", str(response.data))
+        self.assertNotIn("super-secret", str(response.data))
+        self.assertNotIn("secret-token-value", str(response.data))
+
+    @mock.patch("apps.storage.repositories.views.validate_s3_connection")
+    def test_validate_s3_sdk_type_error_returns_configuration_error(
+        self, validate_s3_connection
+    ):
+        try:
+            raise TypeError("expected string or bytes-like object, got 'NoneType'")
+        except TypeError as upstream:
+            validate_s3_connection.side_effect = RepositoryInitializationError(
+                "Unable to list S3 buckets"
+            )
+            validate_s3_connection.side_effect.__cause__ = upstream
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/validate/s3/",
+            {
+                "platform": "other",
+                "endpoint": "192.168.8.81:10443",
+                "region": "",
+                "access_key_id": "002",
+                "secret_access_key": "not-a-real-secret",
+                "s3_url_style": "auto",
+                "use_tls": False,
+                "count": 1000,
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        problem = response.data["data"]
+        self.assertEqual(problem["code"], "STORAGE.S3_CONFIGURATION_INVALID")
+        self.assertNotIn("NoneType", str(response.data))
+        self.assertNotIn("not-a-real-secret", str(response.data))
+
     def test_nas_repository_payload_converts_normalized_smb_share_for_mount(self):
         repo = Repository.objects.create(
             organization_id=self.org.id,

@@ -399,7 +399,6 @@ async function validateS3Auth(
     authStatus.value = 'invalid'
     authError.value = apiErrorMessage(err, t('addS3Repo.authInvalid'))
     if (updateBuckets) bucketOptions.value = []
-    ElMessage.error({ message: authError.value, grouping: true })
     return false
   } finally {
     if (validationRevision === authValidationRevision) refreshingBuckets.value = false
