@@ -1,6 +1,11 @@
-import * as Sentry from '@sentry/vue'
+import type * as SentryTypes from '@sentry/vue'
 import type { App } from 'vue'
 import type { Router } from 'vue-router'
+
+type SentryModule = typeof import('./sentrySdk')
+type SentryLoader = () => Promise<SentryModule>
+
+const loadSentryModule: SentryLoader = () => import('./sentrySdk')
 
 const FILTERED = '[Filtered]'
 const SAFE_SPAN_FIELDS = [
@@ -81,10 +86,10 @@ function sanitizeTraceContext(value: unknown): Record<string, unknown> | undefin
 }
 
 function sanitizeEvent(
-  event: Sentry.Event,
+  event: SentryTypes.Event,
   routePath: string,
   surface: 'admin' | 'tenant',
-): Sentry.Event {
+): SentryTypes.Event {
   delete event.user
   delete event.message
   delete event.logentry
@@ -117,7 +122,11 @@ function sanitizeEvent(
   return event
 }
 
-export function initSentry(app: App, router: Router): void {
+export async function initSentry(
+  app: App,
+  router: Router,
+  load: SentryLoader = loadSentryModule,
+): Promise<void> {
   const config = window.__HFL_APP_CONFIG__
   if (!config?.sentryEnabled) return
 
@@ -131,6 +140,7 @@ export function initSentry(app: App, router: Router): void {
   }
 
   try {
+    const Sentry = await load()
     let activeRoutePath = '/'
     router.afterEach?.((route) => {
       const routeTemplate = route.matched?.at(-1)?.path || '/'

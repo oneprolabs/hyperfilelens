@@ -5,6 +5,7 @@ import {
   Settings,
 } from 'lucide-vue-next'
 import type { MenuItem } from '../../components/ModulePage.vue'
+import { fetchDeployProfile } from '../../composables/useDeployProfile'
 
 /**
  * Community side nav: AI Models + optional Runtime only.
@@ -45,7 +46,6 @@ export function usePlatformOpsAccess() {
   const tenantPublicUrl = ref('')
 
   async function load() {
-    const { fetchDeployProfile } = await import('../../composables/useDeployProfile')
     const profile = await fetchDeployProfile()
     emailSignupEnabled.value = !!profile?.email_signup_enabled
     tenantPublicUrl.value = profile?.tenant_public_url || ''

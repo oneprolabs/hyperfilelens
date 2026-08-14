@@ -1,16 +1,18 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import { sentryVitePlugin } from '@sentry/vite-plugin'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
+import { dirname, relative, resolve } from 'node:path'
+import { gzipSync } from 'node:zlib'
 
 const frontendDir = dirname(fileURLToPath(import.meta.url))
 const frontendSrc = resolve(frontendDir, 'src')
 const repoRoot = resolve(frontendDir, '../..')
 const devApiTarget = process.env.VITE_DEV_API_TARGET || 'http://api:8000'
 const devWebSocketTarget = process.env.VITE_DEV_WEBSOCKET_TARGET || 'http://api:8001'
+const bundleReportEnabled = process.env.HFL_BUNDLE_REPORT === '1'
 const sentrySourceMapUpload = Boolean(
   process.env.SENTRY_AUTH_TOKEN
   && process.env.SENTRY_URL
@@ -131,6 +133,93 @@ for (const e of extensionFrontendSrcs) {
   console.info(`[vite] Extension frontend merged: ${e.id} ← ${e.root}`)
 }
 
+function bundleReportModuleId(moduleId: string): string {
+  const normalized = moduleId.replaceAll('\\', '/')
+  const nodeModulesMarker = '/node_modules/'
+  const nodeModulesIndex = normalized.lastIndexOf(nodeModulesMarker)
+  if (nodeModulesIndex >= 0) {
+    return `node_modules/${normalized.slice(nodeModulesIndex + nodeModulesMarker.length)}`
+  }
+  if (normalized.startsWith(`${frontendDir}/`)) {
+    return relative(frontendDir, normalized).replaceAll('\\', '/')
+  }
+  for (const extension of extensionFrontendSrcs) {
+    if (normalized.startsWith(`${extension.src}/`)) {
+      return `extensions/${extension.id}/${relative(extension.src, normalized).replaceAll('\\', '/')}`
+    }
+  }
+  return normalized.startsWith('\0') ? normalized : relative(repoRoot, normalized).replaceAll('\\', '/')
+}
+
+function hflBundleReportPlugin(): Plugin {
+  return {
+    name: 'hfl-bundle-report',
+    apply: 'build',
+    generateBundle(_options, bundle) {
+      const chunks = Object.values(bundle)
+        .filter(output => output.type === 'chunk')
+        .map((chunk) => ({
+          fileName: chunk.fileName,
+          isEntry: chunk.isEntry,
+          isDynamicEntry: chunk.isDynamicEntry,
+          facadeModuleId: chunk.facadeModuleId ? bundleReportModuleId(chunk.facadeModuleId) : null,
+          imports: [...chunk.imports].sort(),
+          dynamicImports: [...chunk.dynamicImports].sort(),
+          rawBytes: Buffer.byteLength(chunk.code),
+          gzipBytes: gzipSync(chunk.code).byteLength,
+          modules: Object.entries(chunk.modules)
+            .map(([moduleId, details]) => ({
+              id: bundleReportModuleId(moduleId),
+              renderedBytes: details.renderedLength,
+            }))
+            .sort((a, b) => b.renderedBytes - a.renderedBytes || a.id.localeCompare(b.id)),
+        }))
+        .sort((a, b) => b.rawBytes - a.rawBytes || a.fileName.localeCompare(b.fileName))
+      const assets = Object.values(bundle)
+        .filter(output => output.type === 'asset' && output.fileName.endsWith('.css'))
+        .map((asset) => {
+          const source = typeof asset.source === 'string' ? asset.source : Buffer.from(asset.source)
+          return {
+            fileName: asset.fileName,
+            rawBytes: typeof source === 'string' ? Buffer.byteLength(source) : source.byteLength,
+            gzipBytes: gzipSync(source).byteLength,
+          }
+        })
+        .sort((a, b) => b.rawBytes - a.rawBytes || a.fileName.localeCompare(b.fileName))
+      const reportDir = resolve(repoRoot, 'build/reports')
+      mkdirSync(reportDir, { recursive: true })
+      writeFileSync(
+        resolve(reportDir, 'frontend-bundle.json'),
+        `${JSON.stringify({ chunks, cssAssets: assets }, null, 2)}\n`,
+      )
+    },
+  }
+}
+
+function deterministicChunkName(moduleId: string): string | undefined {
+  const normalized = moduleId.replaceAll('\\', '/')
+  const marker = '/node_modules/'
+  const markerIndex = normalized.lastIndexOf(marker)
+  if (markerIndex < 0) return undefined
+  const dependencyPath = normalized.slice(markerIndex + marker.length)
+  const dependency = dependencyPath.startsWith('@')
+    ? dependencyPath.split('/').slice(0, 2).join('/')
+    : dependencyPath.split('/')[0]
+
+  if (dependency === 'echarts' || dependency === 'zrender') {
+    return 'charts-echarts'
+  }
+  if (dependency.startsWith('@sentry/') || dependency.startsWith('@sentry-internal/')) {
+    return 'observability-sentry'
+  }
+  if (
+    dependency === 'codemirror'
+    || dependency.startsWith('@codemirror/')
+    || dependency.startsWith('@lezer/')
+  ) return 'editor-codemirror'
+  return undefined
+}
+
 // https://vite.dev/config/
 export default defineConfig(() => ({
   envDir: repoRoot,
@@ -154,6 +243,7 @@ export default defineConfig(() => ({
     ...(platformFrontendSrc ? [hflExtOssBridgePlugin()] : []),
     vue(),
     tailwindcss(),
+    ...(bundleReportEnabled ? [hflBundleReportPlugin()] : []),
     ...(sentrySourceMapUpload
       ? [sentryVitePlugin({
           url: process.env.SENTRY_URL,
@@ -175,6 +265,11 @@ export default defineConfig(() => ({
   build: {
     target: 'es2022',
     sourcemap: sentrySourceMapUpload ? 'hidden' : false,
+    rollupOptions: {
+      output: {
+        manualChunks: deterministicChunkName,
+      },
+    },
   },
   optimizeDeps: {
     esbuildOptions: {
