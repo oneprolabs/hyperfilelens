@@ -67,7 +67,20 @@ hfl_docker_pull_error_is_terminal() {
 
 hfl_docker_image_matches_platform() {
 	local image=$1 platform="${2:-}" actual expected
-	actual="$(docker image inspect "${image}" --format '{{.Os}}/{{.Architecture}}' 2>/dev/null || true)"
+	if [[ -n "${platform}" ]]; then
+		# Docker 29 may keep a locally pulled multi-platform tag as an OCI image
+		# index. A generic inspect then exposes empty Os/Architecture fields even
+		# though the requested platform is present in the local image store.
+		actual="$(docker image inspect --platform "${platform}" "${image}" \
+			--format '{{.Os}}/{{.Architecture}}' 2>/dev/null || true)"
+		# Docker clients predating platform-selective inspect still expose
+		# platform fields for their single-platform local image representation.
+		[[ -n "${actual}" ]] || actual="$(docker image inspect "${image}" \
+			--format '{{.Os}}/{{.Architecture}}' 2>/dev/null || true)"
+	else
+		actual="$(docker image inspect "${image}" \
+			--format '{{.Os}}/{{.Architecture}}' 2>/dev/null || true)"
+	fi
 	[[ -n "${actual}" ]] || return 1
 	[[ -z "${platform}" ]] && return 0
 	case "${platform}" in

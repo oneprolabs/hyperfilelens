@@ -15,13 +15,18 @@ set -euo pipefail
 
 configure_macos_dev_shell() {
 	[[ "$(uname -s)" == "Darwin" ]] || return 0
-	command -v brew >/dev/null 2>&1 || return 0
 	if ((BASH_VERSINFO[0] < 5)); then
+		command -v brew >/dev/null 2>&1 || {
+			printf 'ERROR: macOS development requires Homebrew Bash 5 or newer; install Homebrew and run: brew install bash\n' >&2
+			exit 2
+		}
 		local brew_bash
 		brew_bash="$(brew --prefix bash 2>/dev/null)/bin/bash"
-		if [[ -x "${brew_bash}" ]]; then
-			exec "${brew_bash}" "$0" "$@"
-		fi
+		[[ -x "${brew_bash}" ]] || {
+			printf 'ERROR: macOS development requires Homebrew Bash 5 or newer; run: brew install bash\n' >&2
+			exit 2
+		}
+		exec "${brew_bash}" "$0" "$@"
 	fi
 	# Make `#!/usr/bin/env bash` child scripts resolve to Homebrew Bash as well.
 	# Without this, macOS falls back to its Bash 3.2 after this script re-execs.
