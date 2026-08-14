@@ -96,6 +96,37 @@ describe('manual restore wizard layout', () => {
     expect(page).not.toContain('recovery-dir-selection-row--invalid')
   })
 
+  it('keeps the selected Restore Scope visible and explains Entire Snapshot', () => {
+    const scopeTree = sourceBetween(
+      ':key="`restore-snapshot-picker-',
+      ':key="`restore-target-dir-picker-',
+    )
+
+    expect(page).toContain('function isRecoverySnapshotPickerNodeSelected')
+    expect(page).toContain(".get(recoveryDirectoryTreeKey(hostId, entry.id, 'snapshot'))")
+    expect(page).toContain('?.setCurrentKey(null)')
+    expect(scopeTree).toContain("'recovery-snapshot-tree-node--selected': isRecoverySnapshotPickerNodeSelected(entry, data)")
+    expect(scopeTree).toContain("'create-tree-node-content--snapshot': data.type === 'snapshot'")
+    expect(scopeTree).toContain("t('protection.backupsPage.createRecoveryScopeSnapshotDesc')")
+    expect(scopeTree).not.toContain('<span v-if="data.path"')
+    expect(scopeTree).not.toContain('highlight-current')
+    expect(page).toContain('.el-tree-node__content:has(> .recovery-snapshot-tree-node--selected)')
+    expect(page).toContain('.el-tree-node__expand-icon.is-leaf) {\n  width: 8px;')
+    expect(page).toMatch(/\.source-dir-tree :deep\(\.el-tree-node__expand-icon\) \{[\s\S]*?width: 20px;[\s\S]*?flex: 0 0 20px;/)
+    expect(page).toMatch(/\.source-dir-tree :deep\(\.el-tree-node\.is-current > \.el-tree-node__content\) \{[\s\S]*?var\(--el-bg-color-overlay\)/)
+
+    const treeLabelRule = page.match(/\.create-tree-node-content__label \{([\s\S]*?)\n\}/)?.[1] || ''
+    const treePathRule = page.match(/\.create-tree-node-content__path \{([\s\S]*?)\n\}/)?.[1] || ''
+    expect(treeLabelRule).toContain('overflow-wrap: anywhere;')
+    expect(treeLabelRule).toContain('white-space: normal;')
+    expect(treePathRule).toContain('overflow-wrap: anywhere;')
+    expect(treePathRule).toContain('white-space: normal;')
+  })
+
+  it('suppresses the redundant restore-plan action hint', () => {
+    expect(page).toContain('class="hfl-btn-with-icon recovery-plan-missing-cell__action hfl-table-no-tooltip"')
+  })
+
   it('fills the visible main area with the shared restore wizard section', () => {
     expect(page).toMatch(/\.dp-restore-wizard-body \{[\s\S]*?flex: 1 0 auto;[\s\S]*?min-height: 0;/)
     expect(page).toMatch(/\.dp-restore-wizard-card \{[\s\S]*?display: flex;[\s\S]*?flex: 1 0 auto;[\s\S]*?flex-direction: column;/)
