@@ -995,19 +995,52 @@ gateway_bootstrap_linux="${ROOT}/deploy/bootstrap/gateway-bootstrap-linux.sh"
 gateway_docker_installer="${ROOT}/deploy/bootstrap/gateway-install-docker-ubuntu-amd64.sh"
 gateway_lifecycle="${ROOT}/deploy/bootstrap/gateway-lifecycle.sh"
 gateway_sidecar_installer="${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh"
+agent_bundle_installer="${ROOT}/src/agent/packaging/install/install.sh"
+agent_windows_installer="${ROOT}/src/agent/packaging/install/install.ps1"
+agent_output="${ROOT}/src/agent/internal/enroll/output.go"
+agent_gateway_lifecycle="${ROOT}/src/agent/internal/enroll/gateway_lifecycle.go"
 grep -F 'requires a systemd-based Linux distribution' "${agent_bootstrap_linux}" >/dev/null
 grep -F 'systemctl show-environment' "${agent_bootstrap_linux}" >/dev/null
 grep -F 'launchd is required to install the agent service on macOS' "${agent_bootstrap_macos}" >/dev/null
 grep -F 'Windows ARM64 is not supported by this release' "${agent_bootstrap_windows}" >/dev/null
+for output_source in "${agent_bundle_installer}" "${agent_windows_installer}" "${agent_output}"; do
+	grep -F '|_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/' \
+		"${output_source}" >/dev/null
+done
+for phase in 'Preflight checks' 'Installing Agent' 'Verifying' 'Installation summary'; do
+	grep -F "${phase}" "${agent_bundle_installer}" >/dev/null
+done
+for phase in 'Target' 'Upgrading Agent' 'Uninstalling' 'Upgrade summary' 'Uninstallation summary'; do
+	grep -F "${phase}" "${agent_bundle_installer}" >/dev/null
+	grep -F "${phase}" "${agent_windows_installer}" >/dev/null
+done
+grep -F 'hfl_detail_log_stream' "${agent_bundle_installer}" >/dev/null
+grep -F "printf '[%s] [DETAIL] %s\\n'" "${agent_bundle_installer}" >/dev/null
+grep -F 'Write-HflDisplayLine' "${agent_windows_installer}" >/dev/null
+grep -F 'Installation failed: $($_.Exception.Message)' "${agent_windows_installer}" >/dev/null
+grep -F 'Upgrade failed: $($_.Exception.Message)' "${agent_windows_installer}" >/dev/null
+grep -F 'Uninstallation failed: $($_.Exception.Message)' "${agent_windows_installer}" >/dev/null
+grep -F "if ((-not \$QuietFooter) -or (\$Level -eq 'FAIL '))" \
+	"${agent_windows_installer}" >/dev/null
+grep -F 'printLifecycleBanner(gatewayName, "Upgrade")' \
+	"${agent_gateway_lifecycle}" >/dev/null
+grep -F 'printGatewayUpgradeSuccess(gatewayName, version, service)' \
+	"${agent_gateway_lifecycle}" >/dev/null
+grep -F 'printUninstallSuccess(state, purgeAll)' \
+	"${agent_gateway_lifecycle}" >/dev/null
+if grep -E 'Write-HflInstallLogLine "(Success|  )' "${agent_windows_installer}" >/dev/null; then
+	printf 'ERROR: Windows Agent lifecycle output must use the timestamping display logger\n' >&2
+	exit 1
+fi
 for bootstrap in "${agent_bootstrap_linux}" "${agent_bootstrap_macos}"; do
-	grep -F -- '--fail --show-error --location --progress-bar' "${bootstrap}" >/dev/null
+	grep -F -- '--fail --silent --show-error --location' "${bootstrap}" >/dev/null
 	grep -F 'curl --retry-connrefused --version' "${bootstrap}" >/dev/null
 	grep -F -- '--retry 3 ${retry_connrefused[@]+"${retry_connrefused[@]}"} --retry-delay 2' "${bootstrap}" >/dev/null
 	grep -F 'HyperFileLens enrollment helper' "${bootstrap}" >/dev/null
 	grep -F 'partial="${destination}.part"' "${bootstrap}" >/dev/null
 done
 for bootstrap in "${gateway_bootstrap_linux}" "${gateway_docker_installer}"; do
-	grep -F -- '--fail --show-error --location --progress-bar' "${bootstrap}" >/dev/null
+	grep -F -- '--fail --silent --show-error --location' "${bootstrap}" >/dev/null
 	grep -F 'curl --retry-connrefused --version' "${bootstrap}" >/dev/null
 	grep -F -- '--retry 3 ${retry_connrefused[@]+"${retry_connrefused[@]}"} --retry-delay 2' "${bootstrap}" >/dev/null
 	grep -F 'partial="${destination}.part"' "${bootstrap}" >/dev/null
@@ -1051,7 +1084,7 @@ grep -F 'checkSourceLensHealthViaConsole' \
 	"${ROOT}/src/agent/internal/enroll/sidecar_install_unix.go" >/dev/null
 grep -F 'isPublicGatewayScope' \
 	"${ROOT}/src/agent/internal/enroll/download_progress.go" >/dev/null
-grep -F -- '--fail --show-error --location --progress-bar' "${gateway_lifecycle}" >/dev/null
+grep -F -- '--fail --silent --show-error --location' "${gateway_lifecycle}" >/dev/null
 grep -F -- '--continue-at -' "${gateway_lifecycle}" >/dev/null
 grep -F 'HFL_GATEWAY_DOWNLOAD_MAX_ATTEMPTS:-5' "${gateway_lifecycle}" >/dev/null
 grep -F 'partial="${2}.part"' "${gateway_lifecycle}" >/dev/null
@@ -1074,7 +1107,11 @@ fi
 grep -F 'script="${INSTALL_SH%/install.sh}/libexec/gateway-lifecycle.sh"' \
 	"${ROOT}/src/agent/internal/platform/install/gateway_hooks_unix.go" >/dev/null
 grep -F 'Docker CE offline bundle' "${gateway_docker_installer}" >/dev/null
-grep -F -- "'--progress-bar'" "${agent_bootstrap_windows}" >/dev/null
+grep -F -- "'--silent'" "${agent_bootstrap_windows}" >/dev/null
+if grep -F -- '--progress-bar' "${agent_bootstrap_windows}" >/dev/null; then
+	printf 'ERROR: Windows bootstrap must not expose curl native progress output\n' >&2
+	exit 1
+fi
 grep -F 'Write-HflDownloadProgress' "${agent_bootstrap_windows}" >/dev/null
 grep -F 'Download size mismatch' "${agent_bootstrap_windows}" >/dev/null
 if grep -F 'hfl-enroll-windows-$archRel.exe' "${agent_bootstrap_windows}" >/dev/null \
@@ -1153,6 +1190,7 @@ grep -F './tools/quality/test-gateway-lifecycle-upgrade.sh' "${workflow}" >/dev/
 grep -F './tools/quality/test-platform-gateway-auto-deploy.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-agent-release-retention.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-agent-gateway-uninstall.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-agent-installer-output.sh' "${workflow}" >/dev/null
 grep -F 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true' "${ROOT}/.env.example" >/dev/null
 grep -F 'com.hyperfilelens.component: "gateway-lensnode"' \
 	"${gateway_sidecar_installer}" >/dev/null

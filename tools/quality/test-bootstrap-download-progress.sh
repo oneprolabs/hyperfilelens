@@ -39,7 +39,7 @@ SH
 chmod +x "${tmp}/bin/curl"
 
 # Load only the standalone bootstrap logging and download helpers.
-source <(sed -n '/^hfl_now()/,/^hfl_build_enroll_args()/p' "${bootstrap}" | sed '$d')
+source <(sed -n '/^hfl_fail()/,/^hfl_build_enroll_args()/p' "${bootstrap}" | sed '$d')
 CURL_TLS=()
 PATH="${tmp}/bin:${PATH}"
 export PATH HFL_TEST_CURL_LOG="${tmp}/curl.log"
@@ -48,8 +48,8 @@ export HFL_TEST_CURL_SUPPORT_RETRY_CONNREFUSED=1
 destination="${tmp}/hfl-enroll"
 output="$(hfl_download "HyperFileLens enrollment helper" https://example.invalid/helper "${destination}" 2>&1)"
 grep -F '[....] Downloading HyperFileLens enrollment helper.' <<<"${output}" >/dev/null
-grep -F '[ OK  ] HyperFileLens enrollment helper downloaded (' <<<"${output}" >/dev/null
-grep -Fx -- '--progress-bar' "${HFL_TEST_CURL_LOG}" >/dev/null
+grep -F '[ OK ] HyperFileLens enrollment helper downloaded (' <<<"${output}" >/dev/null
+grep -Fx -- '--silent' "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx -- '--retry' "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx -- '--retry-connrefused' "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx 'bootstrap-download-fixture' "${destination}" >/dev/null
@@ -60,7 +60,7 @@ rm -f "${destination}"
 : >"${HFL_TEST_CURL_LOG}"
 export HFL_TEST_CURL_SUPPORT_RETRY_CONNREFUSED=0
 output="$(hfl_download "HyperFileLens enrollment helper" https://example.invalid/helper "${destination}" 2>&1)"
-grep -F '[ OK  ] HyperFileLens enrollment helper downloaded (' <<<"${output}" >/dev/null
+grep -F '[ OK ] HyperFileLens enrollment helper downloaded (' <<<"${output}" >/dev/null
 grep -Fx -- '--retry' "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx -- '--retry-delay' "${HFL_TEST_CURL_LOG}" >/dev/null
 if grep -Fx -- '--retry-connrefused' "${HFL_TEST_CURL_LOG}" >/dev/null; then
@@ -79,7 +79,7 @@ set +e
 status=$?
 set -e
 [[ "${status}" -eq 3 ]]
-grep -F '[FAIL ] Failed to download HyperFileLens enrollment helper.' "${tmp}/failed.log" >/dev/null
+grep -F '[FAIL] Failed to download HyperFileLens enrollment helper.' "${tmp}/failed.log" >/dev/null
 [[ ! -e "${destination}" ]]
 [[ ! -e "${destination}.part" ]]
 

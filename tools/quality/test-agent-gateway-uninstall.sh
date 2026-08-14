@@ -56,6 +56,21 @@ unmount_agent_mounts() { :; }
 
 export TEST_AGENT_ENV="${DEFAULT_DATA}/agent.env"
 export TEST_SIDECAR_MARKER="${marker}"
+
+# Preserving data retires the installation identity. A missing Agent binary
+# must fail during preflight, before the service or Gateway sidecar is touched.
+set +e
+(
+	exec 3>&1 4>&2
+	cmd_uninstall
+) >"${tmp}/uninstall-preflight.log" 2>&1
+preflight_status=$?
+set -e
+[[ "${preflight_status}" -eq 1 ]]
+grep -F 'Cannot retire the installation identity' "${tmp}/uninstall-preflight.log" >/dev/null
+[[ ! -e "${marker}" ]]
+[[ ! -e "${stop_marker}" ]]
+
 cmd_uninstall --purge-all
 
 [[ -f "${marker}" ]]

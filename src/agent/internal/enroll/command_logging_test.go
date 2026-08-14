@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -52,6 +53,10 @@ func TestCommandLoggingFlushesBufferedAndLiveOutput(t *testing.T) {
 		if !strings.Contains(string(content), expected) {
 			t.Errorf("install log does not contain %q: %s", expected, content)
 		}
+	}
+	timestampedLine := regexp.MustCompile(`(?m)^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] `)
+	if !timestampedLine.Match(content) {
+		t.Fatalf("install log does not contain UTC RFC3339 timestamps: %s", content)
 	}
 }
 

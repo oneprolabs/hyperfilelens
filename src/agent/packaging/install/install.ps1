@@ -115,10 +115,31 @@ $script:HflUninstallLogPath = $null
 
 function Write-HflInstallLogLine {
   param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Line)
+  $entry = $Line
+  if ($entry -notmatch '^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] ') {
+    $entry = "[$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))] [INFO ] $entry"
+  }
   foreach ($path in @($script:HflInstallLogPath, $script:HflUninstallLogPath)) {
     if (-not $path) { continue }
-    Add-Content -LiteralPath $path -Value $Line -Encoding UTF8
+    try {
+      Add-Content -LiteralPath $path -Value $entry -Encoding UTF8 -ErrorAction Stop
+    }
+    catch {
+      # Installer logging is diagnostic and must never replace the real failure.
+    }
   }
+}
+
+function Write-HflDisplayLine {
+  param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Line)
+  Write-Host $Line
+  Write-HflInstallLogLine $Line
+}
+
+function Write-HflDetailLine {
+  param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Line)
+  $ts = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+  Write-HflInstallLogLine "[$ts] [DETAIL] $Line"
 }
 
 function Start-HflInstallLog {
@@ -163,14 +184,53 @@ function Stop-HflUninstallLog {
   $script:HflUninstallLogPath = $null
 }
 
+function Get-HflRoleDisplayName {
+  param([string]$Value)
+  switch ($Value.Trim().ToLowerInvariant()) {
+    'proxy' { return 'Proxy Host' }
+    'gateway' { return 'Data Gateway' }
+    default { return 'Source Host' }
+  }
+}
+
 function Write-HflBanner {
-  param([Parameter(Mandatory = $true)][string]$Title)
-  Write-HflLog -Level 'INFO ' -Message "HyperFileLens Agent - $Title"
+  param(
+    [Parameter(Mandatory = $true)][string]$Title,
+    [string]$RoleName = ""
+  )
+  if ($QuietFooter) { return }
+  if ($Title -notmatch '^(install|upgrade|uninstall)') {
+    Write-Host "HyperFileLens Agent - $Title"
+    return
+  }
+  if (-not $RoleName) { $RoleName = Get-HflRoleDisplayName -Value $Role }
+  $operation = switch -Regex ($Title) {
+    '^install' { 'Installer'; break }
+    '^upgrade' { 'Upgrade'; break }
+    '^uninstall' { 'Uninstaller'; break }
+    default { $Title }
+  }
+  $banner = @'
+ _   _                       _____ _ _      _
+| | | |_   _ _ __   ___ _ _|  ___(_) | ___| |    ___ _ __  ___
+| |_| | | | | '_ \ / _ \ '__| |_  | | |/ _ \ |   / _ \ '_ \/ __|
+|  _  | |_| | |_) |  __/ |  |  _| | | |  __/ |__|  __/ | | \__ \
+|_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/
+       |___/|_|                     INSTALLER
+'@
+  foreach ($line in ($banner -split "`r?`n")) {
+    Write-HflDisplayLine $line
+  }
+  Write-Host ""
+  Write-HflDisplayLine "HyperFileLens $RoleName $operation"
+  Write-HflDisplayLine ("-" * 64)
 }
 
 function Write-HflSection {
   param([Parameter(Mandatory = $true)][string]$Title)
-  Write-HflLog -Level 'INFO ' -Message $Title
+  if ($QuietFooter) { return }
+  Write-Host ""
+  Write-HflDisplayLine $Title
 }
 
 function Get-HflLogTimestamp {
@@ -189,15 +249,29 @@ function Write-HflLog {
     [Parameter(Mandatory = $true)][ValidateSet('INFO ', ' OK  ', 'WARN ', 'FAIL ', 'STEP ', 'SKIP ')][string]$Level,
     [Parameter(Mandatory = $true)][string]$Message
   )
-  $line = "[$(Get-HflLogTimestamp)] [$Level] $(Format-HflSentence $Message)"
-  if ($Level -eq 'WARN ') {
-    Write-Host $line -ForegroundColor Yellow
+  $messageText = Format-HflSentence $Message
+  $line = "[$(Get-HflLogTimestamp)] [$Level] $messageText"
+  $status = switch ($Level.Trim()) {
+    'OK' { ' OK '; break }
+    'WARN' { 'WARN'; break }
+    'FAIL' { 'FAIL'; break }
+    'STEP' { '....'; break }
+    'SKIP' { 'SKIP'; break }
+    default { 'INFO' }
   }
-  elseif ($Level -eq 'FAIL ') {
-    Write-Host $line -ForegroundColor Red
-  }
-  else {
-    Write-Host $line
+  $displayLine = "  [$status] $messageText"
+  # QuietFooter suppresses duplicate inner lifecycle output, but the outer
+  # enrollment command still needs the concrete failure reason.
+  if ((-not $QuietFooter) -or ($Level -eq 'FAIL ')) {
+    if ($Level -eq 'WARN ') {
+      Write-Host $displayLine -ForegroundColor Yellow
+    }
+    elseif ($Level -eq 'FAIL ') {
+      Write-Host $displayLine -ForegroundColor Red
+    }
+    else {
+      Write-Host $displayLine
+    }
   }
   Write-HflInstallLogLine $line
 }
@@ -220,71 +294,68 @@ function Write-HflSummaryLine {
     [Parameter(Mandatory = $true)][string]$Key,
     [Parameter(Mandatory = $true)][string]$Value
   )
-  Write-HflLog -Level 'INFO ' -Message "${Key}: ${Value}"
+  $message = "${Key}: ${Value}"
+  if (-not $QuietFooter) {
+    Write-Host ("  {0,-13} {1}" -f $Key, $Value)
+  }
+  Write-HflInstallLogLine "[$(Get-HflLogTimestamp)] [INFO ] $message"
 }
 
 function Write-HflFooter {
   param(
     [Parameter(Mandatory = $true)][ValidateSet('install', 'upgrade', 'uninstall', 'status')][string]$Outcome
   )
+  if ($QuietFooter) { return }
   Write-Host ""
+  if ($Outcome -ne 'status') {
+    Write-HflDisplayLine ("=" * 64)
+  }
   switch ($Outcome) {
     'install' {
-      Write-Host "Success"
-      Write-HflInstallLogLine "Success"
+      Write-HflDisplayLine "Installation completed successfully"
+      Write-HflDisplayLine ("=" * 64)
       if ($NoStart) {
-        Write-Host "  Installation files deployed on this host."
-        Write-Host "  Complete enrollment (register node and start service) to finish setup."
-        Write-HflInstallLogLine "  Installation files deployed on this host."
-        Write-HflInstallLogLine "  Complete enrollment (register node and start service) to finish setup."
+        Write-HflDisplayLine "  Installation files deployed on this host."
+        Write-HflDisplayLine "  Complete enrollment (register node and start service) to finish setup."
       }
       elseif ($NoService) {
-        Write-Host "  HyperFileLens Agent installed successfully."
+        Write-HflDisplayLine "  HyperFileLens Agent installed successfully."
         Write-Host ""
-        Write-Host "  Return to the HyperFileLens console to add backup sources,"
-        Write-Host "  configure policies, and run backup jobs."
-        Write-HflInstallLogLine "  HyperFileLens Agent installed successfully."
-        Write-HflInstallLogLine "  Return to the HyperFileLens console to add backup sources,"
-        Write-HflInstallLogLine "  configure policies, and run backup jobs."
+        Write-HflDisplayLine "  Return to the HyperFileLens console to add backup sources,"
+        Write-HflDisplayLine "  configure policies, and run backup jobs."
         if ($ApiBase) {
           Write-Host ""
-          Write-Host "  Console: $($ApiBase.TrimEnd('/'))"
-          Write-HflInstallLogLine "  Console: $($ApiBase.TrimEnd('/'))"
+          Write-HflDisplayLine "  Console: $($ApiBase.TrimEnd('/'))"
         }
       }
       else {
-        Write-Host "  HyperFileLens Agent installed successfully."
+        Write-HflDisplayLine "  HyperFileLens Agent installed successfully."
         Write-Host ""
-        Write-Host "  Return to the HyperFileLens console to add backup sources,"
-        Write-Host "  configure policies, and run backup jobs."
-        Write-HflInstallLogLine "  HyperFileLens Agent installed successfully."
-        Write-HflInstallLogLine "  Return to the HyperFileLens console to add backup sources,"
-        Write-HflInstallLogLine "  configure policies, and run backup jobs."
+        Write-HflDisplayLine "  Return to the HyperFileLens console to add backup sources,"
+        Write-HflDisplayLine "  configure policies, and run backup jobs."
         if ($ApiBase) {
           Write-Host ""
-          Write-Host "  Console: $($ApiBase.TrimEnd('/'))"
-          Write-HflInstallLogLine "  Console: $($ApiBase.TrimEnd('/'))"
+          Write-HflDisplayLine "  Console: $($ApiBase.TrimEnd('/'))"
         }
       }
     }
     'upgrade' {
-      Write-Host "Success"
-      Write-Host "  HyperFileLens Agent upgraded successfully."
+      Write-HflDisplayLine "Upgrade completed successfully"
+      Write-HflDisplayLine ("=" * 64)
+      Write-HflDisplayLine "  HyperFileLens Agent upgraded successfully."
       if ($ApiBase) {
         Write-Host ""
-        Write-Host "  Console: $($ApiBase.TrimEnd('/'))"
+        Write-HflDisplayLine "  Console: $($ApiBase.TrimEnd('/'))"
       }
     }
     'uninstall' {
-      Write-Host "Success"
-      Write-Host "  HyperFileLens Agent removed from this host."
-      Write-Host "  If this node still appears in the console, delete it there."
-      Write-HflInstallLogLine "Success"
-      Write-HflInstallLogLine "  HyperFileLens Agent removed from this host."
-      Write-HflInstallLogLine "  If this node still appears in the console, delete it there."
+      Write-HflDisplayLine "Uninstallation completed successfully"
+      Write-HflDisplayLine ("=" * 64)
+      Write-HflDisplayLine "  HyperFileLens Agent removed from this host."
+      Write-HflDisplayLine "  The local uninstall does not change the console record."
     }
     'status' {
-      Write-Host "Done."
+      Write-HflDisplayLine "Done."
     }
   }
   Write-Host ""
@@ -697,7 +768,7 @@ function Write-Trace([string]`$msg) {
   `$dir = Split-Path -Parent `$logFile
   if (-not `$dir -or -not (Test-Path -LiteralPath `$dir)) { return }
   `$ts = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
-  Add-Content -LiteralPath `$logFile -Value "`$ts `$msg" -Encoding UTF8 -ErrorAction SilentlyContinue
+  Add-Content -LiteralPath `$logFile -Value "[`$ts] [DETAIL] `$msg" -Encoding UTF8 -ErrorAction SilentlyContinue
 }
 Write-Trace "deferred install dir removal started target=`$target"
 Start-Sleep -Seconds 8
@@ -974,14 +1045,16 @@ function Invoke-Install {
   Start-HflInstallLog -DataRoot $dataRoot
   try {
     if (-not $QuietFooter) {
-      Write-HflBanner "install v$(Get-BundleVersion)"
-      Write-HflSection "Preflight"
-      Write-HflSummaryLine "platform" "windows/$archRel"
-      Write-HflSummaryLine "role" $Role
-      Write-HflSummaryLine "install dir" $InstallRoot
-      Write-HflSummaryLine "data dir" $dataRoot
+      $displayRole = Get-HflRoleDisplayName -Value $Role
+      Write-HflBanner "install v$(Get-BundleVersion)" -RoleName $displayRole
+      Write-HflSection "Target"
+      Write-HflSummaryLine "Platform" "windows/$archRel"
+      Write-HflSummaryLine "Role" $displayRole
+      Write-HflSummaryLine "Install path" $InstallRoot
+      Write-HflSummaryLine "Data path" $dataRoot
+      Write-HflSection "Preflight checks"
       Write-HflBundlePreflight
-      Write-HflSection "Actions"
+      Write-HflSection "Installing Agent"
     }
 
     Deploy-Binaries
@@ -991,7 +1064,9 @@ function Invoke-Install {
     if ($NoService) {
       if (-not $QuietFooter) {
         Write-HflSkip "install Windows service (-NoService)"
-        Write-HflSection "Summary"
+        Write-HflSection "Verifying"
+        Write-HflSkip "Windows service was not installed by request"
+        Write-HflSection "Installation summary"
         Write-HflSummaryLine "Status" "installed (no service)"
         Write-HflSummaryLine "Binary" (Join-Path $InstallRoot "hfl-agent.exe")
         Write-HflSummaryLine "Config" $envFile
@@ -1009,7 +1084,14 @@ function Invoke-Install {
       return
     }
 
-    Write-HflSection "Summary"
+    Write-HflSection "Verifying"
+    if ($NoStart) {
+      Write-HflSkip "Agent service was not started by request"
+    }
+    else {
+      Write-HflOk "Agent service is $(Get-HflServiceStatusLine)"
+    }
+    Write-HflSection "Installation summary"
     Write-HflSummaryLine "Status" "installed"
     Write-HflSummaryLine "Binary" (Join-Path $InstallRoot "hfl-agent.exe")
     Write-HflSummaryLine "Config" $envFile
@@ -1025,6 +1107,7 @@ function Invoke-Install {
     Stop-HflInstallLog -ExitCode 0
   }
   catch {
+    Write-HflLog -Level 'FAIL ' -Message "Installation failed: $($_.Exception.Message)"
     Stop-HflInstallLog -ExitCode 1
     throw
   }
@@ -1047,19 +1130,24 @@ function Invoke-Upgrade {
     $prevVer = (Get-Content -LiteralPath $InstalledVersionFile -Raw).Trim()
   }
 
+  $upgradeSucceeded = $false
+  Start-HflInstallLog -DataRoot $dataRoot
   try {
     $srcRoot = Resolve-UpgradeSource -Path $From -DataRoot $dataRoot
     $newVer = Get-BundleVersionFrom -Root $srcRoot
 
     if (-not $QuietFooter) {
-      Write-HflBanner "upgrade $prevVer -> $newVer"
-      Write-HflSection "Preflight"
-      Write-HflSummaryLine "previous" $prevVer
-      Write-HflSummaryLine "target" $newVer
-      Write-HflSummaryLine "install dir" $InstallRoot
-      Write-HflSummaryLine "data dir" $dataRoot
-      Write-HflSummaryLine "source" $From
-      Write-HflSection "Actions"
+      $installedRole = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ROLE"
+      Write-HflBanner "upgrade $prevVer -> $newVer" -RoleName (Get-HflRoleDisplayName -Value $installedRole)
+      Write-HflSection "Target"
+      Write-HflSummaryLine "Current version" $prevVer
+      Write-HflSummaryLine "Target version" $newVer
+      Write-HflSummaryLine "Install path" $InstallRoot
+      Write-HflSummaryLine "Data path" $dataRoot
+      Write-HflSummaryLine "Package source" $From
+      Write-HflSection "Preflight checks"
+      Write-HflOk "Upgrade source and rollback paths are ready"
+      Write-HflSection "Upgrading Agent"
     }
 
     Backup-RollbackBinaries -DataRoot $dataRoot
@@ -1087,49 +1175,85 @@ function Invoke-Upgrade {
     }
 
     Remove-UpgradeRollback -DataRoot $dataRoot
+    $upgradeSucceeded = $true
+  }
+  catch {
+    Write-HflLog -Level 'FAIL ' -Message "Upgrade failed: $($_.Exception.Message)"
+    throw
   }
   finally {
     Remove-UpgradeWorkspace -Workspace $workspace
+    if (-not $upgradeSucceeded) {
+      Stop-HflInstallLog -ExitCode 1
+    }
   }
 
-  if ($QuietFooter) { return }
+  if ($QuietFooter) {
+    Stop-HflInstallLog -ExitCode 0
+    return
+  }
 
-  Write-HflSection "Summary"
+  Write-HflSection "Verifying"
+  if (-not $NoService) {
+    Write-HflOk "Agent service is $(Get-HflServiceStatusLine)"
+  }
+  Write-HflSection "Upgrade summary"
   Write-HflSummaryLine "Status" "upgraded"
   Write-HflSummaryLine "Version" (Get-BundleVersionFrom -Root $InstallRoot)
   if (-not $NoService) {
     Write-HflSummaryLine "Service" "$ServiceName ($(Get-HflServiceStatusLine))"
   }
   Write-HflFooter -Outcome upgrade
+  Stop-HflInstallLog -ExitCode 0
 }
 
 function Invoke-Uninstall {
   $dataRoot = Get-ResolvedDataRoot -Override $DataDir
   $envFile = Join-Path $DefaultDataRoot "agent.env"
+  $nodeId = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ID"
+  $installedRole = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ROLE"
+  $displayRole = Get-HflRoleDisplayName -Value $installedRole
+  $installedVersion = "unknown"
+  if (Test-Path -LiteralPath $InstalledVersionFile) {
+    $installedVersion = (Get-Content -LiteralPath $InstalledVersionFile -Raw).Trim()
+  }
   Start-HflUninstallLog -DataRoot $dataRoot
   try {
 
-  Write-HflBanner "uninstall"
-  Write-HflSection "Preflight"
-  Write-HflSummaryLine "install dir" $InstallRoot
-  Write-HflSummaryLine "data dir" $dataRoot
-  Write-HflSummaryLine "purge data" ($(if ($PurgeAll) { "yes (-PurgeAll)" } else { "no (data dir preserved)" }))
+  Write-HflBanner "uninstall" -RoleName $displayRole
+  Write-HflSection "Target"
+  Write-HflSummaryLine "Role" $displayRole
+  if ($nodeId) { Write-HflSummaryLine "Node ID" $nodeId }
+  Write-HflSummaryLine "Agent version" $installedVersion
+  Write-HflSummaryLine "Service state" (Get-HflServiceStatusLine)
+  Write-HflSummaryLine "Install path" $InstallRoot
+  Write-HflSummaryLine "Data path" $dataRoot
+  Write-HflSummaryLine "Data removal" ($(if ($PurgeAll) { "Remove Agent data" } else { "Preserve Agent data" }))
 
-  Write-HflSection "Actions"
-  Remove-HflService
-  Stop-HflAgentProcesses -Reason "uninstall"
-
+  Write-HflSection "Preflight checks"
   if ($PurgeAll -and $KeepInstallationIdentity) {
     throw "-PurgeAll and -KeepInstallationIdentity are mutually exclusive."
   }
 
+  $agentBinary = Join-Path $InstallRoot "hfl-agent.exe"
+  if ((-not $PurgeAll) -and (-not $KeepInstallationIdentity) -and
+      (-not (Test-Path -LiteralPath $agentBinary))) {
+    throw "Cannot retire the installation identity because $agentBinary is unavailable."
+  }
+  Write-HflOk "Installed Agent paths and data policy were verified"
+
+  Write-HflSection "Uninstalling"
+  Remove-HflService
+  Stop-HflAgentProcesses -Reason "uninstall"
+
   if ((-not $PurgeAll) -and (-not $KeepInstallationIdentity)) {
-    $agentBinary = Join-Path $InstallRoot "hfl-agent.exe"
-    if (-not (Test-Path -LiteralPath $agentBinary)) {
-      throw "Cannot retire the installation identity because $agentBinary is unavailable."
-    }
     Write-HflLog -Level 'STEP ' -Message "Retiring the local installation identity."
-    & $agentBinary config retire-installation --data-dir $dataRoot
+    $retireOutput = @(& $agentBinary config retire-installation --data-dir $dataRoot 2>&1)
+    foreach ($line in $retireOutput) {
+      $text = [string]$line
+      Write-HflDetailLine $text
+      if (-not $QuietFooter) { Write-Host $text }
+    }
     if ($LASTEXITCODE -ne 0) {
       throw "Failed to retire the local installation identity; Agent files and data were preserved for retry."
     }
@@ -1157,13 +1281,7 @@ function Invoke-Uninstall {
     Write-HflSkip "remove $envFile (preserved without installation identity; use -PurgeAll)"
   }
 
-  Write-HflSection "Summary"
-  Write-HflSummaryLine "Status" "uninstalled"
-  Write-HflSummaryLine "Console" "remove this node in SaaS if still listed (when offline)"
-  Write-HflFooter -Outcome uninstall
   $uninstallLogPath = $script:HflUninstallLogPath
-  Stop-HflUninstallLog -ExitCode 0
-
   if (-not $PurgeAll) {
     Write-HflSkip "remove data directory $dataRoot (preserved; use -PurgeAll)"
   }
@@ -1182,8 +1300,17 @@ function Invoke-Uninstall {
   # install-root remover must never recreate that directory after cleanup.
   $uninstallLog = if (-not $PurgeAll -and $uninstallLogPath) { $uninstallLogPath } else { "" }
   Schedule-InstallRootRemoval -InstallRoot $InstallRoot -LogFile $uninstallLog
+
+  Write-HflSection "Verifying"
+  Write-HflOk "Agent service and installed files were removed"
+  Write-HflSection "Uninstallation summary"
+  Write-HflSummaryLine "Status" "uninstalled"
+  Write-HflSummaryLine "Console record" "not changed by local uninstall"
+  Write-HflFooter -Outcome uninstall
+  Stop-HflUninstallLog -ExitCode 0
   }
   catch {
+    Write-HflLog -Level 'FAIL ' -Message "Uninstallation failed: $($_.Exception.Message)"
     Stop-HflUninstallLog -ExitCode 1
     throw
   }

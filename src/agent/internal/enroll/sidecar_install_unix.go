@@ -130,12 +130,12 @@ func checkGatewayRuntimePreflight(ctx context.Context, cfg Config) gatewayRuntim
 	if dockerReady {
 		warnings := []string{}
 		if state := existingLensSidecarState(); state != "" && state != "running (healthy)" && state != "running" {
-			warnings = append(warnings, "existing LensNode container is "+state+"; repair or reinstall will be attempted")
+			warnings = append(warnings, "existing AI engine container is "+state+"; repair or reinstall will be attempted")
 		}
 		return gatewayRuntimePreflightResult{
 			ExistingDocker: true,
 			Detail: fmt.Sprintf(
-				"Docker engine %s and Compose %s will be reused; LensNode artifacts are available",
+				"Docker engine %s and Compose %s will be reused; AI engine artifacts are available",
 				dockerEngineVersion(),
 				dockerComposeVersion(),
 			),
@@ -144,7 +144,7 @@ func checkGatewayRuntimePreflight(ctx context.Context, cfg Config) gatewayRuntim
 		}
 	}
 	return gatewayRuntimePreflightResult{
-		Detail:        "Docker is not installed; verified offline Docker and LensNode bundles will be used",
+		Detail:        "Docker is not installed; verified offline Docker and AI engine bundles will be used",
 		RequiredSpace: downloadBytes * 3,
 	}
 }
@@ -225,7 +225,7 @@ func (runtime lensSidecarRuntime) install(
 		if runtime.healthy() &&
 			os.Getenv("HFL_FORCE_SIDECAR_INSTALL") != "1" &&
 			lensConfigurationApplied(runtime.appliedPath, fingerprint) {
-			logStep("LensNode sidecar is already running.")
+			logStep("AI engine is already running.")
 			return nil
 		}
 
@@ -404,7 +404,7 @@ func (runtime lensSidecarRuntime) convergeObservability(
 			return nil
 		}
 		if err := runtime.installSidecar(ctx, cfg); err != nil {
-			return fmt.Errorf("refresh LensNode observability: %w", err)
+			return fmt.Errorf("refresh AI engine observability: %w", err)
 		}
 		if err := markLensConfigurationApplied(runtime.appliedPath, fingerprint); err != nil {
 			return err
@@ -422,10 +422,10 @@ func lensConfigurationApplied(path, fingerprint string) bool {
 
 func markLensConfigurationApplied(path, fingerprint string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create LensNode state directory: %w", err)
+		return fmt.Errorf("create AI engine state directory: %w", err)
 	}
 	if err := writePrivateEnvAtomically(path, []byte(fingerprint+"\n")); err != nil {
-		return fmt.Errorf("record applied LensNode configuration: %w", err)
+		return fmt.Errorf("record applied AI engine configuration: %w", err)
 	}
 	return nil
 }
@@ -497,7 +497,7 @@ func ensureLensnodeImage(ctx context.Context, cfg Config) error {
 		return nil
 	}
 	if dockerImageExists(defaultLensnodeImage) {
-		logWarn("Local LensNode image lacks configurable TLS verification support; loading console bundle.")
+		logWarn("Local AI engine image lacks configurable TLS verification support; loading console bundle.")
 	}
 
 	workDir, err := os.MkdirTemp("", "hfl-lens-image-")
@@ -508,17 +508,17 @@ func ensureLensnodeImage(ctx context.Context, cfg Config) error {
 
 	url := strings.TrimRight(cfg.APIBase, "/") + "/media/gateway-bootstrap/" + lensnodeImageArchive
 	archivePath := filepath.Join(workDir, lensnodeImageArchive)
-	logStep("Downloading LensNode container image bundle.")
-	if err := downloadWithProgress(ctx, url, archivePath, "LensNode image bundle"); err != nil {
-		return fmt.Errorf("download lensnode image bundle: %w", err)
+	logStep("Downloading AI engine container image bundle.")
+	if err := downloadWithProgress(ctx, url, archivePath, "AI engine image bundle"); err != nil {
+		return fmt.Errorf("download AI engine image bundle: %w", err)
 	}
 
-	logStep("Loading LensNode container image.")
+	logStep("Loading AI engine container image.")
 	cmd := exec.CommandContext(ctx, "docker", "load", "-i", archivePath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker load lensnode image: %w", err)
+		return fmt.Errorf("Docker load AI engine image: %w", err)
 	}
 	for _, ref := range []string{
 		defaultLensnodeImage,
@@ -527,12 +527,12 @@ func ensureLensnodeImage(ctx context.Context, cfg Config) error {
 	} {
 		if dockerImageExists(ref) {
 			if !lensnodeImageSupportsInsecureTLS(ref) {
-				return fmt.Errorf("lensnode image %s is missing configurable TLS verification support", ref)
+				return fmt.Errorf("AI engine image %s is missing configurable TLS verification support", ref)
 			}
 			return nil
 		}
 	}
-	return fmt.Errorf("lensnode image not present after docker load (expected %s)", defaultLensnodeImage)
+	return fmt.Errorf("AI engine image not present after Docker load (expected %s)", defaultLensnodeImage)
 }
 
 func lensnodeImageSupportsInsecureTLS(ref string) bool {

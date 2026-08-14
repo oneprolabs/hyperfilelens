@@ -44,8 +44,6 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 	if opts.Mode == InstallModeUninstall {
 		return RunInstall(ctx, opts)
 	}
-	gatewayName := roleDisplayName(cfg.NodeRole, cfg.GatewayScope)
-
 	if err := RunInstall(ctx, opts); err != nil {
 		return err
 	}
@@ -53,18 +51,18 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 	if credential := readEnvKey(EnvFilePath(), "HFL_NODE_CREDENTIAL"); credential != "" {
 		cfg.NodeToken = credential
 	}
-	logStep("Continuing " + gatewayName + " setup (AI engine).")
+	printPhase("Installing AI engine")
 
 	nodeID := strings.TrimSpace(ReadNodeID(EnvFilePath()))
 	if nodeID == "" {
 		logFail("Agent registered but node_id is missing from agent.env", 5)
 	}
 
-	logStep("Fetching LensNode configuration from the console.")
+	logStep("Fetching AI engine configuration from the console.")
 	lensCfg, err := FetchGatewayLensConfig(ctx, cfg, nodeID)
 	if err != nil {
 		_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "failed", err.Error())
-		logFail("LensNode configuration is unavailable: "+err.Error(), 6)
+		logFail("AI engine configuration is unavailable: "+err.Error(), 6)
 	}
 	// The authenticated console response is authoritative. Public Data Gateways
 	// receive the deployment Sentry policy; Private Data Gateways receive disabled.
@@ -77,7 +75,6 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 		}
 	}
 
-	logStep("Installing AI engine.")
 	if err := ensureGatewayDocker(ctx, cfg); err != nil {
 		_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "failed", err.Error())
 		logFail("Docker setup failed: "+err.Error(), 7)
@@ -89,7 +86,11 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 	_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "success", "")
 	logOK("AI engine was installed successfully.")
 
-	info := summaryFromState(cfg.APIBase, nodeID, "", serviceState(ctx))
+	agentVersion := ""
+	if version, versionErr := InstalledAgentVersion(ctx); versionErr == nil {
+		agentVersion = version
+	}
+	info := summaryFromState(cfg.APIBase, nodeID, agentVersion, serviceState(ctx))
 	printGatewayInstallSuccess(info, lensCfg)
 	return nil
 }
@@ -255,7 +256,7 @@ func floatField(m map[string]any, key string) float64 {
 
 func printGatewayInstallSuccess(info SummaryInfo, lens LensSidecarConfig) {
 	info.Role = gatewayDisplayName(lens.GatewayScope)
-	info.LensNode = "running"
+	info.LensNode = "active"
 	printEnrollmentSuccess(info)
 }
 
