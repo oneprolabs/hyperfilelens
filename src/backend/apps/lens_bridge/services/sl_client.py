@@ -6,6 +6,7 @@ import json
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any, Iterator
 from urllib.parse import urljoin
 
@@ -264,6 +265,21 @@ def _auth_headers(
     return headers
 
 
+def _invalidate_access_token(
+    hfl_user: AbstractBaseUser | None,
+) -> None:
+    if hfl_user is not None:
+        from apps.lens_bridge.services.chat_user_provisioning import (
+            invalidate_user_token,
+        )
+
+        invalidate_user_token(hfl_user.pk)
+        return
+    with _ADMIN_TOKEN_LOCK:
+        global _ADMIN_ACCESS_TOKEN
+        _ADMIN_ACCESS_TOKEN = None
+
+
 def _format_sl_error(body: Any) -> str:
     """Extract a readable message from SourceLens / DRF error payloads."""
 
@@ -357,16 +373,7 @@ def request_json(
     except requests.RequestException as exc:
         raise _transport_error(exc) from exc
     if response.status_code == 401:
-        if hfl_user is not None:
-            from apps.lens_bridge.services.chat_user_provisioning import (
-                invalidate_user_token,
-            )
-
-            invalidate_user_token(hfl_user.pk)
-        else:
-            with _ADMIN_TOKEN_LOCK:
-                global _ADMIN_ACCESS_TOKEN
-                _ADMIN_ACCESS_TOKEN = None
+        _invalidate_access_token(hfl_user)
         headers = _auth_headers(
             {"Accept": "application/json", **(extra_headers or {})},
             hfl_user=hfl_user,
@@ -385,6 +392,177 @@ def request_json(
         except requests.RequestException as exc:
             raise _transport_error(exc) from exc
     return _raise_for_response(response)
+
+
+def request_multipart(
+    path: str,
+    *,
+    uploaded_file,
+    hfl_user: AbstractBaseUser,
+    timeout: int = 120,
+) -> Any:
+    """Forward one uploaded file to a SourceLens multipart endpoint."""
+
+    if not path.startswith("/"):
+        path = f"/{path}"
+    url = urljoin(_base_url() + "/", path.lstrip("/"))
+
+    def _send() -> requests.Response:
+        uploaded_file.seek(0)
+        return requests.post(
+            url,
+            headers=_auth_headers(
+                {"Accept": "application/json"},
+                hfl_user=hfl_user,
+            ),
+            files={
+                "file": (
+                    str(getattr(uploaded_file, "name", "attachment")),
+                    uploaded_file,
+                    str(
+                        getattr(
+                            uploaded_file,
+                            "content_type",
+                            "application/octet-stream",
+                        )
+                        or "application/octet-stream"
+                    ),
+                )
+            },
+            timeout=timeout,
+        )
+
+    try:
+        response = _send()
+        if response.status_code == 401:
+            response.close()
+            _invalidate_access_token(hfl_user)
+            response = _send()
+    except requests.RequestException as exc:
+        raise _transport_error(exc) from exc
+    return _raise_for_response(response)
+
+
+@dataclass(frozen=True)
+class BinaryStreamResponse:
+    """Streaming SourceLens response metadata and byte iterator."""
+
+    body: "_BinaryStreamBody"
+    content_type: str
+    content_length: str
+    content_disposition: str
+    cache_control: str
+
+
+class _BinaryStreamBody(Iterator[bytes]):
+    """Close an upstream response even when Django never starts iteration."""
+
+    def __init__(self, response: requests.Response) -> None:
+        self._response = response
+        self._chunks = iter(response.iter_content(chunk_size=64 * 1024))
+        self._closed = False
+
+    def __iter__(self) -> "_BinaryStreamBody":
+        return self
+
+    def __next__(self) -> bytes:
+        while True:
+            try:
+                chunk = next(self._chunks)
+            except StopIteration:
+                self.close()
+                raise
+            except requests.RequestException as exc:
+                self.close()
+                raise _transport_error(exc) from exc
+            except Exception:
+                self.close()
+                raise
+            if chunk:
+                return chunk
+
+    def close(self) -> None:
+        """Release the iterator and HTTP response exactly once."""
+
+        if self._closed:
+            return
+        self._closed = True
+        close_chunks = getattr(self._chunks, "close", None)
+        try:
+            if callable(close_chunks):
+                close_chunks()
+        finally:
+            self._response.close()
+
+
+def _private_cache_control(value: str) -> str:
+    """Keep attachment responses private across the HFL proxy boundary."""
+
+    directives = {
+        part.strip().lower()
+        for part in str(value or "").split(",")
+        if part.strip()
+    }
+    if "private" in directives and "public" not in directives:
+        return value
+    return "private, no-store"
+
+
+def stream_binary(
+    path: str,
+    *,
+    hfl_user: AbstractBaseUser,
+    timeout: int = 120,
+) -> BinaryStreamResponse:
+    """Stream authenticated attachment bytes without persisting them in HFL."""
+
+    if not path.startswith("/"):
+        path = f"/{path}"
+    url = urljoin(_base_url() + "/", path.lstrip("/"))
+
+    def _send() -> requests.Response:
+        return requests.get(
+            url,
+            headers=_auth_headers(
+                {
+                    "Accept": "*/*",
+                    "Accept-Encoding": "identity",
+                },
+                hfl_user=hfl_user,
+            ),
+            stream=True,
+            timeout=timeout,
+        )
+
+    try:
+        response = _send()
+        if response.status_code == 401:
+            response.close()
+            _invalidate_access_token(hfl_user)
+            response = _send()
+    except requests.RequestException as exc:
+        raise _transport_error(exc) from exc
+    if response.status_code >= 400:
+        try:
+            _raise_for_response(response)
+        finally:
+            response.close()
+
+    return BinaryStreamResponse(
+        body=_BinaryStreamBody(response),
+        content_type=response.headers.get(
+            "Content-Type", "application/octet-stream"
+        ),
+        content_length=(
+            ""
+            if response.headers.get("Content-Encoding")
+            else response.headers.get("Content-Length", "")
+        ),
+        content_disposition=response.headers.get("Content-Disposition", ""),
+        cache_control=_private_cache_control(
+            response.headers.get("Cache-Control", "")
+        ),
+    )
 
 
 def list_managed_datasources(*, target_path: str) -> list[dict[str, Any]]:

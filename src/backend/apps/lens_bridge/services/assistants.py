@@ -106,6 +106,9 @@ def _serialize_list_row(
         "selected_dir": first_dir,
         "agent_model_ref": item.get("agent_model_ref"),
         "multimodal_model_ref": item.get("multimodal_model_ref"),
+        "supports_document_attachments": bool(
+            item.get("supports_document_attachments")
+        ),
         "agent_rounds": item.get("agent_rounds") or "",
         "knowledge_source_id": ks.id if ks else None,
         "knowledge_source_name": ks.name if ks else None,

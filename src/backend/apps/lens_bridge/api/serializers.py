@@ -636,6 +636,24 @@ class LensSessionTitleSerializer(serializers.Serializer):
 class LensRunCreateSerializer(serializers.Serializer):
     question = serializers.CharField(required=False, allow_blank=True)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
+    attachment_uuids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+        max_length=4,
+    )
+
+    def validate(self, attrs):
+        attachment_uuids = attrs.get("attachment_uuids") or []
+        if len(set(attachment_uuids)) != len(attachment_uuids):
+            raise serializers.ValidationError(
+                {"attachment_uuids": "Attachment UUIDs must be unique."}
+            )
+        if not (attrs.get("question") or "").strip() and not attachment_uuids:
+            raise serializers.ValidationError(
+                "Provide a question or at least one attachment."
+            )
+        return attrs
 
 
 class LensOrgSettingsSerializer(serializers.Serializer):

@@ -1,10 +1,14 @@
 import uuid
+from urllib.parse import urlencode
 
+from django.core import signing
 from django.db import transaction
 from django.http import JsonResponse, StreamingHttpResponse
+from django.urls import reverse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException, NotFound, ValidationError
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -74,6 +78,9 @@ from common.drf.org_scoped import OrgScopedMixin
 from common.drf.renderers import ServerSentEventsRenderer
 
 
+_ATTACHMENT_PROXY_SIGNING_SALT = "lens_bridge.copilot_attachment"
+
+
 class SourceLensMaintenanceUnavailable(APIException):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     default_detail = "AI services are temporarily unavailable during maintenance."
@@ -84,6 +91,12 @@ class CopilotRunConflict(APIException):
     status_code = status.HTTP_409_CONFLICT
     default_detail = "This chat already has an active response."
     default_code = "copilot_run_active"
+
+
+def _source_lens_contract_error(resource: str) -> sl_client.LensBridgeError:
+    return sl_client.LensBridgeError(
+        f"SourceLens returned an invalid {resource} response."
+    )
 
 
 class LensCopilotSnapshotBrowseView(OrgScopedMixin, APIView):
@@ -163,6 +176,112 @@ def _lens_error_response(exc: sl_client.LensBridgeError) -> Response:
         {"detail": str(exc)},
         status=response_status,
     )
+
+
+def _source_lens_list_rows(data) -> list[dict]:
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        return [row for row in data["results"] if isinstance(row, dict)]
+    return []
+
+
+def _source_lens_session_meta(
+    *,
+    hfl_user,
+    session_uuids: set[str],
+) -> dict[str, dict]:
+    """Load SourceLens session metadata without imposing a total row limit."""
+
+    remaining = set(session_uuids)
+    metadata: dict[str, dict] = {}
+    page = 1
+    while remaining:
+        payload = sl_client.request_json(
+            "GET",
+            "/api/lens/sessions/",
+            params={"page": page, "page_size": 500},
+            hfl_user=hfl_user,
+        )
+        rows = _source_lens_list_rows(payload)
+        for row in rows:
+            session_uuid = str(row.get("uuid") or "")
+            if session_uuid in remaining:
+                metadata[session_uuid] = row
+                remaining.remove(session_uuid)
+        if not rows or not isinstance(payload, dict) or not payload.get("next"):
+            break
+        page += 1
+    return metadata
+
+
+def _canonical_attachment_uuid(value: object) -> str:
+    try:
+        return str(uuid.UUID(str(value)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise _source_lens_contract_error("attachment") from exc
+
+
+def _attachment_proxy_url(session_id: int, attachment_uuid: str) -> str:
+    """Build a tamper-evident URL; normal HFL auth still gates every request."""
+
+    attachment_uuid = _canonical_attachment_uuid(attachment_uuid)
+    path = reverse(
+        "lens-copilot-session-attachment-content",
+        kwargs={
+            "pk": session_id,
+            "attachment_uuid": attachment_uuid,
+        },
+    )
+    token = signing.dumps(
+        {
+            "session_id": session_id,
+            "attachment_uuid": attachment_uuid,
+        },
+        salt=_ATTACHMENT_PROXY_SIGNING_SALT,
+        compress=True,
+    )
+    return f"{path}?{urlencode({'token': token})}"
+
+
+def _require_attachment_proxy_token(
+    request,
+    *,
+    session_id: int,
+    attachment_uuid: uuid.UUID,
+) -> None:
+    token = request.query_params.get("token", "")
+    try:
+        payload = signing.loads(
+            token,
+            salt=_ATTACHMENT_PROXY_SIGNING_SALT,
+        )
+    except signing.BadSignature as exc:
+        raise NotFound() from exc
+    if not isinstance(payload, dict) or payload != {
+        "session_id": session_id,
+        "attachment_uuid": str(attachment_uuid),
+    }:
+        raise NotFound()
+
+
+def _rewrite_attachment_urls(messages, *, session_id: int):
+    if not isinstance(messages, list):
+        return messages
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        attachments = message.get("attachments")
+        if not isinstance(attachments, list):
+            continue
+        for attachment in attachments:
+            if not isinstance(attachment, dict) or not attachment.get("uuid"):
+                continue
+            attachment["url"] = _attachment_proxy_url(
+                session_id,
+                str(attachment["uuid"]),
+            )
+    return messages
 
 
 def _tenant_model_payload(data) -> tuple[dict, str | None]:
@@ -870,7 +989,12 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             "mark_viewed",
             "cancel_run",
             "retry",
+            "pin",
+            "unpin",
+            "upload_attachment",
         ):
+            return [IsAuthenticated(), IsOrgOperator()]
+        if self.action == "attachment_content" and self.request.method == "DELETE":
             return [IsAuthenticated(), IsOrgOperator()]
         return super().get_permissions()
 
@@ -882,7 +1006,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         ).select_related("knowledge_source", "gateway_link__gateway")
 
     def list(self, request):
-        rows = self._user_sessions().order_by("-last_message_at", "-created_at")
+        rows = list(self._user_sessions().order_by("-last_message_at", "-created_at"))
         membership = get_membership(request)
         assistant_meta: dict[str, dict[str, str]] = {}
         try:
@@ -899,13 +1023,37 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                     }
         except sl_client.LensBridgeError:
             assistant_meta = {}
+        sl_session_meta: dict[str, dict] = {}
+        try:
+            sl_session_meta = _source_lens_session_meta(
+                hfl_user=request.user,
+                session_uuids={
+                    str(row.sl_session_uuid) for row in rows if row.sl_session_uuid
+                },
+            )
+        except sl_client.LensBridgeError:
+            sl_session_meta = {}
         context = {
             "assistant_names": {k: v["name"] for k, v in assistant_meta.items()},
             "assistant_tasks": {k: v["task"] for k, v in assistant_meta.items()},
         }
-        return Response(
-            LensSessionLinkSerializer(rows, many=True, context=context).data,
+        payload = list(LensSessionLinkSerializer(rows, many=True, context=context).data)
+        for row in payload:
+            session_uuid = str(row.get("sl_session_uuid") or "")
+            source_row = sl_session_meta.get(session_uuid)
+            if isinstance(source_row, dict) and "pinned_at" in source_row:
+                pinned_at = source_row.get("pinned_at")
+                row["pinned_at"] = (
+                    pinned_at if isinstance(pinned_at, str) and pinned_at else None
+                )
+        payload.sort(
+            key=lambda row: (
+                str(row.get("pinned_at") or ""),
+                str(row.get("last_message_at") or row.get("created_at") or ""),
+            ),
+            reverse=True,
         )
+        return Response(payload)
 
     def create(self, request):
         body = LensSessionCreateSerializer(data=request.data)
@@ -985,6 +1133,40 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         link.save(update_fields=["last_viewed_at", "updated_at"])
         return Response(LensSessionLinkSerializer(link).data)
 
+    @action(detail=True, methods=["post"], url_path="pin")
+    def pin(self, request, pk=None):
+        return self._set_pinned(request, pk, pinned=True)
+
+    @action(detail=True, methods=["post"], url_path="unpin")
+    def unpin(self, request, pk=None):
+        return self._set_pinned(request, pk, pinned=False)
+
+    def _set_pinned(self, request, pk, *, pinned: bool):
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        action_name = "pin" if pinned else "unpin"
+        data = sl_client.request_json(
+            "POST",
+            f"/api/lens/sessions/{link.sl_session_uuid}/{action_name}/",
+            hfl_user=request.user,
+        )
+        if (
+            not isinstance(data, dict)
+            or "pinned_at" not in data
+            or (
+                pinned
+                and (
+                    not isinstance(data["pinned_at"], str)
+                    or not data["pinned_at"]
+                )
+            )
+            or (not pinned and data["pinned_at"] is not None)
+        ):
+            raise _source_lens_contract_error("session pin")
+        payload = LensSessionLinkSerializer(link).data
+        payload["pinned_at"] = data["pinned_at"]
+        return Response(payload)
+
     def retrieve(self, request, pk=None):
         link = self._get_user_link(pk)
         return Response(LensSessionLinkSerializer(link).data)
@@ -1022,7 +1204,80 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             f"/api/lens/sessions/{link.sl_session_uuid}/messages/",
             hfl_user=request.user,
         )
-        return Response(data)
+        return Response(_rewrite_attachment_urls(data, session_id=link.id))
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="attachments",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def upload_attachment(self, request, pk=None):
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        uploaded_file = request.FILES.get("file")
+        if uploaded_file is None:
+            raise ValidationError({"file": "No file provided."})
+        data = sl_client.request_multipart(
+            f"/api/lens/sessions/{link.sl_session_uuid}/attachments/",
+            uploaded_file=uploaded_file,
+            hfl_user=request.user,
+        )
+        if not isinstance(data, dict):
+            raise _source_lens_contract_error("attachment")
+        attachment_uuid = _canonical_attachment_uuid(data.get("uuid"))
+        if data.get("kind") not in {"image", "document"}:
+            raise _source_lens_contract_error("attachment")
+        data["uuid"] = attachment_uuid
+        data["url"] = _attachment_proxy_url(link.id, attachment_uuid)
+        return Response(data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=["get", "delete"],
+        url_path=r"attachments/(?P<attachment_uuid>[0-9a-fA-F-]+)",
+    )
+    def attachment_content(
+        self,
+        request,
+        pk=None,
+        attachment_uuid=None,
+    ):
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        try:
+            attachment_id = uuid.UUID(str(attachment_uuid))
+        except (TypeError, ValueError) as exc:
+            raise NotFound() from exc
+        _require_attachment_proxy_token(
+            request,
+            session_id=link.id,
+            attachment_uuid=attachment_id,
+        )
+        path = f"/api/lens/attachments/{attachment_id}/"
+        if request.method == "DELETE":
+            sl_client.request_json(
+                "DELETE",
+                path,
+                hfl_user=request.user,
+            )
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        upstream = sl_client.stream_binary(path, hfl_user=request.user)
+        try:
+            response = StreamingHttpResponse(
+                upstream.body,
+                content_type=upstream.content_type,
+            )
+            if upstream.content_length:
+                response["Content-Length"] = upstream.content_length
+            if upstream.content_disposition:
+                response["Content-Disposition"] = upstream.content_disposition
+            response["Cache-Control"] = upstream.cache_control
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+        except Exception:
+            upstream.body.close()
+            raise
 
     @action(detail=True, methods=["post"], url_path="runs")
     def create_run(self, request, pk=None):
@@ -1036,6 +1291,9 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         body = LensRunCreateSerializer(data=request.data)
         body.is_valid(raise_exception=True)
         question = body.validated_data.get("question") or ""
+        attachment_uuids = [
+            str(value) for value in body.validated_data.get("attachment_uuids", [])
+        ]
         idempotency_key = body.validated_data.get("idempotency_key") or uuid.uuid4().hex
         from apps.lens_bridge.services import run_submissions
 
@@ -1047,6 +1305,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                     link,
                     question=question,
                     idempotency_key=idempotency_key,
+                    attachment_uuids=attachment_uuids,
                 )
             except run_submissions.RunSubmissionConflictError as exc:
                 raise CopilotRunConflict() from exc
@@ -1124,6 +1383,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                 or link.last_assistant_message_at > link.last_viewed_at
             )
         )
+        _rewrite_attachment_urls(data.get("messages"), session_id=link.id)
         return Response(data)
 
     @action(detail=True, methods=["get"], url_path="active-run")

@@ -240,6 +240,7 @@ function silentAbortError(): Error {
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase()
   const csrf = isUnsafeMethod(method) ? readCsrfToken() : ''
+  const isMultipart = typeof FormData !== 'undefined' && init?.body instanceof FormData
   // A component-scoped signal already owns this request's lifecycle. Combining it
   // with the global route signal would also abort on same-page query changes.
   const routeSignal = shouldAttachRouteSignal(method) && !init?.signal
@@ -252,7 +253,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       signal,
       headers: {
-        'Content-Type': 'application/json',
+        ...(isMultipart ? {} : { 'Content-Type': 'application/json' }),
         Accept: 'application/json',
         'Accept-Language': currentLocale,
         ...getCorrelationHeaders(),

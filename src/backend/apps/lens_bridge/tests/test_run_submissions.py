@@ -70,6 +70,66 @@ class RunSubmissionRecoveryTests(TestCase):
             hfl_user=self.user,
         )
 
+    @patch("apps.lens_bridge.services.run_submissions.sl_client.request_json")
+    def test_recovery_replays_the_original_attachment_uuids(self, request_json):
+        run_uuid = uuid.uuid4()
+        attachment_uuids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        submission = LensRunSubmission.objects.create(
+            organization=self.org,
+            hfl_user=self.user,
+            session_link=self.session,
+            idempotency_key="recover-attachments",
+            question="Compare these files",
+            attachment_uuids=attachment_uuids,
+        )
+        request_json.return_value = {
+            "uuid": str(run_uuid),
+            "status": "queued",
+            "idempotency_key": "recover-attachments",
+        }
+
+        run_submissions.execute_submission(submission.id)
+
+        request_json.assert_called_once_with(
+            "POST",
+            f"/api/lens/sessions/{self.session.sl_session_uuid}/runs/",
+            json_body={
+                "question": "Compare these files",
+                "idempotency_key": "recover-attachments",
+                "attachment_uuids": attachment_uuids,
+            },
+            hfl_user=self.user,
+        )
+
+    @patch("apps.lens_bridge.services.run_submissions.sl_client.request_json")
+    def test_recovery_accepts_a_legacy_null_attachment_list(self, request_json):
+        run_uuid = uuid.uuid4()
+        submission = LensRunSubmission.objects.create(
+            organization=self.org,
+            hfl_user=self.user,
+            session_link=self.session,
+            idempotency_key="recover-legacy-submission",
+            question="Recover without attachments",
+            attachment_uuids=None,
+        )
+        request_json.return_value = {
+            "uuid": str(run_uuid),
+            "status": "queued",
+            "idempotency_key": "recover-legacy-submission",
+        }
+
+        run_submissions.execute_submission(submission.id)
+
+        request_json.assert_called_once_with(
+            "POST",
+            f"/api/lens/sessions/{self.session.sl_session_uuid}/runs/",
+            json_body={
+                "question": "Recover without attachments",
+                "idempotency_key": "recover-legacy-submission",
+            },
+            hfl_user=self.user,
+        )
+
     def test_stale_worker_does_not_fail_a_newer_recovery_claim(self):
         submission = LensRunSubmission.objects.create(
             organization=self.org,

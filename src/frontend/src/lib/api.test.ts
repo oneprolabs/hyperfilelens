@@ -37,6 +37,22 @@ describe('api request cancellation', () => {
 
     expect(fetchMock.mock.calls[0][1]?.signal).toBe(routeSignal)
   })
+
+  it('lets the browser set the multipart boundary for FormData requests', async () => {
+    vi.mocked(getRouteRequestSignal).mockReturnValue(routeSignal)
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const body = new FormData()
+    body.append('file', new File(['content'], 'report.pdf', { type: 'application/pdf' }))
+
+    await api('/api/v1/lens/copilot/sessions/1/attachments/', {
+      method: 'POST',
+      body,
+    })
+
+    const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>
+    expect(headers['Content-Type']).toBeUndefined()
+  })
 })
 
 describe('api validation errors', () => {

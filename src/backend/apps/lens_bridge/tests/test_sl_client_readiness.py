@@ -2,11 +2,12 @@
 
 from unittest.mock import Mock, patch
 
-from django.test import SimpleTestCase
 import requests
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import SimpleTestCase
 
-from apps.lens_bridge.services import sl_client
 from apps.lens_bridge.api.views import _lens_error_response
+from apps.lens_bridge.services import sl_client
 
 
 class SourceLensClientReadinessTests(SimpleTestCase):
@@ -66,6 +67,186 @@ class SourceLensClientReadinessTests(SimpleTestCase):
 
         self.assertEqual(raised.exception.status_code, 503)
         self.assertEqual(raised.exception.default_code, "lens_bridge_unavailable")
+
+    @patch.object(sl_client, "_auth_headers", return_value={})
+    @patch.object(sl_client, "_base_url", return_value="http://sourcelens")
+    @patch.object(sl_client.requests, "post")
+    def test_multipart_upload_forwards_the_file_without_copying_it(
+        self,
+        post,
+        _base_url,
+        _headers,
+    ) -> None:
+        response = Mock(status_code=201, content=b"{}")
+        response.json.return_value = {"uuid": "attachment-uuid"}
+        post.return_value = response
+        uploaded = SimpleUploadedFile(
+            "report.pdf",
+            b"pdf-bytes",
+            content_type="application/pdf",
+        )
+        user = Mock(pk=7)
+
+        result = sl_client.request_multipart(
+            "/api/lens/sessions/session-uuid/attachments/",
+            uploaded_file=uploaded,
+            hfl_user=user,
+        )
+
+        self.assertEqual(result["uuid"], "attachment-uuid")
+        forwarded = post.call_args.kwargs["files"]["file"]
+        self.assertEqual(forwarded[0], "report.pdf")
+        self.assertIs(forwarded[1], uploaded)
+        self.assertEqual(forwarded[2], "application/pdf")
+
+    @patch.object(sl_client, "_invalidate_access_token")
+    @patch.object(sl_client, "_auth_headers", return_value={})
+    @patch.object(sl_client, "_base_url", return_value="http://sourcelens")
+    @patch.object(sl_client.requests, "post")
+    def test_multipart_upload_rewinds_the_file_after_reauthentication(
+        self,
+        post,
+        _base_url,
+        _headers,
+        invalidate_access_token,
+    ) -> None:
+        unauthorized = Mock(status_code=401)
+        accepted = Mock(status_code=201, content=b"{}")
+        accepted.json.return_value = {"uuid": "attachment-uuid"}
+        positions = []
+
+        def send(*_args, **kwargs):
+            uploaded_file = kwargs["files"]["file"][1]
+            positions.append(uploaded_file.tell())
+            uploaded_file.read()
+            return unauthorized if len(positions) == 1 else accepted
+
+        post.side_effect = send
+        uploaded = SimpleUploadedFile(
+            "report.pdf",
+            b"pdf-bytes",
+            content_type="application/pdf",
+        )
+        user = Mock(pk=7)
+
+        result = sl_client.request_multipart(
+            "/api/lens/sessions/session-uuid/attachments/",
+            uploaded_file=uploaded,
+            hfl_user=user,
+        )
+
+        self.assertEqual(result["uuid"], "attachment-uuid")
+        self.assertEqual(positions, [0, 0])
+        unauthorized.close.assert_called_once()
+        invalidate_access_token.assert_called_once_with(user)
+
+    @patch.object(sl_client, "_auth_headers", return_value={})
+    @patch.object(sl_client, "_base_url", return_value="http://sourcelens")
+    @patch.object(sl_client.requests, "get")
+    def test_binary_attachment_is_streamed_and_closed(
+        self,
+        get,
+        _base_url,
+        _headers,
+    ) -> None:
+        response = Mock(
+            status_code=200,
+            headers={
+                "Content-Type": "image/png",
+                "Content-Length": "6",
+            },
+        )
+        response.iter_content.return_value = [b"abc", b"def"]
+        get.return_value = response
+        user = Mock(pk=7)
+
+        upstream = sl_client.stream_binary(
+            "/api/lens/attachments/attachment-uuid/",
+            hfl_user=user,
+        )
+
+        self.assertEqual(upstream.content_type, "image/png")
+        self.assertEqual(b"".join(upstream.body), b"abcdef")
+        response.close.assert_called_once()
+        _headers.assert_called_once_with(
+            {
+                "Accept": "*/*",
+                "Accept-Encoding": "identity",
+            },
+            hfl_user=user,
+        )
+
+    @patch.object(sl_client, "_auth_headers", return_value={})
+    @patch.object(sl_client, "_base_url", return_value="http://sourcelens")
+    @patch.object(sl_client.requests, "get")
+    def test_binary_attachment_omits_encoded_content_length(
+        self,
+        get,
+        _base_url,
+        _headers,
+    ) -> None:
+        response = Mock(
+            status_code=200,
+            headers={
+                "Content-Encoding": "gzip",
+                "Content-Length": "99",
+            },
+        )
+        response.iter_content.return_value = iter([b"decoded"])
+        get.return_value = response
+
+        upstream = sl_client.stream_binary(
+            "/api/lens/attachments/attachment-uuid/",
+            hfl_user=Mock(pk=7),
+        )
+
+        self.assertEqual(upstream.content_length, "")
+        upstream.body.close()
+
+    @patch.object(sl_client, "_auth_headers", return_value={})
+    @patch.object(sl_client, "_base_url", return_value="http://sourcelens")
+    @patch.object(sl_client.requests, "get")
+    def test_binary_attachment_closes_before_iteration_starts(
+        self,
+        get,
+        _base_url,
+        _headers,
+    ) -> None:
+        response = Mock(status_code=200, headers={})
+        response.iter_content.return_value = iter([b"abc"])
+        get.return_value = response
+
+        upstream = sl_client.stream_binary(
+            "/api/lens/attachments/attachment-uuid/",
+            hfl_user=Mock(pk=7),
+        )
+        upstream.body.close()
+
+        response.close.assert_called_once()
+
+    @patch.object(sl_client, "_auth_headers", return_value={})
+    @patch.object(sl_client, "_base_url", return_value="http://sourcelens")
+    @patch.object(sl_client.requests, "get")
+    def test_binary_attachment_rejects_public_cache_policy(
+        self,
+        get,
+        _base_url,
+        _headers,
+    ) -> None:
+        response = Mock(
+            status_code=200,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+        response.iter_content.return_value = iter([])
+        get.return_value = response
+
+        upstream = sl_client.stream_binary(
+            "/api/lens/attachments/attachment-uuid/",
+            hfl_user=Mock(pk=7),
+        )
+
+        self.assertEqual(upstream.cache_control, "private, no-store")
+        upstream.body.close()
 
     @patch.object(sl_client.deploy, "lens_bridge_legacy_username", return_value="")
     @patch.object(sl_client.deploy, "lens_bridge_password", return_value="password")
