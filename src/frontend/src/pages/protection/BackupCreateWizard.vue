@@ -7564,12 +7564,15 @@ function preserveShallowestPathOrder(paths: string[]) {
                           v-for="(dirPlan, dirPlanIndex) in group.plan.dirPlans"
                           :key="dirPlan.id"
                           class="create-recovery-dir-plan-row"
-                          :class="{ 'create-recovery-dir-plan-row--invalid': highlightedRecoveryDirPlanIds.includes(dirPlan.id) }"
+                          :class="{
+                            'create-recovery-dir-plan-row--invalid': highlightedRecoveryDirPlanIds.includes(dirPlan.id)
+                              && !isRecoveryDirPlanComplete(group, dirPlan),
+                          }"
                           :data-recovery-dir-plan-id="dirPlan.id"
                         >
                           <span class="create-recovery-dir-plan-row__index">{{ String(dirPlanIndex + 1).padStart(2, '0') }}</span>
                           <div
-                            class="create-recovery-dir-plan-cell"
+                            class="create-recovery-dir-plan-cell create-recovery-dir-plan-cell--scope"
                             :class="{ 'create-recovery-dir-plan-cell--invalid': isCreateRecoveryDirPlanFieldInvalid(group, dirPlan, 'sourcePath') }"
                             :data-label="t('protection.backupsPage.createRecoveryPlanScopeCol')"
                           >
@@ -7654,7 +7657,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                                   @node-expand="(data) => onCreateRecoveryDirectoryExpansionChange(recoveryDirPlanPickerKey(group, dirPlan, 'source'), data)"
                                 >
                                   <template #default="{ data }">
-                                    <div class="create-tree-node-content hfl-dir-tree-node">
+                                    <div
+                                      class="create-tree-node-content hfl-dir-tree-node"
+                                      :class="{ 'create-tree-node-content--snapshot': isWholeSnapshotRecoveryPath(data.path) }"
+                                      :title="createRecoverySourceTreePathLabel(data)"
+                                    >
                                       <Camera
                                         v-if="isWholeSnapshotRecoveryPath(data.path)"
                                         :size="15"
@@ -7666,10 +7673,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                         class="create-tree-node-content__icon hfl-dir-tree-node__icon create-dir-row__icon--file"
                                       />
                                       <FolderOpen v-else :size="15" class="create-tree-node-content__icon hfl-dir-tree-node__icon create-dir-row__icon--folder" />
-                                      <div class="create-tree-node-content__text hfl-dir-tree-node__text">
-                                        <span class="create-tree-node-content__label hfl-dir-tree-node__label">{{ data.label }}</span>
-                                        <span class="create-tree-node-content__path hfl-dir-tree-node__path">{{ createRecoverySourceTreePathLabel(data) }}</span>
-                                      </div>
+                                      <span class="create-tree-node-content__label hfl-dir-tree-node__label">{{ data.label }}</span>
                                       <button
                                         v-if="data.path_type === 'directory' && !isWholeSnapshotRecoveryPath(data.path)"
                                         type="button"
@@ -7692,7 +7696,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                             </HflPopover>
                           </div>
                           <div
-                            class="create-recovery-dir-plan-cell"
+                            class="create-recovery-dir-plan-cell create-recovery-dir-plan-cell--target"
                             :class="{ 'create-recovery-dir-plan-cell--invalid': isCreateRecoveryDirPlanFieldInvalid(group, dirPlan, 'targetHostId') }"
                             :data-label="t('protection.backupsPage.createRecoveryPlanTargetHostCol')"
                           >
@@ -7825,7 +7829,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                             </el-select>
                           </div>
                           <div
-                            class="create-recovery-dir-plan-cell"
+                            class="create-recovery-dir-plan-cell create-recovery-dir-plan-cell--directory"
                             :class="{ 'create-recovery-dir-plan-cell--invalid': isCreateRecoveryDirPlanFieldInvalid(group, dirPlan, 'restoreDir') }"
                             :data-label="t('protection.backupsPage.createRecoveryPlanTargetDirCol')"
                           >
@@ -10334,7 +10338,7 @@ function preserveShallowestPathOrder(paths: string[]) {
   border: 1px solid rgba(226, 232, 240, 0.95);
   border-radius: 8px;
   background: linear-gradient(180deg, rgb(255 255 255) 0%, rgb(248 250 252) 100%);
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: visible;
 }
 
@@ -10603,8 +10607,9 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 .create-recovery-dir-plan-stack {
   display: flex;
-  min-width: 850px;
+  min-width: 0;
   flex-direction: column;
+  container-type: inline-size;
   border: 1px solid rgba(226, 232, 240, 0.95);
   border-radius: 8px;
   background: #fff;
@@ -10615,9 +10620,9 @@ function preserveShallowestPathOrder(paths: string[]) {
 .create-recovery-dir-plan-row,
 .create-recovery-dir-plan-add-wrap {
   display: grid;
-  min-width: 850px;
-  grid-template-columns: 34px minmax(230px, 1fr) minmax(260px, 1fr) minmax(230px, 1fr) 44px;
-  gap: 8px;
+  min-width: 0;
+  grid-template-columns: 34px minmax(190px, 1.1fr) minmax(190px, 1fr) minmax(190px, 1.1fr) 64px;
+  gap: 10px;
   align-items: center;
 }
 
@@ -10628,6 +10633,10 @@ function preserveShallowestPathOrder(paths: string[]) {
   font-weight: 700;
   line-height: 18px;
   background: rgb(248 250 252);
+}
+
+.create-recovery-dir-plan-header > span:last-child {
+  text-align: center;
 }
 
 .create-recovery-required-label {
@@ -10651,7 +10660,6 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .create-recovery-dir-plan-row--invalid {
-  background: rgb(255 247 237);
   box-shadow: inset 3px 0 0 rgb(249 115 22);
 }
 
@@ -10867,17 +10875,13 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .create-recovery-path-input__error {
-  position: absolute;
-  z-index: 3;
-  top: calc(100% + 4px);
-  left: 0;
   display: flex;
   min-width: 100%;
-  max-width: min(360px, calc(100vw - 48px));
+  max-width: 100%;
   align-items: flex-start;
   justify-content: space-between;
   gap: 6px;
-  margin: 0;
+  margin: 4px 0 0;
   padding: 4px 8px;
   border: 1px solid color-mix(in srgb, var(--el-color-danger) 38%, white);
   border-radius: 4px;
@@ -10925,6 +10929,82 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 .create-recovery-popover-tree {
   min-width: 100%;
+}
+
+.create-tree-node-content__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.create-tree-node-content--snapshot .create-tree-node-content__label {
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+@container (max-width: 900px) {
+  .create-recovery-dir-plan-header {
+    display: none;
+  }
+
+  .create-recovery-dir-plan-row {
+    grid-template-columns: 34px repeat(2, minmax(0, 1fr)) 36px;
+    align-items: start;
+    padding-block: 12px;
+  }
+
+  .create-recovery-dir-plan-cell:not(.create-recovery-dir-plan-cell--actions)::before {
+    display: block;
+    margin-bottom: 5px;
+    color: rgb(100 116 139);
+    content: attr(data-label);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 18px;
+  }
+
+  .create-recovery-dir-plan-cell--scope {
+    grid-column: 2 / 4;
+  }
+
+  .create-recovery-dir-plan-cell--target {
+    grid-column: 2;
+  }
+
+  .create-recovery-dir-plan-cell--directory {
+    grid-column: 3;
+  }
+
+  .create-recovery-dir-plan-cell--actions {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .create-recovery-dir-plan-add-wrap {
+    grid-template-columns: 34px minmax(0, 1fr) 36px;
+  }
+
+  .create-recovery-dir-plan-add-row {
+    grid-column: 2;
+    width: 100%;
+  }
+}
+
+@container (max-width: 620px) {
+  .create-recovery-dir-plan-row {
+    grid-template-columns: 34px minmax(0, 1fr) 36px;
+  }
+
+  .create-recovery-dir-plan-cell--actions {
+    grid-column: 3;
+  }
+
+  .create-recovery-dir-plan-cell--scope,
+  .create-recovery-dir-plan-cell--target,
+  .create-recovery-dir-plan-cell--directory {
+    grid-column: 2;
+  }
 }
 
 .create-recovery-conflict-options {
