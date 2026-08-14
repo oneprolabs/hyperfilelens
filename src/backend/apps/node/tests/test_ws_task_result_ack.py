@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 from django.db import DatabaseError
 from django.test import SimpleTestCase
 
-from apps.node.ws.node_agent import NodeAgentConsumer
+from apps.node.ws.node_agent import _MAX_AGENT_UPLINK_BYTES, NodeAgentConsumer
 from apps.node.ws.wire import TASK_RESULT_ACK_SUBPROTOCOL
 
 
@@ -21,6 +21,18 @@ def _immediate_database_sync_to_async(func):
 
 
 class NodeAgentTaskResultAckTests(SimpleTestCase):
+
+    async def test_oversized_uplink_is_closed_without_parsing(self):
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.close = AsyncMock()
+
+        with patch("apps.node.ws.node_agent.loads_json") as loads_json:
+            await consumer.receive(text_data="x" * (_MAX_AGENT_UPLINK_BYTES + 1))
+
+        loads_json.assert_not_called()
+        consumer.close.assert_awaited_once_with(code=1009)
+
     async def test_deployment_drain_closes_with_service_restart_code(self):
         consumer = NodeAgentConsumer()
         consumer.node_id = 7
@@ -94,6 +106,9 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
                 "apps.node.ws.node_agent.trigger_task_result_followup",
                 side_effect=followup,
             ),
+            patch("apps.node.ws.node_agent.TASK_RESULT_BYTES") as result_bytes,
+            patch("apps.node.ws.node_agent.TASK_RESULT_TRUNCATED") as result_truncated,
+            patch("apps.node.ws.node_agent.TASK_RESULT_ACK_LATENCY") as ack_latency,
         ):
             await consumer.receive(
                 text_data=json.dumps(
@@ -101,12 +116,18 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
                         "type": "task.result",
                         "task_id": task.id,
                         "status": "success",
-                        "result": {"kopia_snapshot_id": "snap-1"},
+                        "result": {
+                            "kopia_snapshot_id": "snap-1",
+                            "result_truncated": True,
+                        },
                     }
                 )
             )
 
         self.assertEqual(events, ["commit", "ack", "followup"])
+        result_bytes.observe.assert_called_once()
+        result_truncated.inc.assert_called_once_with()
+        ack_latency.observe.assert_called_once()
 
     async def test_database_failure_sends_no_ack(self):
         consumer = NodeAgentConsumer()

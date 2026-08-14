@@ -41,15 +41,13 @@ func NewTaskAccepted(taskID, status string) TaskAccepted {
 
 // NewTaskResult builds a task.result uplink frame.
 func NewTaskResult(taskID, status string, result map[string]any, errMsg string) TaskResult {
-	if result == nil {
-		result = map[string]any{}
-	}
+	result, _ = boundTaskResult(result)
 	return TaskResult{
 		Type:   TypeTaskResult,
 		TaskID: taskID,
 		Status: status,
 		Result: result,
-		Error:  errMsg,
+		Error:  truncateUTF8(errMsg, maxResultStringBytes),
 	}
 }
 
@@ -98,5 +96,9 @@ func SendTaskResult(ctx context.Context, sink Sender, taskID, status string, res
 	if sink == nil || taskID == "" {
 		return nil
 	}
-	return sink.SendJSON(ctx, NewTaskResult(taskID, status, result, errMsg))
+	bounded, stats := boundTaskResult(result)
+	if stats.Truncated {
+		resultBoundLog(taskID, stats)
+	}
+	return sink.SendJSON(ctx, NewTaskResult(taskID, status, bounded, errMsg))
 }

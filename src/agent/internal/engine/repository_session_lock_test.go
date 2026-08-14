@@ -120,3 +120,46 @@ func TestPreparedSnapshotReturnsPolicyNotFoundToBackendWithoutRetry(t *testing.T
 		t.Fatalf("unexpected structured policy error: %#v", result)
 	}
 }
+
+func TestPreparedSnapshotKeepsSingleBoundedCommandSummary(t *testing.T) {
+	originalRunner := runManagedSnapshotCommand
+	t.Cleanup(func() { runManagedSnapshotCommand = originalRunner })
+	runManagedSnapshotCommand = func(
+		context.Context,
+		string,
+		[]string,
+		map[string]string,
+		string,
+		process.OutputLineHandler,
+	) (process.Result, error) {
+		return process.Result{
+			Stdout:           `{"id":"snapshot-bounded","stats":{"totalSize":42}}`,
+			Stderr:           "latest progress",
+			StdoutTotalBytes: 512 * 1024,
+			StderrTotalBytes: 2 * 1024 * 1024,
+			StdoutTruncated:  true,
+			StderrTruncated:  true,
+		}, nil
+	}
+
+	status, result, message := runPreparedManagedSnapshot(
+		t.Context(), ReporterSink{}, "prepared-bounded", "kopia", "/tmp/bounded.config",
+		nil, "/data", map[string]any{},
+	)
+	if status != "success" || message != "" {
+		t.Fatalf("status=%q message=%q result=%#v", status, message, result)
+	}
+	if result["kopia_snapshot_id"] != "snapshot-bounded" {
+		t.Fatalf("snapshot identity missing: %#v", result)
+	}
+	if _, duplicated := result["stdout"]; duplicated {
+		t.Fatalf("command stdout duplicated at top level: %#v", result)
+	}
+	command, ok := result["snapshot_create"].(map[string]any)
+	if !ok || command["stderr"] != "latest progress" {
+		t.Fatalf("bounded command summary missing: %#v", result)
+	}
+	if command["stdout_total_bytes"] != int64(512*1024) || command["stderr_truncated"] != true {
+		t.Fatalf("output bounds metadata missing: %#v", command)
+	}
+}

@@ -85,3 +85,35 @@ class WatchdogProjectionGraceTests(TestCase):
         task.refresh_from_db()
         self.assertEqual(marked, 1)
         self.assertEqual(task.status, NodeTask.Status.TIMEOUT)
+
+    @patch("apps.node.services.internal.task._send_cancel_command")
+    @patch("apps.node.services.internal.task._sync_task_info")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch("apps.node.services.internal.task.redis_store.get_task_uplink_activities")
+    def test_stale_result_marker_reports_ack_timeout(
+        self,
+        mock_activity,
+        _push_stream,
+        _sync_task_info,
+        _send_cancel,
+    ) -> None:
+        task = self.create_expired_task()
+        mock_activity.return_value = {
+            str(task.id): {
+                "message_type": "task.result",
+                "received_at": (
+                    timezone.now()
+                    - timezone.timedelta(
+                        seconds=node_conf.TASK_RESULT_UPLINK_PROJECTION_GRACE_SECONDS + 1
+                    )
+                ).timestamp(),
+            }
+        }
+
+        marked = sweep_watchdog_timeouts()
+
+        task.refresh_from_db()
+        self.assertEqual(marked, 1)
+        self.assertEqual(task.status, NodeTask.Status.TIMEOUT)
+        self.assertEqual(task.last_error, "result acknowledgement timeout")
+        self.assertEqual(task.result["diagnostic_error_code"], "RESULT_ACK_TIMEOUT")

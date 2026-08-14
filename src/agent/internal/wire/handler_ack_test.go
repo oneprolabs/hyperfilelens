@@ -2,6 +2,7 @@ package wire
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -69,6 +70,38 @@ func TestFlushUnreportedWaitsForAckInAckMode(t *testing.T) {
 	if len(pending) != 0 {
 		t.Fatalf("pending after ack = %d, want 0", len(pending))
 	}
+	if err := handler.FlushUnreportedResults(t.Context(), sender); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.frames) != 1 {
+		t.Fatalf("frames after ack = %d, want no retransmission", len(sender.frames))
+	}
+}
+
+func TestFlushUnreportedRetransmitsIdenticalResultUntilAck(t *testing.T) {
+	handler, _ := newFinishedTaskHandler(t)
+	handler.SetTaskResultAckEnabled(true)
+	sender := &captureSender{}
+	if err := handler.FlushUnreportedResults(t.Context(), sender); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.FlushUnreportedResults(t.Context(), sender); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.frames) != 2 {
+		t.Fatalf("frames = %d, want 2", len(sender.frames))
+	}
+	first, err := json.Marshal(sender.frames[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := json.Marshal(sender.frames[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("retransmitted result changed:\n%s\n%s", first, second)
+	}
 }
 
 func TestFlushUnreportedKeepsLegacyMarkOnWrite(t *testing.T) {
@@ -83,6 +116,57 @@ func TestFlushUnreportedKeepsLegacyMarkOnWrite(t *testing.T) {
 	}
 	if len(pending) != 0 {
 		t.Fatalf("legacy pending = %d, want 0", len(pending))
+	}
+}
+
+func TestLateCancelPreservesSucceededResultAwaitingAck(t *testing.T) {
+	handler, repo := newFinishedTaskHandler(t)
+	handler.SetTaskResultAckEnabled(true)
+	sender := &captureSender{}
+	if err := handler.Handle(
+		t.Context(),
+		[]byte(`{"type":"task.cancel","task_id":"task-1","node_id":1}`),
+		sender,
+	); err != nil {
+		t.Fatal(err)
+	}
+	task, err := repo.Get(t.Context(), "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != model.TaskStatusSucceeded || task.Result["kopia_snapshot_id"] != "snap-1" {
+		t.Fatalf("late cancel overwrote terminal success: %#v", task)
+	}
+	if task.ResultReported {
+		t.Fatal("late cancel must leave success pending for ACK retry")
+	}
+}
+
+func TestRunningTaskCancelPersistsCancelledState(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := database.NewTaskRepo(db)
+	if err := repo.RecordCommand(ctx, database.RecordInput{TaskID: "running-1", Kind: "backup.run"}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(nil, controller.NewTracker(), repo)
+	if err := handler.Handle(
+		ctx,
+		[]byte(`{"type":"task.cancel","task_id":"running-1","node_id":1}`),
+		&captureSender{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	task, err := repo.Get(ctx, "running-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != model.TaskStatusCancelled || task.Error != "canceled" {
+		t.Fatalf("task = %#v, want cancelled", task)
 	}
 }
 

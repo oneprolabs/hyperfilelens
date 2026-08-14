@@ -1,7 +1,6 @@
 package process
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -11,9 +10,13 @@ import (
 
 // Result holds captured subprocess output.
 type Result struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
+	Stdout           string
+	Stderr           string
+	ExitCode         int
+	StdoutTotalBytes int64
+	StderrTotalBytes int64
+	StdoutTruncated  bool
+	StderrTruncated  bool
 }
 
 // Run starts bin with args, optional extra env pairs (KEY=value), and workDir.
@@ -36,9 +39,10 @@ func Run(
 	if len(extraEnv) > 0 {
 		cmd.Env = append(os.Environ(), mapToEnv(extraEnv)...)
 	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := newBoundedTailBuffer(streamStdoutLimit)
+	stderr := newBoundedTailBuffer(streamStderrLimit)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		return Result{}, err
 	}
@@ -51,8 +55,12 @@ func Run(
 	defer stopKill()
 	waitErr := cmd.Wait()
 	res := Result{
-		Stdout: stringsTrim(stdout.String()),
-		Stderr: stringsTrim(stderr.String()),
+		Stdout:           stringsTrim(stdout.String()),
+		Stderr:           stringsTrim(stderr.String()),
+		StdoutTotalBytes: stdout.TotalBytes(),
+		StderrTotalBytes: stderr.TotalBytes(),
+		StdoutTruncated:  stdout.Truncated(),
+		StderrTruncated:  stderr.Truncated(),
 	}
 	if waitErr == nil {
 		return res, nil

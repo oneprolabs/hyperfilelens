@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from apps.node import conf as node_conf
 from apps.node.models import Node, NodeTask
+from apps.node.metrics import TASK_RESULT_RETRANSMISSIONS
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.agent_log import task_log_context
 from apps.node.services.internal.node_naming import (
@@ -279,6 +280,21 @@ def _handle_task_progress(*, node_id: int, message: ParsedUplink) -> None:
 def _handle_task_result(*, node_id: int, message: ParsedUplink) -> NodeTask:
     if not message.task_id:
         raise LookupError("task_id is required")
+    previous_status = NodeTask.objects.filter(
+        pk=message.task_id,
+        node_id=node_id,
+    ).values_list("status", flat=True).first()
+    incoming_status = (message.status or "success").lower()
+    is_retransmission = (
+        previous_status == NodeTask.Status.SUCCESS
+        and incoming_status in {"success", "succeeded", "ok"}
+    ) or (
+        previous_status == NodeTask.Status.FAILED
+        and incoming_status not in {"success", "succeeded", "ok", "canceled", "cancelled", "running"}
+    ) or (
+        previous_status == NodeTask.Status.CANCELED
+        and incoming_status in {"canceled", "cancelled"}
+    )
     task = complete_task(
         task_id=message.task_id,
         node_id=node_id,
@@ -286,6 +302,8 @@ def _handle_task_result(*, node_id: int, message: ParsedUplink) -> NodeTask:
         result=message.result or {},
         error=message.error,
     )
+    if is_retransmission:
+        TASK_RESULT_RETRANSMISSIONS.inc()
     logger.info(
         "agent task result committed %s status=%s",
         task_log_context(node_id=node_id, task_id=message.task_id, kind=task.kind),
