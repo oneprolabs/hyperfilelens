@@ -1252,6 +1252,8 @@ validate_release_publish_artifacts() {
 		|| die "release package missing internal Web pool configuration"
 	[[ -f "${pkg_root}/deploy/nginx/snippets/hfl-active-upstreams.conf" ]] \
 		|| die "release package missing blue/green upstream configuration"
+	[[ -f "${pkg_root}/deploy/nginx/snippets/check-language-packs.sh" ]] \
+		|| die "release package missing language-pack health check"
 	[[ -f "${pkg_root}/deploy/blue-green/active-color" ]] \
 		|| die "release package missing blue/green initial state"
 	[[ -d "${releases}" && -n "$(ls -A "${releases}" 2>/dev/null)" ]] \

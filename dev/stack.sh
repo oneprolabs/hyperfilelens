@@ -1288,7 +1288,7 @@ cmd_status() {
 }
 
 cmd_doctor() {
-	local failures=0 command image mode
+	local failures=0 command image mode invalid_language_path
 	ensure_env_file
 	apply_mirror_env_defaults
 	for command in docker go python3 openssl timeout flock gzip sha256sum realpath; do
@@ -1318,10 +1318,27 @@ cmd_doctor() {
 	if [[ -d "${ROOT}/data/lang-packs" ]]; then
 		local language_root="${ROOT}/data/lang-packs/versions/$(read_project_version)"
 		mode="$(stat -c '%a' "${ROOT}/data/lang-packs")"
-		if [[ "${mode}" =~ ^(755|775|777)$ && -r "${language_root}/installed.json" ]]; then
+		invalid_language_path="$(
+			find "${ROOT}/data/lang-packs" "${ROOT}/data/lang-packs/versions" \
+				"${language_root}" -maxdepth 0 -type d ! -perm 0755 \
+				-print -quit 2>/dev/null || true
+		)"
+		if [[ -z "${invalid_language_path}" ]]; then
+			invalid_language_path="$(
+				find "${language_root}" -mindepth 1 \
+				\( \( -type d ! -perm 0755 \) -o \( -type f ! -perm 0644 \) \) \
+					-print -quit 2>/dev/null || true
+			)"
+		fi
+		if [[ "${mode}" == "755" \
+			&& -r "${language_root}/installed.json" \
+			&& -z "${invalid_language_path}" ]]; then
 			printf 'ok      language packs mode=%s manifest=readable\n' "${mode}"
 		else
-			printf 'invalid language packs mode=%s or manifest unreadable (run up)\n' "${mode}"
+			printf 'invalid language packs mode=%s, manifest, or catalog permissions (run up)\n' \
+				"${mode}"
+			[[ -z "${invalid_language_path}" ]] \
+				|| printf 'invalid language pack path %s\n' "${invalid_language_path}"
 			failures=$((failures + 1))
 		fi
 	else

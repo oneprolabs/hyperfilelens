@@ -55,17 +55,35 @@ with tarfile.open(archive, "w:gz") as package:
     for name, content in files.items():
         member = tarfile.TarInfo(name)
         member.size = len(content)
-        member.mode = 0o644
+        # Runtime permissions must not trust archive metadata or caller umask.
+        member.mode = 0o600
         package.addfile(member, io.BytesIO(content))
 PY
 
+original_umask="$(umask)"
+umask 0077
 ensure_data_dirs
 sync_bundled_language_packs
+umask "${original_umask}"
 language_base="${ROOT}/data/lang-packs"
 language_root="${language_base}/versions/1.2.3"
 [[ -f "${language_root}/zh-hans/manifest.json" ]]
 [[ -f "${language_root}/fr/manifest.json" ]]
 [[ -f "${language_root}/.legacy-flat-layout-reviewed" ]]
+
+python3 - "${language_root}/zh-hans" <<'PY'
+import pathlib
+import stat
+import sys
+
+pack_root = pathlib.Path(sys.argv[1])
+for path in [pack_root, *pack_root.rglob("*")]:
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if path.is_dir():
+        assert mode == 0o755, (path, oct(mode))
+    elif path.is_file():
+        assert mode == 0o644, (path, oct(mode))
+PY
 
 mv "${language_root}/zh-hans" "${language_root}/.backup-zh-hans-100"
 mkdir -p "${language_root}/.incoming-zh-hans-100"
@@ -169,6 +187,38 @@ jq -e 'length == 0' "${language_root}/zh-hans/frontend/messages.json" >/dev/null
 rm -f "${ROOT}/payload/language-packs/hyperfilelens-lang-zz-1.2.3.tar.gz"
 sync_bundled_language_packs
 jq -e '.revision == 2' "${language_root}/zh-hans/frontend/messages.json" >/dev/null
+
+# A permission-normalization failure must stop before the current package is
+# replaced. This also guards explicit error propagation when the activation
+# function is invoked from an if-condition, where Bash errexit is suppressed.
+permission_mock_bin="${test_root}/permission-mock-bin"
+mkdir -p "${permission_mock_bin}"
+cat >"${permission_mock_bin}/chmod" <<'SH'
+#!/bin/sh
+if [ "${1:-}" = "0755" ]; then
+	exit 1
+fi
+exec /bin/chmod "$@"
+SH
+chmod +x "${permission_mock_bin}/chmod"
+before_permission_failure_hash="$(
+	sha256sum "${language_root}/zh-hans/frontend/messages.json"
+)"
+if (
+	PATH="${permission_mock_bin}:${PATH}" activate_language_pack_archive \
+		"${ROOT}/payload/language-packs/hyperfilelens-lang-zh-hans-1.2.3.tar.gz" \
+		1.2.3 "${language_root}"
+) >/dev/null 2>&1; then
+	printf 'ERROR: language pack activation ignored a permission failure\n' >&2
+	exit 1
+fi
+[[ "$(sha256sum "${language_root}/zh-hans/frontend/messages.json")" \
+	== "${before_permission_failure_hash}" ]]
+if find "${language_root}" -mindepth 1 -maxdepth 1 \
+	\( -name '.extract-*' -o -name '.incoming-*' \) -print -quit | grep -q .; then
+	printf 'ERROR: permission failure left language-pack activation residue\n' >&2
+	exit 1
+fi
 
 # Simulate termination after the installed package was moved to the collection
 # backup but before its replacement was promoted. The next sync must restore a
