@@ -33,6 +33,8 @@ describe('manual restore wizard layout', () => {
     )
 
     expect(restoreDialog.match(/<WizardSteps/g)).toHaveLength(1)
+    expect(restoreDialog).toContain('responsive-horizontal')
+    expect(restoreDialog).toContain('class="fullscreen-form-layout dp-restore-wizard-layout"')
     expect(restoreDialog.match(/<main class="fullscreen-form-main fullscreen-form-main--wizard">/g)).toHaveLength(1)
     expect(restoreDialog).toContain('fullscreen-form-card fullscreen-form-step-section fullscreen-form-step-section--active dp-restore-wizard-card')
     expect(restoreDialog).toContain('fullscreen-form-section dp-restore-wizard-body')
@@ -82,8 +84,21 @@ describe('manual restore wizard layout', () => {
     expect(page).not.toContain('72px !important;')
   })
 
+  it('keeps mapping errors in flow so they do not cover the next row', () => {
+    const errorRule = page.match(/\.create-recovery-path-input__error \{([\s\S]*?)\n\}/)?.[1] || ''
+
+    expect(errorRule).toContain('margin: 4px 0 0;')
+    expect(errorRule).toContain('background: var(--color-error-light);')
+    expect(errorRule).not.toContain('position: absolute;')
+  })
+
+  it('relies on field errors without a redundant invalid-row state', () => {
+    expect(page).not.toContain('recovery-dir-selection-row--invalid')
+  })
+
   it('fills the visible main area with the shared restore wizard section', () => {
     expect(page).toMatch(/\.dp-restore-wizard-body \{[\s\S]*?flex: 1 0 auto;[\s\S]*?min-height: 0;/)
     expect(page).toMatch(/\.dp-restore-wizard-card \{[\s\S]*?display: flex;[\s\S]*?flex: 1 0 auto;[\s\S]*?flex-direction: column;/)
+    expect(page).toMatch(/@media \(min-width: 768px\) \{[\s\S]*?\.dp-restore-wizard-layout \{[\s\S]*?flex-direction: row;[\s\S]*?align-items: stretch;/)
   })
 })

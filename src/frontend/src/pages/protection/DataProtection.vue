@@ -10864,7 +10864,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             </div>
           </div>
 
-          <div class="fullscreen-form-layout">
+          <div class="fullscreen-form-layout dp-restore-wizard-layout">
             <WizardSteps
               v-if="recEntryStage === 'wizard'"
               as="aside"
@@ -10872,6 +10872,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               :current-step="recStep"
               :is-done="isRecStepDone"
               :clickable="false"
+              responsive-horizontal
               :aria-label="t('protection.backupsPage.createRestoreWizardAria')"
             />
 
@@ -14791,21 +14792,17 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 }
 
 .create-recovery-path-input__error {
-  position: absolute;
-  z-index: 3;
-  top: calc(100% + 4px);
-  left: 0;
   display: flex;
   min-width: 100%;
-  max-width: min(360px, calc(100vw - 48px));
+  max-width: 100%;
   align-items: flex-start;
   justify-content: space-between;
   gap: 6px;
-  margin: 0;
+  margin: 4px 0 0;
   padding: 4px 8px;
   border: 1px solid color-mix(in srgb, var(--el-color-danger) 38%, white);
   border-radius: 4px;
-  background: #fff7f7;
+  background: var(--color-error-light);
   box-shadow: 0 3px 8px rgba(127, 29, 29, 0.12);
   color: var(--el-color-danger);
   font-size: 12px;
@@ -16366,6 +16363,13 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   display: flex;
   flex: 1 0 auto;
   flex-direction: column;
+}
+
+@media (min-width: 768px) {
+  .dp-restore-wizard-layout {
+    flex-direction: row;
+    align-items: stretch;
+  }
 }
 
 .dp-wizard-pane {

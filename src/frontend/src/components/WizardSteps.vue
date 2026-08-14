@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Component } from 'vue'
 
 type WizardStepValue = string | number
@@ -14,12 +15,14 @@ const props = withDefaults(defineProps<{
   currentStep: WizardStepValue
   ariaLabel?: string
   clickable?: boolean
+  responsiveHorizontal?: boolean
   as?: string
   isDone?: (step: WizardStepValue, index: number) => boolean
   isLocked?: (step: WizardStepValue, index: number) => boolean
 }>(), {
   ariaLabel: undefined,
   clickable: true,
+  responsiveHorizontal: false,
   as: 'nav',
   isDone: undefined,
   isLocked: undefined,
@@ -28,6 +31,13 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'step-click': [step: WizardStepValue, index: number]
 }>()
+
+const activeStepIndex = computed(() => {
+  const index = props.steps.findIndex((item) => item.step === props.currentStep)
+  return index >= 0 ? index : 0
+})
+
+const activeStepLabel = computed(() => props.steps[activeStepIndex.value]?.label || '')
 
 function stepKey(item: WizardStepItem, index: number) {
   return `${String(item.step)}-${index}`
@@ -55,6 +65,7 @@ function onStepClick(item: WizardStepItem, index: number) {
   <component
     :is="as"
     class="wizard-steps"
+    :class="{ 'wizard-steps--responsive-horizontal': responsiveHorizontal }"
     :aria-label="ariaLabel"
   >
     <template
@@ -118,6 +129,13 @@ function onStepClick(item: WizardStepItem, index: number) {
         aria-hidden="true"
       />
     </template>
+    <div
+      v-if="responsiveHorizontal"
+      class="wizard-steps__compact-status"
+      aria-hidden="true"
+    >
+      {{ activeStepIndex + 1 }}/{{ steps.length }} · {{ activeStepLabel }}
+    </div>
   </component>
 </template>
 
@@ -237,6 +255,75 @@ button.wizard-steps__item {
     height: 20px;
     min-height: 20px;
     flex-basis: 20px;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .wizard-steps--responsive-horizontal {
+    width: 100%;
+    flex-direction: row;
+    align-items: flex-start;
+    padding: 0 4px;
+    overflow: hidden;
+  }
+
+  .wizard-steps--responsive-horizontal .wizard-steps__item {
+    flex: 0 1 112px;
+    flex-direction: column;
+    gap: 6px;
+    text-align: center;
+  }
+
+  .wizard-steps--responsive-horizontal .wizard-steps__label {
+    max-width: 112px;
+    font-size: 12px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .wizard-steps--responsive-horizontal .wizard-steps__connector {
+    width: auto;
+    height: 1px;
+    min-height: 1px;
+    flex: 1 1 20px;
+    margin: 14px 6px 0;
+  }
+}
+
+.wizard-steps__compact-status {
+  display: none;
+}
+
+@media (max-width: 479.98px) {
+  .wizard-steps--responsive-horizontal {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .wizard-steps--responsive-horizontal .wizard-steps__item {
+    min-width: 28px;
+    flex: 0 0 28px;
+  }
+
+  .wizard-steps--responsive-horizontal .wizard-steps__label {
+    display: none;
+  }
+
+  .wizard-steps--responsive-horizontal .wizard-steps__connector {
+    margin-right: 4px;
+    margin-left: 4px;
+  }
+
+  .wizard-steps--responsive-horizontal .wizard-steps__compact-status {
+    display: block;
+    width: 100%;
+    flex: 0 0 100%;
+    color: rgb(71 85 105);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 18px;
+    text-align: center;
   }
 }
 </style>
