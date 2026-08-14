@@ -47,6 +47,15 @@ status marker. Package deployment still follows the installer's compatibility
 rules; database rollback uses a verified managed backup rather than installing
 an older package over newer data.
 
+PROD promotion creates an immutable hard-link snapshot while holding the TEST
+release-store lock, then releases that lock before network transfer. It keeps
+an interrupted archive in its version-scoped incoming directory. Each transfer
+attempt has a bounded runtime and opens a new SSH connection, so a degraded TCP
+session is replaced while the next attempt continues from retained partial
+data. Cancelling a workflow stops its verified TEST-side process group before
+removing temporary credentials and its snapshot; only a complete package that
+passes SHA-256 verification is retained and deployed on PROD.
+
 ## Upgrade transactions
 
 Each package SHA-256 owns one upgrade transaction under
@@ -70,6 +79,10 @@ extension sources, packages `hyperfilelens-X.Y.Z.tar.gz`, and publishes the
 verified assets as the formal GitHub Release. Community deployment is enabled unless
 `COMMUNITY_AUTO_DEPLOY` is explicitly set to `false`.
 
+Community deployment keeps public registration, email-code sign-in, Google OAuth,
+and Turnstile disabled. It does not consume repository-level Google, SMTP, or
+Turnstile configuration.
+
 New Community releases use the stable package name above. Deployment also
 accepts one unambiguous legacy `hyperfilelens-X.Y.Z-SHA7.tar.gz` asset (or its
 split parts), so an already-published historical tag remains deployable. The
@@ -90,23 +103,10 @@ workflows:
 | Variable | `TEST_AUTO_DEPLOY` | Set to `false` to retain Enterprise packages without deploying TEST |
 | Variable | `PROD_AUTO_DEPLOY` | Set to `false` to disable automatic PROD promotion |
 | Variable | `COMMUNITY_AUTO_DEPLOY` | Set to `false` to publish Community without deploying it |
-| Variable/secret prefix | `COMMUNITY_*` | Community host and runtime configuration, replacing `PREPROD_*` |
+| Variable/secret prefix | `COMMUNITY_*` | Community host and runtime configuration |
 
 The existing `TEST_*` and `PROD_*` SSH and runtime configuration remains in
-use. Rename old settings as follows:
-
-| Previous name | New name |
-| --- | --- |
-| `HFL_EXTENSION_SOURCES` | `ENTERPRISE_EXTENSION_REPOSITORY` |
-| `HFL_EXTENSION_GIT_TOKEN` | `ENTERPRISE_EXTENSION_GIT_TOKEN` |
-| `TEST_DEPLOY_ENABLED` | `TEST_AUTO_DEPLOY` |
-| `PROD_DEPLOY_ENABLED` | `PROD_AUTO_DEPLOY` |
-| `PREPROD_*` | `COMMUNITY_*` |
-
-During migration, the workflows prefer the new Enterprise and Community
-secret names and fall back to the existing `HFL_EXTENSION_GIT_TOKEN` and
-`PREPROD_*` secrets. Variables use only the new names. This allows credentials
-to be rotated into the new names without exposing or copying existing values.
+use. Legacy repository settings are no longer read by these workflows.
 
 The three automatic-deploy variables deliberately use opt-out semantics:
 missing or empty means enabled, and only the exact value `false` disables the

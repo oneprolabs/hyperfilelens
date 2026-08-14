@@ -99,7 +99,7 @@ jobs:
         if: ${{ steps.version.outputs.edition == 'enterprise' }}
         env:
           ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
-          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN || secrets.HFL_EXTENSION_GIT_TOKEN }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
           RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
         shell: bash
         run: |
@@ -381,7 +381,7 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           ENTERPRISE_COMMIT: ${{ needs.prepare.outputs.enterprise_commit }}
           ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
-          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN || secrets.HFL_EXTENSION_GIT_TOKEN }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -589,7 +589,7 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           ENTERPRISE_COMMIT: ${{ needs.prepare.outputs.enterprise_commit }}
           ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
-          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN || secrets.HFL_EXTENSION_GIT_TOKEN }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1073,7 +1073,7 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           HFL_EXTENSION_EXPECTED_COMMIT: ${{ needs.prepare.outputs.enterprise_commit }}
           ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
-          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN || secrets.HFL_EXTENSION_GIT_TOKEN }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
         run: |
           if [[ "$RELEASE_EDITION" == "enterprise" ]]; then
             export HFL_EXTENSION_SOURCES="${ENTERPRISE_EXTENSION_REPOSITORY}@${RELEASE_TAG}"
@@ -1298,7 +1298,7 @@ jobs:
       turnstile_site_key: ${{ vars.TEST_TURNSTILE_SITE_KEY }}
       turnstile_enabled: ${{ vars.TEST_TURNSTILE_ENABLED == 'true' }}
       email_signup_enabled: ${{ vars.TEST_EMAIL_SIGNUP_ENABLED == 'true' }}
-      email_code_login_enabled: ${{ vars.TEST_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
+      email_code_login_enabled: ${{ vars.TEST_EMAIL_CODE_LOGIN_ENABLED == 'true' }}
       google_oauth_enabled: ${{ vars.TEST_GOOGLE_OAUTH_ENABLED == 'true' }}
       google_client_id: ${{ vars.TEST_GOOGLE_CLIENT_ID }}
       sentry_enabled: ${{ vars.TEST_SENTRY_ENABLED == 'true' }}
@@ -1370,25 +1370,17 @@ jobs:
       tag: ${{ needs.prepare.outputs.release_tag }}
       public_url: ${{ vars.COMMUNITY_PUBLIC_URL }}
       admin_public_url: ${{ vars.COMMUNITY_ADMIN_PUBLIC_URL }}
-      release_download_proxy_url: ${{ vars.COMMUNITY_RELEASE_DOWNLOAD_PROXY_URL }}
       ssh_host: ${{ vars.COMMUNITY_SSH_HOST }}
       ssh_port: ${{ vars.COMMUNITY_SSH_PORT }}
       ssh_user: ${{ vars.COMMUNITY_SSH_USER }}
       ssh_known_hosts: ${{ vars.COMMUNITY_SSH_KNOWN_HOSTS }}
-      turnstile_site_key: ${{ vars.COMMUNITY_TURNSTILE_SITE_KEY }}
-      turnstile_enabled: ${{ vars.COMMUNITY_TURNSTILE_ENABLED == 'true' }}
-      email_signup_enabled: ${{ vars.COMMUNITY_EMAIL_SIGNUP_ENABLED == 'true' }}
-      email_code_login_enabled: ${{ vars.COMMUNITY_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
-      google_oauth_enabled: ${{ vars.COMMUNITY_GOOGLE_OAUTH_ENABLED == 'true' }}
-      google_client_id: ${{ vars.COMMUNITY_GOOGLE_CLIENT_ID }}
+      turnstile_enabled: false
+      email_signup_enabled: false
+      email_code_login_enabled: false
+      google_oauth_enabled: false
       sentry_enabled: ${{ vars.COMMUNITY_SENTRY_ENABLED == 'true' }}
       platform_gateway_auto_deploy: ${{ vars.COMMUNITY_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
       hfl_insecure_tls: ${{ vars.COMMUNITY_HFL_INSECURE_TLS }}
-      smtp_host: ${{ vars.COMMUNITY_SMTP_HOST }}
-      smtp_port: ${{ vars.COMMUNITY_SMTP_PORT }}
-      smtp_username: ${{ vars.COMMUNITY_SMTP_USERNAME }}
-      smtp_security: ${{ vars.COMMUNITY_SMTP_SECURITY }}
-      email_from: ${{ vars.COMMUNITY_EMAIL_FROM }}
       ai_model_provider: ${{ vars.COMMUNITY_AI_MODEL_PROVIDER }}
       ai_model_id: ${{ vars.COMMUNITY_AI_MODEL_ID }}
       ai_model_display_name: ${{ vars.COMMUNITY_AI_MODEL_DISPLAY_NAME }}
@@ -1396,12 +1388,9 @@ jobs:
       ai_multimodal_model_id: ${{ vars.COMMUNITY_AI_MULTIMODAL_MODEL_ID }}
       ai_multimodal_model_display_name: ${{ vars.COMMUNITY_AI_MULTIMODAL_MODEL_DISPLAY_NAME }}
     secrets:
-      ssh_private_key: ${{ secrets.COMMUNITY_SSH_PRIVATE_KEY || secrets.PREPROD_SSH_PRIVATE_KEY }}
-      turnstile_secret_key: ${{ secrets.COMMUNITY_TURNSTILE_SECRET_KEY || secrets.PREPROD_TURNSTILE_SECRET_KEY }}
-      smtp_password: ${{ secrets.COMMUNITY_SMTP_PASSWORD || secrets.PREPROD_SMTP_PASSWORD }}
-      google_client_secret: ${{ secrets.COMMUNITY_GOOGLE_CLIENT_SECRET || secrets.PREPROD_GOOGLE_CLIENT_SECRET }}
-      ai_model_api_base: ${{ secrets.COMMUNITY_AI_MODEL_API_BASE || secrets.PREPROD_AI_MODEL_API_BASE }}
-      ai_model_api_key: ${{ secrets.COMMUNITY_AI_MODEL_API_KEY || secrets.PREPROD_AI_MODEL_API_KEY }}
+      ssh_private_key: ${{ secrets.COMMUNITY_SSH_PRIVATE_KEY }}
+      ai_model_api_base: ${{ secrets.COMMUNITY_AI_MODEL_API_BASE }}
+      ai_model_api_key: ${{ secrets.COMMUNITY_AI_MODEL_API_KEY }}
       sentry_backend_dsn: ${{ secrets.SENTRY_BACKEND_DSN }}
       sentry_frontend_dsn: ${{ secrets.SENTRY_FRONTEND_DSN }}
       sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}

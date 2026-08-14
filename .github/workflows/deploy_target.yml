@@ -74,7 +74,7 @@ on:
       email_code_login_enabled:
         description: Allow tenant email verification-code sign-in
         required: false
-        default: true
+        default: false
         type: boolean
       google_oauth_enabled:
         description: Allow Google OAuth sign-in when credentials are valid
