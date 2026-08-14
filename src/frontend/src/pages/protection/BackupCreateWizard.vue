@@ -7580,7 +7580,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                               :visible="isCreateRecoverySourcePathPickerVisible(group, dirPlan)"
                               trigger="manual"
                               placement="bottom-start"
-                              :width="360"
+                              :width="460"
                               popper-class="create-recovery-path-popover"
                               @update:visible="(visible) => setCreateRecoverySourcePathPickerVisible(group, dirPlan, Boolean(visible))"
                             >
@@ -7588,6 +7588,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 <div class="create-recovery-path-input">
                                   <el-input
                                     :model-value="recoverySourcePathInputValue(dirPlan.sourcePath)"
+                                    :title="recoverySourcePathInputValue(dirPlan.sourcePath) || undefined"
                                     clearable
                                     :placeholder="t('protection.backupsPage.phSelectOrEnterRestoreScope')"
                                     :class="{
@@ -7659,7 +7660,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                   <template #default="{ data }">
                                     <div
                                       class="create-tree-node-content hfl-dir-tree-node"
-                                      :class="{ 'create-tree-node-content--snapshot': isWholeSnapshotRecoveryPath(data.path) }"
+                                      :class="{
+                                        'create-tree-node-content--snapshot': isWholeSnapshotRecoveryPath(data.path),
+                                        'create-tree-node-content--selected': dirPlan.sourcePath === data.path,
+                                      }"
                                       :title="createRecoverySourceTreePathLabel(data)"
                                     >
                                       <Camera
@@ -7673,7 +7677,15 @@ function preserveShallowestPathOrder(paths: string[]) {
                                         class="create-tree-node-content__icon hfl-dir-tree-node__icon create-dir-row__icon--file"
                                       />
                                       <FolderOpen v-else :size="15" class="create-tree-node-content__icon hfl-dir-tree-node__icon create-dir-row__icon--folder" />
-                                      <span class="create-tree-node-content__label hfl-dir-tree-node__label">{{ data.label }}</span>
+                                      <div class="create-tree-node-content__text hfl-dir-tree-node__text">
+                                        <span class="create-tree-node-content__label hfl-dir-tree-node__label">{{ data.label }}</span>
+                                        <span
+                                          v-if="isWholeSnapshotRecoveryPath(data.path)"
+                                          class="create-tree-node-content__snapshot-desc hfl-dir-tree-node__path"
+                                        >
+                                          {{ t('protection.backupsPage.createRecoveryScopeSnapshotDesc') }}
+                                        </span>
+                                      </div>
                                       <button
                                         v-if="data.path_type === 'directory' && !isWholeSnapshotRecoveryPath(data.path)"
                                         type="button"
@@ -7715,6 +7727,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                               @popup-scroll="onCreateRecoveryTargetPopupScroll"
                               @update:model-value="(value) => onCreateRecoveryTargetHostChange(group, dirPlan, value)"
                             >
+                              <template #label="{ label }">
+                                <span class="create-recovery-target-selected-label" :title="label">{{ label }}</span>
+                              </template>
                               <template #header>
                                 <div class="create-recovery-target-quick-option">
                                   <ElTooltip
@@ -7845,6 +7860,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 <div class="create-recovery-path-input">
                                   <el-input
                                     :model-value="dirPlan.restoreDir"
+                                    :title="dirPlan.restoreDir || undefined"
                                     clearable
                                     :placeholder="t('protection.backupsPage.phSelectOrEnterRestoreDirectory')"
                                     :class="{
@@ -8217,7 +8233,7 @@ function preserveShallowestPathOrder(paths: string[]) {
               </el-table-column>
               <el-table-column :label="t('protection.backupsPage.createRecoveryPlanEnabled')" width="96" fixed="right" align="center">
                 <template #default="{ row: group }">
-                  <div class="create-recovery-plan-action">
+                  <div class="create-recovery-plan-action hfl-table-no-tooltip">
                     <el-switch
                       :model-value="group.plan.enabled"
                       inline-prompt
@@ -10448,6 +10464,14 @@ function preserveShallowestPathOrder(paths: string[]) {
   line-height: 1.3;
 }
 
+.create-recovery-target-selected-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .create-recovery-target-node-option__main {
   display: flex;
   min-width: 0;
@@ -10931,16 +10955,36 @@ function preserveShallowestPathOrder(paths: string[]) {
   min-width: 100%;
 }
 
-.create-tree-node-content__label {
+.create-recovery-popover-tree :deep(.el-tree-node__expand-icon.is-leaf) {
+  width: 8px;
+  flex: 0 0 8px;
+  padding: 0;
+}
+
+.create-recovery-popover-tree :deep(.el-tree-node__content:has(> .create-tree-node-content--selected)) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 14%, var(--el-bg-color-overlay)) 0%, color-mix(in srgb, var(--color-primary) 20%, var(--el-bg-color-overlay)) 100%);
+}
+
+.create-tree-node-content__text {
+  flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.create-tree-node-content__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .create-tree-node-content--snapshot .create-tree-node-content__label {
   color: var(--color-primary);
   font-weight: 700;
+}
+
+.create-tree-node-content__snapshot-desc {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 @container (max-width: 900px) {
@@ -11022,7 +11066,6 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 :global(.create-recovery-path-popover.el-popper) {
-  width: min(360px, calc(100vw - 48px)) !important;
   max-width: calc(100vw - 48px);
   padding: 10px 10px 10px 12px;
   border-radius: 10px;
@@ -11668,7 +11711,7 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .source-dir-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 14%, #fff) 0%, color-mix(in srgb, var(--color-primary) 20%, #fff) 100%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 14%, var(--el-bg-color-overlay)) 0%, color-mix(in srgb, var(--color-primary) 20%, var(--el-bg-color-overlay)) 100%);
 }
 
 .source-dir-tree :deep(.el-checkbox) {

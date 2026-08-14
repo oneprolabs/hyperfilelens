@@ -7357,6 +7357,11 @@ function recoverySnapshotRangeDisplayForEntry(hostId: string, entry: RecoveryDir
   return entry.path || ''
 }
 
+function isRecoverySnapshotPickerNodeSelected(entry: RecoveryDirSelectionEntry, node: RecoverySnapshotPickerNode) {
+  if (node.type === 'snapshot') return entry.scope === 'snapshot'
+  return entry.scope !== 'snapshot' && entry.path === node.path
+}
+
 async function ensureRecoverySnapshotBrowseOptions(hostId: string) {
   const snapshotId = selectedSnapshotNumericIdForSource(hostId)
   if (snapshotId > 0) {
@@ -7385,6 +7390,9 @@ function pickRecoverySnapshotRange(hostId: string, entry: RecoveryDirSelectionEn
     node.type === 'snapshot' ? '__snapshot__' : node.path,
     node.type === 'snapshot' ? 'snapshot' : node.type === 'file' ? 'file' : 'dir',
   )
+  recoveryDirectoryTreeRefs
+    .get(recoveryDirectoryTreeKey(hostId, entry.id, 'snapshot'))
+    ?.setCurrentKey(null)
   recSnapshotRangePickerVisible[recoveryDirEntryPickerKey(hostId, entry.id)] = false
 }
 
@@ -11058,7 +11066,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         text
                         type="primary"
                         size="small"
-                        class="hfl-btn-with-icon recovery-plan-missing-cell__action"
+                        class="hfl-btn-with-icon recovery-plan-missing-cell__action hfl-table-no-tooltip"
                         @click="openConfigureRestorePlanFromMissingRow(row)"
                       >
                         <Route :size="14" class="shrink-0" />
@@ -11565,7 +11573,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                 class="source-dir-tree create-recovery-popover-tree hfl-dir-tree hfl-dir-tree--tall"
                                 node-key="id"
                                 lazy
-                                highlight-current
                                 :load="(node, resolve) => loadRecoverySnapshotPickerNode(sourceRow.hostId, node, resolve)"
                                 :props="{ label: 'label', children: 'children', isLeaf: 'isLeaf' }"
                                 @node-click="(data) => pickRecoverySnapshotRange(sourceRow.hostId, entry, data)"
@@ -11573,7 +11580,13 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                 @node-expand="(data) => onRecoveryDirectoryExpansionChange(recoveryDirectoryTreeKey(sourceRow.hostId, entry.id, 'snapshot'), data.id)"
                               >
                                 <template #default="{ data }">
-                                  <div class="create-tree-node-content hfl-dir-tree-node">
+                                  <div
+                                    class="create-tree-node-content hfl-dir-tree-node"
+                                    :class="{
+                                      'create-tree-node-content--snapshot': data.type === 'snapshot',
+                                      'recovery-snapshot-tree-node--selected': isRecoverySnapshotPickerNodeSelected(entry, data),
+                                    }"
+                                  >
                                     <Camera
                                       v-if="data.type === 'snapshot'"
                                       :size="15"
@@ -11591,7 +11604,12 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                     />
                                     <div class="create-tree-node-content__text hfl-dir-tree-node__text">
                                       <span class="create-tree-node-content__label hfl-dir-tree-node__label">{{ data.label }}</span>
-                                      <span v-if="data.path" class="create-tree-node-content__path hfl-dir-tree-node__path">{{ data.path }}</span>
+                                      <span
+                                        v-if="data.type === 'snapshot'"
+                                        class="create-tree-node-content__snapshot-desc create-tree-node-content__path hfl-dir-tree-node__path"
+                                      >
+                                        {{ t('protection.backupsPage.createRecoveryScopeSnapshotDesc') }}
+                                      </span>
                                     </div>
                                     <button
                                       v-if="data.type === 'dir'"
@@ -14038,7 +14056,7 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 4px 8px 22px 0;
+  padding: 4px 8px 0 0;
 }
 
 .recovery-dir-selection-labels {
@@ -14739,10 +14757,6 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   box-shadow: 0 0 0 1px var(--el-color-danger) inset;
 }
 
-.create-recovery-path-input--invalid :deep(.el-input-group__append) {
-  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
-}
-
 .create-recovery-path-input__checking {
   font-size: 11px;
   color: rgb(100 116 139);
@@ -14846,6 +14860,12 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 
 .create-recovery-popover-tree {
   min-width: 100%;
+}
+
+.create-recovery-popover-tree :deep(.el-tree-node__expand-icon.is-leaf) {
+  width: 8px;
+  flex: 0 0 8px;
+  padding: 0;
 }
 
 .create-recovery-conflict-options {
@@ -15092,12 +15112,27 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   border-radius: 4px;
 }
 
+.source-dir-tree :deep(.el-tree-node__expand-icon) {
+  display: inline-flex;
+  width: 20px;
+  height: 30px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+}
+
 .source-dir-tree :deep(.el-tree-node__content:hover) {
   background: rgba(226, 232, 240, 0.5);
 }
 
 .source-dir-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
-  background: linear-gradient(180deg, rgba(219, 234, 254, 0.88) 0%, rgba(191, 219, 254, 0.72) 100%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 14%, var(--el-bg-color-overlay)) 0%, color-mix(in srgb, var(--color-primary) 20%, var(--el-bg-color-overlay)) 100%);
+}
+
+.create-recovery-popover-tree :deep(.el-tree-node__content:has(> .recovery-snapshot-tree-node--selected)) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 14%, var(--el-bg-color-overlay)) 0%, color-mix(in srgb, var(--color-primary) 20%, var(--el-bg-color-overlay)) 100%);
 }
 
 .source-dir-tree :deep(.el-checkbox) {
@@ -15143,12 +15178,21 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   font-size: 13px;
   line-height: 17px;
   color: rgb(30 41 59);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.create-tree-node-content--snapshot .create-tree-node-content__label {
+  color: var(--color-primary);
+  font-weight: 700;
 }
 
 .create-tree-node-content__path {
   font-size: 12px;
   line-height: 15px;
   color: rgb(100 116 139);
+  overflow-wrap: anywhere;
+  white-space: normal;
   word-break: break-word;
 }
 

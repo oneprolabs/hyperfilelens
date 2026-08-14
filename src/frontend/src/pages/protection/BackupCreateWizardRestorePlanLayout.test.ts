@@ -37,7 +37,28 @@ describe('BackupCreateWizard restore plan layout', () => {
     )
 
     expect(sourceTreeTemplate).toContain(':title="createRecoverySourceTreePathLabel(data)"')
+    expect(wizardSource).toMatch(/isCreateRecoverySourcePathPickerVisible\(group, dirPlan\)[\s\S]*?:width="460"/)
     expect(sourceTreeTemplate).toContain('create-tree-node-content--snapshot')
+    expect(sourceTreeTemplate).toContain("'create-tree-node-content--selected': dirPlan.sourcePath === data.path")
+    expect(sourceTreeTemplate).toContain('v-if="isWholeSnapshotRecoveryPath(data.path)"')
+    expect(sourceTreeTemplate).toContain("t('protection.backupsPage.createRecoveryScopeSnapshotDesc')")
+    expect(wizardSource).toContain('.el-tree-node__content:has(> .create-tree-node-content--selected)')
     expect(sourceTreeTemplate).not.toContain('create-tree-node-content__path')
+  })
+
+  it('keeps long restore picker values available instead of silently clipping them', () => {
+    const treeLabelRule = wizardSource.match(/\.create-tree-node-content__label \{([\s\S]*?)\n\}/)?.[1] || ''
+
+    expect(wizardSource).toContain(':title="recoverySourcePathInputValue(dirPlan.sourcePath) || undefined"')
+    expect(wizardSource).toContain('<template #label="{ label }">')
+    expect(wizardSource).toContain('class="create-recovery-target-selected-label" :title="label"')
+    expect(wizardSource).toContain(':title="dirPlan.restoreDir || undefined"')
+    expect(treeLabelRule).toContain('overflow-wrap: anywhere;')
+    expect(treeLabelRule).toContain('white-space: normal;')
+    expect(treeLabelRule).not.toContain('text-overflow: ellipsis;')
+    expect(wizardSource).toContain('.el-tree-node__expand-icon.is-leaf) {\n  width: 8px;')
+    expect(wizardSource).toMatch(/\.source-dir-tree :deep\(\.el-tree-node\.is-current > \.el-tree-node__content\) \{[\s\S]*?var\(--el-bg-color-overlay\)/)
+    expect(wizardSource).not.toContain('width: min(360px, calc(100vw - 48px)) !important;')
+    expect(wizardSource).toContain('class="create-recovery-plan-action hfl-table-no-tooltip"')
   })
 })
