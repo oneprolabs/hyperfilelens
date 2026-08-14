@@ -7912,6 +7912,9 @@ function setRecConflictPolicyForSource(hostId: string, policy: RecoveryConflictP
 }
 
 watch(recOpen, (open) => {
+  if (!open && !isFixedSnapshotRestore.value) {
+    nextTick(() => syncStep3TableSelection())
+  }
   if (typeof document === 'undefined') return
   if (addSourceOpen.value) return
   document.body.style.overflow = open ? 'hidden' : ''
