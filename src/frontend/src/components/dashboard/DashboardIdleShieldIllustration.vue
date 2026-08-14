@@ -17,41 +17,134 @@ const shieldSide =
     aria-hidden="true"
   >
     <defs>
-      <radialGradient id="dashboardIdleShieldShadow" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stop-color="#818cf8" stop-opacity="0.26" />
-        <stop offset="100%" stop-color="#818cf8" stop-opacity="0" />
+      <radialGradient
+        id="dashboardIdleShieldShadow"
+        cx="50%"
+        cy="50%"
+        r="50%"
+      >
+        <stop
+          offset="0%"
+          stop-color="#818cf8"
+          stop-opacity="0.26"
+        />
+        <stop
+          offset="100%"
+          stop-color="#818cf8"
+          stop-opacity="0"
+        />
       </radialGradient>
-      <linearGradient id="dashboardIdleShieldTop" x1="24" y1="14" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+      <linearGradient
+        id="dashboardIdleShieldTop"
+        x1="24"
+        y1="14"
+        x2="48"
+        y2="48"
+        gradientUnits="userSpaceOnUse"
+      >
         <stop stop-color="#ffffff" />
-        <stop offset="0.45" stop-color="#eef2ff" />
-        <stop offset="1" stop-color="#e7ebf3" />
+        <stop
+          offset="0.45"
+          stop-color="#eef2ff"
+        />
+        <stop
+          offset="1"
+          stop-color="#e7ebf3"
+        />
       </linearGradient>
-      <linearGradient id="dashboardIdleShieldSide" x1="24" y1="18" x2="48" y2="52" gradientUnits="userSpaceOnUse">
+      <linearGradient
+        id="dashboardIdleShieldSide"
+        x1="24"
+        y1="18"
+        x2="48"
+        y2="52"
+        gradientUnits="userSpaceOnUse"
+      >
         <stop stop-color="#c8d0df" />
-        <stop offset="1" stop-color="#9aa6bc" />
+        <stop
+          offset="1"
+          stop-color="#9aa6bc"
+        />
       </linearGradient>
-      <linearGradient id="dashboardIdleShieldTint" x1="28" y1="16" x2="44" y2="42" gradientUnits="userSpaceOnUse">
-        <stop stop-color="#818cf8" stop-opacity="0.18" />
-        <stop offset="1" stop-color="#a5b4fc" stop-opacity="0.08" />
+      <linearGradient
+        id="dashboardIdleShieldTint"
+        x1="28"
+        y1="16"
+        x2="44"
+        y2="42"
+        gradientUnits="userSpaceOnUse"
+      >
+        <stop
+          stop-color="#818cf8"
+          stop-opacity="0.18"
+        />
+        <stop
+          offset="1"
+          stop-color="#a5b4fc"
+          stop-opacity="0.08"
+        />
       </linearGradient>
-      <linearGradient id="dashboardIdleShieldHighlight" x1="30" y1="18" x2="38" y2="30" gradientUnits="userSpaceOnUse">
-        <stop stop-color="#ffffff" stop-opacity="0.85" />
-        <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+      <linearGradient
+        id="dashboardIdleShieldHighlight"
+        x1="30"
+        y1="18"
+        x2="38"
+        y2="30"
+        gradientUnits="userSpaceOnUse"
+      >
+        <stop
+          stop-color="#ffffff"
+          stop-opacity="0.85"
+        />
+        <stop
+          offset="1"
+          stop-color="#ffffff"
+          stop-opacity="0"
+        />
       </linearGradient>
-      <filter id="dashboardIdleShieldGlow" x="-30%" y="-20%" width="160%" height="170%">
-        <feDropShadow dx="0" dy="5" stdDeviation="4.5" flood-color="#7c6cf6" flood-opacity="0.18" />
+      <filter
+        id="dashboardIdleShieldGlow"
+        x="-30%"
+        y="-20%"
+        width="160%"
+        height="170%"
+      >
+        <feDropShadow
+          dx="0"
+          dy="5"
+          stdDeviation="4.5"
+          flood-color="#7c6cf6"
+          flood-opacity="0.18"
+        />
       </filter>
     </defs>
 
-    <ellipse cx="36" cy="57" rx="18" ry="5" fill="url(#dashboardIdleShieldShadow)" />
+    <ellipse
+      cx="36"
+      cy="57"
+      rx="18"
+      ry="5"
+      fill="url(#dashboardIdleShieldShadow)"
+    />
 
     <g opacity="0.92">
-      <path :d="shieldSide" fill="url(#dashboardIdleShieldSide)" />
+      <path
+        :d="shieldSide"
+        fill="url(#dashboardIdleShieldSide)"
+      />
     </g>
 
     <g filter="url(#dashboardIdleShieldGlow)">
-      <path :d="shieldFace" fill="url(#dashboardIdleShieldTop)" stroke="#cbd5e1" stroke-width="0.75" />
-      <path :d="shieldFace" fill="url(#dashboardIdleShieldTint)" />
+      <path
+        :d="shieldFace"
+        fill="url(#dashboardIdleShieldTop)"
+        stroke="#cbd5e1"
+        stroke-width="0.75"
+      />
+      <path
+        :d="shieldFace"
+        fill="url(#dashboardIdleShieldTint)"
+      />
       <path
         d="M36 18.5 C41.8 18.5 45.2 21.6 45.2 25.8 L45.2 29.2 C45.2 35.2 41.2 40.2 36 42.8 C30.8 40.2 26.8 35.2 26.8 29.2 L26.8 25.8 C26.8 21.6 30.2 18.5 36 18.5 Z"
         fill="url(#dashboardIdleShieldHighlight)"

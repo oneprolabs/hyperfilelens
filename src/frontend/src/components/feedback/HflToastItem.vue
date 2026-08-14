@@ -106,25 +106,57 @@ onUnmounted(() => {
     @focusin="onFocusIn"
     @focusout="onFocusOut"
   >
-    <span class="hfl-toast__icon" aria-hidden="true">
-      <component :is="icon" :size="18" />
+    <span
+      class="hfl-toast__icon"
+      aria-hidden="true"
+    >
+      <component
+        :is="icon"
+        :size="18"
+      />
     </span>
     <div class="hfl-toast__content">
-      <div v-if="toast.title" class="hfl-toast__title">
+      <div
+        v-if="toast.title"
+        class="hfl-toast__title"
+      >
         <span>{{ toast.title }}</span>
-        <span v-if="toast.repeatCount > 1" class="hfl-toast__repeat">×{{ toast.repeatCount }}</span>
+        <span
+          v-if="toast.repeatCount > 1"
+          class="hfl-toast__repeat"
+        >×{{ toast.repeatCount }}</span>
       </div>
       <p class="hfl-toast__message">
         {{ toast.message }}
-        <span v-if="!toast.title && toast.repeatCount > 1" class="hfl-toast__repeat">×{{ toast.repeatCount }}</span>
+        <span
+          v-if="!toast.title && toast.repeatCount > 1"
+          class="hfl-toast__repeat"
+        >×{{ toast.repeatCount }}</span>
       </p>
-      <div v-if="toast.copyText || toast.details" class="hfl-toast__actions">
-        <button v-if="toast.copyText" type="button" @click="copyDetails">
-          <Check v-if="copied" :size="13" />
-          <Copy v-else :size="13" />
+      <div
+        v-if="toast.copyText || toast.details"
+        class="hfl-toast__actions"
+      >
+        <button
+          v-if="toast.copyText"
+          type="button"
+          @click="copyDetails"
+        >
+          <Check
+            v-if="copied"
+            :size="13"
+          />
+          <Copy
+            v-else
+            :size="13"
+          />
           {{ copied ? t('feedback.toast.copied') : t('feedback.toast.copy') }}
         </button>
-        <button v-if="toast.details" type="button" @click="showDetails">
+        <button
+          v-if="toast.details"
+          type="button"
+          @click="showDetails"
+        >
           {{ detailsActionLabel }}
         </button>
       </div>

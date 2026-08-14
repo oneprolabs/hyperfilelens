@@ -10,9 +10,15 @@ const bodyFill = computed(() => route.path === '/account/notifications')
 </script>
 
 <template>
-  <ModulePage :menus="accountMenus" :body-fill="bodyFill">
+  <ModulePage
+    :menus="accountMenus"
+    :body-fill="bodyFill"
+  >
     <RouterView v-slot="{ Component }">
-      <Transition name="account-route" mode="out-in">
+      <Transition
+        name="account-route"
+        mode="out-in"
+      >
         <component :is="Component" />
       </Transition>
     </RouterView>

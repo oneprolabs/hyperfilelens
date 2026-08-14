@@ -509,13 +509,20 @@ defineExpose({ clearInstallCommand })
     </ElAlert>
 
     <div class="fullscreen-form-step-stack">
-      <div v-if="showRolePicker && !roleLocked" class="fullscreen-form-card">
+      <div
+        v-if="showRolePicker && !roleLocked"
+        class="fullscreen-form-card"
+      >
         <section class="fullscreen-form-section">
           <h3 class="fullscreen-form-section__title">
             <span class="fullscreen-form-section__indicator" />
             {{ t('nodesDeploy.step2') }}
           </h3>
-          <ElRadioGroup :model-value="role" class="deploy-role-grid" @update:model-value="selectRole">
+          <ElRadioGroup
+            :model-value="role"
+            class="deploy-role-grid"
+            @update:model-value="selectRole"
+          >
             <ElRadio
               v-for="opt in roleOptions"
               :key="opt.value"
@@ -525,8 +532,12 @@ defineExpose({ clearInstallCommand })
               class="deploy-role-option !mr-0"
             >
               <div>
-                <div class="deploy-role-option__title">{{ opt.title }}</div>
-                <div class="deploy-role-option__desc">{{ opt.desc }}</div>
+                <div class="deploy-role-option__title">
+                  {{ opt.title }}
+                </div>
+                <div class="deploy-role-option__desc">
+                  {{ opt.desc }}
+                </div>
               </div>
             </ElRadio>
           </ElRadioGroup>
@@ -542,33 +553,46 @@ defineExpose({ clearInstallCommand })
           class="fullscreen-form-section"
           :class="{ 'agent-install-wizard__platform-section': installOnly }"
         >
-          <div v-if="installOnly" class="agent-install-wizard__platform-head">
+          <div
+            v-if="installOnly"
+            class="agent-install-wizard__platform-head"
+          >
             <h3 class="fullscreen-form-section__title">
               <span class="fullscreen-form-section__indicator" />
               {{ isUbuntuHostDeploy ? t('nodesDeploy.proxyReqTitle') : t('nodeLifecycle.osStep') }}
             </h3>
           </div>
-          <h3 v-else class="fullscreen-form-section__title">
+          <h3
+            v-else
+            class="fullscreen-form-section__title"
+          >
             <span class="fullscreen-form-section__indicator" />
             {{ isUbuntuHostDeploy ? t('nodesDeploy.proxyReqTitle') : t('nodeLifecycle.osStep') }}
           </h3>
 
           <template v-if="isUbuntuHostDeploy">
-            <div class="proxy-req-grid" role="list" :aria-label="t('nodesDeploy.proxyReqTitle')">
+            <div
+              class="proxy-req-grid"
+              role="list"
+              :aria-label="t('nodesDeploy.proxyReqTitle')"
+            >
               <div
                 v-for="card in proxyReqCards"
                 :key="card.key"
                 class="proxy-req-card"
                 role="listitem"
               >
-                <div class="proxy-req-card__icon-wrap" aria-hidden="true">
+                <div
+                  class="proxy-req-card__icon-wrap"
+                  aria-hidden="true"
+                >
                   <UbuntuBrandIcon
                     v-if="card.kind === 'ubuntu'"
                     class="proxy-req-card__brand proxy-req-card__brand--ubuntu"
                   />
                   <component
-                    v-else
                     :is="card.icon"
+                    v-else
                     class="proxy-req-card__brand proxy-req-card__brand--hardware"
                     :size="32"
                   />
@@ -602,9 +626,15 @@ defineExpose({ clearInstallCommand })
                   class="os-icon-card__icon-wrap"
                   :class="`os-icon-card__icon-wrap--${opt.value}`"
                 >
-                  <AgentPlatformBrandIcon :os="opt.value" class="os-icon-card__brand" />
+                  <AgentPlatformBrandIcon
+                    :os="opt.value"
+                    class="os-icon-card__brand"
+                  />
                 </span>
-                <span class="os-icon-card__check" aria-hidden="true">
+                <span
+                  class="os-icon-card__check"
+                  aria-hidden="true"
+                >
                   <span />
                 </span>
               </span>
@@ -613,13 +643,42 @@ defineExpose({ clearInstallCommand })
             </button>
           </div>
 
-          <ElRadioGroup v-else :model-value="os" class="source-radio-row" @update:model-value="selectOs">
-            <ElRadio value="linux" border class="source-radio-card !mr-0">{{ t('nodesDeploy.osLinux') }}</ElRadio>
-            <ElRadio value="windows" border class="source-radio-card !mr-0" :disabled="osDisabled.windows">{{ t('nodesDeploy.osWindows') }}</ElRadio>
-            <ElRadio value="macos" border class="source-radio-card !mr-0" :disabled="osDisabled.macos">{{ t('nodesDeploy.osMacos') }}</ElRadio>
+          <ElRadioGroup
+            v-else
+            :model-value="os"
+            class="source-radio-row"
+            @update:model-value="selectOs"
+          >
+            <ElRadio
+              value="linux"
+              border
+              class="source-radio-card !mr-0"
+            >
+              {{ t('nodesDeploy.osLinux') }}
+            </ElRadio>
+            <ElRadio
+              value="windows"
+              border
+              class="source-radio-card !mr-0"
+              :disabled="osDisabled.windows"
+            >
+              {{ t('nodesDeploy.osWindows') }}
+            </ElRadio>
+            <ElRadio
+              value="macos"
+              border
+              class="source-radio-card !mr-0"
+              :disabled="osDisabled.macos"
+            >
+              {{ t('nodesDeploy.osMacos') }}
+            </ElRadio>
           </ElRadioGroup>
 
-          <div v-if="installOnly && !isUbuntuHostDeploy" class="agent-os-support" :class="{ 'is-open': supportOpen }">
+          <div
+            v-if="installOnly && !isUbuntuHostDeploy"
+            class="agent-os-support"
+            :class="{ 'is-open': supportOpen }"
+          >
             <button
               type="button"
               class="agent-os-support__toggle"
@@ -628,25 +687,59 @@ defineExpose({ clearInstallCommand })
             >
               <span class="agent-os-support__toggle-main">
                 <span class="agent-os-support__toggle-icon">
-                  <Info :size="14" aria-hidden="true" />
+                  <Info
+                    :size="14"
+                    aria-hidden="true"
+                  />
                 </span>
                 <span>{{ viewSupportedLabel }}</span>
               </span>
-              <ChevronDown class="agent-os-support__chevron" :size="16" aria-hidden="true" />
+              <ChevronDown
+                class="agent-os-support__chevron"
+                :size="16"
+                aria-hidden="true"
+              />
             </button>
-            <div v-show="supportOpen" class="agent-os-support__body">
+            <div
+              v-show="supportOpen"
+              class="agent-os-support__body"
+            >
               <template v-if="os === 'linux'">
-                <p class="agent-os-support__group">{{ t('nodeLifecycle.supportedGroupDeb') }}</p>
+                <p class="agent-os-support__group">
+                  {{ t('nodeLifecycle.supportedGroupDeb') }}
+                </p>
                 <div class="agent-os-support__grid">
-                  <div v-for="name in LINUX_DISTROS.deb" :key="name" class="agent-os-support__chip">{{ name }}</div>
+                  <div
+                    v-for="name in LINUX_DISTROS.deb"
+                    :key="name"
+                    class="agent-os-support__chip"
+                  >
+                    {{ name }}
+                  </div>
                 </div>
-                <p class="agent-os-support__group">{{ t('nodeLifecycle.supportedGroupRpm') }}</p>
+                <p class="agent-os-support__group">
+                  {{ t('nodeLifecycle.supportedGroupRpm') }}
+                </p>
                 <div class="agent-os-support__grid">
-                  <div v-for="name in LINUX_DISTROS.rpm" :key="name" class="agent-os-support__chip">{{ name }}</div>
+                  <div
+                    v-for="name in LINUX_DISTROS.rpm"
+                    :key="name"
+                    class="agent-os-support__chip"
+                  >
+                    {{ name }}
+                  </div>
                 </div>
-                <p class="agent-os-support__group">{{ t('nodeLifecycle.supportedGroupCloud') }}</p>
+                <p class="agent-os-support__group">
+                  {{ t('nodeLifecycle.supportedGroupCloud') }}
+                </p>
                 <div class="agent-os-support__grid">
-                  <div v-for="name in LINUX_DISTROS.cloud" :key="name" class="agent-os-support__chip">{{ name }}</div>
+                  <div
+                    v-for="name in LINUX_DISTROS.cloud"
+                    :key="name"
+                    class="agent-os-support__chip"
+                  >
+                    {{ name }}
+                  </div>
                 </div>
                 <div class="agent-os-support__notes">
                   <p class="agent-os-support__note">
@@ -660,7 +753,9 @@ defineExpose({ clearInstallCommand })
                 </div>
               </template>
               <template v-else-if="os === 'windows'">
-                <p class="agent-os-support__group">{{ t('nodeLifecycle.supportedGroupDesktopServer') }}</p>
+                <p class="agent-os-support__group">
+                  {{ t('nodeLifecycle.supportedGroupDesktopServer') }}
+                </p>
                 <div class="agent-os-support__grid">
                   <div class="agent-os-support__chip">
                     <span class="agent-os-support__chip-name">Windows 10 / 11</span>
@@ -673,7 +768,9 @@ defineExpose({ clearInstallCommand })
                 </div>
               </template>
               <template v-else>
-                <p class="agent-os-support__group">{{ t('nodeLifecycle.supportedGroupHardware') }}</p>
+                <p class="agent-os-support__group">
+                  {{ t('nodeLifecycle.supportedGroupHardware') }}
+                </p>
                 <div class="agent-os-support__grid">
                   <div class="agent-os-support__chip">
                     <span class="agent-os-support__chip-name">Apple Silicon</span>
@@ -688,7 +785,12 @@ defineExpose({ clearInstallCommand })
             </div>
           </div>
 
-          <p v-if="linuxOnlyRoleHint && !isUbuntuHostDeploy" class="fullscreen-form-field__hint">{{ linuxOnlyRoleHint }}</p>
+          <p
+            v-if="linuxOnlyRoleHint && !isUbuntuHostDeploy"
+            class="fullscreen-form-field__hint"
+          >
+            {{ linuxOnlyRoleHint }}
+          </p>
         </section>
       </div>
 
@@ -705,18 +807,33 @@ defineExpose({ clearInstallCommand })
               tag="p"
               class="fullscreen-form-field__hint agent-install-wizard__command-lead"
             >
-              <template #root><strong>root</strong></template>
-              <template #sudo><strong>sudo</strong></template>
-              <template #cmd><strong>CMD</strong></template>
-              <template #powershell><strong>PowerShell</strong></template>
-              <template #administrator><strong>{{ t('nodeLifecycle.installLeadAdministrator') }}</strong></template>
-              <template #terminal><strong>{{ t('nodeLifecycle.installLeadTerminal') }}</strong></template>
+              <template #root>
+                <strong>root</strong>
+              </template>
+              <template #sudo>
+                <strong>sudo</strong>
+              </template>
+              <template #cmd>
+                <strong>CMD</strong>
+              </template>
+              <template #powershell>
+                <strong>PowerShell</strong>
+              </template>
+              <template #administrator>
+                <strong>{{ t('nodeLifecycle.installLeadAdministrator') }}</strong>
+              </template>
+              <template #terminal>
+                <strong>{{ t('nodeLifecycle.installLeadTerminal') }}</strong>
+              </template>
             </I18nT>
 
             <div class="source-script-shell agent-install-wizard__console">
               <div class="agent-install-wizard__console-bar">
                 <span>{{ consoleBarTitle }}</span>
-                <span v-if="installGenerated" class="agent-install-wizard__token-status">
+                <span
+                  v-if="installGenerated"
+                  class="agent-install-wizard__token-status"
+                >
                   <span>{{ tokenValidityLabel }}</span>
                 </span>
               </div>
@@ -728,7 +845,10 @@ defineExpose({ clearInstallCommand })
                 <pre class="agent-install-wizard__console-pre">{{ displayCommand }}</pre>
               </div>
               <div class="agent-install-wizard__console-foot agent-install-wizard__console-foot--copy-only">
-                <span v-if="installGenerated" class="agent-install-wizard__console-hint">
+                <span
+                  v-if="installGenerated"
+                  class="agent-install-wizard__console-hint"
+                >
                   {{ t('nodeLifecycle.installCommandReusable') }}
                 </span>
                 <button
@@ -738,7 +858,11 @@ defineExpose({ clearInstallCommand })
                   :disabled="loading"
                   @click="generateInstallCommand"
                 >
-                  <RefreshCw :size="12" :class="{ 'is-spinning': loading }" aria-hidden="true" />
+                  <RefreshCw
+                    :size="12"
+                    :class="{ 'is-spinning': loading }"
+                    aria-hidden="true"
+                  />
                   <span>{{ t('nodeLifecycle.generateInstallCommand') }}</span>
                 </button>
                 <button
@@ -749,23 +873,47 @@ defineExpose({ clearInstallCommand })
                   :disabled="!displayCommand || loading || !tokenIsUsable"
                   @click="onCopy"
                 >
-                  <Check v-if="copied" :size="12" aria-hidden="true" />
-                  <Copy v-else :size="12" aria-hidden="true" />
+                  <Check
+                    v-if="copied"
+                    :size="12"
+                    aria-hidden="true"
+                  />
+                  <Copy
+                    v-else
+                    :size="12"
+                    aria-hidden="true"
+                  />
                   <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                 </button>
               </div>
             </div>
 
-            <div v-if="localCommandWarning" class="add-s3-warning agent-install-wizard__warn" role="note">
-              <TriangleAlert :size="16" aria-hidden="true" />
+            <div
+              v-if="localCommandWarning"
+              class="add-s3-warning agent-install-wizard__warn"
+              role="note"
+            >
+              <TriangleAlert
+                :size="16"
+                aria-hidden="true"
+              />
               <div class="agent-install-wizard__warn-body">
-                <p class="agent-install-wizard__warn-title">{{ t('nodeLifecycle.localInstallCommandTitle') }}</p>
-                <p class="agent-install-wizard__warn-desc">{{ t('nodeLifecycle.localInstallCommandWarning') }}</p>
+                <p class="agent-install-wizard__warn-title">
+                  {{ t('nodeLifecycle.localInstallCommandTitle') }}
+                </p>
+                <p class="agent-install-wizard__warn-desc">
+                  {{ t('nodeLifecycle.localInstallCommandWarning') }}
+                </p>
               </div>
             </div>
 
-            <div class="install-flow-note" :aria-label="t('nodeLifecycle.installFlowLabel')">
-              <p class="install-flow-note__label">{{ t('nodeLifecycle.installFlowLabel') }}</p>
+            <div
+              class="install-flow-note"
+              :aria-label="t('nodeLifecycle.installFlowLabel')"
+            >
+              <p class="install-flow-note__label">
+                {{ t('nodeLifecycle.installFlowLabel') }}
+              </p>
               <div class="install-flow-note__steps">
                 <p class="install-flow-note__step">
                   <strong>{{ t('nodeLifecycle.installFlowStepDownload') }}</strong>
@@ -781,139 +929,215 @@ defineExpose({ clearInstallCommand })
                 </p>
               </div>
             </div>
-
           </template>
 
           <template v-else>
-          <div class="node-lifecycle-wizard__tabs">
-            <button
-              v-for="tab in visibleTabs"
-              :key="tab"
-              type="button"
-              class="node-lifecycle-wizard__tab"
-              :class="{ 'node-lifecycle-wizard__tab--active': activeTab === tab }"
-              @click="activeTab = tab"
-            >
-              {{ t(`nodeLifecycle.tab.${tab}`) }}
-            </button>
-          </div>
-
-          <div class="agent-install-wizard__body-grid">
-            <div class="agent-install-wizard__platform">
-              <AgentPlatformBrandIcon :os="os" class="agent-install-wizard__platform-icon" />
-              <p class="agent-install-wizard__platform-name">{{ roleLabel }}</p>
-              <div v-if="activeTab !== 'install'" class="agent-install-wizard__platform-hints">
-                <p class="agent-install-wizard__platform-hint-line">
-                  <span>{{ t('nodeLifecycle.installPathLabel') }}</span>
-                  <strong>{{ paths.installDir }}</strong>
-                </p>
-                <p class="agent-install-wizard__platform-hint-line">
-                  <span>{{ t('nodeLifecycle.dataPathLabel') }}</span>
-                  <strong>{{ paths.dataDir }}</strong>
-                </p>
-                <p class="agent-install-wizard__platform-hint-line">
-                  <span>{{ t('nodeLifecycle.serviceNameLabel') }}</span>
-                  <strong>{{ paths.service }}</strong>
-                </p>
-              </div>
+            <div class="node-lifecycle-wizard__tabs">
+              <button
+                v-for="tab in visibleTabs"
+                :key="tab"
+                type="button"
+                class="node-lifecycle-wizard__tab"
+                :class="{ 'node-lifecycle-wizard__tab--active': activeTab === tab }"
+                @click="activeTab = tab"
+              >
+                {{ t(`nodeLifecycle.tab.${tab}`) }}
+              </button>
             </div>
 
-            <div class="agent-install-wizard__command-col">
-              <p class="fullscreen-form-field__hint agent-install-wizard__command-lead">{{ tabHint }}</p>
-
-              <ElAlert
-                v-if="activeTab === 'upgrade' && upgradeError"
-                type="error"
-                :closable="false"
-                show-icon
-                :title="upgradeError"
-              />
-
-              <div v-if="activeTab === 'uninstall'" class="node-lifecycle-wizard__options">
-                <ElCheckbox v-model="purgeAll">{{ t('nodeLifecycle.purgeAll') }}</ElCheckbox>
+            <div class="agent-install-wizard__body-grid">
+              <div class="agent-install-wizard__platform">
+                <AgentPlatformBrandIcon
+                  :os="os"
+                  class="agent-install-wizard__platform-icon"
+                />
+                <p class="agent-install-wizard__platform-name">
+                  {{ roleLabel }}
+                </p>
+                <div
+                  v-if="activeTab !== 'install'"
+                  class="agent-install-wizard__platform-hints"
+                >
+                  <p class="agent-install-wizard__platform-hint-line">
+                    <span>{{ t('nodeLifecycle.installPathLabel') }}</span>
+                    <strong>{{ paths.installDir }}</strong>
+                  </p>
+                  <p class="agent-install-wizard__platform-hint-line">
+                    <span>{{ t('nodeLifecycle.dataPathLabel') }}</span>
+                    <strong>{{ paths.dataDir }}</strong>
+                  </p>
+                  <p class="agent-install-wizard__platform-hint-line">
+                    <span>{{ t('nodeLifecycle.serviceNameLabel') }}</span>
+                    <strong>{{ paths.service }}</strong>
+                  </p>
+                </div>
               </div>
-              <div v-if="activeTab === 'service'" class="node-lifecycle-wizard__options">
-                <ElRadioGroup v-model="serviceAction" size="small">
-                  <ElRadio value="status">{{ t('nodeLifecycle.serviceStatus') }}</ElRadio>
-                  <ElRadio value="start">{{ t('nodeLifecycle.serviceStart') }}</ElRadio>
-                  <ElRadio value="stop">{{ t('nodeLifecycle.serviceStop') }}</ElRadio>
-                  <ElRadio value="restart">{{ t('nodeLifecycle.serviceRestart') }}</ElRadio>
-                </ElRadioGroup>
-              </div>
 
-              <div class="source-script-shell agent-install-wizard__console">
-                <div class="agent-install-wizard__console-bar">
-                  <span>{{ consoleBarTitle }}</span>
-                  <span v-if="activeTab === 'upgrade' && releaseVersion">v{{ releaseVersion }}</span>
-                  <span
-                    v-else-if="activeTab === 'install' && installGenerated"
-                    class="agent-install-wizard__token-status"
-                  >
-                    <span>{{ tokenValidityLabel }}</span>
-                  </span>
+              <div class="agent-install-wizard__command-col">
+                <p class="fullscreen-form-field__hint agent-install-wizard__command-lead">
+                  {{ tabHint }}
+                </p>
+
+                <ElAlert
+                  v-if="activeTab === 'upgrade' && upgradeError"
+                  type="error"
+                  :closable="false"
+                  show-icon
+                  :title="upgradeError"
+                />
+
+                <div
+                  v-if="activeTab === 'uninstall'"
+                  class="node-lifecycle-wizard__options"
+                >
+                  <ElCheckbox v-model="purgeAll">
+                    {{ t('nodeLifecycle.purgeAll') }}
+                  </ElCheckbox>
                 </div>
                 <div
-                  v-loading="loading && (activeTab === 'install' || activeTab === 'upgrade')"
-                  class="agent-install-wizard__console-body"
-                  element-loading-background="rgba(43, 45, 54, 0.88)"
+                  v-if="activeTab === 'service'"
+                  class="node-lifecycle-wizard__options"
                 >
-                  <div v-if="loading && activeTab === 'upgrade'" class="proxy-install-wizard__generating">
-                    <RefreshCw class="proxy-install-wizard__generating-icon" :size="14" aria-hidden="true" />
-                    <span>{{ t('nodeLifecycle.upgradeLoading') }}</span>
-                  </div>
-                  <pre v-else class="agent-install-wizard__console-pre">{{ displayCommand }}</pre>
-                </div>
-                <div class="agent-install-wizard__console-foot">
-                  <span class="agent-install-wizard__console-hint">
-                    <template v-if="activeTab === 'install' && installGenerated">
-                      {{ t('nodeLifecycle.installCommandReusable') }}
-                    </template>
-                    <template v-else>
-                      {{ footnote }}
-                    </template>
-                  </span>
-                  <button
-                    type="button"
-                    class="btn btn-primary agent-install-wizard__copy-btn"
-                    :class="{ 'agent-install-wizard__copy-btn--done': copied }"
-                    :disabled="!displayCommand || loading || (activeTab === 'install' && !tokenIsUsable)"
-                    @click="onCopy"
+                  <ElRadioGroup
+                    v-model="serviceAction"
+                    size="small"
                   >
-                    <Check v-if="copied" :size="12" aria-hidden="true" />
-                    <Copy v-else :size="12" aria-hidden="true" />
-                    <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
-                  </button>
+                    <ElRadio value="status">
+                      {{ t('nodeLifecycle.serviceStatus') }}
+                    </ElRadio>
+                    <ElRadio value="start">
+                      {{ t('nodeLifecycle.serviceStart') }}
+                    </ElRadio>
+                    <ElRadio value="stop">
+                      {{ t('nodeLifecycle.serviceStop') }}
+                    </ElRadio>
+                    <ElRadio value="restart">
+                      {{ t('nodeLifecycle.serviceRestart') }}
+                    </ElRadio>
+                  </ElRadioGroup>
                 </div>
-              </div>
 
-              <div
-                v-if="localCommandWarning"
-                class="add-s3-warning agent-install-wizard__warn"
-                role="note"
-              >
-                <TriangleAlert class="add-s3-warning__icon" :size="16" stroke-width="2" />
-                <div class="agent-install-wizard__warn-body">
-                  <p class="agent-install-wizard__warn-desc">{{ localCommandWarningText }}</p>
+                <div class="source-script-shell agent-install-wizard__console">
+                  <div class="agent-install-wizard__console-bar">
+                    <span>{{ consoleBarTitle }}</span>
+                    <span v-if="activeTab === 'upgrade' && releaseVersion">v{{ releaseVersion }}</span>
+                    <span
+                      v-else-if="activeTab === 'install' && installGenerated"
+                      class="agent-install-wizard__token-status"
+                    >
+                      <span>{{ tokenValidityLabel }}</span>
+                    </span>
+                  </div>
+                  <div
+                    v-loading="loading && (activeTab === 'install' || activeTab === 'upgrade')"
+                    class="agent-install-wizard__console-body"
+                    element-loading-background="rgba(43, 45, 54, 0.88)"
+                  >
+                    <div
+                      v-if="loading && activeTab === 'upgrade'"
+                      class="proxy-install-wizard__generating"
+                    >
+                      <RefreshCw
+                        class="proxy-install-wizard__generating-icon"
+                        :size="14"
+                        aria-hidden="true"
+                      />
+                      <span>{{ t('nodeLifecycle.upgradeLoading') }}</span>
+                    </div>
+                    <pre
+                      v-else
+                      class="agent-install-wizard__console-pre"
+                    >{{ displayCommand }}</pre>
+                  </div>
+                  <div class="agent-install-wizard__console-foot">
+                    <span class="agent-install-wizard__console-hint">
+                      <template v-if="activeTab === 'install' && installGenerated">
+                        {{ t('nodeLifecycle.installCommandReusable') }}
+                      </template>
+                      <template v-else>
+                        {{ footnote }}
+                      </template>
+                    </span>
+                    <button
+                      type="button"
+                      class="btn btn-primary agent-install-wizard__copy-btn"
+                      :class="{ 'agent-install-wizard__copy-btn--done': copied }"
+                      :disabled="!displayCommand || loading || (activeTab === 'install' && !tokenIsUsable)"
+                      @click="onCopy"
+                    >
+                      <Check
+                        v-if="copied"
+                        :size="12"
+                        aria-hidden="true"
+                      />
+                      <Copy
+                        v-else
+                        :size="12"
+                        aria-hidden="true"
+                      />
+                      <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
 
-              <div v-if="roleNote" class="add-s3-warning agent-install-wizard__warn" role="note">
-                <TriangleAlert class="add-s3-warning__icon" :size="16" stroke-width="2" />
-                <div class="agent-install-wizard__warn-body">
-                  <p class="agent-install-wizard__warn-title">{{ t('nodesDeploy.notesTitle') }}</p>
-                  <p class="agent-install-wizard__warn-desc">{{ roleNote }}</p>
+                <div
+                  v-if="localCommandWarning"
+                  class="add-s3-warning agent-install-wizard__warn"
+                  role="note"
+                >
+                  <TriangleAlert
+                    class="add-s3-warning__icon"
+                    :size="16"
+                    stroke-width="2"
+                  />
+                  <div class="agent-install-wizard__warn-body">
+                    <p class="agent-install-wizard__warn-desc">
+                      {{ localCommandWarningText }}
+                    </p>
+                  </div>
                 </div>
-              </div>
 
-              <div v-if="activeTab === 'upgrade'" class="add-s3-warning agent-install-wizard__warn" role="note">
-                <TriangleAlert class="add-s3-warning__icon" :size="16" stroke-width="2" />
-                <div class="agent-install-wizard__warn-body">
-                  <p class="agent-install-wizard__warn-desc">{{ t('nodeLifecycle.upgradeOnlineHint') }}</p>
-                  <p class="agent-install-wizard__warn-desc">{{ t('nodeLifecycle.upgradeInterruptHint') }}</p>
+                <div
+                  v-if="roleNote"
+                  class="add-s3-warning agent-install-wizard__warn"
+                  role="note"
+                >
+                  <TriangleAlert
+                    class="add-s3-warning__icon"
+                    :size="16"
+                    stroke-width="2"
+                  />
+                  <div class="agent-install-wizard__warn-body">
+                    <p class="agent-install-wizard__warn-title">
+                      {{ t('nodesDeploy.notesTitle') }}
+                    </p>
+                    <p class="agent-install-wizard__warn-desc">
+                      {{ roleNote }}
+                    </p>
+                  </div>
+                </div>
+
+                <div
+                  v-if="activeTab === 'upgrade'"
+                  class="add-s3-warning agent-install-wizard__warn"
+                  role="note"
+                >
+                  <TriangleAlert
+                    class="add-s3-warning__icon"
+                    :size="16"
+                    stroke-width="2"
+                  />
+                  <div class="agent-install-wizard__warn-body">
+                    <p class="agent-install-wizard__warn-desc">
+                      {{ t('nodeLifecycle.upgradeOnlineHint') }}
+                    </p>
+                    <p class="agent-install-wizard__warn-desc">
+                      {{ t('nodeLifecycle.upgradeInterruptHint') }}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
           </template>
         </section>
       </div>

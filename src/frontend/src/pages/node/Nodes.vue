@@ -617,17 +617,28 @@ async function submitRename() {
 </script>
 
 <template>
-  <ModulePage :menus="nodeMenus" body-fill>
+  <ModulePage
+    :menus="nodeMenus"
+    body-fill
+  >
     <div class="hfl-list-shell hfl-list-shell--fill">
       <div class="hfl-list-panel hfl-list-panel--fill">
         <div class="hfl-list-toolbar">
-          <RouterLink :to="deployTarget" class="inline-flex">
+          <RouterLink
+            :to="deployTarget"
+            class="inline-flex"
+          >
             <ElButton type="primary">
               <Plus :size="16" />
               {{ deployButtonLabel }}
             </ElButton>
           </RouterLink>
-          <ElDropdown trigger="click" popper-class="hfl-actions-dropdown" @visible-change="moreActionsOpen = $event" @command="handleNodeMoreAction">
+          <ElDropdown
+            trigger="click"
+            popper-class="hfl-actions-dropdown"
+            @visible-change="moreActionsOpen = $event"
+            @command="handleNodeMoreAction"
+          >
             <ElButton>
               {{ t('nodesPage.btnMoreActions') }}
               <ChevronDown
@@ -636,39 +647,60 @@ async function submitRename() {
                 :class="{ 'hfl-list-more__chev--open': moreActionsOpen }"
               />
             </ElButton>
-              <template #dropdown>
-                <ElDropdownMenu>
-                  <ElDropdownItem command="rename" :disabled="batchRenameDisabled">
-                    <span class="el-dropdown-menu__item-content">
-                      <Pencil :size="14" class="shrink-0" />
-                      <span>{{ t('nodesPage.btnBatchRename') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                  <ElDropdownItem command="upgrade" :disabled="batchUpgradeDisabled">
-                    <span class="el-dropdown-menu__item-content">
-                      <ArrowUpCircle :size="14" class="shrink-0" />
-                      <span>{{ t('nodesPage.actionUpgrade') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                  <ElDropdownItem command="maintenance" :disabled="batchRenameDisabled">
-                    <span class="el-dropdown-menu__item-content">
-                      <Wrench :size="14" class="shrink-0" />
-                      <span>{{ t('nodeLifecycle.maintenanceCommands') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                  <ElDropdownItem
-                    command="remove"
-                    divided
-                    class="el-dropdown-menu__item--danger"
-                    :disabled="batchDisabled"
-                  >
-                    <span class="el-dropdown-menu__item-content">
-                      <Trash2 :size="14" class="shrink-0" />
-                      <span>{{ t('nodesPage.actionDelete') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                </ElDropdownMenu>
-                </template>
+            <template #dropdown>
+              <ElDropdownMenu>
+                <ElDropdownItem
+                  command="rename"
+                  :disabled="batchRenameDisabled"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Pencil
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('nodesPage.btnBatchRename') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  command="upgrade"
+                  :disabled="batchUpgradeDisabled"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <ArrowUpCircle
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('nodesPage.actionUpgrade') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  command="maintenance"
+                  :disabled="batchRenameDisabled"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Wrench
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('nodeLifecycle.maintenanceCommands') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  command="remove"
+                  divided
+                  class="el-dropdown-menu__item--danger"
+                  :disabled="batchDisabled"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Trash2
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('nodesPage.actionDelete') }}</span>
+                  </span>
+                </ElDropdownItem>
+              </ElDropdownMenu>
+            </template>
           </ElDropdown>
 
           <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
@@ -682,13 +714,25 @@ async function submitRename() {
               @clear="clearSearch"
             >
               <template #prepend>
-                <ElSelect v-model="searchField" @change="handleSearchFieldChange">
-                  <ElOption value="name" :label="t('protection.listSearchFields.name')" />
-                  <ElOption value="ip" :label="t('protection.listSearchFields.ip')" />
+                <ElSelect
+                  v-model="searchField"
+                  @change="handleSearchFieldChange"
+                >
+                  <ElOption
+                    value="name"
+                    :label="t('protection.listSearchFields.name')"
+                  />
+                  <ElOption
+                    value="ip"
+                    :label="t('protection.listSearchFields.ip')"
+                  />
                 </ElSelect>
               </template>
               <template #prefix>
-                <Search :size="16" class="hfl-list-search__icon" />
+                <Search
+                  :size="16"
+                  class="hfl-list-search__icon"
+                />
               </template>
             </ElInput>
             <div class="hfl-list-toolbar__utility">
@@ -699,7 +743,10 @@ async function submitRename() {
                 :disabled="busy"
                 @click="load()"
               >
-                <RefreshCw :size="16" :class="{ 'is-spinning': busy }" />
+                <RefreshCw
+                  :size="16"
+                  :class="{ 'is-spinning': busy }"
+                />
               </ElButton>
             </div>
           </div>
@@ -711,205 +758,287 @@ async function submitRename() {
           @cancel-queued="lifecycleOps.cancelQueued"
         />
 
-        <div ref="tableBlockRef" class="hfl-list-table-block">
-        <el-table
-          v-table-overflow-title
-          v-table-header-scroll-sync
-          v-table-column-resize="isProxyNodesPage ? 'nodes.proxy.list' : 'nodes.agent.list'"
-          ref="tableRef"
-          v-loading="tableLoading"
-          :data="tableRows"
-          stripe
-          row-key="id"
-          class="hfl-list-table"
-          :max-height="tableMaxHeight"
-          :header-cell-style="TABLE_HEADER_STYLE"
-          @scroll="onTableScroll"
-          @selection-change="onSelectionChange"
+        <div
+          ref="tableBlockRef"
+          class="hfl-list-table-block"
         >
-          <el-table-column
-            type="selection"
-            width="35"
-            :fixed="isProxyNodesPage ? 'left' : undefined"
-            :reserve-selection="true"
-          />
-          <el-table-column
-            :label="isProxyNodesPage ? t('protection.sourceResources.colName') : t('nodesPage.colName')"
-            :min-width="isProxyNodesPage ? 170 : 116"
-            :fixed="isProxyNodesPage ? 'left' : undefined"
-            class-name="hfl-table-name-col"
+          <el-table
+            ref="tableRef"
+            v-table-overflow-title
+            v-table-header-scroll-sync
+            v-table-column-resize="isProxyNodesPage ? 'nodes.proxy.list' : 'nodes.agent.list'"
+            v-loading="tableLoading"
+            :data="tableRows"
+            stripe
+            row-key="id"
+            class="hfl-list-table"
+            :max-height="tableMaxHeight"
+            :header-cell-style="TABLE_HEADER_STYLE"
+            @scroll="onTableScroll"
+            @selection-change="onSelectionChange"
           >
-            <template #default="{ row }">
-              <button
-                v-if="isProxyNodesPage"
-                type="button"
-                class="hfl-table-name-link hfl-table-name-link--full"
-                @click="openNodeDetailDrawer(row)"
-              >
-                {{ row.name }}
-              </button>
-              <ResourceNameSummaryCell
-                v-else
-                :name="row.name"
-                kind="host"
-                :platform="nodeEnrollmentOs(row)"
-                :show-icon="false"
-                @open="openNodeDetailDrawer(row)"
-              />
-            </template>
-          </el-table-column>
-          <template v-if="isProxyNodesPage">
-            <el-table-column :label="t('protection.sourceResources.colLifecycleStatus')" width="126" align="center" header-align="center">
-              <template #default="{ row }">
-                <div class="hfl-table-no-tooltip">
-                  <NodeLifecycleStatusCell
-                    :node="row"
-                    :resolve-display-status="resolveBackupSourceLifecycleStatus"
-                  />
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colHostIp')" min-width="120">
-              <template #default="{ row }">
-                <span>{{ ipLine(row) }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="OS" min-width="105">
-              <template #default="{ row }">
-                <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
-                  <span class="source-os-cell__icon-wrap">
-                    <AgentPlatformBrandIcon :os="nodeEnrollmentOs(row)" />
-                  </span>
-                  <span class="source-os-cell__platform">{{ proxyPlatformLabel(row) }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colCpu')" min-width="76">
-              <template #default="{ row }">
-                <span :class="{ 'hfl-empty-mark': nodeCpuCores(row) == null }">{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colMemory')" min-width="90">
-              <template #default="{ row }">
-                <span :class="{ 'hfl-empty-mark': nodeMemoryTotalBytes(row) == null }">{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colDiskCount')" min-width="78">
-              <template #default="{ row }">
-                <span :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }">{{ nodeDiskCount(row) ?? '—' }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="170">
-              <template #default="{ row }">
-                <HflCapacityCell
-                  :used-bytes="nodeDiskUsageParts(row).used"
-                  :total-bytes="nodeDiskUsageParts(row).total"
-                  variant="compact"
-                  :format-bytes="formatNodeBytes"
-                />
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colRepositories')" min-width="105" align="center" header-align="center">
-              <template #default="{ row }">
-                <span>{{ row.associated_repository_count ?? 0 }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colConnectivity')" min-width="110" align="center" header-align="center">
-              <template #default="{ row }">
-                <div class="hfl-table-no-tooltip">
-                  <ElTag :type="availabilityTagType(row.availability)" size="small">
-                    {{ availabilityLabel(row.availability) }}
-                  </ElTag>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colVersion')" min-width="115">
-              <template #default="{ row }">
-                <NodeVersionCell
-                  :node="row"
-                  :version-label="row.version || '—'"
-                  :resolve-version-display="lifecycleOps.resolveVersionDisplay"
-                />
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" min-width="145">
-              <template #default="{ row }">
-                <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatNodeDate(row.created_at) }}</span>
-              </template>
-            </el-table-column>
-          </template>
-          <template v-else>
-          <el-table-column :label="t('nodesPage.colIp')" min-width="148">
-            <template #default="{ row }">
-              <span class="nodes-ip-cell hfl-table-cell-mono">{{ ipLine(row) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('nodesPage.colOs')" min-width="168">
-            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.os_name }">{{ row.os_name || '—' }}</span></template>
-          </el-table-column>
-          <el-table-column :label="t('nodesPage.colRole')" min-width="108">
-            <template #default="{ row }">
-              <ElTag
-                :type="roleTagType(row.role)"
-                size="small"
-                effect="light"
-                class="nodes-role-tag"
-              >
-                {{ roleLabel(row.role) }}
-              </ElTag>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('nodesPage.colStatus')" min-width="120">
-            <template #default="{ row }">
-              <NodeLifecycleStatusCell
-                v-if="usesRealNodeList"
-                :node="row"
-                :resolve-display-status="lifecycleOps.resolveDisplayStatus"
-              />
-              <ElTag v-else :type="statusTagType(debouncedNodeStatus(row))" size="small">
-                {{ statusLabel(row.status, row) }}
-              </ElTag>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('nodesPage.colVersion')" min-width="176">
-            <template #default="{ row }">
-              <NodeVersionCell
-                v-if="usesRealNodeList"
-                :node="row"
-                :version-label="row.version || '—'"
-                :resolve-version-display="lifecycleOps.resolveVersionDisplay"
-              />
-              <div v-else class="nodes-version-cell" :class="{ 'nodes-version-cell--stacked': needsUpgrade(row) && latestVersion }">
-                <span class="nodes-version-cell__value" :class="{ 'hfl-empty-mark': !row.version }">{{ row.version || '—' }}</span>
-                <ElTooltip
-                  v-if="needsUpgrade(row) && latestVersion"
-                  :content="t('nodesPage.latestVersionTip', { version: upgradeTargetVersion(row) })"
-                  placement="top"
-                >
-                  <span class="nodes-version-cell__hint">
-                    <TriangleAlert :size="14" stroke-width="2.1" />
-                    <span>{{ t('nodesPage.versionUpgradeAvailable') }}</span>
-                  </span>
-                </ElTooltip>
-              </div>
-            </template>
-          </el-table-column>
-          </template>
-          <template #empty>
-            <el-empty
-              :description="
-                isProxyNodesPage
-                  ? t('protection.sourceResources.emptyProxySources')
-                  : t('nodesPage.emptyNodes')
-              "
-              :image-size="80"
+            <el-table-column
+              type="selection"
+              width="35"
+              :fixed="isProxyNodesPage ? 'left' : undefined"
+              :reserve-selection="true"
             />
-          </template>
-        </el-table>
+            <el-table-column
+              :label="isProxyNodesPage ? t('protection.sourceResources.colName') : t('nodesPage.colName')"
+              :min-width="isProxyNodesPage ? 170 : 116"
+              :fixed="isProxyNodesPage ? 'left' : undefined"
+              class-name="hfl-table-name-col"
+            >
+              <template #default="{ row }">
+                <button
+                  v-if="isProxyNodesPage"
+                  type="button"
+                  class="hfl-table-name-link hfl-table-name-link--full"
+                  @click="openNodeDetailDrawer(row)"
+                >
+                  {{ row.name }}
+                </button>
+                <ResourceNameSummaryCell
+                  v-else
+                  :name="row.name"
+                  kind="host"
+                  :platform="nodeEnrollmentOs(row)"
+                  :show-icon="false"
+                  @open="openNodeDetailDrawer(row)"
+                />
+              </template>
+            </el-table-column>
+            <template v-if="isProxyNodesPage">
+              <el-table-column
+                :label="t('protection.sourceResources.colLifecycleStatus')"
+                width="126"
+                align="center"
+                header-align="center"
+              >
+                <template #default="{ row }">
+                  <div class="hfl-table-no-tooltip">
+                    <NodeLifecycleStatusCell
+                      :node="row"
+                      :resolve-display-status="resolveBackupSourceLifecycleStatus"
+                    />
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('protection.sourceResources.colHostIp')"
+                min-width="120"
+              >
+                <template #default="{ row }">
+                  <span>{{ ipLine(row) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="OS"
+                min-width="105"
+              >
+                <template #default="{ row }">
+                  <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
+                    <span class="source-os-cell__icon-wrap">
+                      <AgentPlatformBrandIcon :os="nodeEnrollmentOs(row)" />
+                    </span>
+                    <span class="source-os-cell__platform">{{ proxyPlatformLabel(row) }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('protection.sourceResources.colCpu')"
+                min-width="76"
+              >
+                <template #default="{ row }">
+                  <span :class="{ 'hfl-empty-mark': nodeCpuCores(row) == null }">{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('protection.sourceResources.colMemory')"
+                min-width="90"
+              >
+                <template #default="{ row }">
+                  <span :class="{ 'hfl-empty-mark': nodeMemoryTotalBytes(row) == null }">{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('protection.sourceResources.colDiskCount')"
+                min-width="78"
+              >
+                <template #default="{ row }">
+                  <span :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }">{{ nodeDiskCount(row) ?? '—' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('protection.sourceResources.colCapacity')"
+                min-width="170"
+              >
+                <template #default="{ row }">
+                  <HflCapacityCell
+                    :used-bytes="nodeDiskUsageParts(row).used"
+                    :total-bytes="nodeDiskUsageParts(row).total"
+                    variant="compact"
+                    :format-bytes="formatNodeBytes"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('protection.sourceResources.colRepositories')"
+                min-width="105"
+                align="center"
+                header-align="center"
+              >
+                <template #default="{ row }">
+                  <span>{{ row.associated_repository_count ?? 0 }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('protection.sourceResources.colConnectivity')"
+                min-width="110"
+                align="center"
+                header-align="center"
+              >
+                <template #default="{ row }">
+                  <div class="hfl-table-no-tooltip">
+                    <ElTag
+                      :type="availabilityTagType(row.availability)"
+                      size="small"
+                    >
+                      {{ availabilityLabel(row.availability) }}
+                    </ElTag>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('protection.sourceResources.colVersion')"
+                min-width="115"
+              >
+                <template #default="{ row }">
+                  <NodeVersionCell
+                    :node="row"
+                    :version-label="row.version || '—'"
+                    :resolve-version-display="lifecycleOps.resolveVersionDisplay"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('protection.sourceResources.colRegisteredAt')"
+                min-width="145"
+              >
+                <template #default="{ row }">
+                  <span
+                    class="hfl-table-cell-time"
+                    :class="{ 'hfl-empty-mark': !row.created_at }"
+                  >{{ formatNodeDate(row.created_at) }}</span>
+                </template>
+              </el-table-column>
+            </template>
+            <template v-else>
+              <el-table-column
+                :label="t('nodesPage.colIp')"
+                min-width="148"
+              >
+                <template #default="{ row }">
+                  <span class="nodes-ip-cell hfl-table-cell-mono">{{ ipLine(row) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('nodesPage.colOs')"
+                min-width="168"
+              >
+                <template #default="{ row }">
+                  <span :class="{ 'hfl-empty-mark': !row.os_name }">{{ row.os_name || '—' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('nodesPage.colRole')"
+                min-width="108"
+              >
+                <template #default="{ row }">
+                  <ElTag
+                    :type="roleTagType(row.role)"
+                    size="small"
+                    effect="light"
+                    class="nodes-role-tag"
+                  >
+                    {{ roleLabel(row.role) }}
+                  </ElTag>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('nodesPage.colStatus')"
+                min-width="120"
+              >
+                <template #default="{ row }">
+                  <NodeLifecycleStatusCell
+                    v-if="usesRealNodeList"
+                    :node="row"
+                    :resolve-display-status="lifecycleOps.resolveDisplayStatus"
+                  />
+                  <ElTag
+                    v-else
+                    :type="statusTagType(debouncedNodeStatus(row))"
+                    size="small"
+                  >
+                    {{ statusLabel(row.status, row) }}
+                  </ElTag>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('nodesPage.colVersion')"
+                min-width="176"
+              >
+                <template #default="{ row }">
+                  <NodeVersionCell
+                    v-if="usesRealNodeList"
+                    :node="row"
+                    :version-label="row.version || '—'"
+                    :resolve-version-display="lifecycleOps.resolveVersionDisplay"
+                  />
+                  <div
+                    v-else
+                    class="nodes-version-cell"
+                    :class="{ 'nodes-version-cell--stacked': needsUpgrade(row) && latestVersion }"
+                  >
+                    <span
+                      class="nodes-version-cell__value"
+                      :class="{ 'hfl-empty-mark': !row.version }"
+                    >{{ row.version || '—' }}</span>
+                    <ElTooltip
+                      v-if="needsUpgrade(row) && latestVersion"
+                      :content="t('nodesPage.latestVersionTip', { version: upgradeTargetVersion(row) })"
+                      placement="top"
+                    >
+                      <span class="nodes-version-cell__hint">
+                        <TriangleAlert
+                          :size="14"
+                          stroke-width="2.1"
+                        />
+                        <span>{{ t('nodesPage.versionUpgradeAvailable') }}</span>
+                      </span>
+                    </ElTooltip>
+                  </div>
+                </template>
+              </el-table-column>
+            </template>
+            <template #empty>
+              <el-empty
+                :description="
+                  isProxyNodesPage
+                    ? t('protection.sourceResources.emptyProxySources')
+                    : t('nodesPage.emptyNodes')
+                "
+                :image-size="80"
+              />
+            </template>
+          </el-table>
         </div>
 
         <div class="hfl-list-footer">
-          <span v-if="selectedNodes.length > 0" class="hfl-list-footer__selected">
+          <span
+            v-if="selectedNodes.length > 0"
+            class="hfl-list-footer__selected"
+          >
             {{ t('nodesPage.selectedCount', { n: selectedNodes.length }) }}
           </span>
           <HflPagination
@@ -938,7 +1067,10 @@ async function submitRename() {
         class="source-action-dialog__form proxy-host-edit-form"
         @submit.prevent="submitRename"
       >
-        <ElFormItem :label="t('nodesPage.renameLabel')" required>
+        <ElFormItem
+          :label="t('nodesPage.renameLabel')"
+          required
+        >
           <ElInput
             v-model="renameInput"
             :placeholder="t('nodesPage.renamePlaceholder')"
@@ -960,8 +1092,15 @@ async function submitRename() {
         </ElFormItem>
       </ElForm>
       <template #footer>
-        <el-button @click="closeRenameDialog">{{ t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="submitRename">{{ t('common.save') }}</el-button>
+        <el-button @click="closeRenameDialog">
+          {{ t('common.cancel') }}
+        </el-button>
+        <el-button
+          type="primary"
+          @click="submitRename"
+        >
+          {{ t('common.save') }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -1002,7 +1141,10 @@ async function submitRename() {
       @confirm="executeNodeDelete"
       @cancel="cancelNodeDelete"
     >
-      <div v-if="isProxyNodesPage" class="node-delete-force-option">
+      <div
+        v-if="isProxyNodesPage"
+        class="node-delete-force-option"
+      >
         <ElCheckbox v-model="pendingDeleteForce">
           {{ t('nodesPage.proxyDeleteForceAction') }}
         </ElCheckbox>

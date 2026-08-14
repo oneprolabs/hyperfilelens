@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { compactSourceText } from '../test/sourceText'
 
 function frontendSourcesBelow(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -23,7 +24,9 @@ describe('fullscreen form buttons', () => {
   })
 
   it('binds the Add S3 primary action to the shared loading behavior', () => {
-    const addS3Repo = readFileSync(resolve(process.cwd(), 'src/pages/node/AddS3Repo.vue'), 'utf8')
+    const addS3Repo = compactSourceText(
+      readFileSync(resolve(process.cwd(), 'src/pages/node/AddS3Repo.vue'), 'utf8'),
+    )
 
     expect(addS3Repo).toContain('<ElButton type="primary" :loading="busy" :disabled="!canSubmit" @click="onSubmit">')
     expect(addS3Repo).not.toContain('form-action__loading')

@@ -242,7 +242,11 @@ onMounted(() => {
   <div class="hfl-list-shell hfl-list-shell--fill">
     <div class="hfl-list-panel hfl-list-panel--fill">
       <div class="hfl-list-toolbar">
-        <ElButton type="primary" :disabled="!bridgeReady" @click="openCreate">
+        <ElButton
+          type="primary"
+          :disabled="!bridgeReady"
+          @click="openCreate"
+        >
           <Plus :size="16" />
           {{ isPlatformEngine ? t('platformOps.engineActions.addModel') : t('insight.aiSettings.btnAdd') }}
         </ElButton>
@@ -262,33 +266,64 @@ onMounted(() => {
           </ElButton>
           <template #dropdown>
             <ElDropdownMenu>
-              <ElDropdownItem :disabled="batchDisabled || !singleSelected || selectedIsManaged" @click="editSelected">
+              <ElDropdownItem
+                :disabled="batchDisabled || !singleSelected || selectedIsManaged"
+                @click="editSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <Pencil :size="14" class="shrink-0" />
+                  <Pencil
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('common.edit') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem :disabled="!selectedCanSetAgentDefault" @click="setSelectedAgentDefault">
+              <ElDropdownItem
+                :disabled="!selectedCanSetAgentDefault"
+                @click="setSelectedAgentDefault"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <Star :size="14" class="shrink-0" />
+                  <Star
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('insight.aiSettings.setDefaultAgent') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem :disabled="!selectedCanSetMultimodalDefault" @click="setSelectedMultimodalDefault">
+              <ElDropdownItem
+                :disabled="!selectedCanSetMultimodalDefault"
+                @click="setSelectedMultimodalDefault"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <Images :size="14" class="shrink-0" />
+                  <Images
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('insight.aiSettings.setDefaultMultimodal') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem divided :disabled="batchDisabled || !singleSelected || selectedIsManaged" @click="enableSelected">
+              <ElDropdownItem
+                divided
+                :disabled="batchDisabled || !singleSelected || selectedIsManaged"
+                @click="enableSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <CirclePlay :size="14" class="shrink-0" />
+                  <CirclePlay
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('insight.aiSettings.enable') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem :disabled="batchDisabled || !singleSelected || selectedIsManaged" @click="disableSelected">
+              <ElDropdownItem
+                :disabled="batchDisabled || !singleSelected || selectedIsManaged"
+                @click="disableSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <CircleStop :size="14" class="shrink-0" />
+                  <CircleStop
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('insight.aiSettings.disable') }}</span>
                 </span>
               </ElDropdownItem>
@@ -299,7 +334,10 @@ onMounted(() => {
                 @click="deleteSelected"
               >
                 <span class="el-dropdown-menu__item-content">
-                  <Trash2 :size="14" class="shrink-0" />
+                  <Trash2
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('common.delete') }}</span>
                 </span>
               </ElDropdownItem>
@@ -317,7 +355,10 @@ onMounted(() => {
             @clear="clearSearch"
           >
             <template #prefix>
-              <Search :size="16" class="hfl-list-search__icon" />
+              <Search
+                :size="16"
+                class="hfl-list-search__icon"
+              />
             </template>
           </ElInput>
           <div class="hfl-list-toolbar__utility">
@@ -327,13 +368,19 @@ onMounted(() => {
               :disabled="loading"
               @click="load"
             >
-              <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+              <RefreshCw
+                :size="16"
+                :class="{ 'is-spinning': loading }"
+              />
             </ElButton>
           </div>
         </div>
       </div>
 
-      <div ref="tableBlockRef" class="hfl-list-table-block">
+      <div
+        ref="tableBlockRef"
+        class="hfl-list-table-block"
+      >
         <el-table
           ref="tableRef"
           v-table-overflow-title
@@ -347,7 +394,11 @@ onMounted(() => {
           @scroll="handleTableScroll"
           @selection-change="onSelectionChange"
         >
-          <el-table-column type="selection" width="35" fixed="left" />
+          <el-table-column
+            type="selection"
+            width="35"
+            fixed="left"
+          />
           <el-table-column
             :label="t('insight.aiSettings.colName')"
             min-width="220"
@@ -356,38 +407,84 @@ onMounted(() => {
           >
             <template #default="{ row }">
               <div class="insight-ai-models-name">
-                <button type="button" class="hfl-table-name-link hfl-table-name-link--full" @click="openDetail(row)">
+                <button
+                  type="button"
+                  class="hfl-table-name-link hfl-table-name-link--full"
+                  @click="openDetail(row)"
+                >
                   {{ modelName(row) }}
                 </button>
-                <div v-if="row.is_default_agent || row.is_default_multimodal || row.deployment_managed || row.is_deployment_history" class="insight-ai-models-badges">
-                  <ElTag v-if="row.is_default_agent" size="small" type="success" effect="plain">
+                <div
+                  v-if="row.is_default_agent || row.is_default_multimodal || row.deployment_managed || row.is_deployment_history"
+                  class="insight-ai-models-badges"
+                >
+                  <ElTag
+                    v-if="row.is_default_agent"
+                    size="small"
+                    type="success"
+                    effect="plain"
+                  >
                     {{ t('insight.aiSettings.defaultAgentBadge') }}
                   </ElTag>
-                  <ElTag v-if="row.is_default_multimodal" size="small" type="warning" effect="plain">
+                  <ElTag
+                    v-if="row.is_default_multimodal"
+                    size="small"
+                    type="warning"
+                    effect="plain"
+                  >
                     {{ t('insight.aiSettings.defaultMultimodalBadge') }}
                   </ElTag>
-                  <ElTag v-if="row.deployment_managed" size="small" type="info" effect="plain">
+                  <ElTag
+                    v-if="row.deployment_managed"
+                    size="small"
+                    type="info"
+                    effect="plain"
+                  >
                     {{ t('insight.aiSettings.deploymentManagedBadge') }}
                   </ElTag>
-                  <ElTag v-if="row.is_deployment_history" size="small" type="info" effect="plain">
+                  <ElTag
+                    v-if="row.is_deployment_history"
+                    size="small"
+                    type="info"
+                    effect="plain"
+                  >
                     {{ t('insight.aiSettings.deploymentHistoryBadge') }}
                   </ElTag>
                 </div>
               </div>
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.aiSettings.labelProvider')" min-width="120">
-            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.provider && !row.name }">{{ row.provider || row.name || '—' }}</span></template>
-          </el-table-column>
-          <el-table-column :label="t('insight.aiSettings.labelModel')" min-width="160">
-            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.config?.model }">{{ row.config?.model || '—' }}</span></template>
-          </el-table-column>
-          <el-table-column :label="t('insight.aiSettings.labelApiBase')" min-width="200">
+          <el-table-column
+            :label="t('insight.aiSettings.labelProvider')"
+            min-width="120"
+          >
             <template #default="{ row }">
-              <span class="insight-ai-models-mono" :class="{ 'hfl-empty-mark': !row.config?.api_base }">{{ row.config?.api_base || '—' }}</span>
+              <span :class="{ 'hfl-empty-mark': !row.provider && !row.name }">{{ row.provider || row.name || '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.aiSettings.labelActive')" width="110">
+          <el-table-column
+            :label="t('insight.aiSettings.labelModel')"
+            min-width="160"
+          >
+            <template #default="{ row }">
+              <span :class="{ 'hfl-empty-mark': !row.config?.model }">{{ row.config?.model || '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('insight.aiSettings.labelApiBase')"
+            min-width="200"
+          >
+            <template #default="{ row }">
+              <span
+                class="insight-ai-models-mono"
+                :class="{ 'hfl-empty-mark': !row.config?.api_base }"
+              >{{ row.config?.api_base || '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('insight.aiSettings.labelActive')"
+            width="110"
+          >
             <template #default="{ row }">
               <HflBooleanStatusTag
                 :value="row.is_active !== false"

@@ -12,7 +12,10 @@ defineEmits<{
 </script>
 
 <template>
-  <div v-loading="loading" class="platform-ops-detail">
+  <div
+    v-loading="loading"
+    class="platform-ops-detail"
+  >
     <div class="platform-ops-detail__head">
       <PlatformOpsBackButton @click="$emit('back')" />
       <div class="platform-ops-detail__title-group">

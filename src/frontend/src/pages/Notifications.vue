@@ -101,7 +101,11 @@ watch(
       </el-button>
     </header>
 
-    <div v-if="loadError" class="notifications-page__error" role="status">
+    <div
+      v-if="loadError"
+      class="notifications-page__error"
+      role="status"
+    >
       {{ loadError }}
     </div>
 
@@ -114,7 +118,10 @@ watch(
           :aria-label="t('ops.task.btnRefresh')"
           @click="loadNotifications"
         >
-          <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+          <RefreshCw
+            :size="16"
+            :class="{ 'is-spinning': loading }"
+          />
         </el-button>
       </template>
       <template #table="{ tableMaxHeight }">
@@ -126,34 +133,64 @@ watch(
           class="hfl-list-table"
           :max-height="tableMaxHeight"
         >
-          <el-table-column width="52" fixed="left">
+          <el-table-column
+            width="52"
+            fixed="left"
+          >
             <template #default="{ row }">
-              <span class="notifications-page__state" :class="{ 'is-unread': !row.is_read }">
+              <span
+                class="notifications-page__state"
+                :class="{ 'is-unread': !row.is_read }"
+              >
                 <Bell :size="16" />
               </span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('notificationsPage.notification')" min-width="300">
+          <el-table-column
+            :label="t('notificationsPage.notification')"
+            min-width="300"
+          >
             <template #default="{ row }">
-              <button class="notifications-page__link" type="button" @click="openNotification(row)">
+              <button
+                class="notifications-page__link"
+                type="button"
+                @click="openNotification(row)"
+              >
                 <strong>{{ row.title }}</strong>
                 <span>{{ row.summary || '—' }}</span>
               </button>
             </template>
           </el-table-column>
-          <el-table-column :label="t('notificationsPage.severity')" width="140">
-            <template #default="{ row }">{{ row.severity }}</template>
+          <el-table-column
+            :label="t('notificationsPage.severity')"
+            width="140"
+          >
+            <template #default="{ row }">
+              {{ row.severity }}
+            </template>
           </el-table-column>
-          <el-table-column :label="t('notificationsPage.received')" width="190">
-            <template #default="{ row }">{{ formatLocalDateTime(row.occurred_at || row.updated_at, '—') }}</template>
+          <el-table-column
+            :label="t('notificationsPage.received')"
+            width="190"
+          >
+            <template #default="{ row }">
+              {{ formatLocalDateTime(row.occurred_at || row.updated_at, '—') }}
+            </template>
           </el-table-column>
-          <el-table-column :label="t('notificationsPage.status')" width="120">
+          <el-table-column
+            :label="t('notificationsPage.status')"
+            width="120"
+          >
             <template #default="{ row }">
               {{ row.is_read ? t('notificationsPage.read') : t('notificationsPage.unread') }}
             </template>
           </el-table-column>
           <template #empty>
-            <el-empty v-if="!loading" :description="emptyText" :image-size="72" />
+            <el-empty
+              v-if="!loading"
+              :description="emptyText"
+              :image-size="72"
+            />
           </template>
         </el-table>
       </template>

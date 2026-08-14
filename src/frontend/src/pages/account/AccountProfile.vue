@@ -320,16 +320,25 @@ watch(
           <span class="account-settings-section__icon account-settings-section__icon--account">
             <UserRound :size="16" />
           </span>
-          <h2 class="account-settings-section__title">{{ t('account.profileSectionAccount') }}</h2>
+          <h2 class="account-settings-section__title">
+            {{ t('account.profileSectionAccount') }}
+          </h2>
         </header>
         <div class="account-overview">
-          <div class="account-overview__avatar" aria-hidden="true">{{ accountInitial }}</div>
+          <div
+            class="account-overview__avatar"
+            aria-hidden="true"
+          >
+            {{ accountInitial }}
+          </div>
           <div class="account-overview__content">
             <div class="account-overview__name">
               <span class="account-settings-row__text">{{ username }}</span>
               <span class="account-role-badge">{{ role }}</span>
             </div>
-            <div class="account-overview__email">{{ email }}</div>
+            <div class="account-overview__email">
+              {{ email }}
+            </div>
           </div>
         </div>
         <div class="account-settings-row">
@@ -352,7 +361,6 @@ watch(
           >{{ registeredAt }}</span>
         </div>
       </section>
-
     </div>
 
     <section class="account-settings-section account-settings-section--password">
@@ -360,9 +368,15 @@ watch(
         <span class="account-settings-section__icon account-settings-section__icon--password">
           <KeyRound :size="16" />
         </span>
-        <h2 class="account-settings-section__title">{{ t('account.securitySectionPwd') }}</h2>
+        <h2 class="account-settings-section__title">
+          {{ t('account.securitySectionPwd') }}
+        </h2>
       </header>
-      <ElForm label-position="top" class="account-password-form" @submit.prevent>
+      <ElForm
+        label-position="top"
+        class="account-password-form"
+        @submit.prevent
+      >
         <div class="account-settings-row account-settings-row--form">
           <span class="account-settings-row__label">{{ t('account.fieldCurrentPassword') }}</span>
           <div class="account-settings-row__control">
@@ -375,7 +389,12 @@ watch(
               @input="onCurrentPasswordInput"
               @blur="currentPasswordTouched = true; validateCurrentPassword(true)"
             />
-            <p v-if="currentPasswordError" class="account-settings-row__error">{{ currentPasswordError }}</p>
+            <p
+              v-if="currentPasswordError"
+              class="account-settings-row__error"
+            >
+              {{ currentPasswordError }}
+            </p>
           </div>
         </div>
         <div class="account-settings-row account-settings-row--form">
@@ -390,19 +409,32 @@ watch(
               @input="onNewPasswordInput"
               @blur="newPasswordTouched = true; validateNewPassword(true)"
             />
-            <div v-if="newPassword" class="account-password-strength">
+            <div
+              v-if="newPassword"
+              class="account-password-strength"
+            >
               <div class="account-password-strength__bar">
                 <div
                   class="account-password-strength__fill"
                   :style="{ width: `${(passwordStrength.level / 3) * 100}%`, background: passwordStrength.color }"
                 />
               </div>
-              <span class="account-password-strength__text" :style="{ color: passwordStrength.color }">
+              <span
+                class="account-password-strength__text"
+                :style="{ color: passwordStrength.color }"
+              >
                 {{ passwordStrength.text }}
               </span>
             </div>
-            <p class="account-settings-row__hint">{{ t('account.securityPwdHint') }}</p>
-            <p v-if="newPasswordError" class="account-settings-row__error">{{ newPasswordError }}</p>
+            <p class="account-settings-row__hint">
+              {{ t('account.securityPwdHint') }}
+            </p>
+            <p
+              v-if="newPasswordError"
+              class="account-settings-row__error"
+            >
+              {{ newPasswordError }}
+            </p>
           </div>
         </div>
         <div class="account-settings-row account-settings-row--form">
@@ -417,11 +449,19 @@ watch(
               @input="onConfirmPasswordInput"
               @blur="confirmPasswordTouched = true; validateConfirmPassword(true)"
             />
-            <p v-if="confirmPasswordError" class="account-settings-row__error">{{ confirmPasswordError }}</p>
+            <p
+              v-if="confirmPasswordError"
+              class="account-settings-row__error"
+            >
+              {{ confirmPasswordError }}
+            </p>
           </div>
         </div>
         <div class="account-settings-row account-settings-row--form account-settings-row--actions">
-          <span class="account-settings-row__label" aria-hidden="true" />
+          <span
+            class="account-settings-row__label"
+            aria-hidden="true"
+          />
           <div class="account-settings-row__control">
             <ElButton
               type="primary"
@@ -441,7 +481,9 @@ watch(
         <span class="account-settings-section__icon account-settings-section__icon--audit">
           <ShieldCheck :size="16" />
         </span>
-        <h2 class="account-settings-section__title">{{ t('account.securityAuditCardTitle') }}</h2>
+        <h2 class="account-settings-section__title">
+          {{ t('account.securityAuditCardTitle') }}
+        </h2>
       </header>
       <div class="account-settings-row">
         <span class="account-settings-row__label">{{ t('account.lastLoginAtLabel') }}</span>

@@ -205,8 +205,8 @@ onBeforeUnmount(() => {
   <div class="backup-source-history-section">
     <div v-if="mode === 'snapshots'">
       <el-table
-        v-table-overflow-title
         ref="snapshotTableRef"
+        v-table-overflow-title
         :data="snapshotRows"
         stripe
         :row-key="snapshotRowKey"
@@ -221,7 +221,10 @@ onBeforeUnmount(() => {
           min-width="140"
           prop="backupName"
         />
-        <el-table-column :label="t('protection.backupDetail.colSnapStart')" min-width="200">
+        <el-table-column
+          :label="t('protection.backupDetail.colSnapStart')"
+          min-width="200"
+        >
           <template #default="{ row }">
             <button
               type="button"
@@ -232,9 +235,15 @@ onBeforeUnmount(() => {
             </button>
           </template>
         </el-table-column>
-        <el-table-column :label="t('protection.backupDetail.colSnapEnd')" min-width="200">
+        <el-table-column
+          :label="t('protection.backupDetail.colSnapEnd')"
+          min-width="200"
+        >
           <template #default="{ row }">
-            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.snapshot.endTime }">{{ formatDate(row.snapshot.endTime) }}</span>
+            <span
+              class="hfl-table-cell-time"
+              :class="{ 'hfl-empty-mark': !row.snapshot.endTime }"
+            >{{ formatDate(row.snapshot.endTime) }}</span>
           </template>
         </el-table-column>
         <el-table-column
@@ -242,36 +251,66 @@ onBeforeUnmount(() => {
           width="110"
           align="right"
         >
-          <template #default="{ row }">{{ fmtBackupBytes(row.snapshot.sizeBytes) }}</template>
+          <template #default="{ row }">
+            {{ fmtBackupBytes(row.snapshot.sizeBytes) }}
+          </template>
         </el-table-column>
-        <el-table-column :label="t('protection.backupDetail.colSnapId')" min-width="200">
+        <el-table-column
+          :label="t('protection.backupDetail.colSnapId')"
+          min-width="200"
+        >
           <template #default="{ row }">
             <span class="hfl-table-cell-mono">{{ row.snapshot.id }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('protection.backupDetail.colFileCount')" width="90" align="right">
-          <template #default="{ row }">{{ row.snapshot.fileCount }}</template>
-        </el-table-column>
-        <el-table-column :label="t('protection.backupDetail.colDirCount')" width="90" align="right">
-          <template #default="{ row }">{{ row.snapshot.dirCount }}</template>
-        </el-table-column>
-        <el-table-column :label="t('protection.backupDetail.colActions')" width="100" fixed="right" align="right">
+        <el-table-column
+          :label="t('protection.backupDetail.colFileCount')"
+          width="90"
+          align="right"
+        >
           <template #default="{ row }">
-            <ElButton link type="danger" size="small" @click.stop="onDeleteSnapshot(row)">
+            {{ row.snapshot.fileCount }}
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.backupDetail.colDirCount')"
+          width="90"
+          align="right"
+        >
+          <template #default="{ row }">
+            {{ row.snapshot.dirCount }}
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.backupDetail.colActions')"
+          width="100"
+          fixed="right"
+          align="right"
+        >
+          <template #default="{ row }">
+            <ElButton
+              link
+              type="danger"
+              size="small"
+              @click.stop="onDeleteSnapshot(row)"
+            >
               {{ t('protection.backupDetail.btnDeleteSnapshot') }}
             </ElButton>
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty :description="t('protection.backupDetail.emptySnapshots')" :image-size="64" />
+          <el-empty
+            :description="t('protection.backupDetail.emptySnapshots')"
+            :image-size="64"
+          />
         </template>
       </el-table>
     </div>
 
     <div v-else>
       <el-table
-        v-table-overflow-title
         ref="taskTableRef"
+        v-table-overflow-title
         :data="taskRows"
         stripe
         :row-key="taskRowKey"
@@ -285,7 +324,10 @@ onBeforeUnmount(() => {
           min-width="130"
           prop="backupName"
         />
-        <el-table-column :label="t('protection.backupDetail.colTaskId')" min-width="220">
+        <el-table-column
+          :label="t('protection.backupDetail.colTaskId')"
+          min-width="220"
+        >
           <template #default="{ row }">
             <button
               type="button"
@@ -296,24 +338,53 @@ onBeforeUnmount(() => {
             </button>
           </template>
         </el-table-column>
-        <el-table-column :label="t('protection.backupDetail.colTaskType')" width="120" prop="type" />
-        <el-table-column :label="t('protection.backupDetail.colTaskStatus')" width="96">
+        <el-table-column
+          :label="t('protection.backupDetail.colTaskType')"
+          width="120"
+          prop="type"
+        />
+        <el-table-column
+          :label="t('protection.backupDetail.colTaskStatus')"
+          width="96"
+        >
           <template #default="{ row }">
             <TaskStatusTag :status="row.status" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('protection.backupDetail.colStart')" min-width="170" prop="startTime">
+        <el-table-column
+          :label="t('protection.backupDetail.colStart')"
+          min-width="170"
+          prop="startTime"
+        >
           <template #default="{ row }">
-            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.startTime }">{{ formatDate(row.startTime) }}</span>
+            <span
+              class="hfl-table-cell-time"
+              :class="{ 'hfl-empty-mark': !row.startTime }"
+            >{{ formatDate(row.startTime) }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('protection.backupDetail.colEnd')" min-width="170" prop="endTime">
+        <el-table-column
+          :label="t('protection.backupDetail.colEnd')"
+          min-width="170"
+          prop="endTime"
+        >
           <template #default="{ row }">
-            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.endTime }">{{ formatDate(row.endTime) }}</span>
+            <span
+              class="hfl-table-cell-time"
+              :class="{ 'hfl-empty-mark': !row.endTime }"
+            >{{ formatDate(row.endTime) }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('protection.backupDetail.colDuration')" width="100" prop="duration" />
-        <el-table-column :label="t('protection.backupDetail.colTrigger')" width="100" prop="trigger" />
+        <el-table-column
+          :label="t('protection.backupDetail.colDuration')"
+          width="100"
+          prop="duration"
+        />
+        <el-table-column
+          :label="t('protection.backupDetail.colTrigger')"
+          width="100"
+          prop="trigger"
+        />
         <el-table-column
           :label="t('protection.backupDetail.colLinkedSnap')"
           min-width="120"
@@ -324,7 +395,10 @@ onBeforeUnmount(() => {
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty :description="t('protection.backupDetail.emptyTasks')" :image-size="64" />
+          <el-empty
+            :description="t('protection.backupDetail.emptyTasks')"
+            :image-size="64"
+          />
         </template>
       </el-table>
     </div>
@@ -345,11 +419,17 @@ onBeforeUnmount(() => {
         <span class="snapshot-drawer-title">
           {{ t('protection.backupDetail.drawerSnapTitle', { id: activeSnapshot?.id || '' }) }}
         </span>
-        <span v-if="activeSnapshotRow && showBackupName" class="ml-2 text-sm font-normal text-slate-500">
+        <span
+          v-if="activeSnapshotRow && showBackupName"
+          class="ml-2 text-sm font-normal text-slate-500"
+        >
           · {{ activeSnapshotRow.backupName }}
         </span>
       </template>
-      <div v-if="activeSnapshot" class="snapshot-drawer-body">
+      <div
+        v-if="activeSnapshot"
+        class="snapshot-drawer-body"
+      >
         <p class="text-sm text-slate-500 m-0 mb-3">
           {{
             t('protection.backupDetail.snapMetaLine', {
@@ -373,7 +453,10 @@ onBeforeUnmount(() => {
             :header-cell-style="TABLE_HEADER_STYLE"
             class="hfl-list-table"
           >
-            <el-table-column :label="t('protection.backupDetail.colBackupDir')" min-width="260">
+            <el-table-column
+              :label="t('protection.backupDetail.colBackupDir')"
+              min-width="260"
+            >
               <template #default="{ row }">
                 <button
                   type="button"
@@ -390,7 +473,10 @@ onBeforeUnmount(() => {
                     <span class="backup-source-history-dir-link__path hfl-table-cell-mono">{{ row.path }}</span>
                   </span>
                   <span class="backup-source-history-dir-link__child">
-                    <span class="backup-source-history-dir-link__branch" aria-hidden="true" />
+                    <span
+                      class="backup-source-history-dir-link__branch"
+                      aria-hidden="true"
+                    />
                     <span class="backup-source-history-dir-link__host">
                       {{
                         t('protection.backupDetail.hostSubline', {
@@ -403,13 +489,32 @@ onBeforeUnmount(() => {
                 </button>
               </template>
             </el-table-column>
-            <el-table-column :label="t('protection.backupDetail.colDirSize')" width="110" align="right">
-              <template #default="{ row }">{{ fmtBackupBytes(row.sizeBytes) }}</template>
+            <el-table-column
+              :label="t('protection.backupDetail.colDirSize')"
+              width="110"
+              align="right"
+            >
+              <template #default="{ row }">
+                {{ fmtBackupBytes(row.sizeBytes) }}
+              </template>
             </el-table-column>
-            <el-table-column :label="t('protection.backupDetail.colFileCountDirs')" width="100" prop="fileCount" align="right" />
-            <el-table-column :label="t('protection.backupDetail.colInnerDirs')" width="110" prop="innerDirCount" align="right" />
+            <el-table-column
+              :label="t('protection.backupDetail.colFileCountDirs')"
+              width="100"
+              prop="fileCount"
+              align="right"
+            />
+            <el-table-column
+              :label="t('protection.backupDetail.colInnerDirs')"
+              width="110"
+              prop="innerDirCount"
+              align="right"
+            />
             <template #empty>
-              <el-empty :description="t('protection.backupDetail.emptyDirs')" :image-size="64" />
+              <el-empty
+                :description="t('protection.backupDetail.emptyDirs')"
+                :image-size="64"
+              />
             </template>
           </el-table>
         </div>
@@ -432,29 +537,58 @@ onBeforeUnmount(() => {
         <span class="snapshot-drawer-title">
           {{ t('protection.backupDetail.drawerTaskTitle', { id: activeTask?.id || '' }) }}
         </span>
-        <span v-if="activeTask && showBackupName" class="ml-2 text-sm font-normal text-slate-500">
+        <span
+          v-if="activeTask && showBackupName"
+          class="ml-2 text-sm font-normal text-slate-500"
+        >
           · {{ activeTask.backupName }}
         </span>
       </template>
-      <div v-if="activeTask" ref="drawerScrollAnchorRef" class="snapshot-drawer-body">
-        <el-descriptions :column="1" border>
-          <el-descriptions-item :label="t('protection.backupDetail.labelTaskId')">{{ activeTask.id }}</el-descriptions-item>
-          <el-descriptions-item v-if="showBackupName" :label="t('protection.backupDetail.labelName')">
+      <div
+        v-if="activeTask"
+        ref="drawerScrollAnchorRef"
+        class="snapshot-drawer-body"
+      >
+        <el-descriptions
+          :column="1"
+          border
+        >
+          <el-descriptions-item :label="t('protection.backupDetail.labelTaskId')">
+            {{ activeTask.id }}
+          </el-descriptions-item>
+          <el-descriptions-item
+            v-if="showBackupName"
+            :label="t('protection.backupDetail.labelName')"
+          >
             {{ activeTask.backupName }}
           </el-descriptions-item>
-          <el-descriptions-item :label="t('protection.backupDetail.labelTaskType')">{{ activeTask.type }}</el-descriptions-item>
+          <el-descriptions-item :label="t('protection.backupDetail.labelTaskType')">
+            {{ activeTask.type }}
+          </el-descriptions-item>
           <el-descriptions-item :label="t('protection.backupDetail.labelStatus')">
             <TaskStatusTag :status="activeTask.status" />
           </el-descriptions-item>
-          <el-descriptions-item :label="t('protection.backupDetail.labelStart')">{{ activeTask.startTime }}</el-descriptions-item>
-          <el-descriptions-item :label="t('protection.backupDetail.labelEnd')">{{ activeTask.endTime }}</el-descriptions-item>
-          <el-descriptions-item :label="t('protection.backupDetail.labelDuration')">{{ activeTask.duration }}</el-descriptions-item>
-          <el-descriptions-item :label="t('protection.backupDetail.labelTrigger')">{{ activeTask.trigger }}</el-descriptions-item>
-          <el-descriptions-item :label="t('protection.backupDetail.labelExecutor')">{{ activeTask.executor }}</el-descriptions-item>
+          <el-descriptions-item :label="t('protection.backupDetail.labelStart')">
+            {{ activeTask.startTime }}
+          </el-descriptions-item>
+          <el-descriptions-item :label="t('protection.backupDetail.labelEnd')">
+            {{ activeTask.endTime }}
+          </el-descriptions-item>
+          <el-descriptions-item :label="t('protection.backupDetail.labelDuration')">
+            {{ activeTask.duration }}
+          </el-descriptions-item>
+          <el-descriptions-item :label="t('protection.backupDetail.labelTrigger')">
+            {{ activeTask.trigger }}
+          </el-descriptions-item>
+          <el-descriptions-item :label="t('protection.backupDetail.labelExecutor')">
+            {{ activeTask.executor }}
+          </el-descriptions-item>
           <el-descriptions-item :label="t('protection.backupDetail.labelLinkedSnap')">
             {{ activeTask.snapshotId ?? t('protection.backupDetail.noLinkedSnap') }}
           </el-descriptions-item>
-          <el-descriptions-item :label="t('protection.backupDetail.labelDetail')">{{ activeTask.detail }}</el-descriptions-item>
+          <el-descriptions-item :label="t('protection.backupDetail.labelDetail')">
+            {{ activeTask.detail }}
+          </el-descriptions-item>
         </el-descriptions>
       </div>
     </ElDrawer>
@@ -484,14 +618,25 @@ onBeforeUnmount(() => {
               :class="data.type === 'dir' ? '' : 'text-slate-500'"
             />
             <span class="hfl-dir-tree-node__text">
-              <span class="hfl-dir-tree-node__label" :title="node.label">{{ node.label }}</span>
-              <span v-if="data.type === 'dir'" class="hfl-dir-tree-node__path">{{ t('protection.backupDetail.typeDir') }}</span>
-              <span v-else class="hfl-dir-tree-node__path">{{ t('protection.backupDetail.typeFile') }}</span>
+              <span
+                class="hfl-dir-tree-node__label"
+                :title="node.label"
+              >{{ node.label }}</span>
+              <span
+                v-if="data.type === 'dir'"
+                class="hfl-dir-tree-node__path"
+              >{{ t('protection.backupDetail.typeDir') }}</span>
+              <span
+                v-else
+                class="hfl-dir-tree-node__path"
+              >{{ t('protection.backupDetail.typeFile') }}</span>
             </span>
           </span>
         </template>
       </el-tree>
-      <p class="text-xs text-slate-400 mt-4">{{ t('protection.backupDetail.treeDemoHint') }}</p>
+      <p class="text-xs text-slate-400 mt-4">
+        {{ t('protection.backupDetail.treeDemoHint') }}
+      </p>
     </ElDrawer>
     <DangerConfirmDialog
       v-model="deleteSnapshotDialogOpen"

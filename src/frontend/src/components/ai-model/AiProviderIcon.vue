@@ -25,7 +25,11 @@ const style = computed(() => ({
 </script>
 
 <template>
-  <span class="ai-provider-icon" :style="style" aria-hidden="true">
+  <span
+    class="ai-provider-icon"
+    :style="style"
+    aria-hidden="true"
+  >
     {{ aiProviderLetter(provider) }}
   </span>
 </template>

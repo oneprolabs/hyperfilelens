@@ -26,9 +26,13 @@ defineProps<{
         <span class="nas-proxy-topology__merge-line nas-proxy-topology__merge-line--middle" />
         <span class="nas-proxy-topology__merge-line nas-proxy-topology__merge-line--bottom" />
       </div>
-      <div class="nas-proxy-topology__node nas-proxy-topology__node--proxy">Proxy</div>
+      <div class="nas-proxy-topology__node nas-proxy-topology__node--proxy">
+        Proxy
+      </div>
       <div class="nas-proxy-topology__arrow" />
-      <div class="nas-proxy-topology__node nas-proxy-topology__node--nas">NAS</div>
+      <div class="nas-proxy-topology__node nas-proxy-topology__node--nas">
+        NAS
+      </div>
     </template>
 
     <template v-else>

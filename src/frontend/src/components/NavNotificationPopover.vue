@@ -173,7 +173,10 @@ onUnmounted(() => {
           :aria-label="t('nav.notificationPopover.bellAria')"
         >
           <Bell :size="18" />
-          <span v-if="badgeCount > 0" class="nav-notification-badge">{{ badgeText }}</span>
+          <span
+            v-if="badgeCount > 0"
+            class="nav-notification-badge"
+          >{{ badgeText }}</span>
         </button>
       </template>
 
@@ -196,16 +199,30 @@ onUnmounted(() => {
         </header>
 
         <div class="nav-dropdown-panel__body nav-dropdown-panel__body--flush">
-          <div v-if="loadError" class="nn-load-error" role="status">
+          <div
+            v-if="loadError"
+            class="nn-load-error"
+            role="status"
+          >
             {{ loadError }}
           </div>
-          <div v-if="loading && !notifications.length" class="nav-dropdown-panel__empty">
+          <div
+            v-if="loading && !notifications.length"
+            class="nav-dropdown-panel__empty"
+          >
             {{ t('nav.notificationPopover.loading') }}
           </div>
-          <div v-else-if="!notifications.length && !loadError" class="nav-dropdown-panel__empty">
+          <div
+            v-else-if="!notifications.length && !loadError"
+            class="nav-dropdown-panel__empty"
+          >
             {{ t('nav.notificationPopover.empty') }}
           </div>
-          <ul v-else class="nav-dropdown-panel__list nn-list" role="list">
+          <ul
+            v-else
+            class="nav-dropdown-panel__list nn-list"
+            role="list"
+          >
             <li
               v-for="notification in notifications"
               :key="notification.id"
@@ -222,22 +239,35 @@ onUnmounted(() => {
                 aria-hidden="true"
               />
               <div class="nn-item-body">
-                <div class="nn-item-title">{{ notification.title }}</div>
+                <div class="nn-item-title">
+                  {{ notification.title }}
+                </div>
                 <div class="nn-item-meta">
                   <span class="nn-item-summary">{{ notification.summary || '—' }}</span>
                   <span class="nn-item-sep">|</span>
                   <span class="nn-item-time">{{ formatRelativeTime(notification.occurred_at || notification.updated_at) }}</span>
                 </div>
               </div>
-              <span v-if="!notification.is_read" class="nn-unread-dot" aria-hidden="true" />
+              <span
+                v-if="!notification.is_read"
+                class="nn-unread-dot"
+                aria-hidden="true"
+              />
             </li>
           </ul>
         </div>
 
         <footer class="nav-dropdown-panel__foot">
-          <button type="button" class="nav-dropdown-panel__foot-link" @click="viewAll">
+          <button
+            type="button"
+            class="nav-dropdown-panel__foot-link"
+            @click="viewAll"
+          >
             <span>{{ t('nav.notificationPopover.viewAll') }}</span>
-            <ArrowUpRight :size="14" aria-hidden="true" />
+            <ArrowUpRight
+              :size="14"
+              aria-hidden="true"
+            />
           </button>
         </footer>
       </div>

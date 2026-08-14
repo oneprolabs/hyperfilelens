@@ -416,19 +416,36 @@ watch(
 </script>
 
 <template>
-  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen assistant-form-fullscreen">
+  <div
+    ref="pageRef"
+    class="fullscreen-form-fullscreen resource-add-fullscreen assistant-form-fullscreen"
+  >
     <div class="fullscreen-form-page">
       <header class="fullscreen-form-header">
-        <button type="button" class="fullscreen-form-header__back" @click="handleBack">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+        <button
+          type="button"
+          class="fullscreen-form-header__back"
+          @click="handleBack"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
-          <h1 class="fullscreen-form-header__title">{{ pageTitle }}</h1>
-          <p class="fullscreen-form-header__desc">{{ pageDesc }}</p>
+          <h1 class="fullscreen-form-header__title">
+            {{ pageTitle }}
+          </h1>
+          <p class="fullscreen-form-header__desc">
+            {{ pageDesc }}
+          </p>
         </div>
       </header>
 
-      <div v-loading="loading" class="fullscreen-form-layout">
+      <div
+        v-loading="loading"
+        class="fullscreen-form-layout"
+      >
         <div class="fullscreen-form-main">
           <div class="fullscreen-form-step-stack">
             <!-- 1. Basics & Models -->
@@ -437,19 +454,34 @@ watch(
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.assistants.sectionBasics') }}
               </h3>
-              <ElForm label-position="top" class="fullscreen-form-el-form">
-                <ElFormItem data-validation-field="name" :error="errors.name" :label="t('insight.assistants.fieldName')" required>
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form"
+              >
+                <ElFormItem
+                  data-validation-field="name"
+                  :error="errors.name"
+                  :label="t('insight.assistants.fieldName')"
+                  required
+                >
                   <ElInput
                     v-model="name"
                     maxlength="120"
                     :placeholder="t('insight.assistants.fieldNamePlaceholder')"
                     @input="clearFieldError('name')"
                   />
-                  <p class="assistant-field-hint">{{ t('insight.assistants.fieldNameHint') }}</p>
+                  <p class="assistant-field-hint">
+                    {{ t('insight.assistants.fieldNameHint') }}
+                  </p>
                 </ElFormItem>
 
                 <div class="fullscreen-form-grid">
-                  <ElFormItem data-validation-field="agentModel" :error="errors.agentModel" :label="t('insight.assistants.fieldAgentModel')" required>
+                  <ElFormItem
+                    data-validation-field="agentModel"
+                    :error="errors.agentModel"
+                    :label="t('insight.assistants.fieldAgentModel')"
+                    required
+                  >
                     <div class="assistant-select-row">
                       <div class="assistant-select-row__controls">
                         <ElSelect
@@ -474,7 +506,10 @@ watch(
                           :disabled="modelsRefreshing"
                           @click="refreshModels"
                         >
-                          <RefreshCw :size="16" :class="{ 'is-spinning': modelsRefreshing }" />
+                          <RefreshCw
+                            :size="16"
+                            :class="{ 'is-spinning': modelsRefreshing }"
+                          />
                         </ElButton>
                         <ElButton
                           class="fullscreen-form-icon-btn assistant-select-row__add"
@@ -486,7 +521,9 @@ watch(
                         </ElButton>
                       </div>
                     </div>
-                    <p class="assistant-field-hint">{{ t('insight.assistants.modelHint') }}</p>
+                    <p class="assistant-field-hint">
+                      {{ t('insight.assistants.modelHint') }}
+                    </p>
                   </ElFormItem>
                   <ElFormItem :label="t('insight.assistants.fieldMultimodalModel')">
                     <div class="assistant-select-row">
@@ -513,7 +550,10 @@ watch(
                           :disabled="modelsRefreshing"
                           @click="refreshModels"
                         >
-                          <RefreshCw :size="16" :class="{ 'is-spinning': modelsRefreshing }" />
+                          <RefreshCw
+                            :size="16"
+                            :class="{ 'is-spinning': modelsRefreshing }"
+                          />
                         </ElButton>
                         <ElButton
                           class="fullscreen-form-icon-btn assistant-select-row__add"
@@ -525,17 +565,38 @@ watch(
                         </ElButton>
                       </div>
                     </div>
-                    <p class="assistant-field-hint">{{ t('insight.assistants.multimodalModelHint') }}</p>
+                    <p class="assistant-field-hint">
+                      {{ t('insight.assistants.multimodalModelHint') }}
+                    </p>
                   </ElFormItem>
                 </div>
 
-                <ElFormItem data-validation-field="maxConcurrency" :error="errors.maxConcurrency" :label="t('insight.assistants.fieldMaxConcurrency')" required>
-                  <ElInputNumber v-model="maxConcurrency" :min="1" :max="50" class="assistant-concurrency-input" @change="clearFieldError('maxConcurrency')" />
-                  <p class="assistant-field-hint">{{ t('insight.assistants.maxConcurrencyHint') }}</p>
+                <ElFormItem
+                  data-validation-field="maxConcurrency"
+                  :error="errors.maxConcurrency"
+                  :label="t('insight.assistants.fieldMaxConcurrency')"
+                  required
+                >
+                  <ElInputNumber
+                    v-model="maxConcurrency"
+                    :min="1"
+                    :max="50"
+                    class="assistant-concurrency-input"
+                    @change="clearFieldError('maxConcurrency')"
+                  />
+                  <p class="assistant-field-hint">
+                    {{ t('insight.assistants.maxConcurrencyHint') }}
+                  </p>
                 </ElFormItem>
 
-                <ElFormItem :label="t('insight.assistants.fieldAgentRounds')" required>
-                  <ElRadioGroup v-model="agentRounds" class="assistant-rounds-grid">
+                <ElFormItem
+                  :label="t('insight.assistants.fieldAgentRounds')"
+                  required
+                >
+                  <ElRadioGroup
+                    v-model="agentRounds"
+                    class="assistant-rounds-grid"
+                  >
                     <ElRadio
                       v-for="tier in agentRoundsTiers"
                       :key="tier.value"
@@ -549,7 +610,9 @@ watch(
                       </div>
                     </ElRadio>
                   </ElRadioGroup>
-                  <p class="assistant-field-hint">{{ t('insight.assistants.fieldAgentRoundsHint') }}</p>
+                  <p class="assistant-field-hint">
+                    {{ t('insight.assistants.fieldAgentRoundsHint') }}
+                  </p>
                 </ElFormItem>
               </ElForm>
             </section>
@@ -560,9 +623,17 @@ watch(
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.assistants.sectionKnowledgeSource') }}
               </h3>
-              <ElForm label-position="top" class="fullscreen-form-el-form">
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form"
+              >
                 <div class="fullscreen-form-grid">
-                  <ElFormItem data-validation-field="knowledgeSource" :error="errors.knowledgeSource" :label="t('insight.assistants.fieldKnowledgeSource')" required>
+                  <ElFormItem
+                    data-validation-field="knowledgeSource"
+                    :error="errors.knowledgeSource"
+                    :label="t('insight.assistants.fieldKnowledgeSource')"
+                    required
+                  >
                     <div class="assistant-select-row">
                       <div class="assistant-select-row__controls">
                         <ElSelect
@@ -600,7 +671,10 @@ watch(
                           :disabled="formOptionsRefreshing"
                           @click="refreshFormOptions"
                         >
-                          <RefreshCw :size="16" :class="{ 'is-spinning': formOptionsRefreshing }" />
+                          <RefreshCw
+                            :size="16"
+                            :class="{ 'is-spinning': formOptionsRefreshing }"
+                          />
                         </ElButton>
                         <ElButton
                           class="fullscreen-form-icon-btn assistant-select-row__add"
@@ -618,10 +692,20 @@ watch(
                     >
                       {{ t('insight.assistants.knowledgeSourceEmpty') }}
                     </p>
-                    <p v-else class="assistant-field-hint">{{ t('insight.assistants.fieldKnowledgeSourceHint') }}</p>
+                    <p
+                      v-else
+                      class="assistant-field-hint"
+                    >
+                      {{ t('insight.assistants.fieldKnowledgeSourceHint') }}
+                    </p>
                   </ElFormItem>
 
-                  <ElFormItem data-validation-field="scenario" :error="errors.scenario" :label="t('insight.assistants.fieldScenario')" required>
+                  <ElFormItem
+                    data-validation-field="scenario"
+                    :error="errors.scenario"
+                    :label="t('insight.assistants.fieldScenario')"
+                    required
+                  >
                     <ElSelect
                       v-model="selectedTask"
                       filterable
@@ -637,7 +721,9 @@ watch(
                         :value="task.name"
                       />
                     </ElSelect>
-                    <p class="assistant-field-hint">{{ t('insight.assistants.fieldScenarioHint') }}</p>
+                    <p class="assistant-field-hint">
+                      {{ t('insight.assistants.fieldScenarioHint') }}
+                    </p>
                   </ElFormItem>
                 </div>
 
@@ -651,7 +737,9 @@ watch(
                       :placeholder="t('insight.assistants.fieldRetrievalScopePlaceholder')"
                       :disabled="!selectedKnowledgeSource"
                     />
-                    <p class="assistant-field-hint">{{ t('insight.assistants.fieldRetrievalScopeHint') }}</p>
+                    <p class="assistant-field-hint">
+                      {{ t('insight.assistants.fieldRetrievalScopeHint') }}
+                    </p>
                   </ElFormItem>
                   <ElFormItem :label="t('insight.assistants.fieldExcludeExtensions')">
                     <ElInput
@@ -661,7 +749,9 @@ watch(
                       class="font-mono assistant-retrieval-input"
                       :placeholder="DEFAULT_EXCLUDE_EXTENSIONS"
                     />
-                    <p class="assistant-field-hint">{{ t('insight.assistants.fieldExcludeExtensionsHint') }}</p>
+                    <p class="assistant-field-hint">
+                      {{ t('insight.assistants.fieldExcludeExtensionsHint') }}
+                    </p>
                   </ElFormItem>
                   <ElFormItem :label="t('insight.assistants.fieldExcludeDirs')">
                     <ElInput
@@ -671,7 +761,9 @@ watch(
                       class="font-mono assistant-retrieval-input"
                       :placeholder="DEFAULT_EXCLUDE_DIRS"
                     />
-                    <p class="assistant-field-hint">{{ t('insight.assistants.fieldExcludeDirsHint') }}</p>
+                    <p class="assistant-field-hint">
+                      {{ t('insight.assistants.fieldExcludeDirsHint') }}
+                    </p>
                   </ElFormItem>
                 </div>
               </ElForm>
@@ -684,7 +776,10 @@ watch(
                 {{ t('insight.assistants.sectionTools') }}
               </h3>
 
-              <ElForm label-position="top" class="fullscreen-form-el-form assistant-tools-form">
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form assistant-tools-form"
+              >
                 <ElFormItem :label="t('insight.assistants.fieldWorkspaceContext')">
                   <ElInput
                     v-model="workspaceGuideOverview"
@@ -693,7 +788,9 @@ watch(
                     class="assistant-workspace-input font-mono"
                     :placeholder="t('insight.assistants.workspaceContextPh')"
                   />
-                  <p class="assistant-field-hint">{{ t('insight.assistants.workspaceContextHint') }}</p>
+                  <p class="assistant-field-hint">
+                    {{ t('insight.assistants.workspaceContextHint') }}
+                  </p>
                 </ElFormItem>
 
                 <div class="assistant-tools-bindings">
@@ -709,7 +806,10 @@ watch(
                             :disabled="formOptionsRefreshing"
                             @click="refreshFormOptions"
                           >
-                            <RefreshCw :size="16" :class="{ 'is-spinning': formOptionsRefreshing }" />
+                            <RefreshCw
+                              :size="16"
+                              :class="{ 'is-spinning': formOptionsRefreshing }"
+                            />
                           </ElButton>
                           <ElButton
                             class="fullscreen-form-icon-btn assistant-field-label-row__add"
@@ -723,7 +823,10 @@ watch(
                       </span>
                     </template>
                     <div class="assistant-binding-panel">
-                      <div v-if="selectableSkills.length" class="assistant-binding-panel__toolbar">
+                      <div
+                        v-if="selectableSkills.length"
+                        class="assistant-binding-panel__toolbar"
+                      >
                         <span class="assistant-binding-panel__count">
                           {{
                             t('insight.assistants.bindingsSelectedCount', {
@@ -757,9 +860,16 @@ watch(
                           />
                         </label>
                       </ElCheckboxGroup>
-                      <p v-else class="assistant-binding-panel__empty">{{ t('insight.assistants.noSkills') }}</p>
+                      <p
+                        v-else
+                        class="assistant-binding-panel__empty"
+                      >
+                        {{ t('insight.assistants.noSkills') }}
+                      </p>
                     </div>
-                    <p class="assistant-field-hint">{{ t('insight.assistants.fieldSkillsHint') }}</p>
+                    <p class="assistant-field-hint">
+                      {{ t('insight.assistants.fieldSkillsHint') }}
+                    </p>
                   </ElFormItem>
 
                   <ElFormItem>
@@ -774,7 +884,10 @@ watch(
                             :disabled="formOptionsRefreshing"
                             @click="refreshFormOptions"
                           >
-                            <RefreshCw :size="16" :class="{ 'is-spinning': formOptionsRefreshing }" />
+                            <RefreshCw
+                              :size="16"
+                              :class="{ 'is-spinning': formOptionsRefreshing }"
+                            />
                           </ElButton>
                           <ElButton
                             class="fullscreen-form-icon-btn assistant-field-label-row__add"
@@ -788,7 +901,10 @@ watch(
                       </span>
                     </template>
                     <div class="assistant-binding-panel">
-                      <div v-if="mcps.length" class="assistant-binding-panel__toolbar">
+                      <div
+                        v-if="mcps.length"
+                        class="assistant-binding-panel__toolbar"
+                      >
                         <span class="assistant-binding-panel__count">
                           {{
                             t('insight.assistants.bindingsSelectedCount', {
@@ -825,9 +941,16 @@ watch(
                           />
                         </label>
                       </ElCheckboxGroup>
-                      <p v-else class="assistant-binding-panel__empty">{{ t('insight.assistants.noMcp') }}</p>
+                      <p
+                        v-else
+                        class="assistant-binding-panel__empty"
+                      >
+                        {{ t('insight.assistants.noMcp') }}
+                      </p>
                     </div>
-                    <p class="assistant-field-hint">{{ t('insight.assistants.fieldMcpHint') }}</p>
+                    <p class="assistant-field-hint">
+                      {{ t('insight.assistants.fieldMcpHint') }}
+                    </p>
                   </ElFormItem>
                 </div>
               </ElForm>
@@ -839,8 +962,15 @@ watch(
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.assistants.sectionVisibility') }}
               </h3>
-              <ElRadioGroup v-model="visibilityScope" class="assistant-visibility-grid">
-                <ElRadio value="user" border class="assistant-visibility-card !mr-0">
+              <ElRadioGroup
+                v-model="visibilityScope"
+                class="assistant-visibility-grid"
+              >
+                <ElRadio
+                  value="user"
+                  border
+                  class="assistant-visibility-card !mr-0"
+                >
                   <div class="assistant-visibility-card__inner">
                     <div class="assistant-visibility-card__title">
                       {{ t('insight.assistants.visibilityOnlyMe') }}
@@ -850,7 +980,11 @@ watch(
                     </div>
                   </div>
                 </ElRadio>
-                <ElRadio value="organization" border class="assistant-visibility-card !mr-0">
+                <ElRadio
+                  value="organization"
+                  border
+                  class="assistant-visibility-card !mr-0"
+                >
                   <div class="assistant-visibility-card__inner">
                     <div class="assistant-visibility-card__title">
                       {{ t('insight.assistants.visibilityOrganization') }}

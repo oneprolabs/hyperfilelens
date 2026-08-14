@@ -65,12 +65,21 @@ function openDirTree(row: DemoSnapshotDir) {
 </script>
 
 <template>
-  <ModulePage :title="t('protection.moduleTitle')" :menus="protectionMenus">
-    <div v-if="backup && snapshot" class="space-y-4">
+  <ModulePage
+    :title="t('protection.moduleTitle')"
+    :menus="protectionMenus"
+  >
+    <div
+      v-if="backup && snapshot"
+      class="space-y-4"
+    >
       <div class="flex flex-wrap items-center gap-3">
         <RouterLink :to="`/protection/backups/${backupId}`">
           <ElButton text>
-            <ArrowLeft :size="16" class="inline mr-1 align-text-bottom" />
+            <ArrowLeft
+              :size="16"
+              class="inline mr-1 align-text-bottom"
+            />
             {{ t('protection.snapshotDetail.backToBackupDetail') }}
           </ElButton>
         </RouterLink>
@@ -91,10 +100,18 @@ function openDirTree(row: DemoSnapshotDir) {
       </p>
 
       <div class="hfl-list-panel">
-        <div class="px-4 py-3 border-b border-slate-100 text-sm font-medium text-slate-800">{{ t('protection.snapshotDetail.panelTitle') }}</div>
+        <div class="px-4 py-3 border-b border-slate-100 text-sm font-medium text-slate-800">
+          {{ t('protection.snapshotDetail.panelTitle') }}
+        </div>
         <el-table
-          v-table-overflow-title :data="snapshot.dirs" stripe>
-          <el-table-column :label="t('protection.snapshotDetail.colBackupDir')" min-width="280">
+          v-table-overflow-title
+          :data="snapshot.dirs"
+          stripe
+        >
+          <el-table-column
+            :label="t('protection.snapshotDetail.colBackupDir')"
+            min-width="280"
+          >
             <template #default="{ row }">
               <button
                 type="button"
@@ -113,13 +130,29 @@ function openDirTree(row: DemoSnapshotDir) {
               </button>
             </template>
           </el-table-column>
-          <el-table-column :label="t('protection.snapshotDetail.colDirSize')" width="120">
-            <template #default="{ row }">{{ fmtBytes(row.sizeBytes) }}</template>
+          <el-table-column
+            :label="t('protection.snapshotDetail.colDirSize')"
+            width="120"
+          >
+            <template #default="{ row }">
+              {{ fmtBytes(row.sizeBytes) }}
+            </template>
           </el-table-column>
-          <el-table-column :label="t('protection.snapshotDetail.colFiles')" width="110" prop="fileCount" />
-          <el-table-column :label="t('protection.snapshotDetail.colInnerDirs')" width="120" prop="innerDirCount" />
+          <el-table-column
+            :label="t('protection.snapshotDetail.colFiles')"
+            width="110"
+            prop="fileCount"
+          />
+          <el-table-column
+            :label="t('protection.snapshotDetail.colInnerDirs')"
+            width="120"
+            prop="innerDirCount"
+          />
           <template #empty>
-            <el-empty :description="t('protection.snapshotDetail.emptyDirs')" :image-size="64" />
+            <el-empty
+              :description="t('protection.snapshotDetail.emptyDirs')"
+              :image-size="64"
+            />
           </template>
         </el-table>
       </div>
@@ -147,24 +180,48 @@ function openDirTree(row: DemoSnapshotDir) {
                 :class="data.type === 'dir' ? '' : 'text-slate-500'"
               />
               <span class="hfl-dir-tree-node__text">
-                <span class="hfl-dir-tree-node__label" :title="node.label">{{ node.label }}</span>
-                <span v-if="data.type === 'dir'" class="hfl-dir-tree-node__path">{{ t('protection.snapshotDetail.typeDir') }}</span>
-                <span v-else class="hfl-dir-tree-node__path">{{ t('protection.snapshotDetail.typeFile') }}</span>
+                <span
+                  class="hfl-dir-tree-node__label"
+                  :title="node.label"
+                >{{ node.label }}</span>
+                <span
+                  v-if="data.type === 'dir'"
+                  class="hfl-dir-tree-node__path"
+                >{{ t('protection.snapshotDetail.typeDir') }}</span>
+                <span
+                  v-else
+                  class="hfl-dir-tree-node__path"
+                >{{ t('protection.snapshotDetail.typeFile') }}</span>
               </span>
             </span>
           </template>
         </el-tree>
-        <p class="text-xs text-slate-400 mt-4">{{ t('protection.snapshotDetail.treeDemoHint') }}</p>
+        <p class="text-xs text-slate-400 mt-4">
+          {{ t('protection.snapshotDetail.treeDemoHint') }}
+        </p>
       </ElDrawer>
     </div>
 
-    <div v-else class="py-16 text-center">
+    <div
+      v-else
+      class="py-16 text-center"
+    >
       <el-empty :description="t('protection.snapshotDetail.notFoundSnap')">
-        <RouterLink v-if="backup" :to="`/protection/backups/${backupId}`">
-          <ElButton type="primary">{{ t('protection.snapshotDetail.backToBackup') }}</ElButton>
+        <RouterLink
+          v-if="backup"
+          :to="`/protection/backups/${backupId}`"
+        >
+          <ElButton type="primary">
+            {{ t('protection.snapshotDetail.backToBackup') }}
+          </ElButton>
         </RouterLink>
-        <RouterLink v-else to="/protection/backups">
-          <ElButton type="primary">{{ t('protection.snapshotDetail.backToDataProtection') }}</ElButton>
+        <RouterLink
+          v-else
+          to="/protection/backups"
+        >
+          <ElButton type="primary">
+            {{ t('protection.snapshotDetail.backToDataProtection') }}
+          </ElButton>
         </RouterLink>
       </el-empty>
     </div>

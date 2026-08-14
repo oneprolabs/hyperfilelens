@@ -252,7 +252,10 @@ function nasProtocolLabel(protocol?: string | null): string {
 </script>
 
 <template>
-  <div class="target-repository-picker" :class="{ 'target-repository-picker--compact': compact }">
+  <div
+    class="target-repository-picker"
+    :class="{ 'target-repository-picker--compact': compact }"
+  >
     <ElFormItem>
       <template #label>
         <span class="target-repository-picker__label-row">
@@ -265,12 +268,20 @@ function nasProtocolLabel(protocol?: string | null): string {
             :disabled="refreshing"
             @click.stop="emit('refresh')"
           >
-            <RefreshCw :size="15" stroke-width="2" :class="{ 'is-spinning': refreshing }" />
+            <RefreshCw
+              :size="15"
+              stroke-width="2"
+              :class="{ 'is-spinning': refreshing }"
+            />
           </ElButton>
         </span>
       </template>
       <div class="target-repository-picker__selector">
-        <div class="target-repository-picker__type-panel" role="listbox" :aria-label="repoTypePlaceholder">
+        <div
+          class="target-repository-picker__type-panel"
+          role="listbox"
+          :aria-label="repoTypePlaceholder"
+        >
           <button
             v-for="option in repoTypeFilterOptions"
             :key="option.value"
@@ -369,7 +380,6 @@ function nasProtocolLabel(protocol?: string | null): string {
         </div>
       </div>
     </ElFormItem>
-
   </div>
 </template>
 

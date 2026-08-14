@@ -128,15 +128,23 @@ onUnmounted(() => {
       <span class="hfl-detail-drawer__title">{{ activeRow?.name || DETAIL_EMPTY }}</span>
     </template>
 
-    <div v-loading="loading" class="hfl-detail-drawer__body">
+    <div
+      v-loading="loading"
+      class="hfl-detail-drawer__body"
+    >
       <template v-if="activeRow">
         <div class="hfl-detail-sections">
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('insight.mcpServers.detailSectionConnection') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.mcpServers.detailSectionConnection') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.mcpServers.fieldName') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(activeRow.name)">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(activeRow.name)"
+                >
                   {{ displayValue(activeRow.name) }}
                 </span>
               </div>
@@ -154,14 +162,21 @@ onUnmounted(() => {
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.mcpServers.fieldTransport') }}</span>
                 <span class="hfl-detail-row__value">
-                  <ElTag size="small" :type="transportTagType(activeRow.transport)" effect="plain">
+                  <ElTag
+                    size="small"
+                    :type="transportTagType(activeRow.transport)"
+                    effect="plain"
+                  >
                     {{ transportLabel(activeRow.transport) }}
                   </ElTag>
                 </span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('insight.mcpServers.fieldEndpoint') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(activeRow.endpoint, true)">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(activeRow.endpoint, true)"
+                >
                   {{ displayValue(activeRow.endpoint) }}
                 </span>
               </div>
@@ -169,19 +184,27 @@ onUnmounted(() => {
           </section>
 
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('insight.mcpServers.fieldConfig') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.mcpServers.fieldConfig') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('insight.mcpServers.colRuntimeSettings') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <div v-if="configEntries.length" class="create-filter-rules-preview">
+                  <div
+                    v-if="configEntries.length"
+                    class="create-filter-rules-preview"
+                  >
                     <code
                       v-for="entry in configEntries"
                       :key="entry.key"
                       class="create-filter-rules-preview__line"
                     >{{ entry.key }}={{ entry.value || DETAIL_EMPTY }}</code>
                   </div>
-                  <span v-else class="hfl-detail-row__empty">
+                  <span
+                    v-else
+                    class="hfl-detail-row__empty"
+                  >
                     {{ t('insight.mcpServers.runtimeSettingsNone') }}
                   </span>
                 </span>
@@ -192,7 +215,10 @@ onUnmounted(() => {
       </template>
     </div>
 
-    <template v-if="activeRow" #footer>
+    <template
+      v-if="activeRow"
+      #footer
+    >
       <HflDetailDrawerFooter
         :save-label="t('common.edit')"
         @cancel="drawerOpen = false"

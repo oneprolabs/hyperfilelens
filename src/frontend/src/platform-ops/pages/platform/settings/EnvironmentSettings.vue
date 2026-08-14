@@ -72,22 +72,40 @@ onMounted(load)
 </script>
 
 <template>
-  <ModulePage :menus="sideNav" body-fill>
-    <div v-loading="busy" class="platform-env">
+  <ModulePage
+    :menus="sideNav"
+    body-fill
+  >
+    <div
+      v-loading="busy"
+      class="platform-env"
+    >
       <div class="platform-env__toolbar">
-        <PlatformOpsRefreshButton :loading="busy" @click="load" />
+        <PlatformOpsRefreshButton
+          :loading="busy"
+          @click="load"
+        />
       </div>
 
-      <div v-if="payload" class="hfl-detail-sections">
+      <div
+        v-if="payload"
+        class="hfl-detail-sections"
+      >
         <PlatformOpsDetailSection :title="t('platformOps.settings.environmentTitle')">
           <div class="hfl-detail-grid">
             <div class="hfl-detail-row">
               <span class="hfl-detail-row__label">{{ t('platformOps.settings.environment.appVersion') }}</span>
-              <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': !payload.app_version }">{{ payload.app_version || '—' }}</span>
+              <span
+                class="hfl-detail-row__value hfl-detail-row__value--mono"
+                :class="{ 'hfl-detail-row__empty': !payload.app_version }"
+              >{{ payload.app_version || '—' }}</span>
             </div>
             <div class="hfl-detail-row">
               <span class="hfl-detail-row__label">{{ t('platformOps.settings.environment.agentVersion') }}</span>
-              <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': !payload.agent_version }">{{ payload.agent_version || '—' }}</span>
+              <span
+                class="hfl-detail-row__value hfl-detail-row__value--mono"
+                :class="{ 'hfl-detail-row__empty': !payload.agent_version }"
+              >{{ payload.agent_version || '—' }}</span>
             </div>
             <div class="hfl-detail-row">
               <span class="hfl-detail-row__label">{{ t('platformOps.settings.environment.djangoDebug') }}</span>
@@ -97,33 +115,69 @@ onMounted(load)
         </PlatformOpsDetailSection>
 
         <PlatformOpsDetailSection :title="t('platformOps.settings.environment.effectiveTitle')">
-          <div v-if="effectiveEntries.length" class="hfl-detail-grid">
-            <div v-for="entry in effectiveEntries" :key="entry.key" class="hfl-detail-row hfl-detail-row--full">
+          <div
+            v-if="effectiveEntries.length"
+            class="hfl-detail-grid"
+          >
+            <div
+              v-for="entry in effectiveEntries"
+              :key="entry.key"
+              class="hfl-detail-row hfl-detail-row--full"
+            >
               <span class="hfl-detail-row__label platform-env__label"><strong>{{ entry.label }}</strong><code>{{ entry.key }}</code></span>
               <span class="hfl-detail-row__value hfl-detail-row__value--mono hfl-detail-row__value--break">{{ entry.value }}</span>
             </div>
           </div>
-          <el-empty v-else :description="t('platformOps.settings.environment.emptyEffective')" :image-size="80" />
+          <el-empty
+            v-else
+            :description="t('platformOps.settings.environment.emptyEffective')"
+            :image-size="80"
+          />
         </PlatformOpsDetailSection>
 
         <PlatformOpsDetailSection :title="t('platformOps.settings.environment.sourcesTitle')">
-          <div v-if="sourceEntries.length" class="hfl-detail-grid">
-            <div v-for="entry in sourceEntries" :key="entry.key" class="hfl-detail-row hfl-detail-row--full">
+          <div
+            v-if="sourceEntries.length"
+            class="hfl-detail-grid"
+          >
+            <div
+              v-for="entry in sourceEntries"
+              :key="entry.key"
+              class="hfl-detail-row hfl-detail-row--full"
+            >
               <span class="hfl-detail-row__label platform-env__label"><strong>{{ entry.label }}</strong><code>{{ entry.key }}</code></span>
               <span class="hfl-detail-row__value">{{ entry.value }}</span>
             </div>
           </div>
-          <el-empty v-else :description="t('platformOps.settings.environment.emptySources')" :image-size="80" />
+          <el-empty
+            v-else
+            :description="t('platformOps.settings.environment.emptySources')"
+            :image-size="80"
+          />
         </PlatformOpsDetailSection>
 
         <PlatformOpsDetailSection :title="t('platformOps.settings.environment.healthTitle')">
-          <div v-if="Object.keys(health).length" class="hfl-detail-grid">
-            <div v-for="(value, key) in health" :key="key" class="hfl-detail-row hfl-detail-row--full">
+          <div
+            v-if="Object.keys(health).length"
+            class="hfl-detail-grid"
+          >
+            <div
+              v-for="(value, key) in health"
+              :key="key"
+              class="hfl-detail-row hfl-detail-row--full"
+            >
               <span class="hfl-detail-row__label platform-env__label"><strong>{{ humanizeKey(String(key)) }}</strong><code>{{ String(key) }}</code></span>
-              <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': formatValue(value) === '—' }">{{ formatValue(value) }}</span>
+              <span
+                class="hfl-detail-row__value hfl-detail-row__value--mono"
+                :class="{ 'hfl-detail-row__empty': formatValue(value) === '—' }"
+              >{{ formatValue(value) }}</span>
             </div>
           </div>
-          <el-empty v-else :description="t('platformOps.settings.environment.emptyHealth')" :image-size="80" />
+          <el-empty
+            v-else
+            :description="t('platformOps.settings.environment.emptyHealth')"
+            :image-size="80"
+          />
         </PlatformOpsDetailSection>
       </div>
     </div>

@@ -91,7 +91,9 @@ const unverifiedReason = computed(() =>
 <template>
   <div class="target-repository-detail">
     <div class="target-repository-detail__head">
-      <div class="target-repository-detail__title">{{ target.name }}</div>
+      <div class="target-repository-detail__title">
+        {{ target.name }}
+      </div>
       <span class="target-repository-detail__title-tags">
         <el-tag
           size="small"
@@ -136,7 +138,11 @@ const unverifiedReason = computed(() =>
       <section class="target-repository-detail__section target-repository-detail__section--line">
         <span class="target-repository-detail__section-title">Status:</span>
         <span class="target-repository-detail__tag-row">
-          <el-tag size="small" :type="healthTagType(health)" effect="light">
+          <el-tag
+            size="small"
+            :type="healthTagType(health)"
+            effect="light"
+          >
             {{ healthLabel(health) }}
           </el-tag>
           <el-tooltip
@@ -146,13 +152,22 @@ const unverifiedReason = computed(() =>
             :show-after="300"
             teleported
           >
-            <AlertTriangle :size="13" class="target-repository-detail__hint-icon" />
+            <AlertTriangle
+              :size="13"
+              class="target-repository-detail__hint-icon"
+            />
           </el-tooltip>
         </span>
       </section>
 
-      <div v-if="health === 'unverified'" class="target-repository-detail__reason">
-        <Info :size="13" class="target-repository-detail__reason-icon" />
+      <div
+        v-if="health === 'unverified'"
+        class="target-repository-detail__reason"
+      >
+        <Info
+          :size="13"
+          class="target-repository-detail__reason-icon"
+        />
         <span>{{ unverifiedReason }}</span>
       </div>
 
@@ -190,7 +205,10 @@ const unverifiedReason = computed(() =>
         <span class="target-repository-detail__value">
           {{ formatBytes(target.usedBytes) }} {{ t('protection.backupsPage.targetUsed') }} ·
           {{ target.capacityBytes ? t('protection.backupsPage.targetLimitValue', { limit: formatBytes(target.capacityBytes) }) : t('protection.backupsPage.targetNoConfiguredLimit') }}
-          <span v-if="usagePercent(target) !== null" class="target-repository-detail__usage">
+          <span
+            v-if="usagePercent(target) !== null"
+            class="target-repository-detail__usage"
+          >
             ({{ usagePercent(target) }}%)
           </span>
         </span>

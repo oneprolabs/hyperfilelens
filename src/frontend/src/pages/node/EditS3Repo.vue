@@ -293,7 +293,10 @@ watch(repositoryId, (id) => {
 </script>
 
 <template>
-  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen">
+  <div
+    ref="pageRef"
+    class="fullscreen-form-fullscreen resource-add-fullscreen"
+  >
     <div class="fullscreen-form-page add-s3-page edit-s3-page">
       <div class="fullscreen-form-header">
         <button
@@ -307,7 +310,10 @@ watch(repositoryId, (id) => {
         </button>
         <div class="fullscreen-form-header__content">
           <h1 class="fullscreen-form-header__title">
-            <Wrench :size="18" class="inline-block align-[-3px] mr-1 text-[rgb(37_99_235)]" />
+            <Wrench
+              :size="18"
+              class="inline-block align-[-3px] mr-1 text-[rgb(37_99_235)]"
+            />
             {{ t('repositoriesPage.editS3Repo.pageTitle') }}
           </h1>
           <p class="fullscreen-form-header__desc">
@@ -512,7 +518,10 @@ watch(repositoryId, (id) => {
                 <div class="fullscreen-form-grid">
                   <div class="add-s3-repo-primary-fields">
                     <!-- Repo Name -->
-                    <div data-validation-field="name" class="fullscreen-form-field">
+                    <div
+                      data-validation-field="name"
+                      class="fullscreen-form-field"
+                    >
                       <label class="fullscreen-form-field__label edit-s3-locked-label">
                         {{ t('addS3Repo.fieldRepoName') }}
                         <span class="fullscreen-form-field__required">*</span>
@@ -526,7 +535,12 @@ watch(repositoryId, (id) => {
                       <p class="fullscreen-form-field__hint">
                         {{ t('addS3Repo.hintRepoName') }}
                       </p>
-                      <p v-if="errors.name" class="el-form-item__error">{{ errors.name }}</p>
+                      <p
+                        v-if="errors.name"
+                        class="el-form-item__error"
+                      >
+                        {{ errors.name }}
+                      </p>
                     </div>
 
                     <!-- Bucket (locked) -->
@@ -597,7 +611,10 @@ watch(repositoryId, (id) => {
                       </p>
                     </div>
 
-                    <div data-validation-field="quotaThreshold" class="fullscreen-form-field add-s3-quota-pair__col add-s3-quota-alert-field">
+                    <div
+                      data-validation-field="quotaThreshold"
+                      class="fullscreen-form-field add-s3-quota-pair__col add-s3-quota-alert-field"
+                    >
                       <div class="fullscreen-form-field__label add-s3-quota-pair__head add-s3-quota-alert-head">
                         <ElCheckbox v-model="quotaAlertEnabled">
                           {{ t('addS3Repo.fieldQuotaAlert') }}
@@ -624,7 +641,12 @@ watch(repositoryId, (id) => {
                       <p class="fullscreen-form-field__hint">
                         {{ t('addS3Repo.hintQuotaAlertThreshold') }}
                       </p>
-                      <p v-if="errors.quotaThreshold" class="el-form-item__error">{{ errors.quotaThreshold }}</p>
+                      <p
+                        v-if="errors.quotaThreshold"
+                        class="el-form-item__error"
+                      >
+                        {{ errors.quotaThreshold }}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -817,7 +839,6 @@ watch(repositoryId, (id) => {
       </div>
     </div>
   </div>
-
 </template>
 
 <style src="../../styles/fullscreen-form-shell.css"></style>

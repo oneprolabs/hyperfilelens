@@ -108,17 +108,34 @@ function moduleItemActive(to?: string) {
     <div class="mobile-navigation__shell">
       <header class="mobile-navigation__header">
         <h2>{{ title }}</h2>
-        <button type="button" class="mobile-navigation__close" :aria-label="$t('common.close')" @click="close">
-          <X :size="20" aria-hidden="true" />
+        <button
+          type="button"
+          class="mobile-navigation__close"
+          :aria-label="$t('common.close')"
+          @click="close"
+        >
+          <X
+            :size="20"
+            aria-hidden="true"
+          />
         </button>
       </header>
 
-      <nav class="mobile-navigation__body" :aria-label="title">
-        <section v-if="showOrganizationSwitcher" class="mobile-navigation__section">
+      <nav
+        class="mobile-navigation__body"
+        :aria-label="title"
+      >
+        <section
+          v-if="showOrganizationSwitcher"
+          class="mobile-navigation__section"
+        >
           <OrgSwitcher variant="mobile" />
         </section>
 
-        <section v-if="primaryItems.length" class="mobile-navigation__section">
+        <section
+          v-if="primaryItems.length"
+          class="mobile-navigation__section"
+        >
           <RouterLink
             v-for="item in primaryItems"
             :key="item.to"
@@ -138,8 +155,14 @@ function moduleItemActive(to?: string) {
           </RouterLink>
         </section>
 
-        <section v-if="moduleItems.length" class="mobile-navigation__section mobile-navigation__section--module">
-          <template v-for="(item, index) in moduleItems" :key="item.to || `${item.label}-${index}`">
+        <section
+          v-if="moduleItems.length"
+          class="mobile-navigation__section mobile-navigation__section--module"
+        >
+          <template
+            v-for="(item, index) in moduleItems"
+            :key="item.to || `${item.label}-${index}`"
+          >
             <button
               v-if="item.children?.length"
               type="button"
@@ -148,9 +171,16 @@ function moduleItemActive(to?: string) {
               @click="toggleGroup(index)"
             >
               <span>{{ item.label }}</span>
-              <ChevronDown :size="17" :class="{ 'is-expanded': expandedGroups.has(index) }" aria-hidden="true" />
+              <ChevronDown
+                :size="17"
+                :class="{ 'is-expanded': expandedGroups.has(index) }"
+                aria-hidden="true"
+              />
             </button>
-            <div v-if="item.children?.length && expandedGroups.has(index)" class="mobile-navigation__children">
+            <div
+              v-if="item.children?.length && expandedGroups.has(index)"
+              class="mobile-navigation__children"
+            >
               <RouterLink
                 v-for="child in item.children"
                 :key="child.to || child.label"
@@ -161,7 +191,12 @@ function moduleItemActive(to?: string) {
                 :aria-disabled="!child.to || undefined"
                 @click="child.to && close()"
               >
-                <component :is="child.icon" v-if="child.icon" :size="17" aria-hidden="true" />
+                <component
+                  :is="child.icon"
+                  v-if="child.icon"
+                  :size="17"
+                  aria-hidden="true"
+                />
                 <span>{{ child.label }}</span>
               </RouterLink>
             </div>
@@ -173,13 +208,21 @@ function moduleItemActive(to?: string) {
               :aria-current="moduleItemActive(item.to) ? 'page' : undefined"
               @click="close"
             >
-              <component :is="item.icon" v-if="item.icon" :size="17" aria-hidden="true" />
+              <component
+                :is="item.icon"
+                v-if="item.icon"
+                :size="17"
+                aria-hidden="true"
+              />
               <span>{{ item.label }}</span>
             </RouterLink>
           </template>
         </section>
 
-        <section v-if="adminConsoleHref" class="mobile-navigation__section mobile-navigation__section--utility">
+        <section
+          v-if="adminConsoleHref"
+          class="mobile-navigation__section mobile-navigation__section--utility"
+        >
           <a
             :href="adminConsoleHref"
             class="mobile-navigation__utility-link"
@@ -187,9 +230,16 @@ function moduleItemActive(to?: string) {
             rel="noopener noreferrer"
             @click="close"
           >
-            <Shield :size="17" aria-hidden="true" />
+            <Shield
+              :size="17"
+              aria-hidden="true"
+            />
             <span>{{ $t('nav.platformOps') }}</span>
-            <ExternalLink class="mobile-navigation__utility-external" :size="15" aria-hidden="true" />
+            <ExternalLink
+              class="mobile-navigation__utility-external"
+              :size="15"
+              aria-hidden="true"
+            />
           </a>
         </section>
 
@@ -204,7 +254,10 @@ function moduleItemActive(to?: string) {
             :aria-label="$t('nav.switchLanguage', { language: nextLocaleLabel })"
             @click="toggleLocale"
           >
-            <Globe :size="17" aria-hidden="true" />
+            <Globe
+              :size="17"
+              aria-hidden="true"
+            />
             <span class="mobile-navigation__utility-copy">
               <span class="mobile-navigation__utility-title">{{ $t('nav.languageLabel') }}</span>
               <span class="mobile-navigation__utility-subtitle">
@@ -212,15 +265,27 @@ function moduleItemActive(to?: string) {
               </span>
             </span>
           </button>
-          <div v-else-if="currentLocaleLabel" class="mobile-navigation__utility-link mobile-navigation__utility-link--static">
-            <Globe :size="17" aria-hidden="true" />
+          <div
+            v-else-if="currentLocaleLabel"
+            class="mobile-navigation__utility-link mobile-navigation__utility-link--static"
+          >
+            <Globe
+              :size="17"
+              aria-hidden="true"
+            />
             <span class="mobile-navigation__utility-copy">
               <span class="mobile-navigation__utility-title">{{ $t('nav.languageLabel') }}</span>
               <span class="mobile-navigation__utility-subtitle">{{ currentLocaleLabel }}</span>
             </span>
           </div>
-          <div v-if="timezoneOffsetDisplay" class="mobile-navigation__utility-link mobile-navigation__utility-link--static">
-            <Clock3 :size="17" aria-hidden="true" />
+          <div
+            v-if="timezoneOffsetDisplay"
+            class="mobile-navigation__utility-link mobile-navigation__utility-link--static"
+          >
+            <Clock3
+              :size="17"
+              aria-hidden="true"
+            />
             <span class="mobile-navigation__utility-copy">
               <span class="mobile-navigation__utility-title">{{ $t('nav.timezoneLabel') }}</span>
               <span class="mobile-navigation__utility-subtitle">{{ timezoneOffsetDisplay }}</span>

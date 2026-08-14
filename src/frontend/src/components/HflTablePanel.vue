@@ -67,7 +67,10 @@ onUnmounted(() => {
         'hfl-list-toolbar--mobile-primary-utility': $slots.toolbar && $slots['toolbar-actions'] && $slots['toolbar-utility'],
       }"
     >
-      <div v-if="$slots.toolbar" class="hfl-list-toolbar__primary">
+      <div
+        v-if="$slots.toolbar"
+        class="hfl-list-toolbar__primary"
+      >
         <slot name="toolbar" />
       </div>
       <div
@@ -81,16 +84,29 @@ onUnmounted(() => {
         }"
       >
         <slot name="toolbar-actions" />
-        <div v-if="$slots['toolbar-utility']" class="hfl-list-toolbar__utility">
+        <div
+          v-if="$slots['toolbar-utility']"
+          class="hfl-list-toolbar__utility"
+        >
           <slot name="toolbar-utility" />
         </div>
       </div>
     </div>
     <slot />
-    <div v-if="$slots.table" ref="tableViewportRef" class="hfl-list-table-viewport">
-      <slot name="table" :table-max-height="tableMaxHeight" />
+    <div
+      v-if="$slots.table"
+      ref="tableViewportRef"
+      class="hfl-list-table-viewport"
+    >
+      <slot
+        name="table"
+        :table-max-height="tableMaxHeight"
+      />
     </div>
-    <div v-if="$slots.footer" class="hfl-list-footer">
+    <div
+      v-if="$slots.footer"
+      class="hfl-list-footer"
+    >
       <slot name="footer" />
     </div>
   </div>

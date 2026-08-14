@@ -11,6 +11,7 @@ withDefaults(
     deleteDisabled?: boolean
   }>(),
   {
+    addLabel: '',
     addDisabled: false,
     editDisabled: true,
     deleteDisabled: true,
@@ -28,7 +29,11 @@ const moreActionsOpen = ref(false)
 </script>
 
 <template>
-  <el-button type="primary" :disabled="addDisabled" @click="emit('add')">
+  <el-button
+    type="primary"
+    :disabled="addDisabled"
+    @click="emit('add')"
+  >
     <Plus :size="16" />
     {{ addLabel || t('platformOps.list.btnAdd') }}
   </el-button>
@@ -48,9 +53,15 @@ const moreActionsOpen = ref(false)
     </el-button>
     <template #dropdown>
       <el-dropdown-menu>
-        <el-dropdown-item :disabled="editDisabled" @click="emit('edit')">
+        <el-dropdown-item
+          :disabled="editDisabled"
+          @click="emit('edit')"
+        >
           <span class="el-dropdown-menu__item-content">
-            <Pencil :size="14" class="shrink-0" />
+            <Pencil
+              :size="14"
+              class="shrink-0"
+            />
             <span>{{ t('common.edit') }}</span>
           </span>
         </el-dropdown-item>
@@ -61,7 +72,10 @@ const moreActionsOpen = ref(false)
           @click="emit('delete')"
         >
           <span class="el-dropdown-menu__item-content">
-            <Trash2 :size="14" class="shrink-0" />
+            <Trash2
+              :size="14"
+              class="shrink-0"
+            />
             <span>{{ t('common.delete') }}</span>
           </span>
         </el-dropdown-item>

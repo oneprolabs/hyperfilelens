@@ -530,19 +530,33 @@ function handleBack() {
 </script>
 
 <template>
-  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen" :class="{ 'resource-add-fullscreen--embedded': embedded }">
+  <div
+    ref="pageRef"
+    class="fullscreen-form-fullscreen resource-add-fullscreen"
+    :class="{ 'resource-add-fullscreen--embedded': embedded }"
+  >
     <div class="fullscreen-form-page add-s3-page">
-
       <!-- Header -->
-      <div v-if="!embedded" class="fullscreen-form-header">
-        <button class="fullscreen-form-header__back" @click="handleBack">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+      <div
+        v-if="!embedded"
+        class="fullscreen-form-header"
+      >
+        <button
+          class="fullscreen-form-header__back"
+          @click="handleBack"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
           <h1 class="fullscreen-form-header__title">
             {{ t('addS3Repo.pageTitle') }}
           </h1>
-          <p class="fullscreen-form-header__desc">{{ t('addS3Repo.pageDesc') }}</p>
+          <p class="fullscreen-form-header__desc">
+            {{ t('addS3Repo.pageDesc') }}
+          </p>
         </div>
       </div>
 
@@ -550,18 +564,95 @@ function handleBack() {
         <!-- Main Form Area -->
         <div class="fullscreen-form-main">
           <div class="fullscreen-form-step-stack">
-              <div class="fullscreen-form-card">
-                <section class="fullscreen-form-section">
-                  <div class="fullscreen-form-section__head">
-                    <h3 class="fullscreen-form-section__title">
-                      <span class="fullscreen-form-section__indicator" />
-                      {{ t('addS3Repo.fieldPlatform') }}
-                    </h3>
+            <div class="fullscreen-form-card">
+              <section class="fullscreen-form-section">
+                <div class="fullscreen-form-section__head">
+                  <h3 class="fullscreen-form-section__title">
+                    <span class="fullscreen-form-section__indicator" />
+                    {{ t('addS3Repo.fieldPlatform') }}
+                  </h3>
+                  <div class="add-s3-search">
+                    <ElInput
+                      v-model="platformSearch"
+                      class="add-s3-search__input"
+                      :placeholder="t('addS3Repo.phSearchPlatform')"
+                      clearable
+                    >
+                      <template #prefix>
+                        <Search :size="14" />
+                      </template>
+                    </ElInput>
+                  </div>
+                </div>
+                <div
+                  v-if="catalogError"
+                  class="add-s3-empty-state"
+                >
+                  {{ catalogError }}
+                  <ElButton
+                    link
+                    type="primary"
+                    @click="loadProviderCatalog"
+                  >
+                    {{ t('common.retry') }}
+                  </ElButton>
+                </div>
+                <div
+                  v-loading="catalogLoading"
+                  class="add-s3-platform-grid add-s3-platform-grid--331"
+                >
+                  <button
+                    v-for="p in filteredPlatforms"
+                    :key="p.value"
+                    class="add-s3-platform-btn"
+                    :class="{
+                      'add-s3-platform-btn--active': storagePlatform === p.value,
+                      'add-s3-platform-btn--disabled': !isPlatformEnabled(p.value),
+                    }"
+                    :aria-disabled="!isPlatformEnabled(p.value)"
+                    :title="!isPlatformEnabled(p.value) ? t('addS3Repo.platformComingSoon') : undefined"
+                    @click="onPlatformChange(p.value)"
+                  >
+                    <div
+                      v-if="storagePlatform === p.value"
+                      class="add-s3-platform-btn__glow"
+                    />
+                    <span class="add-s3-platform-btn__icon">
+                      <S3PlatformBrandIcon
+                        :platform="p.value"
+                        :size="18"
+                        :alt="optionLabel(p)"
+                        icon-class="add-s3-platform-btn__icon-img"
+                        lucide-class="add-s3-platform-btn__icon-lucide"
+                      />
+                    </span>
+                    <span class="add-s3-platform-btn__label">{{ optionLabel(p) }}</span>
+                  </button>
+                  <div
+                    v-if="filteredPlatforms.length === 0"
+                    class="add-s3-empty-state"
+                  >
+                    {{ t('addS3Repo.emptyPlatforms') }}
+                  </div>
+                </div>
+                <p
+                  v-if="errors.platform"
+                  class="el-form-item__error"
+                >
+                  {{ errors.platform }}
+                </p>
+
+                <!-- Region Selection -->
+                <template v-if="currentRegions.length > 0">
+                  <div class="add-s3-region-head">
+                    <h4 class="fullscreen-form-section__subtitle">
+                      {{ t('addS3Repo.fieldRegion') }} <span class="fullscreen-form-field__required">*</span>
+                    </h4>
                     <div class="add-s3-search">
                       <ElInput
-                        v-model="platformSearch"
+                        v-model="regionSearch"
                         class="add-s3-search__input"
-                        :placeholder="t('addS3Repo.phSearchPlatform')"
+                        :placeholder="t('addS3Repo.phSearchRegion')"
                         clearable
                       >
                         <template #prefix>
@@ -570,190 +661,197 @@ function handleBack() {
                       </ElInput>
                     </div>
                   </div>
-                  <div v-if="catalogError" class="add-s3-empty-state">
-                    {{ catalogError }}
-                    <ElButton link type="primary" @click="loadProviderCatalog">{{ t('common.retry') }}</ElButton>
-                  </div>
-                  <div v-loading="catalogLoading" class="add-s3-platform-grid add-s3-platform-grid--331">
-                    <button
-                      v-for="p in filteredPlatforms"
-                      :key="p.value"
-                      class="add-s3-platform-btn"
-                      :class="{
-                        'add-s3-platform-btn--active': storagePlatform === p.value,
-                        'add-s3-platform-btn--disabled': !isPlatformEnabled(p.value),
-                      }"
-                      :aria-disabled="!isPlatformEnabled(p.value)"
-                      :title="!isPlatformEnabled(p.value) ? t('addS3Repo.platformComingSoon') : undefined"
-                      @click="onPlatformChange(p.value)"
+                  <div class="add-s3-region-groups add-s3-region-grid--scroll">
+                    <section
+                      v-for="group in groupedRegions"
+                      :key="group.key"
+                      class="add-s3-region-group"
                     >
-                      <div class="add-s3-platform-btn__glow" v-if="storagePlatform === p.value" />
-                      <span class="add-s3-platform-btn__icon">
-                        <S3PlatformBrandIcon
-                          :platform="p.value"
-                          :size="18"
-                          :alt="optionLabel(p)"
-                          icon-class="add-s3-platform-btn__icon-img"
-                          lucide-class="add-s3-platform-btn__icon-lucide"
-                        />
-                      </span>
-                      <span class="add-s3-platform-btn__label">{{ optionLabel(p) }}</span>
-                    </button>
-                    <div v-if="filteredPlatforms.length === 0" class="add-s3-empty-state">
-                      {{ t('addS3Repo.emptyPlatforms') }}
-                    </div>
-                  </div>
-                  <p v-if="errors.platform" class="el-form-item__error">{{ errors.platform }}</p>
-
-                  <!-- Region Selection -->
-                  <template v-if="currentRegions.length > 0">
-                    <div class="add-s3-region-head">
-                      <h4 class="fullscreen-form-section__subtitle">
-                        {{ t('addS3Repo.fieldRegion') }} <span class="fullscreen-form-field__required">*</span>
-                      </h4>
-                      <div class="add-s3-search">
-                        <ElInput
-                          v-model="regionSearch"
-                          class="add-s3-search__input"
-                          :placeholder="t('addS3Repo.phSearchRegion')"
-                          clearable
+                      <h5 class="add-s3-region-group__title">
+                        {{ group.label }}
+                      </h5>
+                      <div class="add-s3-region-grid">
+                        <button
+                          v-for="r in group.regions"
+                          :key="r.key"
+                          class="add-s3-region-btn"
+                          :class="{ 'add-s3-region-btn--active': platformRegionKey === r.key }"
+                          @click="applyRegionPreset(r.key)"
                         >
-                          <template #prefix>
-                            <Search :size="14" />
-                          </template>
-                        </ElInput>
+                          <span class="add-s3-region-btn__label">{{ r.label }}</span>
+                          <span class="add-s3-region-btn__code">{{ r.region }}</span>
+                        </button>
                       </div>
-                    </div>
-                    <div class="add-s3-region-groups add-s3-region-grid--scroll">
-                      <section v-for="group in groupedRegions" :key="group.key" class="add-s3-region-group">
-                        <h5 class="add-s3-region-group__title">{{ group.label }}</h5>
-                        <div class="add-s3-region-grid">
-                          <button
-                            v-for="r in group.regions"
-                            :key="r.key"
-                            class="add-s3-region-btn"
-                            :class="{ 'add-s3-region-btn--active': platformRegionKey === r.key }"
-                            @click="applyRegionPreset(r.key)"
-                          >
-                            <span class="add-s3-region-btn__label">{{ r.label }}</span>
-                            <span class="add-s3-region-btn__code">{{ r.region }}</span>
-                          </button>
-                        </div>
-                      </section>
-                      <div v-if="filteredRegions.length === 0" class="add-s3-empty-state">
-                        {{ t('addS3Repo.emptyRegions') }}
-                      </div>
-                    </div>
-                  </template>
-                </section>
-              </div>
-
-              <div class="fullscreen-form-card">
-                <section class="fullscreen-form-section">
-                  <h3 class="fullscreen-form-section__title">
-                    <span class="fullscreen-form-section__indicator" />
-                    {{ t('addS3Repo.connectionTitle') }}
-                  </h3>
-
-                  <div class="fullscreen-form-grid">
-                    <!-- Endpoint -->
-                    <div data-validation-field="endpoint" class="fullscreen-form-field">
-                      <label class="fullscreen-form-field__label">
-                        {{ t('addS3Repo.fieldEndpoint') }} <span class="fullscreen-form-field__required">*</span>
-                      </label>
-                      <ElInput
-                        v-model="endpoint"
-                        class="add-s3-element-field"
-                        :placeholder="endpointPlaceholder"
-                        :disabled="!!platformRegionKey"
-                        @blur="endpoint = normalizeS3EndpointInput(endpoint)"
-                        @input="clearFieldError('endpoint')"
-                      />
-                      <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintEndpoint') }}</p>
-                      <p v-if="errors.endpoint" class="el-form-item__error">{{ errors.endpoint }}</p>
-                    </div>
-
-                    <!-- Region -->
-                    <div class="fullscreen-form-field">
-                      <label class="fullscreen-form-field__label">
-                        {{ t('addS3Repo.fieldRegion') }}
-                      </label>
-                      <ElInput
-                        v-model="region"
-                        class="add-s3-element-field"
-                        :placeholder="t('addS3Repo.phRegion')"
-                        :disabled="regionReadonly"
-                      />
-                      <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintRegion') }}</p>
-                    </div>
-
-                    <!-- Access Key -->
-                    <div data-validation-field="accessKey" class="fullscreen-form-field">
-                      <label class="fullscreen-form-field__label">
-                        {{ t('addS3Repo.fieldAccessKey') }} <span class="fullscreen-form-field__required">*</span>
-                      </label>
-                      <ElInput
-                        v-model="accessKeyId"
-                        class="add-s3-element-field"
-                        :placeholder="t('addS3Repo.phAccessKey')"
-                        @input="clearFieldError('accessKey')"
-                      />
-                      <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintAccessKey') }}</p>
-                      <p v-if="errors.accessKey" class="el-form-item__error">{{ errors.accessKey }}</p>
-                    </div>
-
-                    <!-- Secret Key -->
-                    <div data-validation-field="secretKey" class="fullscreen-form-field">
-                      <label class="fullscreen-form-field__label">
-                        {{ t('addS3Repo.fieldSecretKey') }} <span class="fullscreen-form-field__required">*</span>
-                      </label>
-                      <ElInput
-                        v-model="accessKeySecret"
-                        type="password"
-                        show-password
-                        class="add-s3-element-field"
-                        :placeholder="t('addS3Repo.phSecretKey')"
-                        @input="clearFieldError('secretKey')"
-                      />
-                      <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintSecretKey') }}</p>
-                      <p v-if="errors.secretKey" class="el-form-item__error">{{ errors.secretKey }}</p>
-                    </div>
-
-                    <!-- Path Style -->
-                    <div class="fullscreen-form-field">
-                      <label class="fullscreen-form-field__label">
-                        {{ t('addS3Repo.fieldS3UrlStyle') }} <span class="fullscreen-form-field__required">*</span>
-                      </label>
-                      <ElSelect v-model="s3UrlStyle" class="add-s3-element-field">
-                        <ElOption :label="t('addS3Repo.s3UrlStyleAuto')" value="auto" />
-                        <ElOption :label="t('addS3Repo.s3UrlStylePath')" value="path" />
-                        <ElOption :label="t('addS3Repo.s3UrlStyleVirtualHosted')" value="virtual_hosted" />
-                      </ElSelect>
-                      <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintS3UrlStyle') }}</p>
-                    </div>
-
-                    <!-- TLS Toggle -->
-                    <div class="fullscreen-form-field">
-                      <label class="fullscreen-form-field__label fullscreen-form-field__label--toggle">
-                        {{ t('addS3Repo.fieldUseTls') }} <span class="fullscreen-form-field__required">*</span>
-                      </label>
-                      <div class="add-s3-toggle">
-                        <ElSwitch v-model="useTls" />
-                        <span class="fullscreen-form-field__hint add-s3-toggle__label">{{ useTls ? t('addS3Repo.tlsOnHint') : t('addS3Repo.tlsOffHint') }}</span>
-                      </div>
+                    </section>
+                    <div
+                      v-if="filteredRegions.length === 0"
+                      class="add-s3-empty-state"
+                    >
+                      {{ t('addS3Repo.emptyRegions') }}
                     </div>
                   </div>
+                </template>
+              </section>
+            </div>
 
-                  <div v-if="authStatus !== 'idle'" class="add-s3-auth-check">
-                    <p class="add-s3-auth-status" :class="`add-s3-auth-status--${authStatus}`">
-                      <span class="add-s3-auth-status__dot" />
-                      {{ authStatusText }}
+            <div class="fullscreen-form-card">
+              <section class="fullscreen-form-section">
+                <h3 class="fullscreen-form-section__title">
+                  <span class="fullscreen-form-section__indicator" />
+                  {{ t('addS3Repo.connectionTitle') }}
+                </h3>
+
+                <div class="fullscreen-form-grid">
+                  <!-- Endpoint -->
+                  <div
+                    data-validation-field="endpoint"
+                    class="fullscreen-form-field"
+                  >
+                    <label class="fullscreen-form-field__label">
+                      {{ t('addS3Repo.fieldEndpoint') }} <span class="fullscreen-form-field__required">*</span>
+                    </label>
+                    <ElInput
+                      v-model="endpoint"
+                      class="add-s3-element-field"
+                      :placeholder="endpointPlaceholder"
+                      :disabled="!!platformRegionKey"
+                      @blur="endpoint = normalizeS3EndpointInput(endpoint)"
+                      @input="clearFieldError('endpoint')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('addS3Repo.hintEndpoint') }}
+                    </p>
+                    <p
+                      v-if="errors.endpoint"
+                      class="el-form-item__error"
+                    >
+                      {{ errors.endpoint }}
                     </p>
                   </div>
-                </section>
-              </div>
 
-              <div class="fullscreen-form-card">
+                  <!-- Region -->
+                  <div class="fullscreen-form-field">
+                    <label class="fullscreen-form-field__label">
+                      {{ t('addS3Repo.fieldRegion') }}
+                    </label>
+                    <ElInput
+                      v-model="region"
+                      class="add-s3-element-field"
+                      :placeholder="t('addS3Repo.phRegion')"
+                      :disabled="regionReadonly"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('addS3Repo.hintRegion') }}
+                    </p>
+                  </div>
+
+                  <!-- Access Key -->
+                  <div
+                    data-validation-field="accessKey"
+                    class="fullscreen-form-field"
+                  >
+                    <label class="fullscreen-form-field__label">
+                      {{ t('addS3Repo.fieldAccessKey') }} <span class="fullscreen-form-field__required">*</span>
+                    </label>
+                    <ElInput
+                      v-model="accessKeyId"
+                      class="add-s3-element-field"
+                      :placeholder="t('addS3Repo.phAccessKey')"
+                      @input="clearFieldError('accessKey')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('addS3Repo.hintAccessKey') }}
+                    </p>
+                    <p
+                      v-if="errors.accessKey"
+                      class="el-form-item__error"
+                    >
+                      {{ errors.accessKey }}
+                    </p>
+                  </div>
+
+                  <!-- Secret Key -->
+                  <div
+                    data-validation-field="secretKey"
+                    class="fullscreen-form-field"
+                  >
+                    <label class="fullscreen-form-field__label">
+                      {{ t('addS3Repo.fieldSecretKey') }} <span class="fullscreen-form-field__required">*</span>
+                    </label>
+                    <ElInput
+                      v-model="accessKeySecret"
+                      type="password"
+                      show-password
+                      class="add-s3-element-field"
+                      :placeholder="t('addS3Repo.phSecretKey')"
+                      @input="clearFieldError('secretKey')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('addS3Repo.hintSecretKey') }}
+                    </p>
+                    <p
+                      v-if="errors.secretKey"
+                      class="el-form-item__error"
+                    >
+                      {{ errors.secretKey }}
+                    </p>
+                  </div>
+
+                  <!-- Path Style -->
+                  <div class="fullscreen-form-field">
+                    <label class="fullscreen-form-field__label">
+                      {{ t('addS3Repo.fieldS3UrlStyle') }} <span class="fullscreen-form-field__required">*</span>
+                    </label>
+                    <ElSelect
+                      v-model="s3UrlStyle"
+                      class="add-s3-element-field"
+                    >
+                      <ElOption
+                        :label="t('addS3Repo.s3UrlStyleAuto')"
+                        value="auto"
+                      />
+                      <ElOption
+                        :label="t('addS3Repo.s3UrlStylePath')"
+                        value="path"
+                      />
+                      <ElOption
+                        :label="t('addS3Repo.s3UrlStyleVirtualHosted')"
+                        value="virtual_hosted"
+                      />
+                    </ElSelect>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('addS3Repo.hintS3UrlStyle') }}
+                    </p>
+                  </div>
+
+                  <!-- TLS Toggle -->
+                  <div class="fullscreen-form-field">
+                    <label class="fullscreen-form-field__label fullscreen-form-field__label--toggle">
+                      {{ t('addS3Repo.fieldUseTls') }} <span class="fullscreen-form-field__required">*</span>
+                    </label>
+                    <div class="add-s3-toggle">
+                      <ElSwitch v-model="useTls" />
+                      <span class="fullscreen-form-field__hint add-s3-toggle__label">{{ useTls ? t('addS3Repo.tlsOnHint') : t('addS3Repo.tlsOffHint') }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  v-if="authStatus !== 'idle'"
+                  class="add-s3-auth-check"
+                >
+                  <p
+                    class="add-s3-auth-status"
+                    :class="`add-s3-auth-status--${authStatus}`"
+                  >
+                    <span class="add-s3-auth-status__dot" />
+                    {{ authStatusText }}
+                  </p>
+                </div>
+              </section>
+            </div>
+
+            <div class="fullscreen-form-card">
               <section class="fullscreen-form-section">
                 <h3 class="fullscreen-form-section__title">
                   <span class="fullscreen-form-section__indicator" />
@@ -761,87 +859,137 @@ function handleBack() {
                 </h3>
                 <div class="fullscreen-form-grid">
                   <div class="add-s3-repo-primary-fields">
-                  <!-- Repo Name -->
-                  <div data-validation-field="repoName" class="fullscreen-form-field">
-                    <label class="fullscreen-form-field__label">
-                      {{ t('addS3Repo.fieldRepoName') }} <span class="fullscreen-form-field__required">*</span>
-                    </label>
-                    <ElInput
-                      v-model="repoName"
-                      class="add-s3-element-field add-s3-repo-primary-input"
-                      :placeholder="t('addS3Repo.phRepoName')"
-                      @input="onRepoNameInput(); clearFieldError('repoName')"
-                    />
-                    <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintRepoName') }}</p>
-                    <p v-if="errors.repoName" class="el-form-item__error">{{ errors.repoName }}</p>
-                  </div>
-
-                  <!-- Bucket -->
-                  <div data-validation-field="bucket" class="fullscreen-form-field">
-                    <label class="fullscreen-form-field__label">
-                      {{ t('addS3Repo.fieldBucket') }} <span class="fullscreen-form-field__required">*</span>
-                    </label>
-                    <ElRadioGroup
-                      :model-value="bucketMode"
-                      class="source-radio-row hfl-segment-radio-row add-s3-bucket-segment"
-                      @update:model-value="(mode) => setBucketMode(mode as 'existing' | 'new')"
+                    <!-- Repo Name -->
+                    <div
+                      data-validation-field="repoName"
+                      class="fullscreen-form-field"
                     >
-                      <ElRadio value="existing" border class="source-radio-card !mr-0">
-                        {{ t('addS3Repo.fieldBucketExisting') }}
-                      </ElRadio>
-                      <ElRadio value="new" border class="source-radio-card !mr-0">
-                        {{ t('addS3Repo.fieldBucketNew') }}
-                      </ElRadio>
-                    </ElRadioGroup>
-                    <div v-if="bucketMode === 'existing'" class="add-s3-bucket-select-row">
-                      <ElSelect
-                        v-model="bucket"
-                        class="add-s3-bucket-select"
-                        filterable
-                        clearable
-                        :loading="refreshingBuckets"
-                        :placeholder="refreshingBuckets ? t('addS3Repo.btnValidatingAuth') : t('addS3Repo.phBucketSelect')"
-                        @focus="loadBucketsForSelect"
-                        @visible-change="(open) => open && loadBucketsForSelect()"
-                        @change="clearFieldError('bucket')"
+                      <label class="fullscreen-form-field__label">
+                        {{ t('addS3Repo.fieldRepoName') }} <span class="fullscreen-form-field__required">*</span>
+                      </label>
+                      <ElInput
+                        v-model="repoName"
+                        class="add-s3-element-field add-s3-repo-primary-input"
+                        :placeholder="t('addS3Repo.phRepoName')"
+                        @input="onRepoNameInput(); clearFieldError('repoName')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('addS3Repo.hintRepoName') }}
+                      </p>
+                      <p
+                        v-if="errors.repoName"
+                        class="el-form-item__error"
                       >
-                        <ElOption v-for="item in bucketSelectOptions" :key="item" :label="item" :value="item" />
-                      </ElSelect>
-                      <button
-                        class="add-s3-icon-btn"
-                        type="button"
-                        :title="t('common.refresh')"
-                        :disabled="refreshingBuckets"
-                        @click="refreshBuckets"
-                      >
-                        <RefreshCw class="add-s3-icon-btn__icon" :class="{ 'add-s3-icon-btn__icon--spinning': refreshingBuckets }" :size="16" />
-                      </button>
+                        {{ errors.repoName }}
+                      </p>
                     </div>
-                    <ElInput
-                      v-else
-                      v-model="bucket"
-                      class="add-s3-element-field add-s3-repo-primary-input"
-                      :placeholder="t('addS3Repo.phBucketNew')"
-                      @input="clearFieldError('bucket')"
-                    />
-                    <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintBucket') }}</p>
-                    <p v-if="errors.bucket" class="el-form-item__error">{{ errors.bucket }}</p>
-                  </div>
-                  <!-- Prefix -->
-                  <div data-validation-field="prefix" class="fullscreen-form-field">
-                    <label class="fullscreen-form-field__label">
-                      {{ t('addS3Repo.fieldPrefix') }} <span class="fullscreen-form-field__required">*</span>
-                    </label>
-                    <ElInput
-                      v-model="prefix"
-                      class="add-s3-element-field add-s3-repo-primary-input"
-                      :placeholder="t('addS3Repo.phPrefix')"
-                      @blur="prefix = normalizeS3ObjectPrefix(prefix)"
-                      @input="clearFieldError('prefix')"
-                    />
-                    <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintPrefix') }}</p>
-                    <p v-if="errors.prefix" class="el-form-item__error">{{ errors.prefix }}</p>
-                  </div>
+
+                    <!-- Bucket -->
+                    <div
+                      data-validation-field="bucket"
+                      class="fullscreen-form-field"
+                    >
+                      <label class="fullscreen-form-field__label">
+                        {{ t('addS3Repo.fieldBucket') }} <span class="fullscreen-form-field__required">*</span>
+                      </label>
+                      <ElRadioGroup
+                        :model-value="bucketMode"
+                        class="source-radio-row hfl-segment-radio-row add-s3-bucket-segment"
+                        @update:model-value="(mode) => setBucketMode(mode as 'existing' | 'new')"
+                      >
+                        <ElRadio
+                          value="existing"
+                          border
+                          class="source-radio-card !mr-0"
+                        >
+                          {{ t('addS3Repo.fieldBucketExisting') }}
+                        </ElRadio>
+                        <ElRadio
+                          value="new"
+                          border
+                          class="source-radio-card !mr-0"
+                        >
+                          {{ t('addS3Repo.fieldBucketNew') }}
+                        </ElRadio>
+                      </ElRadioGroup>
+                      <div
+                        v-if="bucketMode === 'existing'"
+                        class="add-s3-bucket-select-row"
+                      >
+                        <ElSelect
+                          v-model="bucket"
+                          class="add-s3-bucket-select"
+                          filterable
+                          clearable
+                          :loading="refreshingBuckets"
+                          :placeholder="refreshingBuckets ? t('addS3Repo.btnValidatingAuth') : t('addS3Repo.phBucketSelect')"
+                          @focus="loadBucketsForSelect"
+                          @visible-change="(open) => open && loadBucketsForSelect()"
+                          @change="clearFieldError('bucket')"
+                        >
+                          <ElOption
+                            v-for="item in bucketSelectOptions"
+                            :key="item"
+                            :label="item"
+                            :value="item"
+                          />
+                        </ElSelect>
+                        <button
+                          class="add-s3-icon-btn"
+                          type="button"
+                          :title="t('common.refresh')"
+                          :disabled="refreshingBuckets"
+                          @click="refreshBuckets"
+                        >
+                          <RefreshCw
+                            class="add-s3-icon-btn__icon"
+                            :class="{ 'add-s3-icon-btn__icon--spinning': refreshingBuckets }"
+                            :size="16"
+                          />
+                        </button>
+                      </div>
+                      <ElInput
+                        v-else
+                        v-model="bucket"
+                        class="add-s3-element-field add-s3-repo-primary-input"
+                        :placeholder="t('addS3Repo.phBucketNew')"
+                        @input="clearFieldError('bucket')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('addS3Repo.hintBucket') }}
+                      </p>
+                      <p
+                        v-if="errors.bucket"
+                        class="el-form-item__error"
+                      >
+                        {{ errors.bucket }}
+                      </p>
+                    </div>
+                    <!-- Prefix -->
+                    <div
+                      data-validation-field="prefix"
+                      class="fullscreen-form-field"
+                    >
+                      <label class="fullscreen-form-field__label">
+                        {{ t('addS3Repo.fieldPrefix') }} <span class="fullscreen-form-field__required">*</span>
+                      </label>
+                      <ElInput
+                        v-model="prefix"
+                        class="add-s3-element-field add-s3-repo-primary-input"
+                        :placeholder="t('addS3Repo.phPrefix')"
+                        @blur="prefix = normalizeS3ObjectPrefix(prefix)"
+                        @input="clearFieldError('prefix')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('addS3Repo.hintPrefix') }}
+                      </p>
+                      <p
+                        v-if="errors.prefix"
+                        class="el-form-item__error"
+                      >
+                        {{ errors.prefix }}
+                      </p>
+                    </div>
                   </div>
 
                   <!-- Quota -->
@@ -857,15 +1005,24 @@ function handleBack() {
                             :min="0"
                             controls-position="right"
                           />
-                          <div class="repository-quota-number__suffix">GB</div>
+                          <div class="repository-quota-number__suffix">
+                            GB
+                          </div>
                         </div>
                       </div>
-                      <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintQuota') }}</p>
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('addS3Repo.hintQuota') }}
+                      </p>
                     </div>
 
-                    <div data-validation-field="quotaThreshold" class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring">
+                    <div
+                      data-validation-field="quotaThreshold"
+                      class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring"
+                    >
                       <div class="fullscreen-form-field__label repository-quota-head repository-quota-title-row">
-                        <ElCheckbox v-model="enableQuotaAlert">{{ t('repositoriesPage.fieldQuotaAlert') }}</ElCheckbox>
+                        <ElCheckbox v-model="enableQuotaAlert">
+                          {{ t('repositoriesPage.fieldQuotaAlert') }}
+                        </ElCheckbox>
                       </div>
                       <div class="repository-quota-control">
                         <div class="repository-quota-number repository-quota-input">
@@ -877,31 +1034,53 @@ function handleBack() {
                             controls-position="right"
                             @change="clearFieldError('quotaThreshold')"
                           />
-                          <div class="repository-quota-number__suffix">%</div>
+                          <div class="repository-quota-number__suffix">
+                            %
+                          </div>
                         </div>
                       </div>
-                      <p class="fullscreen-form-field__hint">{{ t('addS3Repo.hintQuotaAlertThreshold') }}</p>
-                      <p v-if="errors.quotaThreshold" class="el-form-item__error">{{ errors.quotaThreshold }}</p>
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('addS3Repo.hintQuotaAlertThreshold') }}
+                      </p>
+                      <p
+                        v-if="errors.quotaThreshold"
+                        class="el-form-item__error"
+                      >
+                        {{ errors.quotaThreshold }}
+                      </p>
                     </div>
                   </div>
                 </div>
               </section>
-              </div>
             </div>
+          </div>
 
           <!-- Footer Actions -->
           <div class="fullscreen-form-footer add-s3-footer">
-            <p v-if="submitBlockReason" class="form-submit-hint">{{ submitBlockReason }}</p>
+            <p
+              v-if="submitBlockReason"
+              class="form-submit-hint"
+            >
+              {{ submitBlockReason }}
+            </p>
             <ElButton @click="handleBack">
               {{ t('repositoriesPage.btnCancel') }}
             </ElButton>
-            <ElButton type="primary" :loading="busy" :disabled="!canSubmit" @click="onSubmit">
+            <ElButton
+              type="primary"
+              :loading="busy"
+              :disabled="!canSubmit"
+              @click="onSubmit"
+            >
               {{ t('addS3Repo.btnCreateInit') }}
             </ElButton>
           </div>
         </div>
 
-        <aside v-if="!embedded" class="fullscreen-form-sidebar add-form-preview-sidebar">
+        <aside
+          v-if="!embedded"
+          class="fullscreen-form-sidebar add-form-preview-sidebar"
+        >
           <div class="add-form-preview-card">
             <!-- Preview Header -->
             <div class="add-form-preview-header">
@@ -916,24 +1095,36 @@ function handleBack() {
                 />
               </div>
               <div class="add-form-preview-header__info">
-                <h4 class="add-form-preview-header__name">{{ repoName || t('addS3Repo.previewUnnamed') }}</h4>
-                <p class="add-form-preview-header__type">{{ platformLabel || t('addS3Repo.previewSelectPlatform') }}</p>
+                <h4 class="add-form-preview-header__name">
+                  {{ repoName || t('addS3Repo.previewUnnamed') }}
+                </h4>
+                <p class="add-form-preview-header__type">
+                  {{ platformLabel || t('addS3Repo.previewSelectPlatform') }}
+                </p>
               </div>
             </div>
 
             <!-- Preview Body -->
             <div class="add-form-preview-body">
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('addS3Repo.previewConnectionAuth') }}</h5>
+                <h5 class="add-form-preview-section__title">
+                  {{ t('addS3Repo.previewConnectionAuth') }}
+                </h5>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('addS3Repo.fieldEndpoint') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !endpoint }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !endpoint }"
+                  >
                     {{ s3EndpointDisplay(endpoint) }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('addS3Repo.fieldRegion') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !region }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !region }"
+                  >
                     {{ region || '—' }}
                   </span>
                 </div>
@@ -967,30 +1158,48 @@ function handleBack() {
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('addS3Repo.fieldUseTls') }}</span>
-                  <span class="add-form-preview-row__value" :class="useTls ? 'add-form-preview-row__value--success' : 'add-form-preview-row__value--muted'">
-                    <ShieldCheck v-if="useTls" class="add-form-preview-row__shield" :size="14" />
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="useTls ? 'add-form-preview-row__value--success' : 'add-form-preview-row__value--muted'"
+                  >
+                    <ShieldCheck
+                      v-if="useTls"
+                      class="add-form-preview-row__shield"
+                      :size="14"
+                    />
                     {{ useTls ? 'HTTPS' : 'HTTP' }}
                   </span>
                 </div>
               </div>
 
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('addS3Repo.previewRepoConfig') }}</h5>
+                <h5 class="add-form-preview-section__title">
+                  {{ t('addS3Repo.previewRepoConfig') }}
+                </h5>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('addS3Repo.fieldBucket') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !bucket }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !bucket }"
+                  >
                     {{ bucket || '—' }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('addS3Repo.fieldPrefix') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !prefix }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !prefix }"
+                  >
                     {{ prefix || '—' }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('addS3Repo.fieldQuota') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--highlight': quota > 0 }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--highlight': quota > 0 }"
+                  >
                     {{ quota > 0 ? `${quota} GB` : t('addS3Repo.previewUnlimited') }}
                   </span>
                 </div>
@@ -1000,7 +1209,10 @@ function handleBack() {
                     class="add-form-preview-row__value"
                     :class="enableQuotaAlert ? 'add-form-preview-row__value--success' : 'add-form-preview-row__value--muted'"
                   >
-                    <span v-if="enableQuotaAlert" class="add-form-preview-row__dot add-form-preview-row__dot--green" />
+                    <span
+                      v-if="enableQuotaAlert"
+                      class="add-form-preview-row__dot add-form-preview-row__dot--green"
+                    />
                     <template v-if="enableQuotaAlert">
                       {{ t('repositoriesPage.enabled') }} ({{ quotaAlertThreshold }}%)
                     </template>

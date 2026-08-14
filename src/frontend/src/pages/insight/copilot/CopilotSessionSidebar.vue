@@ -118,14 +118,27 @@ function handleAction(command: string, row: SessionRow) {
 <template>
   <aside class="copilot-aside">
     <div class="copilot-aside__new">
-      <ElButton class="w-full !justify-center" type="primary" size="small" @click="emit('newChat')">
+      <ElButton
+        class="w-full !justify-center"
+        type="primary"
+        size="small"
+        @click="emit('newChat')"
+      >
         <Plus :size="16" />{{ t('insight.copilot.newChat') }}
       </ElButton>
     </div>
 
-    <div v-loading="loading" class="copilot-session-scroll">
-      <template v-for="group in sessionGroups" :key="group.key">
-        <div class="copilot-session-group">{{ group.label }}</div>
+    <div
+      v-loading="loading"
+      class="copilot-session-scroll"
+    >
+      <template
+        v-for="group in sessionGroups"
+        :key="group.key"
+      >
+        <div class="copilot-session-group">
+          {{ group.label }}
+        </div>
         <article
           v-for="row in group.rows"
           :key="row.id"
@@ -144,27 +157,86 @@ function handleAction(command: string, row: SessionRow) {
                 @click.stop
                 @keydown="onRenameKeydown($event, row)"
                 @blur="commitRename(row, true)"
-              />
-              <span v-else class="copilot-session-item__title" :title="sessionTitle(row)">{{ sessionTitle(row) }}</span>
+              >
+              <span
+                v-else
+                class="copilot-session-item__title"
+                :title="sessionTitle(row)"
+              >{{ sessionTitle(row) }}</span>
             </div>
-            <span class="copilot-session-item__meta" :title="sessionMeta(row)">{{ sessionMeta(row) }}</span>
+            <span
+              class="copilot-session-item__meta"
+              :title="sessionMeta(row)"
+            >{{ sessionMeta(row) }}</span>
           </div>
 
-          <div v-if="editingId !== row.id" class="copilot-session-item__trailing">
-            <span class="copilot-session-item__state-slot" aria-hidden="true">
-              <span v-if="row.lifecycle_status === 'failed'" class="copilot-session-item__state is-failed" title="Preparation failed"><AlertCircle :size="14" /></span>
-              <span v-else-if="row.lifecycle_status === 'provisioning'" class="copilot-session-item__state is-preparing" title="Preparing"><i /><i /><i /></span>
-              <span v-else-if="sessionIsRunning(row)" class="copilot-session-item__state is-running" title="Answering" />
-              <span v-else-if="sessionHasUnread(row)" class="copilot-session-item__state is-unread" title="New answer" />
+          <div
+            v-if="editingId !== row.id"
+            class="copilot-session-item__trailing"
+          >
+            <span
+              class="copilot-session-item__state-slot"
+              aria-hidden="true"
+            >
+              <span
+                v-if="row.lifecycle_status === 'failed'"
+                class="copilot-session-item__state is-failed"
+                title="Preparation failed"
+              ><AlertCircle :size="14" /></span>
+              <span
+                v-else-if="row.lifecycle_status === 'provisioning'"
+                class="copilot-session-item__state is-preparing"
+                title="Preparing"
+              ><i /><i /><i /></span>
+              <span
+                v-else-if="sessionIsRunning(row)"
+                class="copilot-session-item__state is-running"
+                title="Answering"
+              />
+              <span
+                v-else-if="sessionHasUnread(row)"
+                class="copilot-session-item__state is-unread"
+                title="New answer"
+              />
             </span>
             <div class="copilot-session-item__actions">
-              <ElDropdown trigger="click" @command="(command) => handleAction(String(command), row)">
-                <button class="copilot-session-item__more" type="button" aria-label="Chat actions" @click.stop><Ellipsis :size="17" /></button>
+              <ElDropdown
+                trigger="click"
+                @command="(command) => handleAction(String(command), row)"
+              >
+                <button
+                  class="copilot-session-item__more"
+                  type="button"
+                  aria-label="Chat actions"
+                  @click.stop
+                >
+                  <Ellipsis :size="17" />
+                </button>
                 <template #dropdown>
                   <ElDropdownMenu>
-                    <ElDropdownItem class="copilot-session-menu__rename" command="rename" :icon="Pencil">Rename Chat</ElDropdownItem>
-                    <ElDropdownItem v-if="row.lifecycle_status === 'failed'" class="copilot-session-menu__retry" command="retry" :icon="RotateCcw">Try Again</ElDropdownItem>
-                    <ElDropdownItem class="copilot-session-menu__delete" command="delete" :icon="Trash2" divided>Delete Chat</ElDropdownItem>
+                    <ElDropdownItem
+                      class="copilot-session-menu__rename"
+                      command="rename"
+                      :icon="Pencil"
+                    >
+                      Rename Chat
+                    </ElDropdownItem>
+                    <ElDropdownItem
+                      v-if="row.lifecycle_status === 'failed'"
+                      class="copilot-session-menu__retry"
+                      command="retry"
+                      :icon="RotateCcw"
+                    >
+                      Try Again
+                    </ElDropdownItem>
+                    <ElDropdownItem
+                      class="copilot-session-menu__delete"
+                      command="delete"
+                      :icon="Trash2"
+                      divided
+                    >
+                      Delete Chat
+                    </ElDropdownItem>
                   </ElDropdownMenu>
                 </template>
               </ElDropdown>
@@ -173,7 +245,12 @@ function handleAction(command: string, row: SessionRow) {
         </article>
       </template>
 
-      <div v-if="!loading && !sessions.length" class="copilot-session-empty">{{ t('insight.copilot.emptyNoSessions') }}</div>
+      <div
+        v-if="!loading && !sessions.length"
+        class="copilot-session-empty"
+      >
+        {{ t('insight.copilot.emptyNoSessions') }}
+      </div>
     </div>
   </aside>
 </template>

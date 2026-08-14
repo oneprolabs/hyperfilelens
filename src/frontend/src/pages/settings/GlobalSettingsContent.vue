@@ -123,7 +123,10 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="busy" class="hfl-list-shell global-settings">
+  <div
+    v-loading="busy"
+    class="hfl-list-shell global-settings"
+  >
     <div class="hfl-list-panel">
       <div class="global-settings__panel">
         <section
@@ -132,9 +135,16 @@ onMounted(load)
           class="global-settings__row"
         >
           <div class="global-settings__row-text">
-            <div class="global-settings__label">{{ t(f.labelKey) }}</div>
-            <p class="global-settings__desc">{{ t(f.hintKey) }}</p>
-            <p v-if="sources[f.key]" class="global-settings__source">
+            <div class="global-settings__label">
+              {{ t(f.labelKey) }}
+            </div>
+            <p class="global-settings__desc">
+              {{ t(f.hintKey) }}
+            </p>
+            <p
+              v-if="sources[f.key]"
+              class="global-settings__source"
+            >
               {{ t('settings.systemOrg.effectiveFrom', { source: sourceLabel[sources[f.key] as keyof typeof sourceLabel] || sources[f.key] }) }}
             </p>
           </div>
@@ -148,13 +158,20 @@ onMounted(load)
               controls-position="right"
               class="global-settings__input-num"
             />
-            <ElSwitch v-else v-model="form[f.key]" />
+            <ElSwitch
+              v-else
+              v-model="form[f.key]"
+            />
           </div>
         </section>
       </div>
 
       <div class="global-settings__footer">
-        <ElButton type="primary" :loading="saving" @click="save">
+        <ElButton
+          type="primary"
+          :loading="saving"
+          @click="save"
+        >
           {{ t('common.save') }}
         </ElButton>
       </div>

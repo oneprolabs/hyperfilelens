@@ -290,7 +290,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen policy-editor-fullscreen">
+  <div
+    ref="pageRef"
+    class="fullscreen-form-fullscreen resource-add-fullscreen policy-editor-fullscreen"
+  >
     <div class="fullscreen-form-page add-s3-page policy-editor-page">
       <header class="fullscreen-form-header">
         <button
@@ -299,15 +302,25 @@ onMounted(() => {
           :aria-label="t('protection.policiesPage.policyEditorBackAria')"
           @click="handleBack"
         >
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
-          <h1 class="fullscreen-form-header__title">{{ pageTitle }}</h1>
-          <p class="fullscreen-form-header__desc">{{ editorHeaderDesc }}</p>
+          <h1 class="fullscreen-form-header__title">
+            {{ pageTitle }}
+          </h1>
+          <p class="fullscreen-form-header__desc">
+            {{ editorHeaderDesc }}
+          </p>
         </div>
       </header>
 
-      <div v-loading="loading" class="fullscreen-form-layout">
+      <div
+        v-loading="loading"
+        class="fullscreen-form-layout"
+      >
         <main class="fullscreen-form-main">
           <ProtectionPolicyEditorForm
             v-model:policy-form="form"
@@ -323,10 +336,18 @@ onMounted(() => {
           />
 
           <footer class="fullscreen-form-footer fullscreen-form-action-footer">
-            <ElButton :disabled="saving" @click="handleBack">
+            <ElButton
+              :disabled="saving"
+              @click="handleBack"
+            >
               {{ t('protection.backupsPage.btnCancel') }}
             </ElButton>
-            <ElButton type="primary" :loading="saving" :disabled="saving || loading" @click="submitEditor">
+            <ElButton
+              type="primary"
+              :loading="saving"
+              :disabled="saving || loading"
+              @click="submitEditor"
+            >
               {{ editorSaveLabel }}
             </ElButton>
           </footer>
@@ -337,7 +358,11 @@ onMounted(() => {
             <div class="add-form-preview-header">
               <div class="add-form-preview-header__glow" />
               <div class="add-form-preview-header__icon">
-                <component :is="editorPreviewIcon" class="add-form-preview-header__cloud" :size="28" />
+                <component
+                  :is="editorPreviewIcon"
+                  class="add-form-preview-header__cloud"
+                  :size="28"
+                />
               </div>
               <div class="add-form-preview-header__info">
                 <h4
@@ -346,13 +371,17 @@ onMounted(() => {
                 >
                   {{ editorPreviewName || t('protection.policiesPage.previewUnnamed') }}
                 </h4>
-                <p class="add-form-preview-header__type">{{ editorPreviewType }}</p>
+                <p class="add-form-preview-header__type">
+                  {{ editorPreviewType }}
+                </p>
               </div>
             </div>
 
             <div class="add-form-preview-body">
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('ops.alertsCenter.editor.previewTitle') }}</h5>
+                <h5 class="add-form-preview-section__title">
+                  {{ t('ops.alertsCenter.editor.previewTitle') }}
+                </h5>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('protection.policiesPage.fieldPolicyStatus') }}</span>
                   <span
@@ -362,7 +391,11 @@ onMounted(() => {
                     {{ editorPreviewActive ? t('protection.policiesPage.statusOn') : t('protection.policiesPage.statusOff') }}
                   </span>
                 </div>
-                <div v-for="row in editorPreviewRows" :key="row.label" class="add-form-preview-row">
+                <div
+                  v-for="row in editorPreviewRows"
+                  :key="row.label"
+                  class="add-form-preview-row"
+                >
                   <span class="add-form-preview-row__label">{{ row.label }}</span>
                   <span
                     class="add-form-preview-row__value"
@@ -377,9 +410,18 @@ onMounted(() => {
                 </div>
               </div>
 
-              <div v-if="isFilterEditor" class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('protection.policiesPage.filterRulesSectionTitle') }}</h5>
-                <div v-for="row in filterRulePreviewRows" :key="row.label" class="add-form-preview-row">
+              <div
+                v-if="isFilterEditor"
+                class="add-form-preview-section"
+              >
+                <h5 class="add-form-preview-section__title">
+                  {{ t('protection.policiesPage.filterRulesSectionTitle') }}
+                </h5>
+                <div
+                  v-for="row in filterRulePreviewRows"
+                  :key="row.label"
+                  class="add-form-preview-row"
+                >
                   <span class="add-form-preview-row__label">{{ row.label }}</span>
                   <span
                     class="add-form-preview-row__value"
@@ -390,9 +432,18 @@ onMounted(() => {
                 </div>
               </div>
 
-              <div v-if="isFilterEditor" class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('protection.policiesPage.previewFilterAdvanced') }}</h5>
-                <div v-for="row in filterAdvancedPreviewRows" :key="row.label" class="add-form-preview-row">
+              <div
+                v-if="isFilterEditor"
+                class="add-form-preview-section"
+              >
+                <h5 class="add-form-preview-section__title">
+                  {{ t('protection.policiesPage.previewFilterAdvanced') }}
+                </h5>
+                <div
+                  v-for="row in filterAdvancedPreviewRows"
+                  :key="row.label"
+                  class="add-form-preview-row"
+                >
                   <span class="add-form-preview-row__label">{{ row.label }}</span>
                   <span
                     class="add-form-preview-row__value"
@@ -406,9 +457,18 @@ onMounted(() => {
                 </div>
               </div>
 
-              <div v-if="!isFilterEditor" class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('protection.policiesPage.fieldRetention') }}</h5>
-                <div v-for="row in backupRetentionPreviewRows" :key="row.label" class="add-form-preview-row">
+              <div
+                v-if="!isFilterEditor"
+                class="add-form-preview-section"
+              >
+                <h5 class="add-form-preview-section__title">
+                  {{ t('protection.policiesPage.fieldRetention') }}
+                </h5>
+                <div
+                  v-for="row in backupRetentionPreviewRows"
+                  :key="row.label"
+                  class="add-form-preview-row"
+                >
                   <span class="add-form-preview-row__label">{{ row.label }}</span>
                   <span
                     class="add-form-preview-row__value"
@@ -419,9 +479,18 @@ onMounted(() => {
                 </div>
               </div>
 
-              <div v-if="!isFilterEditor" class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('protection.policiesPage.sectionCheckError') }}</h5>
-                <div v-for="row in backupErrorHandlingPreviewRows" :key="row.label" class="add-form-preview-row">
+              <div
+                v-if="!isFilterEditor"
+                class="add-form-preview-section"
+              >
+                <h5 class="add-form-preview-section__title">
+                  {{ t('protection.policiesPage.sectionCheckError') }}
+                </h5>
+                <div
+                  v-for="row in backupErrorHandlingPreviewRows"
+                  :key="row.label"
+                  class="add-form-preview-row"
+                >
                   <span class="add-form-preview-row__label">{{ row.label }}</span>
                   <span
                     class="add-form-preview-row__value"

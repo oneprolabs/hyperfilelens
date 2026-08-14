@@ -55,13 +55,30 @@ const props = withDefaults(
     beforeClose?: () => boolean | Promise<boolean>
   }>(),
   {
+    subtitle: '',
     level: 'high',
+    message: '',
+    warning: '',
+    items: undefined,
     maxItemRows: 5,
+    overflowLabel: '',
+    itemsHeading: '',
+    itemNameLabel: undefined,
+    itemStatusLabel: undefined,
+    itemDetailsLabel: undefined,
     confirmMode: 'single',
     confirmKeyword: 'DELETE',
+    confirmKeywordHint: '',
+    confirmKeywordPlaceholder: '',
+    irreversibleHint: '',
     irreversibleTone: 'danger',
+    cancelText: undefined,
+    confirmText: undefined,
     loading: false,
+    pendingText: undefined,
+    errorText: '',
     width: undefined,
+    beforeClose: undefined,
   },
 )
 
@@ -167,12 +184,26 @@ async function onDialogBeforeClose(done: () => void) {
   >
     <template #header>
       <div class="hfl-danger-confirm__header">
-        <div class="hfl-danger-confirm__icon" :class="accentClass" aria-hidden="true">
-          <component :is="Icon" :size="20" />
+        <div
+          class="hfl-danger-confirm__icon"
+          :class="accentClass"
+          aria-hidden="true"
+        >
+          <component
+            :is="Icon"
+            :size="20"
+          />
         </div>
         <div class="hfl-danger-confirm__titles">
-          <h2 class="hfl-danger-confirm__title">{{ title }}</h2>
-          <p v-if="subtitle" class="hfl-danger-confirm__subtitle">{{ subtitle }}</p>
+          <h2 class="hfl-danger-confirm__title">
+            {{ title }}
+          </h2>
+          <p
+            v-if="subtitle"
+            class="hfl-danger-confirm__subtitle"
+          >
+            {{ subtitle }}
+          </p>
         </div>
         <button
           type="button"
@@ -187,7 +218,10 @@ async function onDialogBeforeClose(done: () => void) {
     </template>
 
     <div class="hfl-danger-confirm__body">
-      <div v-if="pending" class="hfl-danger-confirm__pending">
+      <div
+        v-if="pending"
+        class="hfl-danger-confirm__pending"
+      >
         <LoaderCircle
           :size="18"
           class="hfl-danger-confirm__pending-icon"
@@ -195,21 +229,38 @@ async function onDialogBeforeClose(done: () => void) {
         <span>{{ pendingText ?? 'Checking dependencies...' }}</span>
       </div>
 
-      <div v-else-if="errorText" class="hfl-danger-confirm__error">
+      <div
+        v-else-if="errorText"
+        class="hfl-danger-confirm__error"
+      >
         <AlertTriangle :size="16" />
         <span>{{ errorText }}</span>
       </div>
 
       <template v-else>
-        <p v-if="message" class="hfl-danger-confirm__message">{{ message }}</p>
+        <p
+          v-if="message"
+          class="hfl-danger-confirm__message"
+        >
+          {{ message }}
+        </p>
 
-        <div v-if="warning" class="hfl-danger-confirm__warning">
+        <div
+          v-if="warning"
+          class="hfl-danger-confirm__warning"
+        >
           <AlertTriangle :size="16" />
           <span>{{ warning }}</span>
         </div>
 
-        <section v-if="hasItems" class="hfl-danger-confirm__items">
-          <header v-if="itemsHeading" class="hfl-danger-confirm__items-heading">
+        <section
+          v-if="hasItems"
+          class="hfl-danger-confirm__items"
+        >
+          <header
+            v-if="itemsHeading"
+            class="hfl-danger-confirm__items-heading"
+          >
             {{ itemsHeading }}
           </header>
           <div class="hfl-danger-confirm__item-table-scroll">
@@ -221,9 +272,15 @@ async function onDialogBeforeClose(done: () => void) {
               </colgroup>
               <thead>
                 <tr>
-                  <th scope="col">{{ itemNameLabel ?? 'Name' }}</th>
-                  <th scope="col">{{ itemStatusLabel ?? 'Status' }}</th>
-                  <th scope="col">{{ itemDetailsLabel ?? 'Details' }}</th>
+                  <th scope="col">
+                    {{ itemNameLabel ?? 'Name' }}
+                  </th>
+                  <th scope="col">
+                    {{ itemStatusLabel ?? 'Status' }}
+                  </th>
+                  <th scope="col">
+                    {{ itemDetailsLabel ?? 'Details' }}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -235,7 +292,10 @@ async function onDialogBeforeClose(done: () => void) {
                     class="hfl-danger-confirm__item-name-cell"
                     :class="{ 'hfl-danger-confirm__item-name-cell--full': !item.status }"
                   >
-                    <span class="hfl-danger-confirm__item-name" :title="item.name">{{ item.name }}</span>
+                    <span
+                      class="hfl-danger-confirm__item-name"
+                      :title="item.name"
+                    >{{ item.name }}</span>
                   </td>
                   <td class="hfl-danger-confirm__item-status-cell">
                     <span
@@ -290,7 +350,10 @@ async function onDialogBeforeClose(done: () => void) {
           {{ irreversibleHint }}
         </p>
 
-        <section v-if="needsKeyword" class="hfl-danger-confirm__keyword">
+        <section
+          v-if="needsKeyword"
+          class="hfl-danger-confirm__keyword"
+        >
           <ExactKeywordConfirmInput
             v-model="confirmInput"
             :keyword="confirmKeyword"
@@ -315,7 +378,10 @@ async function onDialogBeforeClose(done: () => void) {
           :confirm="onPrimary"
           :cancel="close"
         >
-          <ElButton :disabled="loading" @click="close">
+          <ElButton
+            :disabled="loading"
+            @click="close"
+          >
             {{ cancelText ?? 'Cancel' }}
           </ElButton>
           <ElButton

@@ -477,26 +477,64 @@ onUnmounted(() => {
       <span class="hfl-detail-drawer__title">{{ row?.name || DETAIL_EMPTY }}</span>
     </template>
 
-    <div v-if="row" v-loading="saving" class="hfl-detail-drawer__body">
-      <ElTabs model-value="basic" class="hfl-detail-tabs">
-        <ElTabPane :label="t('protection.sourceResources.detailTabBasic')" name="basic">
+    <div
+      v-if="row"
+      v-loading="saving"
+      class="hfl-detail-drawer__body"
+    >
+      <ElTabs
+        model-value="basic"
+        class="hfl-detail-tabs"
+      >
+        <ElTabPane
+          :label="t('protection.sourceResources.detailTabBasic')"
+          name="basic"
+        >
           <div class="hfl-detail-sections">
             <section class="hfl-detail-section">
-              <h4 class="hfl-detail-section__title">{{ t('protection.sourceResources.detailSectionIdentity') }}</h4>
+              <h4 class="hfl-detail-section__title">
+                {{ t('protection.sourceResources.detailSectionIdentity') }}
+              </h4>
               <div class="hfl-detail-grid">
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldSourceName') }}</span>
                   <span class="hfl-detail-row__value hfl-detail-row__value--editable">
                     <template v-if="detailDraft && isFieldEditing('name')">
-                      <ElInput v-model="detailDraft.name" size="small" class="hfl-detail-inline-edit__input" :disabled="saving" @keyup.enter="saveDetailChanges" />
+                      <ElInput
+                        v-model="detailDraft.name"
+                        size="small"
+                        class="hfl-detail-inline-edit__input"
+                        :disabled="saving"
+                        @keyup.enter="saveDetailChanges"
+                      />
                       <span class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="saving" @click="saveDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="saving" @click="cancelFieldEdit"><X :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.save')"
+                          :disabled="saving"
+                          @click="saveDetailChanges"
+                        ><Check :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.cancel')"
+                          :disabled="saving"
+                          @click="cancelFieldEdit"
+                        ><X :size="14" /></ElButton>
                       </span>
                     </template>
                     <template v-else>
                       <span class="hfl-detail-row__text">{{ row.name }}</span>
-                      <ElButton text circle size="small" class="hfl-detail-row__edit" @click="beginFieldEdit('name')"><Pencil :size="13" /></ElButton>
+                      <ElButton
+                        text
+                        circle
+                        size="small"
+                        class="hfl-detail-row__edit"
+                        @click="beginFieldEdit('name')"
+                      ><Pencil :size="13" /></ElButton>
                     </template>
                   </span>
                 </div>
@@ -508,7 +546,14 @@ onUnmounted(() => {
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldSourceId') }}</span>
                   <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
                     <span class="hfl-detail-row__text">{{ sourceIdText }}</span>
-                    <ElButton text circle size="small" class="hfl-detail-row__edit" :title="t('common.copy')" @click="copyText(sourceIdText)">
+                    <ElButton
+                      text
+                      circle
+                      size="small"
+                      class="hfl-detail-row__edit"
+                      :title="t('common.copy')"
+                      @click="copyText(sourceIdText)"
+                    >
                       <Copy :size="13" />
                     </ElButton>
                   </span>
@@ -517,7 +562,11 @@ onUnmounted(() => {
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colProtocol') }}</span>
                   <span class="hfl-detail-row__value">
                     <span :class="protocolPillClass(protocol)">
-                      <component :is="nasMountProtocolIcon(protocol)" :size="12" stroke-width="2.25" />
+                      <component
+                        :is="nasMountProtocolIcon(protocol)"
+                        :size="12"
+                        stroke-width="2.25"
+                      />
                       {{ protocolLabel(protocol) }}
                     </span>
                   </span>
@@ -526,21 +575,52 @@ onUnmounted(() => {
             </section>
 
             <section class="hfl-detail-section">
-              <h4 class="hfl-detail-section__title">{{ t('protection.sourceResources.detailSectionAccess') }}</h4>
+              <h4 class="hfl-detail-section__title">
+                {{ t('protection.sourceResources.detailSectionAccess') }}
+              </h4>
               <div class="hfl-detail-grid">
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colNasServer') }}</span>
-                  <span class="hfl-detail-row__value hfl-detail-row__value--editable" :class="detailValueClass(displayOrEmpty(cfg('server')), true)">
+                  <span
+                    class="hfl-detail-row__value hfl-detail-row__value--editable"
+                    :class="detailValueClass(displayOrEmpty(cfg('server')), true)"
+                  >
                     <template v-if="detailDraft && isFieldEditing('server')">
-                      <ElInput v-model="detailDraft.server" size="small" class="hfl-detail-inline-edit__input" :disabled="saving" @keyup.enter="saveDetailChanges" />
+                      <ElInput
+                        v-model="detailDraft.server"
+                        size="small"
+                        class="hfl-detail-inline-edit__input"
+                        :disabled="saving"
+                        @keyup.enter="saveDetailChanges"
+                      />
                       <span class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="saving" @click="saveDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="saving" @click="cancelFieldEdit"><X :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.save')"
+                          :disabled="saving"
+                          @click="saveDetailChanges"
+                        ><Check :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.cancel')"
+                          :disabled="saving"
+                          @click="cancelFieldEdit"
+                        ><X :size="14" /></ElButton>
                       </span>
                     </template>
                     <template v-else>
                       <span class="hfl-detail-row__text">{{ displayOrEmpty(cfg('server')) }}</span>
-                      <ElButton text circle size="small" class="hfl-detail-row__edit" @click="beginFieldEdit('server')"><Pencil :size="13" /></ElButton>
+                      <ElButton
+                        text
+                        circle
+                        size="small"
+                        class="hfl-detail-row__edit"
+                        @click="beginFieldEdit('server')"
+                      ><Pencil :size="13" /></ElButton>
                     </template>
                   </span>
                 </div>
@@ -570,8 +650,22 @@ onUnmounted(() => {
                         @keyup.enter="saveDetailChanges"
                       />
                       <span class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="saving" @click="saveDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="saving" @click="cancelFieldEdit"><X :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.save')"
+                          :disabled="saving"
+                          @click="saveDetailChanges"
+                        ><Check :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.cancel')"
+                          :disabled="saving"
+                          @click="cancelFieldEdit"
+                        ><X :size="14" /></ElButton>
                       </span>
                     </template>
                     <template v-else>
@@ -593,23 +687,55 @@ onUnmounted(() => {
                 <template v-if="protocol === 'smb'">
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('protection.sourceResources.nasFieldSmbUsername') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable" :class="detailValueClass(displayOrEmpty(cred('username')))">
+                    <span
+                      class="hfl-detail-row__value hfl-detail-row__value--editable"
+                      :class="detailValueClass(displayOrEmpty(cred('username')))"
+                    >
                       <template v-if="detailDraft && isFieldEditing('username')">
-                        <ElInput v-model="detailDraft.username" size="small" class="hfl-detail-inline-edit__input" :disabled="saving" @keyup.enter="saveDetailChanges" />
+                        <ElInput
+                          v-model="detailDraft.username"
+                          size="small"
+                          class="hfl-detail-inline-edit__input"
+                          :disabled="saving"
+                          @keyup.enter="saveDetailChanges"
+                        />
                         <span class="hfl-detail-inline-edit__actions">
-                          <ElButton text circle size="small" :title="t('common.save')" :disabled="saving" @click="saveDetailChanges"><Check :size="14" /></ElButton>
-                          <ElButton text circle size="small" :title="t('common.cancel')" :disabled="saving" @click="cancelFieldEdit"><X :size="14" /></ElButton>
+                          <ElButton
+                            text
+                            circle
+                            size="small"
+                            :title="t('common.save')"
+                            :disabled="saving"
+                            @click="saveDetailChanges"
+                          ><Check :size="14" /></ElButton>
+                          <ElButton
+                            text
+                            circle
+                            size="small"
+                            :title="t('common.cancel')"
+                            :disabled="saving"
+                            @click="cancelFieldEdit"
+                          ><X :size="14" /></ElButton>
                         </span>
                       </template>
                       <template v-else>
                         <span class="hfl-detail-row__text">{{ displayOrEmpty(cred('username')) }}</span>
-                        <ElButton text circle size="small" class="hfl-detail-row__edit" @click="beginFieldEdit('username')"><Pencil :size="13" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          class="hfl-detail-row__edit"
+                          @click="beginFieldEdit('username')"
+                        ><Pencil :size="13" /></ElButton>
                       </template>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('protection.sourceResources.nasFieldSmbPassword') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable" :class="detailValueClass(passwordDisplay())">
+                    <span
+                      class="hfl-detail-row__value hfl-detail-row__value--editable"
+                      :class="detailValueClass(passwordDisplay())"
+                    >
                       <template v-if="detailDraft && isFieldEditing('password')">
                         <ElInput
                           v-model="detailDraft.password"
@@ -622,34 +748,86 @@ onUnmounted(() => {
                           @keyup.enter="saveDetailChanges"
                         />
                         <span class="hfl-detail-inline-edit__actions">
-                          <ElButton text circle size="small" :title="t('common.save')" :disabled="saving" @click="saveDetailChanges"><Check :size="14" /></ElButton>
-                          <ElButton text circle size="small" :title="t('common.cancel')" :disabled="saving" @click="cancelFieldEdit"><X :size="14" /></ElButton>
+                          <ElButton
+                            text
+                            circle
+                            size="small"
+                            :title="t('common.save')"
+                            :disabled="saving"
+                            @click="saveDetailChanges"
+                          ><Check :size="14" /></ElButton>
+                          <ElButton
+                            text
+                            circle
+                            size="small"
+                            :title="t('common.cancel')"
+                            :disabled="saving"
+                            @click="cancelFieldEdit"
+                          ><X :size="14" /></ElButton>
                         </span>
                       </template>
                       <template v-else>
                         <span class="hfl-detail-row__text">{{ passwordDisplay() }}</span>
-                        <ElButton text circle size="small" class="hfl-detail-row__edit" @click="beginFieldEdit('password')"><Pencil :size="13" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          class="hfl-detail-row__edit"
+                          @click="beginFieldEdit('password')"
+                        ><Pencil :size="13" /></ElButton>
                       </template>
                     </span>
                   </div>
                 </template>
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('addNasRepo.fieldMountOptions') }}</span>
-                  <span class="hfl-detail-row__value hfl-detail-row__value--editable" :class="detailValueClass(displayOrEmpty(cfg('options')), true)">
+                  <span
+                    class="hfl-detail-row__value hfl-detail-row__value--editable"
+                    :class="detailValueClass(displayOrEmpty(cfg('options')), true)"
+                  >
                     <template v-if="detailDraft && isFieldEditing('options')">
-                      <ElInput v-model="detailDraft.options" size="small" class="hfl-detail-inline-edit__input" :disabled="saving" @keyup.enter="saveDetailChanges" />
+                      <ElInput
+                        v-model="detailDraft.options"
+                        size="small"
+                        class="hfl-detail-inline-edit__input"
+                        :disabled="saving"
+                        @keyup.enter="saveDetailChanges"
+                      />
                       <span class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="saving" @click="saveDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="saving" @click="cancelFieldEdit"><X :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.save')"
+                          :disabled="saving"
+                          @click="saveDetailChanges"
+                        ><Check :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.cancel')"
+                          :disabled="saving"
+                          @click="cancelFieldEdit"
+                        ><X :size="14" /></ElButton>
                       </span>
                     </template>
                     <template v-else>
                       <span class="hfl-detail-row__text">{{ displayOrEmpty(cfg('options')) }}</span>
-                      <ElButton text circle size="small" class="hfl-detail-row__edit" @click="beginFieldEdit('options')"><Pencil :size="13" /></ElButton>
+                      <ElButton
+                        text
+                        circle
+                        size="small"
+                        class="hfl-detail-row__edit"
+                        @click="beginFieldEdit('options')"
+                      ><Pencil :size="13" /></ElButton>
                     </template>
                   </span>
                 </div>
-                <div v-if="protocol === 'nfs'" class="hfl-detail-row">
+                <div
+                  v-if="protocol === 'nfs'"
+                  class="hfl-detail-row"
+                >
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colConnection') }}</span>
                   <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
                     <span class="hfl-detail-row__text">{{ connectionUri }}</span>
@@ -666,23 +844,58 @@ onUnmounted(() => {
                     </ElButton>
                   </span>
                 </div>
-                <div v-if="protocol === 'smb'" class="hfl-detail-row">
+                <div
+                  v-if="protocol === 'smb'"
+                  class="hfl-detail-row"
+                >
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.nasFieldSmbDomain') }}</span>
-                  <span class="hfl-detail-row__value hfl-detail-row__value--editable" :class="detailValueClass(displayOrEmpty(cred('domain')))">
+                  <span
+                    class="hfl-detail-row__value hfl-detail-row__value--editable"
+                    :class="detailValueClass(displayOrEmpty(cred('domain')))"
+                  >
                     <template v-if="detailDraft && isFieldEditing('domain')">
-                      <ElInput v-model="detailDraft.domain" size="small" class="hfl-detail-inline-edit__input" :disabled="saving" @keyup.enter="saveDetailChanges" />
+                      <ElInput
+                        v-model="detailDraft.domain"
+                        size="small"
+                        class="hfl-detail-inline-edit__input"
+                        :disabled="saving"
+                        @keyup.enter="saveDetailChanges"
+                      />
                       <span class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="saving" @click="saveDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="saving" @click="cancelFieldEdit"><X :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.save')"
+                          :disabled="saving"
+                          @click="saveDetailChanges"
+                        ><Check :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.cancel')"
+                          :disabled="saving"
+                          @click="cancelFieldEdit"
+                        ><X :size="14" /></ElButton>
                       </span>
                     </template>
                     <template v-else>
                       <span class="hfl-detail-row__text">{{ displayOrEmpty(cred('domain')) }}</span>
-                      <ElButton text circle size="small" class="hfl-detail-row__edit" @click="beginFieldEdit('domain')"><Pencil :size="13" /></ElButton>
+                      <ElButton
+                        text
+                        circle
+                        size="small"
+                        class="hfl-detail-row__edit"
+                        @click="beginFieldEdit('domain')"
+                      ><Pencil :size="13" /></ElButton>
                     </template>
                   </span>
                 </div>
-                <div v-if="protocol === 'smb'" class="hfl-detail-row hfl-detail-row--full">
+                <div
+                  v-if="protocol === 'smb'"
+                  class="hfl-detail-row hfl-detail-row--full"
+                >
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colConnection') }}</span>
                   <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
                     <span class="hfl-detail-row__text">{{ connectionUri }}</span>
@@ -703,11 +916,16 @@ onUnmounted(() => {
             </section>
 
             <section class="hfl-detail-section">
-              <h4 class="hfl-detail-section__title">{{ t('protection.sourceResources.detailSectionProxy') }}</h4>
+              <h4 class="hfl-detail-section__title">
+                {{ t('protection.sourceResources.detailSectionProxy') }}
+              </h4>
               <div class="hfl-detail-grid">
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colSourceProxy') }}</span>
-                  <span class="hfl-detail-row__value hfl-detail-row__value--editable" :class="detailValueClass(proxyPrimaryText, true)">
+                  <span
+                    class="hfl-detail-row__value hfl-detail-row__value--editable"
+                    :class="detailValueClass(proxyPrimaryText, true)"
+                  >
                     <template v-if="detailDraft && isFieldEditing('bound_node_id')">
                       <ElSelect
                         v-model="detailDraft.bound_node_id"
@@ -727,43 +945,102 @@ onUnmounted(() => {
                         >
                           <div class="nas-detail-proxy-option">
                             <span class="nas-detail-proxy-option__text">{{ proxyNodeSelectLine(node) }}</span>
-                            <ElTag size="small" :type="proxyNodeStatusTagType(node)" effect="plain">
+                            <ElTag
+                              size="small"
+                              :type="proxyNodeStatusTagType(node)"
+                              effect="plain"
+                            >
                               {{ proxyNodeStatusLabel(node) }}
                             </ElTag>
                           </div>
                         </ElOption>
                       </ElSelect>
                       <span class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="saving" @click="saveDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="saving" @click="cancelFieldEdit"><X :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.save')"
+                          :disabled="saving"
+                          @click="saveDetailChanges"
+                        ><Check :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.cancel')"
+                          :disabled="saving"
+                          @click="cancelFieldEdit"
+                        ><X :size="14" /></ElButton>
                       </span>
                     </template>
                     <template v-else>
                       <div class="table-stack-cell hfl-table-no-tooltip">
                         <span class="table-stack-cell__primary">{{ proxyPrimaryText }}</span>
-                        <span v-if="!isDetailEmpty(proxyIpText)" class="table-stack-cell__secondary">{{ proxyIpText }}</span>
+                        <span
+                          v-if="!isDetailEmpty(proxyIpText)"
+                          class="table-stack-cell__secondary"
+                        >{{ proxyIpText }}</span>
                       </div>
-                      <ElButton text circle size="small" class="hfl-detail-row__edit" @click="beginFieldEdit('bound_node_id')"><Pencil :size="13" /></ElButton>
+                      <ElButton
+                        text
+                        circle
+                        size="small"
+                        class="hfl-detail-row__edit"
+                        @click="beginFieldEdit('bound_node_id')"
+                      ><Pencil :size="13" /></ElButton>
                     </template>
                   </span>
                 </div>
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldProxyVersion') }}</span>
-                  <span class="hfl-detail-row__value" :class="detailValueClass(proxyVersionText)">{{ proxyVersionText }}</span>
+                  <span
+                    class="hfl-detail-row__value"
+                    :class="detailValueClass(proxyVersionText)"
+                  >{{ proxyVersionText }}</span>
                 </div>
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.nasFieldDir') }}</span>
-                  <span class="hfl-detail-row__value hfl-detail-row__value--editable" :class="detailValueClass(mountDirText, true)">
+                  <span
+                    class="hfl-detail-row__value hfl-detail-row__value--editable"
+                    :class="detailValueClass(mountDirText, true)"
+                  >
                     <template v-if="detailDraft && isFieldEditing('path')">
-                      <ElInput v-model="detailDraft.path" size="small" class="hfl-detail-inline-edit__input" :disabled="saving" @keyup.enter="saveDetailChanges" />
+                      <ElInput
+                        v-model="detailDraft.path"
+                        size="small"
+                        class="hfl-detail-inline-edit__input"
+                        :disabled="saving"
+                        @keyup.enter="saveDetailChanges"
+                      />
                       <span class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="saving" @click="saveDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="saving" @click="cancelFieldEdit"><X :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.save')"
+                          :disabled="saving"
+                          @click="saveDetailChanges"
+                        ><Check :size="14" /></ElButton>
+                        <ElButton
+                          text
+                          circle
+                          size="small"
+                          :title="t('common.cancel')"
+                          :disabled="saving"
+                          @click="cancelFieldEdit"
+                        ><X :size="14" /></ElButton>
                       </span>
                     </template>
                     <template v-else>
                       <span class="hfl-detail-row__text">{{ mountDirText }}</span>
-                      <ElButton text circle size="small" class="hfl-detail-row__edit" @click="beginFieldEdit('path')"><Pencil :size="13" /></ElButton>
+                      <ElButton
+                        text
+                        circle
+                        size="small"
+                        class="hfl-detail-row__edit"
+                        @click="beginFieldEdit('path')"
+                      ><Pencil :size="13" /></ElButton>
                     </template>
                   </span>
                 </div>
@@ -771,7 +1048,9 @@ onUnmounted(() => {
             </section>
 
             <section class="hfl-detail-section">
-              <h4 class="hfl-detail-section__title">{{ t('protection.sourceResources.detailSectionRuntime') }}</h4>
+              <h4 class="hfl-detail-section__title">
+                {{ t('protection.sourceResources.detailSectionRuntime') }}
+              </h4>
               <div class="hfl-detail-grid">
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colLifecycleStatus') }}</span>
@@ -788,7 +1067,10 @@ onUnmounted(() => {
                 </div>
                 <div class="hfl-detail-row hfl-detail-row--full">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colCapacity') }}</span>
-                  <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__value--stacked': capacityParts.total > 0 }">
+                  <span
+                    class="hfl-detail-row__value"
+                    :class="{ 'hfl-detail-row__value--stacked': capacityParts.total > 0 }"
+                  >
                     <HflCapacityCell
                       :used-bytes="capacityParts.used"
                       :total-bytes="capacityParts.total"
@@ -801,20 +1083,32 @@ onUnmounted(() => {
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colConnectivity') }}</span>
                   <span class="hfl-detail-row__value">
-                    <ElTag :type="availabilityTagType" size="small">{{ availabilityLabel }}</ElTag>
+                    <ElTag
+                      :type="availabilityTagType"
+                      size="small"
+                    >{{ availabilityLabel }}</ElTag>
                   </span>
                 </div>
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldConnectivityUpdatedAt') }}</span>
-                  <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !row.availability_updated_at }">{{ formatNodeDate(row.availability_updated_at) }}</span>
+                  <span
+                    class="hfl-detail-row__value"
+                    :class="{ 'hfl-detail-row__empty': !row.availability_updated_at }"
+                  >{{ formatNodeDate(row.availability_updated_at) }}</span>
                 </div>
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colRegisteredAt') }}</span>
-                  <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !row.created_at }">{{ formatNodeDate(row.created_at) }}</span>
+                  <span
+                    class="hfl-detail-row__value"
+                    :class="{ 'hfl-detail-row__empty': !row.created_at }"
+                  >{{ formatNodeDate(row.created_at) }}</span>
                 </div>
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colLastHeartbeat') }}</span>
-                  <span class="hfl-detail-row__value" :class="detailValueClass(lastHeartbeatText)">{{ lastHeartbeatText }}</span>
+                  <span
+                    class="hfl-detail-row__value"
+                    :class="detailValueClass(lastHeartbeatText)"
+                  >{{ lastHeartbeatText }}</span>
                 </div>
               </div>
             </section>

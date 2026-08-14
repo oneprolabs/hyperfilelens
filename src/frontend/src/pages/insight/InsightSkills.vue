@@ -209,7 +209,11 @@ watch(
   <div class="hfl-list-shell hfl-list-shell--fill">
     <div class="hfl-list-panel hfl-list-panel--fill">
       <div class="hfl-list-toolbar">
-        <ElButton type="primary" :disabled="!bridgeReady" @click="openCreate">
+        <ElButton
+          type="primary"
+          :disabled="!bridgeReady"
+          @click="openCreate"
+        >
           <Plus :size="16" />
           {{ isPlatformEngine ? t('platformOps.engineActions.addSkill') : t('insight.skills.btnAdd') }}
         </ElButton>
@@ -229,21 +233,40 @@ watch(
           </ElButton>
           <template #dropdown>
             <ElDropdownMenu>
-              <ElDropdownItem :disabled="batchDisabled || !singleSelected" @click="editSelected">
+              <ElDropdownItem
+                :disabled="batchDisabled || !singleSelected"
+                @click="editSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <Pencil :size="14" class="shrink-0" />
+                  <Pencil
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('common.edit') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem divided :disabled="batchDisabled || !singleSelected" @click="enableSelected">
+              <ElDropdownItem
+                divided
+                :disabled="batchDisabled || !singleSelected"
+                @click="enableSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <CirclePlay :size="14" class="shrink-0" />
+                  <CirclePlay
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('insight.skills.enable') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem :disabled="batchDisabled || !singleSelected" @click="disableSelected">
+              <ElDropdownItem
+                :disabled="batchDisabled || !singleSelected"
+                @click="disableSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <CircleStop :size="14" class="shrink-0" />
+                  <CircleStop
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('insight.skills.disable') }}</span>
                 </span>
               </ElDropdownItem>
@@ -254,7 +277,10 @@ watch(
                 @click="deleteSelected"
               >
                 <span class="el-dropdown-menu__item-content">
-                  <Trash2 :size="14" class="shrink-0" />
+                  <Trash2
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('common.delete') }}</span>
                 </span>
               </ElDropdownItem>
@@ -272,7 +298,10 @@ watch(
             @clear="clearSearch"
           >
             <template #prefix>
-              <Search :size="16" class="hfl-list-search__icon" />
+              <Search
+                :size="16"
+                class="hfl-list-search__icon"
+              />
             </template>
           </ElInput>
           <div class="hfl-list-toolbar__utility">
@@ -282,13 +311,19 @@ watch(
               :disabled="loading"
               @click="load"
             >
-              <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+              <RefreshCw
+                :size="16"
+                :class="{ 'is-spinning': loading }"
+              />
             </ElButton>
           </div>
         </div>
       </div>
 
-      <div ref="tableBlockRef" class="hfl-list-table-block">
+      <div
+        ref="tableBlockRef"
+        class="hfl-list-table-block"
+      >
         <el-table
           ref="tableRef"
           v-table-overflow-title
@@ -302,7 +337,11 @@ watch(
           @scroll="handleTableScroll"
           @selection-change="onSelectionChange"
         >
-          <el-table-column type="selection" width="35" fixed="left" />
+          <el-table-column
+            type="selection"
+            width="35"
+            fixed="left"
+          />
           <el-table-column
             :label="t('insight.skills.colName')"
             min-width="220"
@@ -310,15 +349,27 @@ watch(
             class-name="hfl-table-name-col"
           >
             <template #default="{ row }">
-              <button type="button" class="hfl-table-name-link hfl-table-name-link--full" @click="openDetail(row)">
+              <button
+                type="button"
+                class="hfl-table-name-link hfl-table-name-link--full"
+                @click="openDetail(row)"
+              >
                 <div class="insight-skills-identity">
                   <span class="insight-skills-identity__head">
                     <strong>{{ row.name }}</strong>
-                    <ElTag v-if="isWorkspaceGuideSkill(row)" size="small" type="primary" effect="plain">
+                    <ElTag
+                      v-if="isWorkspaceGuideSkill(row)"
+                      size="small"
+                      type="primary"
+                      effect="plain"
+                    >
                       {{ t('insight.skills.typeWorkspaceGuide') }}
                     </ElTag>
                   </span>
-                  <span v-if="skillDescription(row)" class="insight-skills-identity__meta">
+                  <span
+                    v-if="skillDescription(row)"
+                    class="insight-skills-identity__meta"
+                  >
                     {{ skillDescription(row) }}
                   </span>
                 </div>
@@ -330,15 +381,27 @@ watch(
             min-width="280"
           >
             <template #default="{ row }">
-              <span v-if="skillContentPreview(row)" class="insight-skills-content-preview">
+              <span
+                v-if="skillContentPreview(row)"
+                class="insight-skills-content-preview"
+              >
                 {{ skillContentPreview(row) }}
               </span>
-              <span v-else class="hfl-empty-mark">—</span>
+              <span
+                v-else
+                class="hfl-empty-mark"
+              >—</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.skills.colEnabled')" width="110">
+          <el-table-column
+            :label="t('insight.skills.colEnabled')"
+            width="110"
+          >
             <template #default="{ row }">
-              <HflBooleanStatusTag :value="row.enabled" :label="statusLabel(row.enabled)" />
+              <HflBooleanStatusTag
+                :value="row.enabled"
+                :label="statusLabel(row.enabled)"
+              />
             </template>
           </el-table-column>
           <template #empty>

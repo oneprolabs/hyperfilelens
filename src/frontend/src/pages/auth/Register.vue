@@ -450,13 +450,16 @@ onUnmounted(() => {
     </div>
 
     <div class="register-form-box">
-      <div class="register-box-title" :class="{ 'title-en': locale === 'en' }">
+      <div
+        class="register-box-title"
+        :class="{ 'title-en': locale === 'en' }"
+      >
         <span :class="{ '!text-base': locale === 'en' }">{{ t('register.welcomeTitle') }}</span>
         <button
           v-if="canSwitchLocale"
           class="lang-toggle"
-          @click="toggleLocale"
           :title="`Switch to ${nextLocaleLabel}`"
+          @click="toggleLocale"
         >
           <Globe :size="18" />
           <span class="lang-label">{{ nextLocaleCode.toUpperCase() }}</span>
@@ -465,9 +468,15 @@ onUnmounted(() => {
 
       <div class="register-box-content">
         <!-- Email -->
-        <div class="input-wrapper" :class="{ 'has-error': formItems.email.showError }">
+        <div
+          class="input-wrapper"
+          :class="{ 'has-error': formItems.email.showError }"
+        >
           <div class="input-row">
-            <Mail class="input-icon" :size="18" />
+            <Mail
+              class="input-icon"
+              :size="18"
+            />
             <input
               v-model="formItems.email.value"
               type="text"
@@ -475,9 +484,14 @@ onUnmounted(() => {
               tabindex="1"
               @blur="validateEmailOnInput"
               @input="validateEmailOnInput"
-            />
+            >
           </div>
-          <p v-if="formItems.email.showError" class="error-msg">{{ formItems.email.errorMsg }}</p>
+          <p
+            v-if="formItems.email.showError"
+            class="error-msg"
+          >
+            {{ formItems.email.errorMsg }}
+          </p>
         </div>
 
         <AuthTurnstileField
@@ -504,10 +518,16 @@ onUnmounted(() => {
         />
 
         <!-- Email Verification Code -->
-        <div class="input-wrapper" :class="{ 'has-error': formItems.code.showError }">
+        <div
+          class="input-wrapper"
+          :class="{ 'has-error': formItems.code.showError }"
+        >
           <div class="captcha-row">
             <div class="input-row captcha-input">
-              <Key class="input-icon" :size="18" />
+              <Key
+                class="input-icon"
+                :size="18"
+              />
               <input
                 v-model="formItems.code.value"
                 type="text"
@@ -515,7 +535,7 @@ onUnmounted(() => {
                 maxlength="6"
                 tabindex="3"
                 @input="clearCodeError"
-              />
+              >
             </div>
             <button
               type="button"
@@ -534,13 +554,24 @@ onUnmounted(() => {
               }}
             </button>
           </div>
-          <p v-if="formItems.code.showError" class="error-msg">{{ formItems.code.errorMsg }}</p>
+          <p
+            v-if="formItems.code.showError"
+            class="error-msg"
+          >
+            {{ formItems.code.errorMsg }}
+          </p>
         </div>
 
         <!-- Password -->
-        <div class="input-wrapper" :class="{ 'has-error': formItems.password.showError }">
+        <div
+          class="input-wrapper"
+          :class="{ 'has-error': formItems.password.showError }"
+        >
           <div class="input-row">
-            <Lock class="input-icon" :size="18" />
+            <Lock
+              class="input-icon"
+              :size="18"
+            />
             <input
               v-model="formItems.password.value"
               :type="showPassword ? 'text' : 'password'"
@@ -550,7 +581,7 @@ onUnmounted(() => {
               @blur="validatePasswordOnInput"
               @input="validatePasswordOnInput"
               @keyup.enter="handleSubmit"
-            />
+            >
             <button
               type="button"
               class="eye-btn"
@@ -558,20 +589,39 @@ onUnmounted(() => {
               :aria-pressed="showPassword"
               @click="showPassword = !showPassword"
             >
-              <EyeOff v-if="showPassword" class="eye-icon" :size="16" />
-              <Eye v-else class="eye-icon" :size="16" />
+              <EyeOff
+                v-if="showPassword"
+                class="eye-icon"
+                :size="16"
+              />
+              <Eye
+                v-else
+                class="eye-icon"
+                :size="16"
+              />
             </button>
           </div>
-          <div v-if="formItems.password.value" class="strength-bar-wrapper">
+          <div
+            v-if="formItems.password.value"
+            class="strength-bar-wrapper"
+          >
             <div class="strength-bar">
               <div
                 class="strength-fill"
                 :style="{ width: (passwordStrength.level / 3 * 100) + '%', background: passwordStrength.color }"
-              ></div>
+              />
             </div>
-            <span class="strength-text" :style="{ color: passwordStrength.color }">{{ passwordStrength.text }}</span>
+            <span
+              class="strength-text"
+              :style="{ color: passwordStrength.color }"
+            >{{ passwordStrength.text }}</span>
           </div>
-          <p v-if="formItems.password.showError" class="error-msg">{{ formItems.password.errorMsg }}</p>
+          <p
+            v-if="formItems.password.showError"
+            class="error-msg"
+          >
+            {{ formItems.password.errorMsg }}
+          </p>
         </div>
 
         <!-- Agreement -->
@@ -581,13 +631,17 @@ onUnmounted(() => {
           class="agree-terms"
           @animationend="shakeTerms = false"
         >
-          <ElCheckbox v-model="agree" class="agree-checkbox">
+          <ElCheckbox
+            v-model="agree"
+            class="agree-checkbox"
+          >
             <span class="footer-text">{{ t('register.agree') }}</span>
             <a
               class="footer-link"
               href="https://oneprocloud.com/eula"
               target="_blank"
-              rel="noopener noreferrer">
+              rel="noopener noreferrer"
+            >
               {{ $t('login.eulaNoticeLinkText') }}
             </a>{{ t('login.eulaSuffix') }}
           </ElCheckbox>
@@ -608,7 +662,11 @@ onUnmounted(() => {
         <div class="register-footer">
           <div class="footer-row">
             <span class="footer-text">{{ t('register.hasAccount') }}</span>
-            <a href="#" class="footer-link sign-in-link" @click.prevent="goLogin">{{ t('register.backToLogin') }}</a>
+            <a
+              href="#"
+              class="footer-link sign-in-link"
+              @click.prevent="goLogin"
+            >{{ t('register.backToLogin') }}</a>
           </div>
         </div>
       </div>
@@ -616,21 +674,43 @@ onUnmounted(() => {
 
     <!-- Success Overlay -->
     <Transition name="auth-success-fade">
-      <div v-if="registerSuccess" class="register-success-overlay" @click.self="goLogin()">
-        <div class="register-success-card" role="dialog" aria-labelledby="register-success-title">
+      <div
+        v-if="registerSuccess"
+        class="register-success-overlay"
+        @click.self="goLogin()"
+      >
+        <div
+          class="register-success-card"
+          role="dialog"
+          aria-labelledby="register-success-title"
+        >
           <div class="register-success-icon">
-            <CheckCircle2 :size="40" stroke-width="1.75" />
+            <CheckCircle2
+              :size="40"
+              stroke-width="1.75"
+            />
           </div>
-          <h2 id="register-success-title" class="register-success-title">
+          <h2
+            id="register-success-title"
+            class="register-success-title"
+          >
             {{ t('register.registerSuccessTitle') }}
           </h2>
-          <p class="register-success-desc">{{ t('register.registerSuccessDesc') }}</p>
+          <p class="register-success-desc">
+            {{ t('register.registerSuccessDesc') }}
+          </p>
           <div class="register-success-email">
             <Mail :size="16" />
             <span>{{ formItems.email.value }}</span>
           </div>
-          <p class="register-success-next">{{ t('register.registerSuccessNext') }}</p>
-          <button type="button" class="register-success-btn btn-primary" @click="goLogin()">
+          <p class="register-success-next">
+            {{ t('register.registerSuccessNext') }}
+          </p>
+          <button
+            type="button"
+            class="register-success-btn btn-primary"
+            @click="goLogin()"
+          >
             {{ t('register.registerSuccessLogin') }}
           </button>
         </div>

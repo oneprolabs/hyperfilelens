@@ -92,15 +92,24 @@ function enabledText(enabled: boolean) {
 
 <template>
   <div class="hfl-detail-sections policy-detail-overview policy-detail-overview--filter filter-rule-form">
-    <section v-if="!hideInfoSection" class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('protection.policiesPage.sectionFileFilterInfo') }}</h4>
+    <section
+      v-if="!hideInfoSection"
+      class="hfl-detail-section"
+    >
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.policiesPage.sectionFileFilterInfo') }}
+      </h4>
       <div class="hfl-detail-grid">
         <div class="policy-detail-editor__pair-row">
           <div class="hfl-detail-row policy-detail-editor__pair-item">
             <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldName') }}</span>
             <span class="hfl-detail-row__value policy-detail-overview__name-value">
               <span class="hfl-detail-row__text policy-detail-overview__primary">{{ filterForm.name || emptyText }}</span>
-              <ElTag :type="booleanStatusTag(filterForm.policyActive).type" :class="booleanStatusTag(filterForm.policyActive).class" size="small">{{ enabledText(filterForm.policyActive) }}</ElTag>
+              <ElTag
+                :type="booleanStatusTag(filterForm.policyActive).type"
+                :class="booleanStatusTag(filterForm.policyActive).class"
+                size="small"
+              >{{ enabledText(filterForm.policyActive) }}</ElTag>
             </span>
           </div>
           <div class="hfl-detail-row policy-detail-editor__pair-item">
@@ -124,7 +133,9 @@ function enabledText(enabled: boolean) {
     </section>
 
     <section class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('protection.policiesPage.filterPresetSectionTitle') }}</h4>
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.policiesPage.filterPresetSectionTitle') }}
+      </h4>
       <div class="policy-detail-overview__list">
         <div
           v-for="preset in enabledFilterPresets"
@@ -136,14 +147,19 @@ function enabledText(enabled: boolean) {
             <span class="policy-detail-overview__list-desc">{{ preset.sub }}</span>
           </div>
         </div>
-        <div v-if="!enabledFilterPresets.length" class="policy-detail-overview__list-row">
+        <div
+          v-if="!enabledFilterPresets.length"
+          class="policy-detail-overview__list-row"
+        >
           <span class="policy-detail-overview__empty">{{ noneText }}</span>
         </div>
       </div>
     </section>
 
     <section class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('protection.policiesPage.filterExcludeRulesTitle') }}</h4>
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.policiesPage.filterExcludeRulesTitle') }}
+      </h4>
       <div class="policy-detail-overview__code-list">
         <code
           v-for="(rule, index) in customExcludeRules"
@@ -152,16 +168,23 @@ function enabledText(enabled: boolean) {
         >
           {{ rule }}
         </code>
-        <span v-if="!customExcludeRules.length" class="policy-detail-overview__empty">{{ t('protection.policiesPage.filterNoExcludeRules') }}</span>
+        <span
+          v-if="!customExcludeRules.length"
+          class="policy-detail-overview__empty"
+        >{{ t('protection.policiesPage.filterNoExcludeRules') }}</span>
       </div>
     </section>
 
     <section class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('protection.policiesPage.filterFinalPreviewTitle') }}</h4>
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.policiesPage.filterFinalPreviewTitle') }}
+      </h4>
       <div class="filter-rules-preview policy-detail-overview__rules-preview">
         <template v-if="compiledRuleLines.length">
           <div class="filter-rules-preview__group">
-            <div class="filter-rules-preview__divider">{{ t('protection.policiesPage.filterExcludeRulesTitle') }}</div>
+            <div class="filter-rules-preview__divider">
+              {{ t('protection.policiesPage.filterExcludeRulesTitle') }}
+            </div>
             <code
               v-for="(line, index) in compiledRuleLines"
               :key="`${index}-${line}`"
@@ -171,21 +194,36 @@ function enabledText(enabled: boolean) {
             </code>
           </div>
         </template>
-        <p v-else class="filter-rule-group__empty">
+        <p
+          v-else
+          class="filter-rule-group__empty"
+        >
           {{ t('protection.policiesPage.filterNoActiveRules') }}
         </p>
       </div>
     </section>
 
     <section class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('protection.policiesPage.sectionAdvancedSettings') }}</h4>
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.policiesPage.sectionAdvancedSettings') }}
+      </h4>
       <div class="policy-detail-overview__list">
-        <div v-for="row in advancedRows" :key="row.key" class="policy-detail-overview__list-row">
+        <div
+          v-for="row in advancedRows"
+          :key="row.key"
+          class="policy-detail-overview__list-row"
+        >
           <div class="policy-detail-overview__list-copy">
             <span class="policy-detail-overview__list-title">{{ row.title }}</span>
             <span class="policy-detail-overview__list-desc">{{ row.desc }}</span>
           </div>
-          <ElTag :type="booleanStatusTag(row.enabled).type" :class="booleanStatusTag(row.enabled).class" size="small">{{ enabledText(row.enabled) }}</ElTag>
+          <ElTag
+            :type="booleanStatusTag(row.enabled).type"
+            :class="booleanStatusTag(row.enabled).class"
+            size="small"
+          >
+            {{ enabledText(row.enabled) }}
+          </ElTag>
         </div>
       </div>
     </section>

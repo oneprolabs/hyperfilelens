@@ -135,19 +135,36 @@ const collapsedNavItems = computed<FlatNavItem[]>(() => {
 </script>
 
 <template>
-  <aside :class="{ collapsed }" class="sidebar">
+  <aside
+    :class="{ collapsed }"
+    class="sidebar"
+  >
     <div class="sidebar-content">
-      <div v-if="$slots.prepend && !collapsed" class="sidebar-prepend">
+      <div
+        v-if="$slots.prepend && !collapsed"
+        class="sidebar-prepend"
+      >
         <slot name="prepend" />
       </div>
 
-      <nav v-if="collapsed" class="sidebar-nav sidebar-nav--collapsed">
-        <template v-for="(nav, idx) in collapsedNavItems" :key="nav.to || nav.label">
+      <nav
+        v-if="collapsed"
+        class="sidebar-nav sidebar-nav--collapsed"
+      >
+        <template
+          v-for="(nav, idx) in collapsedNavItems"
+          :key="nav.to || nav.label"
+        >
           <div
             v-if="idx > 0 && collapsedNavItems[idx - 1].groupIndex !== nav.groupIndex"
             class="collapsed-divider"
           />
-          <ElTooltip v-if="nav.to" placement="right" :content="nav.label" :show-after="100">
+          <ElTooltip
+            v-if="nav.to"
+            placement="right"
+            :content="nav.label"
+            :show-after="100"
+          >
             <RouterLink
               :to="nav.to"
               :class="{ active: isActive(nav.to) }"
@@ -155,21 +172,47 @@ const collapsedNavItems = computed<FlatNavItem[]>(() => {
               class="collapsed-icon-btn"
               @click="handleNavClick($event, nav.to)"
             >
-              <component :is="nav.icon || HelpCircle" :size="18" class="collapsed-icon-btn__icon" />
+              <component
+                :is="nav.icon || HelpCircle"
+                :size="18"
+                class="collapsed-icon-btn__icon"
+              />
             </RouterLink>
           </ElTooltip>
-          <ElTooltip v-else placement="right" :content="nav.label" :show-after="100">
+          <ElTooltip
+            v-else
+            placement="right"
+            :content="nav.label"
+            :show-after="100"
+          >
             <div class="collapsed-icon-btn collapsed-icon-btn--disabled">
-              <component :is="nav.icon || HelpCircle" :size="18" class="collapsed-icon-btn__icon" />
+              <component
+                :is="nav.icon || HelpCircle"
+                :size="18"
+                class="collapsed-icon-btn__icon"
+              />
             </div>
           </ElTooltip>
         </template>
       </nav>
 
-      <nav v-else class="sidebar-nav">
-        <template v-for="(item, index) in menus" :key="index">
-          <div v-if="item.children && item.children.length > 0" class="menu-item">
-            <div class="menu-parent" :class="{ expanded: expandedParentIndices.has(index) }" @click.stop="toggleExpand(index)">
+      <nav
+        v-else
+        class="sidebar-nav"
+      >
+        <template
+          v-for="(item, index) in menus"
+          :key="index"
+        >
+          <div
+            v-if="item.children && item.children.length > 0"
+            class="menu-item"
+          >
+            <div
+              class="menu-parent"
+              :class="{ expanded: expandedParentIndices.has(index) }"
+              @click.stop="toggleExpand(index)"
+            >
               <span class="menu-label">{{ item.label }}</span>
               <ChevronRight
                 :size="14"
@@ -178,8 +221,14 @@ const collapsedNavItems = computed<FlatNavItem[]>(() => {
               />
             </div>
             <Transition name="slide">
-              <div v-if="expandedParentIndices.has(index)" class="submenu">
-                <template v-for="child in item.children" :key="child.to || child.label">
+              <div
+                v-if="expandedParentIndices.has(index)"
+                class="submenu"
+              >
+                <template
+                  v-for="child in item.children"
+                  :key="child.to || child.label"
+                >
                   <RouterLink
                     v-if="child.to"
                     :to="child.to"
@@ -188,17 +237,20 @@ const collapsedNavItems = computed<FlatNavItem[]>(() => {
                     @click="handleNavClick($event, child.to)"
                   >
                     <component
-                      v-if="child.icon"
                       :is="child.icon"
+                      v-if="child.icon"
                       :size="16"
                       class="submenu-item__icon"
                     />
                     <span class="submenu-item__label">{{ child.label }}</span>
                   </RouterLink>
-                  <div v-else class="submenu-item submenu-item--disabled">
+                  <div
+                    v-else
+                    class="submenu-item submenu-item--disabled"
+                  >
                     <component
-                      v-if="child.icon"
                       :is="child.icon"
+                      v-if="child.icon"
                       :size="16"
                       class="submenu-item__icon"
                     />
@@ -216,13 +268,21 @@ const collapsedNavItems = computed<FlatNavItem[]>(() => {
             class="menu-link"
             @click="handleNavClick($event, item.to)"
           >
-            <component v-if="item.icon" :is="item.icon" :size="16" class="menu-link__icon" />
+            <component
+              :is="item.icon"
+              v-if="item.icon"
+              :size="16"
+              class="menu-link__icon"
+            />
             <span class="menu-link__label">{{ item.label }}</span>
           </RouterLink>
         </template>
       </nav>
 
-      <div class="sidebar-footer" @click="emit('toggle')">
+      <div
+        class="sidebar-footer"
+        @click="emit('toggle')"
+      >
         <ChevronLeft
           :size="16"
           :class="{ 'rotated': collapsed }"

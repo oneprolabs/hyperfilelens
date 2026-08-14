@@ -222,7 +222,11 @@ watch(
   <div class="hfl-list-shell hfl-list-shell--fill">
     <div class="hfl-list-panel hfl-list-panel--fill">
       <div class="hfl-list-toolbar">
-        <ElButton type="primary" :disabled="!bridgeReady" @click="openCreate">
+        <ElButton
+          type="primary"
+          :disabled="!bridgeReady"
+          @click="openCreate"
+        >
           <Plus :size="16" />
           {{ isPlatformEngine ? t('platformOps.engineActions.addMcpServer') : t('insight.mcpServers.btnAdd') }}
         </ElButton>
@@ -242,21 +246,40 @@ watch(
           </ElButton>
           <template #dropdown>
             <ElDropdownMenu>
-              <ElDropdownItem :disabled="batchDisabled || !singleSelected" @click="editSelected">
+              <ElDropdownItem
+                :disabled="batchDisabled || !singleSelected"
+                @click="editSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <Pencil :size="14" class="shrink-0" />
+                  <Pencil
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('common.edit') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem divided :disabled="batchDisabled || !singleSelected" @click="enableSelected">
+              <ElDropdownItem
+                divided
+                :disabled="batchDisabled || !singleSelected"
+                @click="enableSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <CirclePlay :size="14" class="shrink-0" />
+                  <CirclePlay
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('insight.mcpServers.enable') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem :disabled="batchDisabled || !singleSelected" @click="disableSelected">
+              <ElDropdownItem
+                :disabled="batchDisabled || !singleSelected"
+                @click="disableSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <CircleStop :size="14" class="shrink-0" />
+                  <CircleStop
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('insight.mcpServers.disable') }}</span>
                 </span>
               </ElDropdownItem>
@@ -267,7 +290,10 @@ watch(
                 @click="deleteSelected"
               >
                 <span class="el-dropdown-menu__item-content">
-                  <Trash2 :size="14" class="shrink-0" />
+                  <Trash2
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('common.delete') }}</span>
                 </span>
               </ElDropdownItem>
@@ -285,7 +311,10 @@ watch(
             @clear="clearSearch"
           >
             <template #prefix>
-              <Search :size="16" class="hfl-list-search__icon" />
+              <Search
+                :size="16"
+                class="hfl-list-search__icon"
+              />
             </template>
           </ElInput>
           <div class="hfl-list-toolbar__utility">
@@ -295,13 +324,19 @@ watch(
               :disabled="loading"
               @click="load"
             >
-              <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+              <RefreshCw
+                :size="16"
+                :class="{ 'is-spinning': loading }"
+              />
             </ElButton>
           </div>
         </div>
       </div>
 
-      <div ref="tableBlockRef" class="hfl-list-table-block">
+      <div
+        ref="tableBlockRef"
+        class="hfl-list-table-block"
+      >
         <el-table
           ref="tableRef"
           v-table-overflow-title
@@ -315,7 +350,11 @@ watch(
           @scroll="handleTableScroll"
           @selection-change="onSelectionChange"
         >
-          <el-table-column type="selection" width="35" fixed="left" />
+          <el-table-column
+            type="selection"
+            width="35"
+            fixed="left"
+          />
           <el-table-column
             :label="t('insight.mcpServers.colName')"
             min-width="200"
@@ -323,31 +362,53 @@ watch(
             class-name="hfl-table-name-col"
           >
             <template #default="{ row }">
-              <button type="button" class="hfl-table-name-link hfl-table-name-link--full" @click="openDetail(row)">
+              <button
+                type="button"
+                class="hfl-table-name-link hfl-table-name-link--full"
+                @click="openDetail(row)"
+              >
                 {{ row.name }}
               </button>
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.mcpServers.colTransport')" width="110">
+          <el-table-column
+            :label="t('insight.mcpServers.colTransport')"
+            width="110"
+          >
             <template #default="{ row }">
               <HflTypeLabel :label="transportLabel(row.transport)" />
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.mcpServers.colEndpoint')" min-width="240">
+          <el-table-column
+            :label="t('insight.mcpServers.colEndpoint')"
+            min-width="240"
+          >
             <template #default="{ row }">
-              <span class="insight-mcp-mono" :class="{ 'hfl-empty-mark': !row.endpoint }">{{ row.endpoint || '—' }}</span>
+              <span
+                class="insight-mcp-mono"
+                :class="{ 'hfl-empty-mark': !row.endpoint }"
+              >{{ row.endpoint || '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.mcpServers.colRuntimeSettings')" width="150">
+          <el-table-column
+            :label="t('insight.mcpServers.colRuntimeSettings')"
+            width="150"
+          >
             <template #default="{ row }">
               <span :class="runtimeSettingsCount(row) ? 'insight-mcp-runtime' : 'insight-mcp-muted'">
                 {{ runtimeSettingsLabel(row) }}
               </span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.mcpServers.colEnabled')" width="110">
+          <el-table-column
+            :label="t('insight.mcpServers.colEnabled')"
+            width="110"
+          >
             <template #default="{ row }">
-              <HflBooleanStatusTag :value="row.enabled" :label="statusLabel(row.enabled)" />
+              <HflBooleanStatusTag
+                :value="row.enabled"
+                :label="statusLabel(row.enabled)"
+              />
             </template>
           </el-table-column>
           <template #empty>

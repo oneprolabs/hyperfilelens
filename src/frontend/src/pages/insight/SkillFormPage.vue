@@ -148,26 +148,57 @@ watch(
 </script>
 
 <template>
-  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen skill-form-fullscreen">
+  <div
+    ref="pageRef"
+    class="fullscreen-form-fullscreen resource-add-fullscreen skill-form-fullscreen"
+  >
     <div class="fullscreen-form-page">
       <header class="fullscreen-form-header">
-        <button type="button" class="fullscreen-form-header__back" @click="handleBack">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+        <button
+          type="button"
+          class="fullscreen-form-header__back"
+          @click="handleBack"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
-          <h1 class="fullscreen-form-header__title">{{ pageTitle }}</h1>
-          <p class="fullscreen-form-header__desc">{{ pageDesc }}</p>
+          <h1 class="fullscreen-form-header__title">
+            {{ pageTitle }}
+          </h1>
+          <p class="fullscreen-form-header__desc">
+            {{ pageDesc }}
+          </p>
         </div>
       </header>
 
-      <div v-loading="loading" class="fullscreen-form-layout">
+      <div
+        v-loading="loading"
+        class="fullscreen-form-layout"
+      >
         <div class="fullscreen-form-main">
           <div class="fullscreen-form-step-stack">
             <section class="fullscreen-form-card fullscreen-form-section">
-              <ElForm label-position="top" class="fullscreen-form-el-form">
-                <ElFormItem data-validation-field="name" :error="errors.name" :label="t('insight.skills.fieldName')" required>
-                  <ElInput v-model="name" :placeholder="t('insight.skills.fieldNamePh')" @input="clearFieldError('name')" />
-                  <p class="skill-field-hint">{{ t('insight.skills.fieldNameHint') }}</p>
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form"
+              >
+                <ElFormItem
+                  data-validation-field="name"
+                  :error="errors.name"
+                  :label="t('insight.skills.fieldName')"
+                  required
+                >
+                  <ElInput
+                    v-model="name"
+                    :placeholder="t('insight.skills.fieldNamePh')"
+                    @input="clearFieldError('name')"
+                  />
+                  <p class="skill-field-hint">
+                    {{ t('insight.skills.fieldNameHint') }}
+                  </p>
                 </ElFormItem>
 
                 <ElFormItem :label="t('insight.skills.fieldDescription')">
@@ -175,10 +206,16 @@ watch(
                     v-model="description"
                     :placeholder="t('insight.skills.fieldDescriptionPh')"
                   />
-                  <p class="skill-field-hint">{{ t('insight.skills.fieldDescriptionHint') }}</p>
+                  <p class="skill-field-hint">
+                    {{ t('insight.skills.fieldDescriptionHint') }}
+                  </p>
                 </ElFormItem>
 
-                <ElFormItem data-validation-field="content" :error="errors.content" required>
+                <ElFormItem
+                  data-validation-field="content"
+                  :error="errors.content"
+                  required
+                >
                   <template #label>
                     <span class="skill-content-label">
                       <span>{{ t('insight.skills.fieldContent') }}</span>
@@ -193,7 +230,9 @@ watch(
                       </ElButton>
                     </span>
                   </template>
-                  <p class="skill-beautify-hint">{{ t('insight.skills.beautifyHint') }}</p>
+                  <p class="skill-beautify-hint">
+                    {{ t('insight.skills.beautifyHint') }}
+                  </p>
                   <ElInput
                     v-model="content"
                     type="textarea"
@@ -202,12 +241,16 @@ watch(
                     class="skill-content-textarea"
                     @input="clearFieldError('content')"
                   />
-                  <p class="skill-field-hint">{{ t('insight.skills.fieldContentHint') }}</p>
+                  <p class="skill-field-hint">
+                    {{ t('insight.skills.fieldContentHint') }}
+                  </p>
                 </ElFormItem>
 
                 <ElFormItem :label="t('insight.skills.fieldEnabled')">
                   <ElSwitch v-model="enabled" />
-                  <p class="skill-field-hint">{{ t('insight.skills.fieldEnabledHint') }}</p>
+                  <p class="skill-field-hint">
+                    {{ t('insight.skills.fieldEnabledHint') }}
+                  </p>
                 </ElFormItem>
               </ElForm>
             </section>

@@ -346,16 +346,28 @@ function toggleScheduleMonthDay(day: number) {
   >
     <section :class="sectionClass">
       <h3 :class="titleClass">
-        <span v-if="variant === 'fullscreen'" class="fullscreen-form-section__indicator" />
+        <span
+          v-if="variant === 'fullscreen'"
+          class="fullscreen-form-section__indicator"
+        />
         {{ t('protection.policiesPage.tabBasic') }}
       </h3>
       <div class="policy-basic-grid">
-        <div data-validation-field="name" class="policy-basic-row">
-          <label class="policy-basic-row__label" for="policy-name-input">
+        <div
+          data-validation-field="name"
+          class="policy-basic-row"
+        >
+          <label
+            class="policy-basic-row__label"
+            for="policy-name-input"
+          >
             {{ t('protection.policiesPage.labelPolicyName') }}
             <span class="policy-basic-row__required">*</span>
           </label>
-          <div class="policy-basic-row__control" :class="{ 'is-invalid': !!nameError }">
+          <div
+            class="policy-basic-row__control"
+            :class="{ 'is-invalid': !!nameError }"
+          >
             <ElInput
               id="policy-name-input"
               v-model="policyForm.name"
@@ -364,7 +376,12 @@ function toggleScheduleMonthDay(day: number) {
               show-word-limit
               @input="$emit('clear-name-error')"
             />
-            <p v-if="nameError" class="fullscreen-form-inline-error">{{ nameError }}</p>
+            <p
+              v-if="nameError"
+              class="fullscreen-form-inline-error"
+            >
+              {{ nameError }}
+            </p>
           </div>
         </div>
         <div class="policy-basic-row">
@@ -376,20 +393,46 @@ function toggleScheduleMonthDay(day: number) {
       </div>
     </section>
 
-    <section data-validation-field="schedule" :class="nestedSectionClass">
+    <section
+      data-validation-field="schedule"
+      :class="nestedSectionClass"
+    >
       <div class="policy-section-head">
         <el-checkbox v-model="policyForm.sectionScheduleEnabled" />
         <span class="policy-section-head__title">{{ t('protection.policiesPage.sectionCheckSchedule') }}</span>
       </div>
-      <p v-if="!policyForm.sectionScheduleEnabled" class="policy-section-off-hint">{{ t('protection.policiesPage.sectionOffHint') }}</p>
-      <p v-if="scheduleError" class="fullscreen-form-inline-error">{{ scheduleError }}</p>
-      <div v-if="policyForm.sectionScheduleEnabled" class="policy-section-nested">
-        <el-radio-group v-model="policyForm.freqMode" class="mb-3">
-          <el-radio value="simple">{{ t('protection.policiesPage.freqSimple') }}</el-radio>
-          <el-radio value="advanced">{{ t('protection.policiesPage.freqAdvanced') }}</el-radio>
+      <p
+        v-if="!policyForm.sectionScheduleEnabled"
+        class="policy-section-off-hint"
+      >
+        {{ t('protection.policiesPage.sectionOffHint') }}
+      </p>
+      <p
+        v-if="scheduleError"
+        class="fullscreen-form-inline-error"
+      >
+        {{ scheduleError }}
+      </p>
+      <div
+        v-if="policyForm.sectionScheduleEnabled"
+        class="policy-section-nested"
+      >
+        <el-radio-group
+          v-model="policyForm.freqMode"
+          class="mb-3"
+        >
+          <el-radio value="simple">
+            {{ t('protection.policiesPage.freqSimple') }}
+          </el-radio>
+          <el-radio value="advanced">
+            {{ t('protection.policiesPage.freqAdvanced') }}
+          </el-radio>
         </el-radio-group>
         <div class="schedule-context-grid">
-          <ElFormItem :label="t('protection.policiesPage.scheduleTimezone')" class="!mb-0">
+          <ElFormItem
+            :label="t('protection.policiesPage.scheduleTimezone')"
+            class="!mb-0"
+          >
             <el-select
               v-model="policyForm.scheduleTimezone"
               filterable
@@ -404,7 +447,10 @@ function toggleScheduleMonthDay(day: number) {
               />
             </el-select>
           </ElFormItem>
-          <ElFormItem :label="t('protection.policiesPage.scheduleStartsAt')" class="!mb-0">
+          <ElFormItem
+            :label="t('protection.policiesPage.scheduleStartsAt')"
+            class="!mb-0"
+          >
             <ElDatePicker
               v-model="policyForm.scheduleStartsAt"
               type="datetime"
@@ -415,11 +461,22 @@ function toggleScheduleMonthDay(day: number) {
             />
           </ElFormItem>
         </div>
-        <p class="schedule-context-hint">{{ t('protection.policiesPage.scheduleTimezoneHint') }}</p>
+        <p class="schedule-context-hint">
+          {{ t('protection.policiesPage.scheduleTimezoneHint') }}
+        </p>
 
-        <div v-if="policyForm.freqMode === 'simple'" class="quick-schedule-stack">
-          <ElFormItem :label="t('protection.policiesPage.scheduleCycle')" class="!mb-0">
-            <el-select v-model="policyForm.quickScheduleType" class="schedule-cycle-control">
+        <div
+          v-if="policyForm.freqMode === 'simple'"
+          class="quick-schedule-stack"
+        >
+          <ElFormItem
+            :label="t('protection.policiesPage.scheduleCycle')"
+            class="!mb-0"
+          >
+            <el-select
+              v-model="policyForm.quickScheduleType"
+              class="schedule-cycle-control"
+            >
               <el-option
                 v-for="option in quickScheduleTypeOptions"
                 :key="option.value"
@@ -429,8 +486,14 @@ function toggleScheduleMonthDay(day: number) {
             </el-select>
           </ElFormItem>
 
-          <div v-if="policyForm.quickScheduleType === 'interval'" class="schedule-inline-controls">
-            <ElFormItem :label="t('protection.policiesPage.labelInterval')" class="!mb-0">
+          <div
+            v-if="policyForm.quickScheduleType === 'interval'"
+            class="schedule-inline-controls"
+          >
+            <ElFormItem
+              :label="t('protection.policiesPage.labelInterval')"
+              class="!mb-0"
+            >
               <el-select
                 v-model="policyForm.simpleIntervalUnit"
                 class="schedule-interval-unit"
@@ -444,7 +507,10 @@ function toggleScheduleMonthDay(day: number) {
                 />
               </el-select>
             </ElFormItem>
-            <ElFormItem :label="currentIntervalUnitMeta.valueLabel + t('protection.policiesPage.labelColon')" class="!mb-0">
+            <ElFormItem
+              :label="currentIntervalUnitMeta.valueLabel + t('protection.policiesPage.labelColon')"
+              class="!mb-0"
+            >
               <ElInputNumber
                 v-model="policyForm.simpleIntervalValue"
                 :min="currentIntervalUnitMeta.min"
@@ -456,9 +522,15 @@ function toggleScheduleMonthDay(day: number) {
           </div>
 
           <template v-else>
-            <div v-if="policyForm.quickScheduleType === 'weekly'" class="schedule-picker-block">
+            <div
+              v-if="policyForm.quickScheduleType === 'weekly'"
+              class="schedule-picker-block"
+            >
               <span class="schedule-picker-label">{{ t('protection.policiesPage.scheduleWeekdays') }}</span>
-              <ElCheckboxGroup v-model="policyForm.scheduleWeekdays" class="schedule-weekday-grid">
+              <ElCheckboxGroup
+                v-model="policyForm.scheduleWeekdays"
+                class="schedule-weekday-grid"
+              >
                 <ElCheckbox
                   v-for="option in scheduleWeekdayOptions"
                   :key="option.value"
@@ -469,7 +541,10 @@ function toggleScheduleMonthDay(day: number) {
               </ElCheckboxGroup>
             </div>
 
-            <div v-if="policyForm.quickScheduleType === 'monthly'" class="schedule-picker-block">
+            <div
+              v-if="policyForm.quickScheduleType === 'monthly'"
+              class="schedule-picker-block"
+            >
               <span class="schedule-picker-label">{{ t('protection.policiesPage.scheduleMonthDays') }}</span>
               <div class="schedule-month-day-grid">
                 <button
@@ -495,7 +570,10 @@ function toggleScheduleMonthDay(day: number) {
               </div>
             </div>
 
-            <ElFormItem :label="t('protection.policiesPage.scheduleTime')" class="schedule-time-field !mb-0">
+            <ElFormItem
+              :label="t('protection.policiesPage.scheduleTime')"
+              class="schedule-time-field !mb-0"
+            >
               <ElInput
                 v-model="policyForm.scheduleTime"
                 type="time"
@@ -503,11 +581,22 @@ function toggleScheduleMonthDay(day: number) {
               />
             </ElFormItem>
           </template>
-          <p v-if="scheduleErrorText" class="schedule-field-error">{{ scheduleErrorText }}</p>
+          <p
+            v-if="scheduleErrorText"
+            class="schedule-field-error"
+          >
+            {{ scheduleErrorText }}
+          </p>
         </div>
-        <div v-else class="space-y-3">
+        <div
+          v-else
+          class="space-y-3"
+        >
           <div class="cron-row">
-            <label class="cron-row__label" :for="cronInputId">
+            <label
+              class="cron-row__label"
+              :for="cronInputId"
+            >
               {{ t('protection.policiesPage.cronLabel') }}<span class="cron-row__required">*</span>
             </label>
             <div class="cron-row__field">
@@ -517,14 +606,26 @@ function toggleScheduleMonthDay(day: number) {
                 :placeholder="t('protection.policiesPage.cronPh')"
                 :class="['cron-input', { 'cron-input--error': policyForm.sectionScheduleEnabled && !cronValidation.ok }]"
               />
-              <p v-if="cronErrorText && policyForm.sectionScheduleEnabled" class="cron-row__error">{{ cronErrorText }}</p>
+              <p
+                v-if="cronErrorText && policyForm.sectionScheduleEnabled"
+                class="cron-row__error"
+              >
+                {{ cronErrorText }}
+              </p>
             </div>
           </div>
 
-          <div v-if="showCronHelp" class="policy-cron-help text-slate-600 bg-[var(--color-grey-1,#f8fafc)] border border-[var(--color-border,#e2e8f0)] rounded-[var(--radius-card)] px-3 py-2 space-y-2">
-            <p class="m-0">{{ t('protection.policiesPage.cronHelpLead') }}</p>
+          <div
+            v-if="showCronHelp"
+            class="policy-cron-help text-slate-600 bg-[var(--color-grey-1,#f8fafc)] border border-[var(--color-border,#e2e8f0)] rounded-[var(--radius-card)] px-3 py-2 space-y-2"
+          >
+            <p class="m-0">
+              {{ t('protection.policiesPage.cronHelpLead') }}
+            </p>
             <div>
-              <p class="m-0 font-medium text-slate-700">{{ t('protection.policiesPage.cronHelpSymbolsTitle') }}</p>
+              <p class="m-0 font-medium text-slate-700">
+                {{ t('protection.policiesPage.cronHelpSymbolsTitle') }}
+              </p>
               <ul class="list-disc pl-5 m-0">
                 <li><code>*</code>{{ t('protection.policiesPage.cronSymStar') }}</li>
                 <li><code>,</code>{{ t('protection.policiesPage.cronSymComma') }}</li>
@@ -533,7 +634,9 @@ function toggleScheduleMonthDay(day: number) {
               </ul>
             </div>
             <div>
-              <p class="m-0 font-medium text-slate-700">{{ t('protection.policiesPage.cronExamplesTitle') }}</p>
+              <p class="m-0 font-medium text-slate-700">
+                {{ t('protection.policiesPage.cronExamplesTitle') }}
+              </p>
               <ul class="list-disc pl-5 m-0">
                 <li><code>15 * * * *</code>{{ t('protection.policiesPage.cronEx15') }}</li>
                 <li><code>0 2 * * *</code>{{ t('protection.policiesPage.cronEx0200') }}</li>
@@ -548,14 +651,30 @@ function toggleScheduleMonthDay(day: number) {
       </div>
     </section>
 
-    <section data-validation-field="retention" :class="nestedSectionClass">
+    <section
+      data-validation-field="retention"
+      :class="nestedSectionClass"
+    >
       <div class="policy-section-head">
         <el-checkbox v-model="policyForm.sectionRetentionEnabled" />
         <span class="policy-section-head__title">{{ t('protection.policiesPage.sectionCheckRetention') }}</span>
       </div>
-      <p v-if="!policyForm.sectionRetentionEnabled" class="policy-section-off-hint">{{ t('protection.policiesPage.sectionOffHint') }}</p>
-      <p v-if="retentionError" class="fullscreen-form-inline-error">{{ retentionError }}</p>
-      <div v-if="policyForm.sectionRetentionEnabled" class="policy-section-nested policy-retention-stack">
+      <p
+        v-if="!policyForm.sectionRetentionEnabled"
+        class="policy-section-off-hint"
+      >
+        {{ t('protection.policiesPage.sectionOffHint') }}
+      </p>
+      <p
+        v-if="retentionError"
+        class="fullscreen-form-inline-error"
+      >
+        {{ retentionError }}
+      </p>
+      <div
+        v-if="policyForm.sectionRetentionEnabled"
+        class="policy-section-nested policy-retention-stack"
+      >
         <div>
           <div class="policy-option-title policy-option-title--with-desc">
             {{ t('protection.policiesPage.recentTitle') }}
@@ -566,8 +685,15 @@ function toggleScheduleMonthDay(day: number) {
           <div class="retention-recent-row">
             <span class="policy-inline-label">{{ t('protection.policiesPage.recentLine') }}</span>
             <div :class="[retentionInputWrapClass, { 'is-invalid': !!recentRetentionError }]">
-              <ElInputNumber v-model="policyForm.retentionRecentPoints" :min="1" :max="9999" />
-              <p v-if="recentRetentionError" class="fullscreen-form-inline-error retention-recent-input-wrap__error">
+              <ElInputNumber
+                v-model="policyForm.retentionRecentPoints"
+                :min="1"
+                :max="9999"
+              />
+              <p
+                v-if="recentRetentionError"
+                class="fullscreen-form-inline-error retention-recent-input-wrap__error"
+              >
                 {{ recentRetentionError }}
               </p>
             </div>
@@ -576,9 +702,15 @@ function toggleScheduleMonthDay(day: number) {
         </div>
         <el-divider class="!my-2" />
         <div>
-          <div v-if="variant === 'fullscreen'" class="policy-option-title policy-option-title--with-desc">
+          <div
+            v-if="variant === 'fullscreen'"
+            class="policy-option-title policy-option-title--with-desc"
+          >
             {{ t('protection.policiesPage.shortTitle') }}
-            <span v-if="policyForm.retentionShortHourly" class="policy-inline-desc">
+            <span
+              v-if="policyForm.retentionShortHourly"
+              class="policy-inline-desc"
+            >
               {{ t('protection.policiesPage.shortDesc', { days: policyForm.retentionShortDaysMax }) }}
             </span>
           </div>
@@ -594,7 +726,10 @@ function toggleScheduleMonthDay(day: number) {
                 :max="30"
                 :disabled="!policyForm.retentionShortHourly"
               />
-              <p v-if="hourlyRetentionError" class="fullscreen-form-inline-error retention-input-wrap__error">
+              <p
+                v-if="hourlyRetentionError"
+                class="fullscreen-form-inline-error retention-input-wrap__error"
+              >
                 {{ hourlyRetentionError }}
               </p>
             </div>
@@ -602,9 +737,15 @@ function toggleScheduleMonthDay(day: number) {
           </div>
         </div>
         <div>
-          <div v-if="variant === 'fullscreen'" class="policy-option-title policy-option-title--with-desc">
+          <div
+            v-if="variant === 'fullscreen'"
+            class="policy-option-title policy-option-title--with-desc"
+          >
             {{ t('protection.policiesPage.midTitle') }}
-            <span v-if="policyForm.retentionMidDaily" class="policy-inline-desc">
+            <span
+              v-if="policyForm.retentionMidDaily"
+              class="policy-inline-desc"
+            >
               {{ t('protection.policiesPage.midDesc', { mid: policyForm.retentionMidDaysMax }) }}
             </span>
           </div>
@@ -620,18 +761,32 @@ function toggleScheduleMonthDay(day: number) {
                 :max="365"
                 :disabled="!policyForm.retentionMidDaily"
               />
-              <p v-if="dailyRetentionError" class="fullscreen-form-inline-error retention-input-wrap__error">
+              <p
+                v-if="dailyRetentionError"
+                class="fullscreen-form-inline-error retention-input-wrap__error"
+              >
                 {{ dailyRetentionError }}
               </p>
             </div>
             <span class="retention-tier-unit policy-inline-label">{{ t('protection.policiesPage.unitDays') }}</span>
           </div>
-          <p v-if="midRetentionError" class="text-[13px] text-red-500 m-0 mt-1">{{ midRetentionError }}</p>
+          <p
+            v-if="midRetentionError"
+            class="text-[13px] text-red-500 m-0 mt-1"
+          >
+            {{ midRetentionError }}
+          </p>
         </div>
         <div>
-          <div v-if="variant === 'fullscreen'" class="policy-option-title policy-option-title--with-desc">
+          <div
+            v-if="variant === 'fullscreen'"
+            class="policy-option-title policy-option-title--with-desc"
+          >
             {{ t('protection.policiesPage.longTitle') }}
-            <span v-if="policyForm.retentionLongMonthly" class="policy-inline-desc">
+            <span
+              v-if="policyForm.retentionLongMonthly"
+              class="policy-inline-desc"
+            >
               {{ t('protection.policiesPage.longDesc', { months: policyForm.retentionLongMonths }) }}
             </span>
           </div>
@@ -647,29 +802,51 @@ function toggleScheduleMonthDay(day: number) {
                 :max="120"
                 :disabled="!policyForm.retentionLongMonthly"
               />
-              <p v-if="monthlyRetentionError" class="fullscreen-form-inline-error retention-input-wrap__error">
+              <p
+                v-if="monthlyRetentionError"
+                class="fullscreen-form-inline-error retention-input-wrap__error"
+              >
                 {{ monthlyRetentionError }}
               </p>
             </div>
             <span class="retention-tier-unit policy-inline-label">{{ t('protection.policiesPage.unitMonths') }}</span>
           </div>
-          <p v-if="longVsShortRetentionError" class="text-[13px] text-red-500 m-0 mt-1">{{ longVsShortRetentionError }}</p>
+          <p
+            v-if="longVsShortRetentionError"
+            class="text-[13px] text-red-500 m-0 mt-1"
+          >
+            {{ longVsShortRetentionError }}
+          </p>
         </div>
       </div>
     </section>
 
     <section :class="nestedSectionClass">
       <h3 :class="titleClass">
-        <span v-if="variant === 'fullscreen'" class="fullscreen-form-section__indicator" />
+        <span
+          v-if="variant === 'fullscreen'"
+          class="fullscreen-form-section__indicator"
+        />
         {{ t('protection.policiesPage.sectionAdvancedSettings') }}
       </h3>
       <div class="policy-section-nested advanced-settings-panel">
         <div class="error-policy-list">
-          <div v-for="row in errorHandlingRows" :key="row.key" class="error-policy-list__item">
-            <el-switch v-model="policyForm[row.key]" class="error-policy-list__switch" />
+          <div
+            v-for="row in errorHandlingRows"
+            :key="row.key"
+            class="error-policy-list__item"
+          >
+            <el-switch
+              v-model="policyForm[row.key]"
+              class="error-policy-list__switch"
+            />
             <div class="error-policy-list__main">
-              <div class="error-policy-list__title">{{ row.title }}</div>
-              <p class="error-policy-list__desc">{{ row.desc }}</p>
+              <div class="error-policy-list__title">
+                {{ row.title }}
+              </div>
+              <p class="error-policy-list__desc">
+                {{ row.desc }}
+              </p>
             </div>
           </div>
         </div>
@@ -685,16 +862,28 @@ function toggleScheduleMonthDay(day: number) {
   >
     <section :class="sectionClass">
       <h3 :class="titleClass">
-        <span v-if="variant === 'fullscreen'" class="fullscreen-form-section__indicator" />
+        <span
+          v-if="variant === 'fullscreen'"
+          class="fullscreen-form-section__indicator"
+        />
         {{ t('protection.policiesPage.tabBasic') }}
       </h3>
       <div class="policy-basic-grid">
-        <div data-validation-field="name" class="policy-basic-row">
-          <label class="policy-basic-row__label" for="filter-rule-name-input">
+        <div
+          data-validation-field="name"
+          class="policy-basic-row"
+        >
+          <label
+            class="policy-basic-row__label"
+            for="filter-rule-name-input"
+          >
             {{ t('protection.policiesPage.fieldFilterRuleName') }}
             <span class="policy-basic-row__required">*</span>
           </label>
-          <div class="policy-basic-row__control" :class="{ 'is-invalid': !!nameError }">
+          <div
+            class="policy-basic-row__control"
+            :class="{ 'is-invalid': !!nameError }"
+          >
             <ElInput
               id="filter-rule-name-input"
               v-model="filterForm.name"
@@ -703,7 +892,12 @@ function toggleScheduleMonthDay(day: number) {
               show-word-limit
               @input="$emit('clear-name-error')"
             />
-            <p v-if="nameError" class="fullscreen-form-inline-error">{{ nameError }}</p>
+            <p
+              v-if="nameError"
+              class="fullscreen-form-inline-error"
+            >
+              {{ nameError }}
+            </p>
           </div>
         </div>
         <div class="policy-basic-row">
@@ -717,17 +911,26 @@ function toggleScheduleMonthDay(day: number) {
     <section :class="[sectionClass, { 'policy-dialog-card--rules': variant === 'dialog' }]">
       <div class="filter-section-heading">
         <h3 :class="titleClass">
-          <span v-if="variant === 'fullscreen'" class="fullscreen-form-section__indicator" />
+          <span
+            v-if="variant === 'fullscreen'"
+            class="fullscreen-form-section__indicator"
+          />
           {{ t('protection.policiesPage.filterRulesSectionTitle') }}
         </h3>
-        <button type="button" class="filter-rule-guide-button" @click="openFilterRuleGuide">
+        <button
+          type="button"
+          class="filter-rule-guide-button"
+          @click="openFilterRuleGuide"
+        >
           <BookOpen :size="14" />
           <span>{{ t('protection.policiesPage.filterRuleGuideBtn') }}</span>
         </button>
       </div>
       <div class="filter-rules-stack">
         <div class="filter-rules-subsection">
-          <div class="policy-option-title">{{ t('protection.policiesPage.filterPresetSectionTitle') }}</div>
+          <div class="policy-option-title">
+            {{ t('protection.policiesPage.filterPresetSectionTitle') }}
+          </div>
           <div
             class="filter-preset-grid"
             role="group"
@@ -739,7 +942,10 @@ function toggleScheduleMonthDay(day: number) {
               class="filter-preset-card"
               :class="{ 'filter-preset-card--active': filterForm[preset.key] }"
             >
-              <el-checkbox v-model="filterForm[preset.key]" @change="onFilterPresetChange" />
+              <el-checkbox
+                v-model="filterForm[preset.key]"
+                @change="onFilterPresetChange"
+              />
               <span class="filter-preset-card__body">
                 <span class="filter-preset-card__title">{{ preset.title }}</span>
                 <span class="filter-preset-card__desc">{{ preset.desc }}</span>
@@ -749,13 +955,19 @@ function toggleScheduleMonthDay(day: number) {
         </div>
 
         <div class="filter-rules-subsection">
-          <div class="policy-option-title">{{ t('protection.policiesPage.filterCustomSectionTitle') }}</div>
+          <div class="policy-option-title">
+            {{ t('protection.policiesPage.filterCustomSectionTitle') }}
+          </div>
           <div class="filter-custom-block">
             <div class="filter-rule-group">
               <div class="filter-custom-head">
                 <div>
-                  <div class="filter-rule-group__title">{{ t('protection.policiesPage.filterExcludeRulesTitle') }}</div>
-                  <p class="filter-rule-group__desc">{{ t('protection.policiesPage.filterExcludeRulesDesc') }}</p>
+                  <div class="filter-rule-group__title">
+                    {{ t('protection.policiesPage.filterExcludeRulesTitle') }}
+                  </div>
+                  <p class="filter-rule-group__desc">
+                    {{ t('protection.policiesPage.filterExcludeRulesDesc') }}
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -769,7 +981,10 @@ function toggleScheduleMonthDay(day: number) {
                 <TriangleAlert :size="15" />
                 <span>{{ t('protection.policiesPage.filterRuleOrderHint') }}</span>
               </div>
-              <div v-if="!filterRulesTextMode" class="filter-custom-rules">
+              <div
+                v-if="!filterRulesTextMode"
+                class="filter-custom-rules"
+              >
                 <div
                   v-for="item in filterExcludeRules"
                   :key="`exclude-${item.index}`"
@@ -792,7 +1007,10 @@ function toggleScheduleMonthDay(day: number) {
                     <Trash2 :size="14" />
                   </button>
                 </div>
-                <p v-if="!filterExcludeRules.length" class="filter-rule-group__empty">
+                <p
+                  v-if="!filterExcludeRules.length"
+                  class="filter-rule-group__empty"
+                >
                   {{ t('protection.policiesPage.filterNoExcludeRules') }}
                 </p>
                 <div class="filter-custom-rule-add-wrap">
@@ -806,7 +1024,10 @@ function toggleScheduleMonthDay(day: number) {
                   </button>
                 </div>
               </div>
-              <div v-else class="filter-custom-text-mode">
+              <div
+                v-else
+                class="filter-custom-text-mode"
+              >
                 <ElInput
                   :model-value="filterRulesTextValue"
                   type="textarea"
@@ -822,18 +1043,25 @@ function toggleScheduleMonthDay(day: number) {
               </div>
             </div>
 
-            <p v-if="hasDuplicateFilterRules" class="filter-rule-group__warning">
+            <p
+              v-if="hasDuplicateFilterRules"
+              class="filter-rule-group__warning"
+            >
               {{ t('protection.policiesPage.filterDuplicateWarning') }}
             </p>
           </div>
         </div>
 
         <div class="filter-rules-subsection">
-          <div class="policy-option-title">{{ t('protection.policiesPage.filterFinalPreviewTitle') }}</div>
+          <div class="policy-option-title">
+            {{ t('protection.policiesPage.filterFinalPreviewTitle') }}
+          </div>
           <div class="filter-rules-preview">
             <template v-if="compiledFilterRuleLines.length">
               <div class="filter-rules-preview__group">
-                <div class="filter-rules-preview__divider">{{ t('protection.policiesPage.filterExcludeRulesTitle') }}</div>
+                <div class="filter-rules-preview__divider">
+                  {{ t('protection.policiesPage.filterExcludeRulesTitle') }}
+                </div>
                 <code
                   v-for="line in compiledFilterRuleLines"
                   :key="line"
@@ -843,7 +1071,10 @@ function toggleScheduleMonthDay(day: number) {
                 </code>
               </div>
             </template>
-            <p v-if="!compiledFilterRuleLines.length" class="filter-rule-group__empty">
+            <p
+              v-if="!compiledFilterRuleLines.length"
+              class="filter-rule-group__empty"
+            >
               {{ t('protection.policiesPage.filterNoActiveRules') }}
             </p>
           </div>
@@ -853,15 +1084,25 @@ function toggleScheduleMonthDay(day: number) {
 
     <section :class="sectionClass">
       <h3 :class="titleClass">
-        <span v-if="variant === 'fullscreen'" class="fullscreen-form-section__indicator" />
+        <span
+          v-if="variant === 'fullscreen'"
+          class="fullscreen-form-section__indicator"
+        />
         {{ t('protection.policiesPage.sectionAdvancedSettings') }}
       </h3>
       <div class="filter-advanced-list">
         <div class="filter-advanced-row filter-advanced-row--large-file">
-          <el-switch v-model="filterForm.largeFileLimitEnabled" class="filter-advanced-row__switch" />
+          <el-switch
+            v-model="filterForm.largeFileLimitEnabled"
+            class="filter-advanced-row__switch"
+          />
           <div class="filter-advanced-row__main">
-            <div class="filter-advanced-row__title">{{ t('protection.policiesPage.largeTitle') }}</div>
-            <p class="filter-advanced-row__desc">{{ t('protection.policiesPage.largeFileLimitEnableSub') }}</p>
+            <div class="filter-advanced-row__title">
+              {{ t('protection.policiesPage.largeTitle') }}
+            </div>
+            <p class="filter-advanced-row__desc">
+              {{ t('protection.policiesPage.largeFileLimitEnableSub') }}
+            </p>
           </div>
           <div class="filter-advanced-row__controls">
             <span class="policy-inline-label">{{ t('protection.policiesPage.largeLine') }}</span>
@@ -877,23 +1118,42 @@ function toggleScheduleMonthDay(day: number) {
               class="filter-large-file-unit"
               :disabled="!filterForm.largeFileLimitEnabled"
             >
-              <el-option label="KB" value="KB" />
-              <el-option label="MB" value="MB" />
-              <el-option label="GB" value="GB" />
+              <el-option
+                label="KB"
+                value="KB"
+              />
+              <el-option
+                label="MB"
+                value="MB"
+              />
+              <el-option
+                label="GB"
+                value="GB"
+              />
             </el-select>
           </div>
         </div>
 
         <div class="filter-advanced-row">
-          <el-switch v-model="filterForm.ignoreCacheDirectories" class="filter-advanced-row__switch" />
+          <el-switch
+            v-model="filterForm.ignoreCacheDirectories"
+            class="filter-advanced-row__switch"
+          />
           <div class="filter-advanced-row__main">
-            <div class="filter-advanced-row__title">{{ t('protection.policiesPage.cacheTitle') }}</div>
-            <p class="filter-advanced-row__desc">{{ t('protection.policiesPage.cacheSub') }}</p>
+            <div class="filter-advanced-row__title">
+              {{ t('protection.policiesPage.cacheTitle') }}
+            </div>
+            <p class="filter-advanced-row__desc">
+              {{ t('protection.policiesPage.cacheSub') }}
+            </p>
           </div>
         </div>
 
         <div class="filter-advanced-row filter-advanced-row--last">
-          <el-switch v-model="filterForm.currentFilesystemOnly" class="filter-advanced-row__switch" />
+          <el-switch
+            v-model="filterForm.currentFilesystemOnly"
+            class="filter-advanced-row__switch"
+          />
           <div class="filter-advanced-row__main">
             <div class="filter-advanced-row__title">
               {{ t('protection.policiesPage.fsOnlyTitle') }}
@@ -902,7 +1162,9 @@ function toggleScheduleMonthDay(day: number) {
                 :aria-label="t('protection.policiesPage.fsOnlyTitle')"
               />
             </div>
-            <p class="filter-advanced-row__desc">{{ t('protection.policiesPage.fsOnlySub') }}</p>
+            <p class="filter-advanced-row__desc">
+              {{ t('protection.policiesPage.fsOnlySub') }}
+            </p>
           </div>
         </div>
       </div>

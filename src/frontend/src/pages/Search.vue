@@ -162,7 +162,10 @@ async function onRefresh() {
 <template>
   <ModulePage :side="side">
     <template #actions>
-      <ElButton :disabled="busy" @click="onRefresh">
+      <ElButton
+        :disabled="busy"
+        @click="onRefresh"
+      >
         <RefreshCw :size="16" /> {{ t('searchPage.refresh') }}
       </ElButton>
     </template>
@@ -174,7 +177,10 @@ async function onRefresh() {
         clearable
       >
         <template #prefix>
-          <SearchIcon :size="18" class="text-slate-400" />
+          <SearchIcon
+            :size="18"
+            class="text-slate-400"
+          />
         </template>
       </ElInput>
       <div class="mt-2 text-xs text-slate-500">
@@ -184,104 +190,262 @@ async function onRefresh() {
 
     <div class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-[var(--card-gap)]">
       <div class="hfl-list-panel">
-        <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">{{ t('searchPage.sectionTasks') }}</div>
-        <el-table :data="taskRows" stripe :loading="busy">
-          <el-table-column prop="id" :label="t('searchPage.colId')" width="80">
-            <template #default="{ row }">#{{ row.id }}</template>
-          </el-table-column>
-          <el-table-column prop="display_name" :label="t('searchPage.colName')" min-width="160" />
-          <el-table-column :label="t('searchPage.colType')" min-width="150">
-            <template #default="{ row }"><TaskTypeLabel :type="row.task_type" /></template>
-          </el-table-column>
-          <el-table-column :label="t('searchPage.colStatus')" width="120">
-            <template #default="{ row }"><TaskStatusTag :status="row.status" /></template>
-          </el-table-column>
-          <template #empty>
-            <el-empty :description="t('searchPage.empty')" :image-size="80" />
-          </template>
-        </el-table>
-      </div>
-
-      <div class="hfl-list-panel">
-        <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">{{ t('searchPage.sectionNodes') }}</div>
-        <el-table :data="nodeRows" stripe :loading="busy">
-          <el-table-column prop="id" :label="t('searchPage.colId')" width="80">
-            <template #default="{ row }">#{{ row.id }}</template>
-          </el-table-column>
-          <el-table-column prop="name" :label="t('searchPage.colName')" min-width="160" />
-          <el-table-column :label="t('searchPage.colStatus')" width="120">
+        <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">
+          {{ t('searchPage.sectionTasks') }}
+        </div>
+        <el-table
+          :data="taskRows"
+          stripe
+          :loading="busy"
+        >
+          <el-table-column
+            prop="id"
+            :label="t('searchPage.colId')"
+            width="80"
+          >
             <template #default="{ row }">
-              <ElTag v-bind="lifecycleStatusTagAttrs(row.status)" size="small">{{ nodeStatusLabel(row.status) }}</ElTag>
+              #{{ row.id }}
+            </template>
+          </el-table-column>
+          <el-table-column
+            prop="display_name"
+            :label="t('searchPage.colName')"
+            min-width="160"
+          />
+          <el-table-column
+            :label="t('searchPage.colType')"
+            min-width="150"
+          >
+            <template #default="{ row }">
+              <TaskTypeLabel :type="row.task_type" />
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('searchPage.colStatus')"
+            width="120"
+          >
+            <template #default="{ row }">
+              <TaskStatusTag :status="row.status" />
             </template>
           </el-table-column>
           <template #empty>
-            <el-empty :description="t('searchPage.empty')" :image-size="80" />
+            <el-empty
+              :description="t('searchPage.empty')"
+              :image-size="80"
+            />
           </template>
         </el-table>
       </div>
 
       <div class="hfl-list-panel">
-        <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">{{ t('searchPage.sectionRepos') }}</div>
-        <el-table :data="repoRows" stripe :loading="busy">
-          <el-table-column prop="id" :label="t('searchPage.colId')" width="80">
-            <template #default="{ row }">#{{ row.id }}</template>
-          </el-table-column>
-          <el-table-column prop="name" :label="t('searchPage.colName')" min-width="160" />
-          <el-table-column :label="t('searchPage.colType')" width="140">
-            <template #default="{ row }"><HflTypeLabel :label="repositoryTypeLabel(row.repo_type)" /></template>
-          </el-table-column>
-          <el-table-column :label="t('searchPage.colStatus')" width="120">
+        <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">
+          {{ t('searchPage.sectionNodes') }}
+        </div>
+        <el-table
+          :data="nodeRows"
+          stripe
+          :loading="busy"
+        >
+          <el-table-column
+            prop="id"
+            :label="t('searchPage.colId')"
+            width="80"
+          >
             <template #default="{ row }">
-              <ElTag v-bind="lifecycleStatusTagAttrs(row.status)" size="small">{{ repositoryStatusLabel(row.status) }}</ElTag>
+              #{{ row.id }}
+            </template>
+          </el-table-column>
+          <el-table-column
+            prop="name"
+            :label="t('searchPage.colName')"
+            min-width="160"
+          />
+          <el-table-column
+            :label="t('searchPage.colStatus')"
+            width="120"
+          >
+            <template #default="{ row }">
+              <ElTag
+                v-bind="lifecycleStatusTagAttrs(row.status)"
+                size="small"
+              >
+                {{ nodeStatusLabel(row.status) }}
+              </ElTag>
             </template>
           </el-table-column>
           <template #empty>
-            <el-empty :description="t('searchPage.empty')" :image-size="80" />
+            <el-empty
+              :description="t('searchPage.empty')"
+              :image-size="80"
+            />
           </template>
         </el-table>
       </div>
 
       <div class="hfl-list-panel">
-        <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">{{ t('searchPage.sectionSnapshots') }}</div>
-        <el-table :data="snapRows" stripe :loading="busy">
-          <el-table-column prop="id" :label="t('searchPage.colId')" width="80">
-            <template #default="{ row }">#{{ row.id }}</template>
+        <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">
+          {{ t('searchPage.sectionRepos') }}
+        </div>
+        <el-table
+          :data="repoRows"
+          stripe
+          :loading="busy"
+        >
+          <el-table-column
+            prop="id"
+            :label="t('searchPage.colId')"
+            width="80"
+          >
+            <template #default="{ row }">
+              #{{ row.id }}
+            </template>
           </el-table-column>
-          <el-table-column prop="snapshot_uid" :label="t('searchPage.colName')" min-width="180" show-overflow-tooltip>
+          <el-table-column
+            prop="name"
+            :label="t('searchPage.colName')"
+            min-width="160"
+          />
+          <el-table-column
+            :label="t('searchPage.colType')"
+            width="140"
+          >
+            <template #default="{ row }">
+              <HflTypeLabel :label="repositoryTypeLabel(row.repo_type)" />
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('searchPage.colStatus')"
+            width="120"
+          >
+            <template #default="{ row }">
+              <ElTag
+                v-bind="lifecycleStatusTagAttrs(row.status)"
+                size="small"
+              >
+                {{ repositoryStatusLabel(row.status) }}
+              </ElTag>
+            </template>
+          </el-table-column>
+          <template #empty>
+            <el-empty
+              :description="t('searchPage.empty')"
+              :image-size="80"
+            />
+          </template>
+        </el-table>
+      </div>
+
+      <div class="hfl-list-panel">
+        <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">
+          {{ t('searchPage.sectionSnapshots') }}
+        </div>
+        <el-table
+          :data="snapRows"
+          stripe
+          :loading="busy"
+        >
+          <el-table-column
+            prop="id"
+            :label="t('searchPage.colId')"
+            width="80"
+          >
+            <template #default="{ row }">
+              #{{ row.id }}
+            </template>
+          </el-table-column>
+          <el-table-column
+            prop="snapshot_uid"
+            :label="t('searchPage.colName')"
+            min-width="180"
+            show-overflow-tooltip
+          >
             <template #default="{ row }">
               <span class="hfl-table-cell-mono">{{ row.snapshot_uid }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="repository_display_name" :label="t('searchPage.colRepo')" min-width="140" show-overflow-tooltip />
-          <el-table-column prop="source_display_name" :label="t('searchPage.colSource')" min-width="140" show-overflow-tooltip />
-          <el-table-column :label="t('searchPage.colStatus')" width="120">
-            <template #default="{ row }"><SnapshotStatusTag :status="row.status" /></template>
+          <el-table-column
+            prop="repository_display_name"
+            :label="t('searchPage.colRepo')"
+            min-width="140"
+            show-overflow-tooltip
+          />
+          <el-table-column
+            prop="source_display_name"
+            :label="t('searchPage.colSource')"
+            min-width="140"
+            show-overflow-tooltip
+          />
+          <el-table-column
+            :label="t('searchPage.colStatus')"
+            width="120"
+          >
+            <template #default="{ row }">
+              <SnapshotStatusTag :status="row.status" />
+            </template>
           </el-table-column>
           <template #empty>
-            <el-empty :description="t('searchPage.empty')" :image-size="80" />
+            <el-empty
+              :description="t('searchPage.empty')"
+              :image-size="80"
+            />
           </template>
         </el-table>
       </div>
 
       <div class="hfl-list-panel lg:col-span-2">
-        <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">{{ t('searchPage.sectionAlerts') }}</div>
-        <el-table :data="alertRows" stripe :loading="busy">
-          <el-table-column prop="id" :label="t('searchPage.colId')" width="80">
-            <template #default="{ row }">#{{ row.id }}</template>
-          </el-table-column>
-          <el-table-column prop="title" :label="t('searchPage.colTitle')" min-width="200" />
-          <el-table-column :label="t('searchPage.colSeverity')" width="120">
+        <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">
+          {{ t('searchPage.sectionAlerts') }}
+        </div>
+        <el-table
+          :data="alertRows"
+          stripe
+          :loading="busy"
+        >
+          <el-table-column
+            prop="id"
+            :label="t('searchPage.colId')"
+            width="80"
+          >
             <template #default="{ row }">
-              <ElTag v-bind="alertSeverityTagAttrs(row.severity)" size="small">{{ alertSeverityLabel(row.severity) }}</ElTag>
+              #{{ row.id }}
             </template>
           </el-table-column>
-          <el-table-column :label="t('searchPage.colStatus')" width="120">
+          <el-table-column
+            prop="title"
+            :label="t('searchPage.colTitle')"
+            min-width="200"
+          />
+          <el-table-column
+            :label="t('searchPage.colSeverity')"
+            width="120"
+          >
             <template #default="{ row }">
-              <ElTag v-bind="alertStatusTagAttrs(row.status)" size="small">{{ alertStatusLabel(row.status) }}</ElTag>
+              <ElTag
+                v-bind="alertSeverityTagAttrs(row.severity)"
+                size="small"
+              >
+                {{ alertSeverityLabel(row.severity) }}
+              </ElTag>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('searchPage.colStatus')"
+            width="120"
+          >
+            <template #default="{ row }">
+              <ElTag
+                v-bind="alertStatusTagAttrs(row.status)"
+                size="small"
+              >
+                {{ alertStatusLabel(row.status) }}
+              </ElTag>
             </template>
           </el-table-column>
           <template #empty>
-            <el-empty :description="t('searchPage.empty')" :image-size="80" />
+            <el-empty
+              :description="t('searchPage.empty')"
+              :image-size="80"
+            />
           </template>
         </el-table>
       </div>

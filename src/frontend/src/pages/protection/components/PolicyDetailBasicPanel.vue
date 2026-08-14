@@ -102,23 +102,55 @@ watch(
 </script>
 
 <template>
-  <div v-loading="loading" class="policy-detail-basic-panel policy-detail-overview">
+  <div
+    v-loading="loading"
+    class="policy-detail-basic-panel policy-detail-overview"
+  >
     <section class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('protection.policiesPage.sectionPolicyInfo') }}</h4>
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.policiesPage.sectionPolicyInfo') }}
+      </h4>
       <div class="hfl-detail-grid">
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldName') }}</span>
           <span class="hfl-detail-row__value hfl-detail-row__value--editable">
             <template v-if="editingField === 'name'">
-              <ElInput v-model="inlineDraft" size="small" class="hfl-detail-inline-edit__input" :disabled="saving" @keyup.enter="saveInlineEdit" />
+              <ElInput
+                v-model="inlineDraft"
+                size="small"
+                class="hfl-detail-inline-edit__input"
+                :disabled="saving"
+                @keyup.enter="saveInlineEdit"
+              />
               <span class="hfl-detail-inline-edit__actions">
-                <ElButton text circle size="small" :title="t('common.save')" :disabled="saving" @click="saveInlineEdit"><Check :size="14" /></ElButton>
-                <ElButton text circle size="small" :title="t('common.cancel')" :disabled="saving" @click="cancelInlineEdit"><X :size="14" /></ElButton>
+                <ElButton
+                  text
+                  circle
+                  size="small"
+                  :title="t('common.save')"
+                  :disabled="saving"
+                  @click="saveInlineEdit"
+                ><Check :size="14" /></ElButton>
+                <ElButton
+                  text
+                  circle
+                  size="small"
+                  :title="t('common.cancel')"
+                  :disabled="saving"
+                  @click="cancelInlineEdit"
+                ><X :size="14" /></ElButton>
               </span>
             </template>
             <template v-else>
               <span class="hfl-detail-row__text">{{ policyForm.name || t('protection.policiesPage.timeDash') }}</span>
-              <ElButton text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" @click="beginInlineEdit('name')">
+              <ElButton
+                text
+                circle
+                size="small"
+                class="hfl-detail-row__edit"
+                :title="t('common.edit')"
+                @click="beginInlineEdit('name')"
+              >
                 <Pencil :size="13" />
               </ElButton>
             </template>
@@ -128,10 +160,27 @@ watch(
           <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldStatus') }}</span>
           <span class="hfl-detail-row__value hfl-detail-row__value--editable">
             <template v-if="editingField === 'active'">
-              <ElSwitch v-model="inlineDraft" :disabled="saving" />
+              <ElSwitch
+                v-model="inlineDraft"
+                :disabled="saving"
+              />
               <span class="hfl-detail-inline-edit__actions">
-                <ElButton text circle size="small" :title="t('common.save')" :disabled="saving" @click="saveInlineEdit"><Check :size="14" /></ElButton>
-                <ElButton text circle size="small" :title="t('common.cancel')" :disabled="saving" @click="cancelInlineEdit"><X :size="14" /></ElButton>
+                <ElButton
+                  text
+                  circle
+                  size="small"
+                  :title="t('common.save')"
+                  :disabled="saving"
+                  @click="saveInlineEdit"
+                ><Check :size="14" /></ElButton>
+                <ElButton
+                  text
+                  circle
+                  size="small"
+                  :title="t('common.cancel')"
+                  :disabled="saving"
+                  @click="cancelInlineEdit"
+                ><X :size="14" /></ElButton>
               </span>
             </template>
             <template v-else>
@@ -139,7 +188,14 @@ watch(
                 :value="policyForm.policyActive"
                 :label="policyForm.policyActive ? t('protection.policiesPage.switchEnabledOn') : t('protection.policiesPage.switchEnabledOff')"
               />
-              <ElButton text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" @click="beginInlineEdit('active')">
+              <ElButton
+                text
+                circle
+                size="small"
+                class="hfl-detail-row__edit"
+                :title="t('common.edit')"
+                @click="beginInlineEdit('active')"
+              >
                 <Pencil :size="13" />
               </ElButton>
             </template>

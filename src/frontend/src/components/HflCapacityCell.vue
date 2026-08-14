@@ -24,6 +24,7 @@ const props = withDefaults(
     showBar: true,
     showPercent: true,
     usedOnly: false,
+    unlimitedTotalLabel: '',
     knownTotal: null,
   },
 )
@@ -53,29 +54,59 @@ const percent = computed(() => {
 </script>
 
 <template>
-  <div v-if="showFullCapacity" class="repo-usage-cell" :class="variantClass">
+  <div
+    v-if="showFullCapacity"
+    class="repo-usage-cell"
+    :class="variantClass"
+  >
     <div class="repo-usage-cell__numbers">
       <span class="repo-usage-cell__used">{{ formatBytes(usedBytes) }}</span>
       <span class="repo-usage-cell__capacity">/ {{ formatBytes(totalBytes) }}</span>
-      <span v-if="showPercent" class="repo-usage-cell__percent">{{ percent }}%</span>
+      <span
+        v-if="showPercent"
+        class="repo-usage-cell__percent"
+      >{{ percent }}%</span>
     </div>
-    <div v-if="showBar" class="repo-usage-bar">
-      <span class="repo-usage-bar__fill" :style="{ width: `${percent}%` }" />
+    <div
+      v-if="showBar"
+      class="repo-usage-bar"
+    >
+      <span
+        class="repo-usage-bar__fill"
+        :style="{ width: `${percent}%` }"
+      />
     </div>
   </div>
-  <div v-else-if="showUsedOnly" class="repo-usage-cell" :class="variantClass">
+  <div
+    v-else-if="showUsedOnly"
+    class="repo-usage-cell"
+    :class="variantClass"
+  >
     <div class="repo-usage-cell__numbers">
       <span class="repo-usage-cell__used">{{ formatBytes(usedBytes) }}</span>
     </div>
-    <div v-if="showBar" class="repo-usage-bar">
-      <span class="repo-usage-bar__fill" style="width: 0%" />
+    <div
+      v-if="showBar"
+      class="repo-usage-bar"
+    >
+      <span
+        class="repo-usage-bar__fill"
+        style="width: 0%"
+      />
     </div>
   </div>
-  <div v-else-if="showUnlimited" class="repo-usage-cell repo-usage-cell--unlimited" :class="variantClass">
+  <div
+    v-else-if="showUnlimited"
+    class="repo-usage-cell repo-usage-cell--unlimited"
+    :class="variantClass"
+  >
     <div class="repo-usage-cell__numbers">
       <span class="repo-usage-cell__used">{{ formatBytes(usedBytes) }}</span>
       <span class="repo-usage-cell__capacity">/ {{ unlimitedTotalLabel }}</span>
     </div>
   </div>
-  <span v-else class="hfl-empty-mark">{{ emptyLabel }}</span>
+  <span
+    v-else
+    class="hfl-empty-mark"
+  >{{ emptyLabel }}</span>
 </template>

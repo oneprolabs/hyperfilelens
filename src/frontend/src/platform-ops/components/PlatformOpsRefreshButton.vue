@@ -19,6 +19,9 @@ defineEmits<{
     :disabled="disabled || loading"
     @click="$emit('click')"
   >
-    <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+    <RefreshCw
+      :size="16"
+      :class="{ 'is-spinning': loading }"
+    />
   </el-button>
 </template>

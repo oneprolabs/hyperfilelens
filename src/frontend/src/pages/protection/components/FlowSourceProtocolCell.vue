@@ -29,19 +29,29 @@ const hostPlatformLabel = computed(() => {
 </script>
 
 <template>
-  <span v-if="row.type === 'host' && row.platform" class="source-os-cell source-os-cell--compact">
+  <span
+    v-if="row.type === 'host' && row.platform"
+    class="source-os-cell source-os-cell--compact"
+  >
     <span class="source-os-cell__icon-wrap">
       <AgentPlatformBrandIcon :os="row.platform as EnrollmentOs" />
     </span>
     <span class="source-os-cell__platform">{{ hostPlatformLabel }}</span>
   </span>
-  <span v-else-if="row.type === 'host'" class="hfl-empty-mark">{{ t('protection.backupDetail.durationDash') }}</span>
+  <span
+    v-else-if="row.type === 'host'"
+    class="hfl-empty-mark"
+  >{{ t('protection.backupDetail.durationDash') }}</span>
   <span
     v-else
     class="repo-protocol-pill"
     :class="`repo-protocol-pill--${row.protocol || 'nfs'}`"
   >
-    <component :is="nasMountProtocolIcon(row.protocol)" :size="12" stroke-width="2.25" />
+    <component
+      :is="nasMountProtocolIcon(row.protocol)"
+      :size="12"
+      stroke-width="2.25"
+    />
     {{ protocolLabel }}
   </span>
 </template>

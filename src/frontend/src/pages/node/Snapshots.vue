@@ -74,42 +74,99 @@ onMounted(() => {
 <template>
   <ModulePage :menus="protectionMenus">
     <template #actions>
-      <ElButton :disabled="busy" @click="load">
+      <ElButton
+        :disabled="busy"
+        @click="load"
+      >
         <RefreshCw :size="16" /> {{ t('protection.snapshotsPage.refresh') }}
       </ElButton>
     </template>
 
     <div class="hfl-list-panel">
-      <el-table v-table-column-resize="'node.snapshots'" :data="rows" stripe :loading="busy">
-        <el-table-column prop="id" label="ID" width="80">
-          <template #default="{ row }">#{{ row.id }}</template>
+      <el-table
+        v-table-column-resize="'node.snapshots'"
+        :data="rows"
+        stripe
+        :loading="busy"
+      >
+        <el-table-column
+          prop="id"
+          label="ID"
+          width="80"
+        >
+          <template #default="{ row }">
+            #{{ row.id }}
+          </template>
         </el-table-column>
-        <el-table-column prop="source_display_name" :label="t('protection.snapshotsPage.colSource')" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="backup_config_name" :label="t('protection.snapshotsPage.colBackupConfig')" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="repository_display_name" :label="t('protection.snapshotsPage.colRepo')" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="snapshot_uid" :label="t('protection.snapshotsPage.colSnapshotUid')" min-width="220" show-overflow-tooltip>
+        <el-table-column
+          prop="source_display_name"
+          :label="t('protection.snapshotsPage.colSource')"
+          min-width="180"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="backup_config_name"
+          :label="t('protection.snapshotsPage.colBackupConfig')"
+          min-width="180"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="repository_display_name"
+          :label="t('protection.snapshotsPage.colRepo')"
+          min-width="160"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="snapshot_uid"
+          :label="t('protection.snapshotsPage.colSnapshotUid')"
+          min-width="220"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             <span class="hfl-table-cell-mono">{{ row.snapshot_uid }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('protection.snapshotsPage.fieldStatus')" width="120">
+        <el-table-column
+          :label="t('protection.snapshotsPage.fieldStatus')"
+          width="120"
+        >
           <template #default="{ row }">
             <SnapshotStatusTag :status="row.status" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('protection.snapshotsPage.colDirectoryProgress')" min-width="140">
-          <template #default="{ row }">{{ progressLabel(row) }}</template>
-        </el-table-column>
-        <el-table-column :label="t('protection.snapshotsPage.colSize')" width="120">
-          <template #default="{ row }">{{ fmtBytes(row.total_size_bytes) }}</template>
-        </el-table-column>
-        <el-table-column prop="finished_at" :label="t('protection.snapshotsPage.colFinished')" min-width="180">
+        <el-table-column
+          :label="t('protection.snapshotsPage.colDirectoryProgress')"
+          min-width="140"
+        >
           <template #default="{ row }">
-            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.finished_at || row.created_at) }">{{ formatDate(row.finished_at || row.created_at) }}</span>
+            {{ progressLabel(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.snapshotsPage.colSize')"
+          width="120"
+        >
+          <template #default="{ row }">
+            {{ fmtBytes(row.total_size_bytes) }}
+          </template>
+        </el-table-column>
+        <el-table-column
+          prop="finished_at"
+          :label="t('protection.snapshotsPage.colFinished')"
+          min-width="180"
+        >
+          <template #default="{ row }">
+            <span
+              class="hfl-table-cell-time"
+              :class="{ 'hfl-empty-mark': !(row.finished_at || row.created_at) }"
+            >{{ formatDate(row.finished_at || row.created_at) }}</span>
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty :description="t('protection.snapshotsPage.emptySnapshots')" :image-size="80" />
+          <el-empty
+            :description="t('protection.snapshotsPage.emptySnapshots')"
+            :image-size="80"
+          />
         </template>
       </el-table>
     </div>

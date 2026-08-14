@@ -14,6 +14,9 @@ defineEmits<{
     :title="$t('common.back')"
     @click="$emit('click')"
   >
-    <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+    <ArrowLeft
+      class="fullscreen-form-header__back-icon"
+      :size="18"
+    />
   </button>
 </template>

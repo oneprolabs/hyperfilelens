@@ -67,16 +67,30 @@ onMounted(() => {
   <div class="fullscreen-form-fullscreen resource-add-fullscreen ai-model-form-fullscreen">
     <div class="fullscreen-form-page">
       <header class="fullscreen-form-header">
-        <button type="button" class="fullscreen-form-header__back" @click="handleBack">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+        <button
+          type="button"
+          class="fullscreen-form-header__back"
+          @click="handleBack"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
-          <h1 class="fullscreen-form-header__title">{{ pageTitle }}</h1>
-          <p class="fullscreen-form-header__desc">{{ pageDesc }}</p>
+          <h1 class="fullscreen-form-header__title">
+            {{ pageTitle }}
+          </h1>
+          <p class="fullscreen-form-header__desc">
+            {{ pageDesc }}
+          </p>
         </div>
       </header>
 
-      <div v-loading="loading" class="fullscreen-form-layout">
+      <div
+        v-loading="loading"
+        class="fullscreen-form-layout"
+      >
         <div class="fullscreen-form-main">
           <div class="fullscreen-form-step-stack">
             <!-- Provider -->
@@ -85,7 +99,9 @@ onMounted(() => {
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.aiSettings.sectionProvider') }}
               </h3>
-              <p class="ai-model-section-desc">{{ t('insight.aiSettings.sectionProviderDesc') }}</p>
+              <p class="ai-model-section-desc">
+                {{ t('insight.aiSettings.sectionProviderDesc') }}
+              </p>
 
               <ElRadioGroup
                 v-model="form.provider"
@@ -100,9 +116,14 @@ onMounted(() => {
                   class="ai-provider-card !mr-0"
                 >
                   <div class="ai-provider-card__inner">
-                    <AiProviderIcon :provider="provider.id" size="lg" />
+                    <AiProviderIcon
+                      :provider="provider.id"
+                      size="lg"
+                    />
                     <div class="ai-provider-card__text">
-                      <div class="ai-provider-card__name">{{ provider.label || provider.name || provider.id }}</div>
+                      <div class="ai-provider-card__name">
+                        {{ provider.label || provider.name || provider.id }}
+                      </div>
                       <div class="ai-provider-card__meta">
                         {{ t('insight.aiSettings.providerModelCount', { n: provider.models?.length ?? 0 }) }}
                       </div>
@@ -113,14 +134,23 @@ onMounted(() => {
             </section>
 
             <!-- Connection -->
-            <section v-if="form.provider" class="fullscreen-form-card fullscreen-form-section ai-model-section--connection">
+            <section
+              v-if="form.provider"
+              class="fullscreen-form-card fullscreen-form-section ai-model-section--connection"
+            >
               <h3 class="fullscreen-form-section__title">
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.aiSettings.sectionCredentials') }}
               </h3>
 
-              <ElForm label-position="top" class="fullscreen-form-el-form">
-                <ElFormItem :label="t('insight.aiSettings.labelModel')" required>
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form"
+              >
+                <ElFormItem
+                  :label="t('insight.aiSettings.labelModel')"
+                  required
+                >
                   <div class="ai-model-dropdown">
                     <button
                       type="button"
@@ -128,9 +158,15 @@ onMounted(() => {
                       @click="modelDropdownOpen = !modelDropdownOpen"
                     >
                       <span class="truncate">{{ modelSelectLabel }}</span>
-                      <ChevronDown :size="16" class="shrink-0 text-[var(--color-text-tertiary)]" />
+                      <ChevronDown
+                        :size="16"
+                        class="shrink-0 text-[var(--color-text-tertiary)]"
+                      />
                     </button>
-                    <div v-show="modelDropdownOpen" class="ai-model-dropdown__panel">
+                    <div
+                      v-show="modelDropdownOpen"
+                      class="ai-model-dropdown__panel"
+                    >
                       <button
                         v-for="model in currentProviderModels"
                         :key="model.id"
@@ -139,7 +175,9 @@ onMounted(() => {
                         :class="{ 'is-active': !useCustomModel && form.model === model.id }"
                         @click="selectModel(model.id)"
                       >
-                        <div class="ai-model-dropdown__item-title">{{ model.label || model.name || model.id }}</div>
+                        <div class="ai-model-dropdown__item-title">
+                          {{ model.label || model.name || model.id }}
+                        </div>
                         <div
                           v-if="modelCapabilities(model).length"
                           class="ai-model-dropdown__caps"
@@ -173,8 +211,13 @@ onMounted(() => {
                   />
                 </ElFormItem>
 
-                <div v-if="selectedModelInfo" class="ai-model-info-card">
-                  <div class="ai-model-info-card__label">{{ t('insight.aiSettings.labelCapabilities') }}</div>
+                <div
+                  v-if="selectedModelInfo"
+                  class="ai-model-info-card"
+                >
+                  <div class="ai-model-info-card__label">
+                    {{ t('insight.aiSettings.labelCapabilities') }}
+                  </div>
                   <div class="ai-model-dropdown__caps">
                     <span
                       v-for="cap in selectedModelInfo.capabilities"
@@ -187,14 +230,19 @@ onMounted(() => {
                   </div>
                 </div>
 
-                <ElFormItem :label="t('insight.aiSettings.labelApiKey')" :required="!isEditing">
+                <ElFormItem
+                  :label="t('insight.aiSettings.labelApiKey')"
+                  :required="!isEditing"
+                >
                   <ElInput
                     v-model="form.api_key"
                     type="password"
                     show-password
                     :placeholder="isEditing ? t('insight.aiSettings.apiKeyKeepPlaceholder') : t('insight.aiSettings.apiKeyPlaceholder')"
                   />
-                  <p class="ai-model-field-hint">{{ t('insight.aiSettings.apiKeyEncryptHint') }}</p>
+                  <p class="ai-model-field-hint">
+                    {{ t('insight.aiSettings.apiKeyEncryptHint') }}
+                  </p>
                 </ElFormItem>
 
                 <ElFormItem :label="t('insight.aiSettings.labelApiBase')">
@@ -202,7 +250,9 @@ onMounted(() => {
                     v-model="form.api_base"
                     :placeholder="t('insight.aiSettings.apiBasePlaceholder')"
                   />
-                  <p class="ai-model-field-hint">{{ t('insight.aiSettings.apiBaseHint') }}</p>
+                  <p class="ai-model-field-hint">
+                    {{ t('insight.aiSettings.apiBaseHint') }}
+                  </p>
                 </ElFormItem>
 
                 <ElFormItem :label="t('insight.aiSettings.colName')">
@@ -211,12 +261,16 @@ onMounted(() => {
                     :placeholder="t('insight.aiSettings.namePlaceholder')"
                     @input="onNameInput"
                   />
-                  <p class="ai-model-field-hint">{{ t('insight.aiSettings.nameHint') }}</p>
+                  <p class="ai-model-field-hint">
+                    {{ t('insight.aiSettings.nameHint') }}
+                  </p>
                 </ElFormItem>
 
                 <ElFormItem :label="t('insight.aiSettings.labelActive')">
                   <ElSwitch v-model="form.is_active" />
-                  <p class="ai-model-field-hint">{{ t('insight.aiSettings.activeHint') }}</p>
+                  <p class="ai-model-field-hint">
+                    {{ t('insight.aiSettings.activeHint') }}
+                  </p>
                 </ElFormItem>
               </ElForm>
             </section>

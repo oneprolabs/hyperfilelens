@@ -55,7 +55,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="host" class="hfl-json-editor" />
+  <div
+    ref="host"
+    class="hfl-json-editor"
+  />
 </template>
 
 <style>

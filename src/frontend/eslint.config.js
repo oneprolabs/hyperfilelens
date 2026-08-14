@@ -23,6 +23,16 @@ export default tseslint.config(
     },
   },
   {
+    // Tests intentionally colocate small inline Vue stubs. Production prop
+    // contracts are enforced in maintained components, not throwaway stubs.
+    files: ['**/*.{test,spec}.ts'],
+    rules: {
+      'vue/one-component-per-file': 'off',
+      'vue/require-default-prop': 'off',
+      'vue/require-prop-types': 'off',
+    },
+  },
+  {
     languageOptions: {
       globals: {
         ...globals.browser,

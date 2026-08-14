@@ -44,10 +44,20 @@ const tooltipText = computed(() => {
 </script>
 
 <template>
-  <ElTooltip :content="tooltipText" :disabled="!tooltipText" placement="right">
+  <ElTooltip
+    :content="tooltipText"
+    :disabled="!tooltipText"
+    placement="right"
+  >
     <div class="source-proxy-cell">
-      <span class="source-proxy-cell__name" :class="{ 'hfl-empty-mark': !displayName }">{{ displayName || '—' }}</span>
-      <span v-if="displayIp" class="source-proxy-cell__ip">{{ displayIp }}</span>
+      <span
+        class="source-proxy-cell__name"
+        :class="{ 'hfl-empty-mark': !displayName }"
+      >{{ displayName || '—' }}</span>
+      <span
+        v-if="displayIp"
+        class="source-proxy-cell__ip"
+      >{{ displayIp }}</span>
     </div>
   </ElTooltip>
 </template>

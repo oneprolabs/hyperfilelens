@@ -61,10 +61,18 @@ function handleNavClick(event: MouseEvent, to: string) {
       :aria-expanded="mobileMenuOpen || false"
       @click="emit('toggle-mobile-menu')"
     >
-      <Menu :size="21" aria-hidden="true" />
+      <Menu
+        :size="21"
+        aria-hidden="true"
+      />
     </button>
 
-    <button type="button" class="logo" :aria-label="t('nav.overview')" @click="navigateImmediately('/')">
+    <button
+      type="button"
+      class="logo"
+      :aria-label="t('nav.overview')"
+      @click="navigateImmediately('/')"
+    >
       <AppLogoMark :size="18" />
       <span class="logo-text"><span>Hyper</span><strong>FileLens</strong></span>
     </button>
@@ -103,8 +111,8 @@ function handleNavClick(event: MouseEvent, to: string) {
         class="icon-btn desktop-navigation-control"
         :title="t('nav.switchLanguage', { language: nextLocaleLabel })"
         :aria-label="t('nav.switchLanguage', { language: nextLocaleLabel })"
-        @click="emit('toggle-locale')"
         text
+        @click="emit('toggle-locale')"
       >
         <Globe :size="16" />
       </ElButton>
@@ -120,7 +128,10 @@ function handleNavClick(event: MouseEvent, to: string) {
         target="_blank"
         rel="noopener noreferrer"
       >
-        <Shield :size="15" aria-hidden="true" />
+        <Shield
+          :size="15"
+          aria-hidden="true"
+        />
         <span>{{ t('nav.platformOps') }}</span>
       </a>
 

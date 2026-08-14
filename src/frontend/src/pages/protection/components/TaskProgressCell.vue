@@ -70,13 +70,30 @@ const labelTitle = computed(() => {
 </script>
 
 <template>
-  <div class="task-progress-cell" :class="{ 'is-compact': compact, 'is-failed': failed, 'is-stopping': stopping }">
-    <div v-if="orchestrationLabel || showRightPercent" class="task-progress-cell__row1">
-      <p v-if="orchestrationLabel" class="task-progress-cell__label" :title="labelTitle">
-        <span v-if="showSpinner" class="task-progress-cell__spinner" aria-hidden="true" />
+  <div
+    class="task-progress-cell"
+    :class="{ 'is-compact': compact, 'is-failed': failed, 'is-stopping': stopping }"
+  >
+    <div
+      v-if="orchestrationLabel || showRightPercent"
+      class="task-progress-cell__row1"
+    >
+      <p
+        v-if="orchestrationLabel"
+        class="task-progress-cell__label"
+        :title="labelTitle"
+      >
+        <span
+          v-if="showSpinner"
+          class="task-progress-cell__spinner"
+          aria-hidden="true"
+        />
         <span class="task-progress-cell__label-text">{{ orchestrationLabel }}</span>
       </p>
-      <span v-if="showRightPercent" class="task-progress-cell__percent">{{ progressText }}</span>
+      <span
+        v-if="showRightPercent"
+        class="task-progress-cell__percent"
+      >{{ progressText }}</span>
     </div>
     <el-progress
       class="protection-flow-progress task-progress-cell__bar"
@@ -85,9 +102,18 @@ const labelTitle = computed(() => {
       :stroke-width="compact ? 7 : 8"
       :show-text="false"
     />
-    <p class="task-progress-cell__metrics" :class="{ 'is-empty': !metricParts.length }">
-      <template v-for="(part, index) in metricParts" :key="index">
-        <span v-if="index > 0" class="task-progress-cell__sep">·</span>
+    <p
+      class="task-progress-cell__metrics"
+      :class="{ 'is-empty': !metricParts.length }"
+    >
+      <template
+        v-for="(part, index) in metricParts"
+        :key="index"
+      >
+        <span
+          v-if="index > 0"
+          class="task-progress-cell__sep"
+        >·</span>
         <span>{{ part }}</span>
       </template>
     </p>

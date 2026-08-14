@@ -28,7 +28,11 @@ const hidePageTitle = computed(() => /\/(?:add|edit)$/.test(route.path))
 </script>
 
 <template>
-  <ModulePage :menus="sideNav" body-fill :hide-page-title="hidePageTitle">
+  <ModulePage
+    :menus="sideNav"
+    body-fill
+    :hide-page-title="hidePageTitle"
+  >
     <router-view />
   </ModulePage>
 </template>

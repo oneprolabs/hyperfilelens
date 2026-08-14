@@ -31,26 +31,50 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <div v-loading="phase === 'loading'" class="copilot-empty-state flex min-h-0 flex-1 flex-col items-center justify-center px-6 py-10">
+  <div
+    v-loading="phase === 'loading'"
+    class="copilot-empty-state flex min-h-0 flex-1 flex-col items-center justify-center px-6 py-10"
+  >
     <template v-if="phase === 'network_error'">
       <div class="empty-card">
         <div class="empty-icon empty-icon--error">
           <Network :size="28" />
         </div>
-        <h2 class="empty-title">{{ t('insight.copilot.emptyNetworkTitle') }}</h2>
-        <p class="empty-desc">{{ t('insight.copilot.emptyNetworkDesc') }}</p>
-        <ElButton type="primary" @click="emit('retry')">{{ t('insight.copilot.btnRetry') }}</ElButton>
+        <h2 class="empty-title">
+          {{ t('insight.copilot.emptyNetworkTitle') }}
+        </h2>
+        <p class="empty-desc">
+          {{ t('insight.copilot.emptyNetworkDesc') }}
+        </p>
+        <ElButton
+          type="primary"
+          @click="emit('retry')"
+        >
+          {{ t('insight.copilot.btnRetry') }}
+        </ElButton>
       </div>
     </template>
 
     <template v-else-if="phase === 'bridge_not_ready'">
       <div class="empty-card">
         <div class="empty-icon empty-icon--offline">
-          <CloudOff :size="26" stroke-width="1.75" />
+          <CloudOff
+            :size="26"
+            stroke-width="1.75"
+          />
         </div>
-        <h2 class="empty-title">{{ t('insight.copilot.emptyBridgeTitle') }}</h2>
-        <p class="empty-desc">{{ t('insight.shared.bridgeNotReady') }}</p>
-        <ElButton type="primary" @click="emit('retry')">{{ t('insight.copilot.btnRetry') }}</ElButton>
+        <h2 class="empty-title">
+          {{ t('insight.copilot.emptyBridgeTitle') }}
+        </h2>
+        <p class="empty-desc">
+          {{ t('insight.shared.bridgeNotReady') }}
+        </p>
+        <ElButton
+          type="primary"
+          @click="emit('retry')"
+        >
+          {{ t('insight.copilot.btnRetry') }}
+        </ElButton>
       </div>
     </template>
 
@@ -59,8 +83,12 @@ const { t } = useI18n()
         <div class="empty-icon empty-icon--primary">
           <Sparkles :size="28" />
         </div>
-        <h2 class="empty-title">{{ t('insight.copilot.onboardingTitle') }}</h2>
-        <p class="empty-desc">{{ t('insight.copilot.onboardingSubtitle') }}</p>
+        <h2 class="empty-title">
+          {{ t('insight.copilot.onboardingTitle') }}
+        </h2>
+        <p class="empty-desc">
+          {{ t('insight.copilot.onboardingSubtitle') }}
+        </p>
 
         <ElButton
           type="primary"

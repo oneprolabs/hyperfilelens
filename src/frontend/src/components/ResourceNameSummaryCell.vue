@@ -67,7 +67,10 @@ function onClick() {
     class="backup-source-cell backup-source-cell--summary backup-source-cell--clickable"
     @click.stop="onClick"
   >
-    <div v-if="showIcon" class="backup-source-cell__icon-col">
+    <div
+      v-if="showIcon"
+      class="backup-source-cell__icon-col"
+    >
       <S3PlatformBrandIcon
         v-if="kind === 's3'"
         :platform="s3Platform"
@@ -76,8 +79,8 @@ function onClick() {
         lucide-class="resource-name-summary-cell__main-icon text-slate-500"
       />
       <component
-        v-else
         :is="mainIcon"
+        v-else
         :size="16"
         class="resource-name-summary-cell__main-icon"
         :class="{
@@ -103,7 +106,11 @@ function onClick() {
           class="repo-protocol-pill repo-protocol-pill--icon-only"
           :class="`repo-protocol-pill--${protocol || 'nfs'}`"
         >
-          <component :is="nasMountProtocolIcon(protocol)" :size="12" stroke-width="2.25" />
+          <component
+            :is="nasMountProtocolIcon(protocol)"
+            :size="12"
+            stroke-width="2.25"
+          />
         </span>
       </ElTooltip>
     </div>
@@ -111,13 +118,22 @@ function onClick() {
       <span class="hfl-table-name-link hfl-table-name-link--single">
         {{ name }}
       </span>
-      <span v-if="summary" class="backup-source-cell__type">
+      <span
+        v-if="summary"
+        class="backup-source-cell__type"
+      >
         {{ summary }}
       </span>
     </span>
   </button>
-  <span v-else class="backup-source-cell backup-source-cell--summary">
-    <span v-if="showIcon" class="backup-source-cell__icon-col">
+  <span
+    v-else
+    class="backup-source-cell backup-source-cell--summary"
+  >
+    <span
+      v-if="showIcon"
+      class="backup-source-cell__icon-col"
+    >
       <S3PlatformBrandIcon
         v-if="kind === 's3'"
         :platform="s3Platform"
@@ -125,13 +141,21 @@ function onClick() {
         icon-class="resource-name-summary-cell__s3-icon"
         lucide-class="resource-name-summary-cell__main-icon text-slate-500"
       />
-      <component v-else :is="mainIcon" :size="16" class="resource-name-summary-cell__main-icon text-slate-500" />
+      <component
+        :is="mainIcon"
+        v-else
+        :size="16"
+        class="resource-name-summary-cell__main-icon text-slate-500"
+      />
     </span>
     <span class="backup-source-cell__body">
       <span class="hfl-table-name-link hfl-table-name-link--single">
         {{ name }}
       </span>
-      <span v-if="summary" class="backup-source-cell__type">
+      <span
+        v-if="summary"
+        class="backup-source-cell__type"
+      >
         {{ summary }}
       </span>
     </span>

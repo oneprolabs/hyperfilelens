@@ -88,8 +88,14 @@ onMounted(async () => {
   <div class="oauth-error">
     <div class="oauth-error-card">
       <h1>{{ t('login.googleErrorTitle') }}</h1>
-      <p aria-live="polite">{{ message }}</p>
-      <button type="button" class="back-btn" @click="backToLogin">
+      <p aria-live="polite">
+        {{ message }}
+      </p>
+      <button
+        type="button"
+        class="back-btn"
+        @click="backToLogin"
+      >
         {{ t('login.backToLogin') }}
       </button>
     </div>

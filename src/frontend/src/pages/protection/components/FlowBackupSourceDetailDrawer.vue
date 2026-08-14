@@ -2508,13 +2508,24 @@ function onClosed() {
     :z-index="3000"
     @closed="onClosed"
   >
-    <template v-if="source && aggregate" #header>
+    <template
+      v-if="source && aggregate"
+      #header
+    >
       <div class="dp-flow-source-detail-drawer__header min-w-0">
         <div class="flex flex-wrap items-center gap-2">
-          <h2 class="hfl-detail-drawer__title m-0 truncate">{{ source.name }}</h2>
-          <span class="dp-flow-type-pill shrink-0" :class="flowSourceTypeClass(source)">
+          <h2 class="hfl-detail-drawer__title m-0 truncate">
+            {{ source.name }}
+          </h2>
+          <span
+            class="dp-flow-type-pill shrink-0"
+            :class="flowSourceTypeClass(source)"
+          >
             <span class="dp-flow-type-pill__main">{{ flowSourceTypeParts(source).main }}</span>
-            <span v-if="flowSourceTypeParts(source).suffix" class="dp-flow-type-pill__suffix">
+            <span
+              v-if="flowSourceTypeParts(source).suffix"
+              class="dp-flow-type-pill__suffix"
+            >
               {{ flowSourceTypeParts(source).suffix }}
             </span>
           </span>
@@ -2534,28 +2545,45 @@ function onClosed() {
       </div>
     </template>
 
-    <div v-if="source && aggregate" class="hfl-detail-drawer__body dp-flow-source-detail-drawer__body">
-      <el-tabs v-model="activeTab" class="hfl-detail-tabs dp-flow-source-detail-tabs">
-        <el-tab-pane :label="t('protection.backupsPage.flowSourceDetailTabOverview')" name="overview">
-            <div class="hfl-detail-sections dp-flow-source-overview">
-              <el-alert
-                v-if="sourceDetailError"
-                :title="sourceDetailError"
-                type="error"
-                show-icon
-                :closable="false"
-              />
-              <template v-if="overviewSource">
+    <div
+      v-if="source && aggregate"
+      class="hfl-detail-drawer__body dp-flow-source-detail-drawer__body"
+    >
+      <el-tabs
+        v-model="activeTab"
+        class="hfl-detail-tabs dp-flow-source-detail-tabs"
+      >
+        <el-tab-pane
+          :label="t('protection.backupsPage.flowSourceDetailTabOverview')"
+          name="overview"
+        >
+          <div class="hfl-detail-sections dp-flow-source-overview">
+            <el-alert
+              v-if="sourceDetailError"
+              :title="sourceDetailError"
+              type="error"
+              show-icon
+              :closable="false"
+            />
+            <template v-if="overviewSource">
               <section class="hfl-detail-section">
-                <h4 class="hfl-detail-section__title">{{ t('protection.backupsPage.flowSourceDetailSectionMeta') }}</h4>
+                <h4 class="hfl-detail-section__title">
+                  {{ t('protection.backupsPage.flowSourceDetailSectionMeta') }}
+                </h4>
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailBackupSource') }}</span>
                     <span class="hfl-detail-row__value dp-flow-source-info-value">
                       <span class="dp-flow-source-info-name">{{ overviewSource.name }}</span>
-                      <span class="dp-flow-type-pill shrink-0" :class="flowSourceTypeClass(overviewSource)">
+                      <span
+                        class="dp-flow-type-pill shrink-0"
+                        :class="flowSourceTypeClass(overviewSource)"
+                      >
                         <span class="dp-flow-type-pill__main">{{ flowSourceTypeParts(overviewSource).main }}</span>
-                        <span v-if="flowSourceTypeParts(overviewSource).suffix" class="dp-flow-type-pill__suffix">
+                        <span
+                          v-if="flowSourceTypeParts(overviewSource).suffix"
+                          class="dp-flow-type-pill__suffix"
+                        >
                           {{ flowSourceTypeParts(overviewSource).suffix }}
                         </span>
                       </span>
@@ -2577,7 +2605,11 @@ function onClosed() {
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailSourceStatus') }}</span>
                     <span class="hfl-detail-row__value">
-                      <el-tag size="small" :type="flowSourceLifecycleStatusTag(overviewSource.status)" effect="light">
+                      <el-tag
+                        size="small"
+                        :type="flowSourceLifecycleStatusTag(overviewSource.status)"
+                        effect="light"
+                      >
                         {{ flowSourceLifecycleStatusLabel(overviewSource.status) }}
                       </el-tag>
                     </span>
@@ -2603,10 +2635,15 @@ function onClosed() {
                 <h4 class="hfl-detail-section__title">
                   {{ t('protection.backupsPage.flowSourceDetailTabConfigs') }}
                 </h4>
-                <div v-if="currentSourceConfig" class="dp-flow-config-detail-list">
+                <div
+                  v-if="currentSourceConfig"
+                  class="dp-flow-config-detail-list"
+                >
                   <div class="dp-flow-config-subsections">
                     <section class="hfl-detail-section dp-flow-config-subsection">
-                      <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">{{ t('protection.backupsPage.flowSourceDetailConfigSummary') }}</h6>
+                      <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">
+                        {{ t('protection.backupsPage.flowSourceDetailConfigSummary') }}
+                      </h6>
                       <div class="hfl-detail-grid">
                         <div class="hfl-detail-row">
                           <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailColSnapshotCount') }}</span>
@@ -2633,264 +2670,278 @@ function onClosed() {
                       </div>
                     </section>
 
-                    <section class="hfl-detail-section dp-flow-config-subsection" ref="dirsSectionRef">
-                        <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">{{ t('protection.backupsPage.flowBackupColBackupDirs') }}</h6>
-                        <div class="dp-flow-config-subsection__body">
-                          <div v-if="configDirectories(currentSourceConfig).length" class="dp-flow-config-paths dp-flow-config-paths--stack">
-                            <code
-                              v-for="dir in configDirectories(currentSourceConfig)"
-                              :key="`${currentSourceConfig.id}-${dir.id}`"
-                              class="flow-source-list-drawer-path dp-flow-config-path create-recovery-plan-mapping__endpoint"
-                              :class="`create-recovery-plan-mapping__endpoint--${backupConfigDirectoryKind(dir)}`"
-                            >
-                              <component
-                                :is="backupConfigDirectoryIcon(dir)"
-                                :size="14"
-                                class="dp-flow-config-path__icon create-recovery-plan-mapping__icon"
-                              />
-                              <span class="create-recovery-plan-mapping__text">{{ dir.path }}</span>
-                            </code>
-                          </div>
-                          <span v-else class="hfl-empty-mark">—</span>
-                        </div>
-                      </section>
-
-                      <section class="hfl-detail-section dp-flow-config-subsection" ref="targetsSectionRef">
-                        <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">{{ t('protection.backupsPage.flowSourceDetailDisasterTarget') }}</h6>
-                        <div class="hfl-detail-grid dp-flow-config-detail-card__grid">
-                          <div class="hfl-detail-row">
-                            <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailTargetName') }}</span>
-                            <span class="hfl-detail-row__value">{{ configRepositoryName(currentSourceConfig) }}</span>
-                          </div>
-                          <div class="hfl-detail-row">
-                            <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailTargetType') }}</span>
-                            <span class="hfl-detail-row__value">
-                              <el-tag size="small" effect="plain">{{ configRepositoryType(currentSourceConfig) }}</el-tag>
-                            </span>
-                          </div>
-                          <div class="hfl-detail-row">
-                            <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailTargetLocation') }}</span>
-                            <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ configRepositoryLocation(currentSourceConfig) }}</span>
-                          </div>
-                        </div>
-                      </section>
-
-                      <section class="hfl-detail-section dp-flow-config-subsection">
-                        <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">
-                          {{ t('protection.backupsPage.labelCompressionStrategy') }}
-                        </h6>
-                        <div class="dp-flow-config-compression">
-                          <div class="dp-flow-config-compression__summary">
+                    <section
+                      ref="dirsSectionRef"
+                      class="hfl-detail-section dp-flow-config-subsection"
+                    >
+                      <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">
+                        {{ t('protection.backupsPage.flowBackupColBackupDirs') }}
+                      </h6>
+                      <div class="dp-flow-config-subsection__body">
+                        <div
+                          v-if="configDirectories(currentSourceConfig).length"
+                          class="dp-flow-config-paths dp-flow-config-paths--stack"
+                        >
+                          <code
+                            v-for="dir in configDirectories(currentSourceConfig)"
+                            :key="`${currentSourceConfig.id}-${dir.id}`"
+                            class="flow-source-list-drawer-path dp-flow-config-path create-recovery-plan-mapping__endpoint"
+                            :class="`create-recovery-plan-mapping__endpoint--${backupConfigDirectoryKind(dir)}`"
+                          >
                             <component
-                              :is="currentSourceCompression.icon"
-                              :size="15"
-                              aria-hidden="true"
-                              class="dp-flow-config-compression__icon"
-                              :class="`dp-flow-config-compression__icon--${currentSourceCompression.level}`"
+                              :is="backupConfigDirectoryIcon(dir)"
+                              :size="14"
+                              class="dp-flow-config-path__icon create-recovery-plan-mapping__icon"
                             />
-                            <strong class="dp-flow-config-compression__title">
-                              {{ currentSourceCompression.title }}
-                            </strong>
-                          </div>
-                          <p class="dp-flow-config-compression__description">
-                            {{ currentSourceCompression.description }}
-                          </p>
+                            <span class="create-recovery-plan-mapping__text">{{ dir.path }}</span>
+                          </code>
                         </div>
-                      </section>
+                        <span
+                          v-else
+                          class="hfl-empty-mark"
+                        >—</span>
+                      </div>
+                    </section>
 
-                      <section class="hfl-detail-section dp-flow-config-subsection">
-                        <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">{{ t('protection.backupsPage.flowBackupColBoundBackupPolicy') }}</h6>
-                        <div v-if="currentSourcePolicy" class="hfl-detail-grid dp-flow-config-detail-card__grid">
-                          <div class="hfl-detail-row hfl-detail-row--full dp-flow-policy-overview__name-row">
-                            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldPolicyName') }}</span>
-                            <span class="hfl-detail-row__value dp-flow-policy-overview__name-value">
-                              <span class="dp-flow-detail-name-with-state dp-flow-policy-overview__name">
-                                <span>{{ currentSourcePolicy.name }}</span>
-                                <span :class="detailStatePillClass(currentSourcePolicy.is_active)">
-                                  {{ boolStatusLabel(currentSourcePolicy.is_active) }}
-                                </span>
+                    <section
+                      ref="targetsSectionRef"
+                      class="hfl-detail-section dp-flow-config-subsection"
+                    >
+                      <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">
+                        {{ t('protection.backupsPage.flowSourceDetailDisasterTarget') }}
+                      </h6>
+                      <div class="hfl-detail-grid dp-flow-config-detail-card__grid">
+                        <div class="hfl-detail-row">
+                          <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailTargetName') }}</span>
+                          <span class="hfl-detail-row__value">{{ configRepositoryName(currentSourceConfig) }}</span>
+                        </div>
+                        <div class="hfl-detail-row">
+                          <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailTargetType') }}</span>
+                          <span class="hfl-detail-row__value">
+                            <el-tag
+                              size="small"
+                              effect="plain"
+                            >{{ configRepositoryType(currentSourceConfig) }}</el-tag>
+                          </span>
+                        </div>
+                        <div class="hfl-detail-row">
+                          <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailTargetLocation') }}</span>
+                          <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ configRepositoryLocation(currentSourceConfig) }}</span>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section class="hfl-detail-section dp-flow-config-subsection">
+                      <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">
+                        {{ t('protection.backupsPage.labelCompressionStrategy') }}
+                      </h6>
+                      <div class="dp-flow-config-compression">
+                        <div class="dp-flow-config-compression__summary">
+                          <component
+                            :is="currentSourceCompression.icon"
+                            :size="15"
+                            aria-hidden="true"
+                            class="dp-flow-config-compression__icon"
+                            :class="`dp-flow-config-compression__icon--${currentSourceCompression.level}`"
+                          />
+                          <strong class="dp-flow-config-compression__title">
+                            {{ currentSourceCompression.title }}
+                          </strong>
+                        </div>
+                        <p class="dp-flow-config-compression__description">
+                          {{ currentSourceCompression.description }}
+                        </p>
+                      </div>
+                    </section>
+
+                    <section class="hfl-detail-section dp-flow-config-subsection">
+                      <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">
+                        {{ t('protection.backupsPage.flowBackupColBoundBackupPolicy') }}
+                      </h6>
+                      <div
+                        v-if="currentSourcePolicy"
+                        class="hfl-detail-grid dp-flow-config-detail-card__grid"
+                      >
+                        <div class="hfl-detail-row hfl-detail-row--full dp-flow-policy-overview__name-row">
+                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldPolicyName') }}</span>
+                          <span class="hfl-detail-row__value dp-flow-policy-overview__name-value">
+                            <span class="dp-flow-detail-name-with-state dp-flow-policy-overview__name">
+                              <span>{{ currentSourcePolicy.name }}</span>
+                              <span :class="detailStatePillClass(currentSourcePolicy.is_active)">
+                                {{ boolStatusLabel(currentSourcePolicy.is_active) }}
                               </span>
                             </span>
-                          </div>
-                          <div class="hfl-detail-row hfl-detail-row--full">
-                            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.appliedToBackupSourcesLabel') }}</span>
-                            <span class="hfl-detail-row__value">{{ policyUsageValue(currentSourcePolicy.related_backup_count) }}</span>
-                          </div>
-                          <div class="hfl-detail-row hfl-detail-row--full">
-                            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldSchedule') }}</span>
-                            <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': currentSourcePolicy.schedule?.enabled && !currentSourcePolicy.schedule_summary }">{{ enabledConfigLabel(currentSourcePolicy.schedule?.enabled, currentSourcePolicy.schedule_summary) }}</span>
-                          </div>
-                          <div class="hfl-detail-row hfl-detail-row--full">
-                            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldRetention') }}</span>
-                            <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                              <span class="create-policy-detail-popover__retention-box dp-flow-policy-overview__retention-box">
-                                <div class="policy-retention-detail-list">
-                                  <div
-                                    v-for="line in policyRetentionDetailLines(currentSourcePolicy)"
-                                    :key="`${line.label || ''}${line.text}`"
-                                    class="policy-retention-detail-list__line"
-                                    :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
-                                  >
-                                    <span v-if="line.label" class="policy-retention-detail-list__label">{{ line.label }}</span>
-                                    <span class="policy-retention-detail-list__text">{{ line.text }}</span>
-                                  </div>
+                          </span>
+                        </div>
+                        <div class="hfl-detail-row hfl-detail-row--full">
+                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.appliedToBackupSourcesLabel') }}</span>
+                          <span class="hfl-detail-row__value">{{ policyUsageValue(currentSourcePolicy.related_backup_count) }}</span>
+                        </div>
+                        <div class="hfl-detail-row hfl-detail-row--full">
+                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldSchedule') }}</span>
+                          <span
+                            class="hfl-detail-row__value"
+                            :class="{ 'hfl-detail-row__empty': currentSourcePolicy.schedule?.enabled && !currentSourcePolicy.schedule_summary }"
+                          >{{ enabledConfigLabel(currentSourcePolicy.schedule?.enabled, currentSourcePolicy.schedule_summary) }}</span>
+                        </div>
+                        <div class="hfl-detail-row hfl-detail-row--full">
+                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldRetention') }}</span>
+                          <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
+                            <span class="create-policy-detail-popover__retention-box dp-flow-policy-overview__retention-box">
+                              <div class="policy-retention-detail-list">
+                                <div
+                                  v-for="line in policyRetentionDetailLines(currentSourcePolicy)"
+                                  :key="`${line.label || ''}${line.text}`"
+                                  class="policy-retention-detail-list__line"
+                                  :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
+                                >
+                                  <span
+                                    v-if="line.label"
+                                    class="policy-retention-detail-list__label"
+                                  >{{ line.label }}</span>
+                                  <span class="policy-retention-detail-list__text">{{ line.text }}</span>
                                 </div>
-                              </span>
-                            </span>
-                          </div>
-                        </div>
-                        <div v-else class="dp-flow-config-subsection__empty">
-                          <Unlink :size="14" />
-                          {{ t('protection.backupsPage.flowBackupColPolicyNone') }}
-                        </div>
-                      </section>
-
-                      <section class="hfl-detail-section dp-flow-config-subsection">
-                        <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">{{ t('protection.backupsPage.flowBackupColBoundFileFilter') }}</h6>
-                        <div v-if="currentSourceFilter" class="hfl-detail-grid dp-flow-config-detail-card__grid">
-                          <div class="hfl-detail-row">
-                            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldFilterRuleName') }}</span>
-                            <span class="hfl-detail-row__value dp-flow-detail-name-with-state">
-                              <span>{{ currentSourceFilter.name }}</span>
-                              <span :class="detailStatePillClass(currentSourceFilter.is_active)">
-                                {{ boolStatusLabel(currentSourceFilter.is_active) }}
-                              </span>
-                            </span>
-                          </div>
-                          <div class="hfl-detail-row">
-                            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.appliedToBackupSourcesLabel') }}</span>
-                            <span class="hfl-detail-row__value">{{ policyUsageValue(currentSourceFilter.related_backup_count) }}</span>
-                          </div>
-                          <div v-if="currentSourceFilter.large_file_limit_enabled" class="hfl-detail-row">
-                            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.previewMaxSizeLimit') }}</span>
-                            <span class="hfl-detail-row__value">{{ fileFilterMaxSizeLimitValue(currentSourceFilter) }}</span>
-                          </div>
-                          <div v-if="currentSourceFilter.ignore_cache_directories" class="hfl-detail-row">
-                            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.cacheTitle') }}</span>
-                            <span class="hfl-detail-row__value">
-                              <span :class="detailStatePillClass(true)">{{ boolStatusLabel(true) }}</span>
-                            </span>
-                          </div>
-                          <div v-if="currentSourceFilter.current_filesystem_only" class="hfl-detail-row">
-                            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fsOnlyTitle') }}</span>
-                            <span class="hfl-detail-row__value">
-                              <span :class="detailStatePillClass(true)">{{ boolStatusLabel(true) }}</span>
-                            </span>
-                          </div>
-                          <div class="hfl-detail-row hfl-detail-row--full">
-                            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.filterRulesPreviewTitle') }}</span>
-                            <span class="hfl-detail-row__value">
-                              <div class="flow-binding-rules-preview dp-flow-detail-rules-preview">
-                                <template v-if="fileFilterCompiledRuleLines(currentSourceFilter).length">
-                                  <code
-                                    v-for="(line, index) in fileFilterCompiledRuleLines(currentSourceFilter)"
-                                    :key="`${index}-${line}`"
-                                    class="flow-binding-rules-preview__line"
-                                  >
-                                    {{ line }}
-                                  </code>
-                                </template>
-                                <p v-else class="flow-binding-rules-preview__empty">
-                                  {{ t('protection.policiesPage.filterNoActiveRules') }}
-                                </p>
                               </div>
                             </span>
-                          </div>
+                          </span>
                         </div>
-                        <div v-else class="dp-flow-config-subsection__empty">
-                          <Unlink :size="14" />
-                          {{ t('protection.backupsPage.flowBackupColPolicyNone') }}
-                        </div>
-                      </section>
+                      </div>
+                      <div
+                        v-else
+                        class="dp-flow-config-subsection__empty"
+                      >
+                        <Unlink :size="14" />
+                        {{ t('protection.backupsPage.flowBackupColPolicyNone') }}
+                      </div>
+                    </section>
 
-                      <section class="hfl-detail-section dp-flow-config-subsection">
-                        <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">{{ t('protection.backupsPage.descRecoveryPlan') }}</h6>
-                        <div class="dp-flow-config-subsection__body">
-                          <div v-if="currentSourceRecoveryPlanMappings.length" class="dp-flow-restore-plan-card">
-                            <HflPopover
-                              trigger="hover"
-                              placement="top-start"
-                              :width="520"
-                              popper-class="create-recovery-plan-tooltip"
-                            >
-                              <template #reference>
-                                <div class="create-recovery-plan-cell create-recovery-plan-cell--review create-recovery-plan-cell--enabled">
-                                  <div class="create-recovery-plan-cell__status">
-                                    <span class="create-recovery-plan-cell__dot" aria-hidden="true" />
-                                    <span class="create-recovery-plan-cell__status-label">
-                                      {{ recoveryPlanStatusLabel(currentSourceRecoveryPlanMappings) }}
-                                    </span>
-                                  </div>
-                                  <div
-                                    class="create-recovery-plan-cell__policy"
-                                    :class="`create-recovery-plan-cell__policy--${recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan)}`"
-                                  >
-                                    <ShieldAlert
-                                      v-if="recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan) === 'overwrite'"
-                                      :size="14"
-                                      class="create-recovery-plan-cell__policy-icon"
-                                    />
-                                    <ShieldCheck v-else :size="14" class="create-recovery-plan-cell__policy-icon" />
-                                    <span class="create-recovery-plan-cell__policy-text">
-                                      {{ recoveryPlanConflictSummary(currentSourceRecoveryPlanMappings[0].plan) }}
-                                    </span>
-                                  </div>
-                                  <div class="create-recovery-plan-cell__mappings">
-                                    <div
-                                      v-for="mapping in currentSourceRecoveryPlanMappings"
-                                      :key="mapping.key"
-                                      class="create-recovery-plan-mapping"
-                                    >
-                                      <span
-                                        class="create-recovery-plan-mapping__endpoint"
-                                        :class="`create-recovery-plan-mapping__endpoint--${recoveryPlanMappingSourceKind(mapping)}`"
-                                        :title="recoveryPlanSourcePathLabel(mapping)"
-                                      >
-                                        <Camera
-                                          v-if="recoveryPlanMappingSourceKind(mapping) === 'snapshot'"
-                                          :size="14"
-                                          class="create-recovery-plan-mapping__icon"
-                                        />
-                                        <File
-                                          v-else-if="recoveryPlanMappingSourceKind(mapping) === 'file'"
-                                          :size="14"
-                                          class="create-recovery-plan-mapping__icon"
-                                        />
-                                        <Folder v-else :size="14" class="create-recovery-plan-mapping__icon" />
-                                        <span class="create-recovery-plan-mapping__text" :title="recoveryPlanSourcePathLabel(mapping)">{{ recoveryPlanSourcePathLabel(mapping) }}</span>
-                                      </span>
-                                      <span class="create-recovery-plan-mapping__arrow" aria-hidden="true">-&gt;</span>
-                                      <span
-                                        class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
-                                        :title="recoveryPlanTargetSummary(mapping.plan)"
-                                      >
-                                        <FolderOpen :size="14" class="create-recovery-plan-mapping__icon" />
-                                        <span class="create-recovery-plan-mapping__text" :title="recoveryPlanTargetSummary(mapping.plan)">{{ recoveryPlanTargetSummary(mapping.plan) }}</span>
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
+                    <section class="hfl-detail-section dp-flow-config-subsection">
+                      <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">
+                        {{ t('protection.backupsPage.flowBackupColBoundFileFilter') }}
+                      </h6>
+                      <div
+                        v-if="currentSourceFilter"
+                        class="hfl-detail-grid dp-flow-config-detail-card__grid"
+                      >
+                        <div class="hfl-detail-row">
+                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldFilterRuleName') }}</span>
+                          <span class="hfl-detail-row__value dp-flow-detail-name-with-state">
+                            <span>{{ currentSourceFilter.name }}</span>
+                            <span :class="detailStatePillClass(currentSourceFilter.is_active)">
+                              {{ boolStatusLabel(currentSourceFilter.is_active) }}
+                            </span>
+                          </span>
+                        </div>
+                        <div class="hfl-detail-row">
+                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.appliedToBackupSourcesLabel') }}</span>
+                          <span class="hfl-detail-row__value">{{ policyUsageValue(currentSourceFilter.related_backup_count) }}</span>
+                        </div>
+                        <div
+                          v-if="currentSourceFilter.large_file_limit_enabled"
+                          class="hfl-detail-row"
+                        >
+                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.previewMaxSizeLimit') }}</span>
+                          <span class="hfl-detail-row__value">{{ fileFilterMaxSizeLimitValue(currentSourceFilter) }}</span>
+                        </div>
+                        <div
+                          v-if="currentSourceFilter.ignore_cache_directories"
+                          class="hfl-detail-row"
+                        >
+                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.cacheTitle') }}</span>
+                          <span class="hfl-detail-row__value">
+                            <span :class="detailStatePillClass(true)">{{ boolStatusLabel(true) }}</span>
+                          </span>
+                        </div>
+                        <div
+                          v-if="currentSourceFilter.current_filesystem_only"
+                          class="hfl-detail-row"
+                        >
+                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fsOnlyTitle') }}</span>
+                          <span class="hfl-detail-row__value">
+                            <span :class="detailStatePillClass(true)">{{ boolStatusLabel(true) }}</span>
+                          </span>
+                        </div>
+                        <div class="hfl-detail-row hfl-detail-row--full">
+                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.filterRulesPreviewTitle') }}</span>
+                          <span class="hfl-detail-row__value">
+                            <div class="flow-binding-rules-preview dp-flow-detail-rules-preview">
+                              <template v-if="fileFilterCompiledRuleLines(currentSourceFilter).length">
+                                <code
+                                  v-for="(line, index) in fileFilterCompiledRuleLines(currentSourceFilter)"
+                                  :key="`${index}-${line}`"
+                                  class="flow-binding-rules-preview__line"
+                                >
+                                  {{ line }}
+                                </code>
                               </template>
-                              <template #default>
-                                <div class="create-recovery-plan-tooltip__content">
-                                  <div
-                                    class="create-recovery-plan-tooltip__policy"
-                                    :class="`create-recovery-plan-tooltip__policy--${recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan)}`"
-                                  >
-                                    <ShieldAlert
-                                      v-if="recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan) === 'overwrite'"
-                                      :size="14"
-                                      class="create-recovery-plan-cell__policy-icon"
-                                    />
-                                    <ShieldCheck v-else :size="14" class="create-recovery-plan-cell__policy-icon" />
-                                    <span class="create-recovery-plan-cell__policy-text">
-                                      {{ recoveryPlanConflictFullLabel(currentSourceRecoveryPlanMappings[0].plan) }}
-                                    </span>
-                                  </div>
+                              <p
+                                v-else
+                                class="flow-binding-rules-preview__empty"
+                              >
+                                {{ t('protection.policiesPage.filterNoActiveRules') }}
+                              </p>
+                            </div>
+                          </span>
+                        </div>
+                      </div>
+                      <div
+                        v-else
+                        class="dp-flow-config-subsection__empty"
+                      >
+                        <Unlink :size="14" />
+                        {{ t('protection.backupsPage.flowBackupColPolicyNone') }}
+                      </div>
+                    </section>
+
+                    <section class="hfl-detail-section dp-flow-config-subsection">
+                      <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">
+                        {{ t('protection.backupsPage.descRecoveryPlan') }}
+                      </h6>
+                      <div class="dp-flow-config-subsection__body">
+                        <div
+                          v-if="currentSourceRecoveryPlanMappings.length"
+                          class="dp-flow-restore-plan-card"
+                        >
+                          <HflPopover
+                            trigger="hover"
+                            placement="top-start"
+                            :width="520"
+                            popper-class="create-recovery-plan-tooltip"
+                          >
+                            <template #reference>
+                              <div class="create-recovery-plan-cell create-recovery-plan-cell--review create-recovery-plan-cell--enabled">
+                                <div class="create-recovery-plan-cell__status">
+                                  <span
+                                    class="create-recovery-plan-cell__dot"
+                                    aria-hidden="true"
+                                  />
+                                  <span class="create-recovery-plan-cell__status-label">
+                                    {{ recoveryPlanStatusLabel(currentSourceRecoveryPlanMappings) }}
+                                  </span>
+                                </div>
+                                <div
+                                  class="create-recovery-plan-cell__policy"
+                                  :class="`create-recovery-plan-cell__policy--${recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan)}`"
+                                >
+                                  <ShieldAlert
+                                    v-if="recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan) === 'overwrite'"
+                                    :size="14"
+                                    class="create-recovery-plan-cell__policy-icon"
+                                  />
+                                  <ShieldCheck
+                                    v-else
+                                    :size="14"
+                                    class="create-recovery-plan-cell__policy-icon"
+                                  />
+                                  <span class="create-recovery-plan-cell__policy-text">
+                                    {{ recoveryPlanConflictSummary(currentSourceRecoveryPlanMappings[0].plan) }}
+                                  </span>
+                                </div>
+                                <div class="create-recovery-plan-cell__mappings">
                                   <div
                                     v-for="mapping in currentSourceRecoveryPlanMappings"
-                                    :key="`${mapping.key}-tooltip`"
-                                    class="create-recovery-plan-tooltip__mapping create-recovery-plan-mapping"
+                                    :key="mapping.key"
+                                    class="create-recovery-plan-mapping"
                                   >
                                     <span
                                       class="create-recovery-plan-mapping__endpoint"
@@ -2907,926 +2958,1355 @@ function onClosed() {
                                         :size="14"
                                         class="create-recovery-plan-mapping__icon"
                                       />
-                                      <Folder v-else :size="14" class="create-recovery-plan-mapping__icon" />
-                                      <span class="create-recovery-plan-mapping__text" :title="recoveryPlanSourcePathLabel(mapping)">{{ recoveryPlanSourcePathLabel(mapping) }}</span>
+                                      <Folder
+                                        v-else
+                                        :size="14"
+                                        class="create-recovery-plan-mapping__icon"
+                                      />
+                                      <span
+                                        class="create-recovery-plan-mapping__text"
+                                        :title="recoveryPlanSourcePathLabel(mapping)"
+                                      >{{ recoveryPlanSourcePathLabel(mapping) }}</span>
                                     </span>
-                                    <span class="create-recovery-plan-mapping__arrow" aria-hidden="true">-&gt;</span>
+                                    <span
+                                      class="create-recovery-plan-mapping__arrow"
+                                      aria-hidden="true"
+                                    >-&gt;</span>
                                     <span
                                       class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                                       :title="recoveryPlanTargetSummary(mapping.plan)"
                                     >
-                                      <FolderOpen :size="14" class="create-recovery-plan-mapping__icon" />
-                                      <span class="create-recovery-plan-mapping__text" :title="recoveryPlanTargetSummary(mapping.plan)">{{ recoveryPlanTargetSummary(mapping.plan) }}</span>
+                                      <FolderOpen
+                                        :size="14"
+                                        class="create-recovery-plan-mapping__icon"
+                                      />
+                                      <span
+                                        class="create-recovery-plan-mapping__text"
+                                        :title="recoveryPlanTargetSummary(mapping.plan)"
+                                      >{{ recoveryPlanTargetSummary(mapping.plan) }}</span>
                                     </span>
                                   </div>
                                 </div>
-                              </template>
-                            </HflPopover>
-                          </div>
-                          <div v-else class="dp-flow-config-subsection__empty dp-flow-config-subsection__empty--block">
-                            <Unlink :size="14" />
-                            {{ t('protection.backupsPage.flowSourceDetailRestorePlanEmpty') }}
-                          </div>
+                              </div>
+                            </template>
+                            <template #default>
+                              <div class="create-recovery-plan-tooltip__content">
+                                <div
+                                  class="create-recovery-plan-tooltip__policy"
+                                  :class="`create-recovery-plan-tooltip__policy--${recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan)}`"
+                                >
+                                  <ShieldAlert
+                                    v-if="recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan) === 'overwrite'"
+                                    :size="14"
+                                    class="create-recovery-plan-cell__policy-icon"
+                                  />
+                                  <ShieldCheck
+                                    v-else
+                                    :size="14"
+                                    class="create-recovery-plan-cell__policy-icon"
+                                  />
+                                  <span class="create-recovery-plan-cell__policy-text">
+                                    {{ recoveryPlanConflictFullLabel(currentSourceRecoveryPlanMappings[0].plan) }}
+                                  </span>
+                                </div>
+                                <div
+                                  v-for="mapping in currentSourceRecoveryPlanMappings"
+                                  :key="`${mapping.key}-tooltip`"
+                                  class="create-recovery-plan-tooltip__mapping create-recovery-plan-mapping"
+                                >
+                                  <span
+                                    class="create-recovery-plan-mapping__endpoint"
+                                    :class="`create-recovery-plan-mapping__endpoint--${recoveryPlanMappingSourceKind(mapping)}`"
+                                    :title="recoveryPlanSourcePathLabel(mapping)"
+                                  >
+                                    <Camera
+                                      v-if="recoveryPlanMappingSourceKind(mapping) === 'snapshot'"
+                                      :size="14"
+                                      class="create-recovery-plan-mapping__icon"
+                                    />
+                                    <File
+                                      v-else-if="recoveryPlanMappingSourceKind(mapping) === 'file'"
+                                      :size="14"
+                                      class="create-recovery-plan-mapping__icon"
+                                    />
+                                    <Folder
+                                      v-else
+                                      :size="14"
+                                      class="create-recovery-plan-mapping__icon"
+                                    />
+                                    <span
+                                      class="create-recovery-plan-mapping__text"
+                                      :title="recoveryPlanSourcePathLabel(mapping)"
+                                    >{{ recoveryPlanSourcePathLabel(mapping) }}</span>
+                                  </span>
+                                  <span
+                                    class="create-recovery-plan-mapping__arrow"
+                                    aria-hidden="true"
+                                  >-&gt;</span>
+                                  <span
+                                    class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
+                                    :title="recoveryPlanTargetSummary(mapping.plan)"
+                                  >
+                                    <FolderOpen
+                                      :size="14"
+                                      class="create-recovery-plan-mapping__icon"
+                                    />
+                                    <span
+                                      class="create-recovery-plan-mapping__text"
+                                      :title="recoveryPlanTargetSummary(mapping.plan)"
+                                    >{{ recoveryPlanTargetSummary(mapping.plan) }}</span>
+                                  </span>
+                                </div>
+                              </div>
+                            </template>
+                          </HflPopover>
                         </div>
-                      </section>
-                    </div>
+                        <div
+                          v-else
+                          class="dp-flow-config-subsection__empty dp-flow-config-subsection__empty--block"
+                        >
+                          <Unlink :size="14" />
+                          {{ t('protection.backupsPage.flowSourceDetailRestorePlanEmpty') }}
+                        </div>
+                      </div>
+                    </section>
+                  </div>
                 </div>
-                <el-empty v-else :description="t('protection.backupsPage.flowSourceDetailConfigsEmpty')" :image-size="72" />
+                <el-empty
+                  v-else
+                  :description="t('protection.backupsPage.flowSourceDetailConfigsEmpty')"
+                  :image-size="72"
+                />
               </section>
-              </template>
-              <div v-else-if="sourceDetailLoading" class="py-6">
-                <el-skeleton :rows="8" animated />
-              </div>
-              <el-empty
-                v-else-if="!sourceDetailError"
-                :description="t('protection.backupDetail.notFound')"
-                :image-size="72"
+            </template>
+            <div
+              v-else-if="sourceDetailLoading"
+              class="py-6"
+            >
+              <el-skeleton
+                :rows="8"
+                animated
               />
             </div>
+            <el-empty
+              v-else-if="!sourceDetailError"
+              :description="t('protection.backupDetail.notFound')"
+              :image-size="72"
+            />
+          </div>
         </el-tab-pane>
 
-        <el-tab-pane :label="t('protection.backupsPage.flowSourceDetailTabSnapshots')" name="snapshots">
-            <el-alert
-              v-if="sourceSnapshotsError"
-              :title="sourceSnapshotsError"
-              type="error"
-              show-icon
-              :closable="false"
-            />
-            <el-table
-              v-table-column-resize="'protection.flowBackupSource.snapshots'"
-              v-table-overflow-title
-              v-if="realSourceSnapshots.length || sourceSnapshotsLoading"
-              ref="snapshotTableRef"
-              v-loading="sourceSnapshotsLoading"
-              :data="pagedSourceSnapshots"
-              stripe
-              row-key="id"
-              max-height="calc(var(--app-viewport-height) - 260px)"
-              :expand-row-keys="expandedSnapshotRowKeys"
-              :header-cell-style="TABLE_HEADER_STYLE"
-              class="hfl-list-table"
-              @expand-change="onSnapshotExpandChange"
+        <el-tab-pane
+          :label="t('protection.backupsPage.flowSourceDetailTabSnapshots')"
+          name="snapshots"
+        >
+          <el-alert
+            v-if="sourceSnapshotsError"
+            :title="sourceSnapshotsError"
+            type="error"
+            show-icon
+            :closable="false"
+          />
+          <el-table
+            v-if="realSourceSnapshots.length || sourceSnapshotsLoading"
+            ref="snapshotTableRef"
+            v-table-column-resize="'protection.flowBackupSource.snapshots'"
+            v-table-overflow-title
+            v-loading="sourceSnapshotsLoading"
+            :data="pagedSourceSnapshots"
+            stripe
+            row-key="id"
+            max-height="calc(var(--app-viewport-height) - 260px)"
+            :expand-row-keys="expandedSnapshotRowKeys"
+            :header-cell-style="TABLE_HEADER_STYLE"
+            class="hfl-list-table"
+            @expand-change="onSnapshotExpandChange"
+          >
+            <el-table-column
+              type="expand"
+              width="35"
+              fixed
             >
-              <el-table-column type="expand" width="35" fixed>
-                <template #default="{ row }">
-                  <div class="snapshot-directory-expand-panel">
+              <template #default="{ row }">
+                <div class="snapshot-directory-expand-panel">
+                  <el-alert
+                    v-if="selectedSnapshotId === row.id && snapshotDetailError"
+                    :title="snapshotDetailError"
+                    type="error"
+                    show-icon
+                    :closable="false"
+                  />
+                  <div
+                    v-else-if="selectedSnapshotId === row.id && snapshotDetailLoading"
+                    class="py-6"
+                  >
+                    <el-skeleton
+                      :rows="3"
+                      animated
+                    />
+                  </div>
+                  <el-table
+                    v-else-if="selectedSnapshotId === row.id && selectedSnapshotDirectories.length"
+                    v-table-column-resize="'protection.flowBackupSource.snapshotDirectories'"
+                    v-table-overflow-title
+                    :data="selectedSnapshotDirectories"
+                    :fit="false"
+                    stripe
+                    :header-cell-style="TABLE_HEADER_STYLE"
+                    class="hfl-list-table hfl-list-table--compact snapshot-directory-table"
+                  >
+                    <el-table-column
+                      :label="t('protection.backupDetail.colBackupDir')"
+                      width="240"
+                    >
+                      <template #default="{ row: dir }">
+                        <button
+                          v-if="canBrowseSnapshotDirectory(dir)"
+                          type="button"
+                          class="hfl-table-name-link snapshot-directory-path-cell"
+                          @click.stop="openSnapshotDirectory(dir)"
+                        >
+                          <span class="snapshot-directory-path-cell__parent">
+                            <component
+                              :is="snapshotDirectoryIcon(dir)"
+                              :size="15"
+                              class="snapshot-directory-path-cell__icon"
+                              :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
+                            />
+                            <span class="snapshot-directory-path-cell__path hfl-table-cell-mono">{{ dir.source_path }}</span>
+                          </span>
+                        </button>
+                        <span
+                          v-else
+                          class="snapshot-directory-path-cell snapshot-directory-path-cell--disabled"
+                        >
+                          <span class="snapshot-directory-path-cell__parent">
+                            <component
+                              :is="snapshotDirectoryIcon(dir)"
+                              :size="15"
+                              class="snapshot-directory-path-cell__icon"
+                              :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
+                            />
+                            <code class="snapshot-directory-path-cell__path flow-source-list-drawer-path hfl-table-cell-mono">{{ dir.source_path }}</code>
+                          </span>
+                        </span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.backupsPage.snapshotBrowserDirectorySnapshotId')"
+                      width="180"
+                    >
+                      <template #default="{ row: dir }">
+                        <span
+                          class="hfl-table-cell-mono"
+                          :class="{ 'hfl-empty-mark': !dir.kopia_snapshot_id }"
+                        >{{ dir.kopia_snapshot_id || '—' }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.backupDetail.colSnapSize')"
+                      width="110"
+                      align="right"
+                    >
+                      <template #default="{ row: dir }">
+                        {{ fmtBytes(dir.size_bytes) }}
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.backupsPage.snapshotBrowserFileDirCount')"
+                      width="110"
+                      align="right"
+                    >
+                      <template #default="{ row: dir }">
+                        {{ dir.file_count }}/{{ dir.dir_count }}
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.backupDetail.labelStatus')"
+                      width="92"
+                    >
+                      <template #default="{ row: dir }">
+                        <el-tag
+                          :type="lifecycleStatusTagAttrs(dir.status).type"
+                          :class="lifecycleStatusTagAttrs(dir.status).class"
+                          size="small"
+                        >
+                          {{ snapshotStatusLabel(dir.status) }}
+                        </el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.backupDetail.colError')"
+                      width="220"
+                    >
+                      <template #default="{ row: dir }">
+                        <span
+                          v-if="dir.error_message"
+                          class="snapshot-directory-error"
+                        >
+                          {{ dir.error_code ? `[${dir.error_code}] ` : '' }}{{ dir.error_message }}
+                        </span>
+                        <span
+                          v-else
+                          class="hfl-empty-mark"
+                        >{{ t('protection.backupDetail.durationDash') }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.sourceResources.colActions')"
+                      width="120"
+                      fixed="right"
+                      align="center"
+                      class-name="hfl-table-actions-col"
+                      header-class-name="hfl-table-actions-col"
+                    >
+                      <template #default="{ row: dir }">
+                        <div class="snapshot-point-actions">
+                          <button
+                            type="button"
+                            class="snapshot-point-actions__button snapshot-point-actions__button--browse"
+                            :title="t('protection.backupsPage.snapshotBrowserBrowse')"
+                            :disabled="!canBrowseSnapshotDirectory(dir)"
+                            @click.stop="openSnapshotDirectory(dir)"
+                          >
+                            <FolderOpen
+                              :size="14"
+                              class="snapshot-point-actions__icon"
+                              aria-hidden="true"
+                            />
+                            <span>{{ t('protection.backupsPage.snapshotBrowserBrowse') }}</span>
+                          </button>
+                        </div>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <el-empty
+                    v-else
+                    :description="t('protection.backupsPage.snapshotBrowserEmptyDirectories')"
+                    :image-size="56"
+                  />
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.colSnapId')"
+              width="140"
+              fixed
+            >
+              <template #default="{ row }">
+                <button
+                  type="button"
+                  class="hfl-table-name-link hfl-table-cell-mono hfl-table-name-link--single"
+                  @click.stop="toggleSnapshot(row)"
+                >
+                  {{ row.snapshot_uid || `#${row.id}` }}
+                </button>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.colSnapStart')"
+              width="160"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time snapshot-point-time"
+                  :class="{ 'hfl-empty-mark': !(row.started_at || row.created_at) }"
+                  :title="formatNullableTime(row.started_at || row.created_at)"
+                >
+                  {{ formatNullableTime(row.started_at || row.created_at) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.colSnapEnd')"
+              width="160"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time snapshot-point-time"
+                  :class="{ 'hfl-empty-mark': !row.finished_at }"
+                  :title="formatNullableTime(row.finished_at)"
+                >
+                  {{ formatNullableTime(row.finished_at) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.colSnapSize')"
+              width="110"
+              align="right"
+            >
+              <template #default="{ row }">
+                {{ fmtBytes(snapshotDisplaySize(row)) }}
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupsPage.snapshotBrowserFileDirCount')"
+              width="110"
+              align="right"
+            >
+              <template #default="{ row }">
+                {{ snapshotDisplayFileCount(row) }}/{{ snapshotDisplayDirCount(row) }}
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.labelStatus')"
+              width="92"
+            >
+              <template #default="{ row }">
+                <el-tag
+                  :type="lifecycleStatusTagAttrs(row.status).type"
+                  :class="lifecycleStatusTagAttrs(row.status).class"
+                  size="small"
+                >
+                  {{ snapshotStatusLabel(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colActions')"
+              width="200"
+              fixed="right"
+              align="center"
+              class-name="hfl-table-actions-col"
+              header-class-name="hfl-table-actions-col"
+            >
+              <template #default="{ row }">
+                <div class="snapshot-point-actions">
+                  <ElTooltip
+                    :disabled="canRestoreSnapshot(row)"
+                    :content="snapshotRestoreDisabledReason(row)"
+                    placement="top"
+                  >
+                    <span class="snapshot-point-actions__tooltip-wrap">
+                      <button
+                        type="button"
+                        class="snapshot-point-actions__button snapshot-point-actions__button--restore"
+                        :title="t('protection.backupsPage.snapshotRecoverAction')"
+                        :disabled="!canRestoreSnapshot(row)"
+                        @click.stop="openSnapshotRestore(row)"
+                      >
+                        <RotateCcw
+                          :size="14"
+                          class="snapshot-point-actions__icon"
+                          aria-hidden="true"
+                        />
+                        <span>{{ t('protection.backupsPage.snapshotRecoverAction') }}</span>
+                      </button>
+                    </span>
+                  </ElTooltip>
+                  <button
+                    type="button"
+                    class="snapshot-point-actions__button snapshot-point-actions__button--browse"
+                    :title="t('protection.backupsPage.snapshotViewAction')"
+                    @click.stop="toggleSnapshot(row)"
+                  >
+                    <FolderOpen
+                      :size="14"
+                      class="snapshot-point-actions__icon"
+                      aria-hidden="true"
+                    />
+                    <span>{{ t('protection.backupsPage.snapshotViewAction') }}</span>
+                  </button>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div
+            v-if="sourceSnapshotTotal > 0"
+            class="hfl-list-footer"
+          >
+            <HflPagination
+              v-model:current-page="snapshotPagination.page"
+              v-model:page-size="snapshotPagination.pageSize"
+              class="hfl-list-footer__pagination"
+              layout="total, sizes, prev, pager, next"
+              :total="sourceSnapshotTotal"
+              :page-sizes="DETAIL_PAGE_SIZE_OPTIONS"
+              @size-change="snapshotPagination.page = 1"
+            />
+          </div>
+          <Teleport to="body">
+            <div
+              v-if="fileBrowserDrawerOpen"
+              class="dp-snapshot-file-browser-shell"
+              @click.self="closeSnapshotFileBrowser"
+            >
+              <aside class="dp-snapshot-file-browser-panel">
+                <header class="dp-snapshot-file-browser-panel__header">
+                  <div class="min-w-0 pr-2">
+                    <div class="truncate text-base font-semibold text-slate-900">
+                      {{ t('protection.backupsPage.snapshotBrowserPreviewTitle') }}
+                    </div>
+                    <div
+                      v-if="selectedSnapshotDirectory"
+                      class="truncate text-xs text-slate-500"
+                    >
+                      {{ selectedSnapshotDirectory.source_path }}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="dp-snapshot-file-browser-panel__close"
+                    @click="closeSnapshotFileBrowser"
+                  >
+                    <X :size="18" />
+                  </button>
+                </header>
+                <div
+                  v-if="selectedSnapshotDirectory"
+                  class="dp-snapshot-file-browser dp-snapshot-file-browser-panel__body"
+                >
+                  <template v-if="selectedSnapshotDirectoryIsFile">
+                    <div class="dp-snapshot-file-browser__toolbar">
+                      <div class="dp-snapshot-file-browser__toolbar-main">
+                        <ElButton
+                          type="primary"
+                          size="small"
+                          :loading="downloadingSnapshotFile"
+                          :disabled="!selectedSnapshotFileChecked"
+                          @click="downloadSelectedSnapshotFile"
+                        >
+                          <Download
+                            :size="14"
+                            class="mr-1"
+                          />
+                          {{ t('protection.backupsPage.snapshotBrowserDownload') }}
+                        </ElButton>
+                        <div class="min-w-0">
+                          <div class="text-sm font-medium text-slate-800">
+                            {{ snapshotFileFallbackName(selectedSnapshotDirectory) }}
+                          </div>
+                          <div class="truncate text-xs text-slate-500">
+                            {{ selectedSnapshotDirectory.source_path }}
+                          </div>
+                        </div>
+                      </div>
+                      <div class="dp-snapshot-file-browser__toolbar-actions">
+                        <span class="dp-snapshot-file-browser__selected">
+                          {{ t('protection.backupsPage.snapshotBrowserSelectedCount', { n: selectedSnapshotFileCount }) }}
+                        </span>
+                        <ElButton
+                          v-if="selectedSnapshotFileChecked"
+                          size="small"
+                          @click="clearSnapshotFileSelection"
+                        >
+                          {{ t('protection.backupsPage.snapshotBrowserClearSelection') }}
+                        </ElButton>
+                      </div>
+                    </div>
+
+                    <div
+                      class="dp-snapshot-file-browser__file-row"
+                      :class="{ 'is-selected': selectedSnapshotFileChecked }"
+                      role="button"
+                      tabindex="0"
+                      @click="toggleSnapshotFileSelection"
+                      @keydown.enter.prevent="toggleSnapshotFileSelection"
+                      @keydown.space.prevent="toggleSnapshotFileSelection"
+                    >
+                      <ElCheckbox
+                        :model-value="selectedSnapshotFileChecked"
+                        @change="selectedSnapshotFileChecked = Boolean($event)"
+                        @click.stop
+                      />
+                      <span class="dp-snapshot-file-browser__entry">
+                        <File
+                          :size="15"
+                          class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--file"
+                        />
+                        <span class="truncate">{{ snapshotFileFallbackName(selectedSnapshotDirectory) }}</span>
+                      </span>
+                      <span class="dp-snapshot-file-browser__tree-path truncate">{{ selectedSnapshotDirectory.source_path }}</span>
+                      <span class="dp-snapshot-file-browser__tree-size">{{ fmtBytes(selectedSnapshotDirectory.size_bytes) }}</span>
+                      <span
+                        class="dp-snapshot-file-browser__tree-time"
+                        :class="{ 'hfl-empty-mark': !selectedSnapshotDirectory.created_at }"
+                      >{{ formatNullableTime(selectedSnapshotDirectory.created_at) }}</span>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="dp-snapshot-file-browser__toolbar">
+                      <div class="dp-snapshot-file-browser__toolbar-main">
+                        <ElButton
+                          type="primary"
+                          size="small"
+                          :loading="downloadingSelected"
+                          :disabled="!selectedBrowserPathCount"
+                          @click="downloadSelectedBrowserPaths"
+                        >
+                          <Download
+                            :size="14"
+                            class="mr-1"
+                          />
+                          {{ t('protection.backupsPage.snapshotBrowserDownload') }}
+                        </ElButton>
+                        <div class="min-w-0">
+                          <div class="text-sm font-medium text-slate-800">
+                            {{ selectedSnapshotDirectory.source_path }}
+                          </div>
+                          <div class="dp-snapshot-file-browser__crumbs">
+                            <template
+                              v-for="(crumb, index) in browserBreadcrumbs"
+                              :key="crumb.path || 'root'"
+                            >
+                              <button
+                                type="button"
+                                class="source-more-link"
+                                @click="openSnapshotDirectory(selectedSnapshotDirectory, crumb.path)"
+                              >
+                                {{ crumb.label }}
+                              </button>
+                              <span
+                                v-if="index < browserBreadcrumbs.length - 1"
+                                class="text-slate-400"
+                              >/</span>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="dp-snapshot-file-browser__toolbar-actions">
+                        <span class="dp-snapshot-file-browser__selected">
+                          {{ t('protection.backupsPage.snapshotBrowserSelectedCount', { n: selectedBrowserPathCount }) }}
+                        </span>
+                        <ElButton
+                          v-if="selectedBrowserPathCount"
+                          size="small"
+                          @click="clearBrowserSelection"
+                        >
+                          {{ t('protection.backupsPage.snapshotBrowserClearSelection') }}
+                        </ElButton>
+                        <ElButton
+                          v-if="browserParentPath || browserPath"
+                          size="small"
+                          @click="openSnapshotDirectory(selectedSnapshotDirectory, browserParentPath)"
+                        >
+                          <ArrowLeft
+                            :size="14"
+                            class="mr-1"
+                          />
+                          {{ t('protection.backupsPage.snapshotBrowserParent') }}
+                        </ElButton>
+                      </div>
+                    </div>
+
                     <el-alert
-                      v-if="selectedSnapshotId === row.id && snapshotDetailError"
-                      :title="snapshotDetailError"
+                      v-if="browserError"
+                      :title="browserError"
                       type="error"
                       show-icon
                       :closable="false"
                     />
-                    <div v-else-if="selectedSnapshotId === row.id && snapshotDetailLoading" class="py-6">
-                      <el-skeleton :rows="3" animated />
-                    </div>
-                    <el-table
-                      v-table-column-resize="'protection.flowBackupSource.snapshotDirectories'"
-                      v-table-overflow-title
-                      v-else-if="selectedSnapshotId === row.id && selectedSnapshotDirectories.length"
-                      :data="selectedSnapshotDirectories"
-                      :fit="false"
-                      stripe
-                      :header-cell-style="TABLE_HEADER_STYLE"
-                      class="hfl-list-table hfl-list-table--compact snapshot-directory-table"
+                    <el-tree
+                      ref="browserTreeRef"
+                      :key="`${selectedSnapshotDirectory.id}:${browserPath}:${browserTreeVersion}`"
+                      v-loading="browserLoading"
+                      node-key="id"
+                      show-checkbox
+                      check-strictly
+                      lazy
+                      :load="loadBrowserTreeNode"
+                      :props="{ children: 'children', label: 'label', disabled: 'disabled', isLeaf: 'isLeaf' }"
+                      class="dp-snapshot-file-browser__tree"
+                      empty-text=" "
+                      @check-change="onBrowserTreeCheckChange"
                     >
-                      <el-table-column :label="t('protection.backupDetail.colBackupDir')" width="240">
-                        <template #default="{ row: dir }">
-                          <button
-                            v-if="canBrowseSnapshotDirectory(dir)"
-                            type="button"
-                            class="hfl-table-name-link snapshot-directory-path-cell"
-                            @click.stop="openSnapshotDirectory(dir)"
-                          >
-                            <span class="snapshot-directory-path-cell__parent">
-                              <component
-                                :is="snapshotDirectoryIcon(dir)"
-                                :size="15"
-                                class="snapshot-directory-path-cell__icon"
-                                :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
-                              />
-                              <span class="snapshot-directory-path-cell__path hfl-table-cell-mono">{{ dir.source_path }}</span>
-                            </span>
-                          </button>
-                          <span v-else class="snapshot-directory-path-cell snapshot-directory-path-cell--disabled">
-                            <span class="snapshot-directory-path-cell__parent">
-                              <component
-                                :is="snapshotDirectoryIcon(dir)"
-                                :size="15"
-                                class="snapshot-directory-path-cell__icon"
-                                :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
-                              />
-                              <code class="snapshot-directory-path-cell__path flow-source-list-drawer-path hfl-table-cell-mono">{{ dir.source_path }}</code>
-                            </span>
+                      <template #default="{ data }">
+                        <div class="dp-snapshot-file-browser__tree-row">
+                          <span class="dp-snapshot-file-browser__entry">
+                            <Folder
+                              v-if="data.type === 'dir'"
+                              :size="15"
+                              class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--dir"
+                            />
+                            <File
+                              v-else
+                              :size="15"
+                              class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--file"
+                            />
+                            <span class="truncate">{{ data.name }}</span>
                           </span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column :label="t('protection.backupsPage.snapshotBrowserDirectorySnapshotId')" width="180">
-                        <template #default="{ row: dir }">
-                          <span class="hfl-table-cell-mono" :class="{ 'hfl-empty-mark': !dir.kopia_snapshot_id }">{{ dir.kopia_snapshot_id || '—' }}</span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column :label="t('protection.backupDetail.colSnapSize')" width="110" align="right">
-                        <template #default="{ row: dir }">{{ fmtBytes(dir.size_bytes) }}</template>
-                      </el-table-column>
-                      <el-table-column :label="t('protection.backupsPage.snapshotBrowserFileDirCount')" width="110" align="right">
-                        <template #default="{ row: dir }">{{ dir.file_count }}/{{ dir.dir_count }}</template>
-                      </el-table-column>
-                      <el-table-column :label="t('protection.backupDetail.labelStatus')" width="92">
-                        <template #default="{ row: dir }">
-                          <el-tag
-                            :type="lifecycleStatusTagAttrs(dir.status).type"
-                            :class="lifecycleStatusTagAttrs(dir.status).class"
-                            size="small"
-                          >
-                            {{ snapshotStatusLabel(dir.status) }}
-                          </el-tag>
-                        </template>
-                      </el-table-column>
-                      <el-table-column :label="t('protection.backupDetail.colError')" width="220">
-                        <template #default="{ row: dir }">
-                          <span v-if="dir.error_message" class="snapshot-directory-error">
-                            {{ dir.error_code ? `[${dir.error_code}] ` : '' }}{{ dir.error_message }}
-                          </span>
-                          <span v-else class="hfl-empty-mark">{{ t('protection.backupDetail.durationDash') }}</span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.sourceResources.colActions')"
-                        width="120"
-                        fixed="right"
-                        align="center"
-                        class-name="hfl-table-actions-col"
-                        header-class-name="hfl-table-actions-col"
-                      >
-                        <template #default="{ row: dir }">
-                          <div class="snapshot-point-actions">
-                            <button
-                              type="button"
-                              class="snapshot-point-actions__button snapshot-point-actions__button--browse"
-                              :title="t('protection.backupsPage.snapshotBrowserBrowse')"
-                              :disabled="!canBrowseSnapshotDirectory(dir)"
-                              @click.stop="openSnapshotDirectory(dir)"
-                            >
-                              <FolderOpen :size="14" class="snapshot-point-actions__icon" aria-hidden="true" />
-                              <span>{{ t('protection.backupsPage.snapshotBrowserBrowse') }}</span>
-                            </button>
-                          </div>
-                        </template>
-                      </el-table-column>
-                    </el-table>
+                          <span class="dp-snapshot-file-browser__tree-path truncate">{{ data.path }}</span>
+                          <span class="dp-snapshot-file-browser__tree-size">{{ data.type === 'dir' ? '—' : fmtBytes(data.size_bytes) }}</span>
+                          <span
+                            class="dp-snapshot-file-browser__tree-time"
+                            :class="{ 'hfl-empty-mark': !data.modified_at }"
+                          >{{ formatNullableTime(data.modified_at) }}</span>
+                        </div>
+                      </template>
+                    </el-tree>
                     <el-empty
-                      v-else
-                      :description="t('protection.backupsPage.snapshotBrowserEmptyDirectories')"
-                      :image-size="56"
+                      v-if="!browserLoading && !browserError && !browserTreeEntries.length"
+                      :description="t('protection.backupsPage.snapshotBrowserEmpty')"
+                      :image-size="48"
                     />
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colSnapId')" width="140" fixed>
-                <template #default="{ row }">
-                  <button
-                    type="button"
-                    class="hfl-table-name-link hfl-table-cell-mono hfl-table-name-link--single"
-                    @click.stop="toggleSnapshot(row)"
-                  >
-                    {{ row.snapshot_uid || `#${row.id}` }}
-                  </button>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colSnapStart')" width="160">
-                <template #default="{ row }">
-                  <span
-                    class="hfl-table-cell-time snapshot-point-time"
-                    :class="{ 'hfl-empty-mark': !(row.started_at || row.created_at) }"
-                    :title="formatNullableTime(row.started_at || row.created_at)"
-                  >
-                    {{ formatNullableTime(row.started_at || row.created_at) }}
-                  </span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colSnapEnd')" width="160">
-                <template #default="{ row }">
-                  <span
-                    class="hfl-table-cell-time snapshot-point-time"
-                    :class="{ 'hfl-empty-mark': !row.finished_at }"
-                    :title="formatNullableTime(row.finished_at)"
-                  >
-                    {{ formatNullableTime(row.finished_at) }}
-                  </span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colSnapSize')" width="110" align="right">
-                <template #default="{ row }">{{ fmtBytes(snapshotDisplaySize(row)) }}</template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.snapshotBrowserFileDirCount')" width="110" align="right">
-                <template #default="{ row }">{{ snapshotDisplayFileCount(row) }}/{{ snapshotDisplayDirCount(row) }}</template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.labelStatus')" width="92">
-                <template #default="{ row }">
-                  <el-tag
-                    :type="lifecycleStatusTagAttrs(row.status).type"
-                    :class="lifecycleStatusTagAttrs(row.status).class"
-                    size="small"
-                  >
-                    {{ snapshotStatusLabel(row.status) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column
-                :label="t('protection.sourceResources.colActions')"
-                width="200"
-                fixed="right"
-                align="center"
-                class-name="hfl-table-actions-col"
-                header-class-name="hfl-table-actions-col"
-              >
-                <template #default="{ row }">
-                  <div class="snapshot-point-actions">
-                    <ElTooltip
-                      :disabled="canRestoreSnapshot(row)"
-                      :content="snapshotRestoreDisabledReason(row)"
-                      placement="top"
-                    >
-                      <span class="snapshot-point-actions__tooltip-wrap">
-                        <button
-                          type="button"
-                          class="snapshot-point-actions__button snapshot-point-actions__button--restore"
-                          :title="t('protection.backupsPage.snapshotRecoverAction')"
-                          :disabled="!canRestoreSnapshot(row)"
-                          @click.stop="openSnapshotRestore(row)"
-                        >
-                          <RotateCcw :size="14" class="snapshot-point-actions__icon" aria-hidden="true" />
-                          <span>{{ t('protection.backupsPage.snapshotRecoverAction') }}</span>
-                        </button>
-                      </span>
-                    </ElTooltip>
-                    <button
-                      type="button"
-                      class="snapshot-point-actions__button snapshot-point-actions__button--browse"
-                      :title="t('protection.backupsPage.snapshotViewAction')"
-                      @click.stop="toggleSnapshot(row)"
-                    >
-                      <FolderOpen :size="14" class="snapshot-point-actions__icon" aria-hidden="true" />
-                      <span>{{ t('protection.backupsPage.snapshotViewAction') }}</span>
-                    </button>
-                  </div>
-                </template>
-              </el-table-column>
-            </el-table>
-            <div v-if="sourceSnapshotTotal > 0" class="hfl-list-footer">
-              <HflPagination
-                v-model:current-page="snapshotPagination.page"
-                v-model:page-size="snapshotPagination.pageSize"
-                class="hfl-list-footer__pagination"
-                layout="total, sizes, prev, pager, next"
-                :total="sourceSnapshotTotal"
-                :page-sizes="DETAIL_PAGE_SIZE_OPTIONS"
-                @size-change="snapshotPagination.page = 1"
-              />
-            </div>
-              <Teleport to="body">
-                <div
-                  v-if="fileBrowserDrawerOpen"
-                  class="dp-snapshot-file-browser-shell"
-                  @click.self="closeSnapshotFileBrowser"
-                >
-                  <aside class="dp-snapshot-file-browser-panel">
-                    <header class="dp-snapshot-file-browser-panel__header">
-                      <div class="min-w-0 pr-2">
-                    <div class="truncate text-base font-semibold text-slate-900">
-                      {{ t('protection.backupsPage.snapshotBrowserPreviewTitle') }}
-                    </div>
-                    <div v-if="selectedSnapshotDirectory" class="truncate text-xs text-slate-500">
-                      {{ selectedSnapshotDirectory.source_path }}
-                    </div>
-                  </div>
-                      <button type="button" class="dp-snapshot-file-browser-panel__close" @click="closeSnapshotFileBrowser">
-                        <X :size="18" />
-                      </button>
-                    </header>
-              <div v-if="selectedSnapshotDirectory" class="dp-snapshot-file-browser dp-snapshot-file-browser-panel__body">
-                <template v-if="selectedSnapshotDirectoryIsFile">
-                  <div class="dp-snapshot-file-browser__toolbar">
-                    <div class="dp-snapshot-file-browser__toolbar-main">
-                      <ElButton
-                        type="primary"
-                        size="small"
-                        :loading="downloadingSnapshotFile"
-                        :disabled="!selectedSnapshotFileChecked"
-                        @click="downloadSelectedSnapshotFile"
-                      >
-                        <Download :size="14" class="mr-1" />
-                        {{ t('protection.backupsPage.snapshotBrowserDownload') }}
-                      </ElButton>
-                      <div class="min-w-0">
-                        <div class="text-sm font-medium text-slate-800">
-                          {{ snapshotFileFallbackName(selectedSnapshotDirectory) }}
-                        </div>
-                        <div class="truncate text-xs text-slate-500">
-                          {{ selectedSnapshotDirectory.source_path }}
-                        </div>
-                      </div>
-                    </div>
-                    <div class="dp-snapshot-file-browser__toolbar-actions">
-                      <span class="dp-snapshot-file-browser__selected">
-                        {{ t('protection.backupsPage.snapshotBrowserSelectedCount', { n: selectedSnapshotFileCount }) }}
-                      </span>
-                      <ElButton
-                        v-if="selectedSnapshotFileChecked"
-                        size="small"
-                        @click="clearSnapshotFileSelection"
-                      >
-                        {{ t('protection.backupsPage.snapshotBrowserClearSelection') }}
-                      </ElButton>
-                    </div>
-                  </div>
-
-                  <div
-                    class="dp-snapshot-file-browser__file-row"
-                    :class="{ 'is-selected': selectedSnapshotFileChecked }"
-                    role="button"
-                    tabindex="0"
-                    @click="toggleSnapshotFileSelection"
-                    @keydown.enter.prevent="toggleSnapshotFileSelection"
-                    @keydown.space.prevent="toggleSnapshotFileSelection"
-                  >
-                    <ElCheckbox
-                      :model-value="selectedSnapshotFileChecked"
-                      @change="selectedSnapshotFileChecked = Boolean($event)"
-                      @click.stop
-                    />
-                    <span class="dp-snapshot-file-browser__entry">
-                      <File
-                        :size="15"
-                        class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--file"
-                      />
-                      <span class="truncate">{{ snapshotFileFallbackName(selectedSnapshotDirectory) }}</span>
-                    </span>
-                    <span class="dp-snapshot-file-browser__tree-path truncate">{{ selectedSnapshotDirectory.source_path }}</span>
-                    <span class="dp-snapshot-file-browser__tree-size">{{ fmtBytes(selectedSnapshotDirectory.size_bytes) }}</span>
-                    <span class="dp-snapshot-file-browser__tree-time" :class="{ 'hfl-empty-mark': !selectedSnapshotDirectory.created_at }">{{ formatNullableTime(selectedSnapshotDirectory.created_at) }}</span>
-                  </div>
-                </template>
-                <template v-else>
-                <div class="dp-snapshot-file-browser__toolbar">
-                  <div class="dp-snapshot-file-browser__toolbar-main">
-                    <ElButton
-                      type="primary"
-                      size="small"
-                      :loading="downloadingSelected"
-                      :disabled="!selectedBrowserPathCount"
-                      @click="downloadSelectedBrowserPaths"
-                    >
-                      <Download :size="14" class="mr-1" />
-                      {{ t('protection.backupsPage.snapshotBrowserDownload') }}
-                    </ElButton>
-                    <div class="min-w-0">
-                      <div class="text-sm font-medium text-slate-800">
-                        {{ selectedSnapshotDirectory.source_path }}
-                      </div>
-                      <div class="dp-snapshot-file-browser__crumbs">
-                        <template v-for="(crumb, index) in browserBreadcrumbs" :key="crumb.path || 'root'">
-                          <button type="button" class="source-more-link" @click="openSnapshotDirectory(selectedSnapshotDirectory, crumb.path)">
-                            {{ crumb.label }}
-                          </button>
-                          <span v-if="index < browserBreadcrumbs.length - 1" class="text-slate-400">/</span>
-                        </template>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="dp-snapshot-file-browser__toolbar-actions">
-                    <span class="dp-snapshot-file-browser__selected">
-                      {{ t('protection.backupsPage.snapshotBrowserSelectedCount', { n: selectedBrowserPathCount }) }}
-                    </span>
-                    <ElButton
-                      v-if="selectedBrowserPathCount"
-                      size="small"
-                      @click="clearBrowserSelection"
-                    >
-                      {{ t('protection.backupsPage.snapshotBrowserClearSelection') }}
-                    </ElButton>
-                    <ElButton
-                      v-if="browserParentPath || browserPath"
-                      size="small"
-                      @click="openSnapshotDirectory(selectedSnapshotDirectory, browserParentPath)"
-                    >
-                      <ArrowLeft :size="14" class="mr-1" />
-                      {{ t('protection.backupsPage.snapshotBrowserParent') }}
-                    </ElButton>
-                  </div>
-                </div>
-
-                <el-alert
-                  v-if="browserError"
-                  :title="browserError"
-                  type="error"
-                  show-icon
-                  :closable="false"
-                />
-                <el-tree
-                  v-loading="browserLoading"
-                  ref="browserTreeRef"
-                  :key="`${selectedSnapshotDirectory.id}:${browserPath}:${browserTreeVersion}`"
-                  node-key="id"
-                  show-checkbox
-                  check-strictly
-                  lazy
-                  :load="loadBrowserTreeNode"
-                  :props="{ children: 'children', label: 'label', disabled: 'disabled', isLeaf: 'isLeaf' }"
-                  class="dp-snapshot-file-browser__tree"
-                  empty-text=" "
-                  @check-change="onBrowserTreeCheckChange"
-                >
-                  <template #default="{ data }">
-                    <div class="dp-snapshot-file-browser__tree-row">
-                      <span class="dp-snapshot-file-browser__entry">
-                        <Folder
-                          v-if="data.type === 'dir'"
-                          :size="15"
-                          class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--dir"
-                        />
-                        <File
-                          v-else
-                          :size="15"
-                          class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--file"
-                        />
-                        <span class="truncate">{{ data.name }}</span>
-                      </span>
-                      <span class="dp-snapshot-file-browser__tree-path truncate">{{ data.path }}</span>
-                      <span class="dp-snapshot-file-browser__tree-size">{{ data.type === 'dir' ? '—' : fmtBytes(data.size_bytes) }}</span>
-                      <span class="dp-snapshot-file-browser__tree-time" :class="{ 'hfl-empty-mark': !data.modified_at }">{{ formatNullableTime(data.modified_at) }}</span>
-                    </div>
                   </template>
-                </el-tree>
-                <el-empty
-                  v-if="!browserLoading && !browserError && !browserTreeEntries.length"
-                  :description="t('protection.backupsPage.snapshotBrowserEmpty')"
-                  :image-size="48"
-                />
-                </template>
-              </div>
-                  </aside>
                 </div>
-              </Teleport>
-            <el-empty
-              v-if="!sourceSnapshotsLoading && !sourceSnapshotsError && !realSourceSnapshots.length"
-              :description="t('protection.backupsPage.snapshotBrowserEmpty')"
-              :image-size="72"
-            />
+              </aside>
+            </div>
+          </Teleport>
+          <el-empty
+            v-if="!sourceSnapshotsLoading && !sourceSnapshotsError && !realSourceSnapshots.length"
+            :description="t('protection.backupsPage.snapshotBrowserEmpty')"
+            :image-size="72"
+          />
         </el-tab-pane>
 
-        <el-tab-pane :label="t('protection.backupsPage.flowSourceDetailTabRestoreRecords')" name="restoreRecords">
-            <el-alert
-              v-if="restoreRecordsError"
-              :title="t('protection.backupsPage.flowSourceDetailRestoreRecordsLoadFailed', { msg: restoreRecordsError })"
-              type="error"
-              show-icon
-              :closable="false"
-            />
-            <el-table
-              v-table-column-resize="'protection.flowBackupSource.restoreRecords'"
-              v-table-overflow-title
-              v-loading="restoreRecordsLoading"
-              v-if="displayedRestoreRecords.length || restoreRecordsLoading"
-              :data="displayedRestoreRecords"
-              :fit="false"
-              row-key="id"
-              max-height="calc(var(--app-viewport-height) - 260px)"
-              :expand-row-keys="expandedRestoreRecordRowKeys"
-              :header-cell-style="TABLE_HEADER_STYLE"
-              stripe
-              class="hfl-list-table restore-task-drawer-table"
-              @expand-change="onRestoreRecordExpandChange"
+        <el-tab-pane
+          :label="t('protection.backupsPage.flowSourceDetailTabRestoreRecords')"
+          name="restoreRecords"
+        >
+          <el-alert
+            v-if="restoreRecordsError"
+            :title="t('protection.backupsPage.flowSourceDetailRestoreRecordsLoadFailed', { msg: restoreRecordsError })"
+            type="error"
+            show-icon
+            :closable="false"
+          />
+          <el-table
+            v-if="displayedRestoreRecords.length || restoreRecordsLoading"
+            v-table-column-resize="'protection.flowBackupSource.restoreRecords'"
+            v-table-overflow-title
+            v-loading="restoreRecordsLoading"
+            :data="displayedRestoreRecords"
+            :fit="false"
+            row-key="id"
+            max-height="calc(var(--app-viewport-height) - 260px)"
+            :expand-row-keys="expandedRestoreRecordRowKeys"
+            :header-cell-style="TABLE_HEADER_STYLE"
+            stripe
+            class="hfl-list-table restore-task-drawer-table"
+            @expand-change="onRestoreRecordExpandChange"
+          >
+            <el-table-column
+              type="expand"
+              width="35"
+              fixed
             >
-              <el-table-column type="expand" width="35" fixed>
-                <template #default="{ row }">
-                  <div class="restore-record-expand-panel">
-                    <div class="restore-record-time-summary">
-                      <div class="restore-record-time-summary__point restore-record-time-summary__point--start">
-                        <span class="restore-record-time-summary__marker" aria-hidden="true">
-                          <Clock3 :size="14" />
-                        </span>
-                        <div class="restore-record-time-summary__copy">
-                          <span class="restore-record-time-summary__label">
-                            {{ t('protection.backupDetail.colStart') }}
-                          </span>
-                          <span class="restore-record-time-summary__value" :class="{ 'hfl-empty-mark': !(row.task_summary?.started_at || row.created_at) }">
-                            {{ formatNullableTime(row.task_summary?.started_at || row.created_at) }}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div class="restore-record-time-summary__duration">
-                        <span class="restore-record-time-summary__duration-pill">
-                          <span class="restore-record-time-summary__duration-label">
-                            {{ t('protection.backupsPage.flowSourceDetailDuration') }}
-                          </span>
-                          <span class="restore-record-time-summary__duration-value" :class="{ 'hfl-empty-mark': restoreRecordDuration(row) === t('protection.backupDetail.durationDash') }">
-                            {{ restoreRecordDuration(row) }}
-                          </span>
-                        </span>
-                      </div>
-
-                      <div
-                        class="restore-record-time-summary__point restore-record-time-summary__point--end"
-                        :class="{ 'restore-record-time-summary__point--pending': !row.task_summary?.finished_at }"
+              <template #default="{ row }">
+                <div class="restore-record-expand-panel">
+                  <div class="restore-record-time-summary">
+                    <div class="restore-record-time-summary__point restore-record-time-summary__point--start">
+                      <span
+                        class="restore-record-time-summary__marker"
+                        aria-hidden="true"
                       >
-                        <span class="restore-record-time-summary__marker" aria-hidden="true">
-                          <Check v-if="row.task_summary?.finished_at" :size="14" />
-                          <Clock3 v-else :size="14" />
-                        </span>
-                        <div class="restore-record-time-summary__copy">
-                          <span class="restore-record-time-summary__label">
-                            {{ t('protection.backupDetail.colEnd') }}
-                          </span>
-                          <span class="restore-record-time-summary__value" :class="{ 'hfl-empty-mark': !row.task_summary?.finished_at }">
-                            {{ formatNullableTime(row.task_summary?.finished_at) }}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="restore-record-runtime-summary">
-                      <span class="restore-record-runtime-summary__label">
-                        {{ t('protection.backupsPage.flowRestoreRecordRuntimeSummary') }}
+                        <Clock3 :size="14" />
                       </span>
-                      <div v-if="restoreRecordMetrics(row).length" class="restore-record-runtime-summary__metrics">
+                      <div class="restore-record-time-summary__copy">
+                        <span class="restore-record-time-summary__label">
+                          {{ t('protection.backupDetail.colStart') }}
+                        </span>
                         <span
-                          v-for="metric in restoreRecordMetrics(row)"
-                          :key="metric"
-                          class="restore-record-runtime-summary__metric"
+                          class="restore-record-time-summary__value"
+                          :class="{ 'hfl-empty-mark': !(row.task_summary?.started_at || row.created_at) }"
                         >
-                          {{ metric }}
+                          {{ formatNullableTime(row.task_summary?.started_at || row.created_at) }}
                         </span>
                       </div>
-                      <span v-else class="restore-record-runtime-summary__unavailable">
-                        {{ restoreRecordRuntimeLoading(row)
-                          ? t('common.loading')
-                          : t('protection.backupsPage.flowRestoreRecordMetricsUnavailable') }}
+                    </div>
+
+                    <div class="restore-record-time-summary__duration">
+                      <span class="restore-record-time-summary__duration-pill">
+                        <span class="restore-record-time-summary__duration-label">
+                          {{ t('protection.backupsPage.flowSourceDetailDuration') }}
+                        </span>
+                        <span
+                          class="restore-record-time-summary__duration-value"
+                          :class="{ 'hfl-empty-mark': restoreRecordDuration(row) === t('protection.backupDetail.durationDash') }"
+                        >
+                          {{ restoreRecordDuration(row) }}
+                        </span>
                       </span>
                     </div>
-                    <div v-if="row.items?.length" class="dp-flow-restore-plan-card restore-record-structure-card">
-                      <div class="create-recovery-plan-cell create-recovery-plan-cell--review create-recovery-plan-cell--enabled">
-                        <div v-if="row.scope === 'snapshot'" class="restore-record-snapshot-tree">
-                          <div class="create-recovery-plan-mapping restore-record-mapping--with-result restore-record-snapshot-tree__parent">
-                            <span
-                              class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--snapshot"
-                              :title="t('protection.backupsPage.recoveryWholeSnapshot')"
-                            >
-                              <Camera :size="14" class="create-recovery-plan-mapping__icon" />
-                              <span class="create-recovery-plan-mapping__text">
-                                {{ t('protection.backupsPage.recoveryWholeSnapshot') }}
-                              </span>
-                            </span>
-                            <span class="create-recovery-plan-mapping__arrow" aria-hidden="true">-&gt;</span>
-                            <span
-                              class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
-                              :title="restoreRecordTargetSummary(row)"
-                            >
-                              <FolderOpen :size="14" class="create-recovery-plan-mapping__icon" />
-                              <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                                {{ restoreRecordTargetSummary(row) }}
-                              </span>
-                            </span>
-                            <span class="restore-record-mapping__result">
-                              <TaskStatusTag v-if="restoreRecordStatus(row)" :status="restoreRecordStatus(row)" />
-                              <ElTag v-else type="info" size="small">
-                                {{ t('protection.backupsPage.flowRestoreRecordStatusUnknown') }}
-                              </ElTag>
-                            </span>
-                          </div>
 
-                          <div class="restore-record-snapshot-tree__children">
-                            <div v-for="item in row.items" :key="item.id" class="restore-record-structure-entry restore-record-snapshot-tree__child">
-                              <div class="create-recovery-plan-mapping restore-record-mapping--with-result">
-                                <span
-                                  class="create-recovery-plan-mapping__endpoint"
-                                  :class="`create-recovery-plan-mapping__endpoint--${restoreItemSourceKind(item)}`"
-                                  :title="item.source_path || '—'"
-                                >
-                                  <File
-                                    v-if="restoreItemSourceKind(item) === 'file'"
-                                    :size="14"
-                                    class="create-recovery-plan-mapping__icon"
-                                  />
-                                  <Folder v-else :size="14" class="create-recovery-plan-mapping__icon" />
-                                  <span class="create-recovery-plan-mapping__text hfl-table-cell-mono" :class="{ 'hfl-empty-mark': !item.source_path }">
-                                    {{ item.source_path || '—' }}
-                                  </span>
-                                </span>
-                                <span class="create-recovery-plan-mapping__arrow" aria-hidden="true">-&gt;</span>
-                                <span
-                                  class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
-                                  :title="restoreItemTargetSummary(row, item)"
-                                >
-                                  <FolderOpen :size="14" class="create-recovery-plan-mapping__icon" />
-                                  <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                                    {{ restoreItemTargetSummary(row, item) }}
-                                  </span>
-                                </span>
-                                <span class="restore-record-mapping__result">
-                                  <TaskStatusTag :status="item.status" />
-                                </span>
-                              </div>
-                              <div v-if="item.error_code || item.error_message" class="restore-record-structure-entry__error">
-                                {{ item.error_code ? `[${item.error_code}] ` : '' }}{{ item.error_message }}
-                              </div>
-                            </div>
-                          </div>
+                    <div
+                      class="restore-record-time-summary__point restore-record-time-summary__point--end"
+                      :class="{ 'restore-record-time-summary__point--pending': !row.task_summary?.finished_at }"
+                    >
+                      <span
+                        class="restore-record-time-summary__marker"
+                        aria-hidden="true"
+                      >
+                        <Check
+                          v-if="row.task_summary?.finished_at"
+                          :size="14"
+                        />
+                        <Clock3
+                          v-else
+                          :size="14"
+                        />
+                      </span>
+                      <div class="restore-record-time-summary__copy">
+                        <span class="restore-record-time-summary__label">
+                          {{ t('protection.backupDetail.colEnd') }}
+                        </span>
+                        <span
+                          class="restore-record-time-summary__value"
+                          :class="{ 'hfl-empty-mark': !row.task_summary?.finished_at }"
+                        >
+                          {{ formatNullableTime(row.task_summary?.finished_at) }}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="restore-record-runtime-summary">
+                    <span class="restore-record-runtime-summary__label">
+                      {{ t('protection.backupsPage.flowRestoreRecordRuntimeSummary') }}
+                    </span>
+                    <div
+                      v-if="restoreRecordMetrics(row).length"
+                      class="restore-record-runtime-summary__metrics"
+                    >
+                      <span
+                        v-for="metric in restoreRecordMetrics(row)"
+                        :key="metric"
+                        class="restore-record-runtime-summary__metric"
+                      >
+                        {{ metric }}
+                      </span>
+                    </div>
+                    <span
+                      v-else
+                      class="restore-record-runtime-summary__unavailable"
+                    >
+                      {{ restoreRecordRuntimeLoading(row)
+                        ? t('common.loading')
+                        : t('protection.backupsPage.flowRestoreRecordMetricsUnavailable') }}
+                    </span>
+                  </div>
+                  <div
+                    v-if="row.items?.length"
+                    class="dp-flow-restore-plan-card restore-record-structure-card"
+                  >
+                    <div class="create-recovery-plan-cell create-recovery-plan-cell--review create-recovery-plan-cell--enabled">
+                      <div
+                        v-if="row.scope === 'snapshot'"
+                        class="restore-record-snapshot-tree"
+                      >
+                        <div class="create-recovery-plan-mapping restore-record-mapping--with-result restore-record-snapshot-tree__parent">
+                          <span
+                            class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--snapshot"
+                            :title="t('protection.backupsPage.recoveryWholeSnapshot')"
+                          >
+                            <Camera
+                              :size="14"
+                              class="create-recovery-plan-mapping__icon"
+                            />
+                            <span class="create-recovery-plan-mapping__text">
+                              {{ t('protection.backupsPage.recoveryWholeSnapshot') }}
+                            </span>
+                          </span>
+                          <span
+                            class="create-recovery-plan-mapping__arrow"
+                            aria-hidden="true"
+                          >-&gt;</span>
+                          <span
+                            class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
+                            :title="restoreRecordTargetSummary(row)"
+                          >
+                            <FolderOpen
+                              :size="14"
+                              class="create-recovery-plan-mapping__icon"
+                            />
+                            <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                              {{ restoreRecordTargetSummary(row) }}
+                            </span>
+                          </span>
+                          <span class="restore-record-mapping__result">
+                            <TaskStatusTag
+                              v-if="restoreRecordStatus(row)"
+                              :status="restoreRecordStatus(row)"
+                            />
+                            <ElTag
+                              v-else
+                              type="info"
+                              size="small"
+                            >
+                              {{ t('protection.backupsPage.flowRestoreRecordStatusUnknown') }}
+                            </ElTag>
+                          </span>
                         </div>
 
-                        <div v-else class="create-recovery-plan-cell__mappings restore-record-flat-mappings">
+                        <div class="restore-record-snapshot-tree__children">
                           <div
-                            v-for="mapping in restoreRecordPathMappings(row)"
-                            :key="mapping.key"
-                            class="restore-record-structure-entry"
+                            v-for="item in row.items"
+                            :key="item.id"
+                            class="restore-record-structure-entry restore-record-snapshot-tree__child"
                           >
                             <div class="create-recovery-plan-mapping restore-record-mapping--with-result">
                               <span
                                 class="create-recovery-plan-mapping__endpoint"
-                                :class="`create-recovery-plan-mapping__endpoint--${mapping.sourceKind}`"
-                                :title="mapping.sourcePath"
+                                :class="`create-recovery-plan-mapping__endpoint--${restoreItemSourceKind(item)}`"
+                                :title="item.source_path || '—'"
                               >
                                 <File
-                                  v-if="mapping.sourceKind === 'file'"
+                                  v-if="restoreItemSourceKind(item) === 'file'"
                                   :size="14"
                                   class="create-recovery-plan-mapping__icon"
                                 />
-                                <Folder v-else :size="14" class="create-recovery-plan-mapping__icon" />
-                                <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                                  {{ mapping.sourcePath }}
+                                <Folder
+                                  v-else
+                                  :size="14"
+                                  class="create-recovery-plan-mapping__icon"
+                                />
+                                <span
+                                  class="create-recovery-plan-mapping__text hfl-table-cell-mono"
+                                  :class="{ 'hfl-empty-mark': !item.source_path }"
+                                >
+                                  {{ item.source_path || '—' }}
                                 </span>
                               </span>
-                              <span class="create-recovery-plan-mapping__arrow" aria-hidden="true">-&gt;</span>
+                              <span
+                                class="create-recovery-plan-mapping__arrow"
+                                aria-hidden="true"
+                              >-&gt;</span>
                               <span
                                 class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
-                                :title="restoreItemTargetSummary(row, mapping.item)"
+                                :title="restoreItemTargetSummary(row, item)"
                               >
-                                <FolderOpen :size="14" class="create-recovery-plan-mapping__icon" />
+                                <FolderOpen
+                                  :size="14"
+                                  class="create-recovery-plan-mapping__icon"
+                                />
                                 <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                                  {{ restoreItemTargetSummary(row, mapping.item) }}
+                                  {{ restoreItemTargetSummary(row, item) }}
                                 </span>
                               </span>
                               <span class="restore-record-mapping__result">
-                                <TaskStatusTag :status="mapping.item.status" />
+                                <TaskStatusTag :status="item.status" />
                               </span>
                             </div>
                             <div
-                              v-if="mapping.item.error_code || mapping.item.error_message"
+                              v-if="item.error_code || item.error_message"
                               class="restore-record-structure-entry__error"
                             >
-                              {{ mapping.item.error_code ? `[${mapping.item.error_code}] ` : '' }}{{ mapping.item.error_message }}
+                              {{ item.error_code ? `[${item.error_code}] ` : '' }}{{ item.error_message }}
                             </div>
                           </div>
                         </div>
                       </div>
+
+                      <div
+                        v-else
+                        class="create-recovery-plan-cell__mappings restore-record-flat-mappings"
+                      >
+                        <div
+                          v-for="mapping in restoreRecordPathMappings(row)"
+                          :key="mapping.key"
+                          class="restore-record-structure-entry"
+                        >
+                          <div class="create-recovery-plan-mapping restore-record-mapping--with-result">
+                            <span
+                              class="create-recovery-plan-mapping__endpoint"
+                              :class="`create-recovery-plan-mapping__endpoint--${mapping.sourceKind}`"
+                              :title="mapping.sourcePath"
+                            >
+                              <File
+                                v-if="mapping.sourceKind === 'file'"
+                                :size="14"
+                                class="create-recovery-plan-mapping__icon"
+                              />
+                              <Folder
+                                v-else
+                                :size="14"
+                                class="create-recovery-plan-mapping__icon"
+                              />
+                              <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                                {{ mapping.sourcePath }}
+                              </span>
+                            </span>
+                            <span
+                              class="create-recovery-plan-mapping__arrow"
+                              aria-hidden="true"
+                            >-&gt;</span>
+                            <span
+                              class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
+                              :title="restoreItemTargetSummary(row, mapping.item)"
+                            >
+                              <FolderOpen
+                                :size="14"
+                                class="create-recovery-plan-mapping__icon"
+                              />
+                              <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                                {{ restoreItemTargetSummary(row, mapping.item) }}
+                              </span>
+                            </span>
+                            <span class="restore-record-mapping__result">
+                              <TaskStatusTag :status="mapping.item.status" />
+                            </span>
+                          </div>
+                          <div
+                            v-if="mapping.item.error_code || mapping.item.error_message"
+                            class="restore-record-structure-entry__error"
+                          >
+                            {{ mapping.item.error_code ? `[${mapping.item.error_code}] ` : '' }}{{ mapping.item.error_message }}
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <el-empty
-                      v-else
-                      :description="t('protection.backupsPage.flowRestoreRecordMappingsEmpty')"
-                      :image-size="48"
+                  </div>
+                  <el-empty
+                    v-else
+                    :description="t('protection.backupsPage.flowRestoreRecordMappingsEmpty')"
+                    :image-size="48"
+                  />
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupsPage.flowRestoreRecordColName')"
+              width="148"
+              fixed
+            >
+              <template #default="{ row }">
+                <button
+                  type="button"
+                  class="hfl-table-name-link hfl-table-cell-mono hfl-table-name-link--single"
+                  :aria-expanded="expandedRestoreRecordRowKeys.includes(row.id)"
+                  @click.stop="toggleRestoreRecord(row)"
+                >
+                  {{ row.restore_uid || `#${row.id}` }}
+                </button>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.colTaskId')"
+              width="160"
+            >
+              <template #default="{ row }">
+                <button
+                  v-if="row.task_uuid"
+                  type="button"
+                  class="hfl-table-name-link hfl-table-cell-mono hfl-table-name-link--single"
+                  :title="row.task_uuid"
+                  @click.stop="openTaskDetailByUuid(row.task_uuid)"
+                >
+                  {{ row.task_uuid }}
+                </button>
+                <span
+                  v-else
+                  class="hfl-empty-mark"
+                >{{ t('protection.backupDetail.durationDash') }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupsPage.flowRestoreRecordColStatusProgress')"
+              width="148"
+            >
+              <template #default="{ row }">
+                <div class="restore-record-status-progress">
+                  <div
+                    v-if="shouldShowRestoreRecordProgress(row)"
+                    class="restore-record-status-progress__bar"
+                  >
+                    <ElProgress
+                      :percentage="restoreRecordProgressValue(row)"
+                      :stroke-width="6"
+                      :show-text="false"
                     />
+                    <span>{{ restoreRecordProgressText(row) }}</span>
                   </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowRestoreRecordColName')" width="148" fixed>
-                <template #default="{ row }">
-                  <button
-                    type="button"
-                    class="hfl-table-name-link hfl-table-cell-mono hfl-table-name-link--single"
-                    :aria-expanded="expandedRestoreRecordRowKeys.includes(row.id)"
-                    @click.stop="toggleRestoreRecord(row)"
+                  <TaskStatusTag
+                    v-else-if="restoreRecordStatus(row)"
+                    :status="restoreRecordStatus(row)"
+                  />
+                  <ElTag
+                    v-else
+                    type="info"
+                    size="small"
                   >
-                    {{ row.restore_uid || `#${row.id}` }}
-                  </button>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colTaskId')" width="160">
-                <template #default="{ row }">
-                  <button
-                    v-if="row.task_uuid"
-                    type="button"
-                    class="hfl-table-name-link hfl-table-cell-mono hfl-table-name-link--single"
-                    :title="row.task_uuid"
-                    @click.stop="openTaskDetailByUuid(row.task_uuid)"
-                  >
-                    {{ row.task_uuid }}
-                  </button>
-                  <span v-else class="hfl-empty-mark">{{ t('protection.backupDetail.durationDash') }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column
-                :label="t('protection.backupsPage.flowRestoreRecordColStatusProgress')"
-                width="148"
-              >
-                <template #default="{ row }">
-                  <div class="restore-record-status-progress">
-                    <div v-if="shouldShowRestoreRecordProgress(row)" class="restore-record-status-progress__bar">
-                      <ElProgress
-                        :percentage="restoreRecordProgressValue(row)"
-                        :stroke-width="6"
-                        :show-text="false"
-                      />
-                      <span>{{ restoreRecordProgressText(row) }}</span>
-                    </div>
-                    <TaskStatusTag v-else-if="restoreRecordStatus(row)" :status="restoreRecordStatus(row)" />
-                    <ElTag v-else type="info" size="small">
-                      {{ t('protection.backupsPage.flowRestoreRecordStatusUnknown') }}
-                    </ElTag>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colSnapId')" width="210">
-                <template #default="{ row }">
-                  <span class="hfl-table-cell-mono" :title="restoreRecordSnapshotLabel(row)">
-                    {{ restoreRecordSnapshotLabel(row) }}
-                  </span>
-                </template>
-              </el-table-column>
-              <el-table-column
-                :label="t('protection.backupsPage.flowRestoreRecordColConflict')"
-                width="96"
-              >
-                <template #default="{ row }">
-                  <ElTag :type="row.conflict_mode === 'overwrite' ? 'warning' : 'success'" size="small" effect="plain">
-                    {{ restoreRecordConflictLabel(row.conflict_mode) }}
+                    {{ t('protection.backupsPage.flowRestoreRecordStatusUnknown') }}
                   </ElTag>
-                </template>
-              </el-table-column>
-              <el-table-column
-                :label="t('protection.backupsPage.flowRestoreRecordColMode')"
-                width="132"
-              >
-                <template #default="{ row }">
-                  <ElTag size="small" effect="plain" :title="restoreRecordModeTitle(row)">
-                    {{ restoreRecordModeLabel(row) }}
-                  </ElTag>
-                </template>
-              </el-table-column>
-              <el-table-column
-                :label="t('protection.backupsPage.flowRestoreRecordColCreated')"
-                width="150"
-              >
-                <template #default="{ row }">
-                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatNullableTime(row.created_at) }}</span>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-empty
-              v-else-if="!restoreRecordsLoading && !restoreRecordsError"
-              :description="t('protection.backupsPage.flowSourceDetailRestoreRecordsEmpty')"
-              :image-size="72"
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.colSnapId')"
+              width="210"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-mono"
+                  :title="restoreRecordSnapshotLabel(row)"
+                >
+                  {{ restoreRecordSnapshotLabel(row) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupsPage.flowRestoreRecordColConflict')"
+              width="96"
+            >
+              <template #default="{ row }">
+                <ElTag
+                  :type="row.conflict_mode === 'overwrite' ? 'warning' : 'success'"
+                  size="small"
+                  effect="plain"
+                >
+                  {{ restoreRecordConflictLabel(row.conflict_mode) }}
+                </ElTag>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupsPage.flowRestoreRecordColMode')"
+              width="132"
+            >
+              <template #default="{ row }">
+                <ElTag
+                  size="small"
+                  effect="plain"
+                  :title="restoreRecordModeTitle(row)"
+                >
+                  {{ restoreRecordModeLabel(row) }}
+                </ElTag>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupsPage.flowRestoreRecordColCreated')"
+              width="150"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !row.created_at }"
+                >{{ formatNullableTime(row.created_at) }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty
+            v-else-if="!restoreRecordsLoading && !restoreRecordsError"
+            :description="t('protection.backupsPage.flowSourceDetailRestoreRecordsEmpty')"
+            :image-size="72"
+          />
+          <div
+            v-if="displayedRestoreRecords.length || restoreRecordPagination.count > 0"
+            class="hfl-list-footer"
+          >
+            <HflPagination
+              v-model:current-page="restoreRecordPagination.page"
+              v-model:page-size="restoreRecordPagination.pageSize"
+              class="hfl-list-footer__pagination"
+              layout="total, sizes, prev, pager, next"
+              :total="restoreRecordPagination.count"
+              :page-sizes="DETAIL_PAGE_SIZE_OPTIONS"
+              @size-change="restoreRecordPagination.page = 1"
             />
-            <div v-if="displayedRestoreRecords.length || restoreRecordPagination.count > 0" class="hfl-list-footer">
-              <HflPagination
-                v-model:current-page="restoreRecordPagination.page"
-                v-model:page-size="restoreRecordPagination.pageSize"
-                class="hfl-list-footer__pagination"
-                layout="total, sizes, prev, pager, next"
-                :total="restoreRecordPagination.count"
-                :page-sizes="DETAIL_PAGE_SIZE_OPTIONS"
-                @size-change="restoreRecordPagination.page = 1"
-              />
-            </div>
+          </div>
         </el-tab-pane>
 
-        <el-tab-pane :label="t('protection.backupDetail.tabTasks')" name="tasks">
-            <el-alert
-              v-if="sourceTasksError"
-              :title="t('protection.backupsPage.flowSourceDetailTasksLoadFailed', { msg: sourceTasksError })"
-              type="error"
-              show-icon
-              :closable="false"
-            />
-            <div class="hfl-list-toolbar dp-source-task-toolbar">
-              <ElInput
-                v-model="taskFilterId"
-                clearable
-                class="hfl-list-search dp-source-task-toolbar__search"
-                :placeholder="t('ops.task.phSearch')"
-                @clear="clearSourceTaskSearch"
-              >
-                <template #prepend>
-                  <ElSelect v-model="taskFilterSearchField" style="width: 90px" popper-class="dp-source-task-select-popper" @change="handleSourceTaskSearchFieldChange">
-                    <ElOption
-                      v-for="opt in taskSearchFieldOptions"
-                      :key="opt.value"
-                      :value="opt.value"
-                      :label="opt.label"
-                    />
-                  </ElSelect>
-                </template>
-                <template #prefix>
-                  <Search :size="16" class="text-slate-400" />
-                </template>
-              </ElInput>
-              <ElSelect v-model="taskFilterType" clearable :placeholder="t('ops.task.filterType')" style="width: 130px" popper-class="dp-source-task-select-popper">
-                <ElOption v-for="option in taskTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
-              </ElSelect>
-              <ElSelect v-model="taskFilterStatus" clearable :placeholder="t('ops.task.filterStatus')" style="width: 130px" popper-class="dp-source-task-select-popper">
-                <ElOption v-for="option in taskStatusOptions" :key="option.value" :label="option.label" :value="option.value" />
-              </ElSelect>
-              <ElSelect v-model="taskFilterTimeMode" :placeholder="t('ops.task.filterTime')" style="width: 130px" popper-class="dp-source-task-select-popper" @change="onSourceTaskTimeModeChange">
-                <ElOption v-for="option in sourceTaskTimeModeOptions" :key="option.value" :label="option.label" :value="option.value" />
-              </ElSelect>
-              <div class="hfl-list-toolbar__right">
-                <ElBadge :value="sourceTaskAdvancedFilterCount" :hidden="sourceTaskAdvancedFilterCount === 0" class="dp-source-task-filter-badge">
-                  <ElButton
-                    :class="{ 'dp-source-task-filter-button--active': sourceTaskAdvancedFilterCount > 0 }"
-                    :title="t('ops.task.advancedFilter')"
-                    :aria-label="t('ops.task.advancedFilter')"
-                    @click="openSourceTaskAdvancedFilterDrawer"
-                  >
-                    <Filter :size="16" />
-                  </ElButton>
-                </ElBadge>
-                <ElButton
-                  class="hfl-refresh-button"
-                  :title="t('ops.task.btnRefresh')"
-                  :aria-label="t('ops.task.btnRefresh')"
-                  :disabled="sourceTasksLoading"
-                  @click="loadTasksForSource"
-                >
-                  <RefreshCw :size="16" :class="{ 'is-spinning': sourceTasksLoading }" />
-                </ElButton>
-              </div>
-            </div>
-            <el-table
-              v-table-column-resize="'protection.flowBackupSource.sourceTasks'"
-              v-table-overflow-title
-              v-loading="sourceTasksLoading"
-              :data="sourceTaskRows"
-              stripe
-              class="restore-task-drawer-table dp-source-task-table hfl-list-table"
-              :row-class-name="sourceTaskRowClassName"
+        <el-tab-pane
+          :label="t('protection.backupDetail.tabTasks')"
+          name="tasks"
+        >
+          <el-alert
+            v-if="sourceTasksError"
+            :title="t('protection.backupsPage.flowSourceDetailTasksLoadFailed', { msg: sourceTasksError })"
+            type="error"
+            show-icon
+            :closable="false"
+          />
+          <div class="hfl-list-toolbar dp-source-task-toolbar">
+            <ElInput
+              v-model="taskFilterId"
+              clearable
+              class="hfl-list-search dp-source-task-toolbar__search"
+              :placeholder="t('ops.task.phSearch')"
+              @clear="clearSourceTaskSearch"
             >
-              <el-table-column :label="t('ops.task.colName')" width="275" fixed>
-                <template #default="{ row }">
-                  <ResourceNameSummaryCell
-                    :name="taskDetailTitle(row)"
-                    :summary="row.task_uuid"
-                    kind="task"
-                    :show-icon="false"
-                    @open="openTaskDetail(row)"
+              <template #prepend>
+                <ElSelect
+                  v-model="taskFilterSearchField"
+                  style="width: 90px"
+                  popper-class="dp-source-task-select-popper"
+                  @change="handleSourceTaskSearchFieldChange"
+                >
+                  <ElOption
+                    v-for="opt in taskSearchFieldOptions"
+                    :key="opt.value"
+                    :value="opt.value"
+                    :label="opt.label"
                   />
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colTaskType')" width="205">
-                <template #default="{ row }">
-                  <TaskTypeLabel :type="row.task_type" />
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colTaskStatus')" width="115">
-                <template #default="{ row }">
-                  <TaskStatusTag :status="row.status" />
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowTaskColProgress')" min-width="165">
-                <template #default="{ row }">
-                  <div class="hfl-task-list-progress">
-                    <div class="hfl-task-list-progress__track">
-                      <div
-                        class="hfl-task-list-progress__fill"
-                        :class="`hfl-task-list-progress__fill--${row.status}`"
-                        :style="{ width: `${progressValue(row)}%` }"
-                      />
-                    </div>
-                    <span class="hfl-task-list-progress__text">{{ progressText(row) }}</span>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('ops.task.colTrigger')" width="105">
-                <template #default="{ row }">
-                  <el-tag type="info" size="small">
-                    {{ taskTriggerLabel(row.trigger_type) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colCreated')" min-width="160">
-                <template #default="{ row }">
-                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatNullableTime(row.created_at) }}</span>
-                </template>
-              </el-table-column>
-              <template #empty>
-                <el-empty
-                  v-if="!sourceTasksLoading && !sourceTasksError"
-                  :description="t('protection.backupsPage.flowSourceDetailTasksEmpty')"
-                  :image-size="72"
+                </ElSelect>
+              </template>
+              <template #prefix>
+                <Search
+                  :size="16"
+                  class="text-slate-400"
                 />
               </template>
-            </el-table>
-            <div class="hfl-list-footer">
-              <HflPagination
-                v-model:current-page="taskPagination.page"
-                v-model:page-size="taskPagination.pageSize"
-                class="hfl-list-footer__pagination"
-                layout="total, sizes, prev, pager, next"
-                :total="sourceTasksTotal"
-                :page-sizes="DETAIL_PAGE_SIZE_OPTIONS"
-                @size-change="taskPagination.page = 1"
+            </ElInput>
+            <ElSelect
+              v-model="taskFilterType"
+              clearable
+              :placeholder="t('ops.task.filterType')"
+              style="width: 130px"
+              popper-class="dp-source-task-select-popper"
+            >
+              <ElOption
+                v-for="option in taskTypeOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
               />
+            </ElSelect>
+            <ElSelect
+              v-model="taskFilterStatus"
+              clearable
+              :placeholder="t('ops.task.filterStatus')"
+              style="width: 130px"
+              popper-class="dp-source-task-select-popper"
+            >
+              <ElOption
+                v-for="option in taskStatusOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </ElSelect>
+            <ElSelect
+              v-model="taskFilterTimeMode"
+              :placeholder="t('ops.task.filterTime')"
+              style="width: 130px"
+              popper-class="dp-source-task-select-popper"
+              @change="onSourceTaskTimeModeChange"
+            >
+              <ElOption
+                v-for="option in sourceTaskTimeModeOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </ElSelect>
+            <div class="hfl-list-toolbar__right">
+              <ElBadge
+                :value="sourceTaskAdvancedFilterCount"
+                :hidden="sourceTaskAdvancedFilterCount === 0"
+                class="dp-source-task-filter-badge"
+              >
+                <ElButton
+                  :class="{ 'dp-source-task-filter-button--active': sourceTaskAdvancedFilterCount > 0 }"
+                  :title="t('ops.task.advancedFilter')"
+                  :aria-label="t('ops.task.advancedFilter')"
+                  @click="openSourceTaskAdvancedFilterDrawer"
+                >
+                  <Filter :size="16" />
+                </ElButton>
+              </ElBadge>
+              <ElButton
+                class="hfl-refresh-button"
+                :title="t('ops.task.btnRefresh')"
+                :aria-label="t('ops.task.btnRefresh')"
+                :disabled="sourceTasksLoading"
+                @click="loadTasksForSource"
+              >
+                <RefreshCw
+                  :size="16"
+                  :class="{ 'is-spinning': sourceTasksLoading }"
+                />
+              </ElButton>
             </div>
+          </div>
+          <el-table
+            v-table-column-resize="'protection.flowBackupSource.sourceTasks'"
+            v-table-overflow-title
+            v-loading="sourceTasksLoading"
+            :data="sourceTaskRows"
+            stripe
+            class="restore-task-drawer-table dp-source-task-table hfl-list-table"
+            :row-class-name="sourceTaskRowClassName"
+          >
+            <el-table-column
+              :label="t('ops.task.colName')"
+              width="275"
+              fixed
+            >
+              <template #default="{ row }">
+                <ResourceNameSummaryCell
+                  :name="taskDetailTitle(row)"
+                  :summary="row.task_uuid"
+                  kind="task"
+                  :show-icon="false"
+                  @open="openTaskDetail(row)"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.colTaskType')"
+              width="205"
+            >
+              <template #default="{ row }">
+                <TaskTypeLabel :type="row.task_type" />
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.colTaskStatus')"
+              width="115"
+            >
+              <template #default="{ row }">
+                <TaskStatusTag :status="row.status" />
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupsPage.flowTaskColProgress')"
+              min-width="165"
+            >
+              <template #default="{ row }">
+                <div class="hfl-task-list-progress">
+                  <div class="hfl-task-list-progress__track">
+                    <div
+                      class="hfl-task-list-progress__fill"
+                      :class="`hfl-task-list-progress__fill--${row.status}`"
+                      :style="{ width: `${progressValue(row)}%` }"
+                    />
+                  </div>
+                  <span class="hfl-task-list-progress__text">{{ progressText(row) }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.task.colTrigger')"
+              width="105"
+            >
+              <template #default="{ row }">
+                <el-tag
+                  type="info"
+                  size="small"
+                >
+                  {{ taskTriggerLabel(row.trigger_type) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.colCreated')"
+              min-width="160"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !row.created_at }"
+                >{{ formatNullableTime(row.created_at) }}</span>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty
+                v-if="!sourceTasksLoading && !sourceTasksError"
+                :description="t('protection.backupsPage.flowSourceDetailTasksEmpty')"
+                :image-size="72"
+              />
+            </template>
+          </el-table>
+          <div class="hfl-list-footer">
+            <HflPagination
+              v-model:current-page="taskPagination.page"
+              v-model:page-size="taskPagination.pageSize"
+              class="hfl-list-footer__pagination"
+              layout="total, sizes, prev, pager, next"
+              :total="sourceTasksTotal"
+              :page-sizes="DETAIL_PAGE_SIZE_OPTIONS"
+              @size-change="taskPagination.page = 1"
+            />
+          </div>
         </el-tab-pane>
       </el-tabs>
     </div>
@@ -3840,7 +4320,10 @@ function onClosed() {
     :z-index="3150"
     @closed="onSourceTaskAdvancedFilterClosed"
   >
-    <ElForm label-position="top" class="dp-source-task-filter-form">
+    <ElForm
+      label-position="top"
+      class="dp-source-task-filter-form"
+    >
       <ElFormItem :label="t('ops.task.filterTime')">
         <ElDatePicker
           v-model="taskAdvancedFilterDraft.dateRange"
@@ -3855,8 +4338,15 @@ function onClosed() {
     </ElForm>
     <template #footer>
       <div class="dp-source-task-filter-drawer__footer">
-        <ElButton @click="resetSourceTaskAdvancedFilterDraft">{{ t('ops.task.resetFilter') }}</ElButton>
-        <ElButton type="primary" @click="applySourceTaskAdvancedFilters">{{ t('ops.task.applyFilter') }}</ElButton>
+        <ElButton @click="resetSourceTaskAdvancedFilterDraft">
+          {{ t('ops.task.resetFilter') }}
+        </ElButton>
+        <ElButton
+          type="primary"
+          @click="applySourceTaskAdvancedFilters"
+        >
+          {{ t('ops.task.applyFilter') }}
+        </ElButton>
       </div>
     </template>
   </ElDrawer>
@@ -3871,9 +4361,14 @@ function onClosed() {
   >
     <template #header>
       <div class="dp-task-detail__header-bar">
-        <div v-if="activeTask" class="dp-task-detail__header-summary">
+        <div
+          v-if="activeTask"
+          class="dp-task-detail__header-summary"
+        >
           <div class="dp-task-detail__header-title-row">
-            <h2 class="dp-task-detail__header-title">{{ taskDetailTitle(activeTask) }}</h2>
+            <h2 class="dp-task-detail__header-title">
+              {{ taskDetailTitle(activeTask) }}
+            </h2>
             <TaskStatusTag :status="activeTask.status" />
           </div>
           <div class="dp-task-detail__header-meta">
@@ -3892,7 +4387,12 @@ function onClosed() {
             </span>
           </div>
         </div>
-        <h2 v-else class="dp-task-detail__header-title">{{ t('protection.backupsPage.backupTaskDrawerTitle') }}</h2>
+        <h2
+          v-else
+          class="dp-task-detail__header-title"
+        >
+          {{ t('protection.backupsPage.backupTaskDrawerTitle') }}
+        </h2>
         <div class="dp-task-detail__header-actions">
           <ElButton
             v-if="canCancelBackupTask"
@@ -3915,25 +4415,44 @@ function onClosed() {
             :disabled="activeTaskLoading"
             @click="refreshActiveTask"
           >
-            <RefreshCw :size="20" :class="{ 'is-spinning': activeTaskLoading }" />
+            <RefreshCw
+              :size="20"
+              :class="{ 'is-spinning': activeTaskLoading }"
+            />
           </button>
         </div>
       </div>
     </template>
 
-    <div v-if="activeTask" ref="drawerScrollAnchorRef" v-loading="activeTaskLoading" class="dp-task-detail__body">
+    <div
+      v-if="activeTask"
+      ref="drawerScrollAnchorRef"
+      v-loading="activeTaskLoading"
+      class="dp-task-detail__body"
+    >
       <section class="dp-task-detail__hero">
-        <div class="dp-task-detail__hero-section-title">{{ t('protection.backupsPage.flowSourceDetailBasicData') }}</div>
+        <div class="dp-task-detail__hero-section-title">
+          {{ t('protection.backupsPage.flowSourceDetailBasicData') }}
+        </div>
         <div class="dp-task-detail__hero-grid">
           <div class="dp-task-detail__metric">
-            <Globe :size="18" class="dp-task-detail__metric-icon dp-task-detail__metric-icon--blue" />
+            <Globe
+              :size="18"
+              class="dp-task-detail__metric-icon dp-task-detail__metric-icon--blue"
+            />
             <div class="dp-task-detail__metric-copy">
               <span class="dp-task-detail__metric-label">{{ t('protection.backupsPage.flowSourceDetailTypeAndTrigger') }}</span>
               <div class="dp-task-detail__metric-tags">
-                <span class="dp-source-task-type-pill" :class="`dp-source-task-type-pill--${activeTask.task_type}`">
+                <span
+                  class="dp-source-task-type-pill"
+                  :class="`dp-source-task-type-pill--${activeTask.task_type}`"
+                >
                   <span class="dp-source-task-pill-text">{{ taskTypeLabel(activeTask.task_type) }}</span>
                 </span>
-                <span class="dp-source-task-trigger-pill" :class="`dp-source-task-trigger-pill--${activeTask.trigger_type}`">
+                <span
+                  class="dp-source-task-trigger-pill"
+                  :class="`dp-source-task-trigger-pill--${activeTask.trigger_type}`"
+                >
                   <span class="dp-source-task-pill-text">{{ taskTriggerLabel(activeTask.trigger_type) }}</span>
                 </span>
               </div>
@@ -3941,7 +4460,10 @@ function onClosed() {
           </div>
 
           <div class="dp-task-detail__metric">
-            <RotateCcw :size="18" class="dp-task-detail__metric-icon dp-task-detail__metric-icon--indigo" />
+            <RotateCcw
+              :size="18"
+              class="dp-task-detail__metric-icon dp-task-detail__metric-icon--indigo"
+            />
             <div class="dp-task-detail__metric-copy">
               <span class="dp-task-detail__metric-label">{{ t('protection.backupsPage.flowSourceDetailRetryCount') }}</span>
               <span class="dp-task-detail__metric-value">{{ activeTask.retry_count }}</span>
@@ -3949,19 +4471,31 @@ function onClosed() {
           </div>
 
           <div class="dp-task-detail__metric dp-task-detail__metric--wide">
-            <Clock3 :size="18" class="dp-task-detail__metric-icon" />
+            <Clock3
+              :size="18"
+              class="dp-task-detail__metric-icon"
+            />
             <div class="dp-task-detail__time-grid">
               <div>
                 <span class="dp-task-detail__metric-label">{{ t('protection.backupDetail.colStart') }}</span>
-                <span class="dp-task-detail__time-value" :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }">{{ formatNullableTime(activeTask.started_at || activeTask.created_at) }}</span>
+                <span
+                  class="dp-task-detail__time-value"
+                  :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }"
+                >{{ formatNullableTime(activeTask.started_at || activeTask.created_at) }}</span>
               </div>
               <div>
                 <span class="dp-task-detail__metric-label">{{ t('protection.backupDetail.colEnd') }}</span>
-                <span class="dp-task-detail__time-value" :class="{ 'hfl-empty-mark': !activeTask.finished_at }">{{ formatNullableTime(activeTask.finished_at) }}</span>
+                <span
+                  class="dp-task-detail__time-value"
+                  :class="{ 'hfl-empty-mark': !activeTask.finished_at }"
+                >{{ formatNullableTime(activeTask.finished_at) }}</span>
               </div>
               <div>
                 <span class="dp-task-detail__metric-label">{{ t('protection.backupsPage.flowSourceDetailDuration') }}</span>
-                <span class="dp-task-detail__time-value dp-task-detail__time-value--strong" :class="{ 'hfl-empty-mark': taskDuration(activeTask) === t('protection.backupDetail.durationDash') }">{{ taskDuration(activeTask) }}</span>
+                <span
+                  class="dp-task-detail__time-value dp-task-detail__time-value--strong"
+                  :class="{ 'hfl-empty-mark': taskDuration(activeTask) === t('protection.backupDetail.durationDash') }"
+                >{{ taskDuration(activeTask) }}</span>
               </div>
             </div>
           </div>
@@ -3973,7 +4507,10 @@ function onClosed() {
           :transfer-progress="activeTransferProgress"
           :failed="false"
         />
-        <div v-else class="dp-task-detail__progress-block">
+        <div
+          v-else
+          class="dp-task-detail__progress-block"
+        >
           <div class="dp-task-detail__progress-head">
             <span>{{ t('protection.backupsPage.flowTaskColProgress') }}</span>
             <span>{{ progressText(activeTask) }}</span>
@@ -3997,7 +4534,10 @@ function onClosed() {
       >
         <p>{{ activeTask.status === 'blocked' ? t('ops.task.blockedDescription') : t('ops.task.waitingDescription') }}</p>
         <ul>
-          <li v-for="dependency in activeTaskDependencies" :key="dependency.id">
+          <li
+            v-for="dependency in activeTaskDependencies"
+            :key="dependency.id"
+          >
             <span>{{ dependency.detail }}</span>
             <ElButton
               v-if="dependency.blocking_task_uuid"
@@ -4015,7 +4555,9 @@ function onClosed() {
         v-if="activeTask.task_type === 'backup' && (failedBackupDirectories.length || inProgressBackupDirectories.length)"
         class="dp-task-detail__directories"
       >
-        <div class="dp-task-detail__hero-section-title">{{ t('protection.backupsPage.backupTaskDirectoryStatus') }}</div>
+        <div class="dp-task-detail__hero-section-title">
+          {{ t('protection.backupsPage.backupTaskDirectoryStatus') }}
+        </div>
         <div class="dp-task-detail__directory-list">
           <div
             v-for="dir in [...inProgressBackupDirectories, ...failedBackupDirectories]"
@@ -4029,7 +4571,12 @@ function onClosed() {
                 <template v-if="directoryProgressPercent(dir) != null"> · {{ directoryProgressPercent(dir) }}%</template>
               </span>
             </div>
-            <div v-if="dir.error_message" class="dp-task-detail__directory-error">{{ dir.error_message }}</div>
+            <div
+              v-if="dir.error_message"
+              class="dp-task-detail__directory-error"
+            >
+              {{ dir.error_message }}
+            </div>
             <ElButton
               v-if="dir.status === 'failed'"
               size="small"
@@ -4056,144 +4603,281 @@ function onClosed() {
             </span>
           </template>
           <section class="dp-task-detail__tab-panel">
-        <div class="dp-task-detail__steps-head">
-          <span>{{ t('protection.backupsPage.flowSourceDetailStepsHint') }}</span>
-          <ElButton
-            v-if="hasExpandableTaskSteps"
-            size="small"
-            class="hfl-btn-with-icon"
-            @click="toggleAllTaskStepsExpanded"
-          >
-            {{ hasAnyExpandedTaskStep
-              ? t('protection.backupsPage.flowSourceDetailCollapseAll')
-              : t('protection.backupsPage.flowSourceDetailExpandAll') }}
-            <ChevronDown v-if="hasAnyExpandedTaskStep" :size="16" class="hfl-task-step-chevron" />
-            <ChevronRight v-else :size="16" class="hfl-task-step-chevron" />
-          </ElButton>
-        </div>
-
-        <div v-if="stepsWithEvents.length" class="dp-task-detail__step-list">
-          <div
-            v-for="(step, si) in stepsWithEvents"
-            :key="step.id"
-            class="dp-task-detail__step-item"
-            :class="{ 'dp-task-detail__step-item--last': si === stepsWithEvents.length - 1 && unlinkedTaskEvents.length === 0 }"
-          >
-            <div class="dp-task-detail__step-anchor" :class="timelineIconClass(step.status)">
-              <Check v-if="step.status === 'success'" :size="15" />
-              <X v-else-if="step.status === 'failed' || step.status === 'timeout'" :size="15" />
-              <LoaderCircle v-else-if="step.status === 'running'" :size="15" />
-              <Circle v-else :size="9" />
-            </div>
-
-            <article class="dp-task-detail__step-card">
-              <button
-                type="button"
-                class="dp-task-detail__step-card-head"
-                :class="{ 'dp-task-detail__step-card-head--disabled': step.events.length === 0 }"
-                :aria-expanded="step.events.length > 0 && isStepExpanded(step.id)"
-                :aria-disabled="step.events.length === 0"
-                :aria-description="step.events.length === 0 ? t('ops.task.emptyEvents') : undefined"
-                @click="toggleStep(step.id, step.events.length)"
+            <div class="dp-task-detail__steps-head">
+              <span>{{ t('protection.backupsPage.flowSourceDetailStepsHint') }}</span>
+              <ElButton
+                v-if="hasExpandableTaskSteps"
+                size="small"
+                class="hfl-btn-with-icon"
+                @click="toggleAllTaskStepsExpanded"
               >
-                <span class="dp-task-detail__step-title">
-                  {{ stepDisplayName(step.step_name, activeTask.task_type) }}
-                  <span class="dp-task-detail__step-executed-at" :class="{ 'hfl-empty-mark': !(step.created_at || activeTask.created_at) }">{{ formatNullableTime(step.created_at || activeTask.created_at) }}</span>
-                </span>
-                <TaskStatusTag :status="step.status" />
-                <span class="dp-task-detail__step-duration" :class="{ 'hfl-empty-mark': stepDuration(si) === t('protection.backupDetail.durationDash') }">
-                  <Clock3 :size="12" />
-                  {{ stepDuration(si) }}
-                </span>
-                <ElTooltip
-                  v-if="step.events.length === 0"
-                  :content="t('ops.task.emptyEvents')"
-                  teleported
-                  append-to="body"
-                  :z-index="3600"
-                  placement="top"
-                  :show-after="200"
-                >
-                  <span class="hfl-task-step-chevron hfl-task-step-chevron--disabled">
-                    <ChevronRight :size="16" aria-hidden="true" />
-                  </span>
-                </ElTooltip>
-                <ChevronDown v-else-if="isStepExpanded(step.id)" :size="16" class="hfl-task-step-chevron" />
-                <ChevronRight v-else :size="16" class="hfl-task-step-chevron" />
-              </button>
-
-              <div v-if="step.events.length > 0 && isStepExpanded(step.id)" class="dp-task-detail__event-list">
-                <div v-for="event in step.events" :key="event.id" class="dp-task-detail__event-row">
-                  <span class="dp-task-detail__event-dot" :class="`dp-task-detail__event-dot--${eventTone(event)}`">
-                    <X v-if="eventTone(event) === 'danger'" :size="9" />
-                    <Circle v-else-if="eventTone(event) === 'muted'" :size="7" />
-                    <Check v-else :size="9" />
-                  </span>
-                    <span class="dp-task-detail__event-content">
-                    <span class="dp-task-detail__event-msg" :class="eventMessageClass(event)">{{ eventDisplayMessage(event) }}</span>
-                    <span v-if="eventObjectText(event)" class="dp-task-detail__event-object">
-                      <Link2 :size="11" />
-                      <span>{{ eventObjectText(event) }}</span>
-                    </span>
-                    <span v-if="eventErrorText(event)" class="dp-task-detail__event-error">{{ eventErrorText(event) }}</span>
-                  </span>
-                  <span class="dp-task-detail__event-time" :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span>
-                </div>
-              </div>
-            </article>
-          </div>
-
-          <div v-if="unlinkedTaskEvents.length > 0" class="dp-task-detail__step-item dp-task-detail__step-item--last">
-            <div class="dp-task-detail__step-anchor dp-task-detail__timeline-icon--muted">
-              <Circle :size="9" />
+                {{ hasAnyExpandedTaskStep
+                  ? t('protection.backupsPage.flowSourceDetailCollapseAll')
+                  : t('protection.backupsPage.flowSourceDetailExpandAll') }}
+                <ChevronDown
+                  v-if="hasAnyExpandedTaskStep"
+                  :size="16"
+                  class="hfl-task-step-chevron"
+                />
+                <ChevronRight
+                  v-else
+                  :size="16"
+                  class="hfl-task-step-chevron"
+                />
+              </ElButton>
             </div>
-            <article class="dp-task-detail__step-card">
-              <div class="dp-task-detail__step-card-head dp-task-detail__step-card-head--static">
-                <span class="dp-task-detail__step-title">{{ t('protection.backupsPage.flowSourceDetailEvents') }}</span>
-                <span class="dp-task-detail__step-duration" :class="{ 'hfl-empty-mark': taskDuration(activeTask) === t('protection.backupDetail.durationDash') }">{{ taskDuration(activeTask) }}</span>
-              </div>
-              <div class="dp-task-detail__event-list">
-                <div v-for="event in unlinkedTaskEvents" :key="event.id" class="dp-task-detail__event-row">
-                  <span class="dp-task-detail__event-dot" :class="`dp-task-detail__event-dot--${eventTone(event)}`">
-                    <X v-if="eventTone(event) === 'danger'" :size="9" />
-                    <Circle v-else-if="eventTone(event) === 'muted'" :size="7" />
-                    <Check v-else :size="9" />
-                  </span>
-                    <span class="dp-task-detail__event-content">
-                    <span class="dp-task-detail__event-msg" :class="eventMessageClass(event)">{{ eventDisplayMessage(event) }}</span>
-                    <span v-if="eventObjectText(event)" class="dp-task-detail__event-object">
-                      <Link2 :size="11" />
-                      <span>{{ eventObjectText(event) }}</span>
-                    </span>
-                    <span v-if="eventErrorText(event)" class="dp-task-detail__event-error">{{ eventErrorText(event) }}</span>
-                  </span>
-                  <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
+
+            <div
+              v-if="stepsWithEvents.length"
+              class="dp-task-detail__step-list"
+            >
+              <div
+                v-for="(step, si) in stepsWithEvents"
+                :key="step.id"
+                class="dp-task-detail__step-item"
+                :class="{ 'dp-task-detail__step-item--last': si === stepsWithEvents.length - 1 && unlinkedTaskEvents.length === 0 }"
+              >
+                <div
+                  class="dp-task-detail__step-anchor"
+                  :class="timelineIconClass(step.status)"
+                >
+                  <Check
+                    v-if="step.status === 'success'"
+                    :size="15"
+                  />
+                  <X
+                    v-else-if="step.status === 'failed' || step.status === 'timeout'"
+                    :size="15"
+                  />
+                  <LoaderCircle
+                    v-else-if="step.status === 'running'"
+                    :size="15"
+                  />
+                  <Circle
+                    v-else
+                    :size="9"
+                  />
                 </div>
-              </div>
-            </article>
-          </div>
-        </div>
 
-        <div v-else-if="taskDetailEvents.length" class="dp-task-detail__event-only">
-          <div v-for="event in taskDetailEvents" :key="event.id" class="dp-task-detail__event-row">
-            <span class="dp-task-detail__event-dot" :class="`dp-task-detail__event-dot--${eventTone(event)}`">
-              <X v-if="eventTone(event) === 'danger'" :size="9" />
-              <Circle v-else-if="eventTone(event) === 'muted'" :size="7" />
-              <Check v-else :size="9" />
-            </span>
-                    <span class="dp-task-detail__event-content">
-                    <span class="dp-task-detail__event-msg" :class="eventMessageClass(event)">{{ eventDisplayMessage(event) }}</span>
-                    <span v-if="eventObjectText(event)" class="dp-task-detail__event-object">
-                      <Link2 :size="11" />
-                      <span>{{ eventObjectText(event) }}</span>
+                <article class="dp-task-detail__step-card">
+                  <button
+                    type="button"
+                    class="dp-task-detail__step-card-head"
+                    :class="{ 'dp-task-detail__step-card-head--disabled': step.events.length === 0 }"
+                    :aria-expanded="step.events.length > 0 && isStepExpanded(step.id)"
+                    :aria-disabled="step.events.length === 0"
+                    :aria-description="step.events.length === 0 ? t('ops.task.emptyEvents') : undefined"
+                    @click="toggleStep(step.id, step.events.length)"
+                  >
+                    <span class="dp-task-detail__step-title">
+                      {{ stepDisplayName(step.step_name, activeTask.task_type) }}
+                      <span
+                        class="dp-task-detail__step-executed-at"
+                        :class="{ 'hfl-empty-mark': !(step.created_at || activeTask.created_at) }"
+                      >{{ formatNullableTime(step.created_at || activeTask.created_at) }}</span>
                     </span>
-                    <span v-if="eventErrorText(event)" class="dp-task-detail__event-error">{{ eventErrorText(event) }}</span>
-                  </span>
-            <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
-          </div>
-        </div>
+                    <TaskStatusTag :status="step.status" />
+                    <span
+                      class="dp-task-detail__step-duration"
+                      :class="{ 'hfl-empty-mark': stepDuration(si) === t('protection.backupDetail.durationDash') }"
+                    >
+                      <Clock3 :size="12" />
+                      {{ stepDuration(si) }}
+                    </span>
+                    <ElTooltip
+                      v-if="step.events.length === 0"
+                      :content="t('ops.task.emptyEvents')"
+                      teleported
+                      append-to="body"
+                      :z-index="3600"
+                      placement="top"
+                      :show-after="200"
+                    >
+                      <span class="hfl-task-step-chevron hfl-task-step-chevron--disabled">
+                        <ChevronRight
+                          :size="16"
+                          aria-hidden="true"
+                        />
+                      </span>
+                    </ElTooltip>
+                    <ChevronDown
+                      v-else-if="isStepExpanded(step.id)"
+                      :size="16"
+                      class="hfl-task-step-chevron"
+                    />
+                    <ChevronRight
+                      v-else
+                      :size="16"
+                      class="hfl-task-step-chevron"
+                    />
+                  </button>
 
-            <el-empty v-else :description="t('protection.backupsPage.flowSourceDetailEmptySteps')" :image-size="52" />
+                  <div
+                    v-if="step.events.length > 0 && isStepExpanded(step.id)"
+                    class="dp-task-detail__event-list"
+                  >
+                    <div
+                      v-for="event in step.events"
+                      :key="event.id"
+                      class="dp-task-detail__event-row"
+                    >
+                      <span
+                        class="dp-task-detail__event-dot"
+                        :class="`dp-task-detail__event-dot--${eventTone(event)}`"
+                      >
+                        <X
+                          v-if="eventTone(event) === 'danger'"
+                          :size="9"
+                        />
+                        <Circle
+                          v-else-if="eventTone(event) === 'muted'"
+                          :size="7"
+                        />
+                        <Check
+                          v-else
+                          :size="9"
+                        />
+                      </span>
+                      <span class="dp-task-detail__event-content">
+                        <span
+                          class="dp-task-detail__event-msg"
+                          :class="eventMessageClass(event)"
+                        >{{ eventDisplayMessage(event) }}</span>
+                        <span
+                          v-if="eventObjectText(event)"
+                          class="dp-task-detail__event-object"
+                        >
+                          <Link2 :size="11" />
+                          <span>{{ eventObjectText(event) }}</span>
+                        </span>
+                        <span
+                          v-if="eventErrorText(event)"
+                          class="dp-task-detail__event-error"
+                        >{{ eventErrorText(event) }}</span>
+                      </span>
+                      <span
+                        class="dp-task-detail__event-time"
+                        :class="{ 'hfl-empty-mark': !event.created_at }"
+                      >{{ formatNullableTime(event.created_at) }}</span>
+                    </div>
+                  </div>
+                </article>
+              </div>
+
+              <div
+                v-if="unlinkedTaskEvents.length > 0"
+                class="dp-task-detail__step-item dp-task-detail__step-item--last"
+              >
+                <div class="dp-task-detail__step-anchor dp-task-detail__timeline-icon--muted">
+                  <Circle :size="9" />
+                </div>
+                <article class="dp-task-detail__step-card">
+                  <div class="dp-task-detail__step-card-head dp-task-detail__step-card-head--static">
+                    <span class="dp-task-detail__step-title">{{ t('protection.backupsPage.flowSourceDetailEvents') }}</span>
+                    <span
+                      class="dp-task-detail__step-duration"
+                      :class="{ 'hfl-empty-mark': taskDuration(activeTask) === t('protection.backupDetail.durationDash') }"
+                    >{{ taskDuration(activeTask) }}</span>
+                  </div>
+                  <div class="dp-task-detail__event-list">
+                    <div
+                      v-for="event in unlinkedTaskEvents"
+                      :key="event.id"
+                      class="dp-task-detail__event-row"
+                    >
+                      <span
+                        class="dp-task-detail__event-dot"
+                        :class="`dp-task-detail__event-dot--${eventTone(event)}`"
+                      >
+                        <X
+                          v-if="eventTone(event) === 'danger'"
+                          :size="9"
+                        />
+                        <Circle
+                          v-else-if="eventTone(event) === 'muted'"
+                          :size="7"
+                        />
+                        <Check
+                          v-else
+                          :size="9"
+                        />
+                      </span>
+                      <span class="dp-task-detail__event-content">
+                        <span
+                          class="dp-task-detail__event-msg"
+                          :class="eventMessageClass(event)"
+                        >{{ eventDisplayMessage(event) }}</span>
+                        <span
+                          v-if="eventObjectText(event)"
+                          class="dp-task-detail__event-object"
+                        >
+                          <Link2 :size="11" />
+                          <span>{{ eventObjectText(event) }}</span>
+                        </span>
+                        <span
+                          v-if="eventErrorText(event)"
+                          class="dp-task-detail__event-error"
+                        >{{ eventErrorText(event) }}</span>
+                      </span>
+                      <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
+                    </div>
+                  </div>
+                </article>
+              </div>
+            </div>
+
+            <div
+              v-else-if="taskDetailEvents.length"
+              class="dp-task-detail__event-only"
+            >
+              <div
+                v-for="event in taskDetailEvents"
+                :key="event.id"
+                class="dp-task-detail__event-row"
+              >
+                <span
+                  class="dp-task-detail__event-dot"
+                  :class="`dp-task-detail__event-dot--${eventTone(event)}`"
+                >
+                  <X
+                    v-if="eventTone(event) === 'danger'"
+                    :size="9"
+                  />
+                  <Circle
+                    v-else-if="eventTone(event) === 'muted'"
+                    :size="7"
+                  />
+                  <Check
+                    v-else
+                    :size="9"
+                  />
+                </span>
+                <span class="dp-task-detail__event-content">
+                  <span
+                    class="dp-task-detail__event-msg"
+                    :class="eventMessageClass(event)"
+                  >{{ eventDisplayMessage(event) }}</span>
+                  <span
+                    v-if="eventObjectText(event)"
+                    class="dp-task-detail__event-object"
+                  >
+                    <Link2 :size="11" />
+                    <span>{{ eventObjectText(event) }}</span>
+                  </span>
+                  <span
+                    v-if="eventErrorText(event)"
+                    class="dp-task-detail__event-error"
+                  >{{ eventErrorText(event) }}</span>
+                </span>
+                <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
+              </div>
+            </div>
+
+            <el-empty
+              v-else
+              :description="t('protection.backupsPage.flowSourceDetailEmptySteps')"
+              :image-size="52"
+            />
           </section>
         </ElTabPane>
 
@@ -4205,110 +4889,157 @@ function onClosed() {
             </span>
           </template>
           <section class="dp-task-detail__tab-panel">
-        <div v-if="resourceTypeTabs.length" class="dp-task-detail__resource-view">
-          <div class="dp-task-detail__resource-switcher">
-            <button
-              v-for="item in resourceTypeTabs"
-              :key="item.type"
-              type="button"
-              class="dp-task-detail__resource-switch"
-              :class="{ 'dp-task-detail__resource-switch--active': selectedResourceType === item.type }"
-              @click="loadResourceType(item.type)"
+            <div
+              v-if="resourceTypeTabs.length"
+              class="dp-task-detail__resource-view"
             >
-              <Link2 :size="14" />
-              {{ item.label }}
-              <span class="hfl-task-drawer__resource-switch-count">{{ item.count }}</span>
-            </button>
-          </div>
-
-          <div v-if="resourceErrors[selectedResourceType]" class="dp-task-detail__resource-error">
-            {{ resourceErrors[selectedResourceType] }}
-          </div>
-
-          <el-table
-            v-table-column-resize="'protection.flowBackupSource.resources'"
-            v-table-overflow-title
-            v-loading="resourceLoading"
-            :data="selectedResourceRows"
-            class="hfl-list-table hfl-list-table--compact dp-task-detail__resource-table"
-          >
-            <el-table-column :label="t('protection.backupsPage.flowSourceDetailResourceId')" width="120">
-              <template #default="{ row }">
-                <span class="hfl-table-cell-mono">{{ row.id }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column
-              v-if="selectedResourceType === 'backup_source'"
-              :label="t('protection.backupsPage.colBackupSource')"
-              min-width="180"
-            >
-              <template #default="{ row }">
-                <FlowSourceSummaryCell
-                  v-if="row.flowSource"
-                  :row="row.flowSource"
-                  :interactive="false"
-                />
-                <span v-else class="hfl-empty-mark">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column v-if="selectedResourceType === 'backup_source'" :label="t('protection.backupsPage.colConnectionAddress')" min-width="200">
-              <template #default="{ row }">
-                <FlowSourceConnectionCell v-if="row.flowSource" :row="row.flowSource" />
-                <span v-else class="hfl-empty-mark">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column v-if="selectedResourceType !== 'backup_source'" :label="t('protection.backupsPage.flowSourceDetailResourceName')" min-width="180">
-              <template #default="{ row }">
-                <div class="dp-task-detail__resource-name">{{ row.name }}</div>
-                <div class="dp-task-detail__resource-summary">{{ row.summary }}</div>
-              </template>
-            </el-table-column>
-            <el-table-column v-if="selectedResourceType !== 'backup_source'" :label="t('protection.backupsPage.flowSourceDetailResourceType')" width="130">
-              <template #default="{ row }">
-                <ElTag type="info" size="small" effect="plain">
-                  {{ row.type }}
-                </ElTag>
-              </template>
-            </el-table-column>
-            <el-table-column
-              :label="selectedResourceType === 'backup_source'
-                ? t('protection.sourceResources.colConnectivity')
-                : t('ops.task.colStatus')"
-              width="120"
-            >
-              <template #default="{ row }">
-                <ElTag
-                  v-if="selectedResourceType === 'backup_source' && row.availability"
-                  :type="flowSourceStatusTagType(row.availability)"
-                  :class="{ 'hfl-tag--neutral': flowSourceStatusTag(row.availability) === 'neutral' }"
-                  size="small"
+              <div class="dp-task-detail__resource-switcher">
+                <button
+                  v-for="item in resourceTypeTabs"
+                  :key="item.type"
+                  type="button"
+                  class="dp-task-detail__resource-switch"
+                  :class="{ 'dp-task-detail__resource-switch--active': selectedResourceType === item.type }"
+                  @click="loadResourceType(item.type)"
                 >
-                  {{ flowSourceStatusLabel(row.availability) }}
-                </ElTag>
-                <ElTag
-                  v-else-if="selectedResourceType !== 'backup_source' && row.status"
-                  v-bind="lifecycleStatusTagAttrs(row.statusValue)"
-                  size="small"
+                  <Link2 :size="14" />
+                  {{ item.label }}
+                  <span class="hfl-task-drawer__resource-switch-count">{{ item.count }}</span>
+                </button>
+              </div>
+
+              <div
+                v-if="resourceErrors[selectedResourceType]"
+                class="dp-task-detail__resource-error"
+              >
+                {{ resourceErrors[selectedResourceType] }}
+              </div>
+
+              <el-table
+                v-table-column-resize="'protection.flowBackupSource.resources'"
+                v-table-overflow-title
+                v-loading="resourceLoading"
+                :data="selectedResourceRows"
+                class="hfl-list-table hfl-list-table--compact dp-task-detail__resource-table"
+              >
+                <el-table-column
+                  :label="t('protection.backupsPage.flowSourceDetailResourceId')"
+                  width="120"
                 >
-                  {{ row.status }}
-                </ElTag>
-                <span v-else class="hfl-empty-mark">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column :label="selectedResourceType === 'backup_source' ? t('protection.sourceResources.colRegisteredAt') : t('ops.task.updatedAt')" width="180">
-              <template #default="{ row }">
-                <span
-                  class="hfl-table-cell-time"
-                  :class="{ 'hfl-empty-mark': !(selectedResourceType === 'backup_source' ? row.registeredAt : row.updatedAt) }"
-                >{{ formatNullableTime(selectedResourceType === 'backup_source' ? row.registeredAt : row.updatedAt) }}</span>
-              </template>
-            </el-table-column>
-          </el-table>
-        </div>
-            <el-empty v-else :description="t('protection.backupsPage.flowSourceDetailEmptyResources')" :image-size="52" />
+                  <template #default="{ row }">
+                    <span class="hfl-table-cell-mono">{{ row.id }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  v-if="selectedResourceType === 'backup_source'"
+                  :label="t('protection.backupsPage.colBackupSource')"
+                  min-width="180"
+                >
+                  <template #default="{ row }">
+                    <FlowSourceSummaryCell
+                      v-if="row.flowSource"
+                      :row="row.flowSource"
+                      :interactive="false"
+                    />
+                    <span
+                      v-else
+                      class="hfl-empty-mark"
+                    >—</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  v-if="selectedResourceType === 'backup_source'"
+                  :label="t('protection.backupsPage.colConnectionAddress')"
+                  min-width="200"
+                >
+                  <template #default="{ row }">
+                    <FlowSourceConnectionCell
+                      v-if="row.flowSource"
+                      :row="row.flowSource"
+                    />
+                    <span
+                      v-else
+                      class="hfl-empty-mark"
+                    >—</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  v-if="selectedResourceType !== 'backup_source'"
+                  :label="t('protection.backupsPage.flowSourceDetailResourceName')"
+                  min-width="180"
+                >
+                  <template #default="{ row }">
+                    <div class="dp-task-detail__resource-name">
+                      {{ row.name }}
+                    </div>
+                    <div class="dp-task-detail__resource-summary">
+                      {{ row.summary }}
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  v-if="selectedResourceType !== 'backup_source'"
+                  :label="t('protection.backupsPage.flowSourceDetailResourceType')"
+                  width="130"
+                >
+                  <template #default="{ row }">
+                    <ElTag
+                      type="info"
+                      size="small"
+                      effect="plain"
+                    >
+                      {{ row.type }}
+                    </ElTag>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="selectedResourceType === 'backup_source'
+                    ? t('protection.sourceResources.colConnectivity')
+                    : t('ops.task.colStatus')"
+                  width="120"
+                >
+                  <template #default="{ row }">
+                    <ElTag
+                      v-if="selectedResourceType === 'backup_source' && row.availability"
+                      :type="flowSourceStatusTagType(row.availability)"
+                      :class="{ 'hfl-tag--neutral': flowSourceStatusTag(row.availability) === 'neutral' }"
+                      size="small"
+                    >
+                      {{ flowSourceStatusLabel(row.availability) }}
+                    </ElTag>
+                    <ElTag
+                      v-else-if="selectedResourceType !== 'backup_source' && row.status"
+                      v-bind="lifecycleStatusTagAttrs(row.statusValue)"
+                      size="small"
+                    >
+                      {{ row.status }}
+                    </ElTag>
+                    <span
+                      v-else
+                      class="hfl-empty-mark"
+                    >—</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="selectedResourceType === 'backup_source' ? t('protection.sourceResources.colRegisteredAt') : t('ops.task.updatedAt')"
+                  width="180"
+                >
+                  <template #default="{ row }">
+                    <span
+                      class="hfl-table-cell-time"
+                      :class="{ 'hfl-empty-mark': !(selectedResourceType === 'backup_source' ? row.registeredAt : row.updatedAt) }"
+                    >{{ formatNullableTime(selectedResourceType === 'backup_source' ? row.registeredAt : row.updatedAt) }}</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <el-empty
+              v-else
+              :description="t('protection.backupsPage.flowSourceDetailEmptyResources')"
+              :image-size="52"
+            />
           </section>
         </ElTabPane>
-
       </ElTabs>
     </div>
   </ElDrawer>

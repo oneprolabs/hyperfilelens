@@ -188,6 +188,7 @@ const props = withDefaults(defineProps<{
   embedded: false,
   initialSources: () => [],
   initialEditConfigIds: () => [],
+  initialEditSection: undefined,
 })
 const emit = defineEmits<{
   closed: []
@@ -5903,13 +5904,23 @@ function preserveShallowestPathOrder(paths: string[]) {
           >
             <X :size="15" />
           </button>
-          <div class="create-validation-popover__title">{{ validationPopoverTitle }}</div>
+          <div class="create-validation-popover__title">
+            {{ validationPopoverTitle }}
+          </div>
           <ul class="create-validation-popover__list">
-            <li v-for="item in validationPopoverItems" :key="item">{{ item }}</li>
+            <li
+              v-for="item in validationPopoverItems"
+              :key="item"
+            >
+              {{ item }}
+            </li>
           </ul>
         </div>
 
-        <div v-if="createStep === 0" class="dp-wizard-pane">
+        <div
+          v-if="createStep === 0"
+          class="dp-wizard-pane"
+        >
           <p class="text-sm text-slate-500 mb-3">
             {{ t('protection.backupsPage.createStep0Lead') }}
           </p>
@@ -5919,21 +5930,24 @@ function preserveShallowestPathOrder(paths: string[]) {
               <ElInput
                 v-model="createSourceSearch"
                 clearable
-                @clear="clearCreateSourceSearch"
                 size="small"
                 :placeholder="t('protection.backupsPage.phSearchCreateSources')"
                 class="create-source-config-search hfl-list-search"
+                @clear="clearCreateSourceSearch"
               >
                 <template #prefix>
-                  <Search :size="16" class="hfl-list-search__icon" />
+                  <Search
+                    :size="16"
+                    class="hfl-list-search__icon"
+                  />
                 </template>
               </ElInput>
             </div>
           </div>
 
           <el-table
-          v-table-overflow-title
             ref="createSourceTableRef"
+            v-table-overflow-title
             :data="filteredCreateSourceRows"
             row-key="id"
             stripe
@@ -5943,13 +5957,20 @@ function preserveShallowestPathOrder(paths: string[]) {
             class="hfl-list-table create-source-config-table"
             @expand-change="onCreateSourceExpandChange"
           >
-            <el-table-column type="expand" width="44" fixed="left" class-name="create-source-config-expand-column">
+            <el-table-column
+              type="expand"
+              width="44"
+              fixed="left"
+              class-name="create-source-config-expand-column"
+            >
               <template #default="{ row }">
                 <div class="create-source-config-detail">
                   <section class="create-source-config-detail__tree">
                     <div class="create-source-config-detail__head create-source-config-detail__head--compact">
                       <div class="create-source-config-detail__title-row">
-                        <div class="text-sm font-semibold text-slate-900">{{ t('protection.backupsPage.labelEnterPath') }}</div>
+                        <div class="text-sm font-semibold text-slate-900">
+                          {{ t('protection.backupsPage.labelEnterPath') }}
+                        </div>
                       </div>
                     </div>
                     <div class="create-manual-path">
@@ -5973,13 +5994,18 @@ function preserveShallowestPathOrder(paths: string[]) {
                       >
                         {{ t('protection.backupsPage.btnAdd') }}
                       </ElButton>
-                      <p v-if="manualSourcePathErrorBySource[row.id]" class="create-manual-path__error">
+                      <p
+                        v-if="manualSourcePathErrorBySource[row.id]"
+                        class="create-manual-path__error"
+                      >
                         {{ manualSourcePathErrorBySource[row.id] }}
                       </p>
                     </div>
                     <div class="create-source-config-detail__head create-source-config-detail__head--browse">
                       <div class="create-source-config-detail__title-row">
-                        <div class="text-sm font-semibold text-slate-900">{{ t('protection.backupsPage.labelBrowsePaths') }}</div>
+                        <div class="text-sm font-semibold text-slate-900">
+                          {{ t('protection.backupsPage.labelBrowsePaths') }}
+                        </div>
                       </div>
                       <ElButton
                         size="small"
@@ -5991,10 +6017,16 @@ function preserveShallowestPathOrder(paths: string[]) {
                         {{ t('protection.backupsPage.btnAddSelectedPaths') }}
                       </ElButton>
                     </div>
-                    <p v-if="noSourceTreeRootsBySource[row.id]" class="dp-create-tree-shell__warn">
+                    <p
+                      v-if="noSourceTreeRootsBySource[row.id]"
+                      class="dp-create-tree-shell__warn"
+                    >
                       {{ t('protection.backupsPage.dirTreeEmptyHost') }}
                     </p>
-                    <div v-if="createSourceTreeErrorBySource[row.id]" class="dp-create-tree-shell__error">
+                    <div
+                      v-if="createSourceTreeErrorBySource[row.id]"
+                      class="dp-create-tree-shell__error"
+                    >
                       <span>{{ createSourceTreeErrorBySource[row.id] }}</span>
                       <ElButton
                         size="small"
@@ -6032,7 +6064,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                       @node-expand="(data) => onSourceDirectoryExpansionChange(row.id, data)"
                     >
                       <template #default="{ data }">
-                        <div v-if="data.nodeKind === 'loadMore'" class="create-dir-row create-dir-row--load-more">
+                        <div
+                          v-if="data.nodeKind === 'loadMore'"
+                          class="create-dir-row create-dir-row--load-more"
+                        >
                           <ElButton
                             size="small"
                             text
@@ -6126,8 +6161,12 @@ function preserveShallowestPathOrder(paths: string[]) {
                   <section class="create-source-config-detail__selected">
                     <div class="create-source-config-detail__head create-source-config-detail__head--compact">
                       <div class="create-source-config-detail__title-row">
-                        <div class="text-sm font-semibold text-slate-900">{{ t('protection.backupsPage.labelAddedPaths') }}</div>
-                        <div class="text-xs text-slate-500">{{ t('protection.backupsPage.addedCount', { n: sourceSelectedCount(row.id) }) }}</div>
+                        <div class="text-sm font-semibold text-slate-900">
+                          {{ t('protection.backupsPage.labelAddedPaths') }}
+                        </div>
+                        <div class="text-xs text-slate-500">
+                          {{ t('protection.backupsPage.addedCount', { n: sourceSelectedCount(row.id) }) }}
+                        </div>
                       </div>
                     </div>
                     <div
@@ -6136,7 +6175,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                       :class="{ 'dp-added-dir-empty--error': Boolean(createSourceDirIssue(row.id)) }"
                     >
                       <template v-if="createSourceDirIssue(row.id)">
-                        <ShieldAlert :size="18" class="dp-added-dir-empty__icon" />
+                        <ShieldAlert
+                          :size="18"
+                          class="dp-added-dir-empty__icon"
+                        />
                         <div class="dp-added-dir-empty__title">
                           {{ t('protection.backupsPage.validationMissingSourceDirsShort') }}
                         </div>
@@ -6148,7 +6190,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                         {{ t('protection.backupsPage.addedEmpty') }}
                       </template>
                     </div>
-                    <ul v-else class="dp-added-dir-list list-none m-0 p-0">
+                    <ul
+                      v-else
+                      class="dp-added-dir-list list-none m-0 p-0"
+                    >
                       <li
                         v-for="entry in sourceSelectedEntries(row.id)"
                         :key="entry.key"
@@ -6163,7 +6208,13 @@ function preserveShallowestPathOrder(paths: string[]) {
                         <div class="create-dir-row__body">
                           <span class="create-dir-row__path">{{ entry.path }}</span>
                         </div>
-                        <ElButton text type="danger" class="create-dir-row__action" :aria-label="t('protection.backupsPage.ariaRemove')" @click="removeWizardDirEntry(entry.key)">
+                        <ElButton
+                          text
+                          type="danger"
+                          class="create-dir-row__action"
+                          :aria-label="t('protection.backupsPage.ariaRemove')"
+                          @click="removeWizardDirEntry(entry.key)"
+                        >
                           <X :size="16" />
                         </ElButton>
                       </li>
@@ -6173,7 +6224,11 @@ function preserveShallowestPathOrder(paths: string[]) {
               </template>
             </el-table-column>
 
-            <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="200" fixed="left">
+            <el-table-column
+              :label="t('protection.backupsPage.colBackupSource')"
+              min-width="200"
+              fixed="left"
+            >
               <template #default="{ row }">
                 <button
                   type="button"
@@ -6182,7 +6237,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                   @click.stop="openCreateSourceDetail(row)"
                 >
                   <div class="backup-source-cell__body">
-                    <span class="create-backup-source-name" :title="row.name">{{ row.name }}</span>
+                    <span
+                      class="create-backup-source-name"
+                      :title="row.name"
+                    >{{ row.name }}</span>
                     <span class="create-backup-source-meta-row">
                       <el-tag
                         size="small"
@@ -6191,7 +6249,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                       >
                         {{ backupSourceTypeLabel(row.type) }}
                       </el-tag>
-                      <span v-if="row.platform" class="create-backup-source-platform">
+                      <span
+                        v-if="row.platform"
+                        class="create-backup-source-platform"
+                      >
                         <AgentPlatformBrandIcon :os="row.platform" />
                       </span>
                     </span>
@@ -6199,16 +6260,30 @@ function preserveShallowestPathOrder(paths: string[]) {
                 </button>
               </template>
             </el-table-column>
-            <el-table-column :label="t('protection.sourceResources.colConnectivity')" min-width="110">
+            <el-table-column
+              :label="t('protection.sourceResources.colConnectivity')"
+              min-width="110"
+            >
               <template #default="{ row }">
-                <el-tag size="small" :type="sourceAvailabilityTagType(row.id)" effect="plain">
+                <el-tag
+                  size="small"
+                  :type="sourceAvailabilityTagType(row.id)"
+                  effect="plain"
+                >
                   {{ sourceAvailabilityLabel(row.id) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('protection.backupsPage.labelSourceHostProxy')" min-width="180">
+            <el-table-column
+              :label="t('protection.backupsPage.labelSourceHostProxy')"
+              min-width="180"
+            >
               <template #default="{ row }">
-                <HflPopover trigger="hover" placement="top-start" :width="320">
+                <HflPopover
+                  trigger="hover"
+                  placement="top-start"
+                  :width="320"
+                >
                   <template #reference>
                     <div class="source-endpoint-cell table-stack-cell">
                       <span class="table-stack-cell__primary">{{ sourceEndpointInfo(row.id).primary }}</span>
@@ -6222,7 +6297,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                 </HflPopover>
               </template>
             </el-table-column>
-            <el-table-column :label="t('protection.backupsPage.labelAddedPaths')" min-width="300">
+            <el-table-column
+              :label="t('protection.backupsPage.labelAddedPaths')"
+              min-width="300"
+            >
               <template #default="{ row }">
                 <div
                   v-if="!row.selectedEntries.length"
@@ -6230,11 +6308,19 @@ function preserveShallowestPathOrder(paths: string[]) {
                   :class="{ 'create-source-dir-preview-empty--error': Boolean(createSourceDirIssue(row.id)) }"
                 >
                   <div>{{ t('protection.backupsPage.addedEmptyCompact') }}</div>
-                  <div v-if="createSourceDirIssue(row.id)" class="create-source-dir-preview-empty__reason">
+                  <div
+                    v-if="createSourceDirIssue(row.id)"
+                    class="create-source-dir-preview-empty__reason"
+                  >
                     {{ createSourceDirIssue(row.id) }}
                   </div>
                 </div>
-                <HflPopover v-else trigger="hover" placement="top-start" :width="520">
+                <HflPopover
+                  v-else
+                  trigger="hover"
+                  placement="top-start"
+                  :width="520"
+                >
                   <template #reference>
                     <div class="create-source-dir-preview">
                       <div class="create-source-dir-preview__count">
@@ -6253,7 +6339,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                         />
                         <span class="create-source-dir-preview__path hfl-table-cell-mono">{{ entry.path }}</span>
                       </div>
-                      <div v-if="row.hiddenDirCount > 0" class="create-source-dir-preview__more">
+                      <div
+                        v-if="row.hiddenDirCount > 0"
+                        class="create-source-dir-preview__more"
+                      >
                         {{ t('protection.backupsPage.moreDirs', { n: row.hiddenDirCount }) }}
                       </div>
                     </div>
@@ -6281,7 +6370,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                 </HflPopover>
               </template>
             </el-table-column>
-            <el-table-column :label="t('protection.backupsPage.colAction')" width="112" fixed="right">
+            <el-table-column
+              :label="t('protection.backupsPage.colAction')"
+              width="112"
+              fixed="right"
+            >
               <template #default="{ row }">
                 <ElButton
                   text
@@ -6304,36 +6397,71 @@ function preserveShallowestPathOrder(paths: string[]) {
           </el-table>
         </div>
 
-        <div v-if="createStep === 1" class="policy-step dp-wizard-pane space-y-6">
+        <div
+          v-if="createStep === 1"
+          class="policy-step dp-wizard-pane space-y-6"
+        >
           <div>
             <div>
               <div class="create-source-config-toolbar create-source-config-toolbar--actions hfl-list-toolbar">
                 <div class="create-source-config-selection">
                   {{ t('protection.backupsPage.selectedSourceCount', { selected: checkedFilterPolicyGroups.length, total: wizardSourceGroups.length }) }}
                 </div>
-                <div class="create-source-config-toolbar__divider"></div>
-                <ElButton type="primary" class="hfl-btn-with-icon dp-create-action-btn" @click="goToBackupPolicyPage">
-                  <Plus :size="16" stroke-width="2" class="shrink-0" />
+                <div class="create-source-config-toolbar__divider" />
+                <ElButton
+                  type="primary"
+                  class="hfl-btn-with-icon dp-create-action-btn"
+                  @click="goToBackupPolicyPage"
+                >
+                  <Plus
+                    :size="16"
+                    stroke-width="2"
+                    class="shrink-0"
+                  />
                   <span>{{ t('protection.backupsPage.btnAddBackupPolicy') }}</span>
                 </ElButton>
-                <ElButton type="primary" class="hfl-btn-with-icon dp-create-action-btn" @click="goToFilterRulePage">
-                  <Plus :size="16" stroke-width="2" class="shrink-0" />
+                <ElButton
+                  type="primary"
+                  class="hfl-btn-with-icon dp-create-action-btn"
+                  @click="goToFilterRulePage"
+                >
+                  <Plus
+                    :size="16"
+                    stroke-width="2"
+                    class="shrink-0"
+                  />
                   <span>{{ t('protection.backupsPage.btnAddFileFilterRule') }}</span>
                 </ElButton>
-                <ElDropdown trigger="click" @command="openFilterPolicyBatchDialog">
+                <ElDropdown
+                  trigger="click"
+                  @command="openFilterPolicyBatchDialog"
+                >
                   <ElButton class="hfl-btn-with-icon">
                     <span>{{ t('protection.backupsPage.btnBatchActions') }}</span>
-                    <ChevronDown :size="15" stroke-width="2" class="shrink-0" />
+                    <ChevronDown
+                      :size="15"
+                      stroke-width="2"
+                      class="shrink-0"
+                    />
                   </ElButton>
                   <template #dropdown>
                     <ElDropdownMenu>
-                      <ElDropdownItem command="policy" :disabled="checkedFilterPolicyGroups.length === 0">
+                      <ElDropdownItem
+                        command="policy"
+                        :disabled="checkedFilterPolicyGroups.length === 0"
+                      >
                         {{ t('protection.backupsPage.batchPolicyAction') }}
                       </ElDropdownItem>
-                      <ElDropdownItem command="filter" :disabled="checkedFilterPolicyGroups.length === 0">
+                      <ElDropdownItem
+                        command="filter"
+                        :disabled="checkedFilterPolicyGroups.length === 0"
+                      >
                         {{ t('protection.backupsPage.batchFileFilterAction') }}
                       </ElDropdownItem>
-                      <ElDropdownItem command="compression" :disabled="checkedFilterPolicyGroups.length === 0">
+                      <ElDropdownItem
+                        command="compression"
+                        :disabled="checkedFilterPolicyGroups.length === 0"
+                      >
                         {{ t('protection.backupsPage.batchCompressionAction') }}
                       </ElDropdownItem>
                     </ElDropdownMenu>
@@ -6343,13 +6471,16 @@ function preserveShallowestPathOrder(paths: string[]) {
                   <ElInput
                     v-model="filterPolicySourceSearch"
                     clearable
-                    @clear="clearFilterPolicySourceSearch"
                     size="small"
                     :placeholder="t('protection.backupsPage.phSearchCreateSources')"
                     class="create-source-config-search hfl-list-search"
+                    @clear="clearFilterPolicySourceSearch"
                   >
                     <template #prefix>
-                      <Search :size="16" class="hfl-list-search__icon" />
+                      <Search
+                        :size="16"
+                        class="hfl-list-search__icon"
+                      />
                     </template>
                   </ElInput>
                 </div>
@@ -6380,22 +6511,43 @@ function preserveShallowestPathOrder(paths: string[]) {
                       :label="pol.name"
                       :value="pol.id"
                     >
-                      <HflPopover ref="optionPopoverRefs" trigger="hover" placement="bottom-start" :fallback-placements="['top-start', 'right-start']" :width="420" :persistent="false" popper-class="create-policy-option-popper">
+                      <HflPopover
+                        ref="optionPopoverRefs"
+                        trigger="hover"
+                        placement="bottom-start"
+                        :fallback-placements="['top-start', 'right-start']"
+                        :width="420"
+                        :persistent="false"
+                        popper-class="create-policy-option-popper"
+                      >
                         <template #reference>
-                          <div class="create-policy-option" @pointerdown.capture="hideOptionPopovers">
+                          <div
+                            class="create-policy-option"
+                            @pointerdown.capture="hideOptionPopovers"
+                          >
                             <div class="create-policy-option__head">
                               <span class="create-policy-option__name">{{ pol.name }}</span>
-                              <el-tag v-bind="policyStateTagAttrs(pol.isActive)" size="small">
+                              <el-tag
+                                v-bind="policyStateTagAttrs(pol.isActive)"
+                                size="small"
+                              >
                                 {{ policyStateLabel(pol.isActive) }}
                               </el-tag>
                             </div>
-                            <div class="create-policy-option__summary">{{ policyOptionSummary(pol) }}</div>
+                            <div class="create-policy-option__summary">
+                              {{ policyOptionSummary(pol) }}
+                            </div>
                           </div>
                         </template>
                         <div class="create-policy-detail-popover">
                           <div class="create-policy-detail-popover__head">
-                            <div class="create-policy-detail-popover__title">{{ pol.name }}</div>
-                            <el-tag v-bind="policyStateTagAttrs(pol.isActive)" size="small">
+                            <div class="create-policy-detail-popover__title">
+                              {{ pol.name }}
+                            </div>
+                            <el-tag
+                              v-bind="policyStateTagAttrs(pol.isActive)"
+                              size="small"
+                            >
                               {{ policyStateLabel(pol.isActive) }}
                             </el-tag>
                           </div>
@@ -6431,7 +6583,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     class="policy-retention-detail-list__line"
                                     :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
                                   >
-                                    <span v-if="line.label" class="policy-retention-detail-list__label">{{ line.label }}</span>
+                                    <span
+                                      v-if="line.label"
+                                      class="policy-retention-detail-list__label"
+                                    >{{ line.label }}</span>
                                     <span class="policy-retention-detail-list__text">{{ line.text }}</span>
                                   </div>
                                 </div>
@@ -6465,18 +6620,35 @@ function preserveShallowestPathOrder(paths: string[]) {
                       :label="gf.name"
                       :value="gf.id"
                     >
-                      <HflPopover ref="optionPopoverRefs" trigger="hover" placement="bottom-start" :fallback-placements="['top-start', 'right-start']" :width="460" :persistent="false" popper-class="create-policy-option-popper">
+                      <HflPopover
+                        ref="optionPopoverRefs"
+                        trigger="hover"
+                        placement="bottom-start"
+                        :fallback-placements="['top-start', 'right-start']"
+                        :width="460"
+                        :persistent="false"
+                        popper-class="create-policy-option-popper"
+                      >
                         <template #reference>
-                          <div class="create-policy-option" @pointerdown.capture="hideOptionPopovers">
+                          <div
+                            class="create-policy-option"
+                            @pointerdown.capture="hideOptionPopovers"
+                          >
                             <div class="create-policy-option__head">
                               <span class="create-policy-option__name">{{ gf.name }}</span>
-                              <el-tag v-bind="policyStateTagAttrs(gf.isActive)" size="small">
+                              <el-tag
+                                v-bind="policyStateTagAttrs(gf.isActive)"
+                                size="small"
+                              >
                                 {{ policyStateLabel(gf.isActive) }}
                               </el-tag>
                             </div>
                             <div class="create-filter-rules-option">
                               <span class="create-filter-rules-option__prefix">{{ t('protection.policiesPage.filterCustomTypeExclude') }}:</span>
-                              <div v-if="filterDisplayedRuleLines(gf).length" class="create-filter-rules-option__list">
+                              <div
+                                v-if="filterDisplayedRuleLines(gf).length"
+                                class="create-filter-rules-option__list"
+                              >
                                 <code
                                   v-for="(line, index) in filterDisplayedRuleLines(gf)"
                                   :key="`${index}-${line}`"
@@ -6485,7 +6657,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                   {{ line }}
                                 </code>
                               </div>
-                              <span v-else class="create-filter-rules-option__empty">
+                              <span
+                                v-else
+                                class="create-filter-rules-option__empty"
+                              >
                                 {{ t('protection.policiesPage.filterNoActiveRules') }}
                               </span>
                             </div>
@@ -6493,8 +6668,13 @@ function preserveShallowestPathOrder(paths: string[]) {
                         </template>
                         <div class="create-policy-detail-popover">
                           <div class="create-policy-detail-popover__head">
-                            <div class="create-policy-detail-popover__title">{{ gf.name }}</div>
-                            <el-tag v-bind="policyStateTagAttrs(gf.isActive)" size="small">
+                            <div class="create-policy-detail-popover__title">
+                              {{ gf.name }}
+                            </div>
+                            <el-tag
+                              v-bind="policyStateTagAttrs(gf.isActive)"
+                              size="small"
+                            >
                               {{ policyStateLabel(gf.isActive) }}
                             </el-tag>
                           </div>
@@ -6512,7 +6692,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                               >
                                 {{ row.value }}
                               </el-tag>
-                              <span v-else class="create-policy-detail-popover__value">{{ row.value }}</span>
+                              <span
+                                v-else
+                                class="create-policy-detail-popover__value"
+                              >{{ row.value }}</span>
                             </section>
                             <section class="create-policy-detail-popover__section">
                               <div class="create-policy-detail-popover__section-title">
@@ -6528,7 +6711,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     {{ line }}
                                   </code>
                                 </template>
-                                <p v-else class="create-filter-rules-preview__empty">
+                                <p
+                                  v-else
+                                  class="create-filter-rules-preview__empty"
+                                >
                                   {{ t('protection.policiesPage.filterNoActiveRules') }}
                                 </p>
                               </div>
@@ -6551,14 +6737,17 @@ function preserveShallowestPathOrder(paths: string[]) {
                   <ElButton @click="filterPolicyBatchDialogOpen = false">
                     {{ t('protection.backupsPage.btnCancel') }}
                   </ElButton>
-                  <ElButton type="primary" @click="applyBatchFilterPolicy">
+                  <ElButton
+                    type="primary"
+                    @click="applyBatchFilterPolicy"
+                  >
                     {{ t('protection.backupsPage.btnConfirm') }}
                   </ElButton>
                 </template>
               </el-dialog>
 
               <el-table
-          v-table-overflow-title
+                v-table-overflow-title
                 :data="filteredFilterPolicyGroups"
                 row-key="key"
                 stripe
@@ -6566,17 +6755,36 @@ function preserveShallowestPathOrder(paths: string[]) {
                 class="hfl-list-table create-source-config-table filter-policy-config-table"
                 @selection-change="onFilterPolicyGroupSelectionChange"
               >
-                <el-table-column type="selection" width="35" fixed="left" reserve-selection />
-                <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="162" fixed="left">
+                <el-table-column
+                  type="selection"
+                  width="35"
+                  fixed="left"
+                  reserve-selection
+                />
+                <el-table-column
+                  :label="t('protection.backupsPage.colBackupSource')"
+                  min-width="162"
+                  fixed="left"
+                >
                   <template #default="{ row: group }">
                     <div class="backup-source-cell">
                       <div class="backup-source-cell__body">
-                        <span class="create-backup-source-name" :title="group.sourceName">{{ group.sourceName }}</span>
+                        <span
+                          class="create-backup-source-name"
+                          :title="group.sourceName"
+                        >{{ group.sourceName }}</span>
                         <span class="create-backup-source-meta-row">
-                          <el-tag size="small" effect="plain" class="create-backup-source-type-tag">
+                          <el-tag
+                            size="small"
+                            effect="plain"
+                            class="create-backup-source-type-tag"
+                          >
                             {{ backupSourceTypeLabel(group.sourceType) }}
                           </el-tag>
-                          <span v-if="group.platform" class="create-backup-source-platform">
+                          <span
+                            v-if="group.platform"
+                            class="create-backup-source-platform"
+                          >
                             <AgentPlatformBrandIcon :os="group.platform" />
                           </span>
                         </span>
@@ -6614,13 +6822,18 @@ function preserveShallowestPathOrder(paths: string[]) {
                             />
                             <span class="create-source-dir-preview__path hfl-table-cell-mono">{{ entry.path }}</span>
                           </div>
-                          <div v-if="group.entries.length > 3" class="create-source-dir-preview__more">
+                          <div
+                            v-if="group.entries.length > 3"
+                            class="create-source-dir-preview__more"
+                          >
                             {{ t('protection.backupsPage.moreDirs', { n: group.entries.length - 3 }) }}
                           </div>
                         </div>
                       </template>
                       <div class="create-table-info-popover create-table-info-popover--dirs create-table-info-popover--selected-paths">
-                        <div class="create-table-info-popover__summary">{{ backupDirPopoverSummary(group.entries) }}</div>
+                        <div class="create-table-info-popover__summary">
+                          {{ backupDirPopoverSummary(group.entries) }}
+                        </div>
                         <div
                           v-for="entry in group.entries"
                           :key="entry.key"
@@ -6649,88 +6862,112 @@ function preserveShallowestPathOrder(paths: string[]) {
                     <div class="create-config-summary-cell">
                       <div class="create-config-select-row">
                         <div class="create-config-select-hover-target hfl-table-no-tooltip">
-                              <el-select
-                                :model-value="groupPolicyId(group)"
-                                filterable
-                                clearable
-                                :placeholder="t('protection.backupsPage.phPolicyForDir')"
-                                class="target-picker-grid__target"
+                          <el-select
+                            :model-value="groupPolicyId(group)"
+                            filterable
+                            clearable
+                            :placeholder="t('protection.backupsPage.phPolicyForDir')"
+                            class="target-picker-grid__target"
+                            placement="bottom-start"
+                            popper-class="create-policy-select-popper"
+                            @update:model-value="setGroupPolicyId(group, String($event ?? ''))"
+                            @visible-change="handleConfigSelectVisibleChange"
+                          >
+                            <el-option
+                              v-for="pol in realPolicies"
+                              :key="pol.id"
+                              :label="pol.name"
+                              :value="pol.id"
+                            >
+                              <HflPopover
+                                ref="optionPopoverRefs"
+                                trigger="hover"
                                 placement="bottom-start"
-                                popper-class="create-policy-select-popper"
-                                @update:model-value="setGroupPolicyId(group, String($event ?? ''))"
-                                @visible-change="handleConfigSelectVisibleChange"
+                                :fallback-placements="['top-start', 'right-start']"
+                                :width="420"
+                                :persistent="false"
+                                popper-class="create-policy-option-popper"
                               >
-                                <el-option
-                                  v-for="pol in realPolicies"
-                                  :key="pol.id"
-                                  :label="pol.name"
-                                  :value="pol.id"
-                                >
-                                  <HflPopover ref="optionPopoverRefs" trigger="hover" placement="bottom-start" :fallback-placements="['top-start', 'right-start']" :width="420" :persistent="false" popper-class="create-policy-option-popper">
-                                    <template #reference>
-                                      <div class="create-policy-option" @pointerdown.capture="hideOptionPopovers">
-                                        <div class="create-policy-option__head">
-                                          <span class="create-policy-option__name">{{ pol.name }}</span>
-                                          <el-tag v-bind="policyStateTagAttrs(pol.isActive)" size="small">
-                                            {{ policyStateLabel(pol.isActive) }}
-                                          </el-tag>
-                                        </div>
-                                        <div class="create-policy-option__summary">{{ policyOptionSummary(pol) }}</div>
-                                      </div>
-                                    </template>
-                                    <div class="create-policy-detail-popover">
-                                      <div class="create-policy-detail-popover__head">
-                                        <div class="create-policy-detail-popover__title">{{ pol.name }}</div>
-                                        <el-tag v-bind="policyStateTagAttrs(pol.isActive)" size="small">
-                                          {{ policyStateLabel(pol.isActive) }}
-                                        </el-tag>
-                                      </div>
-                                      <div class="create-policy-detail-popover__sections">
-                                        <section
-                                          v-for="row in policyDetailRows(pol)"
-                                          :key="row.label"
-                                          class="create-policy-detail-popover__section create-policy-detail-popover__section--line"
-                                        >
-                                          <span class="create-policy-detail-popover__section-title">{{ row.label }}:</span>
-                                          <el-tag
-                                            v-if="row.state !== undefined"
-                                            size="small"
-                                            v-bind="policyStateTagAttrs(Boolean(row.state))"
-                                          >
-                                            {{ row.value }}
-                                          </el-tag>
-                                          <span
-                                            v-else
-                                            class="create-policy-detail-popover__value"
-                                            :class="{ 'create-policy-detail-popover__value--mono': row.mono }"
-                                          >{{ row.value }}</span>
-                                        </section>
-                                        <section class="create-policy-detail-popover__section">
-                                          <div class="create-policy-detail-popover__section-title">
-                                            {{ t('protection.policiesPage.fieldRetention') }}:
-                                          </div>
-                                          <div class="create-policy-detail-popover__retention-box">
-                                            <div class="policy-retention-detail-list">
-                                              <div
-                                                v-for="line in policyRetentionDetailLines(pol)"
-                                                :key="`${line.label || ''}${line.text}`"
-                                                class="policy-retention-detail-list__line"
-                                                :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
-                                              >
-                                                <span v-if="line.label" class="policy-retention-detail-list__label">{{ line.label }}</span>
-                                                <span class="policy-retention-detail-list__text">{{ line.text }}</span>
-                                              </div>
-                                            </div>
-                                          </div>
-                                        </section>
-                                      </div>
+                                <template #reference>
+                                  <div
+                                    class="create-policy-option"
+                                    @pointerdown.capture="hideOptionPopovers"
+                                  >
+                                    <div class="create-policy-option__head">
+                                      <span class="create-policy-option__name">{{ pol.name }}</span>
+                                      <el-tag
+                                        v-bind="policyStateTagAttrs(pol.isActive)"
+                                        size="small"
+                                      >
+                                        {{ policyStateLabel(pol.isActive) }}
+                                      </el-tag>
                                     </div>
-                                  </HflPopover>
-                                </el-option>
-                                <template #empty>
-                                  {{ realPolicies.length ? t('protection.backupsPage.policiesNoMatch') : t('protection.backupsPage.policyTemplatesEmpty') }}
+                                    <div class="create-policy-option__summary">
+                                      {{ policyOptionSummary(pol) }}
+                                    </div>
+                                  </div>
                                 </template>
-                              </el-select>
+                                <div class="create-policy-detail-popover">
+                                  <div class="create-policy-detail-popover__head">
+                                    <div class="create-policy-detail-popover__title">
+                                      {{ pol.name }}
+                                    </div>
+                                    <el-tag
+                                      v-bind="policyStateTagAttrs(pol.isActive)"
+                                      size="small"
+                                    >
+                                      {{ policyStateLabel(pol.isActive) }}
+                                    </el-tag>
+                                  </div>
+                                  <div class="create-policy-detail-popover__sections">
+                                    <section
+                                      v-for="row in policyDetailRows(pol)"
+                                      :key="row.label"
+                                      class="create-policy-detail-popover__section create-policy-detail-popover__section--line"
+                                    >
+                                      <span class="create-policy-detail-popover__section-title">{{ row.label }}:</span>
+                                      <el-tag
+                                        v-if="row.state !== undefined"
+                                        size="small"
+                                        v-bind="policyStateTagAttrs(Boolean(row.state))"
+                                      >
+                                        {{ row.value }}
+                                      </el-tag>
+                                      <span
+                                        v-else
+                                        class="create-policy-detail-popover__value"
+                                        :class="{ 'create-policy-detail-popover__value--mono': row.mono }"
+                                      >{{ row.value }}</span>
+                                    </section>
+                                    <section class="create-policy-detail-popover__section">
+                                      <div class="create-policy-detail-popover__section-title">
+                                        {{ t('protection.policiesPage.fieldRetention') }}:
+                                      </div>
+                                      <div class="create-policy-detail-popover__retention-box">
+                                        <div class="policy-retention-detail-list">
+                                          <div
+                                            v-for="line in policyRetentionDetailLines(pol)"
+                                            :key="`${line.label || ''}${line.text}`"
+                                            class="policy-retention-detail-list__line"
+                                            :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
+                                          >
+                                            <span
+                                              v-if="line.label"
+                                              class="policy-retention-detail-list__label"
+                                            >{{ line.label }}</span>
+                                            <span class="policy-retention-detail-list__text">{{ line.text }}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </section>
+                                  </div>
+                                </div>
+                              </HflPopover>
+                            </el-option>
+                            <template #empty>
+                              {{ realPolicies.length ? t('protection.backupsPage.policiesNoMatch') : t('protection.backupsPage.policyTemplatesEmpty') }}
+                            </template>
+                          </el-select>
                         </div>
                         <ElButton
                           text
@@ -6742,7 +6979,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                           :disabled="policiesRefreshing"
                           @click.stop="refreshWizardPolicies"
                         >
-                          <RefreshCw :size="15" stroke-width="2" :class="{ 'is-spinning': policiesRefreshing }" />
+                          <RefreshCw
+                            :size="15"
+                            stroke-width="2"
+                            :class="{ 'is-spinning': policiesRefreshing }"
+                          />
                         </ElButton>
                       </div>
                       <HflPopover
@@ -6759,7 +7000,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                               class="wizard-summary-cell wizard-summary-cell--inline"
                               :class="Boolean(getRealPolicy(groupPolicyId(group))?.isActive) ? 'wizard-summary-cell--online' : 'wizard-summary-cell--offline'"
                             >
-                              <el-tag v-bind="policyStateTagAttrs(Boolean(getRealPolicy(groupPolicyId(group))?.isActive))" size="small">
+                              <el-tag
+                                v-bind="policyStateTagAttrs(Boolean(getRealPolicy(groupPolicyId(group))?.isActive))"
+                                size="small"
+                              >
                                 {{ policyStateLabel(Boolean(getRealPolicy(groupPolicyId(group))?.isActive)) }}
                               </el-tag>
                               <span class="wizard-summary-cell__detail">
@@ -6770,7 +7014,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                         </template>
                         <div class="create-policy-detail-popover">
                           <div class="create-policy-detail-popover__head">
-                            <div class="create-policy-detail-popover__title">{{ getRealPolicy(groupPolicyId(group))?.name }}</div>
+                            <div class="create-policy-detail-popover__title">
+                              {{ getRealPolicy(groupPolicyId(group))?.name }}
+                            </div>
                             <el-tag
                               v-if="getRealPolicy(groupPolicyId(group))"
                               size="small"
@@ -6811,7 +7057,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     class="policy-retention-detail-list__line"
                                     :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
                                   >
-                                    <span v-if="line.label" class="policy-retention-detail-list__label">{{ line.label }}</span>
+                                    <span
+                                      v-if="line.label"
+                                      class="policy-retention-detail-list__label"
+                                    >{{ line.label }}</span>
                                     <span class="policy-retention-detail-list__text">{{ line.text }}</span>
                                   </div>
                                 </div>
@@ -6820,7 +7069,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                           </div>
                         </div>
                       </HflPopover>
-                      <span v-else class="create-config-summary-line create-config-summary-line--empty hfl-table-no-tooltip">
+                      <span
+                        v-else
+                        class="create-config-summary-line create-config-summary-line--empty hfl-table-no-tooltip"
+                      >
                         {{ policyCompactSummary(group) }}
                       </span>
                     </div>
@@ -6835,99 +7087,130 @@ function preserveShallowestPathOrder(paths: string[]) {
                     <div class="create-config-summary-cell">
                       <div class="create-config-select-row">
                         <div class="create-config-select-hover-target hfl-table-no-tooltip">
-                              <el-select
-                                :model-value="groupFilterId(group)"
-                                filterable
-                                clearable
-                                :placeholder="t('protection.backupsPage.phFilterForDir')"
-                                class="target-picker-grid__target"
+                          <el-select
+                            :model-value="groupFilterId(group)"
+                            filterable
+                            clearable
+                            :placeholder="t('protection.backupsPage.phFilterForDir')"
+                            class="target-picker-grid__target"
+                            placement="bottom-start"
+                            popper-class="create-policy-select-popper"
+                            @update:model-value="(value) => setGroupFilterId(group, String(value || ''))"
+                            @visible-change="handleConfigSelectVisibleChange"
+                          >
+                            <el-option
+                              v-for="gf in realFilters"
+                              :key="gf.id"
+                              :label="gf.name"
+                              :value="gf.id"
+                            >
+                              <HflPopover
+                                ref="optionPopoverRefs"
+                                trigger="hover"
                                 placement="bottom-start"
-                                popper-class="create-policy-select-popper"
-                                @update:model-value="(value) => setGroupFilterId(group, String(value || ''))"
-                                @visible-change="handleConfigSelectVisibleChange"
+                                :fallback-placements="['top-start', 'right-start']"
+                                :width="460"
+                                :persistent="false"
+                                popper-class="create-policy-option-popper"
                               >
-                                <el-option
-                                  v-for="gf in realFilters"
-                                  :key="gf.id"
-                                  :label="gf.name"
-                                  :value="gf.id"
-                                >
-                                  <HflPopover ref="optionPopoverRefs" trigger="hover" placement="bottom-start" :fallback-placements="['top-start', 'right-start']" :width="460" :persistent="false" popper-class="create-policy-option-popper">
-                                    <template #reference>
-                                      <div class="create-policy-option" @pointerdown.capture="hideOptionPopovers">
-                                        <div class="create-policy-option__head">
-                                          <span class="create-policy-option__name">{{ gf.name }}</span>
-                                          <el-tag v-bind="policyStateTagAttrs(gf.isActive)" size="small">
-                                            {{ policyStateLabel(gf.isActive) }}
-                                          </el-tag>
-                                        </div>
-                                        <div class="create-filter-rules-option">
-                                          <span class="create-filter-rules-option__prefix">{{ t('protection.policiesPage.filterCustomTypeExclude') }}:</span>
-                                          <div v-if="filterDisplayedRuleLines(gf).length" class="create-filter-rules-option__list">
-                                            <code
-                                              v-for="(line, index) in filterDisplayedRuleLines(gf)"
-                                              :key="`${index}-${line}`"
-                                              class="create-filter-rules-option__rule"
-                                            >
-                                              {{ line }}
-                                            </code>
-                                          </div>
-                                          <span v-else class="create-filter-rules-option__empty">
-                                            {{ t('protection.policiesPage.filterNoActiveRules') }}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    </template>
-                                    <div class="create-policy-detail-popover">
-                                      <div class="create-policy-detail-popover__head">
-                                        <div class="create-policy-detail-popover__title">{{ gf.name }}</div>
-                                        <el-tag v-bind="policyStateTagAttrs(gf.isActive)" size="small">
-                                          {{ policyStateLabel(gf.isActive) }}
-                                        </el-tag>
-                                      </div>
-                                      <div class="create-policy-detail-popover__sections">
-                                        <section
-                                          v-for="row in filterHoverRows(gf)"
-                                          :key="row.label"
-                                          class="create-policy-detail-popover__section create-policy-detail-popover__section--filter-line"
-                                        >
-                                          <span class="create-policy-detail-popover__section-title">{{ row.label }}:</span>
-                                          <el-tag
-                                            v-if="row.enabled"
-                                            size="small"
-                                            v-bind="policyStateTagAttrs(true)"
-                                          >
-                                            {{ row.value }}
-                                          </el-tag>
-                                          <span v-else class="create-policy-detail-popover__value">{{ row.value }}</span>
-                                        </section>
-                                        <section class="create-policy-detail-popover__section">
-                                          <div class="create-policy-detail-popover__section-title">
-                                            {{ t('protection.policiesPage.filterRulesPreviewTitle') }}:
-                                          </div>
-                                          <div class="create-filter-rules-preview">
-                                            <template v-if="filterCompiledRuleLines(gf).length">
-                                              <code
-                                                v-for="(line, index) in filterCompiledRuleLines(gf)"
-                                                :key="`${index}-${line}`"
-                                                class="create-filter-rules-preview__line"
-                                              >
-                                                {{ line }}
-                                              </code>
-                                            </template>
-                                            <p v-else class="create-filter-rules-preview__empty">
-                                              {{ t('protection.policiesPage.filterNoActiveRules') }}
-                                            </p>
-                                          </div>
-                                        </section>
-                                      </div>
+                                <template #reference>
+                                  <div
+                                    class="create-policy-option"
+                                    @pointerdown.capture="hideOptionPopovers"
+                                  >
+                                    <div class="create-policy-option__head">
+                                      <span class="create-policy-option__name">{{ gf.name }}</span>
+                                      <el-tag
+                                        v-bind="policyStateTagAttrs(gf.isActive)"
+                                        size="small"
+                                      >
+                                        {{ policyStateLabel(gf.isActive) }}
+                                      </el-tag>
                                     </div>
-                                  </HflPopover>
-                                </el-option>
-                                <template #empty>
-                                  {{ realFilters.length ? t('protection.backupsPage.filtersNoMatch') : t('protection.backupsPage.filterRulesEmpty') }}
+                                    <div class="create-filter-rules-option">
+                                      <span class="create-filter-rules-option__prefix">{{ t('protection.policiesPage.filterCustomTypeExclude') }}:</span>
+                                      <div
+                                        v-if="filterDisplayedRuleLines(gf).length"
+                                        class="create-filter-rules-option__list"
+                                      >
+                                        <code
+                                          v-for="(line, index) in filterDisplayedRuleLines(gf)"
+                                          :key="`${index}-${line}`"
+                                          class="create-filter-rules-option__rule"
+                                        >
+                                          {{ line }}
+                                        </code>
+                                      </div>
+                                      <span
+                                        v-else
+                                        class="create-filter-rules-option__empty"
+                                      >
+                                        {{ t('protection.policiesPage.filterNoActiveRules') }}
+                                      </span>
+                                    </div>
+                                  </div>
                                 </template>
-                              </el-select>
+                                <div class="create-policy-detail-popover">
+                                  <div class="create-policy-detail-popover__head">
+                                    <div class="create-policy-detail-popover__title">
+                                      {{ gf.name }}
+                                    </div>
+                                    <el-tag
+                                      v-bind="policyStateTagAttrs(gf.isActive)"
+                                      size="small"
+                                    >
+                                      {{ policyStateLabel(gf.isActive) }}
+                                    </el-tag>
+                                  </div>
+                                  <div class="create-policy-detail-popover__sections">
+                                    <section
+                                      v-for="row in filterHoverRows(gf)"
+                                      :key="row.label"
+                                      class="create-policy-detail-popover__section create-policy-detail-popover__section--filter-line"
+                                    >
+                                      <span class="create-policy-detail-popover__section-title">{{ row.label }}:</span>
+                                      <el-tag
+                                        v-if="row.enabled"
+                                        size="small"
+                                        v-bind="policyStateTagAttrs(true)"
+                                      >
+                                        {{ row.value }}
+                                      </el-tag>
+                                      <span
+                                        v-else
+                                        class="create-policy-detail-popover__value"
+                                      >{{ row.value }}</span>
+                                    </section>
+                                    <section class="create-policy-detail-popover__section">
+                                      <div class="create-policy-detail-popover__section-title">
+                                        {{ t('protection.policiesPage.filterRulesPreviewTitle') }}:
+                                      </div>
+                                      <div class="create-filter-rules-preview">
+                                        <template v-if="filterCompiledRuleLines(gf).length">
+                                          <code
+                                            v-for="(line, index) in filterCompiledRuleLines(gf)"
+                                            :key="`${index}-${line}`"
+                                            class="create-filter-rules-preview__line"
+                                          >
+                                            {{ line }}
+                                          </code>
+                                        </template>
+                                        <p
+                                          v-else
+                                          class="create-filter-rules-preview__empty"
+                                        >
+                                          {{ t('protection.policiesPage.filterNoActiveRules') }}
+                                        </p>
+                                      </div>
+                                    </section>
+                                  </div>
+                                </div>
+                              </HflPopover>
+                            </el-option>
+                            <template #empty>
+                              {{ realFilters.length ? t('protection.backupsPage.filtersNoMatch') : t('protection.backupsPage.filterRulesEmpty') }}
+                            </template>
+                          </el-select>
                         </div>
                         <ElButton
                           text
@@ -6939,7 +7222,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                           :disabled="filtersRefreshing"
                           @click.stop="refreshWizardFilters"
                         >
-                          <RefreshCw :size="15" stroke-width="2" :class="{ 'is-spinning': filtersRefreshing }" />
+                          <RefreshCw
+                            :size="15"
+                            stroke-width="2"
+                            :class="{ 'is-spinning': filtersRefreshing }"
+                          />
                         </ElButton>
                       </div>
                       <HflPopover
@@ -6956,7 +7243,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                               class="wizard-summary-cell wizard-summary-cell--inline"
                               :class="Boolean(getRealFilter(groupFilterId(group))?.isActive) ? 'wizard-summary-cell--online' : 'wizard-summary-cell--offline'"
                             >
-                              <el-tag v-bind="policyStateTagAttrs(Boolean(getRealFilter(groupFilterId(group))?.isActive))" size="small">
+                              <el-tag
+                                v-bind="policyStateTagAttrs(Boolean(getRealFilter(groupFilterId(group))?.isActive))"
+                                size="small"
+                              >
                                 {{ policyStateLabel(Boolean(getRealFilter(groupFilterId(group))?.isActive)) }}
                               </el-tag>
                               <span class="wizard-summary-cell__detail">
@@ -6967,7 +7257,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                         </template>
                         <div class="create-policy-detail-popover">
                           <div class="create-policy-detail-popover__head">
-                            <div class="create-policy-detail-popover__title">{{ getRealFilter(groupFilterId(group))?.name }}</div>
+                            <div class="create-policy-detail-popover__title">
+                              {{ getRealFilter(groupFilterId(group))?.name }}
+                            </div>
                             <el-tag
                               v-if="getRealFilter(groupFilterId(group))"
                               size="small"
@@ -6990,7 +7282,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                               >
                                 {{ row.value }}
                               </el-tag>
-                              <span v-else class="create-policy-detail-popover__value">{{ row.value }}</span>
+                              <span
+                                v-else
+                                class="create-policy-detail-popover__value"
+                              >{{ row.value }}</span>
                             </section>
                             <section class="create-policy-detail-popover__section">
                               <div class="create-policy-detail-popover__section-title">
@@ -7006,7 +7301,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     {{ line }}
                                   </code>
                                 </template>
-                                <p v-else class="create-filter-rules-preview__empty">
+                                <p
+                                  v-else
+                                  class="create-filter-rules-preview__empty"
+                                >
                                   {{ t('protection.policiesPage.filterNoActiveRules') }}
                                 </p>
                               </div>
@@ -7014,7 +7312,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                           </div>
                         </div>
                       </HflPopover>
-                      <span v-else class="create-config-summary-line create-config-summary-line--empty hfl-table-no-tooltip">
+                      <span
+                        v-else
+                        class="create-config-summary-line create-config-summary-line--empty hfl-table-no-tooltip"
+                      >
                         {{ filterCompactSummary(group) }}
                       </span>
                     </div>
@@ -7086,27 +7387,35 @@ function preserveShallowestPathOrder(paths: string[]) {
           destroy-on-close
           class="dp-add-target-dialog create-policy-dialog dp-dialog-soft-bg"
         >
-          <p class="create-policy-dialog__desc">{{ addPolicyDialogDesc }}</p>
+          <p class="create-policy-dialog__desc">
+            {{ addPolicyDialogDesc }}
+          </p>
 
           <div ref="addPolicyDialogRef">
-          <ProtectionPolicyEditorForm
-            v-model:policy-form="addPolicyForm"
-            v-model:filter-form="addFileFilterForm"
-            :show-backup="addPolicyCreateKind === 'backup'"
-            :show-filter="addPolicyCreateKind === 'filter'"
-            variant="dialog"
-            :show-cron-help="false"
-            cron-input-id="create-backup-policy-cron"
-            :name-error="addPolicyErrors.name"
-            :schedule-error="addPolicyErrors.schedule"
-            :retention-error="addPolicyErrors.retention"
-            @clear-name-error="clearAddPolicyError('name')"
-          />
+            <ProtectionPolicyEditorForm
+              v-model:policy-form="addPolicyForm"
+              v-model:filter-form="addFileFilterForm"
+              :show-backup="addPolicyCreateKind === 'backup'"
+              :show-filter="addPolicyCreateKind === 'filter'"
+              variant="dialog"
+              :show-cron-help="false"
+              cron-input-id="create-backup-policy-cron"
+              :name-error="addPolicyErrors.name"
+              :schedule-error="addPolicyErrors.schedule"
+              :retention-error="addPolicyErrors.retention"
+              @clear-name-error="clearAddPolicyError('name')"
+            />
           </div>
           <template #footer>
             <div class="flex justify-end gap-2">
-              <ElButton @click="closeAddFilterDialog">{{ t('protection.backupsPage.btnCancel') }}</ElButton>
-              <ElButton type="primary" :loading="addPolicySaving" @click="submitAddFilterDialog">
+              <ElButton @click="closeAddFilterDialog">
+                {{ t('protection.backupsPage.btnCancel') }}
+              </ElButton>
+              <ElButton
+                type="primary"
+                :loading="addPolicySaving"
+                @click="submitAddFilterDialog"
+              >
                 {{ addPolicySaveLabel }}
               </ElButton>
             </div>
@@ -7118,7 +7427,10 @@ function preserveShallowestPathOrder(paths: string[]) {
           class="dp-wizard-pane"
           :aria-busy="targetValidationInProgress"
         >
-          <div v-if="!wizardDirEntries.length" class="text-sm text-slate-400 py-8 text-center border border-dashed border-slate-200 rounded-md">
+          <div
+            v-if="!wizardDirEntries.length"
+            class="text-sm text-slate-400 py-8 text-center border border-dashed border-slate-200 rounded-md"
+          >
             {{ t('protection.backupsPage.addedEmpty') }}
           </div>
           <div v-else>
@@ -7126,14 +7438,18 @@ function preserveShallowestPathOrder(paths: string[]) {
               <div class="create-source-config-selection">
                 {{ t('protection.backupsPage.selectedSourceCount', { selected: checkedTargetGroups.length, total: wizardSourceGroups.length }) }}
               </div>
-              <div class="create-source-config-toolbar__divider"></div>
+              <div class="create-source-config-toolbar__divider" />
               <ElButton
                 type="primary"
                 class="hfl-btn-with-icon dp-create-action-btn"
                 :disabled="targetValidationInProgress"
                 @click="goToStorageRepositoryPage"
               >
-                <Plus :size="16" stroke-width="2" class="shrink-0" />
+                <Plus
+                  :size="16"
+                  stroke-width="2"
+                  class="shrink-0"
+                />
                 <span>{{ t('protection.backupsPage.btnAddTarget') }}</span>
               </ElButton>
               <ElButton
@@ -7142,20 +7458,27 @@ function preserveShallowestPathOrder(paths: string[]) {
                 :disabled="targetValidationInProgress || checkedTargetGroups.length === 0"
                 @click="openBatchTargetDialog"
               >
-                <Database :size="16" stroke-width="2" class="shrink-0" />
+                <Database
+                  :size="16"
+                  stroke-width="2"
+                  class="shrink-0"
+                />
                 <span>{{ t('protection.backupsPage.batchAssignTitle') }}</span>
               </ElButton>
               <div class="hfl-list-toolbar__right">
                 <ElInput
                   v-model="targetSourceSearch"
                   clearable
-                  @clear="clearTargetSourceSearch"
                   size="small"
                   :placeholder="t('protection.backupsPage.phSearchCreateSources')"
                   class="create-source-config-search hfl-list-search"
+                  @clear="clearTargetSourceSearch"
                 >
                   <template #prefix>
-                    <Search :size="16" class="hfl-list-search__icon" />
+                    <Search
+                      :size="16"
+                      class="hfl-list-search__icon"
+                    />
                   </template>
                 </ElInput>
               </div>
@@ -7197,11 +7520,14 @@ function preserveShallowestPathOrder(paths: string[]) {
               destroy-on-close
               class="target-batch-dialog dp-dialog-soft-bg"
             >
-              <ElForm label-position="top" class="target-batch-form">
+              <ElForm
+                label-position="top"
+                class="target-batch-form"
+              >
                 <TargetRepositoryPicker
-                  :model-value="batchTargetPicker.targetId"
                   v-model:repo-type="batchTargetPicker.repoType"
                   v-model:nas-mode="batchNasTargetMode"
+                  :model-value="batchTargetPicker.targetId"
                   :targets="targetOptionsForBatch()"
                   :selected-target="batchSelectedTarget"
                   :repo-type-options="repoTypeOptions"
@@ -7227,20 +7553,28 @@ function preserveShallowestPathOrder(paths: string[]) {
                     v-model="batchRepositoryEndpointType"
                     class="target-endpoint-choice__options"
                   >
-                    <ElRadio value="external" border>
+                    <ElRadio
+                      value="external"
+                      border
+                    >
                       <span class="target-endpoint-choice__option">
                         <strong>{{ t('addS3Repo.endpointExternal') }}</strong>
                         <span>{{ targetExternalEndpoint(batchSelectedTarget) }}</span>
                       </span>
                     </ElRadio>
-                    <ElRadio value="internal" border>
+                    <ElRadio
+                      value="internal"
+                      border
+                    >
                       <span class="target-endpoint-choice__option">
                         <strong>{{ t('addS3Repo.endpointInternal') }}</strong>
                         <span>{{ targetInternalEndpoint(batchSelectedTarget) }}</span>
                       </span>
                     </ElRadio>
                   </ElRadioGroup>
-                  <p class="target-endpoint-choice__hint">{{ t('addS3Repo.hintEndpointType') }}</p>
+                  <p class="target-endpoint-choice__hint">
+                    {{ t('addS3Repo.hintEndpointType') }}
+                  </p>
                 </ElFormItem>
               </ElForm>
               <template #footer>
@@ -7258,7 +7592,7 @@ function preserveShallowestPathOrder(paths: string[]) {
             </el-dialog>
 
             <el-table
-          v-table-overflow-title
+              v-table-overflow-title
               :data="filteredTargetGroups"
               row-key="key"
               stripe
@@ -7267,17 +7601,36 @@ function preserveShallowestPathOrder(paths: string[]) {
               class="hfl-list-table create-source-config-table filter-policy-config-table create-target-config-table"
               @selection-change="onTargetGroupSelectionChange"
             >
-              <el-table-column type="selection" width="35" fixed="left" reserve-selection />
-              <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="200" fixed="left">
+              <el-table-column
+                type="selection"
+                width="35"
+                fixed="left"
+                reserve-selection
+              />
+              <el-table-column
+                :label="t('protection.backupsPage.colBackupSource')"
+                min-width="200"
+                fixed="left"
+              >
                 <template #default="{ row: group }">
                   <div class="backup-source-cell">
                     <div class="backup-source-cell__body">
-                      <span class="create-backup-source-name" :title="group.sourceName">{{ group.sourceName }}</span>
+                      <span
+                        class="create-backup-source-name"
+                        :title="group.sourceName"
+                      >{{ group.sourceName }}</span>
                       <span class="create-backup-source-meta-row">
-                        <el-tag size="small" effect="plain" class="create-backup-source-type-tag">
+                        <el-tag
+                          size="small"
+                          effect="plain"
+                          class="create-backup-source-type-tag"
+                        >
                           {{ backupSourceTypeLabel(group.sourceType) }}
                         </el-tag>
-                        <span v-if="group.platform" class="create-backup-source-platform">
+                        <span
+                          v-if="group.platform"
+                          class="create-backup-source-platform"
+                        >
                           <AgentPlatformBrandIcon :os="group.platform" />
                         </span>
                       </span>
@@ -7285,9 +7638,16 @@ function preserveShallowestPathOrder(paths: string[]) {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.labelBackupDirs')" min-width="200">
+              <el-table-column
+                :label="t('protection.backupsPage.labelBackupDirs')"
+                min-width="200"
+              >
                 <template #default="{ row: group }">
-                  <HflPopover trigger="hover" placement="top-start" :width="520">
+                  <HflPopover
+                    trigger="hover"
+                    placement="top-start"
+                    :width="520"
+                  >
                     <template #reference>
                       <div class="create-source-dir-preview">
                         <div class="create-source-dir-preview__count">
@@ -7306,13 +7666,18 @@ function preserveShallowestPathOrder(paths: string[]) {
                           />
                           <span class="create-source-dir-preview__path hfl-table-cell-mono">{{ entry.path }}</span>
                         </div>
-                        <div v-if="group.entries.length > 3" class="create-source-dir-preview__more">
+                        <div
+                          v-if="group.entries.length > 3"
+                          class="create-source-dir-preview__more"
+                        >
                           {{ t('protection.backupsPage.moreDirs', { n: group.entries.length - 3 }) }}
                         </div>
                       </div>
                     </template>
                     <div class="create-table-info-popover create-table-info-popover--dirs create-table-info-popover--selected-paths">
-                      <div class="create-table-info-popover__summary">{{ backupDirPopoverSummary(group.entries) }}</div>
+                      <div class="create-table-info-popover__summary">
+                        {{ backupDirPopoverSummary(group.entries) }}
+                      </div>
                       <div
                         v-for="entry in group.entries"
                         :key="entry.key"
@@ -7332,7 +7697,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                   </HflPopover>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.labelTargetRepository')" min-width="220">
+              <el-table-column
+                :label="t('protection.backupsPage.labelTargetRepository')"
+                min-width="220"
+              >
                 <template #default="{ row: group }">
                   <div class="target-select-with-meta">
                     <HflPopover
@@ -7348,7 +7716,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                             class="wizard-summary-cell"
                             :class="`wizard-summary-cell--${targetTone(getRealTarget(sourceTargetMap[group.key]))}`"
                           >
-                            <span class="wizard-summary-cell__dot" aria-hidden="true"></span>
+                            <span
+                              class="wizard-summary-cell__dot"
+                              aria-hidden="true"
+                            />
                             <div class="wizard-summary-cell__body">
                               <div class="wizard-summary-cell__name">
                                 {{ getRealTarget(sourceTargetMap[group.key])?.name }}
@@ -7371,7 +7742,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                       </template>
                       <TargetRepositoryDetailCard :target="getRealTarget(sourceTargetMap[group.key])!" />
                     </HflPopover>
-                    <span v-else class="target-assignment-empty">
+                    <span
+                      v-else
+                      class="target-assignment-empty"
+                    >
                       {{ t('protection.backupsPage.targetUnassigned') }}
                     </span>
                     <ElButton
@@ -7390,7 +7764,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                       class="target-assignment-issue"
                       role="status"
                     >
-                      <ShieldAlert :size="14" class="target-assignment-issue__icon" />
+                      <ShieldAlert
+                        :size="14"
+                        class="target-assignment-issue__icon"
+                      />
                       <span>{{ targetGroupIssue(group) }}</span>
                     </div>
                     <div
@@ -7438,7 +7815,10 @@ function preserveShallowestPathOrder(paths: string[]) {
           </div>
         </div>
 
-        <div v-if="createStep === 3" class="dp-wizard-pane">
+        <div
+          v-if="createStep === 3"
+          class="dp-wizard-pane"
+        >
           <p class="text-sm text-slate-500 mb-3 m-0">
             {{ t('protection.backupsPage.createRecoveryPlanLead') }}
           </p>
@@ -7447,41 +7827,57 @@ function preserveShallowestPathOrder(paths: string[]) {
               <div class="create-source-config-selection">
                 {{ t('protection.backupsPage.selectedSourceCount', { selected: checkedRecoveryPlanGroups.length, total: createRecoveryPlanGroups.length }) }}
               </div>
-              <div class="create-source-config-toolbar__divider"></div>
-              <ElDropdown trigger="click" @command="(command) => applyBatchRecoveryPlanEnabled(command === 'enable')">
+              <div class="create-source-config-toolbar__divider" />
+              <ElDropdown
+                trigger="click"
+                @command="(command) => applyBatchRecoveryPlanEnabled(command === 'enable')"
+              >
                 <ElButton class="hfl-btn-with-icon">
                   <span>{{ t('protection.backupsPage.btnBatchActions') }}</span>
-                  <ChevronDown :size="15" stroke-width="2" class="shrink-0" />
+                  <ChevronDown
+                    :size="15"
+                    stroke-width="2"
+                    class="shrink-0"
+                  />
                 </ElButton>
                 <template #dropdown>
                   <ElDropdownMenu>
-                    <ElDropdownItem command="enable" :disabled="checkedRecoveryPlanDisabledGroups.length === 0">
+                    <ElDropdownItem
+                      command="enable"
+                      :disabled="checkedRecoveryPlanDisabledGroups.length === 0"
+                    >
                       {{ t('protection.backupsPage.batchEnableRecoveryPlanAction') }}
                     </ElDropdownItem>
-                    <ElDropdownItem command="disable" :disabled="checkedRecoveryPlanEnabledGroups.length === 0">
+                    <ElDropdownItem
+                      command="disable"
+                      :disabled="checkedRecoveryPlanEnabledGroups.length === 0"
+                    >
                       {{ t('protection.backupsPage.batchDisableRecoveryPlanAction') }}
                     </ElDropdownItem>
                   </ElDropdownMenu>
-                  </template>
-                </ElDropdown>
+                </template>
+              </ElDropdown>
               <div class="hfl-list-toolbar__right">
                 <ElInput
                   v-model="recoveryPlanSourceSearch"
                   clearable
-                  @clear="clearRecoveryPlanSourceSearch"
                   size="small"
                   :placeholder="t('protection.backupsPage.phSearchCreateSources')"
                   class="create-source-config-search hfl-list-search"
+                  @clear="clearRecoveryPlanSourceSearch"
                 >
                   <template #prefix>
-                    <Search :size="16" class="hfl-list-search__icon" />
+                    <Search
+                      :size="16"
+                      class="hfl-list-search__icon"
+                    />
                   </template>
                 </ElInput>
               </div>
             </div>
             <el-table
-          v-table-overflow-title
               ref="createRecoveryPlanTableRef"
+              v-table-overflow-title
               :data="filteredRecoveryPlanGroups"
               row-key="key"
               stripe
@@ -7491,11 +7887,24 @@ function preserveShallowestPathOrder(paths: string[]) {
               @expand-change="onCreateRecoveryPlanExpandChange"
               @selection-change="onRecoveryPlanGroupSelectionChange"
             >
-              <el-table-column type="selection" width="35" fixed="left" reserve-selection />
-              <el-table-column type="expand" width="35" fixed="left" class-name="create-source-config-expand-column">
+              <el-table-column
+                type="selection"
+                width="35"
+                fixed="left"
+                reserve-selection
+              />
+              <el-table-column
+                type="expand"
+                width="35"
+                fixed="left"
+                class-name="create-source-config-expand-column"
+              >
                 <template #default="{ row: group }">
                   <div class="create-recovery-plan-expand">
-                    <div v-if="group.plan.enabled" class="create-recovery-config-panel">
+                    <div
+                      v-if="group.plan.enabled"
+                      class="create-recovery-config-panel"
+                    >
                       <div class="create-recovery-config-panel__head">
                         <div class="create-recovery-config-panel__title-wrap">
                           <div class="create-recovery-config-panel__title">
@@ -7518,13 +7927,19 @@ function preserveShallowestPathOrder(paths: string[]) {
                             :placeholder="t('protection.backupsPage.fileConflictPolicyPlaceholder')"
                             @update:model-value="(value) => updateRecoveryPlanConflictMode(group, value)"
                           >
-                            <el-option :label="t('protection.backupsPage.createRecoveryConflictSkip')" value="skip">
+                            <el-option
+                              :label="t('protection.backupsPage.createRecoveryConflictSkip')"
+                              value="skip"
+                            >
                               <div class="recovery-conflict-policy-option recovery-conflict-policy-option--skip">
                                 <ShieldCheck :size="14" />
                                 <span>{{ t('protection.backupsPage.createRecoveryConflictSkipFull') }}</span>
                               </div>
                             </el-option>
-                            <el-option :label="t('protection.backupsPage.createRecoveryConflictOverwrite')" value="overwrite">
+                            <el-option
+                              :label="t('protection.backupsPage.createRecoveryConflictOverwrite')"
+                              value="overwrite"
+                            >
                               <div class="recovery-conflict-policy-option recovery-conflict-policy-option--overwrite">
                                 <ShieldAlert :size="14" />
                                 <span>{{ t('protection.backupsPage.createRecoveryConflictOverwriteFull') }}</span>
@@ -7534,7 +7949,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                         </div>
                       </div>
                       <div class="create-recovery-dir-plan-stack">
-                        <div class="create-recovery-dir-plan-header" aria-hidden="true">
+                        <div
+                          class="create-recovery-dir-plan-header"
+                          aria-hidden="true"
+                        >
                           <span />
                           <span class="create-recovery-required-label">
                             {{ t('protection.backupsPage.createRecoveryPlanScopeCol') }}
@@ -7601,7 +8019,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     @blur="dirPlan.sourcePathValidation === 'pending' && validateCreateRecoverySourcePathInput(group, dirPlan)"
                                     @keydown.enter.prevent="validateCreateRecoverySourcePathInput(group, dirPlan)"
                                   >
-                                    <template v-if="isDirectoryLoading(recoveryDirPlanPickerKey(group, dirPlan, 'source'))" #suffix>
+                                    <template
+                                      v-if="isDirectoryLoading(recoveryDirPlanPickerKey(group, dirPlan, 'source'))"
+                                      #suffix
+                                    >
                                       <span class="create-recovery-path-input__checking">{{ t('common.loading') }}</span>
                                     </template>
                                     <template #prefix>
@@ -7676,7 +8097,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                                         :size="15"
                                         class="create-tree-node-content__icon hfl-dir-tree-node__icon create-dir-row__icon--file"
                                       />
-                                      <FolderOpen v-else :size="15" class="create-tree-node-content__icon hfl-dir-tree-node__icon create-dir-row__icon--folder" />
+                                      <FolderOpen
+                                        v-else
+                                        :size="15"
+                                        class="create-tree-node-content__icon hfl-dir-tree-node__icon create-dir-row__icon--folder"
+                                      />
                                       <div class="create-tree-node-content__text hfl-dir-tree-node__text">
                                         <span class="create-tree-node-content__label hfl-dir-tree-node__label">{{ data.label }}</span>
                                         <span
@@ -7728,7 +8153,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                               @update:model-value="(value) => onCreateRecoveryTargetHostChange(group, dirPlan, value)"
                             >
                               <template #label="{ label }">
-                                <span class="create-recovery-target-selected-label" :title="label">{{ label }}</span>
+                                <span
+                                  class="create-recovery-target-selected-label"
+                                  :title="label"
+                                >{{ label }}</span>
                               </template>
                               <template #header>
                                 <div class="create-recovery-target-quick-option">
@@ -7829,14 +8257,23 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 value="__load_more_error__"
                                 :label="t('protection.backupsPage.recoveryTargetLoadFailed')"
                               >
-                                <ElButton link type="primary" @click.stop="restoreTargetCatalog.retry">
+                                <ElButton
+                                  link
+                                  type="primary"
+                                  @click.stop="restoreTargetCatalog.retry"
+                                >
                                   {{ t('common.retry') }}
                                 </ElButton>
                               </el-option>
                               <template #empty>
                                 <div class="py-3 text-center text-xs text-slate-500">
                                   <span>{{ recoveryTargetError ? t('protection.backupsPage.recoveryTargetLoadFailed') : t('protection.backupsPage.recoveryTargetEmpty') }}</span>
-                                  <ElButton v-if="recoveryTargetError" link type="primary" @click.stop="restoreTargetCatalog.retry">
+                                  <ElButton
+                                    v-if="recoveryTargetError"
+                                    link
+                                    type="primary"
+                                    @click.stop="restoreTargetCatalog.retry"
+                                  >
                                     {{ t('common.retry') }}
                                   </ElButton>
                                 </div>
@@ -7873,7 +8310,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     @blur="dirPlan.restoreDirValidation === 'pending' && validateCreateRecoveryDestPathInput(group, dirPlan)"
                                     @keydown.enter.prevent="validateCreateRecoveryDestPathInput(group, dirPlan)"
                                   >
-                                    <template v-if="isDirectoryLoading(recoveryDirPlanPickerKey(group, dirPlan, 'dest'))" #suffix>
+                                    <template
+                                      v-if="isDirectoryLoading(recoveryDirPlanPickerKey(group, dirPlan, 'dest'))"
+                                      #suffix
+                                    >
                                       <span class="create-recovery-path-input__checking">{{ t('common.loading') }}</span>
                                     </template>
                                     <template #prefix>
@@ -7931,7 +8371,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 >
                                   <template #default="{ data }">
                                     <div class="create-tree-node-content hfl-dir-tree-node">
-                                      <FolderOpen :size="15" class="create-tree-node-content__icon hfl-dir-tree-node__icon" />
+                                      <FolderOpen
+                                        :size="15"
+                                        class="create-tree-node-content__icon hfl-dir-tree-node__icon"
+                                      />
                                       <div class="create-tree-node-content__text hfl-dir-tree-node__text">
                                         <span class="create-tree-node-content__label hfl-dir-tree-node__label">{{ data.label }}</span>
                                         <span class="create-tree-node-content__path hfl-dir-tree-node__path">{{ data.path }}</span>
@@ -7957,7 +8400,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                               </div>
                             </HflPopover>
                           </div>
-                          <div class="create-recovery-dir-plan-cell create-recovery-dir-plan-cell--actions" :data-label="t('protection.backupsPage.colActions')">
+                          <div
+                            class="create-recovery-dir-plan-cell create-recovery-dir-plan-cell--actions"
+                            :data-label="t('protection.backupsPage.colActions')"
+                          >
                             <ElButton
                               text
                               circle
@@ -7984,13 +8430,20 @@ function preserveShallowestPathOrder(paths: string[]) {
                         </div>
                       </div>
                     </div>
-                    <span v-else class="create-recovery-disabled-cell">
+                    <span
+                      v-else
+                      class="create-recovery-disabled-cell"
+                    >
                       {{ t('protection.backupsPage.createRecoveryPlanDisabled') }}
                     </span>
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="200" fixed="left">
+              <el-table-column
+                :label="t('protection.backupsPage.colBackupSource')"
+                min-width="200"
+                fixed="left"
+              >
                 <template #default="{ row: group }">
                   <button
                     type="button"
@@ -7999,12 +8452,22 @@ function preserveShallowestPathOrder(paths: string[]) {
                     @click.stop="requestToggleCreateRecoveryPlanRow(group)"
                   >
                     <div class="backup-source-cell__body">
-                      <span class="create-backup-source-name" :title="group.sourceName">{{ group.sourceName }}</span>
+                      <span
+                        class="create-backup-source-name"
+                        :title="group.sourceName"
+                      >{{ group.sourceName }}</span>
                       <span class="create-backup-source-meta-row">
-                        <el-tag size="small" effect="plain" class="create-backup-source-type-tag">
+                        <el-tag
+                          size="small"
+                          effect="plain"
+                          class="create-backup-source-type-tag"
+                        >
                           {{ backupSourceTypeLabel(group.sourceType) }}
                         </el-tag>
-                        <span v-if="group.platform" class="create-backup-source-platform">
+                        <span
+                          v-if="group.platform"
+                          class="create-backup-source-platform"
+                        >
                           <AgentPlatformBrandIcon :os="group.platform" />
                         </span>
                       </span>
@@ -8012,9 +8475,16 @@ function preserveShallowestPathOrder(paths: string[]) {
                   </button>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.labelBackupDirs')" min-width="200">
+              <el-table-column
+                :label="t('protection.backupsPage.labelBackupDirs')"
+                min-width="200"
+              >
                 <template #default="{ row: group }">
-                  <HflPopover trigger="hover" placement="top-start" :width="520">
+                  <HflPopover
+                    trigger="hover"
+                    placement="top-start"
+                    :width="520"
+                  >
                     <template #reference>
                       <div class="create-source-dir-preview">
                         <div class="create-source-dir-preview__count">
@@ -8033,13 +8503,18 @@ function preserveShallowestPathOrder(paths: string[]) {
                           />
                           <span class="create-source-dir-preview__path hfl-table-cell-mono">{{ entry.path }}</span>
                         </div>
-                        <div v-if="group.entries.length > 3" class="create-source-dir-preview__more">
+                        <div
+                          v-if="group.entries.length > 3"
+                          class="create-source-dir-preview__more"
+                        >
                           {{ t('protection.backupsPage.moreDirs', { n: group.entries.length - 3 }) }}
                         </div>
                       </div>
                     </template>
                     <div class="create-table-info-popover create-table-info-popover--dirs create-table-info-popover--selected-paths">
-                      <div class="create-table-info-popover__summary">{{ backupDirPopoverSummary(group.entries) }}</div>
+                      <div class="create-table-info-popover__summary">
+                        {{ backupDirPopoverSummary(group.entries) }}
+                      </div>
                       <div
                         v-for="entry in group.entries"
                         :key="entry.key"
@@ -8078,7 +8553,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                         :class="`create-recovery-plan-cell--${recoveryPlanStatusTone(group)}`"
                       >
                         <div class="create-recovery-plan-cell__status">
-                          <span class="create-recovery-plan-cell__dot" aria-hidden="true" />
+                          <span
+                            class="create-recovery-plan-cell__dot"
+                            aria-hidden="true"
+                          />
                           <span class="create-recovery-plan-cell__status-label">
                             {{ recoveryPlanStatusLabel(group) }}
                           </span>
@@ -8100,12 +8578,19 @@ function preserveShallowestPathOrder(paths: string[]) {
                             :size="14"
                             class="create-recovery-plan-cell__policy-icon"
                           />
-                          <Info v-else :size="14" class="create-recovery-plan-cell__policy-icon" />
+                          <Info
+                            v-else
+                            :size="14"
+                            class="create-recovery-plan-cell__policy-icon"
+                          />
                           <span class="create-recovery-plan-cell__policy-text">
                             {{ recoveryPlanConflictSummary(group) }}
                           </span>
                         </div>
-                        <div v-if="recoveryPlanIncompleteReason(group)" class="create-recovery-plan-cell__issue">
+                        <div
+                          v-if="recoveryPlanIncompleteReason(group)"
+                          class="create-recovery-plan-cell__issue"
+                        >
                           {{ recoveryPlanIncompleteReason(group) }}
                         </div>
                         <div class="create-recovery-plan-cell__mappings">
@@ -8129,18 +8614,31 @@ function preserveShallowestPathOrder(paths: string[]) {
                                   :size="14"
                                   class="create-recovery-plan-mapping__icon"
                                 />
-                                <Folder v-else :size="14" class="create-recovery-plan-mapping__icon" />
+                                <Folder
+                                  v-else
+                                  :size="14"
+                                  class="create-recovery-plan-mapping__icon"
+                                />
                                 <span class="create-recovery-plan-mapping__text">{{ recoverySourcePathLabel(dirPlan.sourcePath) }}</span>
                               </span>
-                              <span class="create-recovery-plan-mapping__arrow" aria-hidden="true">-&gt;</span>
+                              <span
+                                class="create-recovery-plan-mapping__arrow"
+                                aria-hidden="true"
+                              >-&gt;</span>
                               <span
                                 class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                               >
-                                <FolderOpen :size="14" class="create-recovery-plan-mapping__icon create-dir-row__icon--folder" />
+                                <FolderOpen
+                                  :size="14"
+                                  class="create-recovery-plan-mapping__icon create-dir-row__icon--folder"
+                                />
                                 <span class="create-recovery-plan-mapping__text">{{ recoveryDirPlanTargetSummary(dirPlan) }}</span>
                               </span>
                             </template>
-                            <span v-else class="create-recovery-plan-mapping__pending">
+                            <span
+                              v-else
+                              class="create-recovery-plan-mapping__pending"
+                            >
                               {{ recoveryDirPlanPendingLabel() }}
                             </span>
                           </div>
@@ -8172,12 +8670,19 @@ function preserveShallowestPathOrder(paths: string[]) {
                             :size="14"
                             class="create-recovery-plan-cell__policy-icon"
                           />
-                          <Info v-else :size="14" class="create-recovery-plan-cell__policy-icon" />
+                          <Info
+                            v-else
+                            :size="14"
+                            class="create-recovery-plan-cell__policy-icon"
+                          />
                           <span class="create-recovery-plan-cell__policy-text">
                             {{ recoveryPlanConflictLabel(group.plan.conflictMode) }}
                           </span>
                         </div>
-                        <div v-if="recoveryPlanIncompleteReason(group)" class="create-recovery-plan-tooltip__issue">
+                        <div
+                          v-if="recoveryPlanIncompleteReason(group)"
+                          class="create-recovery-plan-tooltip__issue"
+                        >
                           {{ recoveryPlanIncompleteReason(group) }}
                         </div>
                         <div
@@ -8200,27 +8705,46 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 :size="14"
                                 class="create-recovery-plan-mapping__icon"
                               />
-                              <Folder v-else :size="14" class="create-recovery-plan-mapping__icon" />
+                              <Folder
+                                v-else
+                                :size="14"
+                                class="create-recovery-plan-mapping__icon"
+                              />
                               <span class="create-recovery-plan-mapping__text">{{ recoverySourcePathLabel(dirPlan.sourcePath) }}</span>
                             </span>
-                            <span class="create-recovery-plan-mapping__arrow" aria-hidden="true">-&gt;</span>
+                            <span
+                              class="create-recovery-plan-mapping__arrow"
+                              aria-hidden="true"
+                            >-&gt;</span>
                             <span
                               class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                             >
-                              <FolderOpen :size="14" class="create-recovery-plan-mapping__icon create-dir-row__icon--folder" />
+                              <FolderOpen
+                                :size="14"
+                                class="create-recovery-plan-mapping__icon create-dir-row__icon--folder"
+                              />
                               <span class="create-recovery-plan-mapping__text">{{ recoveryDirPlanTargetSummary(dirPlan) }}</span>
                             </span>
                           </template>
-                          <span v-else class="create-recovery-plan-mapping__pending">
+                          <span
+                            v-else
+                            class="create-recovery-plan-mapping__pending"
+                          >
                             {{ recoveryDirPlanPendingLabel() }}
                           </span>
                         </div>
                       </div>
                     </template>
                   </HflPopover>
-                  <div v-else class="create-recovery-plan-cell create-recovery-plan-cell--disabled">
+                  <div
+                    v-else
+                    class="create-recovery-plan-cell create-recovery-plan-cell--disabled"
+                  >
                     <div class="create-recovery-plan-cell__status">
-                      <span class="create-recovery-plan-cell__dot" aria-hidden="true" />
+                      <span
+                        class="create-recovery-plan-cell__dot"
+                        aria-hidden="true"
+                      />
                       <span class="create-recovery-plan-cell__status-label">
                         {{ recoveryPlanStatusLabel(group) }}
                       </span>
@@ -8231,7 +8755,12 @@ function preserveShallowestPathOrder(paths: string[]) {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.createRecoveryPlanEnabled')" width="96" fixed="right" align="center">
+              <el-table-column
+                :label="t('protection.backupsPage.createRecoveryPlanEnabled')"
+                width="96"
+                fixed="right"
+                align="center"
+              >
                 <template #default="{ row: group }">
                   <div class="create-recovery-plan-action hfl-table-no-tooltip">
                     <el-switch
@@ -8250,8 +8779,13 @@ function preserveShallowestPathOrder(paths: string[]) {
           </div>
         </div>
 
-        <div v-if="createStep === 4" class="dp-wizard-pane">
-          <p class="create-confirm-lead">{{ t('protection.backupsPage.createStep3Lead') }}</p>
+        <div
+          v-if="createStep === 4"
+          class="dp-wizard-pane"
+        >
+          <p class="create-confirm-lead">
+            {{ t('protection.backupsPage.createStep3Lead') }}
+          </p>
           <section class="create-confirm-section create-confirm-section--first">
             <div class="create-confirm-list">
               <article
@@ -8261,11 +8795,19 @@ function preserveShallowestPathOrder(paths: string[]) {
               >
                 <div class="create-confirm-card__main">
                   <div class="create-confirm-card__name">
-                    <span class="create-confirm-card__index" :class="`is-${row.group.sourceType}`">
-                      <component :is="backupSourceTypeIcon(row.group.sourceType)" :size="14" />
+                    <span
+                      class="create-confirm-card__index"
+                      :class="`is-${row.group.sourceType}`"
+                    >
+                      <component
+                        :is="backupSourceTypeIcon(row.group.sourceType)"
+                        :size="14"
+                      />
                       {{ String(row.index + 1).padStart(2, '0') }}
                     </span>
-                    <div class="create-confirm-card__name-text">{{ row.name }}</div>
+                    <div class="create-confirm-card__name-text">
+                      {{ row.name }}
+                    </div>
                   </div>
                   <dl class="create-confirm-card__meta">
                     <div class="create-confirm-card__meta-item create-confirm-card__meta-item--wide">
@@ -8281,10 +8823,17 @@ function preserveShallowestPathOrder(paths: string[]) {
                             <div class="create-confirm-source__identity">
                               <span class="create-confirm-source__name">{{ row.group.sourceName }}</span>
                               <span class="create-backup-source-meta-row">
-                                <el-tag size="small" effect="plain" class="create-backup-source-type-tag">
+                                <el-tag
+                                  size="small"
+                                  effect="plain"
+                                  class="create-backup-source-type-tag"
+                                >
                                   {{ backupSourceTypeLabel(row.group.sourceType) }}
                                 </el-tag>
-                                <span v-if="row.group.platform" class="create-backup-source-platform">
+                                <span
+                                  v-if="row.group.platform"
+                                  class="create-backup-source-platform"
+                                >
                                   <AgentPlatformBrandIcon :os="row.group.platform" />
                                 </span>
                               </span>
@@ -8295,7 +8844,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                           </div>
                           <div class="create-confirm-dir-box">
                             <ul class="create-confirm-dir-list">
-                              <li v-for="entry in row.entries" :key="entry.key" class="create-confirm-dir-list__item">
+                              <li
+                                v-for="entry in row.entries"
+                                :key="entry.key"
+                                class="create-confirm-dir-list__item"
+                              >
                                 <component
                                   :is="entry.pathType === 'file' ? FileIcon : Folder"
                                   :size="14"
@@ -8321,13 +8874,24 @@ function preserveShallowestPathOrder(paths: string[]) {
                           class="wizard-target-repository-cell wizard-target-repository-cell--confirm"
                           :class="`wizard-target-repository-cell--${row.targetTone}`"
                         >
-                          <span class="wizard-target-repository-cell__dot" aria-hidden="true"></span>
+                          <span
+                            class="wizard-target-repository-cell__dot"
+                            aria-hidden="true"
+                          />
                           <div class="wizard-target-repository-cell__body">
-                            <div class="wizard-target-repository-cell__name">{{ row.target }}</div>
-                            <div v-if="row.targetLocation" class="wizard-target-repository-cell__location hfl-table-cell-mono">
+                            <div class="wizard-target-repository-cell__name">
+                              {{ row.target }}
+                            </div>
+                            <div
+                              v-if="row.targetLocation"
+                              class="wizard-target-repository-cell__location hfl-table-cell-mono"
+                            >
                               {{ row.targetLocation }}
                             </div>
-                            <div v-if="row.targetEndpoint" class="wizard-target-repository-cell__location hfl-table-cell-mono">
+                            <div
+                              v-if="row.targetEndpoint"
+                              class="wizard-target-repository-cell__location hfl-table-cell-mono"
+                            >
                               {{ row.targetEndpoint }}
                             </div>
                           </div>
@@ -8359,17 +8923,28 @@ function preserveShallowestPathOrder(paths: string[]) {
                           popper-class="create-policy-option-popper"
                         >
                           <template #reference>
-                            <button type="button" class="create-confirm-hover-summary create-confirm-binding-summary">
+                            <button
+                              type="button"
+                              class="create-confirm-hover-summary create-confirm-binding-summary"
+                            >
                               <span class="create-confirm-binding-summary__name">{{ row.policyObject.name }}</span>
-                              <el-tag v-bind="policyStateTagAttrs(row.policyObject.isActive)" size="small">
+                              <el-tag
+                                v-bind="policyStateTagAttrs(row.policyObject.isActive)"
+                                size="small"
+                              >
                                 {{ policyStateLabel(row.policyObject.isActive) }}
                               </el-tag>
                             </button>
                           </template>
                           <div class="create-policy-detail-popover">
                             <div class="create-policy-detail-popover__head">
-                              <div class="create-policy-detail-popover__title">{{ row.policyObject.name }}</div>
-                              <el-tag v-bind="policyStateTagAttrs(row.policyObject.isActive)" size="small">
+                              <div class="create-policy-detail-popover__title">
+                                {{ row.policyObject.name }}
+                              </div>
+                              <el-tag
+                                v-bind="policyStateTagAttrs(row.policyObject.isActive)"
+                                size="small"
+                              >
                                 {{ policyStateLabel(row.policyObject.isActive) }}
                               </el-tag>
                             </div>
@@ -8394,7 +8969,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                       class="policy-retention-detail-list__line"
                                       :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
                                     >
-                                      <span v-if="line.label" class="policy-retention-detail-list__label">{{ line.label }}</span>
+                                      <span
+                                        v-if="line.label"
+                                        class="policy-retention-detail-list__label"
+                                      >{{ line.label }}</span>
                                       <span class="policy-retention-detail-list__text">{{ line.text }}</span>
                                     </div>
                                   </div>
@@ -8403,7 +8981,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                             </div>
                           </div>
                         </HflPopover>
-                        <span v-else class="create-confirm-binding-empty">
+                        <span
+                          v-else
+                          class="create-confirm-binding-empty"
+                        >
                           {{ t('protection.backupsPage.policyNoneOptional') }}
                         </span>
                       </dd>
@@ -8424,14 +9005,20 @@ function preserveShallowestPathOrder(paths: string[]) {
                           popper-class="create-policy-option-popper"
                         >
                           <template #reference>
-                            <button type="button" class="create-confirm-hover-summary create-confirm-binding-summary">
+                            <button
+                              type="button"
+                              class="create-confirm-hover-summary create-confirm-binding-summary"
+                            >
                               <span
                                 v-for="filter in row.filterObjects"
                                 :key="filter.id"
                                 class="create-confirm-binding-summary__item"
                               >
                                 <span class="create-confirm-binding-summary__name">{{ filter.name }}</span>
-                                <el-tag v-bind="policyStateTagAttrs(filter.isActive)" size="small">
+                                <el-tag
+                                  v-bind="policyStateTagAttrs(filter.isActive)"
+                                  size="small"
+                                >
                                   {{ policyStateLabel(filter.isActive) }}
                                 </el-tag>
                               </span>
@@ -8444,8 +9031,13 @@ function preserveShallowestPathOrder(paths: string[]) {
                               class="create-policy-detail-popover"
                             >
                               <div class="create-policy-detail-popover__head">
-                                <div class="create-policy-detail-popover__title">{{ filter.name }}</div>
-                                <el-tag v-bind="policyStateTagAttrs(filter.isActive)" size="small">
+                                <div class="create-policy-detail-popover__title">
+                                  {{ filter.name }}
+                                </div>
+                                <el-tag
+                                  v-bind="policyStateTagAttrs(filter.isActive)"
+                                  size="small"
+                                >
                                   {{ policyStateLabel(filter.isActive) }}
                                 </el-tag>
                               </div>
@@ -8463,7 +9055,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                   >
                                     {{ detailRow.value }}
                                   </el-tag>
-                                  <span v-else class="create-policy-detail-popover__value">{{ detailRow.value }}</span>
+                                  <span
+                                    v-else
+                                    class="create-policy-detail-popover__value"
+                                  >{{ detailRow.value }}</span>
                                 </section>
                                 <section class="create-policy-detail-popover__section">
                                   <div class="create-policy-detail-popover__section-title">
@@ -8479,7 +9074,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                                         {{ line }}
                                       </code>
                                     </template>
-                                    <p v-else class="create-filter-rules-preview__empty">
+                                    <p
+                                      v-else
+                                      class="create-filter-rules-preview__empty"
+                                    >
                                       {{ t('protection.policiesPage.filterNoActiveRules') }}
                                     </p>
                                   </div>
@@ -8488,22 +9086,33 @@ function preserveShallowestPathOrder(paths: string[]) {
                             </div>
                           </div>
                         </HflPopover>
-                        <span v-else class="create-confirm-binding-empty">
+                        <span
+                          v-else
+                          class="create-confirm-binding-empty"
+                        >
                           {{ row.fileFilter }}
                         </span>
                       </dd>
                     </div>
-                    <div v-if="row.nasPlan" class="create-confirm-card__meta-item">
+                    <div
+                      v-if="row.nasPlan"
+                      class="create-confirm-card__meta-item"
+                    >
                       <dt>
                         <span class="create-confirm-meta-label">
-                          <component :is="targetNasSidebarIcon" :size="14" />
+                          <component
+                            :is="targetNasSidebarIcon"
+                            :size="14"
+                          />
                           {{ t('protection.backupsPage.descNasPlan') }}
                         </span>
                       </dt>
                       <dd>
                         <div class="create-confirm-detail-stack">
                           <div>{{ row.nasPlan }}</div>
-                          <div class="create-confirm-detail-line">{{ row.nasPlanDesc }}</div>
+                          <div class="create-confirm-detail-line">
+                            {{ row.nasPlanDesc }}
+                          </div>
                         </div>
                       </dd>
                     </div>
@@ -8521,7 +9130,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                           :class="`create-recovery-plan-cell--${recoveryPlanStatusTone(row.recoveryGroup)}`"
                         >
                           <div class="create-recovery-plan-cell__status">
-                            <span class="create-recovery-plan-cell__dot" aria-hidden="true" />
+                            <span
+                              class="create-recovery-plan-cell__dot"
+                              aria-hidden="true"
+                            />
                             <span class="create-recovery-plan-cell__status-label">
                               {{ recoveryPlanStatusLabel(row.recoveryGroup) }}
                             </span>
@@ -8543,12 +9155,19 @@ function preserveShallowestPathOrder(paths: string[]) {
                               :size="14"
                               class="create-recovery-plan-cell__policy-icon"
                             />
-                            <Info v-else :size="14" class="create-recovery-plan-cell__policy-icon" />
+                            <Info
+                              v-else
+                              :size="14"
+                              class="create-recovery-plan-cell__policy-icon"
+                            />
                             <span class="create-recovery-plan-cell__policy-text">
                               {{ recoveryPlanConflictLabel(row.recoveryGroup.plan.conflictMode) }}
                             </span>
                           </div>
-                          <div v-if="recoveryPlanIncompleteReason(row.recoveryGroup)" class="create-recovery-plan-cell__issue">
+                          <div
+                            v-if="recoveryPlanIncompleteReason(row.recoveryGroup)"
+                            class="create-recovery-plan-cell__issue"
+                          >
                             {{ recoveryPlanIncompleteReason(row.recoveryGroup) }}
                           </div>
                           <div class="create-recovery-plan-cell__mappings">
@@ -8573,19 +9192,38 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     :size="14"
                                     class="create-recovery-plan-mapping__icon"
                                   />
-                                  <Folder v-else :size="14" class="create-recovery-plan-mapping__icon" />
-                                  <span class="create-recovery-plan-mapping__text" :title="recoverySourcePathLabel(dirPlan.sourcePath)">{{ recoverySourcePathLabel(dirPlan.sourcePath) }}</span>
+                                  <Folder
+                                    v-else
+                                    :size="14"
+                                    class="create-recovery-plan-mapping__icon"
+                                  />
+                                  <span
+                                    class="create-recovery-plan-mapping__text"
+                                    :title="recoverySourcePathLabel(dirPlan.sourcePath)"
+                                  >{{ recoverySourcePathLabel(dirPlan.sourcePath) }}</span>
                                 </span>
-                                <span class="create-recovery-plan-mapping__arrow" aria-hidden="true">-&gt;</span>
+                                <span
+                                  class="create-recovery-plan-mapping__arrow"
+                                  aria-hidden="true"
+                                >-&gt;</span>
                                 <span
                                   class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                                   :title="recoveryDirPlanTargetSummary(dirPlan)"
                                 >
-                                  <FolderOpen :size="14" class="create-recovery-plan-mapping__icon create-dir-row__icon--folder" />
-                                  <span class="create-recovery-plan-mapping__text" :title="recoveryDirPlanTargetSummary(dirPlan)">{{ recoveryDirPlanTargetSummary(dirPlan) }}</span>
+                                  <FolderOpen
+                                    :size="14"
+                                    class="create-recovery-plan-mapping__icon create-dir-row__icon--folder"
+                                  />
+                                  <span
+                                    class="create-recovery-plan-mapping__text"
+                                    :title="recoveryDirPlanTargetSummary(dirPlan)"
+                                  >{{ recoveryDirPlanTargetSummary(dirPlan) }}</span>
                                 </span>
                               </template>
-                              <span v-else class="create-recovery-plan-mapping__pending">
+                              <span
+                                v-else
+                                class="create-recovery-plan-mapping__pending"
+                              >
                                 {{ recoveryDirPlanPendingLabel() }}
                               </span>
                             </div>
@@ -8597,9 +9235,15 @@ function preserveShallowestPathOrder(paths: string[]) {
                             </div>
                           </div>
                         </div>
-                        <div v-else class="create-recovery-plan-cell create-recovery-plan-cell--disabled">
+                        <div
+                          v-else
+                          class="create-recovery-plan-cell create-recovery-plan-cell--disabled"
+                        >
                           <div class="create-recovery-plan-cell__status">
-                            <span class="create-recovery-plan-cell__dot" aria-hidden="true" />
+                            <span
+                              class="create-recovery-plan-cell__dot"
+                              aria-hidden="true"
+                            />
                             <span class="create-recovery-plan-cell__status-label">
                               {{ recoveryPlanStatusLabel(row.recoveryGroup) }}
                             </span>
@@ -8615,9 +9259,7 @@ function preserveShallowestPathOrder(paths: string[]) {
               </article>
             </div>
           </section>
-
         </div>
-
       </template>
     </BackupConfigCreateWizard>
 
@@ -8641,7 +9283,10 @@ function preserveShallowestPathOrder(paths: string[]) {
               :aria-pressed="addTargetKind === item.value"
               @click="onAddTargetKindChange(item.value)"
             >
-              <span class="add-source-type-card__indicator" aria-hidden="true" />
+              <span
+                class="add-source-type-card__indicator"
+                aria-hidden="true"
+              />
               <span class="add-source-type-card__inner">
                 <span class="add-source-type-card__text">
                   <span class="add-source-type-card__name">{{ item.label }}</span>
@@ -8674,530 +9319,800 @@ function preserveShallowestPathOrder(paths: string[]) {
                 @created="onEmbeddedTargetCreated"
               />
 
-              <div v-show="false" aria-hidden="true">
-              <template v-if="addTargetKind === 's3'">
-                <div class="repository-add-steps">
-                  <div
-                    class="repository-add-step"
-                    :class="{
-                      'repository-add-step--active': addTargetS3Step === 0,
-                      'repository-add-step--done': addTargetS3Step > 0,
-                    }"
-                  >
-                    <span class="repository-add-step__num">{{ addTargetS3Step > 0 ? '✓' : '01' }}</span>
-                    <span class="repository-add-step__label">{{ t('addS3Repo.stepAuth') }}</span>
-                  </div>
-                  <div class="repository-add-step__connector" :class="{ 'is-on': addTargetS3Step > 0 }" />
-                  <div
-                    class="repository-add-step"
-                    :class="{ 'repository-add-step--active': addTargetS3Step === 1 }"
-                  >
-                    <span class="repository-add-step__num">02</span>
-                    <span class="repository-add-step__label">{{ t('addS3Repo.stepRepo') }}</span>
-                  </div>
-                </div>
-
-                <template v-if="addTargetS3Step === 0">
-                <section class="repository-add-card">
-                  <div class="repository-add-section">
-                    <h4 class="repository-add-section__title">
-                      <span class="repository-add-section__indicator" />
-                      {{ t('addS3Repo.fieldPlatform') }}
-                    </h4>
-                    <div class="repository-platform-grid">
-                      <button
-                        v-for="platform in addTargetS3PlatformOptions"
-                        :key="platform.value"
-                        type="button"
-                        class="repository-platform-btn"
-                        :class="{ 'is-active': addTargetS3Platform === platform.value }"
-                        @click="onAddTargetS3PlatformChange(platform.value)"
-                      >
-                        {{ platform.label }}
-                      </button>
+              <div
+                v-show="false"
+                aria-hidden="true"
+              >
+                <template v-if="addTargetKind === 's3'">
+                  <div class="repository-add-steps">
+                    <div
+                      class="repository-add-step"
+                      :class="{
+                        'repository-add-step--active': addTargetS3Step === 0,
+                        'repository-add-step--done': addTargetS3Step > 0,
+                      }"
+                    >
+                      <span class="repository-add-step__num">{{ addTargetS3Step > 0 ? '✓' : '01' }}</span>
+                      <span class="repository-add-step__label">{{ t('addS3Repo.stepAuth') }}</span>
                     </div>
-
-                    <template v-if="addTargetS3Platform && addTargetS3Platform !== 'other'">
-                      <h5 class="repository-add-section__subtitle">{{ t('repositoriesPage.fieldRegion') }}</h5>
-                      <div class="repository-region-grid">
-                        <button
-                          v-for="region in addTargetS3Regions"
-                          :key="region.key"
-                          type="button"
-                          class="repository-region-btn"
-                          :class="{ 'is-active': addTargetS3RegionPreset === region.key }"
-                          @click="applyAddTargetS3RegionPreset(region.key)"
-                        >
-                          <span class="repository-region-btn__label">{{ region.label }}</span>
-                          <span class="repository-region-btn__code">{{ region.region }}</span>
-                        </button>
-                      </div>
-                    </template>
-                  </div>
-                </section>
-
-                <section class="repository-add-card">
-                  <div class="repository-add-section">
-                    <h4 class="repository-add-section__title">
-                      <span class="repository-add-section__indicator" />
-                      {{ t('addS3Repo.connectionTitle') }}
-                    </h4>
-                    <div class="repository-add-warning">
-                      <Info :size="18" />
-                      <span>{{ t('addS3Repo.s3WarningHint') }}</span>
+                    <div
+                      class="repository-add-step__connector"
+                      :class="{ 'is-on': addTargetS3Step > 0 }"
+                    />
+                    <div
+                      class="repository-add-step"
+                      :class="{ 'repository-add-step--active': addTargetS3Step === 1 }"
+                    >
+                      <span class="repository-add-step__num">02</span>
+                      <span class="repository-add-step__label">{{ t('addS3Repo.stepRepo') }}</span>
                     </div>
-                    <ElForm label-position="top" class="repository-add-form repository-add-form--grid">
-                      <ElFormItem :label="t('addS3Repo.fieldEndpoint')" required>
-                        <ElInput v-model="addTargetS3Endpoint" :placeholder="t('addS3Repo.phEndpoint')" />
-                      </ElFormItem>
-                      <ElFormItem :label="t('repositoriesPage.fieldRegion')">
-                        <ElInput v-model="addTargetS3Region" :placeholder="t('repositoriesPage.phRegion')" />
-                      </ElFormItem>
-                      <ElFormItem :label="t('repositoriesPage.fieldAccessKey')" required>
-                        <ElInput v-model="addTargetS3AccessKey" :placeholder="t('repositoriesPage.phAccessKey')" />
-                      </ElFormItem>
-                      <ElFormItem :label="t('repositoriesPage.fieldSecretKey')" required>
-                        <ElInput v-model="addTargetS3SecretKey" type="password" show-password :placeholder="t('repositoriesPage.phSecretKey')" />
-                      </ElFormItem>
-                      <ElFormItem :label="t('repositoriesPage.fieldS3UrlStyle')">
-                        <ElSelect v-model="addTargetS3UrlStyle" class="w-full">
-                          <ElOption :label="t('repositoriesPage.s3UrlStyleAuto')" value="auto" />
-                          <ElOption :label="t('repositoriesPage.s3UrlStyleVirtualHosted')" value="virtual_hosted" />
-                          <ElOption :label="t('repositoriesPage.s3UrlStylePath')" value="path" />
-                        </ElSelect>
-                      </ElFormItem>
-                      <ElFormItem :label="t('repositoriesPage.fieldUseTls')">
-                        <ElSwitch
-                          v-model="addTargetS3UseTls"
-                          :active-text="t('repositoriesPage.tlsOnHint')"
-                          :inactive-text="t('repositoriesPage.tlsOffHint')"
-                        />
-                      </ElFormItem>
-                    </ElForm>
                   </div>
-                </section>
-                </template>
 
-                <section v-else class="repository-add-card">
-                  <div class="repository-add-section">
-                    <h4 class="repository-add-section__title">
-                      <span class="repository-add-section__indicator" />
-                      {{ t('repositoriesPage.stepRepo') }}
-                    </h4>
-                    <ElForm label-position="top" class="repository-add-form">
-                      <ElFormItem :label="t('repositoriesPage.fieldRepoName')" required>
-                        <ElInput v-model="addTargetRepoName" :placeholder="t('repositoriesPage.phRepoName')" />
-                      </ElFormItem>
-                      <ElFormItem :label="t('repositoriesPage.fieldBucket')" required>
-                        <div class="repository-segmented">
-                          <button
-                            type="button"
-                            class="repository-segmented__btn"
-                            :class="{ 'is-active': addTargetS3BucketMode === 'existing' }"
-                            @click="addTargetS3BucketMode = 'existing'"
-                          >
-                            {{ t('repositoriesPage.fieldBucketExisting') }}
-                          </button>
-                          <button
-                            type="button"
-                            class="repository-segmented__btn"
-                            :class="{ 'is-active': addTargetS3BucketMode === 'new' }"
-                            @click="addTargetS3BucketMode = 'new'"
-                          >
-                            {{ t('repositoriesPage.fieldBucketNew') }}
-                          </button>
-                        </div>
-                        <ElInput
-                          v-model="addTargetS3Bucket"
-                          :placeholder="addTargetS3BucketMode === 'existing' ? t('repositoriesPage.phBucketSelect') : t('repositoriesPage.phBucketNew')"
-                        />
-                      </ElFormItem>
-                      <ElFormItem :label="t('repositoriesPage.fieldPrefix')">
-                        <ElInput v-model="addTargetS3Prefix" :placeholder="t('repositoriesPage.phPrefix')" />
-                        <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">{{ t('repositoriesPage.hintPrefix') }}</div>
-                      </ElFormItem>
-                    </ElForm>
-                  </div>
-                </section>
-              </template>
-
-              <template v-else-if="addTargetKind === 'nas'">
-                <div class="add-nas-steps add-nas-steps--panel">
-                  <div
-                    class="add-nas-steps__item"
-                    :class="{
-                      'add-nas-steps__item--active': addTargetNasStep === 0,
-                      'add-nas-steps__item--done': addTargetNasStep > 0,
-                    }"
-                  >
-                    <span class="add-nas-steps__num">{{ addTargetNasStep > 0 ? '✓' : '01' }}</span>
-                    <span class="add-nas-steps__label">{{ t('addNasRepo.stepAuthNas') }}</span>
-                  </div>
-                  <div class="add-nas-steps__connector" :class="{ 'add-nas-steps__connector--on': addTargetNasStep >= 1 }" />
-                  <div
-                    class="add-nas-steps__item"
-                    :class="{
-                      'add-nas-steps__item--active': addTargetNasStep === 1,
-                      'add-nas-steps__item--done': addTargetNasStep > 1,
-                    }"
-                  >
-                    <span class="add-nas-steps__num">{{ addTargetNasStep > 1 ? '✓' : '02' }}</span>
-                    <span class="add-nas-steps__label">{{ t('addNasRepo.stepBindProxy') }}</span>
-                  </div>
-                  <div class="add-nas-steps__connector" :class="{ 'add-nas-steps__connector--on': addTargetNasStep >= 2 }" />
-                  <div class="add-nas-steps__item" :class="{ 'add-nas-steps__item--active': addTargetNasStep === 2 }">
-                    <span class="add-nas-steps__num">03</span>
-                    <span class="add-nas-steps__label">{{ t('repositoriesPage.stepRepo') }}</span>
-                  </div>
-                </div>
-
-                <section v-show="addTargetNasStep === 0" class="add-nas-card">
-                  <div class="add-nas-section">
-                    <h4 class="add-nas-section__title">
-                      <span class="add-nas-section__indicator" />
-                      {{ t('repositoriesPage.fieldProtocol') }}
-                    </h4>
-                    <ElRadioGroup v-model="addTargetNasProtocol" class="add-nas-protocol-grid">
-                      <ElRadio value="smb" border class="add-nas-protocol-card !mr-0">
-                        <div class="add-nas-protocol-card__inner">
-                          <component :is="nasMountProtocolIcon('smb')" :size="24" />
-                          <div class="add-nas-protocol-card__text">
-                            <div class="font-semibold">{{ t('repositoriesPage.protocolSmb') }}</div>
-                          </div>
-                        </div>
-                      </ElRadio>
-                      <ElRadio value="nfs" border class="add-nas-protocol-card !mr-0">
-                        <div class="add-nas-protocol-card__inner">
-                          <component :is="nasMountProtocolIcon('nfs')" :size="24" />
-                          <div class="add-nas-protocol-card__text">
-                            <div class="font-semibold">{{ t('repositoriesPage.protocolNfs') }}</div>
-                          </div>
-                        </div>
-                      </ElRadio>
-                    </ElRadioGroup>
-
-                    <h5 class="add-nas-section__subtitle">
-                      <FolderOpen :size="16" />
-                      {{ t('addNasRepo.titleNasInfo') }}
-                    </h5>
-                    <ElForm label-position="top" class="add-nas-form">
-                      <div class="add-nas-form-row add-nas-form-row--responsive">
-                        <ElFormItem
-                          :label="addTargetNasProtocol === 'smb' ? t('addNasRepo.fieldSmbHost') : t('addNasRepo.fieldNfsHost')"
-                          required
-                          class="flex-1"
-                        >
-                          <ElInput v-model="addTargetNasHost" :placeholder="addTargetNasProtocol === 'smb' ? t('addNasRepo.phSmbHost') : t('addNasRepo.phNfsHost')" />
-                        </ElFormItem>
-                        <ElFormItem v-if="addTargetNasProtocol === 'smb'" :label="t('addNasRepo.fieldSmbShare')" required class="flex-1">
-                          <ElInput v-model="addTargetNasShare" :placeholder="t('addNasRepo.phSmbShare')" />
-                        </ElFormItem>
-                        <ElFormItem v-else :label="t('addNasRepo.fieldNfsExport')" required class="flex-1">
-                          <ElInput v-model="addTargetNasExport" :placeholder="t('addNasRepo.phNfsExport')" />
-                        </ElFormItem>
-                      </div>
-                      <div v-if="addTargetNasProtocol === 'smb'" class="add-nas-form-row add-nas-form-row--responsive">
-                        <ElFormItem :label="t('repositoriesPage.fieldSmbUsername')" required class="flex-1">
-                          <ElInput v-model="addTargetNasUsername" :placeholder="t('repositoriesPage.phSmbUsername')" />
-                        </ElFormItem>
-                        <ElFormItem :label="t('repositoriesPage.fieldSmbPassword')" required class="flex-1">
-                          <ElInput v-model="addTargetNasPassword" type="password" show-password :placeholder="t('repositoriesPage.phSmbPassword')" />
-                        </ElFormItem>
-                      </div>
-                      <ElFormItem :label="t('addNasRepo.fieldMountOptions')">
-                        <ElInput
-                          v-model="addTargetNasMountOptions"
-                          :placeholder="addTargetNasProtocol === 'smb' ? t('addNasRepo.phMountOptionsSmb') : t('addNasRepo.phMountOptionsNfs')"
-                        />
-                        <div class="mt-1 text-xs text-[rgb(100_116_139)]">
-                          {{ addTargetNasProtocol === 'smb' ? t('addNasRepo.hintMountOptionsSmb') : t('addNasRepo.hintMountOptionsNfs') }}
-                        </div>
-                      </ElFormItem>
-                    </ElForm>
-                  </div>
-                </section>
-
-                <section v-show="addTargetNasStep === 1" class="add-nas-card">
-                  <div class="add-nas-section">
-                    <div class="add-nas-section__head">
-                      <div class="add-nas-section__title-wrap">
-                        <h4 class="add-nas-section__title !mb-0">
-                          <span class="add-nas-section__indicator" />
-                          {{ t('addNasRepo.titleBindProxy') }}
+                  <template v-if="addTargetS3Step === 0">
+                    <section class="repository-add-card">
+                      <div class="repository-add-section">
+                        <h4 class="repository-add-section__title">
+                          <span class="repository-add-section__indicator" />
+                          {{ t('addS3Repo.fieldPlatform') }}
                         </h4>
-                        <span class="add-nas-optional-badge">{{ t('addNasRepo.optional') }}</span>
+                        <div class="repository-platform-grid">
+                          <button
+                            v-for="platform in addTargetS3PlatformOptions"
+                            :key="platform.value"
+                            type="button"
+                            class="repository-platform-btn"
+                            :class="{ 'is-active': addTargetS3Platform === platform.value }"
+                            @click="onAddTargetS3PlatformChange(platform.value)"
+                          >
+                            {{ platform.label }}
+                          </button>
+                        </div>
+
+                        <template v-if="addTargetS3Platform && addTargetS3Platform !== 'other'">
+                          <h5 class="repository-add-section__subtitle">
+                            {{ t('repositoriesPage.fieldRegion') }}
+                          </h5>
+                          <div class="repository-region-grid">
+                            <button
+                              v-for="region in addTargetS3Regions"
+                              :key="region.key"
+                              type="button"
+                              class="repository-region-btn"
+                              :class="{ 'is-active': addTargetS3RegionPreset === region.key }"
+                              @click="applyAddTargetS3RegionPreset(region.key)"
+                            >
+                              <span class="repository-region-btn__label">{{ region.label }}</span>
+                              <span class="repository-region-btn__code">{{ region.region }}</span>
+                            </button>
+                          </div>
+                        </template>
                       </div>
-                    </div>
+                    </section>
 
-                    <ElAlert type="warning" :closable="false" show-icon class="add-nas-proxy-alert">
-                      <ol class="add-nas-proxy-alert__list">
-                        <li v-for="item in bindProxyLeadItems" :key="item">{{ item }}</li>
-                      </ol>
-                    </ElAlert>
-
-                    <div class="add-nas-proxy-layout">
-                      <div class="add-nas-proxy-form">
-                        <ElForm label-position="top" class="add-nas-form">
-                          <ElFormItem class="add-nas-bind-form-item">
-                            <template #label>
-                              <span class="add-nas-field-label-with-action">
-                                <span>{{ t('addNasRepo.fieldSourceProxyNode') }}</span>
-                                <ElButton
-                                  text
-                                  circle
-                                  class="hfl-refresh-button add-nas-field-label-with-action__btn"
-                                  :title="t('addNasRepo.proxyRefresh')"
-                                  :aria-label="t('addNasRepo.proxyRefresh')"
-                                  :disabled="proxyNodesRefreshing"
-                                  @click.stop="refreshProxyNodesManually"
-                                >
-                                  <RefreshCw :size="15" stroke-width="2" :class="{ 'is-spinning': proxyNodesRefreshing }" />
-                                </ElButton>
-                              </span>
-                            </template>
-                            <div class="add-nas-select-row">
-                              <ElButton text circle class="add-nas-select-row__search" aria-hidden="true" tabindex="-1">
-                                <Search :size="15" stroke-width="2" />
-                              </ElButton>
-                              <ElSelect
-                                v-model="addTargetNasProxyNodeId"
-                                class="add-nas-select-row__select"
-                                :placeholder="t('addNasRepo.phSourceProxyNode')"
-                                filterable
-                                clearable
-                              >
-                                <ElOption :value="0" :label="t('addNasRepo.optionNoProxy')" />
-                                <ElOption
-                                  v-for="node in addTargetProxyNodeOptions"
-                                  :key="node.id"
-                                  :value="node.id"
-                                  :label="node.name"
-                                />
-                              </ElSelect>
-                            </div>
-                            <div class="mt-2 text-xs text-[var(--color-text-tertiary)]">
-                              {{ addTargetNasProxyNodeId ? t('addNasRepo.hintProxySelected') : t('addNasRepo.hintProxySkipped') }}
-                            </div>
+                    <section class="repository-add-card">
+                      <div class="repository-add-section">
+                        <h4 class="repository-add-section__title">
+                          <span class="repository-add-section__indicator" />
+                          {{ t('addS3Repo.connectionTitle') }}
+                        </h4>
+                        <div class="repository-add-warning">
+                          <Info :size="18" />
+                          <span>{{ t('addS3Repo.s3WarningHint') }}</span>
+                        </div>
+                        <ElForm
+                          label-position="top"
+                          class="repository-add-form repository-add-form--grid"
+                        >
+                          <ElFormItem
+                            :label="t('addS3Repo.fieldEndpoint')"
+                            required
+                          >
+                            <ElInput
+                              v-model="addTargetS3Endpoint"
+                              :placeholder="t('addS3Repo.phEndpoint')"
+                            />
+                          </ElFormItem>
+                          <ElFormItem :label="t('repositoriesPage.fieldRegion')">
+                            <ElInput
+                              v-model="addTargetS3Region"
+                              :placeholder="t('repositoriesPage.phRegion')"
+                            />
+                          </ElFormItem>
+                          <ElFormItem
+                            :label="t('repositoriesPage.fieldAccessKey')"
+                            required
+                          >
+                            <ElInput
+                              v-model="addTargetS3AccessKey"
+                              :placeholder="t('repositoriesPage.phAccessKey')"
+                            />
+                          </ElFormItem>
+                          <ElFormItem
+                            :label="t('repositoriesPage.fieldSecretKey')"
+                            required
+                          >
+                            <ElInput
+                              v-model="addTargetS3SecretKey"
+                              type="password"
+                              show-password
+                              :placeholder="t('repositoriesPage.phSecretKey')"
+                            />
+                          </ElFormItem>
+                          <ElFormItem :label="t('repositoriesPage.fieldS3UrlStyle')">
+                            <ElSelect
+                              v-model="addTargetS3UrlStyle"
+                              class="w-full"
+                            >
+                              <ElOption
+                                :label="t('repositoriesPage.s3UrlStyleAuto')"
+                                value="auto"
+                              />
+                              <ElOption
+                                :label="t('repositoriesPage.s3UrlStyleVirtualHosted')"
+                                value="virtual_hosted"
+                              />
+                              <ElOption
+                                :label="t('repositoriesPage.s3UrlStylePath')"
+                                value="path"
+                              />
+                            </ElSelect>
+                          </ElFormItem>
+                          <ElFormItem :label="t('repositoriesPage.fieldUseTls')">
+                            <ElSwitch
+                              v-model="addTargetS3UseTls"
+                              :active-text="t('repositoriesPage.tlsOnHint')"
+                              :inactive-text="t('repositoriesPage.tlsOffHint')"
+                            />
                           </ElFormItem>
                         </ElForm>
-
-                        <div class="add-nas-proxy-benefits">
-                          <div class="add-nas-proxy-benefit">
-                            <span class="add-nas-proxy-benefit__dot" />
-                            {{ t('addNasRepo.proxyBenefitAvoidMountFailure') }}
-                          </div>
-                          <div class="add-nas-proxy-benefit">
-                            <span class="add-nas-proxy-benefit__dot" />
-                            {{ t('addNasRepo.proxyBenefitSharedRepo') }}
-                          </div>
-                        </div>
                       </div>
+                    </section>
+                  </template>
 
-                      <div class="add-nas-path-card" :class="{ 'add-nas-path-card--direct': isAddTargetNasDirectAccess }" aria-hidden="true">
-                        <template v-if="!isAddTargetNasDirectAccess">
-                          <div class="add-nas-path-card__agents">
-                            <span>{{ t('addNasRepo.demoBackupSourceA') }}</span>
-                            <span>{{ t('addNasRepo.demoBackupSourceB') }}</span>
-                            <span>{{ t('addNasRepo.demoBackupSourceC') }}</span>
-                          </div>
-                          <div class="add-nas-path-card__join" />
-                          <div class="add-nas-path-card__node add-nas-path-card__node--proxy">Proxy</div>
-                          <div class="add-nas-path-card__line" />
-                          <div class="add-nas-path-card__node add-nas-path-card__node--nas">NAS</div>
-                        </template>
-                        <template v-else>
-                          <div class="add-nas-path-card__direct-rows">
-                            <div class="add-nas-path-card__direct-row">
-                              <span class="add-nas-path-card__source">{{ t('addNasRepo.demoBackupSourceA') }}</span>
-                              <span class="add-nas-path-card__direct-line" />
-                              <span class="add-nas-path-card__node add-nas-path-card__node--nas">NAS</span>
-                            </div>
-                            <div class="add-nas-path-card__direct-row">
-                              <span class="add-nas-path-card__source">{{ t('addNasRepo.demoBackupSourceB') }}</span>
-                              <span class="add-nas-path-card__direct-line" />
-                              <span class="add-nas-path-card__node add-nas-path-card__node--nas">NAS</span>
-                            </div>
-                            <div class="add-nas-path-card__direct-row">
-                              <span class="add-nas-path-card__source">{{ t('addNasRepo.demoBackupSourceC') }}</span>
-                              <span class="add-nas-path-card__direct-line" />
-                              <span class="add-nas-path-card__node add-nas-path-card__node--nas">NAS</span>
-                            </div>
-                          </div>
-                        </template>
-                      </div>
-                    </div>
-
-                    <ElButton class="add-nas-deploy-btn" type="primary" plain @click="openProxyDeploy">
-                      <Plus :size="14" class="inline" />
-                      {{ t('addNasRepo.deployProxy') }}
-                    </ElButton>
-                  </div>
-                </section>
-
-                <section v-show="addTargetNasStep === 2" class="add-nas-card">
-                  <div class="add-nas-section">
-                    <h4 class="add-nas-section__title">
-                      <span class="add-nas-section__indicator" />
-                      {{ t('repositoriesPage.stepRepo') }}
-                    </h4>
-                    <ElForm label-position="top" class="add-nas-form">
-                      <ElFormItem :label="t('repositoriesPage.fieldRepoName')" required>
-                        <ElInput v-model="addTargetRepoName" :placeholder="t('repositoriesPage.phRepoName')" />
-                      </ElFormItem>
-                    </ElForm>
-                  </div>
-                </section>
-              </template>
-
-              <template v-else>
-                <section class="repository-add-card">
-                  <div class="repository-add-section">
-                    <h4 class="repository-add-section__title">
-                      <span class="repository-add-section__indicator" />
-                      {{ t('repositoriesPage.addProxyFsPage') }}
-                    </h4>
-                    <ElForm label-position="top" class="repository-add-form">
-                      <ElFormItem :label="t('repositoriesPage.fieldRepoName')" required>
-                        <ElInput v-model="addTargetRepoName" :placeholder="t('repositoriesPage.phRepoName')" />
-                        <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">{{ t('repositoriesPage.hintRepoNameAuto') }}</div>
-                      </ElFormItem>
-                      <ElFormItem :label="t('repositoriesPage.fieldProxyNode')" required>
-                        <ElSelect
-                          v-model="addTargetProxyNodeId"
-                          class="w-full"
-                          filterable
-                          :placeholder="t('repositoriesPage.phProxyNode')"
+                  <section
+                    v-else
+                    class="repository-add-card"
+                  >
+                    <div class="repository-add-section">
+                      <h4 class="repository-add-section__title">
+                        <span class="repository-add-section__indicator" />
+                        {{ t('repositoriesPage.stepRepo') }}
+                      </h4>
+                      <ElForm
+                        label-position="top"
+                        class="repository-add-form"
+                      >
+                        <ElFormItem
+                          :label="t('repositoriesPage.fieldRepoName')"
+                          required
                         >
-                          <ElOption
-                            v-for="node in addTargetProxyNodeOptions"
-                            :key="node.id"
-                            :label="node.name"
-                            :value="node.id"
+                          <ElInput
+                            v-model="addTargetRepoName"
+                            :placeholder="t('repositoriesPage.phRepoName')"
                           />
-                        </ElSelect>
-                      </ElFormItem>
-                      <ElFormItem :label="t('repositoriesPage.fieldProxyNodeDir')" required>
-                        <div class="repository-dir-selector">
+                        </ElFormItem>
+                        <ElFormItem
+                          :label="t('repositoriesPage.fieldBucket')"
+                          required
+                        >
                           <div class="repository-segmented">
                             <button
                               type="button"
                               class="repository-segmented__btn"
-                              :class="{ 'is-active': addTargetProxyUseTree }"
-                              @click="addTargetProxyUseTree = true"
+                              :class="{ 'is-active': addTargetS3BucketMode === 'existing' }"
+                              @click="addTargetS3BucketMode = 'existing'"
                             >
-                              <FolderTree :size="14" />
-                              {{ t('repositoriesPage.dirSelectTree') }}
+                              {{ t('repositoriesPage.fieldBucketExisting') }}
                             </button>
                             <button
                               type="button"
                               class="repository-segmented__btn"
-                              :class="{ 'is-active': !addTargetProxyUseTree }"
-                              @click="addTargetProxyUseTree = false"
+                              :class="{ 'is-active': addTargetS3BucketMode === 'new' }"
+                              @click="addTargetS3BucketMode = 'new'"
                             >
-                              <HardDrive :size="14" />
-                              {{ t('repositoriesPage.dirSelectInput') }}
+                              {{ t('repositoriesPage.fieldBucketNew') }}
                             </button>
                           </div>
-                          <div v-if="addTargetProxyUseTree" class="repository-dir-tree-shell hfl-dir-tree-shell">
-                            <div v-if="!addTargetProxyNodeId" class="repository-dir-tree-shell__empty hfl-dir-tree-empty">
-                              {{ t('repositoriesPage.errProxyNode') }}
-                            </div>
-                            <ElTree
-                              v-else
-                              ref="addTargetProxyDirTreeRef"
-                              class="repository-dir-tree hfl-dir-tree"
-                              :data="addTargetProxyTreeData"
-                              :props="{ children: 'children', label: 'label' }"
-                              node-key="id"
-                              show-checkbox
-                              check-strictly
-                              default-expand-all
-                              :check-on-click-node="true"
-                              :expand-on-click-node="false"
-                              :highlight-current="true"
-                              :current-node-key="addTargetProxyCurrentTreeNodeKey"
-                              :default-checked-keys="addTargetProxyCheckedTreeKeys"
-                              @current-change="onAddTargetProxyTreeSelect"
-                              @check-change="onAddTargetProxyTreeCheck"
-                            >
-                              <template #default="{ data }">
-                                <div class="repository-tree-node hfl-dir-tree-node">
-                                  <FolderOpen :size="15" class="repository-tree-node__icon hfl-dir-tree-node__icon" />
-                                  <div class="repository-tree-node__text hfl-dir-tree-node__text">
-                                    <span class="repository-tree-node__label hfl-dir-tree-node__label">{{ data.label }}</span>
-                                    <span class="repository-tree-node__path hfl-dir-tree-node__path">{{ data.pathLabel }}</span>
-                                  </div>
-                                </div>
-                              </template>
-                            </ElTree>
-                            <div class="mt-2 text-xs text-[var(--color-text-tertiary)]">{{ t('repositoriesPage.hintTreeSelect') }}</div>
+                          <ElInput
+                            v-model="addTargetS3Bucket"
+                            :placeholder="addTargetS3BucketMode === 'existing' ? t('repositoriesPage.phBucketSelect') : t('repositoriesPage.phBucketNew')"
+                          />
+                        </ElFormItem>
+                        <ElFormItem :label="t('repositoriesPage.fieldPrefix')">
+                          <ElInput
+                            v-model="addTargetS3Prefix"
+                            :placeholder="t('repositoriesPage.phPrefix')"
+                          />
+                          <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                            {{ t('repositoriesPage.hintPrefix') }}
                           </div>
-                          <ElInput v-else v-model="addTargetProxyDir" :placeholder="t('repositoriesPage.phProxyNodeDir')" />
+                        </ElFormItem>
+                      </ElForm>
+                    </div>
+                  </section>
+                </template>
+
+                <template v-else-if="addTargetKind === 'nas'">
+                  <div class="add-nas-steps add-nas-steps--panel">
+                    <div
+                      class="add-nas-steps__item"
+                      :class="{
+                        'add-nas-steps__item--active': addTargetNasStep === 0,
+                        'add-nas-steps__item--done': addTargetNasStep > 0,
+                      }"
+                    >
+                      <span class="add-nas-steps__num">{{ addTargetNasStep > 0 ? '✓' : '01' }}</span>
+                      <span class="add-nas-steps__label">{{ t('addNasRepo.stepAuthNas') }}</span>
+                    </div>
+                    <div
+                      class="add-nas-steps__connector"
+                      :class="{ 'add-nas-steps__connector--on': addTargetNasStep >= 1 }"
+                    />
+                    <div
+                      class="add-nas-steps__item"
+                      :class="{
+                        'add-nas-steps__item--active': addTargetNasStep === 1,
+                        'add-nas-steps__item--done': addTargetNasStep > 1,
+                      }"
+                    >
+                      <span class="add-nas-steps__num">{{ addTargetNasStep > 1 ? '✓' : '02' }}</span>
+                      <span class="add-nas-steps__label">{{ t('addNasRepo.stepBindProxy') }}</span>
+                    </div>
+                    <div
+                      class="add-nas-steps__connector"
+                      :class="{ 'add-nas-steps__connector--on': addTargetNasStep >= 2 }"
+                    />
+                    <div
+                      class="add-nas-steps__item"
+                      :class="{ 'add-nas-steps__item--active': addTargetNasStep === 2 }"
+                    >
+                      <span class="add-nas-steps__num">03</span>
+                      <span class="add-nas-steps__label">{{ t('repositoriesPage.stepRepo') }}</span>
+                    </div>
+                  </div>
+
+                  <section
+                    v-show="addTargetNasStep === 0"
+                    class="add-nas-card"
+                  >
+                    <div class="add-nas-section">
+                      <h4 class="add-nas-section__title">
+                        <span class="add-nas-section__indicator" />
+                        {{ t('repositoriesPage.fieldProtocol') }}
+                      </h4>
+                      <ElRadioGroup
+                        v-model="addTargetNasProtocol"
+                        class="add-nas-protocol-grid"
+                      >
+                        <ElRadio
+                          value="smb"
+                          border
+                          class="add-nas-protocol-card !mr-0"
+                        >
+                          <div class="add-nas-protocol-card__inner">
+                            <component
+                              :is="nasMountProtocolIcon('smb')"
+                              :size="24"
+                            />
+                            <div class="add-nas-protocol-card__text">
+                              <div class="font-semibold">
+                                {{ t('repositoriesPage.protocolSmb') }}
+                              </div>
+                            </div>
+                          </div>
+                        </ElRadio>
+                        <ElRadio
+                          value="nfs"
+                          border
+                          class="add-nas-protocol-card !mr-0"
+                        >
+                          <div class="add-nas-protocol-card__inner">
+                            <component
+                              :is="nasMountProtocolIcon('nfs')"
+                              :size="24"
+                            />
+                            <div class="add-nas-protocol-card__text">
+                              <div class="font-semibold">
+                                {{ t('repositoriesPage.protocolNfs') }}
+                              </div>
+                            </div>
+                          </div>
+                        </ElRadio>
+                      </ElRadioGroup>
+
+                      <h5 class="add-nas-section__subtitle">
+                        <FolderOpen :size="16" />
+                        {{ t('addNasRepo.titleNasInfo') }}
+                      </h5>
+                      <ElForm
+                        label-position="top"
+                        class="add-nas-form"
+                      >
+                        <div class="add-nas-form-row add-nas-form-row--responsive">
+                          <ElFormItem
+                            :label="addTargetNasProtocol === 'smb' ? t('addNasRepo.fieldSmbHost') : t('addNasRepo.fieldNfsHost')"
+                            required
+                            class="flex-1"
+                          >
+                            <ElInput
+                              v-model="addTargetNasHost"
+                              :placeholder="addTargetNasProtocol === 'smb' ? t('addNasRepo.phSmbHost') : t('addNasRepo.phNfsHost')"
+                            />
+                          </ElFormItem>
+                          <ElFormItem
+                            v-if="addTargetNasProtocol === 'smb'"
+                            :label="t('addNasRepo.fieldSmbShare')"
+                            required
+                            class="flex-1"
+                          >
+                            <ElInput
+                              v-model="addTargetNasShare"
+                              :placeholder="t('addNasRepo.phSmbShare')"
+                            />
+                          </ElFormItem>
+                          <ElFormItem
+                            v-else
+                            :label="t('addNasRepo.fieldNfsExport')"
+                            required
+                            class="flex-1"
+                          >
+                            <ElInput
+                              v-model="addTargetNasExport"
+                              :placeholder="t('addNasRepo.phNfsExport')"
+                            />
+                          </ElFormItem>
+                        </div>
+                        <div
+                          v-if="addTargetNasProtocol === 'smb'"
+                          class="add-nas-form-row add-nas-form-row--responsive"
+                        >
+                          <ElFormItem
+                            :label="t('repositoriesPage.fieldSmbUsername')"
+                            required
+                            class="flex-1"
+                          >
+                            <ElInput
+                              v-model="addTargetNasUsername"
+                              :placeholder="t('repositoriesPage.phSmbUsername')"
+                            />
+                          </ElFormItem>
+                          <ElFormItem
+                            :label="t('repositoriesPage.fieldSmbPassword')"
+                            required
+                            class="flex-1"
+                          >
+                            <ElInput
+                              v-model="addTargetNasPassword"
+                              type="password"
+                              show-password
+                              :placeholder="t('repositoriesPage.phSmbPassword')"
+                            />
+                          </ElFormItem>
+                        </div>
+                        <ElFormItem :label="t('addNasRepo.fieldMountOptions')">
+                          <ElInput
+                            v-model="addTargetNasMountOptions"
+                            :placeholder="addTargetNasProtocol === 'smb' ? t('addNasRepo.phMountOptionsSmb') : t('addNasRepo.phMountOptionsNfs')"
+                          />
+                          <div class="mt-1 text-xs text-[rgb(100_116_139)]">
+                            {{ addTargetNasProtocol === 'smb' ? t('addNasRepo.hintMountOptionsSmb') : t('addNasRepo.hintMountOptionsNfs') }}
+                          </div>
+                        </ElFormItem>
+                      </ElForm>
+                    </div>
+                  </section>
+
+                  <section
+                    v-show="addTargetNasStep === 1"
+                    class="add-nas-card"
+                  >
+                    <div class="add-nas-section">
+                      <div class="add-nas-section__head">
+                        <div class="add-nas-section__title-wrap">
+                          <h4 class="add-nas-section__title !mb-0">
+                            <span class="add-nas-section__indicator" />
+                            {{ t('addNasRepo.titleBindProxy') }}
+                          </h4>
+                          <span class="add-nas-optional-badge">{{ t('addNasRepo.optional') }}</span>
+                        </div>
+                      </div>
+
+                      <ElAlert
+                        type="warning"
+                        :closable="false"
+                        show-icon
+                        class="add-nas-proxy-alert"
+                      >
+                        <ol class="add-nas-proxy-alert__list">
+                          <li
+                            v-for="item in bindProxyLeadItems"
+                            :key="item"
+                          >
+                            {{ item }}
+                          </li>
+                        </ol>
+                      </ElAlert>
+
+                      <div class="add-nas-proxy-layout">
+                        <div class="add-nas-proxy-form">
+                          <ElForm
+                            label-position="top"
+                            class="add-nas-form"
+                          >
+                            <ElFormItem class="add-nas-bind-form-item">
+                              <template #label>
+                                <span class="add-nas-field-label-with-action">
+                                  <span>{{ t('addNasRepo.fieldSourceProxyNode') }}</span>
+                                  <ElButton
+                                    text
+                                    circle
+                                    class="hfl-refresh-button add-nas-field-label-with-action__btn"
+                                    :title="t('addNasRepo.proxyRefresh')"
+                                    :aria-label="t('addNasRepo.proxyRefresh')"
+                                    :disabled="proxyNodesRefreshing"
+                                    @click.stop="refreshProxyNodesManually"
+                                  >
+                                    <RefreshCw
+                                      :size="15"
+                                      stroke-width="2"
+                                      :class="{ 'is-spinning': proxyNodesRefreshing }"
+                                    />
+                                  </ElButton>
+                                </span>
+                              </template>
+                              <div class="add-nas-select-row">
+                                <ElButton
+                                  text
+                                  circle
+                                  class="add-nas-select-row__search"
+                                  aria-hidden="true"
+                                  tabindex="-1"
+                                >
+                                  <Search
+                                    :size="15"
+                                    stroke-width="2"
+                                  />
+                                </ElButton>
+                                <ElSelect
+                                  v-model="addTargetNasProxyNodeId"
+                                  class="add-nas-select-row__select"
+                                  :placeholder="t('addNasRepo.phSourceProxyNode')"
+                                  filterable
+                                  clearable
+                                >
+                                  <ElOption
+                                    :value="0"
+                                    :label="t('addNasRepo.optionNoProxy')"
+                                  />
+                                  <ElOption
+                                    v-for="node in addTargetProxyNodeOptions"
+                                    :key="node.id"
+                                    :value="node.id"
+                                    :label="node.name"
+                                  />
+                                </ElSelect>
+                              </div>
+                              <div class="mt-2 text-xs text-[var(--color-text-tertiary)]">
+                                {{ addTargetNasProxyNodeId ? t('addNasRepo.hintProxySelected') : t('addNasRepo.hintProxySkipped') }}
+                              </div>
+                            </ElFormItem>
+                          </ElForm>
+
+                          <div class="add-nas-proxy-benefits">
+                            <div class="add-nas-proxy-benefit">
+                              <span class="add-nas-proxy-benefit__dot" />
+                              {{ t('addNasRepo.proxyBenefitAvoidMountFailure') }}
+                            </div>
+                            <div class="add-nas-proxy-benefit">
+                              <span class="add-nas-proxy-benefit__dot" />
+                              {{ t('addNasRepo.proxyBenefitSharedRepo') }}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div
+                          class="add-nas-path-card"
+                          :class="{ 'add-nas-path-card--direct': isAddTargetNasDirectAccess }"
+                          aria-hidden="true"
+                        >
+                          <template v-if="!isAddTargetNasDirectAccess">
+                            <div class="add-nas-path-card__agents">
+                              <span>{{ t('addNasRepo.demoBackupSourceA') }}</span>
+                              <span>{{ t('addNasRepo.demoBackupSourceB') }}</span>
+                              <span>{{ t('addNasRepo.demoBackupSourceC') }}</span>
+                            </div>
+                            <div class="add-nas-path-card__join" />
+                            <div class="add-nas-path-card__node add-nas-path-card__node--proxy">
+                              Proxy
+                            </div>
+                            <div class="add-nas-path-card__line" />
+                            <div class="add-nas-path-card__node add-nas-path-card__node--nas">
+                              NAS
+                            </div>
+                          </template>
+                          <template v-else>
+                            <div class="add-nas-path-card__direct-rows">
+                              <div class="add-nas-path-card__direct-row">
+                                <span class="add-nas-path-card__source">{{ t('addNasRepo.demoBackupSourceA') }}</span>
+                                <span class="add-nas-path-card__direct-line" />
+                                <span class="add-nas-path-card__node add-nas-path-card__node--nas">NAS</span>
+                              </div>
+                              <div class="add-nas-path-card__direct-row">
+                                <span class="add-nas-path-card__source">{{ t('addNasRepo.demoBackupSourceB') }}</span>
+                                <span class="add-nas-path-card__direct-line" />
+                                <span class="add-nas-path-card__node add-nas-path-card__node--nas">NAS</span>
+                              </div>
+                              <div class="add-nas-path-card__direct-row">
+                                <span class="add-nas-path-card__source">{{ t('addNasRepo.demoBackupSourceC') }}</span>
+                                <span class="add-nas-path-card__direct-line" />
+                                <span class="add-nas-path-card__node add-nas-path-card__node--nas">NAS</span>
+                              </div>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+
+                      <ElButton
+                        class="add-nas-deploy-btn"
+                        type="primary"
+                        plain
+                        @click="openProxyDeploy"
+                      >
+                        <Plus
+                          :size="14"
+                          class="inline"
+                        />
+                        {{ t('addNasRepo.deployProxy') }}
+                      </ElButton>
+                    </div>
+                  </section>
+
+                  <section
+                    v-show="addTargetNasStep === 2"
+                    class="add-nas-card"
+                  >
+                    <div class="add-nas-section">
+                      <h4 class="add-nas-section__title">
+                        <span class="add-nas-section__indicator" />
+                        {{ t('repositoriesPage.stepRepo') }}
+                      </h4>
+                      <ElForm
+                        label-position="top"
+                        class="add-nas-form"
+                      >
+                        <ElFormItem
+                          :label="t('repositoriesPage.fieldRepoName')"
+                          required
+                        >
+                          <ElInput
+                            v-model="addTargetRepoName"
+                            :placeholder="t('repositoriesPage.phRepoName')"
+                          />
+                        </ElFormItem>
+                      </ElForm>
+                    </div>
+                  </section>
+                </template>
+
+                <template v-else>
+                  <section class="repository-add-card">
+                    <div class="repository-add-section">
+                      <h4 class="repository-add-section__title">
+                        <span class="repository-add-section__indicator" />
+                        {{ t('repositoriesPage.addProxyFsPage') }}
+                      </h4>
+                      <ElForm
+                        label-position="top"
+                        class="repository-add-form"
+                      >
+                        <ElFormItem
+                          :label="t('repositoriesPage.fieldRepoName')"
+                          required
+                        >
+                          <ElInput
+                            v-model="addTargetRepoName"
+                            :placeholder="t('repositoriesPage.phRepoName')"
+                          />
+                          <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                            {{ t('repositoriesPage.hintRepoNameAuto') }}
+                          </div>
+                        </ElFormItem>
+                        <ElFormItem
+                          :label="t('repositoriesPage.fieldProxyNode')"
+                          required
+                        >
+                          <ElSelect
+                            v-model="addTargetProxyNodeId"
+                            class="w-full"
+                            filterable
+                            :placeholder="t('repositoriesPage.phProxyNode')"
+                          >
+                            <ElOption
+                              v-for="node in addTargetProxyNodeOptions"
+                              :key="node.id"
+                              :label="node.name"
+                              :value="node.id"
+                            />
+                          </ElSelect>
+                        </ElFormItem>
+                        <ElFormItem
+                          :label="t('repositoriesPage.fieldProxyNodeDir')"
+                          required
+                        >
+                          <div class="repository-dir-selector">
+                            <div class="repository-segmented">
+                              <button
+                                type="button"
+                                class="repository-segmented__btn"
+                                :class="{ 'is-active': addTargetProxyUseTree }"
+                                @click="addTargetProxyUseTree = true"
+                              >
+                                <FolderTree :size="14" />
+                                {{ t('repositoriesPage.dirSelectTree') }}
+                              </button>
+                              <button
+                                type="button"
+                                class="repository-segmented__btn"
+                                :class="{ 'is-active': !addTargetProxyUseTree }"
+                                @click="addTargetProxyUseTree = false"
+                              >
+                                <HardDrive :size="14" />
+                                {{ t('repositoriesPage.dirSelectInput') }}
+                              </button>
+                            </div>
+                            <div
+                              v-if="addTargetProxyUseTree"
+                              class="repository-dir-tree-shell hfl-dir-tree-shell"
+                            >
+                              <div
+                                v-if="!addTargetProxyNodeId"
+                                class="repository-dir-tree-shell__empty hfl-dir-tree-empty"
+                              >
+                                {{ t('repositoriesPage.errProxyNode') }}
+                              </div>
+                              <ElTree
+                                v-else
+                                ref="addTargetProxyDirTreeRef"
+                                class="repository-dir-tree hfl-dir-tree"
+                                :data="addTargetProxyTreeData"
+                                :props="{ children: 'children', label: 'label' }"
+                                node-key="id"
+                                show-checkbox
+                                check-strictly
+                                default-expand-all
+                                :check-on-click-node="true"
+                                :expand-on-click-node="false"
+                                :highlight-current="true"
+                                :current-node-key="addTargetProxyCurrentTreeNodeKey"
+                                :default-checked-keys="addTargetProxyCheckedTreeKeys"
+                                @current-change="onAddTargetProxyTreeSelect"
+                                @check-change="onAddTargetProxyTreeCheck"
+                              >
+                                <template #default="{ data }">
+                                  <div class="repository-tree-node hfl-dir-tree-node">
+                                    <FolderOpen
+                                      :size="15"
+                                      class="repository-tree-node__icon hfl-dir-tree-node__icon"
+                                    />
+                                    <div class="repository-tree-node__text hfl-dir-tree-node__text">
+                                      <span class="repository-tree-node__label hfl-dir-tree-node__label">{{ data.label }}</span>
+                                      <span class="repository-tree-node__path hfl-dir-tree-node__path">{{ data.pathLabel }}</span>
+                                    </div>
+                                  </div>
+                                </template>
+                              </ElTree>
+                              <div class="mt-2 text-xs text-[var(--color-text-tertiary)]">
+                                {{ t('repositoriesPage.hintTreeSelect') }}
+                              </div>
+                            </div>
+                            <ElInput
+                              v-else
+                              v-model="addTargetProxyDir"
+                              :placeholder="t('repositoriesPage.phProxyNodeDir')"
+                            />
+                          </div>
+                        </ElFormItem>
+                      </ElForm>
+                    </div>
+                  </section>
+                </template>
+
+                <section
+                  v-if="
+                    addTargetKind === 'proxy_fs' ||
+                      (addTargetKind === 's3' && addTargetS3Step === 1) ||
+                      (addTargetKind === 'nas' && addTargetNasStep === 2)
+                  "
+                  class="repository-add-card repository-add-card--quota"
+                >
+                  <div class="repository-add-section">
+                    <h4 class="repository-add-section__title">
+                      <span class="repository-add-section__indicator" />
+                      {{ t('repositoriesPage.fieldQuota') }}
+                    </h4>
+                    <ElForm
+                      label-position="top"
+                      class="repository-add-form repository-add-form--quota"
+                    >
+                      <ElFormItem
+                        :label="t('repositoriesPage.fieldQuota')"
+                        class="repository-add-form__grow"
+                      >
+                        <ElInput
+                          v-model.number="addTargetQuota"
+                          type="number"
+                          min="0"
+                          :placeholder="t('repositoriesPage.phQuota')"
+                        />
+                        <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                          {{ t('repositoriesPage.hintQuota') }}
                         </div>
                       </ElFormItem>
+                      <div class="repository-quota-panel">
+                        <ElCheckbox v-model="addTargetEnableQuotaAlert">
+                          {{ t('repositoriesPage.fieldQuotaAlert') }}
+                        </ElCheckbox>
+                        <div class="repository-quota-panel__threshold">
+                          <span>{{ t('repositoriesPage.fieldQuotaAlertThreshold') }}</span>
+                          <ElInput
+                            v-model.number="addTargetQuotaAlertThreshold"
+                            type="number"
+                            min="1"
+                            max="100"
+                            class="repository-quota-panel__input"
+                          />
+                          <span>%</span>
+                        </div>
+                      </div>
                     </ElForm>
                   </div>
                 </section>
-              </template>
-
-              <section
-                v-if="
-                  addTargetKind === 'proxy_fs' ||
-                  (addTargetKind === 's3' && addTargetS3Step === 1) ||
-                  (addTargetKind === 'nas' && addTargetNasStep === 2)
-                "
-                class="repository-add-card repository-add-card--quota"
-              >
-                <div class="repository-add-section">
-                  <h4 class="repository-add-section__title">
-                    <span class="repository-add-section__indicator" />
-                    {{ t('repositoriesPage.fieldQuota') }}
-                  </h4>
-                  <ElForm label-position="top" class="repository-add-form repository-add-form--quota">
-                    <ElFormItem :label="t('repositoriesPage.fieldQuota')" class="repository-add-form__grow">
-                      <ElInput v-model.number="addTargetQuota" type="number" min="0" :placeholder="t('repositoriesPage.phQuota')" />
-                      <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">{{ t('repositoriesPage.hintQuota') }}</div>
-                    </ElFormItem>
-                    <div class="repository-quota-panel">
-                      <ElCheckbox v-model="addTargetEnableQuotaAlert">{{ t('repositoriesPage.fieldQuotaAlert') }}</ElCheckbox>
-                      <div class="repository-quota-panel__threshold">
-                        <span>{{ t('repositoriesPage.fieldQuotaAlertThreshold') }}</span>
-                        <ElInput
-                          v-model.number="addTargetQuotaAlertThreshold"
-                          type="number"
-                          min="1"
-                          max="100"
-                          class="repository-quota-panel__input"
-                        />
-                        <span>%</span>
-                      </div>
-                    </div>
-                  </ElForm>
-                </div>
-              </section>
               </div>
             </div>
 
-            <aside v-show="false" class="repository-add-preview">
+            <aside
+              v-show="false"
+              class="repository-add-preview"
+            >
               <div class="repository-add-preview__head">
                 <div class="repository-add-preview__icon">
-                  <Cloud v-if="addTargetKind === 's3'" :size="26" />
-                  <component :is="targetNasSidebarIcon" v-else-if="addTargetKind === 'nas'" :size="26" />
-                  <FolderTree v-else :size="26" />
+                  <Cloud
+                    v-if="addTargetKind === 's3'"
+                    :size="26"
+                  />
+                  <component
+                    :is="targetNasSidebarIcon"
+                    v-else-if="addTargetKind === 'nas'"
+                    :size="26"
+                  />
+                  <FolderTree
+                    v-else
+                    :size="26"
+                  />
                 </div>
                 <div class="repository-add-preview__title-wrap">
-                  <h4 class="repository-add-preview__title">{{ addTargetRepoName || t('addS3Repo.previewUnnamed') }}</h4>
+                  <h4 class="repository-add-preview__title">
+                    {{ addTargetRepoName || t('addS3Repo.previewUnnamed') }}
+                  </h4>
                   <p class="repository-add-preview__type">
-                    <template v-if="addTargetKind === 's3'">{{ addTargetS3PlatformLabel || t('addS3Repo.previewSelectPlatform') }}</template>
-                    <template v-else-if="addTargetKind === 'nas'">{{ addTargetNasProtocolLabel }}</template>
-                    <template v-else>{{ t('repositoriesPage.kindProxyFs') }}</template>
+                    <template v-if="addTargetKind === 's3'">
+                      {{ addTargetS3PlatformLabel || t('addS3Repo.previewSelectPlatform') }}
+                    </template>
+                    <template v-else-if="addTargetKind === 'nas'">
+                      {{ addTargetNasProtocolLabel }}
+                    </template>
+                    <template v-else>
+                      {{ t('repositoriesPage.kindProxyFs') }}
+                    </template>
                   </p>
                 </div>
               </div>
 
               <div class="repository-add-preview__body">
                 <section class="repository-add-preview__section">
-                  <h5 class="repository-add-preview__section-title">{{ t('addS3Repo.previewBasicInfo') }}</h5>
+                  <h5 class="repository-add-preview__section-title">
+                    {{ t('addS3Repo.previewBasicInfo') }}
+                  </h5>
                   <div class="repository-add-preview__row">
                     <span>{{ addTargetKind === 's3' ? t('repositoriesPage.fieldBucket') : t('repositoriesPage.fieldRepoName') }}</span>
                     <strong>{{ addTargetKind === 's3' ? (addTargetS3Bucket || '—') : (addTargetRepoName || '—') }}</strong>
@@ -9208,14 +10123,19 @@ function preserveShallowestPathOrder(paths: string[]) {
                   </div>
                   <div class="repository-add-preview__row">
                     <span>{{ t('repositoriesPage.fieldQuotaAlert') }}</span>
-                    <strong class="repository-add-preview__badge" :class="{ 'is-on': addTargetEnableQuotaAlert }">
+                    <strong
+                      class="repository-add-preview__badge"
+                      :class="{ 'is-on': addTargetEnableQuotaAlert }"
+                    >
                       {{ addTargetEnableQuotaAlert ? `${t('repositoriesPage.enabled')} (${addTargetQuotaAlertThreshold}%)` : t('repositoriesPage.disabled') }}
                     </strong>
                   </div>
                 </section>
 
                 <section class="repository-add-preview__section">
-                  <h5 class="repository-add-preview__section-title">{{ t('addS3Repo.previewConnection') }}</h5>
+                  <h5 class="repository-add-preview__section-title">
+                    {{ t('addS3Repo.previewConnection') }}
+                  </h5>
                   <template v-if="addTargetKind === 's3'">
                     <div class="repository-add-preview__row">
                       <span>{{ t('addS3Repo.fieldEndpoint') }}</span>
@@ -9235,8 +10155,14 @@ function preserveShallowestPathOrder(paths: string[]) {
                     </div>
                     <div class="repository-add-preview__row">
                       <span>{{ t('repositoriesPage.fieldUseTls') }}</span>
-                      <strong class="repository-add-preview__badge" :class="{ 'is-on': addTargetS3UseTls }">
-                        <ShieldCheck v-if="addTargetS3UseTls" :size="14" />
+                      <strong
+                        class="repository-add-preview__badge"
+                        :class="{ 'is-on': addTargetS3UseTls }"
+                      >
+                        <ShieldCheck
+                          v-if="addTargetS3UseTls"
+                          :size="14"
+                        />
                         {{ addTargetS3UseTls ? 'HTTPS' : 'HTTP' }}
                       </strong>
                     </div>
@@ -9277,18 +10203,35 @@ function preserveShallowestPathOrder(paths: string[]) {
       </div>
 
       <template #footer>
-        <div v-show="false" class="repository-add-footer">
-          <ElButton v-if="!addTargetIsFirstStep" @click="prevAddTargetStep">
+        <div
+          v-show="false"
+          class="repository-add-footer"
+        >
+          <ElButton
+            v-if="!addTargetIsFirstStep"
+            @click="prevAddTargetStep"
+          >
             {{ t('repositoriesPage.btnPrev') }}
           </ElButton>
           <span v-else />
           <div class="repository-add-footer__actions">
-            <ElButton @click="closeAddTargetDialog">{{ t('protection.backupsPage.btnCancel') }}</ElButton>
-            <ElButton v-if="!addTargetIsFinalStep" type="primary" @click="nextAddTargetStep">
+            <ElButton @click="closeAddTargetDialog">
+              {{ t('protection.backupsPage.btnCancel') }}
+            </ElButton>
+            <ElButton
+              v-if="!addTargetIsFinalStep"
+              type="primary"
+              @click="nextAddTargetStep"
+            >
               {{ addTargetNextButtonLabel }}
             </ElButton>
-            <ElButton v-else type="primary" :loading="addTargetSaving" @click="submitAddTargetDialog">
-            {{ t('protection.backupsPage.btnAddTargetConfirm') }}
+            <ElButton
+              v-else
+              type="primary"
+              :loading="addTargetSaving"
+              @click="submitAddTargetDialog"
+            >
+              {{ t('protection.backupsPage.btnAddTargetConfirm') }}
             </ElButton>
           </div>
         </div>
@@ -9308,12 +10251,23 @@ function preserveShallowestPathOrder(paths: string[]) {
       >
         <div class="fullscreen-form-page source-deploy-page">
           <header class="fullscreen-form-header">
-            <button type="button" class="fullscreen-form-header__back" @click="closeAddSource">
-              <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+            <button
+              type="button"
+              class="fullscreen-form-header__back"
+              @click="closeAddSource"
+            >
+              <ArrowLeft
+                class="fullscreen-form-header__back-icon"
+                :size="18"
+              />
             </button>
             <div class="fullscreen-form-header__content">
-              <h1 class="fullscreen-form-header__title">{{ t('protection.sourceResources.addSourcePageTitle') }}</h1>
-              <p class="fullscreen-form-header__desc">{{ t('protection.sourceResources.addSourcePageDesc') }}</p>
+              <h1 class="fullscreen-form-header__title">
+                {{ t('protection.sourceResources.addSourcePageTitle') }}
+              </h1>
+              <p class="fullscreen-form-header__desc">
+                {{ t('protection.sourceResources.addSourcePageDesc') }}
+              </p>
             </div>
           </header>
 
@@ -9329,10 +10283,17 @@ function preserveShallowestPathOrder(paths: string[]) {
                       :aria-pressed="addSourceType === 'hostFileSystem'"
                       @click="addSourceType = 'hostFileSystem'"
                     >
-                      <span class="add-source-type-card__indicator" aria-hidden="true" />
+                      <span
+                        class="add-source-type-card__indicator"
+                        aria-hidden="true"
+                      />
                       <span class="add-source-type-card__inner">
                         <span class="add-source-type-card__icon">
-                          <component :is="backupSourceTypeIcon('host')" :size="20" stroke-width="2" />
+                          <component
+                            :is="backupSourceTypeIcon('host')"
+                            :size="20"
+                            stroke-width="2"
+                          />
                         </span>
                         <span class="add-source-type-card__text">
                           <span class="add-source-type-card__name">{{ t('protection.sourceResources.addSourceTypeHostFile') }}</span>
@@ -9347,10 +10308,17 @@ function preserveShallowestPathOrder(paths: string[]) {
                       :aria-pressed="addSourceType === 'nas'"
                       @click="addSourceType = 'nas'"
                     >
-                      <span class="add-source-type-card__indicator" aria-hidden="true" />
+                      <span
+                        class="add-source-type-card__indicator"
+                        aria-hidden="true"
+                      />
                       <span class="add-source-type-card__inner">
                         <span class="add-source-type-card__icon">
-                          <component :is="backupSourceTypeIcon('nas')" :size="20" stroke-width="2" />
+                          <component
+                            :is="backupSourceTypeIcon('nas')"
+                            :size="20"
+                            stroke-width="2"
+                          />
                         </span>
                         <span class="add-source-type-card__text">
                           <span class="add-source-type-card__name">{{ t('protection.sourceResources.addSourceTypeNas') }}</span>

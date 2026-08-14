@@ -7,7 +7,12 @@ const insightMenus = useInsightSideNav()
 </script>
 
 <template>
-  <ModulePage :menus="insightMenus" body-flush body-fill hide-page-title>
+  <ModulePage
+    :menus="insightMenus"
+    body-flush
+    body-fill
+    hide-page-title
+  >
     <KeepAlive include="InsightCopilot">
       <InsightCopilot />
     </KeepAlive>

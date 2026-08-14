@@ -106,10 +106,18 @@ onMounted(load)
 </script>
 
 <template>
-  <ModulePage :menus="sideNav" body-fill>
-    <div v-loading="busy" class="platform-settings">
+  <ModulePage
+    :menus="sideNav"
+    body-fill
+  >
+    <div
+      v-loading="busy"
+      class="platform-settings"
+    >
       <div class="platform-settings__toolbar">
-        <p class="platform-settings__intro">{{ t('platformOps.settings.email.intro') }}</p>
+        <p class="platform-settings__intro">
+          {{ t('platformOps.settings.email.intro') }}
+        </p>
         <el-button
           v-if="emailEditable"
           type="primary"
@@ -144,18 +152,52 @@ onMounted(load)
             <p v-if="managedByDeployment">
               {{ t('platformOps.settings.email.managedByDeployment') }}
             </p>
-            <p v-if="meta.configuration_error">{{ meta.configuration_error }}</p>
+            <p v-if="meta.configuration_error">
+              {{ meta.configuration_error }}
+            </p>
           </template>
         </el-alert>
 
-        <div v-if="!emailEditable" class="platform-settings__readonly-summary hfl-detail-grid">
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.backend') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.backend }">{{ form.backend || '—' }}</strong></div>
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.host') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.host }">{{ form.host || '—' }}</strong></div>
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.port') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.port }">{{ form.port || '—' }}</strong></div>
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.hostUser') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.host_user }">{{ form.host_user || '—' }}</strong></div>
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.password') }}</span><strong class="hfl-detail-row__value">{{ meta?.password_configured ? 'Configured' : 'Not configured' }}</strong></div>
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.fromEmail') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.from_email }">{{ form.from_email || '—' }}</strong></div>
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">Transport security</span><strong class="hfl-detail-row__value">{{ form.use_ssl ? 'SSL' : form.use_tls ? 'TLS' : 'None' }}</strong></div>
+        <div
+          v-if="!emailEditable"
+          class="platform-settings__readonly-summary hfl-detail-grid"
+        >
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.settings.email.backend') }}</span><strong
+              class="hfl-detail-row__value"
+              :class="{ 'hfl-detail-row__empty': !form.backend }"
+            >{{ form.backend || '—' }}</strong>
+          </div>
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.settings.email.host') }}</span><strong
+              class="hfl-detail-row__value"
+              :class="{ 'hfl-detail-row__empty': !form.host }"
+            >{{ form.host || '—' }}</strong>
+          </div>
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.settings.email.port') }}</span><strong
+              class="hfl-detail-row__value"
+              :class="{ 'hfl-detail-row__empty': !form.port }"
+            >{{ form.port || '—' }}</strong>
+          </div>
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.settings.email.hostUser') }}</span><strong
+              class="hfl-detail-row__value"
+              :class="{ 'hfl-detail-row__empty': !form.host_user }"
+            >{{ form.host_user || '—' }}</strong>
+          </div>
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.settings.email.password') }}</span><strong class="hfl-detail-row__value">{{ meta?.password_configured ? 'Configured' : 'Not configured' }}</strong>
+          </div>
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.settings.email.fromEmail') }}</span><strong
+              class="hfl-detail-row__value"
+              :class="{ 'hfl-detail-row__empty': !form.from_email }"
+            >{{ form.from_email || '—' }}</strong>
+          </div>
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">Transport security</span><strong class="hfl-detail-row__value">{{ form.use_ssl ? 'SSL' : form.use_tls ? 'TLS' : 'None' }}</strong>
+          </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">Configuration source</span>
             <strong class="hfl-detail-row__value">
@@ -170,16 +212,29 @@ onMounted(load)
           class="platform-settings__form"
         >
           <el-form-item :label="t('platformOps.settings.email.backend')">
-            <el-input v-model="form.backend" autocomplete="off" />
+            <el-input
+              v-model="form.backend"
+              autocomplete="off"
+            />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.email.host')">
-            <el-input v-model="form.host" autocomplete="off" />
+            <el-input
+              v-model="form.host"
+              autocomplete="off"
+            />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.email.port')">
-            <el-input-number v-model="form.port" :min="1" :max="65535" />
+            <el-input-number
+              v-model="form.port"
+              :min="1"
+              :max="65535"
+            />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.email.hostUser')">
-            <el-input v-model="form.host_user" autocomplete="off" />
+            <el-input
+              v-model="form.host_user"
+              autocomplete="off"
+            />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.email.password')">
             <el-input
@@ -189,10 +244,15 @@ onMounted(load)
               autocomplete="new-password"
               :placeholder="meta?.password_configured ? '••••••••' : ''"
             />
-            <p class="platform-settings__hint">{{ t('platformOps.settings.email.passwordHint') }}</p>
+            <p class="platform-settings__hint">
+              {{ t('platformOps.settings.email.passwordHint') }}
+            </p>
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.email.fromEmail')">
-            <el-input v-model="form.from_email" autocomplete="off" />
+            <el-input
+              v-model="form.from_email"
+              autocomplete="off"
+            />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.email.tls')">
             <el-switch v-model="form.use_tls" />
@@ -203,14 +263,19 @@ onMounted(load)
         </el-form>
 
         <div class="platform-settings__test-block">
-          <h3 class="platform-settings__section">{{ t('platformOps.settings.email.testSectionTitle') }}</h3>
+          <h3 class="platform-settings__section">
+            {{ t('platformOps.settings.email.testSectionTitle') }}
+          </h3>
           <div class="platform-settings__test-row">
             <el-input
               v-model="testRecipient"
               :placeholder="t('platformOps.settings.email.testRecipient')"
               autocomplete="off"
             />
-            <el-button :loading="testing" @click="sendTest">
+            <el-button
+              :loading="testing"
+              @click="sendTest"
+            >
               {{ t('platformOps.settings.email.testSend') }}
             </el-button>
           </div>

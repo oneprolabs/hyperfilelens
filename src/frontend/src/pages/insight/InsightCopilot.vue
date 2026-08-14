@@ -692,8 +692,15 @@ onUnmounted(() => {
 
     <div class="copilot-main flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--color-card-bg)]">
       <div class="copilot-mobile-navigation">
-        <button type="button" :aria-label="t('insight.copilot.sessions')" @click="mobileSessionsOpen = true">
-          <Menu :size="20" aria-hidden="true" />
+        <button
+          type="button"
+          :aria-label="t('insight.copilot.sessions')"
+          @click="mobileSessionsOpen = true"
+        >
+          <Menu
+            :size="20"
+            aria-hidden="true"
+          />
           <span>{{ t('insight.copilot.sessions') }}</span>
         </button>
       </div>
@@ -710,7 +717,10 @@ onUnmounted(() => {
           @delete="deleteActiveSession"
         />
 
-        <div v-if="activeSession?.lifecycle_status === 'ready'" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div
+          v-if="activeSession?.lifecycle_status === 'ready'"
+          class="flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
           <CopilotMessageList
             :key="activeSessionId"
             ref="messageListRef"

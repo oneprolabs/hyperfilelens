@@ -93,12 +93,23 @@ watch(
     >
       <div class="fullscreen-form-page create-backup-page">
         <div class="fullscreen-form-header">
-          <button type="button" class="fullscreen-form-header__back" @click="emit('close')">
-            <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+          <button
+            type="button"
+            class="fullscreen-form-header__back"
+            @click="emit('close')"
+          >
+            <ArrowLeft
+              class="fullscreen-form-header__back-icon"
+              :size="18"
+            />
           </button>
           <div class="fullscreen-form-header__content">
-            <h1 class="fullscreen-form-header__title">{{ title }}</h1>
-            <p class="fullscreen-form-header__desc">{{ description }}</p>
+            <h1 class="fullscreen-form-header__title">
+              {{ title }}
+            </h1>
+            <p class="fullscreen-form-header__desc">
+              {{ description }}
+            </p>
           </div>
         </div>
 
@@ -122,10 +133,20 @@ watch(
           />
 
           <main class="fullscreen-form-main create-backup-main">
-            <div v-if="bootstrapping" class="create-backup-step-body dp-process-page create-backup-loading-pane">
+            <div
+              v-if="bootstrapping"
+              class="create-backup-step-body dp-process-page create-backup-loading-pane"
+            >
               <div class="fullscreen-form-card create-backup-loading-card">
-                <el-progress :percentage="66" :indeterminate="true" status="warning" class="mb-4" />
-                <p class="text-slate-600">{{ waitingText }}</p>
+                <el-progress
+                  :percentage="66"
+                  :indeterminate="true"
+                  status="warning"
+                  class="mb-4"
+                />
+                <p class="text-slate-600">
+                  {{ waitingText }}
+                </p>
               </div>
             </div>
 
@@ -136,17 +157,41 @@ watch(
               <slot name="form" />
             </div>
 
-            <div v-else-if="phase === 'waiting'" class="fullscreen-form-card py-10 text-center">
-              <el-progress :percentage="66" :indeterminate="true" status="warning" class="mb-4" />
-              <p class="text-slate-600">{{ waitingText }}</p>
+            <div
+              v-else-if="phase === 'waiting'"
+              class="fullscreen-form-card py-10 text-center"
+            >
+              <el-progress
+                :percentage="66"
+                :indeterminate="true"
+                status="warning"
+                class="mb-4"
+              />
+              <p class="text-slate-600">
+                {{ waitingText }}
+              </p>
             </div>
 
-            <div v-else class="fullscreen-form-card py-8 text-center space-y-4">
-              <el-result icon="success" :title="resultTitle" :sub-title="resultSubtitle">
+            <div
+              v-else
+              class="fullscreen-form-card py-8 text-center space-y-4"
+            >
+              <el-result
+                icon="success"
+                :title="resultTitle"
+                :sub-title="resultSubtitle"
+              >
                 <template #extra>
                   <div class="flex flex-wrap items-center justify-center gap-2">
-                    <ElButton type="primary" @click="emit('close')">{{ closeLabel }}</ElButton>
-                    <ElButton @click="emit('goToStartBackup')">{{ goToStartBackupLabel }}</ElButton>
+                    <ElButton
+                      type="primary"
+                      @click="emit('close')"
+                    >
+                      {{ closeLabel }}
+                    </ElButton>
+                    <ElButton @click="emit('goToStartBackup')">
+                      {{ goToStartBackupLabel }}
+                    </ElButton>
                   </div>
                 </template>
               </el-result>
@@ -154,22 +199,46 @@ watch(
           </main>
         </div>
 
-        <div v-if="phase === 'form' || bootstrapping" class="fullscreen-form-footer create-backup-footer">
+        <div
+          v-if="phase === 'form' || bootstrapping"
+          class="fullscreen-form-footer create-backup-footer"
+        >
           <div class="create-backup-footer__inner">
             <div class="create-backup-footer__actions">
-              <ElButton class="hfl-btn-with-icon" @click="emit('close')">
+              <ElButton
+                class="hfl-btn-with-icon"
+                @click="emit('close')"
+              >
                 <X :size="14" />
                 <span>{{ cancelLabel }}</span>
               </ElButton>
-              <ElButton v-if="canGoPrev" class="hfl-btn-with-icon" :disabled="bootstrapping || busy" @click="emit('prev')">
+              <ElButton
+                v-if="canGoPrev"
+                class="hfl-btn-with-icon"
+                :disabled="bootstrapping || busy"
+                @click="emit('prev')"
+              >
                 <ArrowLeft :size="14" />
                 <span>{{ prevLabel }}</span>
               </ElButton>
-              <ElButton v-if="!isLastStep" type="primary" class="hfl-btn-with-icon" :loading="busy" :disabled="bootstrapping || busy" @click="emit('next')">
+              <ElButton
+                v-if="!isLastStep"
+                type="primary"
+                class="hfl-btn-with-icon"
+                :loading="busy"
+                :disabled="bootstrapping || busy"
+                @click="emit('next')"
+              >
                 <span>{{ nextLabel }}</span>
                 <ArrowRight :size="14" />
               </ElButton>
-              <ElButton v-else type="primary" class="hfl-btn-with-icon" :disabled="bootstrapping || busy" @click="emit('confirm')">
+              <ElButton
+                v-else
+                type="primary"
+                class="hfl-btn-with-icon"
+                :disabled="bootstrapping || busy"
+                @click="emit('confirm')"
+              >
                 <Check :size="14" />
                 <span>{{ confirmLabel }}</span>
               </ElButton>

@@ -28,13 +28,22 @@ defineProps<{
         d="M42 21s9-18-8-31c16 17 6 32 6 32h-3C36-13 27 6 14-56 29-73 0-88 0-60h-9c1-24-20-12-8 5-1 37-23 52-23 78-7-18 6-32 6-32s-18 15-7 37 31 17 17 27c22 15 56 5 55-27 1-8 22-5 24-3s-3-4-13-4m-56-78c-7-2-5-11-2-11s8 7 2 11m19 1c-5-7-1-14 4-13s5 13-4 13"
         fill="#ffffff"
       />
-      <g fill="#fabf24" stroke="#1e293b" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round">
+      <g
+        fill="#fabf24"
+        stroke="#1e293b"
+        stroke-width="1.2"
+        stroke-linejoin="round"
+        stroke-linecap="round"
+      >
         <path
           d="M-41 31l21 30c11 7 5 35-25 21-17-5-31-4-33-13s4-10 3-14c-4-22 14-11 19-22s5-16 15-2M71 45c-4-6 0-17-14-16-6 12-23 24-24 0-10 0-3 24-7 35-9 27 17 29 28 16l26-18c2-3 5-6-9-17m-92-92c-3-6 11-14 16-14s12 4 19 6 4 9 2 10S3-35-5-35s-10-8-16-12"
         />
         <path d="M-21-48c8 6 17 11 35-3" />
       </g>
-      <path d="M-10-54c-2 0 1-2 2-1m7 1c1-1-1-2-3-1" fill="#1e293b" />
+      <path
+        d="M-10-54c-2 0 1-2 2-1m7 1c1-1-1-2-3-1"
+        fill="#1e293b"
+      />
     </g>
   </svg>
 
@@ -48,10 +57,22 @@ defineProps<{
     xmlns="http://www.w3.org/2000/svg"
     aria-hidden="true"
   >
-    <path d="M16 26 L52 21 L52 56 L16 56 Z" fill="#00adef" />
-    <path d="M16 61 L52 61 L52 96 L16 91 Z" fill="#00adef" />
-    <path d="M57 20 L104 14 L104 56 L57 56 Z" fill="#0078d7" />
-    <path d="M57 61 L104 61 L104 103 L57 97 Z" fill="#0078d7" />
+    <path
+      d="M16 26 L52 21 L52 56 L16 56 Z"
+      fill="#00adef"
+    />
+    <path
+      d="M16 61 L52 61 L52 96 L16 91 Z"
+      fill="#00adef"
+    />
+    <path
+      d="M57 20 L104 14 L104 56 L57 56 Z"
+      fill="#0078d7"
+    />
+    <path
+      d="M57 61 L104 61 L104 103 L57 97 Z"
+      fill="#0078d7"
+    />
   </svg>
 
   <!-- Apple Logo -->

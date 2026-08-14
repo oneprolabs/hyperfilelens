@@ -14,9 +14,18 @@ const nodeParts = computed(() => flowSourceNodeParts(props.row))
 </script>
 
 <template>
-  <span v-if="row.type === 'host'" class="protection-flow-cell-muted">{{ t('protection.backupsPage.flowExecutorLocalAgent') }}</span>
-  <div v-else class="protection-flow-node-cell">
+  <span
+    v-if="row.type === 'host'"
+    class="protection-flow-cell-muted"
+  >{{ t('protection.backupsPage.flowExecutorLocalAgent') }}</span>
+  <div
+    v-else
+    class="protection-flow-node-cell"
+  >
     <span class="source-node-name">{{ nodeParts.name }}</span>
-    <span v-if="nodeParts.ip" class="source-ip-text">{{ nodeParts.ip }}</span>
+    <span
+      v-if="nodeParts.ip"
+      class="source-ip-text"
+    >{{ nodeParts.ip }}</span>
   </div>
 </template>

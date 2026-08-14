@@ -1013,27 +1013,59 @@ function closeDeleteSnapshotDialog() {
 </script>
 
 <template>
-  <ModulePage :title="t('protection.moduleTitle')" :menus="protectionMenus">
-    <div v-if="detailLoading" class="py-16 text-center">
-      <el-empty :description="t('common.loading')" :image-size="64" />
+  <ModulePage
+    :title="t('protection.moduleTitle')"
+    :menus="protectionMenus"
+  >
+    <div
+      v-if="detailLoading"
+      class="py-16 text-center"
+    >
+      <el-empty
+        :description="t('common.loading')"
+        :image-size="64"
+      />
     </div>
 
-    <div v-else-if="backup" class="space-y-[var(--card-gap)]">
+    <div
+      v-else-if="backup"
+      class="space-y-[var(--card-gap)]"
+    >
       <div class="flex flex-wrap items-center gap-3">
         <RouterLink to="/protection/backups">
           <ElButton text>
-            <ArrowLeft :size="16" class="inline mr-1 align-text-bottom" />
+            <ArrowLeft
+              :size="16"
+              class="inline mr-1 align-text-bottom"
+            />
             {{ t('protection.backupDetail.backToList') }}
           </ElButton>
         </RouterLink>
       </div>
 
-      <el-tabs v-model="activeTab" class="detail-tabs repo-underline-tabs">
-        <el-tab-pane :label="t('protection.backupDetail.tabDetail')" name="detail">
-          <el-descriptions :column="1" border size="default" class="max-w-3xl">
-            <el-descriptions-item :label="t('protection.backupDetail.labelName')">{{ backup.name }}</el-descriptions-item>
-            <el-descriptions-item :label="t('protection.backupDetail.labelRemark')"><span :class="{ 'hfl-empty-mark': !backup.remark }">{{ backup.remark || t('protection.backupDetail.durationDash') }}</span></el-descriptions-item>
-            <el-descriptions-item :label="t('protection.backupDetail.labelSnapshotCount')">{{ backup.snapshots.length }}</el-descriptions-item>
+      <el-tabs
+        v-model="activeTab"
+        class="detail-tabs repo-underline-tabs"
+      >
+        <el-tab-pane
+          :label="t('protection.backupDetail.tabDetail')"
+          name="detail"
+        >
+          <el-descriptions
+            :column="1"
+            border
+            size="default"
+            class="max-w-3xl"
+          >
+            <el-descriptions-item :label="t('protection.backupDetail.labelName')">
+              {{ backup.name }}
+            </el-descriptions-item>
+            <el-descriptions-item :label="t('protection.backupDetail.labelRemark')">
+              <span :class="{ 'hfl-empty-mark': !backup.remark }">{{ backup.remark || t('protection.backupDetail.durationDash') }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item :label="t('protection.backupDetail.labelSnapshotCount')">
+              {{ backup.snapshots.length }}
+            </el-descriptions-item>
             <el-descriptions-item :label="t('protection.backupDetail.labelLatestEnd')">
               <span :class="{ 'hfl-empty-mark': !backup.latestSnapshotAt }">{{ backup.latestSnapshotAt ?? t('protection.backupDetail.durationDash') }}</span>
             </el-descriptions-item>
@@ -1044,7 +1076,9 @@ function closeDeleteSnapshotDialog() {
                   :key="i"
                   class="border border-slate-100 rounded-md px-3 py-2 bg-[var(--color-grey-1,#f8fafc)]"
                 >
-                  <div class="text-sm font-medium text-slate-800">{{ s.path }}</div>
+                  <div class="text-sm font-medium text-slate-800">
+                    {{ s.path }}
+                  </div>
                   <div class="text-xs text-slate-500 mt-1">
                     {{
                       t('protection.backupDetail.hostLine', {
@@ -1061,39 +1095,62 @@ function closeDeleteSnapshotDialog() {
               <span class="text-slate-400 text-sm ml-2">{{ backup.targetLocation }}</span>
             </el-descriptions-item>
             <el-descriptions-item :label="t('protection.backupDetail.labelPolicyName')">
-              <template v-if="policy">{{ policy.name }}</template>
-              <span v-else class="text-slate-400">{{ t('protection.backupDetail.noPolicy') }}</span>
+              <template v-if="policy">
+                {{ policy.name }}
+              </template>
+              <span
+                v-else
+                class="text-slate-400"
+              >{{ t('protection.backupDetail.noPolicy') }}</span>
             </el-descriptions-item>
             <template v-if="policy">
-              <el-descriptions-item :label="t('protection.backupDetail.labelFreq')">{{ policy.backupFrequencyDesc }}</el-descriptions-item>
+              <el-descriptions-item :label="t('protection.backupDetail.labelFreq')">
+                {{ policy.backupFrequencyDesc }}
+              </el-descriptions-item>
               <el-descriptions-item :label="t('protection.backupDetail.labelCron')">
                 <code class="rounded bg-slate-100 px-2 py-0.5 text-sm text-slate-800">{{ policy.schedule }}</code>
               </el-descriptions-item>
-              <el-descriptions-item :label="t('protection.backupDetail.labelRetention')">{{ policy.retentionDesc }}</el-descriptions-item>
+              <el-descriptions-item :label="t('protection.backupDetail.labelRetention')">
+                {{ policy.retentionDesc }}
+              </el-descriptions-item>
             </template>
             <el-descriptions-item :label="t('protection.backupDetail.labelCompression')">
               {{ compressionLevelLabel(backup.compression) }}
             </el-descriptions-item>
             <el-descriptions-item :label="t('protection.backupDetail.labelGlobalFilterName')">
-              <template v-if="globalFilter">{{ globalFilter.name }}</template>
-              <span v-else class="text-slate-400">{{ t('protection.backupDetail.noGlobalFilter') }}</span>
+              <template v-if="globalFilter">
+                {{ globalFilter.name }}
+              </template>
+              <span
+                v-else
+                class="text-slate-400"
+              >{{ t('protection.backupDetail.noGlobalFilter') }}</span>
             </el-descriptions-item>
-            <el-descriptions-item v-if="globalFilter" :label="t('protection.backupDetail.labelGlobalFilterSummary')">
+            <el-descriptions-item
+              v-if="globalFilter"
+              :label="t('protection.backupDetail.labelGlobalFilterSummary')"
+            >
               {{ globalFilter.summary }}
             </el-descriptions-item>
           </el-descriptions>
         </el-tab-pane>
 
-        <el-tab-pane :label="t('protection.backupDetail.tabSnapshots')" name="snapshots">
+        <el-tab-pane
+          :label="t('protection.backupDetail.tabSnapshots')"
+          name="snapshots"
+        >
           <div class="hfl-list-panel">
             <el-table
-              v-table-overflow-title
               ref="snapshotTableRef"
+              v-table-overflow-title
               :data="backup.snapshots"
               stripe
               :row-class-name="snapshotRowClassName"
             >
-              <el-table-column :label="t('protection.backupDetail.colSnapStart')" width="260">
+              <el-table-column
+                :label="t('protection.backupDetail.colSnapStart')"
+                width="260"
+              >
                 <template #default="{ row }">
                   <button
                     type="button"
@@ -1104,50 +1161,114 @@ function closeDeleteSnapshotDialog() {
                   </button>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colSnapEnd')" width="260" prop="endTime">
+              <el-table-column
+                :label="t('protection.backupDetail.colSnapEnd')"
+                width="260"
+                prop="endTime"
+              >
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.endTime }">{{ row.endTime || '—' }}</span>
+                  <span
+                    class="hfl-table-cell-time"
+                    :class="{ 'hfl-empty-mark': !row.endTime }"
+                  >{{ row.endTime || '—' }}</span>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colSnapSize')" width="120" header-cell-class-name="snapshot-th-split-start">
-                <template #default="{ row }">{{ fmtBytes(row.sizeBytes) }}</template>
+              <el-table-column
+                :label="t('protection.backupDetail.colSnapSize')"
+                width="120"
+                header-cell-class-name="snapshot-th-split-start"
+              >
+                <template #default="{ row }">
+                  {{ fmtBytes(row.sizeBytes) }}
+                </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colSnapId')" width="300" prop="id">
+              <el-table-column
+                :label="t('protection.backupDetail.colSnapId')"
+                width="300"
+                prop="id"
+              >
                 <template #default="{ row }">
                   <span class="hfl-table-cell-mono">{{ row.id }}</span>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colFileCount')" width="100" prop="fileCount" />
-              <el-table-column :label="t('protection.backupDetail.colDirCount')" width="100" prop="dirCount" />
-              <el-table-column :label="t('protection.backupDetail.labelStatus')" width="120">
+              <el-table-column
+                :label="t('protection.backupDetail.colFileCount')"
+                width="100"
+                prop="fileCount"
+              />
+              <el-table-column
+                :label="t('protection.backupDetail.colDirCount')"
+                width="100"
+                prop="dirCount"
+              />
+              <el-table-column
+                :label="t('protection.backupDetail.labelStatus')"
+                width="120"
+              >
                 <template #default="{ row }">
                   <SnapshotStatusTag :status="row.status" />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colActions')" min-width="220" fixed="right" align="right">
+              <el-table-column
+                :label="t('protection.backupDetail.colActions')"
+                min-width="220"
+                fixed="right"
+                align="right"
+              >
                 <template #default="{ row }">
-                  <ElButton type="primary" link class="snapshot-action-btn" :disabled="!canRestoreSnapshot(row)" @click.stop="openRecoveryWizard(row)">
-                    <Undo2 :size="16" class="inline mr-1 align-text-bottom" />
+                  <ElButton
+                    type="primary"
+                    link
+                    class="snapshot-action-btn"
+                    :disabled="!canRestoreSnapshot(row)"
+                    @click.stop="openRecoveryWizard(row)"
+                  >
+                    <Undo2
+                      :size="16"
+                      class="inline mr-1 align-text-bottom"
+                    />
                     {{ t('protection.backupDetail.btnRecoverSnapshot') }}
                   </ElButton>
-                  <ElButton type="danger" link class="snapshot-action-btn" :disabled="!canDeleteSnapshot(row)" @click.stop="onDeleteSnapshot(row)">
-                    <Trash2 :size="16" class="inline mr-1 align-text-bottom" />
+                  <ElButton
+                    type="danger"
+                    link
+                    class="snapshot-action-btn"
+                    :disabled="!canDeleteSnapshot(row)"
+                    @click.stop="onDeleteSnapshot(row)"
+                  >
+                    <Trash2
+                      :size="16"
+                      class="inline mr-1 align-text-bottom"
+                    />
                     {{ t('protection.backupDetail.btnDeleteSnapshot') }}
                   </ElButton>
                 </template>
               </el-table-column>
               <template #empty>
-                <el-empty :description="t('protection.backupDetail.emptySnapshots')" :image-size="64" />
+                <el-empty
+                  :description="t('protection.backupDetail.emptySnapshots')"
+                  :image-size="64"
+                />
               </template>
             </el-table>
           </div>
         </el-tab-pane>
 
-        <el-tab-pane :label="t('protection.backupDetail.tabTasks')" name="tasks">
+        <el-tab-pane
+          :label="t('protection.backupDetail.tabTasks')"
+          name="tasks"
+        >
           <div class="hfl-list-panel">
             <el-table
-              v-table-overflow-title ref="taskTableRef" :data="taskList" stripe>
-              <el-table-column :label="t('protection.backupDetail.colTaskId')" min-width="260">
+              ref="taskTableRef"
+              v-table-overflow-title
+              :data="taskList"
+              stripe
+            >
+              <el-table-column
+                :label="t('protection.backupDetail.colTaskId')"
+                min-width="260"
+              >
                 <template #default="{ row }">
                   <button
                     type="button"
@@ -1158,18 +1279,32 @@ function closeDeleteSnapshotDialog() {
                   </button>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colTaskType')" width="150">
+              <el-table-column
+                :label="t('protection.backupDetail.colTaskType')"
+                width="150"
+              >
                 <template #default="{ row }">
                   <TaskTypeLabel :type="row.type" />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colTaskStatus')" width="100">
+              <el-table-column
+                :label="t('protection.backupDetail.colTaskStatus')"
+                width="100"
+              >
                 <template #default="{ row }">
                   <TaskStatusTag :status="row.status" />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colDuration')" width="110" prop="duration" />
-              <el-table-column :label="t('protection.backupDetail.colTrigger')" width="110" prop="trigger" />
+              <el-table-column
+                :label="t('protection.backupDetail.colDuration')"
+                width="110"
+                prop="duration"
+              />
+              <el-table-column
+                :label="t('protection.backupDetail.colTrigger')"
+                width="110"
+                prop="trigger"
+              />
               <el-table-column
                 :label="t('protection.backupDetail.colLinkedSnap')"
                 min-width="140"
@@ -1180,13 +1315,23 @@ function closeDeleteSnapshotDialog() {
                   <span class="hfl-table-cell-mono">{{ row.snapshotId }}</span>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colCreated')" min-width="180" prop="createdAt">
+              <el-table-column
+                :label="t('protection.backupDetail.colCreated')"
+                min-width="180"
+                prop="createdAt"
+              >
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.createdAt }">{{ row.createdAt || '—' }}</span>
+                  <span
+                    class="hfl-table-cell-time"
+                    :class="{ 'hfl-empty-mark': !row.createdAt }"
+                  >{{ row.createdAt || '—' }}</span>
                 </template>
               </el-table-column>
               <template #empty>
-                <el-empty :description="t('protection.backupDetail.emptyTasks')" :image-size="64" />
+                <el-empty
+                  :description="t('protection.backupDetail.emptyTasks')"
+                  :image-size="64"
+                />
               </template>
             </el-table>
           </div>
@@ -1194,10 +1339,15 @@ function closeDeleteSnapshotDialog() {
       </el-tabs>
     </div>
 
-    <div v-else class="py-16 text-center">
+    <div
+      v-else
+      class="py-16 text-center"
+    >
       <el-empty :description="detailLoadError || t('protection.backupDetail.notFound')">
         <RouterLink to="/protection/backups">
-          <ElButton type="primary">{{ t('protection.backupDetail.backToDataProtection') }}</ElButton>
+          <ElButton type="primary">
+            {{ t('protection.backupDetail.backToDataProtection') }}
+          </ElButton>
         </RouterLink>
       </el-empty>
     </div>
@@ -1216,7 +1366,10 @@ function closeDeleteSnapshotDialog() {
     <template #header>
       <span class="snapshot-drawer-title">{{ t('protection.backupDetail.drawerSnapTitle', { id: activeSnapshot?.id || '' }) }}</span>
     </template>
-    <div v-if="activeSnapshot" class="snapshot-drawer-body">
+    <div
+      v-if="activeSnapshot"
+      class="snapshot-drawer-body"
+    >
       <p class="text-sm text-slate-500 m-0 mb-3">
         {{
           t('protection.backupDetail.snapMetaLine', {
@@ -1227,11 +1380,20 @@ function closeDeleteSnapshotDialog() {
         }}
       </p>
       <div class="hfl-list-panel">
-        <div class="px-4 py-3 border-b border-slate-100 text-sm font-medium text-slate-800">{{ t('protection.backupDetail.panelDirList') }}</div>
+        <div class="px-4 py-3 border-b border-slate-100 text-sm font-medium text-slate-800">
+          {{ t('protection.backupDetail.panelDirList') }}
+        </div>
         <el-table
           v-table-column-resize="'protection.backupDetail.snapshotDrawer.dirs'"
-          v-table-overflow-title :data="activeSnapshot.dirs" stripe class="hfl-list-table">
-          <el-table-column :label="t('protection.backupDetail.colBackupDir')" min-width="300">
+          v-table-overflow-title
+          :data="activeSnapshot.dirs"
+          stripe
+          class="hfl-list-table"
+        >
+          <el-table-column
+            :label="t('protection.backupDetail.colBackupDir')"
+            min-width="300"
+          >
             <template #default="{ row }">
               <button
                 type="button"
@@ -1248,7 +1410,10 @@ function closeDeleteSnapshotDialog() {
                   <span class="snapshot-source-path-cell__path hfl-table-cell-mono">{{ row.path }}</span>
                 </span>
                 <span class="snapshot-source-path-cell__child">
-                  <span class="snapshot-source-path-cell__branch" aria-hidden="true" />
+                  <span
+                    class="snapshot-source-path-cell__branch"
+                    aria-hidden="true"
+                  />
                   <span class="snapshot-source-path-cell__host">
                     {{
                       t('protection.backupDetail.hostSubline', {
@@ -1261,13 +1426,29 @@ function closeDeleteSnapshotDialog() {
               </button>
             </template>
           </el-table-column>
-          <el-table-column :label="t('protection.backupDetail.colDirSize')" width="120">
-            <template #default="{ row }">{{ fmtBytes(row.sizeBytes) }}</template>
+          <el-table-column
+            :label="t('protection.backupDetail.colDirSize')"
+            width="120"
+          >
+            <template #default="{ row }">
+              {{ fmtBytes(row.sizeBytes) }}
+            </template>
           </el-table-column>
-          <el-table-column :label="t('protection.backupDetail.colFileCountDirs')" width="110" prop="fileCount" />
-          <el-table-column :label="t('protection.backupDetail.colInnerDirs')" width="120" prop="innerDirCount" />
+          <el-table-column
+            :label="t('protection.backupDetail.colFileCountDirs')"
+            width="110"
+            prop="fileCount"
+          />
+          <el-table-column
+            :label="t('protection.backupDetail.colInnerDirs')"
+            width="120"
+            prop="innerDirCount"
+          />
           <template #empty>
-            <el-empty :description="t('protection.backupDetail.emptyDirs')" :image-size="64" />
+            <el-empty
+              :description="t('protection.backupDetail.emptyDirs')"
+              :image-size="64"
+            />
           </template>
         </el-table>
       </div>
@@ -1287,22 +1468,47 @@ function closeDeleteSnapshotDialog() {
     <template #header>
       <span class="snapshot-drawer-title">{{ t('protection.backupDetail.drawerTaskTitle', { id: activeTask?.id || '' }) }}</span>
     </template>
-    <div v-if="activeTask" ref="drawerScrollAnchorRef" class="snapshot-drawer-body">
-      <el-descriptions :column="1" border>
-        <el-descriptions-item :label="t('protection.backupDetail.labelTaskId')">{{ activeTask.id }}</el-descriptions-item>
-        <el-descriptions-item :label="t('protection.backupDetail.labelTaskType')">{{ activeTask.type }}</el-descriptions-item>
+    <div
+      v-if="activeTask"
+      ref="drawerScrollAnchorRef"
+      class="snapshot-drawer-body"
+    >
+      <el-descriptions
+        :column="1"
+        border
+      >
+        <el-descriptions-item :label="t('protection.backupDetail.labelTaskId')">
+          {{ activeTask.id }}
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('protection.backupDetail.labelTaskType')">
+          {{ activeTask.type }}
+        </el-descriptions-item>
         <el-descriptions-item :label="t('protection.backupDetail.labelStatus')">
           <TaskStatusTag :status="activeTask.status" />
         </el-descriptions-item>
-        <el-descriptions-item :label="t('protection.backupDetail.labelStart')">{{ activeTask.startTime }}</el-descriptions-item>
-        <el-descriptions-item :label="t('protection.backupDetail.labelEnd')">{{ activeTask.endTime }}</el-descriptions-item>
-        <el-descriptions-item :label="t('protection.backupDetail.labelDuration')">{{ activeTask.duration }}</el-descriptions-item>
-        <el-descriptions-item :label="t('protection.backupDetail.labelTrigger')">{{ activeTask.trigger }}</el-descriptions-item>
-        <el-descriptions-item :label="t('protection.backupDetail.labelExecutor')">{{ activeTask.executor }}</el-descriptions-item>
-        <el-descriptions-item :label="t('protection.backupDetail.labelLinkedSnap')">{{
-          activeTask.snapshotId ?? t('protection.backupDetail.noLinkedSnap')
-        }}</el-descriptions-item>
-        <el-descriptions-item :label="t('protection.backupDetail.labelDetail')">{{ activeTask.detail }}</el-descriptions-item>
+        <el-descriptions-item :label="t('protection.backupDetail.labelStart')">
+          {{ activeTask.startTime }}
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('protection.backupDetail.labelEnd')">
+          {{ activeTask.endTime }}
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('protection.backupDetail.labelDuration')">
+          {{ activeTask.duration }}
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('protection.backupDetail.labelTrigger')">
+          {{ activeTask.trigger }}
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('protection.backupDetail.labelExecutor')">
+          {{ activeTask.executor }}
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('protection.backupDetail.labelLinkedSnap')">
+          {{
+            activeTask.snapshotId ?? t('protection.backupDetail.noLinkedSnap')
+          }}
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('protection.backupDetail.labelDetail')">
+          {{ activeTask.detail }}
+        </el-descriptions-item>
       </el-descriptions>
     </div>
   </ElDrawer>
@@ -1331,14 +1537,25 @@ function closeDeleteSnapshotDialog() {
             :class="data.type === 'dir' ? '' : 'text-slate-500'"
           />
           <span class="hfl-dir-tree-node__text">
-            <span class="hfl-dir-tree-node__label" :title="node.label">{{ node.label }}</span>
-            <span v-if="data.type === 'dir'" class="hfl-dir-tree-node__path">{{ t('protection.backupDetail.typeDir') }}</span>
-            <span v-else class="hfl-dir-tree-node__path">{{ t('protection.backupDetail.typeFile') }}</span>
+            <span
+              class="hfl-dir-tree-node__label"
+              :title="node.label"
+            >{{ node.label }}</span>
+            <span
+              v-if="data.type === 'dir'"
+              class="hfl-dir-tree-node__path"
+            >{{ t('protection.backupDetail.typeDir') }}</span>
+            <span
+              v-else
+              class="hfl-dir-tree-node__path"
+            >{{ t('protection.backupDetail.typeFile') }}</span>
           </span>
         </span>
       </template>
     </el-tree>
-    <p class="text-xs text-slate-400 mt-4">{{ t('protection.backupDetail.treeDemoHint') }}</p>
+    <p class="text-xs text-slate-400 mt-4">
+      {{ t('protection.backupDetail.treeDemoHint') }}
+    </p>
   </ElDrawer>
 
   <Modal
@@ -1349,7 +1566,10 @@ function closeDeleteSnapshotDialog() {
     min-height="min(820px, calc(var(--app-viewport-height) - 3rem))"
     @close="closeRecoveryWizard"
   >
-    <div v-if="recSnapshotForRecover && backup" class="dp-restore-wizard-body space-y-4">
+    <div
+      v-if="recSnapshotForRecover && backup"
+      class="dp-restore-wizard-body space-y-4"
+    >
       <p class="text-sm text-slate-500 m-0">
         {{ t('protection.backupDetail.recoverFromSnapshotLead', { backup: backup.name, snapshot: fmtLocalTime(recSnapshotForRecover.endTime) }) }}
       </p>
@@ -1360,7 +1580,10 @@ function closeDeleteSnapshotDialog() {
         :aria-label="t('protection.backupsPage.createRestoreWizardAria')"
       >
         <ol class="dp-create-wizard__list m-0 list-none p-0">
-          <template v-for="(step, idx) in recWizardSteps" :key="`bd-rec-step-${idx}`">
+          <template
+            v-for="(step, idx) in recWizardSteps"
+            :key="`bd-rec-step-${idx}`"
+          >
             <li
               class="dp-create-wizard__step"
               :class="{
@@ -1371,18 +1594,34 @@ function closeDeleteSnapshotDialog() {
               :aria-current="recStep === idx ? 'step' : undefined"
             >
               <div class="dp-create-wizard__card">
-                <div class="dp-create-wizard__icon-wrap" aria-hidden="true">
-                  <component :is="step.icon" :size="22" stroke-width="2" />
+                <div
+                  class="dp-create-wizard__icon-wrap"
+                  aria-hidden="true"
+                >
+                  <component
+                    :is="step.icon"
+                    :size="22"
+                    stroke-width="2"
+                  />
                 </div>
                 <div class="dp-create-wizard__content min-w-0 flex-1">
                   <div class="dp-create-wizard__head">
-                    <span class="dp-create-wizard__badge" aria-hidden="true">
-                      <Check v-if="recStep > idx" :size="13" stroke-width="3" />
+                    <span
+                      class="dp-create-wizard__badge"
+                      aria-hidden="true"
+                    >
+                      <Check
+                        v-if="recStep > idx"
+                        :size="13"
+                        stroke-width="3"
+                      />
                       <span v-else>{{ String(idx + 1).padStart(2, '0') }}</span>
                     </span>
                     <span class="dp-create-wizard__title">{{ step.title }}</span>
                   </div>
-                  <p class="dp-create-wizard__hint">{{ step.hint }}</p>
+                  <p class="dp-create-wizard__hint">
+                    {{ step.hint }}
+                  </p>
                 </div>
               </div>
             </li>
@@ -1395,7 +1634,10 @@ function closeDeleteSnapshotDialog() {
             >
               <span class="dp-create-wizard__rail dp-create-wizard__rail--left" />
               <span class="dp-create-wizard__chev">
-                <ChevronsRight :size="16" stroke-width="2.4" />
+                <ChevronsRight
+                  :size="16"
+                  stroke-width="2.4"
+                />
               </span>
               <span class="dp-create-wizard__rail dp-create-wizard__rail--right" />
             </li>
@@ -1403,8 +1645,13 @@ function closeDeleteSnapshotDialog() {
         </ol>
       </nav>
 
-      <div v-show="recStep === 0" class="dp-wizard-pane">
-        <p class="text-sm text-slate-500 mb-3">{{ t('protection.backupsPage.recStep3Lead') }}</p>
+      <div
+        v-show="recStep === 0"
+        class="dp-wizard-pane"
+      >
+        <p class="text-sm text-slate-500 mb-3">
+          {{ t('protection.backupsPage.recStep3Lead') }}
+        </p>
         <div class="flex flex-col gap-3 lg:flex-row lg:items-stretch min-h-[380px]">
           <div
             class="rounded-[var(--radius-card)] border border-[var(--color-border,#e2e8f0)] bg-[var(--color-grey-1,#f8fafc)]/70 p-3 lg:w-[min(100%,380px)] shrink-0"
@@ -1432,7 +1679,10 @@ function closeDeleteSnapshotDialog() {
             </div>
             <div class="mb-2 flex items-center gap-2">
               <span class="shrink-0 text-sm text-slate-600">{{ t('protection.backupsPage.labelCustomSubdir') }}</span>
-              <ElInput v-model="recCustomDestSubDir" :placeholder="t('protection.backupsPage.phCustomSubdir')" />
+              <ElInput
+                v-model="recCustomDestSubDir"
+                :placeholder="t('protection.backupsPage.phCustomSubdir')"
+              />
             </div>
             <el-tree
               ref="recDestTreeRef"
@@ -1448,8 +1698,14 @@ function closeDeleteSnapshotDialog() {
             >
               <template #default="{ data }">
                 <span class="rec-tree-node-label hfl-dir-tree-node">
-                  <span class="rec-custom-arrow" :class="{ 'rec-custom-arrow--hidden': !data.isCustom }">▸</span>
-                  <Folder :size="15" class="hfl-dir-tree-node__icon" />
+                  <span
+                    class="rec-custom-arrow"
+                    :class="{ 'rec-custom-arrow--hidden': !data.isCustom }"
+                  >▸</span>
+                  <Folder
+                    :size="15"
+                    class="hfl-dir-tree-node__icon"
+                  />
                   <span class="hfl-dir-tree-node__text">
                     <span class="hfl-dir-tree-node__label">{{ data.label }}</span>
                     <span class="hfl-dir-tree-node__path">{{ data.path }}</span>
@@ -1461,11 +1717,20 @@ function closeDeleteSnapshotDialog() {
         </div>
       </div>
 
-      <div v-show="recStep === 1" class="dp-wizard-pane">
-        <p class="text-sm text-slate-500 mb-3">{{ t('protection.backupsPage.recStep2Lead') }}</p>
+      <div
+        v-show="recStep === 1"
+        class="dp-wizard-pane"
+      >
+        <p class="text-sm text-slate-500 mb-3">
+          {{ t('protection.backupsPage.recStep2Lead') }}
+        </p>
         <div class="rounded-[var(--radius-card)] border border-[var(--color-border,#e2e8f0)] bg-[var(--color-card-bg,#fff)] p-3 dp-wizard-scroll-card">
-          <div class="text-sm font-semibold text-slate-800 mb-2">{{ t('protection.backupsPage.recDirsTitle') }}</div>
-          <p class="text-xs text-slate-500 m-0 mb-2">{{ t('protection.backupsPage.recDirsHint') }}</p>
+          <div class="text-sm font-semibold text-slate-800 mb-2">
+            {{ t('protection.backupsPage.recDirsTitle') }}
+          </div>
+          <p class="text-xs text-slate-500 m-0 mb-2">
+            {{ t('protection.backupsPage.recDirsHint') }}
+          </p>
           <el-tree
             ref="recSelectTreeRef"
             class="rec-select-tree hfl-dir-tree hfl-dir-tree--fill"
@@ -1480,7 +1745,10 @@ function closeDeleteSnapshotDialog() {
           >
             <template #default="{ data }">
               <span class="hfl-dir-tree-node">
-                <Folder :size="15" class="hfl-dir-tree-node__icon" />
+                <Folder
+                  :size="15"
+                  class="hfl-dir-tree-node__icon"
+                />
                 <span class="hfl-dir-tree-node__text">
                   <span class="hfl-dir-tree-node__label">{{ data.label }}</span>
                   <span class="hfl-dir-tree-node__path">{{ data.path }}</span>
@@ -1491,9 +1759,19 @@ function closeDeleteSnapshotDialog() {
         </div>
       </div>
 
-      <div v-show="recStep === 2" class="dp-wizard-pane">
-        <p class="text-sm text-slate-600 mb-3">{{ t('protection.backupsPage.recStep4Lead') }}</p>
-        <el-descriptions :column="1" border size="small" class="mt-2">
+      <div
+        v-show="recStep === 2"
+        class="dp-wizard-pane"
+      >
+        <p class="text-sm text-slate-600 mb-3">
+          {{ t('protection.backupsPage.recStep4Lead') }}
+        </p>
+        <el-descriptions
+          :column="1"
+          border
+          size="small"
+          class="mt-2"
+        >
           <el-descriptions-item :label="t('protection.backupsPage.descBackup')">
             {{ backup.name }}
           </el-descriptions-item>
@@ -1502,7 +1780,10 @@ function closeDeleteSnapshotDialog() {
           </el-descriptions-item>
           <el-descriptions-item :label="t('protection.backupsPage.descRecoveryDirs')">
             <ul class="list-disc pl-4 m-0">
-              <li v-for="d in recSelectedDirNodes" :key="d.id">
+              <li
+                v-for="d in recSelectedDirNodes"
+                :key="d.id"
+              >
                 {{ sourceNameByHostId(d.hostId) }} - {{ d.path }}
               </li>
             </ul>
@@ -1523,7 +1804,10 @@ function closeDeleteSnapshotDialog() {
                 class="flex items-center gap-2"
               >
                 <span class="w-32 text-slate-500">{{ sourceNameByHostId(h) }}</span>
-                <ElInput v-model="recHostDirNameMap[h]" :placeholder="t('protection.backupsPage.phHostDirName')" />
+                <ElInput
+                  v-model="recHostDirNameMap[h]"
+                  :placeholder="t('protection.backupsPage.phHostDirName')"
+                />
               </div>
             </div>
           </el-descriptions-item>
@@ -1539,19 +1823,33 @@ function closeDeleteSnapshotDialog() {
           </el-descriptions-item>
         </el-descriptions>
       </div>
-
     </div>
 
     <template #footer>
       <div class="flex items-center justify-between">
-        <ElButton v-if="recStep > 0" @click="prevRec">{{ t('protection.backupsPage.btnPrev') }}</ElButton>
+        <ElButton
+          v-if="recStep > 0"
+          @click="prevRec"
+        >
+          {{ t('protection.backupsPage.btnPrev') }}
+        </ElButton>
         <span v-else />
         <div class="flex gap-2">
-          <ElButton @click="closeRecoveryWizard">{{ t('protection.backupsPage.btnCancel') }}</ElButton>
-          <ElButton v-if="recStep < 2" type="primary" @click="nextRec">
+          <ElButton @click="closeRecoveryWizard">
+            {{ t('protection.backupsPage.btnCancel') }}
+          </ElButton>
+          <ElButton
+            v-if="recStep < 2"
+            type="primary"
+            @click="nextRec"
+          >
             {{ t('protection.backupsPage.btnNext') }}
           </ElButton>
-          <ElButton v-else type="primary" @click="runRecovery">
+          <ElButton
+            v-else
+            type="primary"
+            @click="runRecovery"
+          >
             {{ t('protection.backupsPage.btnConfirmRecovery') }}
           </ElButton>
         </div>

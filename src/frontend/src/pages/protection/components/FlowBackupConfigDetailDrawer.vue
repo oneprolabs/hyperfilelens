@@ -39,10 +39,16 @@ const backupTitle = computed(() => {
     class="dp-flow-backup-config-detail-drawer"
     :show-close="true"
   >
-    <template v-if="backupId" #header>
+    <template
+      v-if="backupId"
+      #header
+    >
       <span class="truncate text-base font-semibold text-slate-900">{{ backupTitle }}</span>
     </template>
-    <BackupConfigDetailPanel v-if="backupId && drawerOpen" :backup-id="backupId" />
+    <BackupConfigDetailPanel
+      v-if="backupId && drawerOpen"
+      :backup-id="backupId"
+    />
   </el-drawer>
 </template>
 

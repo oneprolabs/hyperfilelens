@@ -306,65 +306,96 @@ onUnmounted(() => {
       <span class="hfl-detail-drawer__title">{{ drawerTitle }}</span>
     </template>
 
-    <div v-loading="loading" class="hfl-detail-drawer__body">
+    <div
+      v-loading="loading"
+      class="hfl-detail-drawer__body"
+    >
       <template v-if="activeRow">
         <div class="hfl-detail-sections">
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('insight.assistants.sectionBasics') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.assistants.sectionBasics') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldName') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(displayValue(activeRow.name))">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(displayValue(activeRow.name))"
+                >
                   {{ displayValue(activeRow.name) }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.colStatus') }}</span>
                 <span class="hfl-detail-row__value">
-                  <ElTag v-bind="lifecycleStatusTagAttrs(String(activeRow.status || ''))" size="small">
+                  <ElTag
+                    v-bind="lifecycleStatusTagAttrs(String(activeRow.status || ''))"
+                    size="small"
+                  >
                     {{ statusLabel }}
                   </ElTag>
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldAgentModel') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(agentModelLabel)">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(agentModelLabel)"
+                >
                   {{ agentModelLabel }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldMultimodalModel') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(multimodalModelLabel)">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(multimodalModelLabel)"
+                >
                   {{ multimodalModelLabel }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldMaxConcurrency') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(displayValue(activeRow.max_concurrency))">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(displayValue(activeRow.max_concurrency))"
+                >
                   {{ displayValue(activeRow.max_concurrency) }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldAgentRounds') }}</span>
                 <span class="hfl-detail-row__value">
-                  <ElTag size="small" effect="plain">{{ analysisDepthLabel }}</ElTag>
+                  <ElTag
+                    size="small"
+                    effect="plain"
+                  >{{ analysisDepthLabel }}</ElTag>
                 </span>
               </div>
             </div>
           </section>
 
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('insight.assistants.sectionKnowledgeSource') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.assistants.sectionKnowledgeSource') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldKnowledgeSource') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(knowledgeSourceLabel)">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(knowledgeSourceLabel)"
+                >
                   {{ knowledgeSourceLabel }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldGateway') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(gatewayLabel)">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(gatewayLabel)"
+                >
                   {{ gatewayLabel }}
                 </span>
               </div>
@@ -378,26 +409,38 @@ onUnmounted(() => {
                   >
                     {{ knowledgeSourceStatusDisplay }}
                   </ElTag>
-                  <span v-else class="hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
+                  <span
+                    v-else
+                    class="hfl-detail-row__empty"
+                  >{{ DETAIL_EMPTY }}</span>
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldScenario') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(scenarioLabel)">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(scenarioLabel)"
+                >
                   {{ scenarioLabel }}
                 </span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldRetrievalScope') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <div v-if="retrievalScopeLines.length" class="create-filter-rules-preview">
+                  <div
+                    v-if="retrievalScopeLines.length"
+                    class="create-filter-rules-preview"
+                  >
                     <code
                       v-for="line in retrievalScopeLines"
                       :key="line"
                       class="create-filter-rules-preview__line"
                     >{{ line }}</code>
                   </div>
-                  <span v-else class="hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
+                  <span
+                    v-else
+                    class="hfl-detail-row__empty"
+                  >{{ DETAIL_EMPTY }}</span>
                 </span>
               </div>
               <div class="hfl-detail-row">
@@ -422,49 +465,84 @@ onUnmounted(() => {
           </section>
 
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('insight.assistants.sectionTools') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.assistants.sectionTools') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldWorkspaceContext') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <div v-if="workspaceContextText !== DETAIL_EMPTY" class="create-filter-rules-preview">
+                  <div
+                    v-if="workspaceContextText !== DETAIL_EMPTY"
+                    class="create-filter-rules-preview"
+                  >
                     <pre class="create-filter-rules-preview__line">{{ workspaceContextText }}</pre>
                   </div>
-                  <span v-else class="hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
+                  <span
+                    v-else
+                    class="hfl-detail-row__empty"
+                  >{{ DETAIL_EMPTY }}</span>
                 </span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.skillsSection') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <span v-if="boundSkillNames.length" class="insight-detail-tag-row">
-                    <ElTag v-for="name in boundSkillNames" :key="name" size="small" effect="plain">
+                  <span
+                    v-if="boundSkillNames.length"
+                    class="insight-detail-tag-row"
+                  >
+                    <ElTag
+                      v-for="name in boundSkillNames"
+                      :key="name"
+                      size="small"
+                      effect="plain"
+                    >
                       {{ name }}
                     </ElTag>
                   </span>
-                  <span v-else class="hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
+                  <span
+                    v-else
+                    class="hfl-detail-row__empty"
+                  >{{ DETAIL_EMPTY }}</span>
                 </span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.mcpSection') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <span v-if="boundMcpNames.length" class="insight-detail-tag-row">
-                    <ElTag v-for="name in boundMcpNames" :key="name" size="small" effect="plain">
+                  <span
+                    v-if="boundMcpNames.length"
+                    class="insight-detail-tag-row"
+                  >
+                    <ElTag
+                      v-for="name in boundMcpNames"
+                      :key="name"
+                      size="small"
+                      effect="plain"
+                    >
                       {{ name }}
                     </ElTag>
                   </span>
-                  <span v-else class="hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
+                  <span
+                    v-else
+                    class="hfl-detail-row__empty"
+                  >{{ DETAIL_EMPTY }}</span>
                 </span>
               </div>
             </div>
           </section>
 
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('insight.assistants.sectionVisibility') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.assistants.sectionVisibility') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldVisibility') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <ElTag :type="visibilityScope === 'user' ? 'warning' : 'success'" size="small">
+                  <ElTag
+                    :type="visibilityScope === 'user' ? 'warning' : 'success'"
+                    size="small"
+                  >
                     {{
                       visibilityScope === 'user'
                         ? t('insight.assistants.visibilityOnlyMe')
@@ -486,7 +564,10 @@ onUnmounted(() => {
       </template>
     </div>
 
-    <template v-if="activeRow" #footer>
+    <template
+      v-if="activeRow"
+      #footer
+    >
       <HflDetailDrawerFooter
         :save-label="t('common.edit')"
         @cancel="drawerOpen = false"

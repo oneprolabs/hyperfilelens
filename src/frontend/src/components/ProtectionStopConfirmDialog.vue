@@ -159,7 +159,10 @@ function confirm() {
               min-width="180"
             >
               <template #default="{ row }">
-                <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': detailText(row) === '—' }">{{ detailText(row) }}</span>
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': detailText(row) === '—' }"
+                >{{ detailText(row) }}</span>
               </template>
             </ElTableColumn>
           </ElTable>

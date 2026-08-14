@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { compactSourceText } from '../../test/sourceText'
 
 const entryPage = readFileSync(resolve(process.cwd(), 'src/pages/protection/SnapshotRestorePage.vue'), 'utf8')
 const sharedWizard = readFileSync(resolve(process.cwd(), 'src/pages/protection/DataProtection.vue'), 'utf8')
+const compactSharedWizard = compactSourceText(sharedWizard)
 
 describe('SnapshotRestorePage shared wizard entry', () => {
   it('delegates rendering to the existing restore wizard', () => {
@@ -24,7 +26,7 @@ describe('SnapshotRestorePage shared wizard entry', () => {
   })
 
   it('hides the chooser and first step in fixed-snapshot mode', () => {
-    expect(sharedWizard).toContain('v-if="!isFixedSnapshotRestore" v-model="recEntryMode"')
+    expect(compactSharedWizard).toContain('v-if="!isFixedSnapshotRestore" v-model="recEntryMode"')
     expect(sharedWizard).toContain('.slice(isFixedSnapshotRestore.value ? 1 : 0)')
     expect(sharedWizard).toContain('recStep > (isFixedSnapshotRestore ? 1 : 0)')
   })

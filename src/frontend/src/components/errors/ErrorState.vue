@@ -34,15 +34,43 @@ const heading = computed(() => props.title || t('errors.generic.loadFailed'))
 
 <template>
   <div class="hfl-error-state">
-    <div class="hfl-error-state__icon" aria-hidden="true">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="8" x2="12" y2="12" />
-        <line x1="12" y1="16" x2="12.01" y2="16" />
+    <div
+      class="hfl-error-state__icon"
+      aria-hidden="true"
+    >
+      <svg
+        width="22"
+        height="22"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <circle
+          cx="12"
+          cy="12"
+          r="10"
+        />
+        <line
+          x1="12"
+          y1="8"
+          x2="12"
+          y2="12"
+        />
+        <line
+          x1="12"
+          y1="16"
+          x2="12.01"
+          y2="16"
+        />
       </svg>
     </div>
-    <h3 class="hfl-error-state__title">{{ heading }}</h3>
-    <p class="hfl-error-state__message">{{ message }}</p>
+    <h3 class="hfl-error-state__title">
+      {{ heading }}
+    </h3>
+    <p class="hfl-error-state__message">
+      {{ message }}
+    </p>
     <button
       v-if="showRetry"
       type="button"
@@ -51,7 +79,10 @@ const heading = computed(() => props.title || t('errors.generic.loadFailed'))
     >
       {{ t('common.retry') }}
     </button>
-    <p v-if="traceId" class="hfl-error-state__trace">
+    <p
+      v-if="traceId"
+      class="hfl-error-state__trace"
+    >
       {{ t('errors.generic.traceId') }}: {{ traceId }}
     </p>
   </div>

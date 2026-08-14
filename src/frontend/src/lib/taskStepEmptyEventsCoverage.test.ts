@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { en } from '../locales/en'
+import { compactSourceText } from '../test/sourceText'
 
 const taskDetailSurfaces = [
   {
@@ -22,7 +23,7 @@ const taskDetailSurfaces = [
 ] as const
 
 describe.each(taskDetailSurfaces)('$name empty-event step expansion', ({ path, disabledClass }) => {
-  const source = readFileSync(resolve(process.cwd(), path), 'utf8')
+  const source = compactSourceText(readFileSync(resolve(process.cwd(), path), 'utf8'))
 
   it('keeps the step collapsed and exposes disabled semantics', () => {
     const toggleStart = source.indexOf('function toggleStep(stepId: number | string, eventCount: number)')
@@ -40,7 +41,7 @@ describe.each(taskDetailSurfaces)('$name empty-event step expansion', ({ path, d
   })
 
   it('shows a disabled right chevron with the shared tooltip', () => {
-    expect(source).toContain('<ElTooltip\n')
+    expect(source).toContain('<ElTooltip ')
     expect(source).toContain('v-if="step.events.length === 0"')
     expect(source).toContain(':content="t(\'ops.task.emptyEvents\')"')
     expect(source).toContain('teleported')

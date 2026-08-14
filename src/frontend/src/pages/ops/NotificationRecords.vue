@@ -190,10 +190,19 @@ watch(
 </script>
 
 <template>
-  <ModulePage :title="t('ops.nav.deliveryHistory')" :menus="opsMenus" body-fill>
+  <ModulePage
+    :title="t('ops.nav.deliveryHistory')"
+    :menus="opsMenus"
+    body-fill
+  >
     <div class="hfl-ops-page hfl-ops-page--fill">
       <div class="hfl-ops-stats-grid hfl-ops-stats-grid--4">
-        <OpsStatCard :label="t('ops.notification.logsTotal')" :value="stats.total" accent="indigo" accent-side="left" />
+        <OpsStatCard
+          :label="t('ops.notification.logsTotal')"
+          :value="stats.total"
+          accent="indigo"
+          accent-side="left"
+        />
         <OpsStatCard
           :label="t('ops.notification.statusSuccess')"
           :value="stats.success"
@@ -225,7 +234,9 @@ watch(
             :placeholder="t('ops.notification.logsSearch')"
             @clear="clearSearch"
           >
-            <template #prefix><Search class="h-4 w-4 opacity-60" /></template>
+            <template #prefix>
+              <Search class="h-4 w-4 opacity-60" />
+            </template>
           </el-input>
           <el-select
             v-model="filters.channel_id"
@@ -233,17 +244,49 @@ watch(
             style="width: 150px"
             :placeholder="t('ops.notification.filterChannel')"
           >
-            <el-option v-for="ch in channels" :key="ch.id" :value="String(ch.id)" :label="ch.name" />
+            <el-option
+              v-for="ch in channels"
+              :key="ch.id"
+              :value="String(ch.id)"
+              :label="ch.name"
+            />
           </el-select>
-          <el-select v-model="filters.status" clearable style="width: 120px" :placeholder="t('ops.notification.filterAllStatus')">
-            <el-option value="success" :label="t('ops.notification.statusSuccess')" />
-            <el-option value="failed" :label="t('ops.notification.statusFailed')" />
+          <el-select
+            v-model="filters.status"
+            clearable
+            style="width: 120px"
+            :placeholder="t('ops.notification.filterAllStatus')"
+          >
+            <el-option
+              value="success"
+              :label="t('ops.notification.statusSuccess')"
+            />
+            <el-option
+              value="failed"
+              :label="t('ops.notification.statusFailed')"
+            />
           </el-select>
-          <el-select v-model="filters.notification_type" clearable style="width: 130px" :placeholder="t('ops.notification.filterNotificationType')">
-            <el-option value="firing" :label="t('ops.notification.logTypeFiring')" />
-            <el-option value="resolved" :label="t('ops.notification.logTypeResolved')" />
+          <el-select
+            v-model="filters.notification_type"
+            clearable
+            style="width: 130px"
+            :placeholder="t('ops.notification.filterNotificationType')"
+          >
+            <el-option
+              value="firing"
+              :label="t('ops.notification.logTypeFiring')"
+            />
+            <el-option
+              value="resolved"
+              :label="t('ops.notification.logTypeResolved')"
+            />
           </el-select>
-          <el-select v-model="filters.type" clearable style="width: 130px" :placeholder="t('ops.alertsCenter.common.allTypes')">
+          <el-select
+            v-model="filters.type"
+            clearable
+            style="width: 130px"
+            :placeholder="t('ops.alertsCenter.common.allTypes')"
+          >
             <el-option
               v-for="opt in policyTypeOptions"
               :key="opt.value"
@@ -251,15 +294,38 @@ watch(
               :label="opt.label"
             />
           </el-select>
-          <el-select v-model="filters.severity" clearable style="width: 130px" :placeholder="t('ops.alertsCenter.common.allSeverity')">
-            <el-option value="critical" :label="t('ops.alertsCenter.common.critical')" />
-            <el-option value="warning" :label="t('ops.alertsCenter.common.warning')" />
-            <el-option value="info" :label="t('ops.alertsCenter.common.info')" />
+          <el-select
+            v-model="filters.severity"
+            clearable
+            style="width: 130px"
+            :placeholder="t('ops.alertsCenter.common.allSeverity')"
+          >
+            <el-option
+              value="critical"
+              :label="t('ops.alertsCenter.common.critical')"
+            />
+            <el-option
+              value="warning"
+              :label="t('ops.alertsCenter.common.warning')"
+            />
+            <el-option
+              value="info"
+              :label="t('ops.alertsCenter.common.info')"
+            />
           </el-select>
         </template>
         <template #toolbar-utility>
-          <el-button class="hfl-refresh-button" :title="t('ops.task.btnRefresh')" :aria-label="t('ops.task.btnRefresh')" :disabled="loading" @click="fetchData">
-            <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+          <el-button
+            class="hfl-refresh-button"
+            :title="t('ops.task.btnRefresh')"
+            :aria-label="t('ops.task.btnRefresh')"
+            :disabled="loading"
+            @click="fetchData"
+          >
+            <RefreshCw
+              :size="16"
+              :class="{ 'is-spinning': loading }"
+            />
           </el-button>
         </template>
 
@@ -273,7 +339,11 @@ watch(
             class="hfl-list-table"
             :max-height="tableMaxHeight"
           >
-            <el-table-column :label="t('ops.notification.logsAlert')" min-width="260" fixed="left">
+            <el-table-column
+              :label="t('ops.notification.logsAlert')"
+              min-width="260"
+              fixed="left"
+            >
               <template #default="{ row }">
                 <div class="hfl-ops-primary-cell">
                   <div class="min-w-0">
@@ -293,35 +363,71 @@ watch(
                 </div>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.notification.logsPolicy')" min-width="150">
+            <el-table-column
+              :label="t('ops.notification.logsPolicy')"
+              min-width="150"
+            >
               <template #default="{ row }">
-                <div class="hfl-ops-cell-stack__title" :class="{ 'hfl-empty-mark': logPolicyName(row) === t('common.empty') }">{{ logPolicyName(row) }}</div>
+                <div
+                  class="hfl-ops-cell-stack__title"
+                  :class="{ 'hfl-empty-mark': logPolicyName(row) === t('common.empty') }"
+                >
+                  {{ logPolicyName(row) }}
+                </div>
                 <div class="hfl-ops-cell-stack__meta">
                   <AlertPolicyTypeLabel :type="logPolicyTypeValue(row)" />
                 </div>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.notification.logsChannel')" width="160">
+            <el-table-column
+              :label="t('ops.notification.logsChannel')"
+              width="160"
+            >
               <template #default="{ row }">
-                <div class="hfl-ops-cell-stack__title" :class="{ 'hfl-empty-mark': !row.channel?.name }">{{ row.channel?.name || '—' }}</div>
-                <div class="hfl-ops-cell-stack__meta uppercase" :class="{ 'hfl-empty-mark': !row.channel?.type }">{{ row.channel?.type || '—' }}</div>
+                <div
+                  class="hfl-ops-cell-stack__title"
+                  :class="{ 'hfl-empty-mark': !row.channel?.name }"
+                >
+                  {{ row.channel?.name || '—' }}
+                </div>
+                <div
+                  class="hfl-ops-cell-stack__meta uppercase"
+                  :class="{ 'hfl-empty-mark': !row.channel?.type }"
+                >
+                  {{ row.channel?.type || '—' }}
+                </div>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.notification.logsNotificationType')" width="110">
+            <el-table-column
+              :label="t('ops.notification.logsNotificationType')"
+              width="110"
+            >
               <template #default="{ row }">
-                <el-tag v-bind="notificationTypeTagAttrs(row.notificationType || row.notification_type)" size="small">
+                <el-tag
+                  v-bind="notificationTypeTagAttrs(row.notificationType || row.notification_type)"
+                  size="small"
+                >
                   {{ notificationTypeLabel(row.notificationType || row.notification_type) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.alertsCenter.common.severity')" width="100">
+            <el-table-column
+              :label="t('ops.alertsCenter.common.severity')"
+              width="100"
+            >
               <template #default="{ row }">
-                <el-tag v-bind="severityStatusTagAttrs(logSeverity(row))" size="small">
+                <el-tag
+                  v-bind="severityStatusTagAttrs(logSeverity(row))"
+                  size="small"
+                >
                   {{ severityLabel(logSeverity(row)) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.notification.colStatus')" width="110">
+            <el-table-column
+              :label="t('ops.notification.colStatus')"
+              width="110"
+            >
               <template #default="{ row }">
                 <el-tag
                   class="hfl-ops-result-tag"
@@ -340,37 +446,43 @@ watch(
                 </el-tag>
               </template>
             </el-table-column>
-          <el-table-column :label="t('ops.notification.logsSentAt')" width="170">
-            <template #default="{ row }">
-              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.sentAt || row.sent_at) }">{{ formatDate(row.sentAt || row.sent_at) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column
-            :label="t('ops.notification.logsResult')"
-            min-width="220"
-            class-name="hfl-notification-result-column"
-          >
-            <template #default="{ row }">
-              <el-tooltip
-                :content="responsePreview(row)"
-                placement="top-start"
-                popper-class="hfl-notification-result-tooltip"
-                :show-after="250"
-              >
-                <button
-                  type="button"
-                  class="hfl-ops-response-chip"
-                  @click.stop="openDetail(row)"
+            <el-table-column
+              :label="t('ops.notification.logsSentAt')"
+              width="170"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !(row.sentAt || row.sent_at) }"
+                >{{ formatDate(row.sentAt || row.sent_at) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.notification.logsResult')"
+              min-width="220"
+              class-name="hfl-notification-result-column"
+            >
+              <template #default="{ row }">
+                <el-tooltip
+                  :content="responsePreview(row)"
+                  placement="top-start"
+                  popper-class="hfl-notification-result-tooltip"
+                  :show-after="250"
                 >
-                  {{ responsePreview(row) }}
-                </button>
-              </el-tooltip>
+                  <button
+                    type="button"
+                    class="hfl-ops-response-chip"
+                    @click.stop="openDetail(row)"
+                  >
+                    {{ responsePreview(row) }}
+                  </button>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty :description="emptyDescription" />
             </template>
-          </el-table-column>
-          <template #empty>
-            <el-empty :description="emptyDescription" />
-          </template>
-        </el-table>
+          </el-table>
         </template>
 
         <template #footer>
@@ -401,10 +513,15 @@ watch(
         </span>
       </template>
 
-      <div v-if="selected" class="hfl-detail-drawer__body">
+      <div
+        v-if="selected"
+        class="hfl-detail-drawer__body"
+      >
         <div class="hfl-detail-sections">
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('ops.notification.logDetail') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.notification.logDetail') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.colId') }}</span>
@@ -412,7 +529,10 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsNotificationType') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !(selected.notificationType || selected.notification_type) }">{{ notificationTypeLabel(selected.notificationType || selected.notification_type) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !(selected.notificationType || selected.notification_type) }"
+                >{{ notificationTypeLabel(selected.notificationType || selected.notification_type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.colStatus') }}</span>
@@ -436,7 +556,10 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsSentAt') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !(selected.sentAt || selected.sent_at) }">
+                <span
+                  class="hfl-detail-row__value hfl-table-cell-time"
+                  :class="{ 'hfl-detail-row__empty': !(selected.sentAt || selected.sent_at) }"
+                >
                   {{ formatDate(selected.sentAt || selected.sent_at) }}
                 </span>
               </div>
@@ -452,35 +575,55 @@ watch(
           </section>
 
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('ops.alertsCenter.common.resourcesAndChannels') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.alertsCenter.common.resourcesAndChannels') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsChannel') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !selected.channel?.name }">{{ displayValue(selected.channel?.name) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !selected.channel?.name }"
+                >{{ displayValue(selected.channel?.name) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.colType') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !selected.channel?.type }">{{ displayValue(selected.channel?.type) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !selected.channel?.type }"
+                >{{ displayValue(selected.channel?.type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsPolicy') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': logPolicyName(selected) === t('common.empty') }">{{ logPolicyName(selected) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': logPolicyName(selected) === t('common.empty') }"
+                >{{ logPolicyName(selected) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.type') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': logPolicyType(selected) === t('common.empty') }">{{ logPolicyType(selected) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': logPolicyType(selected) === t('common.empty') }"
+                >{{ logPolicyType(selected) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.severity') }}</span>
                 <span class="hfl-detail-row__value">
-                  <el-tag v-bind="severityStatusTagAttrs(logSeverity(selected))" size="small">
+                  <el-tag
+                    v-bind="severityStatusTagAttrs(logSeverity(selected))"
+                    size="small"
+                  >
                     {{ severityLabel(logSeverity(selected)) }}
                   </el-tag>
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.targetColumn') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': logResourceSummary(selected) === t('common.empty') }">{{ logResourceSummary(selected) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': logResourceSummary(selected) === t('common.empty') }"
+                >{{ logResourceSummary(selected) }}</span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsAlert') }}</span>

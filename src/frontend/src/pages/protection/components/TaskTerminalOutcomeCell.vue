@@ -85,8 +85,15 @@ const outcome = computed(() => {
   >
     <span class="task-terminal-outcome__summary">
       <span class="task-terminal-outcome__status">{{ outcome.label }}</span>
-      <span v-if="outcome.timestamp" class="task-terminal-outcome__separator" aria-hidden="true">·</span>
-      <span v-if="outcome.timestamp" class="task-terminal-outcome__time">{{ outcome.timestamp }}</span>
+      <span
+        v-if="outcome.timestamp"
+        class="task-terminal-outcome__separator"
+        aria-hidden="true"
+      >·</span>
+      <span
+        v-if="outcome.timestamp"
+        class="task-terminal-outcome__time"
+      >{{ outcome.timestamp }}</span>
     </span>
     <span
       v-if="outcome.showDiagnostic"
@@ -98,10 +105,16 @@ const outcome = computed(() => {
         class="task-terminal-outcome__code"
         :class="{ 'task-terminal-outcome__code--only': !outcome.reason }"
       >[{{ outcome.code }}]</span>
-      <span v-if="outcome.reason" class="task-terminal-outcome__reason">{{ outcome.reason }}</span>
+      <span
+        v-if="outcome.reason"
+        class="task-terminal-outcome__reason"
+      >{{ outcome.reason }}</span>
     </span>
   </span>
-  <span v-else class="task-terminal-outcome task-terminal-outcome--empty hfl-empty-mark">—</span>
+  <span
+    v-else
+    class="task-terminal-outcome task-terminal-outcome--empty hfl-empty-mark"
+  >—</span>
 </template>
 
 <style scoped>

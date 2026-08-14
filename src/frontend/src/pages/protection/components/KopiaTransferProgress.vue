@@ -49,9 +49,19 @@ const showPercentMetric = computed(() => shouldShowPercentMetric(props.progress)
 </script>
 
 <template>
-  <div class="kopia-transfer-progress" :class="{ 'is-compact': compact, 'is-failed': failed }">
-    <p v-if="orchestrationLabel" class="kopia-transfer-progress__label">
-      <span v-if="!failed" class="kopia-transfer-progress__spinner" aria-hidden="true" />
+  <div
+    class="kopia-transfer-progress"
+    :class="{ 'is-compact': compact, 'is-failed': failed }"
+  >
+    <p
+      v-if="orchestrationLabel"
+      class="kopia-transfer-progress__label"
+    >
+      <span
+        v-if="!failed"
+        class="kopia-transfer-progress__spinner"
+        aria-hidden="true"
+      />
       {{ orchestrationLabel }}
     </p>
     <el-progress
@@ -61,9 +71,15 @@ const showPercentMetric = computed(() => shouldShowPercentMetric(props.progress)
       :stroke-width="compact ? 7 : 8"
       :show-text="compact"
     />
-    <p v-if="showMetrics" class="kopia-transfer-progress__metrics">
+    <p
+      v-if="showMetrics"
+      class="kopia-transfer-progress__metrics"
+    >
       <span v-if="capacity">{{ capacity }}</span>
-      <span v-else class="hfl-empty-mark">—</span>
+      <span
+        v-else
+        class="hfl-empty-mark"
+      >—</span>
       <span v-if="showPercentMetric">{{ percent }}%</span>
       <span :class="{ 'hfl-empty-mark': !speed }">{{ speed || '—' }}</span>
       <span :class="{ 'hfl-empty-mark': !eta }">{{ eta || '—' }}</span>

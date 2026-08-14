@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { compactSourceText } from '../test/sourceText'
 
 function source(path: string) {
-  return readFileSync(resolve(process.cwd(), path), 'utf8')
+  return compactSourceText(readFileSync(resolve(process.cwd(), path), 'utf8'))
 }
 
 describe('Admin Console finalization contracts', () => {

@@ -64,44 +64,78 @@ watch(pageSize, () => {
 </script>
 
 <template>
-  <ModulePage :menus="nodeMenus" body-fill>
+  <ModulePage
+    :menus="nodeMenus"
+    body-fill
+  >
     <HflTablePanel fill>
       <template #table="{ tableMaxHeight }">
-      <el-table
-        v-table-column-resize="'settings.organizations'"
-        v-loading="busy"
-        :data="paginatedRows"
-        stripe
-        row-key="id"
-        class="hfl-list-table"
-        :max-height="tableMaxHeight"
-      >
-        <el-table-column prop="name" :label="t('settings.org.colName')" min-width="140" />
-        <el-table-column :label="t('settings.org.colOwner')" min-width="160">
-          <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.owner_email }">{{ row.owner_email || '—' }}</span></template>
-        </el-table-column>
-        <el-table-column :label="t('settings.org.colMembers')" width="100">
-          <template #default="{ row }">{{ row.member_count ?? 0 }}</template>
-        </el-table-column>
-        <el-table-column :label="t('settings.org.colPlan')" min-width="140">
-          <template #default>{{ t('settings.org.planDefault') }}</template>
-        </el-table-column>
-        <el-table-column :label="t('settings.org.colStatus')" width="100">
-          <template #default="{ row }">
-            <el-tag v-bind="booleanStatusTag(row.is_active)" size="small">
-              {{ row.is_active ? t('settings.org.statusNormal') : t('settings.org.statusInactive') }}
-            </el-tag>
+        <el-table
+          v-table-column-resize="'settings.organizations'"
+          v-loading="busy"
+          :data="paginatedRows"
+          stripe
+          row-key="id"
+          class="hfl-list-table"
+          :max-height="tableMaxHeight"
+        >
+          <el-table-column
+            prop="name"
+            :label="t('settings.org.colName')"
+            min-width="140"
+          />
+          <el-table-column
+            :label="t('settings.org.colOwner')"
+            min-width="160"
+          >
+            <template #default="{ row }">
+              <span :class="{ 'hfl-empty-mark': !row.owner_email }">{{ row.owner_email || '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('settings.org.colMembers')"
+            width="100"
+          >
+            <template #default="{ row }">
+              {{ row.member_count ?? 0 }}
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('settings.org.colPlan')"
+            min-width="140"
+          >
+            <template #default>
+              {{ t('settings.org.planDefault') }}
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('settings.org.colStatus')"
+            width="100"
+          >
+            <template #default="{ row }">
+              <el-tag
+                v-bind="booleanStatusTag(row.is_active)"
+                size="small"
+              >
+                {{ row.is_active ? t('settings.org.statusNormal') : t('settings.org.statusInactive') }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('settings.org.colCreated')"
+            width="170"
+          >
+            <template #default="{ row }">
+              <span
+                class="hfl-table-cell-time"
+                :class="{ 'hfl-empty-mark': !row.created_at }"
+              >{{ formatCreatedAt(row.created_at) }}</span>
+            </template>
+          </el-table-column>
+          <template #empty>
+            <el-empty :description="t('settings.org.empty')" />
           </template>
-        </el-table-column>
-        <el-table-column :label="t('settings.org.colCreated')" width="170">
-          <template #default="{ row }">
-            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatCreatedAt(row.created_at) }}</span>
-          </template>
-        </el-table-column>
-        <template #empty>
-          <el-empty :description="t('settings.org.empty')" />
-        </template>
-      </el-table>
+        </el-table>
       </template>
 
       <template #footer>

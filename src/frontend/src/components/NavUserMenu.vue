@@ -73,24 +73,44 @@ async function confirmLogout() {
         :aria-label="`${displayLabel} · ${t('account.userMenuAria')}`"
       >
         <span class="nav-user-trigger__label">{{ displayLabel }}</span>
-        <ChevronDown :size="14" class="nav-user-trigger__caret" stroke-width="2" aria-hidden="true" />
+        <ChevronDown
+          :size="14"
+          class="nav-user-trigger__caret"
+          stroke-width="2"
+          aria-hidden="true"
+        />
       </button>
     </template>
 
     <div class="nav-dropdown-panel">
       <header class="nav-dropdown-panel__head nav-dropdown-panel__head--stacked">
-        <h3 class="nav-dropdown-panel__title">{{ email }}</h3>
+        <h3 class="nav-dropdown-panel__title">
+          {{ email }}
+        </h3>
         <span class="nav-dropdown-panel__role-badge">{{ role }}</span>
       </header>
 
       <div class="nav-dropdown-panel__body">
-        <button type="button" class="nav-dropdown-panel__item" @click="go('/account/profile')">
-          <span class="nav-dropdown-panel__icon-box" aria-hidden="true">
-            <User :size="16" stroke-width="1.75" />
+        <button
+          type="button"
+          class="nav-dropdown-panel__item"
+          @click="go('/account/profile')"
+        >
+          <span
+            class="nav-dropdown-panel__icon-box"
+            aria-hidden="true"
+          >
+            <User
+              :size="16"
+              stroke-width="1.75"
+            />
           </span>
           <span class="nav-dropdown-panel__item-text">
             <span class="nav-dropdown-panel__item-title">{{ t('account.menuProfile') }}</span>
-            <span v-if="profileSub" class="nav-dropdown-panel__item-sub">{{ profileSub }}</span>
+            <span
+              v-if="profileSub"
+              class="nav-dropdown-panel__item-sub"
+            >{{ profileSub }}</span>
           </span>
         </button>
       </div>
@@ -103,12 +123,21 @@ async function confirmLogout() {
           class="nav-dropdown-panel__item nav-dropdown-panel__item--danger"
           @click.stop.prevent="confirmLogout"
         >
-          <span class="nav-dropdown-panel__icon-box nav-dropdown-panel__icon-box--danger" aria-hidden="true">
-            <LogOut :size="16" stroke-width="1.75" />
+          <span
+            class="nav-dropdown-panel__icon-box nav-dropdown-panel__icon-box--danger"
+            aria-hidden="true"
+          >
+            <LogOut
+              :size="16"
+              stroke-width="1.75"
+            />
           </span>
           <span class="nav-dropdown-panel__item-text">
             <span class="nav-dropdown-panel__item-title">{{ t('account.menuSignOut') }}</span>
-            <span v-if="signOutSub" class="nav-dropdown-panel__item-sub">{{ signOutSub }}</span>
+            <span
+              v-if="signOutSub"
+              class="nav-dropdown-panel__item-sub"
+            >{{ signOutSub }}</span>
           </span>
         </button>
       </div>

@@ -231,8 +231,15 @@ const showLiveRow = computed(() => props.streaming)
 
 <template>
   <div class="chat-scroll-shell min-h-0 flex-1">
-    <div ref="chatScrollRef" class="chat-scroll h-full overflow-y-auto" @scroll="syncFollowState">
-      <div ref="copilotThreadRef" class="copilot-thread">
+    <div
+      ref="chatScrollRef"
+      class="chat-scroll h-full overflow-y-auto"
+      @scroll="syncFollowState"
+    >
+      <div
+        ref="copilotThreadRef"
+        class="copilot-thread"
+      >
         <div
           v-for="msg in messages"
           :key="msg.id"
@@ -250,8 +257,15 @@ const showLiveRow = computed(() => props.streaming)
               msg.role === 'user' ? t('insight.copilot.roleUser') : t('insight.copilot.roleAi')
             "
           >
-            <span v-if="msg.role === 'user'" class="message-avatar-initial">{{ userInitial }}</span>
-            <Sparkles v-else :size="16" :stroke-width="2" />
+            <span
+              v-if="msg.role === 'user'"
+              class="message-avatar-initial"
+            >{{ userInitial }}</span>
+            <Sparkles
+              v-else
+              :size="16"
+              :stroke-width="2"
+            />
           </div>
 
           <div class="message-body">
@@ -259,17 +273,21 @@ const showLiveRow = computed(() => props.streaming)
               v-if="msg.role === 'assistant' && thinkingStepsFor(msg).length"
               class="thinking-panel thinking-panel-done"
             >
-              <button type="button" class="thinking-panel-header" @click="toggleThinking(msg.id)">
+              <button
+                type="button"
+                class="thinking-panel-header"
+                @click="toggleThinking(msg.id)"
+              >
                 <span class="thinking-panel-status">
                   {{
                     thinkingDuration(msg) != null
                       ? t('insight.copilot.thinkingDone', {
-                          seconds: thinkingDuration(msg),
-                          count: thinkingStepsFor(msg).length,
-                        })
+                        seconds: thinkingDuration(msg),
+                        count: thinkingStepsFor(msg).length,
+                      })
                       : t('insight.copilot.thinkingDoneSteps', {
-                          count: thinkingStepsFor(msg).length,
-                        })
+                        count: thinkingStepsFor(msg).length,
+                      })
                   }}
                 </span>
                 <ChevronUp
@@ -277,9 +295,16 @@ const showLiveRow = computed(() => props.streaming)
                   :size="13"
                   class="thinking-panel-chevron"
                 />
-                <ChevronDown v-else :size="13" class="thinking-panel-chevron" />
+                <ChevronDown
+                  v-else
+                  :size="13"
+                  class="thinking-panel-chevron"
+                />
               </button>
-              <div v-if="expandedThinking.has(msg.id)" class="thinking-panel-body">
+              <div
+                v-if="expandedThinking.has(msg.id)"
+                class="thinking-panel-body"
+              >
                 <div
                   v-for="(step, idx) in thinkingStepsFor(msg)"
                   :key="idx"
@@ -299,13 +324,29 @@ const showLiveRow = computed(() => props.streaming)
                 msg.starterChips ? 'message-card--welcome' : '',
               ]"
             >
-              <div v-if="msg.starterChips || msg.isError" class="message-text">{{ msg.text }}</div>
-              <div v-else-if="msg.role === 'assistant' && msg.text" class="message-markdown">
+              <div
+                v-if="msg.starterChips || msg.isError"
+                class="message-text"
+              >
+                {{ msg.text }}
+              </div>
+              <div
+                v-else-if="msg.role === 'assistant' && msg.text"
+                class="message-markdown"
+              >
                 <CopilotMarkdown :content="msg.text" />
               </div>
-              <div v-else-if="msg.text" class="message-text">{{ msg.text }}</div>
+              <div
+                v-else-if="msg.text"
+                class="message-text"
+              >
+                {{ msg.text }}
+              </div>
 
-              <div v-if="msg.starterChips" class="copilot-chip-grid">
+              <div
+                v-if="msg.starterChips"
+                class="copilot-chip-grid"
+              >
                 <button
                   v-for="chip in starterChips"
                   :key="chip.key"
@@ -317,14 +358,21 @@ const showLiveRow = computed(() => props.streaming)
                   @click="emit('starterChip', chip.key, starterChipPrompt(chip.key))"
                 >
                   <span class="copilot-chip-inner">
-                    <span class="copilot-chip-icon" aria-hidden="true">{{ chip.icon }}</span>
+                    <span
+                      class="copilot-chip-icon"
+                      aria-hidden="true"
+                    >{{ chip.icon }}</span>
                     <span class="copilot-chip-label">{{ starterChipTitle(chip.key) }}</span>
                   </span>
                 </button>
               </div>
             </div>
 
-            <div v-if="msg.createdAt" class="message-time" :class="msg.role">
+            <div
+              v-if="msg.createdAt"
+              class="message-time"
+              :class="msg.role"
+            >
               {{ formatMessageTime(msg.createdAt) }}
             </div>
 
@@ -361,15 +409,24 @@ const showLiveRow = computed(() => props.streaming)
           </div>
         </div>
 
-        <div v-if="showLiveRow" class="message-row message-row-assistant live-progress-row">
+        <div
+          v-if="showLiveRow"
+          class="message-row message-row-assistant live-progress-row"
+        >
           <div
             class="message-avatar message-avatar-icon message-avatar-icon--assistant"
             :aria-label="t('insight.copilot.roleAi')"
           >
-            <Sparkles :size="16" :stroke-width="2" />
+            <Sparkles
+              :size="16"
+              :stroke-width="2"
+            />
           </div>
           <div class="message-body">
-            <div v-if="!streamError" class="thinking-panel thinking-panel-live">
+            <div
+              v-if="!streamError"
+              class="thinking-panel thinking-panel-live"
+            >
               <button
                 v-if="streamingThinking?.length"
                 type="button"
@@ -381,11 +438,22 @@ const showLiveRow = computed(() => props.streaming)
                 <span class="thinking-panel-status">
                   <span class="thinking-panel-status-text">{{ liveThinkingStatus() }}</span>
                 </span>
-                <span v-if="streamingThinking.length" class="thinking-step-count">
+                <span
+                  v-if="streamingThinking.length"
+                  class="thinking-step-count"
+                >
                   {{ streamingThinking.length }}
                 </span>
-                <ChevronUp v-if="liveThinkingOpen" :size="13" class="thinking-panel-chevron" />
-                <ChevronDown v-else :size="13" class="thinking-panel-chevron" />
+                <ChevronUp
+                  v-if="liveThinkingOpen"
+                  :size="13"
+                  class="thinking-panel-chevron"
+                />
+                <ChevronDown
+                  v-else
+                  :size="13"
+                  class="thinking-panel-chevron"
+                />
               </button>
               <div
                 v-else
@@ -398,20 +466,38 @@ const showLiveRow = computed(() => props.streaming)
                   <span class="thinking-panel-status-text">{{ liveThinkingStatus() }}</span>
                 </span>
               </div>
-              <div v-if="liveThinkingOpen && streamingThinking?.length" class="thinking-panel-body">
-                <div v-for="(step, idx) in streamingThinking" :key="idx" class="thinking-step-item">
+              <div
+                v-if="liveThinkingOpen && streamingThinking?.length"
+                class="thinking-panel-body"
+              >
+                <div
+                  v-for="(step, idx) in streamingThinking"
+                  :key="idx"
+                  class="thinking-step-item"
+                >
                   <span class="thinking-step-bullet">▸</span>
                   <span class="thinking-step-text">{{ step.displayMessage || stepLabel(step) }}</span>
                 </div>
               </div>
             </div>
 
-            <p v-if="showRetrievalHint" class="thinking-retrieval-hint">
+            <p
+              v-if="showRetrievalHint"
+              class="thinking-retrieval-hint"
+            >
               {{ t('insight.copilot.thinkingRetrievalHint') }}
             </p>
 
-            <div v-if="streamingContent || streamError" class="message-card assistant">
-              <div v-if="streamError" class="message-text message-text--error">{{ streamError }}</div>
+            <div
+              v-if="streamingContent || streamError"
+              class="message-card assistant"
+            >
+              <div
+                v-if="streamError"
+                class="message-text message-text--error"
+              >
+                {{ streamError }}
+              </div>
               <div
                 v-else
                 class="message-markdown live-markdown"
@@ -436,7 +522,10 @@ const showLiveRow = computed(() => props.streaming)
       :title="t('insight.copilot.scrollToLatest')"
       @click="scrollToBottom"
     >
-      <ArrowDown :size="16" aria-hidden="true" />
+      <ArrowDown
+        :size="16"
+        aria-hidden="true"
+      />
       <span>{{ t('insight.copilot.scrollToLatest') }}</span>
     </button>
   </div>

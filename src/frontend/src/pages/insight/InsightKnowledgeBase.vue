@@ -262,13 +262,17 @@ watch(hasSyncingRows, (syncing) => {
   <div class="hfl-list-shell hfl-list-shell--fill">
     <div class="hfl-list-panel hfl-list-panel--fill">
       <div class="hfl-list-toolbar">
-        <ElButton type="primary" :disabled="!bridgeReady" @click="openCreate">
+        <ElButton
+          type="primary"
+          :disabled="!bridgeReady"
+          @click="openCreate"
+        >
           <Plus :size="16" />
           {{ isPlatformEngine ? t('platformOps.engineActions.addKnowledgeSource') : t('insight.kb.btnAdd') }}
         </ElButton>
 
         <ElDropdown
-            trigger="click"
+          trigger="click"
           popper-class="hfl-actions-dropdown"
           @visible-change="moreActionsOpen = $event"
         >
@@ -279,12 +283,18 @@ watch(hasSyncingRows, (syncing) => {
               class="hfl-list-more__chev"
               :class="{ 'hfl-list-more__chev--open': moreActionsOpen }"
             />
-              </ElButton>
+          </ElButton>
           <template #dropdown>
             <ElDropdownMenu>
-              <ElDropdownItem :disabled="batchDisabled || !singleSelected" @click="editSelected">
+              <ElDropdownItem
+                :disabled="batchDisabled || !singleSelected"
+                @click="editSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <Pencil :size="14" class="shrink-0" />
+                  <Pencil
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('common.edit') }}</span>
                 </span>
               </ElDropdownItem>
@@ -293,7 +303,10 @@ watch(hasSyncingRows, (syncing) => {
                 @click="syncSelected"
               >
                 <span class="el-dropdown-menu__item-content">
-                  <RefreshCw :size="14" class="shrink-0" />
+                  <RefreshCw
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('insight.kb.sync') }}</span>
                 </span>
               </ElDropdownItem>
@@ -304,32 +317,50 @@ watch(hasSyncingRows, (syncing) => {
                 @click="deleteSelected"
               >
                 <span class="el-dropdown-menu__item-content">
-                  <Trash2 :size="14" class="shrink-0" />
+                  <Trash2
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('common.delete') }}</span>
                 </span>
               </ElDropdownItem>
             </ElDropdownMenu>
-            </template>
+          </template>
         </ElDropdown>
 
         <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
           <ElSelect
             v-model="statusFilter"
             clearable
-          size="small"
+            size="small"
             :placeholder="t('insight.kb.filterRunState')"
             style="width: 160px"
           >
-            <ElOption value="ready" :label="t('insight.kb.statusReady')" />
-            <ElOption value="syncing" :label="t('insight.kb.statusSyncing')" />
-            <ElOption value="degraded" :label="t('insight.kb.statusDegraded')" />
-            <ElOption value="paused" :label="t('insight.kb.statusPaused')" />
-            <ElOption value="error" :label="t('insight.kb.statusError')" />
+            <ElOption
+              value="ready"
+              :label="t('insight.kb.statusReady')"
+            />
+            <ElOption
+              value="syncing"
+              :label="t('insight.kb.statusSyncing')"
+            />
+            <ElOption
+              value="degraded"
+              :label="t('insight.kb.statusDegraded')"
+            />
+            <ElOption
+              value="paused"
+              :label="t('insight.kb.statusPaused')"
+            />
+            <ElOption
+              value="error"
+              :label="t('insight.kb.statusError')"
+            />
           </ElSelect>
           <ElInput
             v-model="search"
             clearable
-          size="small"
+            size="small"
             :placeholder="t('insight.kb.searchPlaceholder')"
             class="hfl-list-search"
             @clear="clearSearch"
@@ -351,7 +382,10 @@ watch(hasSyncingRows, (syncing) => {
         </div>
       </div>
 
-      <div ref="tableBlockRef" class="hfl-list-table-block">
+      <div
+        ref="tableBlockRef"
+        class="hfl-list-table-block"
+      >
         <ElTable
           ref="tableRef"
           v-table-overflow-title
@@ -365,38 +399,69 @@ watch(hasSyncingRows, (syncing) => {
           @scroll="handleTableScroll"
           @selection-change="onSelectionChange"
         >
-          <ElTableColumn type="selection" width="35" fixed="left" />
+          <ElTableColumn
+            type="selection"
+            width="35"
+            fixed="left"
+          />
           <ElTableColumn
             :label="t('insight.kb.colName')"
             min-width="220"
             fixed="left"
             class-name="hfl-table-name-col"
           >
-          <template #default="{ row }">
-              <button type="button" class="hfl-table-name-link hfl-table-name-link--full" @click="openDetail(row)">
+            <template #default="{ row }">
+              <button
+                type="button"
+                class="hfl-table-name-link hfl-table-name-link--full"
+                @click="openDetail(row)"
+              >
                 <div class="ks-identity">
                   <strong>{{ row.name }}</strong>
                   <span>{{ row.source_path }}</span>
-            </div>
+                </div>
               </button>
-          </template>
+            </template>
           </ElTableColumn>
-          <ElTableColumn :label="t('insight.kb.colSourceType')" min-width="140">
-          <template #default="{ row }">
-              <HflTypeLabel :label="sourceTypeLabel(row)" />
-          </template>
-          </ElTableColumn>
-          <ElTableColumn :label="t('insight.kb.colGateway')" prop="gateway_name" min-width="140" />
-          <ElTableColumn :label="t('insight.kb.colLinkedVersion')" min-width="120">
-          <template #default="{ row }">
-              <span v-if="row.backup_source_snapshot_id">{{ versionLabel(row) }}</span>
-              <span v-else class="hfl-empty-mark">—</span>
-          </template>
-          </ElTableColumn>
-          <ElTableColumn :label="t('insight.kb.colRetrieval')" prop="ingest_summary" min-width="140" />
-          <ElTableColumn :label="t('insight.kb.colLearnStatus')" min-width="110">
+          <ElTableColumn
+            :label="t('insight.kb.colSourceType')"
+            min-width="140"
+          >
             <template #default="{ row }">
-              <ElTag v-bind="lifecycleStatusTagAttrs(row.status)" size="small">
+              <HflTypeLabel :label="sourceTypeLabel(row)" />
+            </template>
+          </ElTableColumn>
+          <ElTableColumn
+            :label="t('insight.kb.colGateway')"
+            prop="gateway_name"
+            min-width="140"
+          />
+          <ElTableColumn
+            :label="t('insight.kb.colLinkedVersion')"
+            min-width="120"
+          >
+            <template #default="{ row }">
+              <span v-if="row.backup_source_snapshot_id">{{ versionLabel(row) }}</span>
+              <span
+                v-else
+                class="hfl-empty-mark"
+              >—</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn
+            :label="t('insight.kb.colRetrieval')"
+            prop="ingest_summary"
+            min-width="140"
+          />
+          <ElTableColumn
+            :label="t('insight.kb.colLearnStatus')"
+            min-width="110"
+          >
+            <template #default="{ row }">
+              <ElTag
+                v-bind="lifecycleStatusTagAttrs(row.status)"
+                size="small"
+              >
                 {{ statusLabel(row.status) }}
               </ElTag>
             </template>
@@ -408,8 +473,8 @@ watch(hasSyncingRows, (syncing) => {
             />
           </template>
         </ElTable>
-            </div>
-          </div>
+      </div>
+    </div>
 
     <InsightKnowledgeSourceDetailDrawer
       v-model:open="detailOpen"

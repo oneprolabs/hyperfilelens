@@ -316,10 +316,20 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="email-code-login-form">
-    <div class="input-wrapper" :class="{ 'has-error': emailError }">
-      <label class="sr-only" for="email-code-login-email">{{ t('login.emailPh') }}</label>
+    <div
+      class="input-wrapper"
+      :class="{ 'has-error': emailError }"
+    >
+      <label
+        class="sr-only"
+        for="email-code-login-email"
+      >{{ t('login.emailPh') }}</label>
       <div class="input-row">
-        <Mail class="input-icon" :size="18" aria-hidden="true" />
+        <Mail
+          class="input-icon"
+          :size="18"
+          aria-hidden="true"
+        />
         <input
           id="email-code-login-email"
           v-model="email"
@@ -331,15 +341,31 @@ onBeforeUnmount(() => {
           @input="validateEmail"
           @blur="validateEmail"
           @keyup.enter="sendCode"
-        />
+        >
       </div>
-      <p v-if="emailError" class="error-msg" role="alert">{{ emailError }}</p>
+      <p
+        v-if="emailError"
+        class="error-msg"
+        role="alert"
+      >
+        {{ emailError }}
+      </p>
     </div>
 
-    <div class="input-wrapper" :class="{ 'has-error': codeError }">
-      <label class="sr-only" for="email-code-login-code">{{ t('login.emailCodePlaceholder') }}</label>
+    <div
+      class="input-wrapper"
+      :class="{ 'has-error': codeError }"
+    >
+      <label
+        class="sr-only"
+        for="email-code-login-code"
+      >{{ t('login.emailCodePlaceholder') }}</label>
       <div class="input-row email-code-login-form__code-row">
-        <KeyRound class="input-icon" :size="18" aria-hidden="true" />
+        <KeyRound
+          class="input-icon"
+          :size="18"
+          aria-hidden="true"
+        />
         <input
           id="email-code-login-code"
           ref="codeInputRef"
@@ -353,7 +379,7 @@ onBeforeUnmount(() => {
           :aria-invalid="Boolean(codeError)"
           @input="sanitizeCode"
           @keyup.enter="verifyCode"
-        />
+        >
         <button
           type="button"
           class="email-code-login-form__send"
@@ -363,7 +389,13 @@ onBeforeUnmount(() => {
           {{ sendLabel }}
         </button>
       </div>
-      <p v-if="codeError" class="error-msg" role="alert">{{ codeError }}</p>
+      <p
+        v-if="codeError"
+        class="error-msg"
+        role="alert"
+      >
+        {{ codeError }}
+      </p>
     </div>
 
     <ElButton

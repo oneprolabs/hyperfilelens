@@ -3,8 +3,11 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { en } from '../../../locales/en'
 import { enProtectionPages } from '../../../locales/enProtectionPages'
+import { compactSourceText } from '../../../test/sourceText'
 
-const drawer = readFileSync(resolve(process.cwd(), 'src/pages/protection/components/FlowBackupSourceDetailDrawer.vue'), 'utf8')
+const drawer = compactSourceText(
+  readFileSync(resolve(process.cwd(), 'src/pages/protection/components/FlowBackupSourceDetailDrawer.vue'), 'utf8'),
+)
 
 function sourceBetween(start: string, end: string) {
   const startIndex = drawer.indexOf(start)
@@ -32,7 +35,7 @@ describe('FlowBackupSourceDetailDrawer task columns', () => {
   it('removes Current Step and keeps the remaining columns within the full-size drawer', () => {
     const tasksTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupDetail.tabTasks\')" name="tasks">',
-      '<ElDrawer\n    v-model="taskAdvancedFilterOpen"',
+      '<ElDrawer v-model="taskAdvancedFilterOpen"',
     )
 
     expect(tasksTab).not.toContain("t('protection.backupsPage.flowTaskColPhase')")

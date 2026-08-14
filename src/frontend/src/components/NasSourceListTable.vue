@@ -24,7 +24,9 @@ const props = withDefaults(
   {
     loading: false,
     selectable: false,
+    maxHeight: undefined,
     capacitySyncing: false,
+    emptyDescription: '',
   },
 )
 
@@ -50,7 +52,12 @@ const display = useNasSourceListDisplay(toRef(props, 'proxyNodes'))
     :header-cell-style="NAS_SOURCE_TABLE_HEADER_STYLE"
     @selection-change="emit('selection-change', $event)"
   >
-    <el-table-column v-if="selectable" type="selection" width="35" fixed="left" />
+    <el-table-column
+      v-if="selectable"
+      type="selection"
+      width="35"
+      fixed="left"
+    />
     <el-table-column
       :label="t('protection.sourceResources.colName')"
       min-width="200"
@@ -67,21 +74,40 @@ const display = useNasSourceListDisplay(toRef(props, 'proxyNodes'))
         </button>
       </template>
     </el-table-column>
-    <el-table-column :label="t('protection.sourceResources.colProtocol')" width="100">
+    <el-table-column
+      :label="t('protection.sourceResources.colProtocol')"
+      width="100"
+    >
       <template #default="{ row }">
-        <span v-if="display.nasProtocolType(row) !== 'nas'" :class="display.nasProtocolPillClass(row)">
-          <component :is="nasMountProtocolIcon(display.nasProtocolType(row))" :size="12" stroke-width="2.25" />
+        <span
+          v-if="display.nasProtocolType(row) !== 'nas'"
+          :class="display.nasProtocolPillClass(row)"
+        >
+          <component
+            :is="nasMountProtocolIcon(display.nasProtocolType(row))"
+            :size="12"
+            stroke-width="2.25"
+          />
           {{ display.nasProtocolLabel(row) }}
         </span>
-        <span v-else class="hfl-empty-mark">—</span>
+        <span
+          v-else
+          class="hfl-empty-mark"
+        >—</span>
       </template>
     </el-table-column>
-    <el-table-column :label="t('protection.sourceResources.colNasServer')" min-width="140">
+    <el-table-column
+      :label="t('protection.sourceResources.colNasServer')"
+      min-width="140"
+    >
       <template #default="{ row }">
         {{ display.nasServerAddress(row) }}
       </template>
     </el-table-column>
-    <el-table-column :label="t('protection.sourceResources.colNasShareExport')" min-width="160">
+    <el-table-column
+      :label="t('protection.sourceResources.colNasShareExport')"
+      min-width="160"
+    >
       <template #default="{ row }">
         <div class="table-stack-cell">
           <span class="table-stack-cell__secondary">{{ display.nasPathKindLabel(row) }}</span>
@@ -89,7 +115,10 @@ const display = useNasSourceListDisplay(toRef(props, 'proxyNodes'))
         </div>
       </template>
     </el-table-column>
-    <el-table-column :label="t('protection.sourceResources.colSourceProxy')" min-width="150">
+    <el-table-column
+      :label="t('protection.sourceResources.colSourceProxy')"
+      min-width="150"
+    >
       <template #header>
         <span class="hfl-table-header-with-tip">
           <span>{{ t('protection.sourceResources.colSourceProxy') }}</span>
@@ -101,19 +130,31 @@ const display = useNasSourceListDisplay(toRef(props, 'proxyNodes'))
       </template>
       <template #default="{ row }">
         <div class="table-stack-cell">
-          <span class="table-stack-cell__primary" :class="{ 'hfl-empty-mark': !display.nasSourceProxyName(row) }">{{ display.nasSourceProxyName(row) || '—' }}</span>
-          <span v-if="display.nasSourceProxyIp(row)" class="table-stack-cell__secondary">
+          <span
+            class="table-stack-cell__primary"
+            :class="{ 'hfl-empty-mark': !display.nasSourceProxyName(row) }"
+          >{{ display.nasSourceProxyName(row) || '—' }}</span>
+          <span
+            v-if="display.nasSourceProxyIp(row)"
+            class="table-stack-cell__secondary"
+          >
             {{ display.nasSourceProxyIp(row) }}
           </span>
         </div>
       </template>
     </el-table-column>
-    <el-table-column :label="t('protection.sourceResources.colProxyMountPoint')" min-width="220">
+    <el-table-column
+      :label="t('protection.sourceResources.colProxyMountPoint')"
+      min-width="220"
+    >
       <template #default="{ row }">
         <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ display.nasProxyMountPoint(row) }}</span>
       </template>
     </el-table-column>
-    <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="200">
+    <el-table-column
+      :label="t('protection.sourceResources.colCapacity')"
+      min-width="200"
+    >
       <template #default="{ row }">
         <HflCapacityCell
           v-if="row.total_size"
@@ -128,25 +169,43 @@ const display = useNasSourceListDisplay(toRef(props, 'proxyNodes'))
         >
           {{ t('protection.sourceResources.capacitySyncing') }}
         </span>
-        <span v-else class="hfl-empty-mark">—</span>
+        <span
+          v-else
+          class="hfl-empty-mark"
+        >—</span>
       </template>
     </el-table-column>
-    <el-table-column :label="t('protection.sourceResources.colStatus')" width="88">
+    <el-table-column
+      :label="t('protection.sourceResources.colStatus')"
+      width="88"
+    >
       <template #default="{ row }">
         <div class="hfl-table-no-tooltip">
-          <el-tag :type="display.sourceNodeOnlineTagType(row)" size="small">
+          <el-tag
+            :type="display.sourceNodeOnlineTagType(row)"
+            size="small"
+          >
             {{ display.sourceNodeOnlineLabel(row) }}
           </el-tag>
         </div>
       </template>
     </el-table-column>
-    <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="170">
+    <el-table-column
+      :label="t('protection.sourceResources.colRegistered')"
+      min-width="170"
+    >
       <template #default="{ row }">
-        <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !display.sourceRegisteredAt(row) }">{{ display.formatDate(display.sourceRegisteredAt(row)) }}</span>
+        <span
+          class="hfl-table-cell-time"
+          :class="{ 'hfl-empty-mark': !display.sourceRegisteredAt(row) }"
+        >{{ display.formatDate(display.sourceRegisteredAt(row)) }}</span>
       </template>
     </el-table-column>
     <template #empty>
-      <el-empty :description="emptyDescription || t('protection.sourceResources.emptyNasSources')" :image-size="80" />
+      <el-empty
+        :description="emptyDescription || t('protection.sourceResources.emptyNasSources')"
+        :image-size="80"
+      />
     </template>
   </el-table>
 </template>

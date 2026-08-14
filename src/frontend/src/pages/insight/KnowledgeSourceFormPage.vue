@@ -160,16 +160,30 @@ onMounted(() => {
   <div class="fullscreen-form-fullscreen resource-add-fullscreen ks-form-fullscreen">
     <div class="fullscreen-form-page">
       <header class="fullscreen-form-header">
-        <button type="button" class="fullscreen-form-header__back" @click="handleBack">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+        <button
+          type="button"
+          class="fullscreen-form-header__back"
+          @click="handleBack"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
-          <h1 class="fullscreen-form-header__title">{{ pageTitle }}</h1>
-          <p class="fullscreen-form-header__desc">{{ pageDesc }}</p>
+          <h1 class="fullscreen-form-header__title">
+            {{ pageTitle }}
+          </h1>
+          <p class="fullscreen-form-header__desc">
+            {{ pageDesc }}
+          </p>
         </div>
       </header>
 
-      <div v-loading="loading" class="fullscreen-form-layout">
+      <div
+        v-loading="loading"
+        class="fullscreen-form-layout"
+      >
         <div class="fullscreen-form-main">
           <div class="fullscreen-form-step-stack">
             <section class="fullscreen-form-card fullscreen-form-section">
@@ -177,16 +191,27 @@ onMounted(() => {
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.kb.sectionBasicInfo') }}
               </h3>
-              <ElForm label-position="top" class="fullscreen-form-el-form">
-                <ElFormItem :label="t('insight.kb.fieldName')" required>
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form"
+              >
+                <ElFormItem
+                  :label="t('insight.kb.fieldName')"
+                  required
+                >
                   <ElInput
                     v-model="name"
                     maxlength="160"
                     :placeholder="t('insight.kb.fieldNamePlaceholder')"
                   />
-                  <p class="ks-field-hint">{{ t('insight.kb.fieldNameHint') }}</p>
+                  <p class="ks-field-hint">
+                    {{ t('insight.kb.fieldNameHint') }}
+                  </p>
                 </ElFormItem>
-                <ElFormItem :label="t('insight.kb.fieldSourceType')" required>
+                <ElFormItem
+                  :label="t('insight.kb.fieldSourceType')"
+                  required
+                >
                   <ElSelect
                     v-model="sourceType"
                     fit-input-width
@@ -207,176 +232,225 @@ onMounted(() => {
                       {{ t('insight.kb.sourceTypeGatewayLocalOption') }}
                     </ElOption>
                   </ElSelect>
-                  <p class="ks-field-hint">{{ t('insight.kb.fieldSourceTypeHint') }}</p>
+                  <p class="ks-field-hint">
+                    {{ t('insight.kb.fieldSourceTypeHint') }}
+                  </p>
                 </ElFormItem>
               </ElForm>
             </section>
 
-            <section v-if="isGatewayLocal" class="fullscreen-form-card fullscreen-form-section">
+            <section
+              v-if="isGatewayLocal"
+              class="fullscreen-form-card fullscreen-form-section"
+            >
               <h3 class="fullscreen-form-section__title">
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.kb.sourceTypeGatewayLocal') }}
               </h3>
-              <p v-if="isEditing" class="ks-field-hint ks-section-desc">
+              <p
+                v-if="isEditing"
+                class="ks-field-hint ks-section-desc"
+              >
                 {{ t('insight.kb.fieldSourceBindingReadonlyHint') }}
               </p>
-              <ElForm label-position="top" class="fullscreen-form-el-form">
-                <ElFormItem :label="t('insight.kb.colGateway')" required>
-                    <p
-                      v-if="!isEditing && offlineGatewayCount > 0"
-                      class="ks-field-hint ks-field-hint--spaced"
-                    >
-                      {{ t('insight.kb.gatewayOnlineOnlyNote', { n: offlineGatewayCount }) }}
-                    </p>
-                    <div class="ks-gateway-select-row">
-                      <div class="ks-gateway-select-row__controls">
-                        <ElSelect
-                          v-model="gatewayId"
-                          class="ks-gateway-select-row__select"
-                          filterable
-                          fit-input-width
-                          :loading="gatewaysRefreshing"
-                          :disabled="isEditing || onlineGateways.length === 0"
-                          popper-class="ks-gateway-select-popper"
-                          :placeholder="t('insight.kb.colGateway')"
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form"
+              >
+                <ElFormItem
+                  :label="t('insight.kb.colGateway')"
+                  required
+                >
+                  <p
+                    v-if="!isEditing && offlineGatewayCount > 0"
+                    class="ks-field-hint ks-field-hint--spaced"
+                  >
+                    {{ t('insight.kb.gatewayOnlineOnlyNote', { n: offlineGatewayCount }) }}
+                  </p>
+                  <div class="ks-gateway-select-row">
+                    <div class="ks-gateway-select-row__controls">
+                      <ElSelect
+                        v-model="gatewayId"
+                        class="ks-gateway-select-row__select"
+                        filterable
+                        fit-input-width
+                        :loading="gatewaysRefreshing"
+                        :disabled="isEditing || onlineGateways.length === 0"
+                        popper-class="ks-gateway-select-popper"
+                        :placeholder="t('insight.kb.colGateway')"
+                      >
+                        <ElOption
+                          v-for="row in gatewaysForPicker"
+                          :key="row.id"
+                          :label="gatewaySelectLine(row)"
+                          :value="row.id"
                         >
-                          <ElOption
-                            v-for="row in gatewaysForPicker"
-                            :key="row.id"
-                            :label="gatewaySelectLine(row)"
-                            :value="row.id"
-                          >
-                            <div class="ks-gateway-option">
-                              <span class="ks-gateway-option__name">{{ gatewaySelectLine(row) }}</span>
-                              <span class="ks-gateway-option__tags">
-                                <ElTag size="small" type="success" effect="plain">
-                                  {{ t('protection.sourceResources.nodeStatusOnline') }}
-                                </ElTag>
-                                <ElTag size="small" :type="gatewayAiTagType(row)" effect="plain">
-                                  {{ gatewayAiLabel(row) }}
-                                </ElTag>
-                              </span>
-                            </div>
-                          </ElOption>
-                        </ElSelect>
-                        <ElButton
-                          v-if="!isEditing"
-                          class="hfl-refresh-button ks-gateway-select-row__refresh"
-                          :title="t('insight.kb.gatewayRefresh')"
-                          :aria-label="t('insight.kb.gatewayRefresh')"
-                          :disabled="gatewaysRefreshing"
-                          @click="refreshGateways"
-                        >
-                          <RefreshCw :size="16" :class="{ 'is-spinning': gatewaysRefreshing }" />
-                        </ElButton>
-                        <ElButton
-                          v-if="!isEditing"
-                          class="fullscreen-form-icon-btn ks-gateway-select-row__deploy"
-                          :title="t('nodesPage.deployGateway')"
-                          :aria-label="t('nodesPage.deployGateway')"
-                          @click="openGatewayDeploy"
-                        >
-                          <Plus :size="14" />
-                        </ElButton>
-                      </div>
+                          <div class="ks-gateway-option">
+                            <span class="ks-gateway-option__name">{{ gatewaySelectLine(row) }}</span>
+                            <span class="ks-gateway-option__tags">
+                              <ElTag
+                                size="small"
+                                type="success"
+                                effect="plain"
+                              >
+                                {{ t('protection.sourceResources.nodeStatusOnline') }}
+                              </ElTag>
+                              <ElTag
+                                size="small"
+                                :type="gatewayAiTagType(row)"
+                                effect="plain"
+                              >
+                                {{ gatewayAiLabel(row) }}
+                              </ElTag>
+                            </span>
+                          </div>
+                        </ElOption>
+                      </ElSelect>
+                      <ElButton
+                        v-if="!isEditing"
+                        class="hfl-refresh-button ks-gateway-select-row__refresh"
+                        :title="t('insight.kb.gatewayRefresh')"
+                        :aria-label="t('insight.kb.gatewayRefresh')"
+                        :disabled="gatewaysRefreshing"
+                        @click="refreshGateways"
+                      >
+                        <RefreshCw
+                          :size="16"
+                          :class="{ 'is-spinning': gatewaysRefreshing }"
+                        />
+                      </ElButton>
+                      <ElButton
+                        v-if="!isEditing"
+                        class="fullscreen-form-icon-btn ks-gateway-select-row__deploy"
+                        :title="t('nodesPage.deployGateway')"
+                        :aria-label="t('nodesPage.deployGateway')"
+                        @click="openGatewayDeploy"
+                      >
+                        <Plus :size="14" />
+                      </ElButton>
                     </div>
-                    <p
-                      v-if="!isEditing && !gatewaysRefreshing && onlineGateways.length === 0"
-                      class="ks-field-hint ks-field-hint--warn"
-                    >
-                      {{ t('insight.kb.gatewayNoOnline') }}
-                    </p>
-                    <p
-                      v-else-if="!isEditing && onlineGateways.length > 0"
-                      class="ks-field-hint"
-                    >
-                      {{ t('insight.kb.fieldGatewayLocalGatewayHint') }}
-                    </p>
-                  </ElFormItem>
+                  </div>
+                  <p
+                    v-if="!isEditing && !gatewaysRefreshing && onlineGateways.length === 0"
+                    class="ks-field-hint ks-field-hint--warn"
+                  >
+                    {{ t('insight.kb.gatewayNoOnline') }}
+                  </p>
+                  <p
+                    v-else-if="!isEditing && onlineGateways.length > 0"
+                    class="ks-field-hint"
+                  >
+                    {{ t('insight.kb.fieldGatewayLocalGatewayHint') }}
+                  </p>
+                </ElFormItem>
 
-                  <ElFormItem :label="t('insight.kb.wizardStepPath')" required>
-                    <HflPopover
-                      :visible="!isEditing && gatewayDirPickerOpen"
-                      trigger="click"
-                      placement="bottom-start"
-                      :width="gatewayDirPickerWidth"
-                      popper-class="ks-gateway-dir-popover"
-                      @update:visible="(open) => !isEditing && setGatewayDirPickerOpen(open)"
-                    >
-                      <template #reference>
-                        <div ref="gatewayDirInputRef" class="ks-dir-path-input">
-                          <ElInput
-                            :model-value="gatewaySelectedPath"
-                            :placeholder="t('insight.kb.phSelectOrEnterGatewayDirectory')"
-                            :disabled="isEditing || !gatewayId"
-                            @update:model-value="updateGatewayDirectoryInput"
-                            @blur="validateGatewayDirectoryPath(false)"
-                          >
-                            <template #prefix>
-                              <TextCursorInput :size="14" class="ks-dir-path-input__type-icon" />
-                            </template>
-                            <template #append>
-                              <ElTooltip :content="t('insight.kb.btnBrowseDirectory')" placement="top">
-                                <ElButton
-                                  class="ks-dir-path-input__btn"
-                                  :disabled="isEditing || !gatewayId"
-                                  @click.stop="setGatewayDirPickerOpen(!gatewayDirPickerOpen)"
-                                >
-                                  <FolderOpen :size="16" />
-                                </ElButton>
-                              </ElTooltip>
-                            </template>
-                          </ElInput>
-                        </div>
-                      </template>
-                      <div class="ks-gateway-dir-tree hfl-dir-tree-shell">
-                        <el-tree
-                          :key="`ks-gateway-dir-${gatewayId}-${gatewayDirTreeRevision}`"
-                          v-loading="gatewayBrowseLoading"
-                          class="hfl-dir-tree hfl-dir-tree--tall"
-                          node-key="path"
-                          lazy
-                          :expand-on-click-node="false"
-                          :load="loadGatewayDirTreeNode"
-                          :props="{ label: 'label', children: 'children', isLeaf: 'isLeaf' }"
-                          :current-node-key="gatewaySelectedPath"
-                          highlight-current
-                          @node-click="handleGatewayDirNodeClick"
+                <ElFormItem
+                  :label="t('insight.kb.wizardStepPath')"
+                  required
+                >
+                  <HflPopover
+                    :visible="!isEditing && gatewayDirPickerOpen"
+                    trigger="click"
+                    placement="bottom-start"
+                    :width="gatewayDirPickerWidth"
+                    popper-class="ks-gateway-dir-popover"
+                    @update:visible="(open) => !isEditing && setGatewayDirPickerOpen(open)"
+                  >
+                    <template #reference>
+                      <div
+                        ref="gatewayDirInputRef"
+                        class="ks-dir-path-input"
+                      >
+                        <ElInput
+                          :model-value="gatewaySelectedPath"
+                          :placeholder="t('insight.kb.phSelectOrEnterGatewayDirectory')"
+                          :disabled="isEditing || !gatewayId"
+                          @update:model-value="updateGatewayDirectoryInput"
+                          @blur="validateGatewayDirectoryPath(false)"
                         >
-                          <template #default="{ data }">
-                            <div class="hfl-dir-tree-node">
-                              <FolderOpen :size="15" class="hfl-dir-tree-node__icon" />
-                              <div class="hfl-dir-tree-node__text">
-                                <span class="hfl-dir-tree-node__label">{{ data.label }}</span>
-                                <span class="hfl-dir-tree-node__path">{{ data.path }}</span>
-                              </div>
-                            </div>
+                          <template #prefix>
+                            <TextCursorInput
+                              :size="14"
+                              class="ks-dir-path-input__type-icon"
+                            />
                           </template>
-                        </el-tree>
+                          <template #append>
+                            <ElTooltip
+                              :content="t('insight.kb.btnBrowseDirectory')"
+                              placement="top"
+                            >
+                              <ElButton
+                                class="ks-dir-path-input__btn"
+                                :disabled="isEditing || !gatewayId"
+                                @click.stop="setGatewayDirPickerOpen(!gatewayDirPickerOpen)"
+                              >
+                                <FolderOpen :size="16" />
+                              </ElButton>
+                            </ElTooltip>
+                          </template>
+                        </ElInput>
                       </div>
-                    </HflPopover>
-                    <p
-                      v-if="gatewayBrowseRoot && gatewaySelectedPath.trim() && !gatewayDirectoryValid"
-                      class="ks-field-hint ks-field-hint--warn"
-                    >
-                      {{ t('insight.kb.gatewayDirectoryOutOfWorkspace', { root: gatewayBrowseRoot }) }}
-                    </p>
-                    <p class="ks-field-hint">
-                      {{ t('insight.kb.fieldGatewayLocalDirectoryHint') }}
-                    </p>
-                  </ElFormItem>
-                </ElForm>
-              </section>
+                    </template>
+                    <div class="ks-gateway-dir-tree hfl-dir-tree-shell">
+                      <el-tree
+                        :key="`ks-gateway-dir-${gatewayId}-${gatewayDirTreeRevision}`"
+                        v-loading="gatewayBrowseLoading"
+                        class="hfl-dir-tree hfl-dir-tree--tall"
+                        node-key="path"
+                        lazy
+                        :expand-on-click-node="false"
+                        :load="loadGatewayDirTreeNode"
+                        :props="{ label: 'label', children: 'children', isLeaf: 'isLeaf' }"
+                        :current-node-key="gatewaySelectedPath"
+                        highlight-current
+                        @node-click="handleGatewayDirNodeClick"
+                      >
+                        <template #default="{ data }">
+                          <div class="hfl-dir-tree-node">
+                            <FolderOpen
+                              :size="15"
+                              class="hfl-dir-tree-node__icon"
+                            />
+                            <div class="hfl-dir-tree-node__text">
+                              <span class="hfl-dir-tree-node__label">{{ data.label }}</span>
+                              <span class="hfl-dir-tree-node__path">{{ data.path }}</span>
+                            </div>
+                          </div>
+                        </template>
+                      </el-tree>
+                    </div>
+                  </HflPopover>
+                  <p
+                    v-if="gatewayBrowseRoot && gatewaySelectedPath.trim() && !gatewayDirectoryValid"
+                    class="ks-field-hint ks-field-hint--warn"
+                  >
+                    {{ t('insight.kb.gatewayDirectoryOutOfWorkspace', { root: gatewayBrowseRoot }) }}
+                  </p>
+                  <p class="ks-field-hint">
+                    {{ t('insight.kb.fieldGatewayLocalDirectoryHint') }}
+                  </p>
+                </ElFormItem>
+              </ElForm>
+            </section>
 
-            <section v-if="isBackupSource" class="fullscreen-form-card fullscreen-form-section">
+            <section
+              v-if="isBackupSource"
+              class="fullscreen-form-card fullscreen-form-section"
+            >
               <h3 class="fullscreen-form-section__title">
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.kb.sourceTypeBackup') }}
               </h3>
-              <p v-if="isEditing" class="ks-field-hint ks-section-desc">
+              <p
+                v-if="isEditing"
+                class="ks-field-hint ks-section-desc"
+              >
                 {{ t('insight.kb.fieldSourceBindingReadonlyHint') }}
               </p>
-              <ElForm label-position="top" class="fullscreen-form-el-form">
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form"
+              >
                 <div class="ks-backup-form-row">
                   <ElFormItem
                     class="ks-backup-form-row__item"
@@ -394,12 +468,12 @@ onMounted(() => {
                           :loading="snapshotLoading"
                           :disabled="isEditing || (!snapshotLoading && backupSourceOptions.length === 0)"
                         >
-                            <ElOption
-                              v-for="row in backupSourceOptions"
-                              :key="row.backupConfigId"
-                              :label="row.label"
-                              :value="row.backupConfigId"
-                            />
+                          <ElOption
+                            v-for="row in backupSourceOptions"
+                            :key="row.backupConfigId"
+                            :label="row.label"
+                            :value="row.backupConfigId"
+                          />
                         </ElSelect>
                         <ElButton
                           v-if="!isEditing"
@@ -409,7 +483,10 @@ onMounted(() => {
                           :disabled="snapshotLoading"
                           @click="loadSnapshots"
                         >
-                          <RefreshCw :size="16" :class="{ 'is-spinning': snapshotLoading }" />
+                          <RefreshCw
+                            :size="16"
+                            :class="{ 'is-spinning': snapshotLoading }"
+                          />
                         </ElButton>
                       </div>
                     </div>
@@ -419,7 +496,12 @@ onMounted(() => {
                     >
                       {{ t('insight.kb.backupSourceNoAvailable') }}
                     </p>
-                    <p v-else class="ks-field-hint">{{ t('insight.kb.fieldBackupSourceHint') }}</p>
+                    <p
+                      v-else
+                      class="ks-field-hint"
+                    >
+                      {{ t('insight.kb.fieldBackupSourceHint') }}
+                    </p>
                   </ElFormItem>
 
                   <ElFormItem
@@ -435,257 +517,313 @@ onMounted(() => {
                       :placeholder="t('insight.kb.phSelectSnapshot')"
                       :disabled="isEditing || !selectedBackupConfigId"
                     >
-                        <ElOption
-                          :label="t('insight.kb.snapshotLatestOption')"
-                          :value="SNAPSHOT_PICKER_LATEST"
-                        />
-                        <ElOption
-                          v-for="row in snapshotsForSelectedBackupSource"
-                          :key="row.id"
-                          :label="snapshotOptionLabel(row)"
-                          :value="row.id"
-                        />
-                      </ElSelect>
-                      <p
-                        v-if="!selectedBackupConfigId"
-                        class="ks-field-hint"
-                      >
-                        {{ t('insight.kb.snapshotPickBackupFirst') }}
-                      </p>
-                      <p v-else class="ks-field-hint">{{ t('insight.kb.fieldSnapshotHint') }}</p>
-                    </ElFormItem>
-                  </div>
-
-                  <ElFormItem required class="ks-index-scope-form-item">
-                    <div class="ks-index-scope-stack" :class="{ 'ks-index-scope-stack--readonly': isEditing }">
-                      <div class="ks-index-scope-stack__header" aria-hidden="true">
-                        <span />
-                        <span class="ks-index-scope-stack__label">
-                          {{ t('insight.kb.fieldRestoreScope') }}
-                          <span class="ks-index-scope-stack__required">*</span>
-                        </span>
-                        <span v-if="!isEditing">{{ t('protection.backupsPage.colActions') }}</span>
-                      </div>
-                      <div
-                        v-for="(scopeEntry, scopeIndex) in backupScopeEntries"
-                        :key="scopeEntry.id"
-                        class="ks-index-scope-row"
-                      >
-                        <span class="ks-index-scope-row__index">
-                          {{ String(scopeIndex + 1).padStart(2, '0') }}
-                        </span>
-                        <div class="ks-index-scope-row__field">
-                          <HflPopover
-                            :visible="!isEditing && isBackupScopePickerOpen(scopeEntry.id)"
-                            trigger="click"
-                            placement="bottom-start"
-                            :width="backupScopePickerWidth"
-                            popper-class="ks-backup-scope-popover"
-                            @update:visible="(open) => !isEditing && setBackupScopePickerOpen(scopeEntry.id, open)"
-                          >
-                            <template #reference>
-                              <div class="ks-backup-scope-input">
-                                <ElInput
-                                  :model-value="scopeEntry.path"
-                                  :clearable="!isEditing"
-                                  :placeholder="t('insight.kb.phSelectOrEnterRestoreScope')"
-                                  :disabled="isEditing || !effectiveSnapshotId || snapshotDirectories.length === 0"
-                                  @update:model-value="updateBackupScopeEntryInput(scopeEntry.id, $event)"
-                                  @blur="validateBackupScopeEntryOnBlur(scopeEntry.id)"
-                                  @keydown.enter.prevent="validateBackupScopeEntry(scopeEntry.id)"
-                                >
-                                  <template #prefix>
-                                    <TextCursorInput :size="14" class="ks-backup-scope-input__type-icon" />
-                                  </template>
-                                  <template #append>
-                                    <ElTooltip :content="t('insight.kb.btnBrowseRestoreScope')" placement="top">
-                                      <ElButton
-                                        class="ks-backup-scope-input__btn"
-                                        :disabled="isEditing || !effectiveSnapshotId || snapshotDirectories.length === 0"
-                                        @click.stop="setBackupScopePickerOpen(scopeEntry.id, !isBackupScopePickerOpen(scopeEntry.id))"
-                                      >
-                                        <FolderOpen :size="16" />
-                                      </ElButton>
-                                    </ElTooltip>
-                                  </template>
-                                </ElInput>
-                              </div>
-                            </template>
-                            <div class="ks-backup-scope-tree hfl-dir-tree-shell">
-                              <el-tree
-                                :key="`ks-backup-scope-${scopeEntry.id}-${effectiveSnapshotId}-${backupScopeTreeRevision}`"
-                                v-loading="backupScopeBrowseLoading"
-                                class="hfl-dir-tree hfl-dir-tree--tall"
-                                node-key="id"
-                                lazy
-                                highlight-current
-                                :expand-on-click-node="false"
-                                :load="loadBackupScopePickerNode"
-                                :props="{ label: 'label', children: 'children', isLeaf: 'isLeaf' }"
-                                :current-node-key="scopeEntry.path"
-                                @node-click="(data) => handleBackupScopeNodeClick(scopeEntry.id, data)"
-                              >
-                                <template #default="{ data }">
-                                  <div class="hfl-dir-tree-node">
-                                    <FolderOpen
-                                      v-if="data.type === 'dir'"
-                                      :size="15"
-                                      class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--dir"
-                                    />
-                                    <File
-                                      v-else
-                                      :size="15"
-                                      class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--file"
-                                    />
-                                    <div class="hfl-dir-tree-node__text">
-                                      <span class="hfl-dir-tree-node__label">{{ data.label }}</span>
-                                      <span v-if="data.path" class="hfl-dir-tree-node__path">{{ data.path }}</span>
-                                    </div>
-                                  </div>
-                                </template>
-                              </el-tree>
-                            </div>
-                          </HflPopover>
-                        </div>
-                        <div class="ks-index-scope-row__actions">
-                          <ElButton
-                            v-if="!isEditing"
-                            type="danger"
-                            size="small"
-                            class="ks-index-scope-row__remove"
-                            :disabled="backupScopeEntries.length <= 1"
-                            :title="t('protection.backupsPage.ariaRemove')"
-                            :aria-label="t('protection.backupsPage.ariaRemove')"
-                            @click="removeBackupScopeEntry(scopeEntry.id)"
-                          >
-                            <Trash2 :size="14" />
-                          </ElButton>
-                        </div>
-                      </div>
-                      <div v-if="!isEditing" class="ks-index-scope-stack__add-wrap">
-                        <button
-                          type="button"
-                          class="ks-index-scope-stack__add"
-                          :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0"
-                          @click="addBackupScopeEntry"
-                        >
-                          <Plus :size="16" />
-                          <span>{{ t('insight.kb.btnAddRestoreScope') }}</span>
-                        </button>
-                      </div>
-                    </div>
+                      <ElOption
+                        :label="t('insight.kb.snapshotLatestOption')"
+                        :value="SNAPSHOT_PICKER_LATEST"
+                      />
+                      <ElOption
+                        v-for="row in snapshotsForSelectedBackupSource"
+                        :key="row.id"
+                        :label="snapshotOptionLabel(row)"
+                        :value="row.id"
+                      />
+                    </ElSelect>
                     <p
-                      v-if="!effectiveSnapshotId"
+                      v-if="!selectedBackupConfigId"
                       class="ks-field-hint"
                     >
-                      {{ t('insight.kb.backupScopePickSnapshotFirst') }}
+                      {{ t('insight.kb.snapshotPickBackupFirst') }}
                     </p>
                     <p
-                      v-else-if="snapshotDirectories.length === 0"
-                      class="ks-field-hint ks-field-hint--warn"
+                      v-else
+                      class="ks-field-hint"
                     >
-                      {{ t('insight.kb.restoreScopeNoDirectories') }}
+                      {{ t('insight.kb.fieldSnapshotHint') }}
                     </p>
-                    <p v-else class="ks-field-hint">{{ t('insight.kb.fieldRestoreScopeHint') }}</p>
                   </ElFormItem>
+                </div>
 
-                  <ElFormItem :label="t('insight.kb.colGateway')" required>
-                    <p
-                      v-if="!isEditing && offlineGatewayCount > 0"
-                      class="ks-field-hint ks-field-hint--spaced"
+                <ElFormItem
+                  required
+                  class="ks-index-scope-form-item"
+                >
+                  <div
+                    class="ks-index-scope-stack"
+                    :class="{ 'ks-index-scope-stack--readonly': isEditing }"
+                  >
+                    <div
+                      class="ks-index-scope-stack__header"
+                      aria-hidden="true"
                     >
-                      {{ t('insight.kb.gatewayOnlineOnlyNote', { n: offlineGatewayCount }) }}
-                    </p>
-                    <div class="ks-gateway-select-row">
-                      <div class="ks-gateway-select-row__controls">
-                        <ElSelect
-                          v-model="gatewayId"
-                          class="ks-gateway-select-row__select"
-                          filterable
-                          fit-input-width
-                          :loading="gatewaysRefreshing"
-                          :disabled="isEditing || onlineGateways.length === 0"
-                          popper-class="ks-gateway-select-popper"
-                          :placeholder="t('insight.kb.colGateway')"
+                      <span />
+                      <span class="ks-index-scope-stack__label">
+                        {{ t('insight.kb.fieldRestoreScope') }}
+                        <span class="ks-index-scope-stack__required">*</span>
+                      </span>
+                      <span v-if="!isEditing">{{ t('protection.backupsPage.colActions') }}</span>
+                    </div>
+                    <div
+                      v-for="(scopeEntry, scopeIndex) in backupScopeEntries"
+                      :key="scopeEntry.id"
+                      class="ks-index-scope-row"
+                    >
+                      <span class="ks-index-scope-row__index">
+                        {{ String(scopeIndex + 1).padStart(2, '0') }}
+                      </span>
+                      <div class="ks-index-scope-row__field">
+                        <HflPopover
+                          :visible="!isEditing && isBackupScopePickerOpen(scopeEntry.id)"
+                          trigger="click"
+                          placement="bottom-start"
+                          :width="backupScopePickerWidth"
+                          popper-class="ks-backup-scope-popover"
+                          @update:visible="(open) => !isEditing && setBackupScopePickerOpen(scopeEntry.id, open)"
                         >
-                          <ElOption
-                            v-for="row in gatewaysForPicker"
-                            :key="row.id"
-                            :label="gatewaySelectLine(row)"
-                            :value="row.id"
-                          >
-                            <div class="ks-gateway-option">
-                              <span class="ks-gateway-option__name">{{ gatewaySelectLine(row) }}</span>
-                              <span class="ks-gateway-option__tags">
-                                <ElTag size="small" type="success" effect="plain">
-                                  {{ t('protection.sourceResources.nodeStatusOnline') }}
-                                </ElTag>
-                                <ElTag size="small" :type="gatewayAiTagType(row)" effect="plain">
-                                  {{ gatewayAiLabel(row) }}
-                                </ElTag>
-                              </span>
+                          <template #reference>
+                            <div class="ks-backup-scope-input">
+                              <ElInput
+                                :model-value="scopeEntry.path"
+                                :clearable="!isEditing"
+                                :placeholder="t('insight.kb.phSelectOrEnterRestoreScope')"
+                                :disabled="isEditing || !effectiveSnapshotId || snapshotDirectories.length === 0"
+                                @update:model-value="updateBackupScopeEntryInput(scopeEntry.id, $event)"
+                                @blur="validateBackupScopeEntryOnBlur(scopeEntry.id)"
+                                @keydown.enter.prevent="validateBackupScopeEntry(scopeEntry.id)"
+                              >
+                                <template #prefix>
+                                  <TextCursorInput
+                                    :size="14"
+                                    class="ks-backup-scope-input__type-icon"
+                                  />
+                                </template>
+                                <template #append>
+                                  <ElTooltip
+                                    :content="t('insight.kb.btnBrowseRestoreScope')"
+                                    placement="top"
+                                  >
+                                    <ElButton
+                                      class="ks-backup-scope-input__btn"
+                                      :disabled="isEditing || !effectiveSnapshotId || snapshotDirectories.length === 0"
+                                      @click.stop="setBackupScopePickerOpen(scopeEntry.id, !isBackupScopePickerOpen(scopeEntry.id))"
+                                    >
+                                      <FolderOpen :size="16" />
+                                    </ElButton>
+                                  </ElTooltip>
+                                </template>
+                              </ElInput>
                             </div>
-                          </ElOption>
-                        </ElSelect>
+                          </template>
+                          <div class="ks-backup-scope-tree hfl-dir-tree-shell">
+                            <el-tree
+                              :key="`ks-backup-scope-${scopeEntry.id}-${effectiveSnapshotId}-${backupScopeTreeRevision}`"
+                              v-loading="backupScopeBrowseLoading"
+                              class="hfl-dir-tree hfl-dir-tree--tall"
+                              node-key="id"
+                              lazy
+                              highlight-current
+                              :expand-on-click-node="false"
+                              :load="loadBackupScopePickerNode"
+                              :props="{ label: 'label', children: 'children', isLeaf: 'isLeaf' }"
+                              :current-node-key="scopeEntry.path"
+                              @node-click="(data) => handleBackupScopeNodeClick(scopeEntry.id, data)"
+                            >
+                              <template #default="{ data }">
+                                <div class="hfl-dir-tree-node">
+                                  <FolderOpen
+                                    v-if="data.type === 'dir'"
+                                    :size="15"
+                                    class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--dir"
+                                  />
+                                  <File
+                                    v-else
+                                    :size="15"
+                                    class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--file"
+                                  />
+                                  <div class="hfl-dir-tree-node__text">
+                                    <span class="hfl-dir-tree-node__label">{{ data.label }}</span>
+                                    <span
+                                      v-if="data.path"
+                                      class="hfl-dir-tree-node__path"
+                                    >{{ data.path }}</span>
+                                  </div>
+                                </div>
+                              </template>
+                            </el-tree>
+                          </div>
+                        </HflPopover>
+                      </div>
+                      <div class="ks-index-scope-row__actions">
                         <ElButton
                           v-if="!isEditing"
-                          class="hfl-refresh-button ks-gateway-select-row__refresh"
-                          :title="t('insight.kb.gatewayRefresh')"
-                          :aria-label="t('insight.kb.gatewayRefresh')"
-                          :disabled="gatewaysRefreshing"
-                          @click="refreshGateways"
+                          type="danger"
+                          size="small"
+                          class="ks-index-scope-row__remove"
+                          :disabled="backupScopeEntries.length <= 1"
+                          :title="t('protection.backupsPage.ariaRemove')"
+                          :aria-label="t('protection.backupsPage.ariaRemove')"
+                          @click="removeBackupScopeEntry(scopeEntry.id)"
                         >
-                          <RefreshCw :size="16" :class="{ 'is-spinning': gatewaysRefreshing }" />
-                        </ElButton>
-                        <ElButton
-                          v-if="!isEditing"
-                          class="fullscreen-form-icon-btn ks-gateway-select-row__deploy"
-                          :title="t('nodesPage.deployGateway')"
-                          :aria-label="t('nodesPage.deployGateway')"
-                          @click="openGatewayDeploy"
-                        >
-                          <Plus :size="14" />
+                          <Trash2 :size="14" />
                         </ElButton>
                       </div>
                     </div>
-                    <p
-                      v-if="!isEditing && !gatewaysRefreshing && onlineGateways.length === 0"
-                      class="ks-field-hint ks-field-hint--warn"
+                    <div
+                      v-if="!isEditing"
+                      class="ks-index-scope-stack__add-wrap"
                     >
-                      {{ t('insight.kb.gatewayNoOnline') }}
-                    </p>
-                    <p v-else class="ks-field-hint">{{ t('insight.kb.fieldGatewayHint') }}</p>
-                  </ElFormItem>
-                </ElForm>
-              </section>
+                      <button
+                        type="button"
+                        class="ks-index-scope-stack__add"
+                        :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0"
+                        @click="addBackupScopeEntry"
+                      >
+                        <Plus :size="16" />
+                        <span>{{ t('insight.kb.btnAddRestoreScope') }}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <p
+                    v-if="!effectiveSnapshotId"
+                    class="ks-field-hint"
+                  >
+                    {{ t('insight.kb.backupScopePickSnapshotFirst') }}
+                  </p>
+                  <p
+                    v-else-if="snapshotDirectories.length === 0"
+                    class="ks-field-hint ks-field-hint--warn"
+                  >
+                    {{ t('insight.kb.restoreScopeNoDirectories') }}
+                  </p>
+                  <p
+                    v-else
+                    class="ks-field-hint"
+                  >
+                    {{ t('insight.kb.fieldRestoreScopeHint') }}
+                  </p>
+                </ElFormItem>
 
-              <section class="fullscreen-form-card fullscreen-form-section">
-                <h3 class="fullscreen-form-section__title">
-                  <span class="fullscreen-form-section__indicator" />
-                  {{ t('insight.kb.retrieval.documentContentTitle') }}
-                </h3>
-                <KnowledgeSourceRetrievalEnhancement
-                  v-model="ingestPolicy"
-                  section="document"
-                  :show-lead="true"
-                />
-              </section>
+                <ElFormItem
+                  :label="t('insight.kb.colGateway')"
+                  required
+                >
+                  <p
+                    v-if="!isEditing && offlineGatewayCount > 0"
+                    class="ks-field-hint ks-field-hint--spaced"
+                  >
+                    {{ t('insight.kb.gatewayOnlineOnlyNote', { n: offlineGatewayCount }) }}
+                  </p>
+                  <div class="ks-gateway-select-row">
+                    <div class="ks-gateway-select-row__controls">
+                      <ElSelect
+                        v-model="gatewayId"
+                        class="ks-gateway-select-row__select"
+                        filterable
+                        fit-input-width
+                        :loading="gatewaysRefreshing"
+                        :disabled="isEditing || onlineGateways.length === 0"
+                        popper-class="ks-gateway-select-popper"
+                        :placeholder="t('insight.kb.colGateway')"
+                      >
+                        <ElOption
+                          v-for="row in gatewaysForPicker"
+                          :key="row.id"
+                          :label="gatewaySelectLine(row)"
+                          :value="row.id"
+                        >
+                          <div class="ks-gateway-option">
+                            <span class="ks-gateway-option__name">{{ gatewaySelectLine(row) }}</span>
+                            <span class="ks-gateway-option__tags">
+                              <ElTag
+                                size="small"
+                                type="success"
+                                effect="plain"
+                              >
+                                {{ t('protection.sourceResources.nodeStatusOnline') }}
+                              </ElTag>
+                              <ElTag
+                                size="small"
+                                :type="gatewayAiTagType(row)"
+                                effect="plain"
+                              >
+                                {{ gatewayAiLabel(row) }}
+                              </ElTag>
+                            </span>
+                          </div>
+                        </ElOption>
+                      </ElSelect>
+                      <ElButton
+                        v-if="!isEditing"
+                        class="hfl-refresh-button ks-gateway-select-row__refresh"
+                        :title="t('insight.kb.gatewayRefresh')"
+                        :aria-label="t('insight.kb.gatewayRefresh')"
+                        :disabled="gatewaysRefreshing"
+                        @click="refreshGateways"
+                      >
+                        <RefreshCw
+                          :size="16"
+                          :class="{ 'is-spinning': gatewaysRefreshing }"
+                        />
+                      </ElButton>
+                      <ElButton
+                        v-if="!isEditing"
+                        class="fullscreen-form-icon-btn ks-gateway-select-row__deploy"
+                        :title="t('nodesPage.deployGateway')"
+                        :aria-label="t('nodesPage.deployGateway')"
+                        @click="openGatewayDeploy"
+                      >
+                        <Plus :size="14" />
+                      </ElButton>
+                    </div>
+                  </div>
+                  <p
+                    v-if="!isEditing && !gatewaysRefreshing && onlineGateways.length === 0"
+                    class="ks-field-hint ks-field-hint--warn"
+                  >
+                    {{ t('insight.kb.gatewayNoOnline') }}
+                  </p>
+                  <p
+                    v-else
+                    class="ks-field-hint"
+                  >
+                    {{ t('insight.kb.fieldGatewayHint') }}
+                  </p>
+                </ElFormItem>
+              </ElForm>
+            </section>
 
-              <section class="fullscreen-form-card fullscreen-form-section">
-                <h3 class="fullscreen-form-section__title">
-                  <span class="fullscreen-form-section__indicator" />
-                  {{ t('insight.kb.retrieval.standaloneImagesTitle') }}
-                </h3>
-                <KnowledgeSourceRetrievalEnhancement v-model="ingestPolicy" section="images" />
-              </section>
+            <section class="fullscreen-form-card fullscreen-form-section">
+              <h3 class="fullscreen-form-section__title">
+                <span class="fullscreen-form-section__indicator" />
+                {{ t('insight.kb.retrieval.documentContentTitle') }}
+              </h3>
+              <KnowledgeSourceRetrievalEnhancement
+                v-model="ingestPolicy"
+                section="document"
+                :show-lead="true"
+              />
+            </section>
 
-              <section class="fullscreen-form-card fullscreen-form-section">
-                <h3 class="fullscreen-form-section__title">
-                  <span class="fullscreen-form-section__indicator" />
-                  {{ t('insight.kb.retrieval.globalConversionLimitsTitle') }}
-                </h3>
-                <KnowledgeSourceRetrievalEnhancement v-model="ingestPolicy" section="limits" />
-              </section>
+            <section class="fullscreen-form-card fullscreen-form-section">
+              <h3 class="fullscreen-form-section__title">
+                <span class="fullscreen-form-section__indicator" />
+                {{ t('insight.kb.retrieval.standaloneImagesTitle') }}
+              </h3>
+              <KnowledgeSourceRetrievalEnhancement
+                v-model="ingestPolicy"
+                section="images"
+              />
+            </section>
+
+            <section class="fullscreen-form-card fullscreen-form-section">
+              <h3 class="fullscreen-form-section__title">
+                <span class="fullscreen-form-section__indicator" />
+                {{ t('insight.kb.retrieval.globalConversionLimitsTitle') }}
+              </h3>
+              <KnowledgeSourceRetrievalEnhancement
+                v-model="ingestPolicy"
+                section="limits"
+              />
+            </section>
           </div>
 
           <footer class="fullscreen-form-footer">

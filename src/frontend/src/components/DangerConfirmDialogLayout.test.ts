@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-/* eslint-disable vue/one-component-per-file, vue/require-default-prop */
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -65,6 +64,23 @@ function functionSource(source: string, start: string, end: string) {
 }
 
 describe('Danger confirmation item layout', () => {
+  it('preserves built-in labels when optional copy is omitted', async () => {
+    const wrapper = mountDialog([{ name: 'proxy-01' }])
+
+    expect(wrapper.findAll('th').map(cell => cell.text())).toEqual([
+      'Name',
+      'Status',
+      'Details',
+    ])
+    expect(wrapper.get('.hfl-danger-confirm__close').attributes('aria-label')).toBe('Close')
+    expect(wrapper.get('.hfl-danger-confirm__footer').text()).toContain('Cancel')
+    expect(wrapper.get('.hfl-danger-confirm__footer').text()).toContain('Confirm')
+
+    await wrapper.setProps({ pending: true })
+    expect(wrapper.get('.hfl-danger-confirm__pending').text()).toContain('Checking dependencies...')
+    wrapper.unmount()
+  })
+
   it('keeps item-dialog width stable while asynchronous items load', async () => {
     const wrapper = mountDialog([])
     const itemWidth = 'min(600px, calc(100vw - 32px))'
