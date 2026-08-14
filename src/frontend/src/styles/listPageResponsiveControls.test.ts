@@ -11,6 +11,13 @@ const dataGatewaysPage = readFileSync(resolve(process.cwd(), 'src/pages/insight/
 const dataProtectionPage = readFileSync(resolve(process.cwd(), 'src/pages/protection/DataProtection.vue'), 'utf8')
 
 describe('responsive list toolbar controls', () => {
+  it('leaves text input line height to Element Plus while preserving control height', () => {
+    const inputInnerRule = tableStyles.match(/(?:^|\n)\.el-input__inner\s*{([^}]*)}/s)?.[1]
+
+    expect(inputInnerRule).toContain('height: 34px !important')
+    expect(inputInnerRule).not.toMatch(/line-height:/)
+  })
+
   it('keeps nested search field selects at their configured width', () => {
     expect(styles).toContain('.hfl-list-search-group .el-input-group__prepend .el-select')
     expect(styles).toMatch(/\.hfl-list-search-group \.el-input-group__prepend \.el-select\s*{[^}]*width:\s*140px;/s)
