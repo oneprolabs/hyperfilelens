@@ -188,6 +188,10 @@ watch(
   min-height: 0;
 }
 
+.create-backup-layout {
+  width: min(100%, 1560px);
+}
+
 .create-backup-fullscreen .create-backup-layout--steps {
   display: flex;
   flex-direction: column;
