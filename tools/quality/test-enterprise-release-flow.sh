@@ -89,10 +89,18 @@ grep -F "vars.PROD_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
 grep -F 'needs.deploy-test.result == '\''success'\''' "${workflow}" >/dev/null
 grep -F "vars.COMMUNITY_AUTO_DEPLOY != 'false'" "${workflow}" >/dev/null
 grep -F 'ENTERPRISE_EXTENSION_REPOSITORY' "${workflow}" >/dev/null
-grep -F 'secrets.ENTERPRISE_EXTENSION_GIT_TOKEN || secrets.HFL_EXTENSION_GIT_TOKEN' \
-	"${workflow}" >/dev/null
-grep -F 'secrets.COMMUNITY_SSH_PRIVATE_KEY || secrets.PREPROD_SSH_PRIVATE_KEY' \
-	"${workflow}" >/dev/null
+grep -F 'secrets.ENTERPRISE_EXTENSION_GIT_TOKEN' "${workflow}" >/dev/null
+grep -F 'secrets.COMMUNITY_SSH_PRIVATE_KEY' "${workflow}" >/dev/null
+if grep -E 'secrets\.(HFL_EXTENSION_GIT_TOKEN|PREPROD_[A-Z0-9_]+)' \
+	"${workflow}" >/dev/null; then
+	printf 'ERROR: release workflow still reads legacy repository secrets\n' >&2
+	exit 1
+fi
+if grep -E 'vars\.(HFL_EXTENSION_SOURCES|TEST_DEPLOY_ENABLED|PROD_DEPLOY_ENABLED)' \
+	"${workflow}" >/dev/null; then
+	printf 'ERROR: release workflow still reads legacy repository variables\n' >&2
+	exit 1
+fi
 grep -F 'Materialize Enterprise extension for quality gates' "${workflow}" >/dev/null
 grep -F 'HFL_EXTENSIONS=$extensions' "${workflow}" >/dev/null
 grep -F 'Enterprise extension contains no discoverable backend tests' "${workflow}" >/dev/null
@@ -316,23 +324,35 @@ grep -F "ref: \${{ inputs.automatic && inputs.tag || 'main' }}" \
 	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'ssh-agent -s' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 promotion_transfer="${ROOT}/.github/scripts/promote-enterprise-release.sh"
+promotion_stop="${ROOT}/.github/scripts/stop-enterprise-promotion.sh"
 [[ -x "${promotion_transfer}" ]]
+[[ -x "${promotion_stop}" ]]
 grep -F 'flock -s 9' "${promotion_transfer}" >/dev/null
+grep -F 'flock -u 9' "${promotion_transfer}" >/dev/null
+grep -F '.promotion-snapshots' "${promotion_transfer}" >/dev/null
+grep -F 'ln --' "${promotion_transfer}" >/dev/null
 promotion_no_stdin_ssh_count="$(grep -c \
 	'^[[:space:]]*ssh -n ' \
 	"${ROOT}/.github/workflows/enterprise_promotion.yml")"
-[[ "${promotion_no_stdin_ssh_count}" -eq 3 ]] || {
-	printf 'ERROR: every non-script PROD promotion SSH must disable stdin (found %s/3)\n' \
+[[ "${promotion_no_stdin_ssh_count}" -eq 2 ]] || {
+	printf 'ERROR: every non-script PROD promotion SSH must disable stdin (found %s/2)\n' \
 		"${promotion_no_stdin_ssh_count}" >&2
 	exit 1
 }
-[[ "$(grep -c 'ServerAliveInterval=30' "${ROOT}/.github/workflows/enterprise_promotion.yml")" -eq 4 ]]
+[[ "$(grep -c 'ServerAliveInterval=30' "${ROOT}/.github/workflows/enterprise_promotion.yml")" -eq 5 ]]
 grep -F 'ServerAliveCountMax=20' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'ServerAliveInterval=30' "${promotion_transfer}" >/dev/null
 grep -F 'ServerAliveCountMax=20' "${promotion_transfer}" >/dev/null
 grep -F 'rsync --archive --checksum --partial --partial-dir=.rsync-partial' \
 	"${promotion_transfer}" >/dev/null
 grep -F -- '--info=progress2' "${promotion_transfer}" >/dev/null
+grep -F 'timeout --signal=TERM --kill-after=30s' "${promotion_transfer}" >/dev/null
+grep -F 'hfl-prod-promotion.active' "${promotion_transfer}" >/dev/null
+grep -F 'kill -TERM -- "-${state_pgid}"' "${promotion_stop}" >/dev/null
+grep -F 'setsid bash "$hop/promote-enterprise-release.sh"' \
+	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+grep -F 'bash -s -- --stale' \
+	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'for attempt in 1 2 3' "${promotion_transfer}" >/dev/null
 grep -F 'retaining partial data' "${promotion_transfer}" >/dev/null
 grep -F 'already retained on PROD' "${promotion_transfer}" >/dev/null

@@ -472,15 +472,21 @@ grep -F 'Existing Docker not found; the verified offline release bundle will ins
 	"${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
 grep -F 'existing Docker daemon is not reachable' \
 	"${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
-grep -F 'turnstile_enabled: ${{ vars.COMMUNITY_TURNSTILE_ENABLED' "${workflow}" >/dev/null
+grep -F 'turnstile_enabled: false' "${workflow}" >/dev/null
 grep -F 'public_url: ${{ vars.COMMUNITY_PUBLIC_URL }}' "${workflow}" >/dev/null
 grep -F 'admin_public_url: ${{ vars.COMMUNITY_ADMIN_PUBLIC_URL }}' "${workflow}" >/dev/null
+if grep -F 'COMMUNITY_RELEASE_DOWNLOAD_PROXY_URL' "${workflow}" >/dev/null; then
+	printf 'ERROR: Community deployment must not read a Release download proxy\n' >&2
+	exit 1
+fi
 grep -F 'turnstile_enabled: ${{ vars.TEST_TURNSTILE_ENABLED' "${workflow}" >/dev/null
 grep -F 'public_url: ${{ vars.TEST_PUBLIC_URL }}' "${workflow}" >/dev/null
 grep -F 'admin_public_url: ${{ vars.TEST_ADMIN_PUBLIC_URL }}' "${workflow}" >/dev/null
 grep -F 'turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'public_url: ${{ vars.PROD_PUBLIC_URL }}' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'admin_public_url: ${{ vars.PROD_ADMIN_PUBLIC_URL }}' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+grep -F 'release_download_proxy_url: ${{ vars.PROD_RELEASE_DOWNLOAD_PROXY_URL }}' \
+	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'hfl_insecure_tls: ${{ vars.TEST_HFL_INSECURE_TLS }}' "${workflow}" >/dev/null
 grep -F 'hfl_insecure_tls: ${{ vars.COMMUNITY_HFL_INSECURE_TLS }}' "${workflow}" >/dev/null
 grep -F 'hfl_insecure_tls: ${{ vars.PROD_HFL_INSECURE_TLS }}' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
@@ -497,11 +503,9 @@ grep -F 'test:1|community:1|prod:0' \
 for variable in \
 	SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_SECURITY EMAIL_FROM; do
 	grep -F "TEST_${variable}" "${workflow}" >/dev/null
-	grep -F "COMMUNITY_${variable}" "${workflow}" >/dev/null
 	grep -F "PROD_${variable}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 done
 grep -F 'smtp_password: ${{ secrets.TEST_SMTP_PASSWORD }}' "${workflow}" >/dev/null
-grep -F 'smtp_password: ${{ secrets.COMMUNITY_SMTP_PASSWORD || secrets.PREPROD_SMTP_PASSWORD }}' "${workflow}" >/dev/null
 grep -F 'smtp_password: ${{ secrets.PROD_SMTP_PASSWORD }}' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 for variable in AI_MODEL_PROVIDER AI_MODEL_ID AI_MODEL_DISPLAY_NAME; do
 	grep -F "TEST_${variable}" "${workflow}" >/dev/null
@@ -518,7 +522,7 @@ for variable in \
 done
 for secret in AI_MODEL_API_BASE AI_MODEL_API_KEY; do
 	grep -F "secrets.TEST_${secret}" "${workflow}" >/dev/null
-	grep -F "secrets.COMMUNITY_${secret} || secrets.PREPROD_${secret}" "${workflow}" >/dev/null
+	grep -F "secrets.COMMUNITY_${secret}" "${workflow}" >/dev/null
 	grep -F "secrets.PROD_${secret}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 done
 grep -F '/opt/hyperfilelens/install.sh manage ensure_platform_ai_model' \
@@ -536,12 +540,35 @@ if grep -F '"AI_MODEL_API_KEY=$AI_MODEL_API_KEY"' \
 fi
 for variable in EMAIL_SIGNUP_ENABLED EMAIL_CODE_LOGIN_ENABLED GOOGLE_OAUTH_ENABLED GOOGLE_CLIENT_ID; do
 	grep -F "vars.TEST_${variable}" "${workflow}" >/dev/null
-	grep -F "vars.COMMUNITY_${variable}" "${workflow}" >/dev/null
 	grep -F "vars.PROD_${variable}" "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 done
+grep -F "email_code_login_enabled: \${{ vars.TEST_EMAIL_CODE_LOGIN_ENABLED == 'true' }}" \
+	"${workflow}" >/dev/null
+grep -F "email_code_login_enabled: \${{ vars.PROD_EMAIL_CODE_LOGIN_ENABLED == 'true' }}" \
+	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
 grep -F 'secrets.TEST_GOOGLE_CLIENT_SECRET' "${workflow}" >/dev/null
-grep -F 'secrets.COMMUNITY_GOOGLE_CLIENT_SECRET || secrets.PREPROD_GOOGLE_CLIENT_SECRET' "${workflow}" >/dev/null
 grep -F 'secrets.PROD_GOOGLE_CLIENT_SECRET' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+for setting in \
+	COMMUNITY_EMAIL_SIGNUP_ENABLED COMMUNITY_EMAIL_CODE_LOGIN_ENABLED \
+	COMMUNITY_GOOGLE_OAUTH_ENABLED COMMUNITY_GOOGLE_CLIENT_ID \
+	COMMUNITY_TURNSTILE_ENABLED COMMUNITY_TURNSTILE_SITE_KEY \
+	COMMUNITY_SMTP_HOST COMMUNITY_SMTP_PORT COMMUNITY_SMTP_USERNAME \
+	COMMUNITY_SMTP_SECURITY COMMUNITY_EMAIL_FROM \
+	COMMUNITY_GOOGLE_CLIENT_SECRET COMMUNITY_TURNSTILE_SECRET_KEY \
+	COMMUNITY_SMTP_PASSWORD; do
+	if grep -F "${setting}" "${workflow}" >/dev/null; then
+		printf 'ERROR: Community release still reads unsupported auth setting %s\n' \
+			"${setting}" >&2
+		exit 1
+	fi
+done
+for setting in \
+	'turnstile_enabled: false' \
+	'email_signup_enabled: false' \
+	'email_code_login_enabled: false' \
+	'google_oauth_enabled: false'; do
+	grep -F "${setting}" "${workflow}" >/dev/null
+done
 for runtime_key in \
 	HFL_EMAIL_SIGNUP_ENABLED HFL_EMAIL_CODE_LOGIN_ENABLED HFL_GOOGLE_OAUTH_ENABLED \
 	GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SMTP_PASSWORD; do
@@ -1248,6 +1275,7 @@ for executable in \
 	"${ROOT}/.github/scripts/check-public-endpoint.sh" \
 	"${ROOT}/.github/scripts/cleanup-main-builds.sh" \
 	"${ROOT}/.github/scripts/promote-enterprise-release.sh" \
+	"${ROOT}/.github/scripts/stop-enterprise-promotion.sh" \
 	"${ROOT}/.github/scripts/remote-deploy.sh" \
 	"${ROOT}/.github/scripts/store-enterprise-release.sh" \
 	"${ROOT}/tools/quality/check-python38-runtime.py" \
@@ -1255,7 +1283,6 @@ for executable in \
 	"${ROOT}/tools/quality/test-bootstrap-curl-tls-nounset.sh" \
 	"${ROOT}/tools/quality/test-gh-release-upload-retry.sh" \
 	"${ROOT}/release/ci/gh-release-upload.sh" \
-	"${ROOT}/tools/quality/test-main-channel-contracts.sh" \
 	"${ROOT}/tools/quality/test-main-release-freshness.sh" \
 	"${ROOT}/tools/quality/test-main-release-cleanup.sh" \
 	"${ROOT}/tools/quality/test-release-freshness.sh" \

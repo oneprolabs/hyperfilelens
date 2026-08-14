@@ -65,6 +65,12 @@ jobs:
           printf '%s\n' "$PROD_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/prod-key"
           printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/prod-known-hosts"
           chmod 0600 "$RUNNER_TEMP/prod-key" "$RUNNER_TEMP/prod-known-hosts"
+          ssh -i ~/.ssh/hyperfilelens_test \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
+            -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
+            "bash -s -- --stale" < .github/scripts/stop-enterprise-promotion.sh
           eval "$(ssh-agent -s)"
           trap 'ssh-agent -k >/dev/null 2>&1 || true' EXIT
           ssh-add "$RUNNER_TEMP/prod-key"
@@ -84,7 +90,7 @@ jobs:
             .github/scripts/store-enterprise-release.sh \
             "$TEST_SSH_USER@$TEST_SSH_HOST:$hop/"
           printf -v remote_command '%q ' \
-            bash "$hop/promote-enterprise-release.sh" \
+            setsid bash "$hop/promote-enterprise-release.sh" \
               "$RELEASE_TAG" "$version" "$hop" \
               "$PROD_SSH_HOST" "$PROD_SSH_PORT" "$PROD_SSH_USER"
           ssh -n -A -i ~/.ssh/hyperfilelens_test -o IdentitiesOnly=yes \
@@ -109,12 +115,13 @@ jobs:
           printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           printf '%s\n' "$TEST_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_test
           chmod 0600 ~/.ssh/known_hosts ~/.ssh/hyperfilelens_test
-          ssh -n -i ~/.ssh/hyperfilelens_test \
+          ssh -i ~/.ssh/hyperfilelens_test \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             -o TCPKeepAlive=yes \
             -p "$TEST_SSH_PORT" "$TEST_SSH_USER@$TEST_SSH_HOST" \
-            "rm -rf -- '/var/tmp/hfl-prod-promotion-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}'"
+            "bash -s -- '/var/tmp/hfl-prod-promotion-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}'" \
+            < .github/scripts/stop-enterprise-promotion.sh
 
   deploy-production:
     name: Deploy · PROD
@@ -128,6 +135,7 @@ jobs:
       tag: ${{ inputs.tag }}
       public_url: ${{ vars.PROD_PUBLIC_URL }}
       admin_public_url: ${{ vars.PROD_ADMIN_PUBLIC_URL }}
+      release_download_proxy_url: ${{ vars.PROD_RELEASE_DOWNLOAD_PROXY_URL }}
       ssh_host: ${{ vars.PROD_SSH_HOST }}
       ssh_port: ${{ vars.PROD_SSH_PORT }}
       ssh_user: ${{ vars.PROD_SSH_USER }}
@@ -135,7 +143,7 @@ jobs:
       turnstile_site_key: ${{ vars.PROD_TURNSTILE_SITE_KEY }}
       turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED == 'true' }}
       email_signup_enabled: ${{ vars.PROD_EMAIL_SIGNUP_ENABLED == 'true' }}
-      email_code_login_enabled: ${{ vars.PROD_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
+      email_code_login_enabled: ${{ vars.PROD_EMAIL_CODE_LOGIN_ENABLED == 'true' }}
       google_oauth_enabled: ${{ vars.PROD_GOOGLE_OAUTH_ENABLED == 'true' }}
       google_client_id: ${{ vars.PROD_GOOGLE_CLIENT_ID }}
       ga_measurement_id: ${{ vars.PROD_GA_MEASUREMENT_ID }}
