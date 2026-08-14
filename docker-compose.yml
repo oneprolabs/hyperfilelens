@@ -13,7 +13,8 @@ x-backend-environment: &backend-environment
 x-backend-volumes: &backend-volumes
   - ./src/backend:/opt/backend
   - ./deploy/bootstrap:/opt/bootstrap:ro
-  - ./data/lang-packs:/opt/backend/lang-packs:ro
+  # Language packs follow the product version synchronized by dev/stack.sh.
+  - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/backend/lang-packs:ro
   - ./data/media:/opt/backend/media
   - ./data/staticfiles:/opt/backend/staticfiles
   - ./data/logs:/var/log/hyperfilelens
@@ -250,7 +251,7 @@ services:
       - ./deploy/nginx/development-upstreams.conf:/etc/nginx/snippets/hfl-active-upstreams.conf:ro
       - ./deploy/nginx/development-tenant-spa-locations.conf:/etc/nginx/snippets/hfl-tenant-spa-locations.conf:ro
       - ./deploy/nginx/development-ops-spa-locations.conf:/etc/nginx/snippets/hfl-ops-spa-locations.conf:ro
-      - ./data/lang-packs:/opt/hyperfilelens/lang-packs:ro
+      - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/hyperfilelens/lang-packs:ro
       - ./data/media:/opt/backend/media:ro
       - ./data/staticfiles:/opt/django-static:ro
       - ./deploy/nginx/certs:/etc/nginx/certs:ro

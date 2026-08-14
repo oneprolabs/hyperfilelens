@@ -78,6 +78,8 @@ WEBSITE_OUTPUT="${ROOT}/build/website"
 WEBSITE_BUILDER_IMAGE="hyperfilelens-website-builder:dev"
 WEBSITE_BASE_IMAGE="node:22-alpine"
 WEBSITE_ARTIFACT_REBUILT=0
+LANGUAGE_PACK_BUILDER_IMAGE="hyperfilelens-language-pack-builder:dev"
+LANGUAGE_PACK_BUILD_OUTPUT="${ROOT}/build/language-packs"
 # Open Core extensions: CLI --extension-source only (not a .env setting).
 EXTENSION_SOURCES=()
 EXTENSION_SOURCES_CSV=""
@@ -400,11 +402,48 @@ ensure_tls_certs() {
 	log "Repository-pinned TLS certificates validated"
 }
 
+read_project_version() {
+	python3 - "${ROOT}/pyproject.toml" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+project = re.search(r"(?ms)^\[project\]\s*(.*?)(?=^\[|\Z)", text)
+version = re.search(r'(?m)^\s*version\s*=\s*["\']([^"\']+)["\']', project.group(1)) if project else None
+if version is None:
+    raise SystemExit("pyproject.toml has no static project version")
+print(version.group(1))
+PY
+}
+
+sync_dev_product_version() {
+	local version
+	version="$(read_project_version)"
+	python3 - "${ROOT}/.env" "${version}" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+version = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+pattern = r"^(HFL_PRODUCT_VERSION=).*$"
+if re.search(pattern, text, flags=re.M):
+    text = re.sub(pattern, lambda match: f"{match.group(1)}{version}", text, count=1, flags=re.M)
+else:
+    text = text.rstrip() + f"\nHFL_PRODUCT_VERSION={version}\n"
+path.write_text(text, encoding="utf-8")
+PY
+}
+
 ensure_data_dirs() {
+	local language_root
+	language_root="${ROOT}/data/lang-packs/versions/$(read_project_version)"
 	mkdir -p "${ROOT}/data/postgresql" "${ROOT}/data/redis"
 	install -d -m 0755 \
 		"${ROOT}/data/logs" \
-		"${ROOT}/data/lang-packs" \
+		"${language_root}" \
 		"${ROOT}/data/media/agent-releases" \
 		"${ROOT}/data/media/enroll-bootstrap" \
 		"${ROOT}/data/media/gateway-bootstrap" \
@@ -412,13 +451,15 @@ ensure_data_dirs() {
 		"${ROOT}/data/staticfiles"
 	chmod 0755 \
 		"${ROOT}/data/lang-packs" \
+		"${ROOT}/data/lang-packs/versions" \
+		"${language_root}" \
 		"${ROOT}/data/media" \
 		"${ROOT}/data/media/agent-releases" \
 		"${ROOT}/data/media/enroll-bootstrap" \
 		"${ROOT}/data/media/gateway-bootstrap" \
 		"${ROOT}/data/media/snapshot-downloads" \
 		"${ROOT}/data/staticfiles"
-	local manifest="${ROOT}/data/lang-packs/installed.json"
+	local manifest="${language_root}/installed.json"
 	local legacy_empty_manifest=0
 	if [[ -f "${manifest}" ]] \
 		&& [[ "$(tr -d '[:space:]' <"${manifest}")" == '{"packs":[]}' ]]; then
@@ -426,7 +467,8 @@ ensure_data_dirs() {
 	fi
 	if [[ ! -f "${manifest}" || "${legacy_empty_manifest}" -eq 1 ]]; then
 		local temporary="${manifest}.tmp.$$"
-		printf '%s\n' '{"schema":1,"packs":[]}' >"${temporary}"
+		printf '{"schema":1,"app_version":"%s","packs":[]}\n' \
+			"$(read_project_version)" >"${temporary}"
 		chmod 0644 "${temporary}"
 		mv -f "${temporary}" "${manifest}"
 		log "Initialized empty runtime language-pack manifest schema"
@@ -575,6 +617,51 @@ build_dev_images() {
 	fi
 }
 
+prepare_dev_language_packs() {
+	local force=$1 fingerprint version
+	fingerprint="$(cache_fingerprint \
+		language-packs src/backend src/frontend/src/locales \
+		src/frontend/package.json src/frontend/package-lock.json -- \
+		"npm=${OPT_NPM_REGISTRY}" \
+		"node_base=${HFL_FRONTEND_NODE_BASE_IMAGE}")"
+	if [[ "${force}" -eq 1 ]] \
+		|| ! docker image inspect "${LANGUAGE_PACK_BUILDER_IMAGE}" >/dev/null 2>&1 \
+		|| ! cache_matches language-pack-builder "${fingerprint}"; then
+		[[ "${DEV_OFFLINE}" -eq 0 ]] \
+			|| die "language-pack builder is missing or stale in offline mode"
+		local -a build_args=(
+			--network host
+			--file "${ROOT}/language-packs/tooling/Dockerfile"
+			--tag "${LANGUAGE_PACK_BUILDER_IMAGE}"
+			--build-arg "NODE_BASE_IMAGE=${HFL_FRONTEND_NODE_BASE_IMAGE}"
+			--build-arg "NPM_REGISTRY=${OPT_NPM_REGISTRY}"
+		)
+		[[ "${force}" -eq 0 ]] || build_args+=(--no-cache)
+		build_args+=("${ROOT}")
+		log "Building language-pack toolchain"
+		docker build "${build_args[@]}"
+		cache_update language-pack-builder "${fingerprint}"
+	fi
+
+	version="$(read_project_version)"
+	(
+		source "${ROOT}/deploy/installer/install.sh"
+		ROOT="${ROOT}"
+		HFL_BUNDLED_LANGUAGE_PACKS_DIR="${LANGUAGE_PACK_BUILD_OUTPUT}/dist"
+		acquire_installation_lock
+		mkdir -p "${LANGUAGE_PACK_BUILD_OUTPUT}"
+		log "Building development language packs for application ${version}"
+		docker run --rm --platform linux/amd64 \
+			--user "$(id -u):$(id -g)" \
+			--mount "type=bind,src=${ROOT}/language-packs,dst=/workspace/language-packs,readonly" \
+			--mount "type=bind,src=${ROOT}/src/backend,dst=/workspace/src/backend,readonly" \
+			--mount "type=bind,src=${ROOT}/src/frontend/src/locales,dst=/workspace/src/frontend/src/locales,readonly" \
+			--mount "type=bind,src=${LANGUAGE_PACK_BUILD_OUTPUT},dst=/workspace/build/language-packs" \
+			"${LANGUAGE_PACK_BUILDER_IMAGE}" --version "${version}"
+		sync_bundled_language_packs
+	)
+}
+
 prepare_kopia_artifacts() {
 	local force=$1
 	local args=(
@@ -708,10 +795,11 @@ prepare_dev() {
 	local force=$1
 	apply_mirror_env_defaults
 	apply_ubuntu2404_arch_default
-	log "Checking English-only public source trees"
+	log "Checking the English source boundary"
 	python3 "${ROOT}/tools/quality/check-english-source.py"
 	require_docker
 	ensure_env_file
+	sync_dev_product_version
 	ensure_tls_certs
 	ensure_data_dirs
 	prepare_kopia_artifacts "${force}"
@@ -719,6 +807,7 @@ prepare_dev() {
 	publish_agent "${force}"
 	prepare_website_static "${force}"
 	build_dev_images "${force}"
+	prepare_dev_language_packs "${force}"
 }
 
 read_env_value() {
@@ -1188,7 +1277,8 @@ cmd_doctor() {
 	if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
 		printf 'ok      Docker daemon reachable\n'
 		for image in nginx:stable-alpine postgres:17 redis:alpine \
-			hyperfilelens-backend:dev hyperfilelens-frontend:dev; do
+			hyperfilelens-backend:dev hyperfilelens-frontend:dev \
+			"${LANGUAGE_PACK_BUILDER_IMAGE}"; do
 			if docker image inspect "${image}" >/dev/null 2>&1; then
 				printf 'ok      image %s\n' "${image}"
 			else
@@ -1200,8 +1290,9 @@ cmd_doctor() {
 		failures=$((failures + 1))
 	fi
 	if [[ -d "${ROOT}/data/lang-packs" ]]; then
+		local language_root="${ROOT}/data/lang-packs/versions/$(read_project_version)"
 		mode="$(stat -c '%a' "${ROOT}/data/lang-packs")"
-		if [[ "${mode}" =~ ^(755|775|777)$ && -r "${ROOT}/data/lang-packs/installed.json" ]]; then
+		if [[ "${mode}" =~ ^(755|775|777)$ && -r "${language_root}/installed.json" ]]; then
 			printf 'ok      language packs mode=%s manifest=readable\n' "${mode}"
 		else
 			printf 'invalid language packs mode=%s or manifest unreadable (run up)\n' "${mode}"
@@ -1231,11 +1322,11 @@ clean_cache() {
 	require_docker
 	local image
 	for image in hyperfilelens-backend:dev hyperfilelens-frontend:dev \
-		"${WEBSITE_BUILDER_IMAGE}"; do
+		"${WEBSITE_BUILDER_IMAGE}" "${LANGUAGE_PACK_BUILDER_IMAGE}"; do
 		docker image rm "${image}" >/dev/null 2>&1 || true
 	done
 	rm -rf "${ROOT}/build/agent" "${ROOT}/build/state" \
-		"${ROOT}/build/sourcelens" "${WEBSITE_OUTPUT}"
+		"${ROOT}/build/sourcelens" "${WEBSITE_OUTPUT}" "${LANGUAGE_PACK_BUILD_OUTPUT}"
 	log "Removed generated build caches and local HFL development images"
 }
 

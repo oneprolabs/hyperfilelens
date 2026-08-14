@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for the English-only public source checker."""
+"""Regression tests for the repository language-source boundary checker."""
 
 from __future__ import annotations
 
@@ -86,7 +86,32 @@ class EnglishSourceCheckerTests(unittest.TestCase):
         result = self.run_checker()
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("English-only source check passed.", result.stdout)
+        self.assertIn("English source boundary check passed.", result.stdout)
+
+    def test_language_pack_content_is_allowed(self) -> None:
+        """Allow translated data only inside an individual language pack."""
+        translated_file = self.repository_root / "language-packs/packs/zh-hans/messages.json"
+        translated_file.parent.mkdir(parents=True)
+        translated_file.write_text(
+            f'{{"welcome": "{cjk_sample()}"}}\n',
+            encoding="utf-8",
+        )
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("English source boundary check passed.", result.stdout)
+
+    def test_language_pack_tooling_remains_english_only(self) -> None:
+        """Do not let the translation-data exemption hide tooling source."""
+        tooling_file = self.repository_root / "language-packs/tooling/build.py"
+        tooling_file.parent.mkdir(parents=True)
+        tooling_file.write_text(f"# {cjk_sample()}\n", encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("language-packs/tooling/build.py:1:3", result.stdout)
 
     def test_untracked_nonignored_file_is_checked(self) -> None:
         """Check new source files before they are added to Git."""

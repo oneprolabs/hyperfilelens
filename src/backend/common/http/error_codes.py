@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.utils.translation import gettext_noop
+
 
 # Success
 SUCCESS = "SUCCESS"
@@ -32,13 +34,13 @@ SRV_INTERNAL = "SRV_500_INTERNAL"
 NOT_FOUND = "API_404_NOT_FOUND"
 
 # i18n messages (kept in django.po; keys used by exception handler)
-I18N_UNAUTHORIZED = "Unauthorized"
-I18N_FORBIDDEN = "Forbidden"
-I18N_VALIDATION = "Validation failed"
-I18N_NOT_FOUND = "Not found"
-I18N_SERVER_ERROR = "Server error"
-I18N_NOT_ACCEPTABLE = "Not acceptable"
-I18N_ERROR = "Error"
+I18N_UNAUTHORIZED = gettext_noop("Unauthorized")
+I18N_FORBIDDEN = gettext_noop("Forbidden")
+I18N_VALIDATION = gettext_noop("Validation failed")
+I18N_NOT_FOUND = gettext_noop("Not found")
+I18N_SERVER_ERROR = gettext_noop("Server error")
+I18N_NOT_ACCEPTABLE = gettext_noop("Not acceptable")
+I18N_ERROR = gettext_noop("Error")
 
 
 def map_http_status_to_error_code(status_code: int) -> str:
@@ -67,4 +69,3 @@ def ensure_request_id_in_data(data: Any, request_id: str) -> Any:
         out["request_id"] = request_id
         return out
     return {"value": data, "request_id": request_id}
-

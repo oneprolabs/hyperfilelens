@@ -13,8 +13,9 @@ from django.core.exceptions import ImproperlyConfigured
 from django.utils.translation import to_locale
 
 LANG_PACKS_ENV = "HFL_LANG_PACKS_DIR"
+APP_VERSION_ENV = "HFL_PRODUCT_VERSION"
 DEFAULT_LANG_PACKS_ROOT = Path("/opt/backend/lang-packs")
-SUPPORTED_MANIFEST_SCHEMA = 1
+SUPPORTED_MANIFEST_SCHEMAS = frozenset({1, 2})
 _PACK_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _LANGUAGE_CODE_PATTERN = re.compile(
     r"^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$",
@@ -101,6 +102,7 @@ def load_language_pack_settings(root: Path) -> LanguagePackSettings:
     aliases: dict[str, str] = {}
     seen_backend_codes: set[str] = set()
     seen_frontend_codes: set[str] = set()
+    app_version = os.environ.get(APP_VERSION_ENV, "").strip()
 
     for pack_dir in sorted(
         path for path in root.iterdir() if path.is_dir() and not path.name.startswith(".")
@@ -111,10 +113,12 @@ def load_language_pack_settings(root: Path) -> LanguagePackSettings:
             raise _fail(manifest_path, "manifest.json is required")
 
         manifest = _read_manifest(manifest_path)
-        if manifest.get("schema") != SUPPORTED_MANIFEST_SCHEMA:
+        manifest_schema = manifest.get("schema")
+        if manifest_schema not in SUPPORTED_MANIFEST_SCHEMAS:
             raise _fail(
                 manifest_path,
-                f"'schema' must be {SUPPORTED_MANIFEST_SCHEMA}",
+                "'schema' must be one of "
+                f"{sorted(SUPPORTED_MANIFEST_SCHEMAS)}",
             )
 
         pack_id = _required_string(manifest, "id", manifest_path)
@@ -124,8 +128,19 @@ def load_language_pack_settings(root: Path) -> LanguagePackSettings:
             raise _fail(manifest_path, "'id' must match its installation directory")
 
         display_name = _required_string(manifest, "display_name", manifest_path)
-        _required_string(manifest, "version", manifest_path)
-        _required_string(manifest, "compatible_app", manifest_path)
+        pack_version = _required_string(manifest, "version", manifest_path)
+        compatible_app = _required_string(manifest, "compatible_app", manifest_path)
+        if manifest_schema == 2:
+            if not app_version:
+                raise _fail(
+                    manifest_path,
+                    f"schema 2 requires {APP_VERSION_ENV}",
+                )
+            if pack_version != app_version or compatible_app != f"=={app_version}":
+                raise _fail(
+                    manifest_path,
+                    f"schema 2 must exactly match application {app_version}",
+                )
         frontend_code = _validate_language_code(
             _required_string(manifest, "frontend_code", manifest_path),
             "frontend_code",
@@ -153,16 +168,27 @@ def load_language_pack_settings(root: Path) -> LanguagePackSettings:
         locale_path = resolved_pack / "backend" / "locale"
         locale_messages = locale_path / to_locale(backend_code) / "LC_MESSAGES" / "django.mo"
         frontend_messages = resolved_pack / "frontend" / "messages.json"
+        component_messages = resolved_pack / "frontend" / "element-plus.json"
         if not locale_messages.is_file():
             raise _fail(manifest_path, f"missing backend catalog: {locale_messages}")
         if not frontend_messages.is_file():
             raise _fail(manifest_path, f"missing frontend messages: {frontend_messages}")
+        if manifest_schema == 2 and not component_messages.is_file():
+            raise _fail(
+                manifest_path,
+                f"missing component messages: {component_messages}",
+            )
 
         pack_aliases = {backend_code, frontend_code}
         pack_aliases.update(
             _validate_language_code(alias, "aliases", manifest_path)
             for alias in raw_aliases
         )
+        if "en" in pack_aliases:
+            raise _fail(
+                manifest_path,
+                "optional packs cannot claim the built-in English locale as an alias",
+            )
         for alias in sorted(pack_aliases):
             existing = aliases.get(alias)
             if existing is not None and existing != backend_code:

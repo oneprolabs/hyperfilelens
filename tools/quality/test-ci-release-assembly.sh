@@ -42,6 +42,45 @@ make_metadata "${runtime}/metadata/postgres.json" postgres hyperfilelens-postgre
 make_metadata "${runtime}/metadata/redis.json" redis hyperfilelens-redis:alpine 4
 tar -C "${runtime}" -cf "${input}/_internal-runtime-images.tar" images metadata
 
+language_packs="${fixtures}/language-packs"
+mkdir -p "${language_packs}/payload/language-packs"
+LANGUAGE_PACK_ARCHIVE="${language_packs}/payload/language-packs/hyperfilelens-lang-zh-hans-${version}.tar.gz" \
+	LANGUAGE_PACK_VERSION="${version}" python3 - <<'PY'
+import io
+import json
+import os
+import pathlib
+import tarfile
+
+archive = pathlib.Path(os.environ["LANGUAGE_PACK_ARCHIVE"])
+version = os.environ["LANGUAGE_PACK_VERSION"]
+files = {
+    "manifest.json": json.dumps(
+        {
+            "schema": 2,
+            "id": "zh-hans",
+            "display_name": "Simplified Chinese",
+            "version": version,
+            "compatible_app": f"=={version}",
+            "frontend_code": "zh-hans",
+            "backend_code": "zh-hans",
+            "aliases": ["zh", "zh-cn"],
+            "component_locale": "zh-cn",
+        }
+    ).encode(),
+    "frontend/messages.json": b"{}\n",
+    "frontend/element-plus.json": b"{}\n",
+    "backend/locale/zh_Hans/LC_MESSAGES/django.mo": b"compiled-catalog",
+}
+with tarfile.open(archive, "w:gz") as package:
+    for name, content in files.items():
+        member = tarfile.TarInfo(name)
+        member.size = len(content)
+        member.mode = 0o644
+        package.addfile(member, io.BytesIO(content))
+PY
+tar -C "${language_packs}" -cf "${input}/_internal-language-packs.tar" payload
+
 sl="${fixtures}/sourcelens"
 make_gzip "${sl}/images/10-sourcelens-app.tar.gz" sourcelens-app
 make_gzip "${sl}/images/11-sourcelens-lensnode.tar.gz" sourcelens-lensnode
@@ -183,6 +222,9 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 				MANIFEST.json >/dev/null
 		fi
 	fi
+	jq -e --arg version "${version}" \
+		'(.language_packs | length) == 1 and .language_packs[0].id == "zh-hans" and .language_packs[0].display_name == "Simplified Chinese" and .language_packs[0].version == $version and .language_packs[0].file == ("payload/language-packs/hyperfilelens-lang-zh-hans-" + $version + ".tar.gz") and (.language_packs[0].size > 0) and (.language_packs[0].sha256 | test("^[0-9a-f]{64}$"))' \
+		MANIFEST.json >/dev/null
 	sha256sum -c SHA256SUMS
 	[[ -s hyperfilelens-root-ca.crt ]]
 	first="$(find . -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz.part-000' -print -quit)"
@@ -205,6 +247,7 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/tls\.key$' >/dev/null
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/root-ca\.crt$' >/dev/null
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/web\.conf$' >/dev/null
+	tar -tzf "${archive}" | grep -F "/payload/language-packs/hyperfilelens-lang-zh-hans-${version}.tar.gz" >/dev/null
 	key_mode="$(tar -tvzf "${archive}" | awk '$NF ~ /\/deploy\/nginx\/certs\/tls\.key$/ {mode=$1} END {print mode}')"
 	[[ "${key_mode}" == "-rw-------" ]]
 	tar -tzf "${archive}" | grep -F "/hfl-agent-${version}-linux-amd64-ubuntu2004.tar.gz" >/dev/null

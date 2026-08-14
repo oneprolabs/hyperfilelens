@@ -131,6 +131,28 @@ validate_release_security() {
 	log "Release secret and download permission validation passed"
 }
 
+stage_local_language_packs() {
+	local pkg_root=$1 version=$2
+	local builder_image="hyperfilelens-language-pack-builder:${version}"
+	local output="${RELEASE_BUILD_DIR}/language-packs"
+	log "Building version-matched language packs"
+	docker build --network host \
+		-f "${ROOT}/language-packs/tooling/Dockerfile" \
+		-t "${builder_image}" \
+		--build-arg "NODE_BASE_IMAGE=${HFL_FRONTEND_NODE_BASE_IMAGE:-node:22-alpine}" \
+		--build-arg "NPM_REGISTRY=${NPM_REGISTRY:-}" \
+		"${ROOT}"
+	mkdir -p "${output}" "${pkg_root}/payload/language-packs"
+	docker run --rm --platform linux/amd64 \
+		--user "$(id -u):$(id -g)" \
+		--mount "type=bind,src=${ROOT}/language-packs,dst=/workspace/language-packs,readonly" \
+		--mount "type=bind,src=${ROOT}/src/backend,dst=/workspace/src/backend,readonly" \
+		--mount "type=bind,src=${ROOT}/src/frontend/src/locales,dst=/workspace/src/frontend/src/locales,readonly" \
+		--mount "type=bind,src=${output},dst=/workspace/build/language-packs" \
+		"${builder_image}" --version "${version}"
+	cp "${output}/dist/"*.tar.gz "${pkg_root}/payload/language-packs/"
+}
+
 stage_default_tls_bundle() {
 	local pkg_root=$1
 	local source_dir="${ROOT}/deploy/nginx/certs"
@@ -1006,6 +1028,63 @@ for ubuntu_release, release_id in (("20.04", "2004"), ("22.04", "2204"), ("24.04
         }
     )
 
+language_packs = []
+language_pack_ids = set()
+language_pack_dir = pkg_root / "payload/language-packs"
+if not language_pack_dir.is_dir():
+    raise SystemExit("missing bundled language-pack directory: payload/language-packs")
+for archive in sorted(language_pack_dir.glob("*.tar.gz")):
+    relative = archive.relative_to(pkg_root)
+    with tarfile.open(archive, "r:gz") as pack_archive:
+        members = pack_archive.getmembers()
+        for member in members:
+            member_path = pathlib.PurePosixPath(member.name)
+            if member_path.is_absolute() or ".." in member_path.parts:
+                raise SystemExit(f"language pack has an unsafe path: {relative}")
+            if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+                raise SystemExit(f"language pack has an unsupported entry: {relative}")
+        manifest_members = [
+            member
+            for member in members
+            if member.name in {"manifest.json", "./manifest.json"} and member.isfile()
+        ]
+        if len(manifest_members) != 1:
+            raise SystemExit(f"language pack has no unique manifest.json: {relative}")
+        stream = pack_archive.extractfile(manifest_members[0])
+        if stream is None:
+            raise SystemExit(f"language-pack manifest cannot be read: {relative}")
+        pack_manifest = json.load(stream)
+    pack_id = str(pack_manifest.get("id") or "")
+    display_name = str(pack_manifest.get("display_name") or "").strip()
+    pack_version = str(pack_manifest.get("version") or "")
+    compatible_app = str(pack_manifest.get("compatible_app") or "")
+    expected_name = f"hyperfilelens-lang-{pack_id}-{version}.tar.gz"
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", pack_id):
+        raise SystemExit(f"language pack has an invalid id: {relative}")
+    if pack_manifest.get("schema") != 2 or not display_name:
+        raise SystemExit(f"bundled language pack must use schema 2 and a display name: {relative}")
+    if pack_id in language_pack_ids:
+        raise SystemExit(f"duplicate bundled language pack id: {pack_id}")
+    if pack_version != version or compatible_app != f"=={version}":
+        raise SystemExit(f"language pack does not exactly match application {version}: {relative}")
+    if archive.name != expected_name:
+        raise SystemExit(
+            f"language-pack filename mismatch: expected {expected_name}, got {archive.name}"
+        )
+    language_pack_ids.add(pack_id)
+    language_packs.append(
+        {
+            "id": pack_id,
+            "display_name": display_name,
+            "version": pack_version,
+            "file": relative.as_posix(),
+            "size": archive.stat().st_size,
+            "sha256": sha256_file(archive),
+        }
+    )
+if "zh-hans" not in language_pack_ids:
+    raise SystemExit("required bundled language pack is missing: zh-hans")
+
 images = [
     {
         "file": "images/00-hyperfilelens.tar.gz",
@@ -1141,6 +1220,7 @@ manifest = {
         },
     },
     "sourcelens": sourcelens,
+    "language_packs": language_packs,
     "images": images,
     "artifacts": {
         "payload_tree_sha256": payload_sha,
@@ -1308,6 +1388,18 @@ Platform Gateway converges to the control-plane Agent version and only recreates
 Agent release media retention keeps the desired and locally installed versions, the latest three Main builds, and the latest
 three formal releases. An interrupted local Agent upgrade is also protected until a later successful deployment.
 
+## Language packs
+
+Bundled language packs are installed with the application, while English remains the default and fallback language.
+
+\`\`\`bash
+sudo ./install.sh lang-pack list
+sudo ./install.sh lang-pack install --id zh-hans
+sudo ./install.sh lang-pack uninstall zh-hans
+\`\`\`
+
+An explicitly uninstalled bundled pack remains disabled across upgrades. Use \`install --id\` to enable it again.
+
 ## Uninstall
 
 \`\`\`bash
@@ -1318,7 +1410,7 @@ sudo ./install.sh uninstall --with-sourcelens --purge-sourcelens-data --purge-me
 
 ## Commands
 
-\`install\` | \`start\` | \`stop\` | \`restart\` | \`status\` | \`uninstall\` | \`upgrade\`
+\`install\` | \`start\` | \`stop\` | \`restart\` | \`status\` | \`lang-pack\` | \`uninstall\` | \`upgrade\`
 EOF
 }
 
@@ -1335,7 +1427,7 @@ main() {
 	fi
 	hfl_logging_start
 	preflight
-	log "Checking English-only public source trees"
+	log "Checking the English source boundary"
 	python3 "${ROOT}/tools/quality/check-english-source.py"
 	local version commit_full commit7 release_commit pkg_name pkg_root images_dir tar_path tar_basename edition edition_suffix
 	version="$(read_version)"
@@ -1419,6 +1511,7 @@ main() {
 	chmod +x "${pkg_root}/install.sh" "${pkg_root}/apply-runtime-config.py" "${pkg_root}/sync-env.py"
 	mkdir -p "${pkg_root}/deploy/logrotate"
 	cp "${ROOT}/deploy/logrotate/hyperfilelens.conf" "${pkg_root}/deploy/logrotate/hyperfilelens.conf"
+	stage_local_language_packs "${pkg_root}" "${version}"
 
 	normalize_release_permissions "${pkg_root}"
 

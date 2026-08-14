@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject literal and escaped CJK from the public English-only repository."""
+"""Reject literal and escaped CJK outside the language-pack source boundary."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from pathlib import Path
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+LANGUAGE_PACK_DATA_ROOT = Path("language-packs/packs")
 CJK_CODE_POINT_RANGES = (
     (0x1100, 0x11FF),
     (0x3040, 0x30FF),
@@ -104,11 +105,21 @@ def find_violations(path: Path) -> list[str]:
     return violations
 
 
+def is_language_pack_data_path(relative_path: Path) -> bool:
+    """Return whether a path contains language-specific package data."""
+    return (
+        relative_path == LANGUAGE_PACK_DATA_ROOT
+        or LANGUAGE_PACK_DATA_ROOT in relative_path.parents
+    )
+
+
 def main() -> int:
     """Scan public paths and contents and return a CI-friendly status code."""
     violations: list[str] = []
     for path in iter_public_files():
         relative_path = path.relative_to(REPOSITORY_ROOT)
+        if is_language_pack_data_path(relative_path):
+            continue
         for _offset, code_point, kind in iter_cjk_references(str(relative_path)):
             violations.append(
                 f"{relative_path}: path contains CJK {kind} "
@@ -116,11 +127,11 @@ def main() -> int:
             )
         violations.extend(find_violations(path))
     if violations:
-        print("Literal and escaped CJK are not allowed in the English-only source release:")
+        print("Literal and escaped CJK are only allowed below language-packs/packs/:")
         print("\n".join(violations))
         return 1
 
-    print("English-only source check passed.")
+    print("English source boundary check passed.")
     return 0
 
 

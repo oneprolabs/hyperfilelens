@@ -13,16 +13,9 @@ const elLocale = shallowRef(enLocale)
 
 watch(
   locale,
-  async (value) => {
+  (value) => {
     const pack = installedLangPacks.value.find((item) => item.frontend_code === value)
-    if (pack?.element_plus_locale) {
-      const mod = await import(
-        /* @vite-ignore */ `element-plus/dist/locale/${pack.element_plus_locale}.mjs`
-      )
-      elLocale.value = mod.default
-      return
-    }
-    elLocale.value = enLocale
+    elLocale.value = (pack?.component_messages as typeof enLocale | undefined) ?? enLocale
   },
   { immediate: true },
 )
