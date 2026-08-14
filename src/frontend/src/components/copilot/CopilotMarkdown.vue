@@ -13,6 +13,17 @@ function escapeHtml(value: string) {
     .replace(/"/g, '&quot;')
 }
 
+function safeLinkHref(value: string): boolean {
+  const normalized = value.trim().toLowerCase()
+  return normalized.startsWith('https://')
+    || normalized.startsWith('http://')
+    || normalized.startsWith('mailto:')
+    || normalized.startsWith('/')
+    || normalized.startsWith('./')
+    || normalized.startsWith('../')
+    || normalized.startsWith('#')
+}
+
 function renderMarkdown(text: string): string {
   if (!text.trim()) return ''
   let html = escapeHtml(text.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
@@ -24,7 +35,9 @@ function renderMarkdown(text: string): string {
   html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
   html = html.replace(
     /\[([^\]]+)\]\(([^)\s]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
+    (_match, label: string, href: string) => safeLinkHref(href)
+      ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`
+      : label,
   )
 
   return html
@@ -40,8 +53,13 @@ const rendered = computed(() => renderMarkdown(props.content))
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vue/no-v-html -->
-  <div class="copilot-markdown" v-html="rendered" />
+  <!-- Content is escaped and link protocols are allowlisted before rendering. -->
+  <!-- eslint-disable vue/no-v-html -->
+  <div
+    class="copilot-markdown"
+    v-html="rendered"
+  />
+  <!-- eslint-enable vue/no-v-html -->
 </template>
 
 <style scoped>
