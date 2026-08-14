@@ -960,7 +960,7 @@ grep -F 'org.opencontainers.image.revision="${IMAGE_REVISION}"' "${frontend_dock
 grep -F 'IMAGE_REVISION=${{ needs.prepare.outputs.commit }}' "${workflow}" >/dev/null
 
 installer="${ROOT}/deploy/installer/install.sh"
-grep -F 'loading image {rel}' "${installer}" >/dev/null
+grep -F 'Loading container image archive' "${installer}" >/dev/null
 grep -F 'org.opencontainers.image.revision' "${installer}" >/dev/null
 grep -F 'does not match release' "${installer}" >/dev/null
 if grep -F 'image already loaded' "${installer}" >/dev/null; then
@@ -1195,6 +1195,8 @@ grep -F './tools/quality/test-platform-gateway-auto-deploy.sh' "${workflow}" >/d
 grep -F './tools/quality/test-agent-release-retention.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-agent-gateway-uninstall.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-agent-installer-output.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-lifecycle-output-contract.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-release-purge-all.sh' "${workflow}" >/dev/null
 grep -F 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true' "${ROOT}/.env.example" >/dev/null
 grep -F 'com.hyperfilelens.component: "gateway-lensnode"' \
 	"${gateway_sidecar_installer}" >/dev/null

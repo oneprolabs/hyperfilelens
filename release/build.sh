@@ -1407,8 +1407,12 @@ An explicitly uninstalled bundled pack remains disabled across upgrades. Use \`i
 \`\`\`bash
 sudo ./install.sh uninstall
 sudo ./install.sh uninstall --with-sourcelens
-sudo ./install.sh uninstall --with-sourcelens --purge-sourcelens-data --purge-media --purge-all
+sudo ./install.sh uninstall --purge-all
 \`\`\`
+
+Plain uninstall removes only the HyperFileLens runtime and preserves its data, bundled SourceLens, and the installer-managed
+local Platform Data Gateway. \`--purge-all\` removes the complete installer-managed runtime and data while retaining the
+release directory, managed backup sets, and host Docker CE.
 
 ## Commands
 

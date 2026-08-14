@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=../../deploy/installer/install.sh
+source "${ROOT_REPO}/deploy/installer/install.sh"
+
+fixture="$(mktemp -d)"
+trap 'rm -rf "${fixture}"' EXIT
+ROOT="${fixture}"
+LOG_FILE="${fixture}/install.log"
+INTERACTIVE_SESSION=1
+mkdir -p "${ROOT}/data/sourcelens/config" "${ROOT}/sourcelens"
+printf '%s\n' \
+	'SEED_INITIAL_DATA=1' \
+	'SEED_ADMIN_EMAIL=admin@hyperfilelens.com' \
+	'SEED_ADMIN_PASSWORD=Admin@123' \
+	'SEED_ORG_NAME=HyperFileLens' \
+	'HFL_WEBSITE_PORT=11442' \
+	'HFL_TENANT_PORT=11443' \
+	'HFL_ADMIN_PORT=11444' \
+	'SOURCELENS_MODE=bundled' \
+	'SOURCELENS_CONSOLE_PORT=11445' >"${ROOT}/.env"
+printf '%s\n' \
+	'DJANGO_SUPERUSER_USERNAME=admin' \
+	'DJANGO_SUPERUSER_EMAIL=admin@example.com' \
+	'DJANGO_SUPERUSER_PASSWORD=adminpassword' >"${ROOT}/data/sourcelens/config/.env"
+
+read_version() { printf '0.2.0'; }
+read_edition_from_dir() { printf 'Enterprise'; }
+resolve_console_host() { printf '192.0.2.10'; }
+package_has_sourcelens() { return 0; }
+sourcelens_installed() { return 0; }
+
+output="$({
+	print_banner 'HyperFileLens Installer'
+	print_result 'Installation completed successfully'
+	print_console_access_summary
+} 2>&1)"
+
+[[ "$(grep -c 'INSTALLER' <<<"${output}")" -eq 1 ]]
+grep -F 'https://192.0.2.10:11442/en/' <<<"${output}" >/dev/null
+grep -F 'https://192.0.2.10:11443/' <<<"${output}" >/dev/null
+grep -F 'https://192.0.2.10:11444/admin/' <<<"${output}" >/dev/null
+grep -F 'https://192.0.2.10:11445/' <<<"${output}" >/dev/null
+grep -F 'admin@hyperfilelens.com' <<<"${output}" >/dev/null
+grep -F 'Admin@123' <<<"${output}" >/dev/null
+grep -F 'adminpassword' <<<"${output}" >/dev/null
+grep -F 'install.sh upgrade --from /path/to/new-release.tar.gz' <<<"${output}" >/dev/null
+grep -F 'install.sh uninstall' <<<"${output}" >/dev/null
+
+# A bundled package is not the same as a running Insight installation. The
+# --hfl-only summary must not advertise an unavailable console or credentials.
+sourcelens_installed() { return 1; }
+hfl_only_output="$(print_console_access_summary 2>&1)"
+if grep -F 'Insight Console' <<<"${hfl_only_output}" >/dev/null; then
+	echo 'HFL-only summary advertised an unavailable Insight Console' >&2
+	exit 1
+fi
+sourcelens_installed() { return 0; }
+
+grep -F 'hfl_print_banner "${title}"' "${ROOT_REPO}/dev/stack.sh" >/dev/null
+grep -F 'HFL_PARENT_SESSION=1 "${ROOT}/dev/sourcelens.sh"' \
+	"${ROOT_REPO}/dev/stack.sh" >/dev/null
+grep -F 'gateway-install --yes --no-banner' \
+	"${ROOT_REPO}/deploy/installer/install.sh" >/dev/null
+
+capture_log="${fixture}/dev-session.log"
+capture_stdout="${fixture}/dev-session.stdout"
+capture_stderr="${fixture}/dev-session.stderr"
+HFL_LOG_CAPTURE_STDOUT=1 \
+HFL_LOG_TERMINAL_TIMESTAMPS=0 \
+HFL_LOG_SESSION_MESSAGES=0 \
+HFL_CAPTURE_TEST_LOG="${capture_log}" \
+	bash -c '
+set -euo pipefail
+source "$1/tools/lib/logging.sh"
+hfl_logging_configure test "$HFL_CAPTURE_TEST_LOG" 0
+hfl_log_info "structured detail"
+hfl_log_step "structured step"
+hfl_log_ok "structured success"
+printf "%s\n" "raw child stdout"
+printf "progress-one\rprogress-two\n"
+' _ "${ROOT_REPO}" >"${capture_stdout}" 2>"${capture_stderr}"
+for _ in {1..50}; do
+	if grep -F 'raw child stdout' "${capture_log}" >/dev/null 2>&1 \
+		&& grep -F 'raw child stdout' "${capture_stdout}" >/dev/null 2>&1 \
+		&& grep -F '[INFO ] structured detail' "${capture_stderr}" >/dev/null 2>&1; then
+		break
+	fi
+	sleep 0.02
+done
+[[ "$(stat -c '%a' "${capture_log}")" == "600" ]]
+grep -Fx 'raw child stdout' "${capture_stdout}" >/dev/null
+grep -Fx '[INFO ] structured detail' "${capture_stderr}" >/dev/null
+grep -Fx '[....] structured step' "${capture_stderr}" >/dev/null
+grep -Fx '[ OK ] structured success' "${capture_stderr}" >/dev/null
+if grep -F 'structured detail' "${capture_stdout}" >/dev/null; then
+	echo 'structured stderr was redirected to stdout' >&2
+	exit 1
+fi
+grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] \[INFO *\] structured detail$' \
+	"${capture_log}" >/dev/null
+grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] raw child stdout$' \
+	"${capture_log}" >/dev/null
+grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] progress-one$' \
+	"${capture_log}" >/dev/null
+grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] progress-two$' \
+	"${capture_log}" >/dev/null
+
+failure_log="${fixture}/dev-failure.log"
+failure_stderr="${fixture}/dev-failure.stderr"
+set +e
+HFL_LOG_CAPTURE_STDOUT=1 \
+HFL_LOG_TERMINAL_TIMESTAMPS=0 \
+HFL_LOG_SESSION_MESSAGES=0 \
+HFL_FAILURE_LOG="${failure_log}" \
+	bash -c '
+set -euo pipefail
+source "$1/tools/lib/logging.sh"
+hfl_logging_configure test "$HFL_FAILURE_LOG"
+hfl_logging_start
+trap '\''rc=$?; hfl_logging_finish "$rc"'\'' EXIT
+exit 7
+' _ "${ROOT_REPO}" >/dev/null 2>"${failure_stderr}"
+failure_rc=$?
+set -e
+[[ "${failure_rc}" -eq 7 ]]
+for _ in {1..50}; do
+	grep -F 'Session exited with status 7; full log:' "${failure_log}" >/dev/null 2>&1 && break
+	sleep 0.02
+done
+grep -F '[FAIL] Session exited with status 7; full log:' "${failure_stderr}" >/dev/null
+grep -F 'Session exited with status 7; full log:' "${failure_log}" >/dev/null
+[[ "$(grep -Fc 'Session exited with status 7; full log:' "${failure_stderr}")" -eq 1 ]]
+[[ "$(grep -Fc 'Session exited with status 7; full log:' "${failure_log}")" -eq 1 ]]
+
+for script in build.sh fetch-deps.sh package.sh; do
+	grep -F 'HFL_PARENT_SESSION' "${ROOT_REPO}/src/agent/scripts/${script}" >/dev/null
+	grep -F 'HFL_LOG_TERMINAL_TIMESTAMPS' "${ROOT_REPO}/src/agent/scripts/${script}" >/dev/null
+	grep -F '[[ "${HFL_PARENT_SESSION:-0}" != "1" ]] || return 0' \
+		"${ROOT_REPO}/src/agent/scripts/${script}" >/dev/null
+	grep -F '[[ "${HFL_LOG_TEE_ACTIVE:-0}" != "1" ]] || return 0' \
+		"${ROOT_REPO}/src/agent/scripts/${script}" >/dev/null
+done
+[[ "$(grep -Fc 'HFL_PARENT_SESSION=1 "${AGENT_DIR}/scripts/' "${ROOT_REPO}/tools/agent/publish.sh")" -eq 4 ]]
+
+# Unknown commands cannot escape the managed log directory through their name.
+safe_log_root="${fixture}/safe-log-root"
+safe_log_result="${fixture}/safe-log-result"
+HFL_SAFE_LOG_ROOT="${safe_log_root}" HFL_SAFE_LOG_RESULT="${safe_log_result}" \
+	bash -c '
+set -euo pipefail
+source "$1/deploy/installer/install.sh"
+INSTALL_DIR="$HFL_SAFE_LOG_ROOT"
+LOG_FILE=""
+configure_logging "../../escape"
+printf "%s\n" "$LOG_FILE" >"$HFL_SAFE_LOG_RESULT"
+' _ "${ROOT_REPO}" >/dev/null 2>&1
+safe_log_file="$(cat "${safe_log_result}")"
+[[ "${safe_log_file}" == "${safe_log_root}"/logs/operation-*.log ]]
+[[ ! -L "${safe_log_file}" && "$(stat -c '%a' "${safe_log_file}")" == "600" ]]
+
+# A configured symlink is rejected; fallback uses a fresh, private file.
+symlink_target="${fixture}/symlink-target.log"
+symlink_log="${fixture}/symlink.log"
+symlink_result="${fixture}/symlink-result"
+: >"${symlink_target}"
+ln -s "${symlink_target}" "${symlink_log}"
+HFL_SYMLINK_LOG="${symlink_log}" HFL_SYMLINK_RESULT="${symlink_result}" \
+	bash -c '
+set -euo pipefail
+source "$1/tools/lib/logging.sh"
+hfl_logging_configure test "$HFL_SYMLINK_LOG"
+printf "%s\n" "$HFL_LOG_FILE" >"$HFL_SYMLINK_RESULT"
+' _ "${ROOT_REPO}" >/dev/null 2>&1
+fallback_log="$(cat "${symlink_result}")"
+[[ "${fallback_log}" != "${symlink_log}" && ! -L "${fallback_log}" ]]
+[[ "$(stat -c '%a' "${fallback_log}")" == "600" && ! -s "${symlink_target}" ]]
+rm -f "${fallback_log}"
+
+# Explicit Insight-data purge also removes orphaned data when no runtime is
+# currently installed.
+orphan_root="${fixture}/orphaned-insight"
+mkdir -p "${orphan_root}/data/sourcelens"
+ROOT="${orphan_root}"
+sourcelens_installed() { return 1; }
+sourcelens_runtime_present() { return 1; }
+uninstall_bundled_sourcelens 1 >/dev/null 2>&1
+[[ ! -e "${orphan_root}/data/sourcelens" ]]
+
+# Disabled HFL seeding must not advertise credentials for an account that does
+# not exist in the development environment.
+dev_fixture="${fixture}/dev"
+mkdir -p "${dev_fixture}"
+printf '%s\n' \
+	'SEED_INITIAL_DATA=0' \
+	'SOURCELENS_MODE=bundled' >"${dev_fixture}/.env"
+dev_output="$({
+	source "${ROOT_REPO}/dev/stack.sh"
+	ROOT="${dev_fixture}"
+	WITH_SOURCELENS=0
+	LOG_FILE="${dev_fixture}/dev.log"
+	print_urls
+} 2>&1)"
+grep -F 'no seeded account (SEED_INITIAL_DATA=0)' <<<"${dev_output}" >/dev/null
+if grep -F 'Password' <<<"${dev_output}" >/dev/null; then
+	echo 'Dev summary advertised credentials while HFL seeding was disabled' >&2
+	exit 1
+fi
+
+printf 'Lifecycle output contract checks passed.\n'

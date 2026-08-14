@@ -19,13 +19,32 @@ PRINT_CONFIG=0
 SESSION_STARTED=0
 
 hfl_now() { date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ; }
-log() { printf '[%s] [INFO ] %s\n' "$(hfl_now)" "$*" >&2; }
-step() { printf '[%s] [STEP ] %s\n' "$(hfl_now)" "$*" >&2; }
-ok() { printf '[%s] [ OK  ] %s\n' "$(hfl_now)" "$*" >&2; }
-skip() { printf '[%s] [SKIP ] %s\n' "$(hfl_now)" "$*" >&2; }
-warn() { printf '[%s] [WARN ] %s\n' "$(hfl_now)" "$*" >&2; }
-debug() { [[ "${VERBOSE}" == "1" ]] && printf '[%s] [DEBUG] %s\n' "$(hfl_now)" "$*" >&2 || true; }
-die() { local message=$1 code=${2:-1}; printf '[%s] [FAIL ] %s\n' "$(hfl_now)" "${message}" >&2; exit "${code}"; }
+emit() {
+	local level=$1 tag
+	shift
+	if [[ "${HFL_PARENT_SESSION:-0}" == "1" ]]; then
+		case "${level}" in
+		INFO) tag='INFO ' ;;
+		'....') tag='....' ;;
+		' OK ') tag=' OK ' ;;
+		WARN) tag='WARN' ;;
+		SKIP) tag='SKIP' ;;
+		FAIL) tag='FAIL' ;;
+		DEBUG) tag='DEBUG' ;;
+		*) tag="${level}" ;;
+		esac
+		printf '[%s] %s\n' "${tag}" "$*" >&2
+	else
+		printf '[%s] [%-5s] %s\n' "$(hfl_now)" "${level}" "$*" >&2
+	fi
+}
+log() { emit INFO "$@"; }
+step() { emit '....' "$@"; }
+ok() { emit ' OK ' "$@"; }
+skip() { emit SKIP "$@"; }
+warn() { emit WARN "$@"; }
+debug() { [[ "${VERBOSE}" == "1" ]] && emit DEBUG "$@" || true; }
+die() { local message=$1 code=${2:-1}; emit FAIL "${message}"; exit "${code}"; }
 
 configure_logging() {
 	if [[ -n "${LOG_FILE}" ]]; then
@@ -448,10 +467,12 @@ main() {
 	fi
 	if [[ $# -eq 0 ]]; then
 		configure_logging
-		SESSION_STARTED=1
-		trap finish_session EXIT
+		if [[ "${HFL_PARENT_SESSION:-0}" != "1" ]]; then
+			SESSION_STARTED=1
+			trap finish_session EXIT
+			log "SourceLens installer session started"
+		fi
 		trap 'exit 130' INT TERM
-		log "SourceLens installer session started"
 		cmd_install
 		return 0
 	fi
@@ -459,10 +480,12 @@ main() {
 	install)
 		shift
 		configure_logging
-		SESSION_STARTED=1
-		trap finish_session EXIT
+		if [[ "${HFL_PARENT_SESSION:-0}" != "1" ]]; then
+			SESSION_STARTED=1
+			trap finish_session EXIT
+			log "SourceLens installer session started"
+		fi
 		trap 'exit 130' INT TERM
-		log "SourceLens installer session started"
 		cmd_install "$@"
 		;;
 	-h | --help)

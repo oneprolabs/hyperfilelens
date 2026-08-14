@@ -267,7 +267,7 @@ if wait_for_local_platform_gateway_readiness 0; then
 	exit 1
 fi
 [[ "${LOCAL_PLATFORM_GATEWAY_READINESS_REASON}" == \
-	"managed platform Gateway link, Agent WebSocket, or LensNode sidecar is not online and usable" ]]
+	"managed Platform Data Gateway link, Agent WebSocket, or AI engine is not online and usable" ]]
 READINESS_OK=1
 LENSNODE_RUNNING=false
 if wait_for_local_platform_gateway_readiness 0; then
@@ -275,7 +275,7 @@ if wait_for_local_platform_gateway_readiness 0; then
 	exit 1
 fi
 [[ "${LOCAL_PLATFORM_GATEWAY_READINESS_REASON}" == \
-	"managed LensNode container is not running" ]]
+	"managed AI engine container is not running" ]]
 LENSNODE_RUNNING=true
 AGENT_ACTIVE=0
 if wait_for_local_platform_gateway_readiness 0; then

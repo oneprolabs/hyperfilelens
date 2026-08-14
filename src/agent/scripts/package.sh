@@ -37,9 +37,22 @@ hfl_finish_sentence() {
 }
 
 _hfl_emit_raw() {
-	local level=$1
+	local level=$1 tag
 	shift
-	printf '[%s] [%s] %s\n' "$(hfl_now)" "${level}" "$(hfl_finish_sentence "$@")" >&2
+	if [[ "${HFL_LOG_TERMINAL_TIMESTAMPS:-1}" == "1" ]]; then
+		printf '[%s] [%s] %s\n' "$(hfl_now)" "${level}" "$(hfl_finish_sentence "$@")" >&2
+	else
+		case "${level// /}" in
+		INFO) tag='INFO ' ;;
+		STEP) tag='....' ;;
+		OK) tag=' OK ' ;;
+		WARN) tag='WARN' ;;
+		SKIP) tag='SKIP' ;;
+		FAIL) tag='FAIL' ;;
+		*) tag="${level}" ;;
+		esac
+		printf '[%s] %s\n' "${tag}" "$(hfl_finish_sentence "$@")" >&2
+	fi
 }
 
 log_info() { _hfl_emit_raw "INFO " "$@"; }
@@ -210,6 +223,8 @@ CONFIG
 }
 
 setup_log_file() {
+	[[ "${HFL_PARENT_SESSION:-0}" != "1" ]] || return 0
+	[[ "${HFL_LOG_TEE_ACTIVE:-0}" != "1" ]] || return 0
 	[[ -n "${LOG_FILE}" ]] || return 0
 	mkdir -p "$(dirname "${LOG_FILE}")"
 	exec > >(tee -a "${LOG_FILE}") 2>&1
@@ -264,7 +279,17 @@ def log(level: str, message: str) -> None:
     message = message.rstrip()
     if message and message[-1] not in ".?!":
         message += "."
-    print(f"[{timestamp}] [{level}] {message}", file=sys.stderr, flush=True)
+    if os.environ.get("HFL_LOG_TERMINAL_TIMESTAMPS", "1") != "1":
+        tags = {
+            "STEP ": "....",
+            " OK  ": " OK ",
+            "WARN ": "WARN",
+            "SKIP ": "SKIP",
+            "FAIL ": "FAIL",
+        }
+        print(f"[{tags.get(level, level.strip())}] {message}", file=sys.stderr, flush=True)
+    else:
+        print(f"[{timestamp}] [{level}] {message}", file=sys.stderr, flush=True)
 
 
 def sha256_file(path: Path) -> str:
@@ -461,10 +486,13 @@ def safe_extract_tar(archive_path: Path, destination: Path) -> Path:
             roots.add(parts[0])
         if len(roots) != 1:
             raise PrerequisiteError(f"base archive must contain one root directory: {archive_path}")
-        # Python 3.12 adds tarfile's data filter. The checks above enforce the
-        # same restrictions before extraction so supported older hosts (such as
-        # Ubuntu 20.04's Python 3.8) can package offline Agent bundles too.
-        archive.extractall(destination, members=members)
+        # Python 3.12 adds tarfile's data filter. Keep the explicit checks for
+        # Python 3.8 hosts, and opt in on newer Python versions so Python 3.14
+        # does not emit a deprecation warning during every Dev deployment.
+        if sys.version_info >= (3, 12):
+            archive.extractall(destination, members=members, filter="data")
+        else:
+            archive.extractall(destination, members=members)
     return destination / next(iter(roots))
 
 
@@ -572,10 +600,12 @@ fi
 
 command -v python3 >/dev/null 2>&1 || log_fail "python3 is required to package Agent archives" 2
 setup_log_file
-trap finish_session EXIT
 trap 'exit 130' INT TERM
-SESSION_STARTED=1
-log_info "Agent packaging session started"
+if [[ "${HFL_PARENT_SESSION:-0}" != "1" ]]; then
+	trap finish_session EXIT
+	SESSION_STARTED=1
+	log_info "Agent packaging session started"
+fi
 log_info "Bundle: ${BUNDLE}"
 log_info "Version: ${AGENT_VERSION}"
 log_info "Commit: ${COMMIT}"
