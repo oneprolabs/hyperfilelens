@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ArrowDown, ChevronDown, ChevronUp, Copy, RotateCcw, Share2, Sparkles } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, ChevronUp, Copy, RotateCcw, Share2, Sparkles } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import { copyTextToClipboard } from '../../../lib/clipboard'
 import { currentUser } from '../../../composables/useAuth'
@@ -32,6 +32,59 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const expandedThinking = ref<Set<string>>(new Set())
 const liveThinkingOpen = ref(true)
+const chatScrollRef = ref<HTMLElement | null>(null)
+const copilotThreadRef = ref<HTMLElement | null>(null)
+const followsLatest = ref(true)
+let contentResizeObserver: ResizeObserver | null = null
+
+const BOTTOM_FOLLOW_THRESHOLD = 48
+
+function isNearBottom(el: HTMLElement) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_FOLLOW_THRESHOLD
+}
+
+function syncFollowState() {
+  const el = chatScrollRef.value
+  if (el) followsLatest.value = isNearBottom(el)
+}
+
+function alignToLatestIfFollowing() {
+  if (!followsLatest.value) return
+  const el = chatScrollRef.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
+function scrollToBottom() {
+  followsLatest.value = true
+  nextTick(alignToLatestIfFollowing)
+}
+
+watch(
+  () => [
+    props.messages.length,
+    props.streamingContent,
+    props.streamingThinking?.length,
+    props.streaming,
+    props.streamError,
+  ],
+  () => {
+    nextTick(alignToLatestIfFollowing)
+  },
+  { flush: 'post' },
+)
+
+onMounted(() => {
+  scrollToBottom()
+  const thread = copilotThreadRef.value
+  if (thread && typeof ResizeObserver !== 'undefined') {
+    contentResizeObserver = new ResizeObserver(alignToLatestIfFollowing)
+    contentResizeObserver.observe(thread)
+  }
+})
+
+onBeforeUnmount(() => contentResizeObserver?.disconnect())
+
+defineExpose({ scrollToBottom })
 
 const starterChips = [
   { key: 'chipQuerySops', icon: '📖' },
@@ -67,6 +120,12 @@ function toggleThinking(id: string) {
   if (next.has(id)) next.delete(id)
   else next.add(id)
   expandedThinking.value = next
+  if (followsLatest.value) scrollToBottom()
+}
+
+function toggleLiveThinking() {
+  liveThinkingOpen.value = !liveThinkingOpen.value
+  if (followsLatest.value) scrollToBottom()
 }
 
 function thinkingStepsFor(message: CopilotDisplayMessage) {
@@ -171,187 +230,259 @@ const showLiveRow = computed(() => props.streaming)
 </script>
 
 <template>
-  <div class="chat-scroll min-h-0 flex-1 overflow-y-auto">
-    <div class="copilot-thread">
-      <div
-        v-for="msg in messages"
-        :key="msg.id"
-        class="message-row"
-        :class="msg.role === 'user' ? 'message-row-user' : 'message-row-assistant'"
-      >
+  <div class="chat-scroll-shell min-h-0 flex-1">
+    <div ref="chatScrollRef" class="chat-scroll h-full overflow-y-auto" @scroll="syncFollowState">
+      <div ref="copilotThreadRef" class="copilot-thread">
         <div
-          class="message-avatar message-avatar-icon"
-          :class="msg.role === 'user' ? 'message-avatar-icon--user' : 'message-avatar-icon--assistant'"
-          :aria-label="
-            msg.role === 'user' ? t('insight.copilot.roleUser') : t('insight.copilot.roleAi')
-          "
+          v-for="msg in messages"
+          :key="msg.id"
+          class="message-row"
+          :class="msg.role === 'user' ? 'message-row-user' : 'message-row-assistant'"
         >
-          <span v-if="msg.role === 'user'" class="message-avatar-initial">{{ userInitial }}</span>
-          <Sparkles v-else :size="16" :stroke-width="2" />
-        </div>
-
-        <div class="message-body">
           <div
-            v-if="msg.role === 'assistant' && thinkingStepsFor(msg).length"
-            class="thinking-panel thinking-panel-done"
+            class="message-avatar message-avatar-icon"
+            :class="
+              msg.role === 'user'
+                ? 'message-avatar-icon--user'
+                : 'message-avatar-icon--assistant'
+            "
+            :aria-label="
+              msg.role === 'user' ? t('insight.copilot.roleUser') : t('insight.copilot.roleAi')
+            "
           >
-            <button type="button" class="thinking-panel-header" @click="toggleThinking(msg.id)">
-              <span class="thinking-panel-status">
-                {{
-                  thinkingDuration(msg) != null
-                    ? t('insight.copilot.thinkingDone', {
-                        seconds: thinkingDuration(msg),
-                        count: thinkingStepsFor(msg).length,
-                      })
-                    : t('insight.copilot.thinkingDoneSteps', { count: thinkingStepsFor(msg).length })
-                }}
-              </span>
-              <ChevronUp v-if="expandedThinking.has(msg.id)" :size="13" class="thinking-panel-chevron" />
-              <ChevronDown v-else :size="13" class="thinking-panel-chevron" />
-            </button>
-            <div v-if="expandedThinking.has(msg.id)" class="thinking-panel-body">
-              <div v-for="(step, idx) in thinkingStepsFor(msg)" :key="idx" class="thinking-step-item">
-                <span class="thinking-step-bullet">▸</span>
-                <span class="thinking-step-text">{{ stepLabel(step) }}</span>
-              </div>
-            </div>
+            <span v-if="msg.role === 'user'" class="message-avatar-initial">{{ userInitial }}</span>
+            <Sparkles v-else :size="16" :stroke-width="2" />
           </div>
 
-          <div
-            class="message-card"
-            :class="[
-              msg.role,
-              msg.isError ? 'message-card--error' : '',
-              msg.starterChips ? 'message-card--welcome' : '',
-            ]"
-          >
-            <div v-if="msg.starterChips || msg.isError" class="message-text">{{ msg.text }}</div>
-            <div v-else-if="msg.role === 'assistant' && msg.text" class="message-markdown">
-              <CopilotMarkdown :content="msg.text" />
-            </div>
-            <div v-else-if="msg.text" class="message-text">{{ msg.text }}</div>
-
-            <div v-if="msg.starterChips" class="copilot-chip-grid">
-              <button
-                v-for="chip in starterChips"
-                :key="chip.key"
-                type="button"
-                class="copilot-chip-box"
-                :class="{ 'is-selected': selectedStarterKey === chip.key }"
-                :aria-pressed="selectedStarterKey === chip.key"
-                :disabled="starterDisabled"
-                @click="emit('starterChip', chip.key, starterChipPrompt(chip.key))"
-              >
-                <span class="copilot-chip-inner">
-                  <span class="copilot-chip-icon" aria-hidden="true">{{ chip.icon }}</span>
-                  <span class="copilot-chip-label">{{ starterChipTitle(chip.key) }}</span>
+          <div class="message-body">
+            <div
+              v-if="msg.role === 'assistant' && thinkingStepsFor(msg).length"
+              class="thinking-panel thinking-panel-done"
+            >
+              <button type="button" class="thinking-panel-header" @click="toggleThinking(msg.id)">
+                <span class="thinking-panel-status">
+                  {{
+                    thinkingDuration(msg) != null
+                      ? t('insight.copilot.thinkingDone', {
+                          seconds: thinkingDuration(msg),
+                          count: thinkingStepsFor(msg).length,
+                        })
+                      : t('insight.copilot.thinkingDoneSteps', {
+                          count: thinkingStepsFor(msg).length,
+                        })
+                  }}
                 </span>
+                <ChevronUp
+                  v-if="expandedThinking.has(msg.id)"
+                  :size="13"
+                  class="thinking-panel-chevron"
+                />
+                <ChevronDown v-else :size="13" class="thinking-panel-chevron" />
+              </button>
+              <div v-if="expandedThinking.has(msg.id)" class="thinking-panel-body">
+                <div
+                  v-for="(step, idx) in thinkingStepsFor(msg)"
+                  :key="idx"
+                  class="thinking-step-item"
+                >
+                  <span class="thinking-step-bullet">▸</span>
+                  <span class="thinking-step-text">{{ stepLabel(step) }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="message-card"
+              :class="[
+                msg.role,
+                msg.isError ? 'message-card--error' : '',
+                msg.starterChips ? 'message-card--welcome' : '',
+              ]"
+            >
+              <div v-if="msg.starterChips || msg.isError" class="message-text">{{ msg.text }}</div>
+              <div v-else-if="msg.role === 'assistant' && msg.text" class="message-markdown">
+                <CopilotMarkdown :content="msg.text" />
+              </div>
+              <div v-else-if="msg.text" class="message-text">{{ msg.text }}</div>
+
+              <div v-if="msg.starterChips" class="copilot-chip-grid">
+                <button
+                  v-for="chip in starterChips"
+                  :key="chip.key"
+                  type="button"
+                  class="copilot-chip-box"
+                  :class="{ 'is-selected': selectedStarterKey === chip.key }"
+                  :aria-pressed="selectedStarterKey === chip.key"
+                  :disabled="starterDisabled"
+                  @click="emit('starterChip', chip.key, starterChipPrompt(chip.key))"
+                >
+                  <span class="copilot-chip-inner">
+                    <span class="copilot-chip-icon" aria-hidden="true">{{ chip.icon }}</span>
+                    <span class="copilot-chip-label">{{ starterChipTitle(chip.key) }}</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <div v-if="msg.createdAt" class="message-time" :class="msg.role">
+              {{ formatMessageTime(msg.createdAt) }}
+            </div>
+
+            <div
+              v-if="msg.role === 'assistant' && msg.text && !msg.starterChips && !msg.isError"
+              class="message-actions"
+            >
+              <button
+                type="button"
+                class="message-action-btn"
+                :title="t('common.copy')"
+                @click="copyText(msg.text || '')"
+              >
+                <Copy :size="16" />
+              </button>
+              <button
+                type="button"
+                class="message-action-btn"
+                :title="t('insight.copilot.retryQuestion')"
+                :disabled="!questionForMessage(msg)"
+                @click="retryForMessage(msg)"
+              >
+                <RotateCcw :size="16" />
+              </button>
+              <button
+                type="button"
+                class="message-action-btn"
+                :title="t('insight.copilot.shareAnswer')"
+                @click="shareMessage()"
+              >
+                <Share2 :size="16" />
               </button>
             </div>
           </div>
-
-          <div
-            v-if="msg.createdAt"
-            class="message-time"
-            :class="msg.role"
-          >
-            {{ formatMessageTime(msg.createdAt) }}
-          </div>
-
-          <div
-            v-if="msg.role === 'assistant' && msg.text && !msg.starterChips && !msg.isError"
-            class="message-actions"
-          >
-            <button
-              type="button"
-              class="message-action-btn"
-              :title="t('common.copy')"
-              @click="copyText(msg.text || '')"
-            >
-              <Copy :size="16" />
-            </button>
-            <button
-              type="button"
-              class="message-action-btn"
-              :title="t('insight.copilot.retryQuestion')"
-              :disabled="!questionForMessage(msg)"
-              @click="retryForMessage(msg)"
-            >
-              <RotateCcw :size="16" />
-            </button>
-            <button
-              type="button"
-              class="message-action-btn"
-              :title="t('insight.copilot.shareAnswer')"
-              @click="shareMessage()"
-            >
-              <Share2 :size="16" />
-            </button>
-          </div>
         </div>
-      </div>
 
-      <div v-if="showLiveRow" class="message-row message-row-assistant live-progress-row">
-        <div class="message-avatar message-avatar-icon message-avatar-icon--assistant" :aria-label="t('insight.copilot.roleAi')">
-          <Sparkles :size="16" :stroke-width="2" />
-        </div>
-        <div class="message-body">
-          <div v-if="!streamError" class="thinking-panel thinking-panel-live">
-            <button
-              v-if="streamingThinking?.length"
-              type="button"
-              class="thinking-panel-header"
-              :aria-expanded="liveThinkingOpen"
-              @click="liveThinkingOpen = !liveThinkingOpen"
-            >
-              <span class="live-progress-dot" />
-              <span class="thinking-panel-status">
-                <span class="thinking-panel-status-text">{{ liveThinkingStatus() }}</span>
-              </span>
-              <span v-if="streamingThinking.length" class="thinking-step-count">
-                {{ streamingThinking.length }}
-              </span>
-              <ChevronUp v-if="liveThinkingOpen" :size="13" class="thinking-panel-chevron" />
-              <ChevronDown v-else :size="13" class="thinking-panel-chevron" />
-            </button>
-            <div
-              v-else
-              class="thinking-panel-header thinking-panel-header--static"
-              role="status"
-              aria-live="polite"
-            >
-              <span class="live-progress-dot" />
-              <span class="thinking-panel-status">
-                <span class="thinking-panel-status-text">{{ liveThinkingStatus() }}</span>
-              </span>
-            </div>
-            <div v-if="liveThinkingOpen && streamingThinking?.length" class="thinking-panel-body">
-              <div v-for="(step, idx) in streamingThinking" :key="idx" class="thinking-step-item">
-                <span class="thinking-step-bullet">▸</span>
-                <span class="thinking-step-text">{{ step.displayMessage || stepLabel(step) }}</span>
+        <div v-if="showLiveRow" class="message-row message-row-assistant live-progress-row">
+          <div
+            class="message-avatar message-avatar-icon message-avatar-icon--assistant"
+            :aria-label="t('insight.copilot.roleAi')"
+          >
+            <Sparkles :size="16" :stroke-width="2" />
+          </div>
+          <div class="message-body">
+            <div v-if="!streamError" class="thinking-panel thinking-panel-live">
+              <button
+                v-if="streamingThinking?.length"
+                type="button"
+                class="thinking-panel-header"
+                :aria-expanded="liveThinkingOpen"
+                @click="toggleLiveThinking"
+              >
+                <span class="live-progress-dot" />
+                <span class="thinking-panel-status">
+                  <span class="thinking-panel-status-text">{{ liveThinkingStatus() }}</span>
+                </span>
+                <span v-if="streamingThinking.length" class="thinking-step-count">
+                  {{ streamingThinking.length }}
+                </span>
+                <ChevronUp v-if="liveThinkingOpen" :size="13" class="thinking-panel-chevron" />
+                <ChevronDown v-else :size="13" class="thinking-panel-chevron" />
+              </button>
+              <div
+                v-else
+                class="thinking-panel-header thinking-panel-header--static"
+                role="status"
+                aria-live="polite"
+              >
+                <span class="live-progress-dot" />
+                <span class="thinking-panel-status">
+                  <span class="thinking-panel-status-text">{{ liveThinkingStatus() }}</span>
+                </span>
+              </div>
+              <div v-if="liveThinkingOpen && streamingThinking?.length" class="thinking-panel-body">
+                <div v-for="(step, idx) in streamingThinking" :key="idx" class="thinking-step-item">
+                  <span class="thinking-step-bullet">▸</span>
+                  <span class="thinking-step-text">{{ step.displayMessage || stepLabel(step) }}</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          <p v-if="showRetrievalHint" class="thinking-retrieval-hint">
-            {{ t('insight.copilot.thinkingRetrievalHint') }}
-          </p>
+            <p v-if="showRetrievalHint" class="thinking-retrieval-hint">
+              {{ t('insight.copilot.thinkingRetrievalHint') }}
+            </p>
 
-          <div v-if="streamingContent || streamError" class="message-card assistant">
-            <div v-if="streamError" class="message-text message-text--error">{{ streamError }}</div>
-            <div v-else class="message-markdown live-markdown" :class="{ 'is-streaming': streaming }">
-              <CopilotStreamingMarkdown :content="streamingContent || ''" :streaming="streaming" />
+            <div v-if="streamingContent || streamError" class="message-card assistant">
+              <div v-if="streamError" class="message-text message-text--error">{{ streamError }}</div>
+              <div
+                v-else
+                class="message-markdown live-markdown"
+                :class="{ 'is-streaming': streaming }"
+              >
+                <CopilotStreamingMarkdown
+                  :content="streamingContent || ''"
+                  :streaming="streaming"
+                />
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
+
+    <button
+      v-if="!followsLatest"
+      type="button"
+      class="scroll-to-latest"
+      :aria-label="t('insight.copilot.scrollToLatest')"
+      :title="t('insight.copilot.scrollToLatest')"
+      @click="scrollToBottom"
+    >
+      <ArrowDown :size="16" aria-hidden="true" />
+      <span>{{ t('insight.copilot.scrollToLatest') }}</span>
+    </button>
   </div>
 </template>
 
 <style scoped>
+.chat-scroll-shell {
+  position: relative;
+}
+
 .chat-scroll {
   background: var(--color-card-bg);
+  overscroll-behavior: contain;
+}
+
+.scroll-to-latest {
+  position: absolute;
+  z-index: 2;
+  bottom: 16px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-card-bg);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transform: translateX(-50%);
+  transition: border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.scroll-to-latest:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border));
+  color: var(--color-primary);
+  box-shadow: var(--shadow-lg);
+}
+
+.scroll-to-latest:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+  outline-offset: 2px;
 }
 
 .copilot-thread {
@@ -803,6 +934,10 @@ const showLiveRow = computed(() => props.streaming)
 }
 
 @media (max-width: 768px) {
+  .scroll-to-latest {
+    min-height: 44px;
+  }
+
   .copilot-thread {
     padding: 16px 16px 28px;
   }
