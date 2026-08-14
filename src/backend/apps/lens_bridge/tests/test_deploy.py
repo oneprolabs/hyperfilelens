@@ -139,6 +139,22 @@ class LensDeployUrlTest(unittest.TestCase):
             "https://sourcelens.example.com",
         )
 
+    @patch("apps.lens_bridge.deploy.env_str")
+    def test_bundled_gateway_uses_control_plane_relative_path(self, env_str):
+        env_str.side_effect = lambda key, default="": (
+            "bundled" if key == "SOURCELENS_MODE" else default
+        )
+
+        self.assertEqual(deploy.lens_gateway_base_path(), "/sourcelens")
+
+    @patch("apps.lens_bridge.deploy.env_str")
+    def test_external_gateway_does_not_override_absolute_url(self, env_str):
+        env_str.side_effect = lambda key, default="": (
+            "external" if key == "SOURCELENS_MODE" else default
+        )
+
+        self.assertEqual(deploy.lens_gateway_base_path(), "")
+
     @patch("apps.lens_bridge.deploy.env_int", return_value=12443)
     @patch("apps.lens_bridge.deploy.env_str")
     def test_local_platform_gateway_uses_loopback_for_bundled_mode(

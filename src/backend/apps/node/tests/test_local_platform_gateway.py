@@ -48,6 +48,16 @@ class LocalPlatformGatewayConfigTests(SimpleTestCase):
         with self.assertRaisesMessage(ValueError, "must use HTTPS"):
             platform_gateway_api_base()
 
+    @override_settings(FRONTEND_URL="https://127.0.0.1:11443")
+    def test_remote_platform_gateway_rejects_loopback_origin(self):
+        with self.assertRaisesMessage(ValueError, "network-reachable"):
+            platform_gateway_api_base(require_remote=True)
+
+    @override_settings(FRONTEND_URL="https://0.0.0.0:11443")
+    def test_remote_platform_gateway_rejects_unspecified_origin(self):
+        with self.assertRaisesMessage(ValueError, "network-reachable"):
+            platform_gateway_api_base(require_remote=True)
+
     def test_registration_metadata_requires_trusted_installer_state(self):
         untrusted = registration_metadata(LOCAL_PLATFORM_GATEWAY_METADATA)
         self.assertNotIn("install_key", untrusted)
