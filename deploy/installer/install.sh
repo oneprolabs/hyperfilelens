@@ -4631,6 +4631,16 @@ recover_interrupted_language_pack_activations() {
 	done
 }
 
+normalize_language_pack_runtime_permissions() {
+	local pack_root=$1
+	[[ -d "${pack_root}" && ! -L "${pack_root}" ]] || return 1
+	# Language packs are immutable runtime catalogs mounted read-only into the
+	# API and Nginx containers. Do not inherit the invoking user's umask: Nginx
+	# workers must be able to traverse directories and read every catalog.
+	find "${pack_root}" -type d -exec chmod 0755 {} + || return 1
+	find "${pack_root}" -type f -exec chmod 0644 {} + || return 1
+}
+
 activate_language_pack_archive() {
 	local archive=$1 app_version=$2 language_root=${3:-$(language_pack_version_root "$2")}
 	local temp_dir validation_output pack_id pack_source incoming target backup
@@ -4661,8 +4671,16 @@ activate_language_pack_archive() {
 	backup="${language_root}/.backup-${pack_id}-$$"
 
 	safe_rm_dir "${incoming}"
-	mkdir -p "${incoming}"
-	cp -a "${pack_source}/." "${incoming}/"
+	if ! mkdir -p "${incoming}" || ! cp -a "${pack_source}/." "${incoming}/"; then
+		safe_rm_dir "${incoming}"
+		safe_rm_dir "${temp_dir}"
+		die "failed to stage language pack ${pack_id}"
+	fi
+	if ! normalize_language_pack_runtime_permissions "${incoming}"; then
+		safe_rm_dir "${incoming}"
+		safe_rm_dir "${temp_dir}"
+		die "failed to normalize runtime permissions for language pack ${pack_id}"
+	fi
 	if [[ -e "${target}" ]]; then
 		mv "${target}" "${backup}"
 	fi

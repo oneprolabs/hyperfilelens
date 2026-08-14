@@ -198,6 +198,10 @@ PY
 )
 openssl verify -CAfile "${pkg_root}/deploy/nginx/certs/root-ca.crt" \
 	"${pkg_root}/deploy/nginx/certs/tls.crt" >/dev/null
+[[ -f "${pkg_root}/deploy/nginx/snippets/check-language-packs.sh" ]] || {
+	printf 'ERROR: release package is missing the language-pack health check\n' >&2
+	exit 1
+}
 
 artifact_channel="$(python3 - "${pkg_root}/MANIFEST.json" <<'PY'
 import json

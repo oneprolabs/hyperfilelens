@@ -263,7 +263,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "nginx -t >/dev/null 2>&1 && wget --no-check-certificate -qO- https://127.0.0.1:11443/health >/dev/null && wget --no-check-certificate -qO- https://127.0.0.1:11443/locales/installed.json >/dev/null && wget --no-check-certificate -qO- https://127.0.0.1:11443/ >/dev/null && wget --no-check-certificate -qO- https://127.0.0.1:11442/en/ >/dev/null",
+          "nginx -t >/dev/null 2>&1 && wget --no-check-certificate -qO- https://127.0.0.1:11443/health >/dev/null && sh /etc/nginx/snippets/check-language-packs.sh && wget --no-check-certificate -qO- https://127.0.0.1:11443/ >/dev/null && wget --no-check-certificate -qO- https://127.0.0.1:11442/en/ >/dev/null",
         ]
       interval: 5s
       timeout: 3s
