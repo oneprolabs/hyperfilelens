@@ -9,9 +9,6 @@ export type HflDateTimeRangePreset = {
 }
 
 type RangeValue = [string, string] | ''
-type PickerShortcutContext = {
-  emit: (event: string, value: [Date, Date]) => void
-}
 
 const props = withDefaults(
   defineProps<{
@@ -60,19 +57,22 @@ const popperClass = computed(() => [
   props.constrainToTrigger ? 'hfl-date-time-range-picker__popper--constrained' : '',
 ].filter(Boolean).join(' '))
 
-const shortcuts = computed(() => props.presets.map((preset) => ({
-  text: preset.label,
-  onClick: ({ emit: pickerEmit }: PickerShortcutContext) => {
-    const range = rangeForPreset(preset)
-    if (!range) return
-    suppressNextChange.value = true
-    emit('preset', preset.value, preset.hours)
-    pickerEmit('pick', range)
-    void nextTick(() => {
-      pickerValue.value = displayRangeFromProps()
-    })
-  },
-})))
+const shortcuts = computed(() => props.presets.flatMap((preset) => {
+  const hours = preset.hours
+  if (!hours) return []
+  return [{
+    text: preset.label,
+    value: () => {
+      const range = rangeForHours(hours)
+      suppressNextChange.value = true
+      emit('preset', preset.value, hours)
+      void nextTick(() => {
+        pickerValue.value = displayRangeFromProps()
+      })
+      return range
+    },
+  }]
+}))
 
 function pad2(n: number) {
   return String(n).padStart(2, '0')
@@ -98,8 +98,12 @@ function displayRangeFromProps(): RangeValue {
 
 function rangeForPreset(preset: HflDateTimeRangePreset): [Date, Date] | null {
   if (!preset.hours) return null
+  return rangeForHours(preset.hours)
+}
+
+function rangeForHours(hours: number): [Date, Date] {
   const end = new Date()
-  const start = new Date(end.getTime() - preset.hours * 60 * 60 * 1000)
+  const start = new Date(end.getTime() - hours * 60 * 60 * 1000)
   return [start, end]
 }
 
@@ -159,8 +163,8 @@ watch(
     :class="{ 'hfl-date-time-range-picker--constrained': constrainToTrigger }"
   >
     <ElDatePicker
-      :model-value="pickerValue"
       :id="rangeInputIds"
+      :model-value="pickerValue"
       class="hfl-date-time-range-picker__trigger"
       type="datetimerange"
       unlink-panels
