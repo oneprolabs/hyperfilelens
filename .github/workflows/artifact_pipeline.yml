@@ -436,6 +436,8 @@ jobs:
           ./tools/quality/test-platform-gateway-auto-deploy.sh
           ./tools/quality/test-agent-gateway-uninstall.sh
           ./tools/quality/test-agent-installer-output.sh
+          ./tools/quality/test-lifecycle-output-contract.sh
+          ./tools/quality/test-release-purge-all.sh
           ./tools/quality/test-installer-image-refresh.sh
           ./tools/quality/test-language-pack-runtime-index.sh
           ./tools/quality/test-bundled-language-pack-lifecycle.sh

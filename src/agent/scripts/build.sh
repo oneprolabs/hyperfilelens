@@ -37,9 +37,22 @@ hfl_finish_sentence() {
 }
 
 _hfl_emit_raw() {
-	local level=$1
+	local level=$1 tag
 	shift
-	printf '[%s] [%s] %s\n' "$(hfl_now)" "${level}" "$(hfl_finish_sentence "$@")" >&2
+	if [[ "${HFL_LOG_TERMINAL_TIMESTAMPS:-1}" == "1" ]]; then
+		printf '[%s] [%s] %s\n' "$(hfl_now)" "${level}" "$(hfl_finish_sentence "$@")" >&2
+	else
+		case "${level// /}" in
+		INFO) tag='INFO ' ;;
+		STEP) tag='....' ;;
+		OK) tag=' OK ' ;;
+		WARN) tag='WARN' ;;
+		SKIP) tag='SKIP' ;;
+		FAIL) tag='FAIL' ;;
+		*) tag="${level}" ;;
+		esac
+		printf '[%s] %s\n' "${tag}" "$(hfl_finish_sentence "$@")" >&2
+	fi
 }
 
 log_info() { _hfl_emit_raw "INFO " "$@"; }
@@ -196,6 +209,8 @@ CONFIG
 }
 
 setup_log_file() {
+	[[ "${HFL_PARENT_SESSION:-0}" != "1" ]] || return 0
+	[[ "${HFL_LOG_TEE_ACTIVE:-0}" != "1" ]] || return 0
 	[[ -n "${LOG_FILE}" ]] || return 0
 	mkdir -p "$(dirname "${LOG_FILE}")"
 	exec > >(tee -a "${LOG_FILE}") 2>&1
@@ -285,10 +300,12 @@ if [[ "${PRINT_CONFIG}" -eq 1 ]]; then
 fi
 
 setup_log_file
-trap finish_session EXIT
 trap 'exit 130' INT TERM
-SESSION_STARTED=1
-log_info "Agent build session started"
+if [[ "${HFL_PARENT_SESSION:-0}" != "1" ]]; then
+	trap finish_session EXIT
+	SESSION_STARTED=1
+	log_info "Agent build session started"
+fi
 log_info "Mode: ${MODE}"
 log_info "Version: ${AGENT_VERSION}"
 log_info "Commit: ${COMMIT}"

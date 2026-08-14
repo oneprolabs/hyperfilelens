@@ -632,7 +632,7 @@ fi
 
 if [[ "${BUNDLE}" != "standard" ]] && matrix_has_linux; then
 	hfl_log_step "Fetching Ubuntu 20.04/22.04/24.04 NAS dependency debs"
-	"${AGENT_DIR}/scripts/fetch-deps.sh" --nas-deps "${fetch_common_args[@]}" \
+	HFL_PARENT_SESSION=1 "${AGENT_DIR}/scripts/fetch-deps.sh" --nas-deps "${fetch_common_args[@]}" \
 		--version "${VERSION}" \
 		--matrix "${MATRIX}" \
 		--ubuntu2404-arch "${UBUNTU2404_ARCH}"
@@ -645,10 +645,10 @@ build_args=(--release \
 	--commit "${COMMIT}")
 [[ -n "${GO_PROXY}" ]] && build_args+=(--go-proxy "${GO_PROXY}")
 [[ -n "${GO_SUMDB}" ]] && build_args+=(--go-sumdb "${GO_SUMDB}")
-"${AGENT_DIR}/scripts/build.sh" "${build_args[@]}"
+HFL_PARENT_SESSION=1 "${AGENT_DIR}/scripts/build.sh" "${build_args[@]}"
 
 hfl_log_step "Preparing the unified Kopia artifact matrix"
-"${AGENT_DIR}/scripts/fetch-deps.sh" --kopia "${fetch_common_args[@]}" \
+HFL_PARENT_SESSION=1 "${AGENT_DIR}/scripts/fetch-deps.sh" --kopia "${fetch_common_args[@]}" \
 	--version "${VERSION}" \
 	--matrix "${MATRIX}"
 
@@ -657,7 +657,7 @@ package_args=(--version "${VERSION}" --matrix "${MATRIX}" --commit "${COMMIT}" -
 if [[ "${BUNDLE}" != "standard" ]] && matrix_has_linux; then
 	package_args+=(--ubuntu2404-arch "${UBUNTU2404_ARCH}")
 fi
-"${AGENT_DIR}/scripts/package.sh" "${package_args[@]}"
+HFL_PARENT_SESSION=1 "${AGENT_DIR}/scripts/package.sh" "${package_args[@]}"
 
 if [[ ! -d "${BUILD_DIR}/${VERSION}/package" ]]; then
 	hfl_die "Missing package output ${BUILD_DIR}/${VERSION}/package/" 3

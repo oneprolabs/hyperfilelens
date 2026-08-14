@@ -160,7 +160,8 @@ Mirror options (Kopia fetch + Agent publishing + SourceLens git clone; env fallb
   --pull-retries COUNT             Docker pull attempts (default: 2)
 
 Output options:
-  --log-file FILE                  Append runtime logs to FILE; normal output remains on stderr
+  --log-file FILE                  Write complete stdout/stderr to FILE with timestamps
+                                     (default: build/logs/dev-<command>-<time>-<pid>.log)
   --verbose                        Enable debug logs
   --print-config                   Print effective non-secret configuration and exit
   -h, --help                       Show this help
@@ -762,7 +763,7 @@ prepare_sourcelens_dev() {
 	SOURCELENS_CONSOLE_PORT="$(read_env_value_or SOURCELENS_CONSOLE_PORT 11445 "${ROOT}/.env")"
 	SOURCELENS_NGINX_HTTPS_PORT="${SOURCELENS_CONSOLE_PORT}"
 	log "Preparing SourceLens ${mode} integration (force_build=${force})"
-	"${ROOT}/dev/sourcelens.sh" "${args[@]}"
+	HFL_PARENT_SESSION=1 "${ROOT}/dev/sourcelens.sh" "${args[@]}"
 }
 
 stop_sourcelens_dev() {
@@ -811,7 +812,7 @@ publish_agent() {
 	[[ -n "${OPT_GO_PROXY}" ]] && args+=(--go-proxy "${OPT_GO_PROXY}")
 	[[ -n "${OPT_GO_SUMDB}" ]] && args+=(--go-sumdb "${OPT_GO_SUMDB}")
 	log "Publishing Agent packages (bundle=all, ubuntu2404-arch=${UBUNTU2404_ARCH}, force_fetch=${force})"
-	"${ROOT}/tools/agent/publish.sh" "${args[@]}"
+	HFL_PARENT_SESSION=1 "${ROOT}/tools/agent/publish.sh" "${args[@]}"
 	cache_update agent-publish "${fingerprint}"
 }
 
@@ -854,12 +855,38 @@ read_env_value_or() {
 	fi
 }
 
+print_dev_target() {
+	local edition="Community" branch commit source display
+	[[ ${#EXTENSION_SOURCES[@]} -eq 0 ]] || edition="Enterprise"
+	branch="$(git -C "${ROOT}" branch --show-current 2>/dev/null || true)"
+	commit="$(git -C "${ROOT}" rev-parse --short=12 HEAD 2>/dev/null || true)"
+	hfl_print_section "Target"
+	hfl_print_value "Edition" "${edition}"
+	hfl_print_value "OSS source" "${ROOT}"
+	hfl_print_value "OSS revision" "${branch:-detached} (${commit:-unknown})"
+	if [[ ${#EXTENSION_SOURCES[@]} -eq 0 ]]; then
+		hfl_print_value "Extensions" "none"
+	else
+		for source in "${EXTENSION_SOURCES[@]}"; do
+			if [[ "${source}" == http://* || "${source}" == https://* ]]; then
+				display="remote Git source configured"
+			else
+				display="${source}"
+			fi
+			hfl_print_value "Extension" "${display}"
+		done
+	fi
+	hfl_print_value "SourceLens" "$([[ "${WITH_SOURCELENS}" -eq 1 ]] && printf '%s' "${SOURCELENS_GIT_REF}" || printf 'disabled')"
+	hfl_print_value "Platform" "$(uname -s | tr '[:upper:]' '[:lower:]')/$(uname -m)"
+	hfl_print_value "Log file" "${LOG_FILE#${ROOT}/}"
+}
+
 print_urls() {
 	local env_file="${ROOT}/.env"
 	local sl_env="${ROOT}/data/sourcelens/config/.env"
 	local seed seed_email seed_pass seed_org sourcelens_mode sourcelens_console_port
 	local website_bind website_port tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
-	local pg_user pg_pass pg_db frontend_url lens_base lens_gw lens_email lens_pass
+	local pg_user pg_pass pg_db frontend_url lens_base lens_gw lens_email lens_pass insight_access
 	local sl_user sl_email sl_pass
 
 	seed="$(read_env_value_or SEED_INITIAL_DATA 1 "${env_file}")"
@@ -887,40 +914,58 @@ print_urls() {
 	fi
 	lens_email="$(read_env_value_or LENS_BRIDGE_EMAIL admin@example.com "${env_file}")"
 	lens_pass="$(read_env_value_or LENS_BRIDGE_PASSWORD adminpassword "${env_file}")"
+	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
+		insight_access="https://localhost:${sourcelens_console_port}/  (${sourcelens_console_bind})"
+	elif [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "external" ]]; then
+		insight_access="${lens_base} (external)"
+	else
+		insight_access="not started"
+	fi
 
 	cat <<EOF
 
-======================================================================
-  Dev stack ready
-======================================================================
+================================================================
+Development stack is ready
+================================================================
 
-HyperFileLens
+Access
   Website          https://localhost:${website_port}/en/  (${website_bind})
   Tenant           https://localhost:${tenant_port}/  (${tenant_bind})
   Platform Ops     https://localhost:${admin_port}/  (${admin_bind})
   Django Admin     https://localhost:${admin_port}/admin/
+  Insight Console  ${insight_access}
   API / Swagger    https://localhost:${tenant_port}/swagger
 EOF
 
-	cat <<EOF
-
-  Login (tenant)   ${seed_email} / ${seed_pass}
-  Organization     ${seed_org}
-EOF
-
 	if [[ "${seed}" == "1" ]]; then
-		echo "  Seeding          enabled (worker creates admin on first startup)"
+		cat <<EOF
+
+Development credentials
+  HyperFileLens
+    Email          ${seed_email}
+    Password       ${seed_pass}
+    Applies to     Tenant, Platform Ops and Django Admin
+    Organization   ${seed_org}
+    Seeding        enabled (worker creates admin on first startup)
+EOF
 	else
-		echo "  Seeding          disabled (SEED_INITIAL_DATA=${seed})"
+		cat <<EOF
+
+Development credentials
+  HyperFileLens    no seeded account (SEED_INITIAL_DATA=${seed})
+EOF
 	fi
 
 	cat <<EOF
-  Postgres         ${pg_user}/${pg_pass} @ postgres:5432 / ${pg_db} (private)
-  Config           ${env_file#${ROOT}/}
 
-Agent / Gateway bootstrap
+Development services
+  PostgreSQL       postgres:5432/${pg_db} (private)
+  Database user    ${pg_user}
+  Database pass    ${pg_pass}
   Agent releases   https://localhost:${tenant_port}/media/agent-releases/
-  LensNode bundle  https://localhost:${tenant_port}/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz
+  AI engine bundle https://localhost:${tenant_port}/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz
+  Config           ${env_file#${ROOT}/}
+  Log file         ${LOG_FILE#${ROOT}/}
 EOF
 
 	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
@@ -936,13 +981,15 @@ EOF
 
 		cat <<EOF
 
-SourceLens
-  Console          https://localhost:${sourcelens_console_port}/  (${sourcelens_console_bind})
-  Network          hyperfilelens-bridge (private)
-  Gateway API      https://localhost:${tenant_port}/sourcelens/api/
-  Gateway WSS      wss://localhost:${tenant_port}/sourcelens/ws/lens/lensnodes/
-  Login            ${sl_user} / ${sl_pass}  (email: ${sl_email})
+  Insight Console
+    Username       ${sl_user}
+    Email          ${sl_email}
+    Password       ${sl_pass}
 
+Service endpoints
+  Insight API      https://localhost:${tenant_port}/sourcelens/api/
+  Insight WSS      wss://localhost:${tenant_port}/sourcelens/ws/lens/lensnodes/
+  Insight network  hyperfilelens-bridge (private)
   HFL bridge       ${lens_base}
   Gateway URL      ${lens_gw}
   Bridge account   ${lens_email} / ${lens_pass}  (LENS_BRIDGE_* in .env)
@@ -953,9 +1000,9 @@ EOF
 	elif [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "external" ]]; then
 		cat <<EOF
 
-SourceLens
-  Mode             external (not managed by stack.sh)
-  Base URL         ${lens_base}
+Service endpoints
+  Insight mode     external (not managed by stack.sh)
+  Insight base URL ${lens_base}
   Gateway URL      ${lens_gw}
   Bridge account   ${lens_email} / ${lens_pass}  (LENS_BRIDGE_* in .env)
 EOF
@@ -963,14 +1010,20 @@ EOF
 
 	cat <<EOF
 
+Useful commands
+  Status           ./dev/stack.sh status
+  Doctor           ./dev/stack.sh doctor
+  Smoke test       ./dev/stack.sh smoke
+  Restart          ./dev/stack.sh restart
+  Force rebuild    ./dev/stack.sh restart --force
+  Stop HFL         ./dev/stack.sh down --hfl-only
+  Stop all         ./dev/stack.sh down
+
 Notes
-  - HFL backend and frontend source changes reload automatically; no stack restart is required
-  - Website source changes are rebuilt by ./dev/stack.sh restart and served as static files
-  - SourceLens always runs from images; its source cache is never mounted into a container
-  - Self-signed TLS: accept the browser warning for localhost
+  - Backend and frontend source changes reload automatically
+  - Website source changes are rebuilt by ./dev/stack.sh restart
+  - Accept the self-signed TLS warning for localhost
   - Change default passwords after first login
-  - Stop stack: ./dev/stack.sh down
-======================================================================
 EOF
 }
 
@@ -1127,7 +1180,8 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		HFL_WSS_URL="${wss_url}" \
 		HFL_INSECURE_TLS=1 \
 		HFL_FORCE_SIDECAR_INSTALL=1 \
-		"${helper}" gateway-install --yes
+		HFL_NO_BANNER=1 \
+		"${helper}" gateway-install --yes --no-banner
 	command_status=$?
 	set -e
 	if [[ "${command_status}" -ne 0 ]]; then
@@ -1208,6 +1262,7 @@ run_dev_migration_gate() {
 }
 
 cmd_up() {
+	hfl_print_section "[1/8] Checking development environment"
 	apply_mirror_env_defaults
 	require_dev_build_tools
 	ensure_env_file
@@ -1216,14 +1271,30 @@ cmd_up() {
 	ensure_runtime_images
 	verify_amd64_runtime
 	ensure_bridge_network
+	hfl_log_ok "Development tools, runtime images, and shared network are ready"
+	hfl_print_section "[2/8] Preparing insight services"
 	prepare_sourcelens_dev 0
+	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
+		hfl_log_ok "Insight services are prepared"
+	else
+		hfl_log_skip "Insight services are disabled for this run"
+	fi
+	hfl_print_section "[3/8] Preparing HyperFileLens artifacts and images"
 	prepare_dev 0
+	hfl_log_ok "HyperFileLens development artifacts and images are ready"
+	hfl_print_section "[4/8] Applying database migrations"
 	run_dev_migration_gate
+	hfl_log_ok "Database migrations and singleton initialization completed"
+	hfl_print_section "[5/8] Starting development services"
 	log "Starting hot-reload HFL stack from explicitly prepared images"
 	compose up -d --no-build --pull never --remove-orphans
 	refresh_website_web_mount
+	hfl_log_ok "Hot-reload HyperFileLens services started"
+	hfl_print_section "[6/8] Applying identity and email configuration"
 	sync_optional_identity_settings
+	hfl_print_section "[7/8] Preparing Platform Data Gateway"
 	ensure_local_platform_gateway_dev
+	hfl_print_section "[8/8] Development environment summary"
 	print_urls
 }
 
@@ -1239,6 +1310,7 @@ cmd_down() {
 cmd_restart() {
 	local force=$1
 
+	hfl_print_section "[1/8] Checking development environment"
 	apply_mirror_env_defaults
 	require_dev_build_tools
 	ensure_env_file
@@ -1247,9 +1319,21 @@ cmd_restart() {
 	ensure_runtime_images
 	verify_amd64_runtime
 	ensure_bridge_network
+	hfl_log_ok "Development tools, runtime images, and shared network are ready"
+	hfl_print_section "[2/8] Preparing insight services"
 	prepare_sourcelens_dev "${force}"
+	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
+		hfl_log_ok "Insight services are prepared"
+	else
+		hfl_log_skip "Insight services are disabled for this run"
+	fi
+	hfl_print_section "[3/8] Preparing HyperFileLens artifacts and images"
 	prepare_dev "${force}"
+	hfl_log_ok "HyperFileLens development artifacts and images are ready"
+	hfl_print_section "[4/8] Applying database migrations"
 	run_dev_migration_gate
+	hfl_log_ok "Database migrations and singleton initialization completed"
+	hfl_print_section "[5/8] Restarting development services"
 
 	if [[ "${force}" -eq 1 ]]; then
 		log "Force restart: recreating services from freshly rebuilt images"
@@ -1259,8 +1343,12 @@ cmd_restart() {
 		compose up -d --no-build --pull never --remove-orphans
 		refresh_website_web_mount
 	fi
+	hfl_log_ok "HyperFileLens development services restarted"
+	hfl_print_section "[6/8] Applying identity and email configuration"
 	sync_optional_identity_settings
+	hfl_print_section "[7/8] Preparing Platform Data Gateway"
 	ensure_local_platform_gateway_dev
+	hfl_print_section "[8/8] Development environment summary"
 	print_urls
 }
 
@@ -1597,11 +1685,20 @@ main() {
 		EXTENSION_SOURCES_CSV=""
 	fi
 	CMD="${cmd}"
-	hfl_logging_configure dev "${LOG_FILE}" "${VERBOSE}"
+	if [[ -z "${LOG_FILE}" ]]; then
+		LOG_FILE="${ROOT}/build/logs/dev-${cmd:-command}-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
+	fi
 	if [[ "${PRINT_CONFIG}" -eq 1 ]]; then
 		print_config
 		return 0
 	fi
+	HFL_LOG_TERMINAL_TIMESTAMPS=0
+	HFL_LOG_SESSION_MESSAGES=0
+	HFL_LOG_CAPTURE_STDOUT=1
+	export HFL_LOG_TERMINAL_TIMESTAMPS HFL_LOG_SESSION_MESSAGES \
+		HFL_LOG_CAPTURE_STDOUT HFL_LOG_FILE="${LOG_FILE}"
+	hfl_logging_configure dev "${LOG_FILE}" "${VERBOSE}"
+	LOG_FILE="${HFL_LOG_FILE}"
 	hfl_logging_start
 
 	[[ -n "${cmd}" ]] || {
@@ -1626,6 +1723,19 @@ main() {
 		die "--yes is only valid with clean" 2
 	fi
 
+	local title="HyperFileLens Development Stack"
+	case "${cmd}" in
+	down) title="HyperFileLens Development Stack Shutdown" ;;
+	status) title="HyperFileLens Development Stack Status" ;;
+	doctor) title="HyperFileLens Development Environment Doctor" ;;
+	smoke) title="HyperFileLens Development Smoke Test" ;;
+	clean) title="HyperFileLens Development Cleanup" ;;
+	esac
+	hfl_print_banner "${title}"
+	if [[ "${cmd}" == "up" || "${cmd}" == "restart" ]]; then
+		print_dev_target
+	fi
+
 	case "${cmd}" in
 	up) cmd_up ;;
 	down) cmd_down ;;
@@ -1638,7 +1748,6 @@ main() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-	hfl_logging_configure dev
 	trap 'rc=$?; hfl_logging_finish "${rc}"' EXIT
 	trap 'exit 130' INT TERM
 	main "$@"
