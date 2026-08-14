@@ -437,6 +437,7 @@ jobs:
           ./tools/quality/test-agent-gateway-uninstall.sh
           ./tools/quality/test-installer-image-refresh.sh
           ./tools/quality/test-language-pack-runtime-index.sh
+          ./tools/quality/test-bundled-language-pack-lifecycle.sh
           ./tools/quality/test-docker-image-digest-alias.sh
           ./tools/quality/test-docker-pull-retry.sh
           ./tools/quality/test-gh-release-upload-retry.sh
@@ -508,7 +509,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gettext
           npm ci
+          ../../language-packs/tooling/build-all.sh \
+            --version "${{ needs.prepare.outputs.version }}"
+          cd ../..
+          HFL_EXTENSIONS= \
+            HFL_LANG_PACKS_DIR="$PWD/build/language-packs/staging" \
+            HFL_PRODUCT_VERSION="${{ needs.prepare.outputs.version }}" \
+            uv run python src/backend/manage.py test \
+              apps.iam.tests.test_verification_email.VerificationEmailTests.test_chinese_catalog_translates_verification_email \
+              apps.iam.tests.test_verification_email.VerificationEmailTests.test_chinese_accept_language_translates_api_error
+          cd src/frontend
           npm run lint
           # Community tests define the Host contract and always run with an
           # empty Extension socket, including for Enterprise releases.
@@ -1040,6 +1053,43 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" _internal-runtime-images.tar --clobber
 
+  build-language-packs:
+    name: Build · Language packs
+    if: ${{ needs.prepare.outputs.build_required == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: [prepare, quality]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+      - name: Install language-pack build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gettext
+          npm ci --prefix src/frontend
+      - name: Build version-matched language packs
+        run: |
+          ./language-packs/tooling/build-all.sh \
+            --version "${{ needs.prepare.outputs.version }}"
+          mkdir -p build/language-packs-bundle/payload/language-packs
+          cp build/language-packs/dist/*.tar.gz \
+            build/language-packs-bundle/payload/language-packs/
+          tar -cf _internal-language-packs.tar \
+            -C build/language-packs-bundle payload
+      - name: Upload language-pack bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" _internal-language-packs.tar --clobber
+
   assemble-release:
     name: Assemble · Release
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
@@ -1053,6 +1103,7 @@ jobs:
       - export-hfl-images
       - export-sourcelens-bundle
       - export-runtime-images
+      - build-language-packs
     permissions:
       contents: write
     steps:

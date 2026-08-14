@@ -11,6 +11,28 @@ grep -F './tools/quality/test-offline-docker-package-plan.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-language-pack-runtime-index.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F './tools/quality/test-bundled-language-pack-lifecycle.sh' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F 'language-packs/tooling/build-all.sh' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F 'test_chinese_accept_language_translates_api_error' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+python3 - "${ROOT}/dev/stack.sh" <<'PY'
+import pathlib
+import re
+import sys
+
+stack = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r"(?ms)^prepare_dev_language_packs\(\) \{(?P<body>.*?)^\}", stack)
+if match is None:
+    raise SystemExit("development language-pack preparation function is missing")
+body = match.group("body")
+lock = body.find("acquire_installation_lock")
+build = body.find('"${LANGUAGE_PACK_BUILDER_IMAGE}" --version')
+sync = body.find("sync_bundled_language_packs")
+if lock < 0 or build < 0 or sync < 0 or not lock < build < sync:
+    raise SystemExit("development language-pack build and synchronization must hold one lock")
+PY
 grep -F './tools/quality/test-sourcelens-git-mirror.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-sourcelens-submodule-recovery.sh' \
@@ -963,6 +985,8 @@ grep -F 'minimal installer matrix mismatch' "${ROOT}/release/ci/assemble-release
 grep -F 'minimal installer exceeds 3.5 MiB' "${ROOT}/release/ci/assemble-release.sh" >/dev/null
 grep -F 'minimal installer checksum mismatch' "${ROOT}/release/ci/verify-release.sh" >/dev/null
 grep -F 'minimal installer exceeds 3.5 MiB' "${ROOT}/release/ci/verify-release.sh" >/dev/null
+grep -F 'bundled language-pack checksum mismatch' "${ROOT}/release/ci/verify-release.sh" >/dev/null
+grep -F 'verify_installed_language_packs' "${ROOT}/release/ci/verify-release.sh" >/dev/null
 
 agent_bootstrap_linux="${ROOT}/deploy/bootstrap/agent-bootstrap-linux.sh"
 agent_bootstrap_macos="${ROOT}/deploy/bootstrap/agent-bootstrap-macos.sh"
@@ -1288,6 +1312,7 @@ for executable in \
 	"${ROOT}/tools/quality/test-release-freshness.sh" \
 	"${ROOT}/tools/quality/test-enterprise-release-flow.sh" \
 	"${ROOT}/tools/quality/test-enterprise-promotion-transfer.sh" \
+	"${ROOT}/tools/quality/test-bundled-language-pack-lifecycle.sh" \
 	"${ROOT}/tools/quality/test-language-pack-runtime-index.sh" \
 	"${ROOT}/tools/quality/test-upgrade-backup-retention.sh" \
 	"${ROOT}/tools/quality/test-redis-rdb-preflight.sh" \

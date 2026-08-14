@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "default_locale": "en",
+  "packs": [
+    {
+      "id": "zh-hans",
+      "path": "packs/zh-hans",
+      "status": "bundled"
+    }
+  ]
+}

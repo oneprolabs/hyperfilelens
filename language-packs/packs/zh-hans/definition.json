@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "id": "zh-hans",
+  "display_name": "简体中文",
+  "frontend_code": "zh-hans",
+  "backend_code": "zh-hans",
+  "aliases": ["zh", "zh-cn"],
+  "component_locale": "zh-cn"
+}

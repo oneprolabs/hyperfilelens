@@ -60,7 +60,7 @@ Commands:
   platform-gateway Ensure or verify the installer-managed platform Gateway
   upgrade       In-place upgrade from another release package directory or .tar.gz
   uninstall     Stop and remove Docker containers and app images (does not remove the install dir; see uninstall options)
-  lang-pack     Install, list, or remove optional runtime language packs
+  lang-pack     Install, list, or uninstall optional runtime language packs
 
 Options:
   global:
@@ -103,9 +103,11 @@ Options:
     --purge-all             Remove both data/ and .env
 
   lang-pack:
+    install --id PACK_ID   Install a language pack bundled with this release
     install --file PATH     Validate and atomically install a language-pack .tar.gz
     list                    List installed language packs
-    remove PACK_ID          Remove an installed language pack
+    uninstall PACK_ID       Uninstall a pack and keep it disabled across upgrades
+    remove PACK_ID          Compatibility alias for uninstall
 
   platform-gateway:
     ensure                  Deploy or repair the local platform Gateway when enabled
@@ -130,8 +132,9 @@ Examples:
   sudo ./install.sh uninstall
   sudo ./install.sh uninstall --purge-all
   sudo ./install.sh lang-pack install --file /path/to/hyperfilelens-lang-fr-0.1.0.tar.gz
+  sudo ./install.sh lang-pack install --id zh-hans
   sudo ./install.sh lang-pack list
-  sudo ./install.sh lang-pack remove fr
+  sudo ./install.sh lang-pack uninstall zh-hans
   sudo rm -rf ${INSTALL_DIR}   # optional: remove install dir after uninstall (not done by install.sh)
 USAGE
 }
@@ -1489,6 +1492,17 @@ read_version() {
 	read_version_from_dir "${ROOT}"
 }
 
+language_pack_data_root() {
+	printf '%s\n' "${ROOT}/data/lang-packs"
+}
+
+language_pack_version_root() {
+	local version=$1
+	[[ "${version}" =~ ^([0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9][A-Za-z0-9.-]*)?|main-[0-9a-f]{7})$ ]] \
+		|| die "invalid language-pack application version: ${version}"
+	printf '%s/versions/%s\n' "$(language_pack_data_root)" "${version}"
+}
+
 random_hex() {
 	if command -v openssl >/dev/null 2>&1; then
 		openssl rand -hex 32
@@ -1498,19 +1512,28 @@ random_hex() {
 }
 
 ensure_data_dirs() {
+	local language_base language_root app_version
+	language_base="$(language_pack_data_root)"
+	app_version="$(read_language_pack_app_version)"
+	language_root="$(language_pack_version_root "${app_version}")"
+	# Validate and normalize language-pack state before touching catalogs. A
+	# damaged state file must never be mistaken for an enabled package.
+	update_language_pack_state initialize "" "${language_base}" \
+		|| die "cannot prepare data directories while language-pack state is invalid"
 	mkdir -p \
 		"${ROOT}/data/postgresql" \
 		"${ROOT}/data/redis" \
 		"${ROOT}/data/logs" \
-		"${ROOT}/data/lang-packs" \
+		"${language_root}" \
 		"${ROOT}/data/media/agent-releases" \
 		"${ROOT}/data/media/enroll-bootstrap" \
 		"${ROOT}/data/media/gateway-bootstrap" \
 		"${ROOT}/data/media/snapshot-downloads" \
 		"${ROOT}/data/staticfiles" \
 		"${ROOT}/data/sourcelens/config"
-	chmod 0755 "${ROOT}/data/lang-packs"
-	refresh_language_pack_index "${ROOT}/data/lang-packs"
+	chmod 0755 "${language_base}" "${language_base}/versions" "${language_root}"
+	refresh_language_pack_index "${language_root}"
+	migrate_legacy_flat_language_packs "${app_version}" "${language_base}" "${language_root}"
 }
 
 sync_runtime_media() {
@@ -3813,6 +3836,7 @@ cmd_install() {
 	apply_runtime_configuration
 	ensure_tls_certs
 	ensure_data_dirs
+	sync_bundled_language_packs
 	sync_runtime_media
 
 	step "[3/6] Loading container images ..."
@@ -3903,6 +3927,7 @@ cmd_start() {
 	[[ -f "${ROOT}/.env" ]] || die "missing .env; run install first"
 	ensure_bridge_network
 	ensure_data_dirs
+	sync_bundled_language_packs
 	sync_runtime_media
 	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] && sourcelens_installed; then
 		step "Starting bundled SourceLens ..."
@@ -4048,11 +4073,98 @@ else:
 PY
 }
 
+update_language_pack_state() {
+	local action=$1 pack_id=${2:-} language_base=${3:-$(language_pack_data_root)}
+	python3 - "${language_base}/.state.json" "${action}" "${pack_id}" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import re
+import sys
+import tempfile
+
+
+def invalid(message: str) -> None:
+    print(f"invalid language-pack state: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+state_path = pathlib.Path(sys.argv[1])
+action = sys.argv[2]
+pack_id = sys.argv[3]
+if pack_id and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", pack_id) is None:
+    raise SystemExit(f"invalid language-pack id: {pack_id}")
+if action in {"is-disabled", "disable", "enable"} and not pack_id:
+    invalid(f"action {action!r} requires a package id")
+
+try:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    state = {}
+except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    invalid(str(exc))
+
+if not isinstance(state, dict):
+    invalid("top-level value must be an object")
+schema = state.get("schema")
+if schema is not None and schema not in {1, 2}:
+    invalid("schema must be 1 or 2")
+disabled = state.get("disabled_packs", [])
+legacy_disabled = state.get("disabled_bundled", [])
+for field, value in (
+    ("disabled_packs", disabled),
+    ("disabled_bundled", legacy_disabled),
+):
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        invalid(f"{field} must be an array of package ids")
+disabled_set = {*disabled, *legacy_disabled}
+if any(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", item) is None for item in disabled_set):
+    invalid("disabled package ids must use lowercase language-pack id syntax")
+
+if action == "is-disabled":
+    raise SystemExit(0 if pack_id in disabled_set else 1)
+if action == "disable":
+    disabled_set.add(pack_id)
+elif action == "enable":
+    disabled_set.discard(pack_id)
+elif action != "initialize":
+    invalid(f"unknown action: {action}")
+
+payload = {
+    "schema": 2,
+    "disabled_packs": sorted(disabled_set),
+}
+state_path.parent.mkdir(parents=True, exist_ok=True)
+with tempfile.NamedTemporaryFile(
+    mode="w",
+    encoding="utf-8",
+    dir=state_path.parent,
+    prefix=".state-",
+    suffix=".json",
+    delete=False,
+) as stream:
+    json.dump(payload, stream, ensure_ascii=True, indent=2)
+    stream.write("\n")
+    stream.flush()
+    os.fsync(stream.fileno())
+    temporary_path = pathlib.Path(stream.name)
+temporary_path.chmod(0o644)
+os.replace(temporary_path, state_path)
+directory_fd = os.open(state_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+try:
+    os.fsync(directory_fd)
+finally:
+    os.close(directory_fd)
+PY
+}
+
 validate_and_extract_language_pack() {
 	local archive=$1 destination=$2 app_version=$3
 	python3 - "${archive}" "${destination}" "${app_version}" <<'PY'
 from __future__ import annotations
 
+import inspect
 import json
 import pathlib
 import re
@@ -4069,6 +4181,7 @@ language_code_pattern = re.compile(
     re.IGNORECASE,
 )
 semver_pattern = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?$")
+main_version_pattern = re.compile(r"^main-[0-9a-f]{7}$")
 
 
 def fail(message: str) -> None:
@@ -4094,6 +4207,8 @@ def parse_version(value: str) -> tuple[int, int, int]:
 
 def check_compatibility(specifier: str, current_version: str) -> None:
     """Check a comma-separated set of simple semantic-version constraints."""
+    if specifier == f"=={current_version}":
+        return
     current = parse_version(current_version)
     operators = {
         ">=": lambda left, right: left >= right,
@@ -4147,8 +4262,13 @@ with tarfile.open(archive, mode="r:*") as package:
         total_size += member.size
     if total_size > 100 * 1024 * 1024:
         fail("archive expands beyond the 100 MiB limit")
+    extract_options = (
+        {"filter": "data"}
+        if "filter" in inspect.signature(package.extract).parameters
+        else {}
+    )
     for member in members:
-        package.extract(member, destination)
+        package.extract(member, destination, **extract_options)
 
 manifest_candidates = sorted(destination.glob("manifest.json"))
 manifest_candidates.extend(sorted(destination.glob("*/manifest.json")))
@@ -4166,14 +4286,17 @@ except (OSError, json.JSONDecodeError) as exc:
     fail(f"cannot read manifest.json: {exc}")
 if not isinstance(manifest, dict):
     fail("manifest.json must contain an object")
-if manifest.get("schema") != 1:
-    fail("'schema' must be 1")
+manifest_schema = manifest.get("schema")
+if manifest_schema not in {1, 2}:
+    fail("'schema' must be 1 or 2")
 
 pack_id = required_string(manifest, "id")
 if pack_id_pattern.fullmatch(pack_id) is None:
     fail("'id' must use lowercase letters, digits, and hyphens")
 required_string(manifest, "display_name")
-parse_version(required_string(manifest, "version"))
+pack_version = required_string(manifest, "version")
+if main_version_pattern.fullmatch(pack_version) is None:
+    parse_version(pack_version)
 compatible_app = required_string(manifest, "compatible_app")
 frontend_code = required_string(manifest, "frontend_code")
 backend_code = required_string(manifest, "backend_code")
@@ -4181,6 +4304,8 @@ if language_code_pattern.fullmatch(frontend_code) is None:
     fail("'frontend_code' is invalid")
 if language_code_pattern.fullmatch(backend_code) is None:
     fail("'backend_code' is invalid")
+if frontend_code != frontend_code.lower() or backend_code != backend_code.lower():
+    fail("'frontend_code' and 'backend_code' must use lowercase language codes")
 if frontend_code == "en" or backend_code == "en":
     fail("optional packs cannot replace the built-in English locale")
 
@@ -4192,6 +4317,10 @@ if not isinstance(aliases, list) or not all(
     for alias in aliases
 ):
     fail("'aliases' must be an array of valid language codes")
+if "en" in aliases:
+    fail("optional packs cannot claim the built-in English locale as an alias")
+if len(set(aliases)) != len(aliases):
+    fail("'aliases' must not contain duplicates")
 
 element_plus_locale = manifest.get("element_plus_locale")
 if element_plus_locale is not None and (
@@ -4200,7 +4329,17 @@ if element_plus_locale is not None and (
 ):
     fail("'element_plus_locale' is invalid")
 
+component_locale = manifest.get("component_locale")
+if component_locale is not None and (
+    not isinstance(component_locale, str)
+    or re.fullmatch(r"[A-Za-z0-9_-]+", component_locale) is None
+):
+    fail("'component_locale' is invalid")
+if manifest_schema == 2 and component_locale is None:
+    fail("'component_locale' is required for schema 2")
+
 frontend_messages = pack_root / "frontend" / "messages.json"
+component_messages = pack_root / "frontend" / "element-plus.json"
 backend_messages = (
     pack_root
     / "backend"
@@ -4217,6 +4356,15 @@ except (OSError, json.JSONDecodeError) as exc:
     fail(f"cannot read frontend/messages.json: {exc}")
 if not isinstance(message_catalog, dict):
     fail("frontend/messages.json must contain an object")
+if manifest_schema == 2:
+    if not component_messages.is_file():
+        fail("frontend/element-plus.json is required for schema 2")
+    try:
+        component_catalog = json.loads(component_messages.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"cannot read frontend/element-plus.json: {exc}")
+    if not isinstance(component_catalog, dict):
+        fail("frontend/element-plus.json must contain an object")
 if not backend_messages.is_file() or backend_messages.stat().st_size == 0:
     fail(f"compiled backend catalog is required: {backend_messages.relative_to(pack_root)}")
 
@@ -4225,6 +4373,8 @@ allowed_files = {
     pathlib.Path("frontend/messages.json"),
     backend_messages.relative_to(pack_root),
 }
+if manifest_schema == 2:
+    allowed_files.add(pathlib.Path("frontend/element-plus.json"))
 installed_files = {
     path.relative_to(pack_root) for path in pack_root.rglob("*") if path.is_file()
 }
@@ -4235,9 +4385,114 @@ if unexpected_files:
         + ", ".join(str(path) for path in unexpected_files)
     )
 
+if manifest_schema == 2 and (
+    pack_version != app_version or compatible_app != f"=={app_version}"
+):
+    fail(
+        "schema 2 requires 'version' and 'compatible_app' to exactly match "
+        f"application {app_version}"
+    )
 check_compatibility(compatible_app, app_version)
 print(pack_id)
 print(pack_root)
+PY
+}
+
+validate_language_pack_collection() {
+	local language_root=$1 candidate_root=$2 candidate_id=$3
+	python3 - "${language_root}" "${candidate_root}" "${candidate_id}" <<'PY'
+from __future__ import annotations
+
+import json
+import pathlib
+import re
+import sys
+from typing import Any
+
+language_root = pathlib.Path(sys.argv[1]).resolve()
+candidate_root = pathlib.Path(sys.argv[2]).resolve()
+candidate_id = sys.argv[3]
+pack_id_pattern = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+language_code_pattern = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$")
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"invalid language-pack collection: {message}")
+
+
+def required_string(manifest: dict[str, Any], field: str, pack_id: str) -> str:
+    value = manifest.get(field)
+    if not isinstance(value, str) or not value.strip():
+        fail(f"pack {pack_id!r} field {field!r} must be a non-empty string")
+    return value.strip()
+
+
+def read_identity(pack_root: pathlib.Path, expected_id: str) -> tuple[str, str, list[str]]:
+    manifest_path = pack_root / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        fail(f"cannot read {manifest_path}: {exc}")
+    if not isinstance(manifest, dict):
+        fail(f"{manifest_path} must contain an object")
+    pack_id = required_string(manifest, "id", expected_id)
+    if pack_id != expected_id or pack_id_pattern.fullmatch(pack_id) is None:
+        fail(f"pack id {pack_id!r} does not match directory {expected_id!r}")
+    frontend_code = required_string(manifest, "frontend_code", pack_id)
+    backend_code = required_string(manifest, "backend_code", pack_id)
+    for field, code in (("frontend_code", frontend_code), ("backend_code", backend_code)):
+        if code != code.lower() or language_code_pattern.fullmatch(code) is None:
+            fail(f"pack {pack_id!r} has invalid {field} {code!r}")
+    if frontend_code == "en" or backend_code == "en":
+        fail(f"pack {pack_id!r} cannot replace the built-in English locale")
+    aliases = manifest.get("aliases", [])
+    if not isinstance(aliases, list) or not all(
+        isinstance(alias, str)
+        and alias == alias.lower()
+        and language_code_pattern.fullmatch(alias)
+        for alias in aliases
+    ):
+        fail(f"pack {pack_id!r} has invalid aliases")
+    if "en" in aliases:
+        fail(f"pack {pack_id!r} cannot claim the built-in English locale as an alias")
+    return frontend_code, backend_code, aliases
+
+
+pack_roots: list[tuple[str, pathlib.Path]] = []
+if language_root.is_dir():
+    for path in sorted(language_root.iterdir()):
+        if not path.is_dir() or path.name.startswith(".") or path.name == candidate_id:
+            continue
+        pack_roots.append((path.name, path))
+pack_roots.append((candidate_id, candidate_root))
+
+frontend_owners: dict[str, str] = {}
+backend_owners: dict[str, str] = {}
+language_owners: dict[str, tuple[str, str]] = {}
+for pack_id, pack_root in pack_roots:
+    frontend_code, backend_code, aliases = read_identity(pack_root, pack_id)
+    previous = frontend_owners.get(frontend_code)
+    if previous is not None:
+        fail(
+            f"packs {previous!r} and {pack_id!r} share frontend code "
+            f"{frontend_code!r}"
+        )
+    frontend_owners[frontend_code] = pack_id
+    previous = backend_owners.get(backend_code)
+    if previous is not None:
+        fail(
+            f"packs {previous!r} and {pack_id!r} share backend code "
+            f"{backend_code!r}"
+        )
+    backend_owners[backend_code] = pack_id
+    for language_code in {frontend_code, backend_code, *aliases}:
+        previous_identity = language_owners.get(language_code)
+        if previous_identity is not None and previous_identity[1] != backend_code:
+            fail(
+                f"language code {language_code!r} maps to both "
+                f"{previous_identity[0]!r} and {pack_id!r}"
+            )
+        language_owners[language_code] = (pack_id, backend_code)
 PY
 }
 
@@ -4261,17 +4516,22 @@ for pack_dir in sorted(root.iterdir()):
     manifest_path = pack_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     entry = {
+        "schema": manifest["schema"],
         "id": manifest["id"],
         "display_name": manifest["display_name"],
         "version": manifest["version"],
         "frontend_code": manifest["frontend_code"],
         "backend_code": manifest["backend_code"],
     }
+    if manifest.get("component_locale"):
+        entry["component_locale"] = manifest["component_locale"]
     if manifest.get("element_plus_locale"):
         entry["element_plus_locale"] = manifest["element_plus_locale"]
+    if manifest.get("aliases"):
+        entry["aliases"] = manifest["aliases"]
     packs.append(entry)
 
-payload = {"schema": 1, "packs": packs}
+payload = {"schema": 1, "app_version": root.name, "packs": packs}
 payload_text = json.dumps(payload, ensure_ascii=True, indent=2) + "\n"
 index_path = root / "installed.json"
 try:
@@ -4323,31 +4583,62 @@ restart_language_pack_services() {
 	fi
 }
 
-cmd_language_pack_install() {
-	local archive="" temp_dir language_root app_version pack_id pack_source
-	local validation_output
-	local incoming target backup
-	local -a validation_result=()
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--file)
-			shift
-			archive="${1:-}"
-			[[ -n "${archive}" ]] || die "--file requires a package path"
-			;;
-		*) die "unknown lang-pack install option: $1" 2 ;;
-		esac
-		shift
+recover_language_pack_activation() {
+	local language_root=$1 pack_id=$2 target candidate
+	local -a backups=() incoming=()
+	target="${language_root}/${pack_id}"
+	mapfile -t backups < <(
+		find "${language_root}" -mindepth 1 -maxdepth 1 -type d \
+			-name ".backup-${pack_id}-*" -print | sort
+	)
+	mapfile -t incoming < <(
+		find "${language_root}" -mindepth 1 -maxdepth 1 -type d \
+			-name ".incoming-${pack_id}-*" -print | sort
+	)
+	if [[ ! -e "${target}" && "${#backups[@]}" -gt 0 ]]; then
+		candidate="${backups[0]}"
+		safe_assert_path_under_dir "${candidate}" "${language_root}" "language-pack backup"
+		mv "${candidate}" "${target}"
+		backups=("${backups[@]:1}")
+		log "Recovered interrupted language-pack activation for ${pack_id}"
+	fi
+	for candidate in "${backups[@]}" "${incoming[@]}"; do
+		[[ -n "${candidate}" && -e "${candidate}" ]] || continue
+		safe_assert_path_under_dir "${candidate}" "${language_root}" "language-pack staging path"
+		safe_rm_dir "${candidate}"
 	done
-	[[ -n "${archive}" ]] || die "lang-pack install requires --file <package.tar.gz>"
+}
+
+recover_interrupted_language_pack_activations() {
+	local language_root=$1 residue name pack_id
+	local -A pack_ids=()
+	local -a residues=()
+	mapfile -t residues < <(
+		find "${language_root}" -mindepth 1 -maxdepth 1 \
+			\( -name '.backup-*' -o -name '.incoming-*' \) -print | sort
+	)
+	for residue in "${residues[@]}"; do
+		name="$(basename "${residue}")"
+		if [[ -d "${residue}" && ! -L "${residue}" \
+			&& "${name}" =~ ^\.(backup|incoming)-([a-z0-9]+(-[a-z0-9]+)*)-[0-9]+$ ]]; then
+			pack_ids["${BASH_REMATCH[2]}"]=1
+		else
+			die "invalid interrupted language-pack activation path: ${residue}"
+		fi
+	done
+	for pack_id in "${!pack_ids[@]}"; do
+		recover_language_pack_activation "${language_root}" "${pack_id}"
+	done
+}
+
+activate_language_pack_archive() {
+	local archive=$1 app_version=$2 language_root=${3:-$(language_pack_version_root "$2")}
+	local temp_dir validation_output pack_id pack_source incoming target backup
+	local -a validation_result=()
 	archive="$(realpath "${archive}")"
 	[[ -f "${archive}" ]] || die "language-pack archive not found: ${archive}"
-
-	init_language_pack_root
-	language_root="${ROOT}/data/lang-packs"
 	mkdir -p "${language_root}"
 	temp_dir="$(mktemp -d "${language_root}/.extract-XXXXXX")"
-	app_version="$(read_language_pack_app_version)"
 	if ! validation_output="$(
 		validate_and_extract_language_pack "${archive}" "${temp_dir}" "${app_version}"
 	)"; then
@@ -4359,6 +4650,12 @@ cmd_language_pack_install() {
 		|| die "language-pack validator returned an unexpected result"
 	pack_id="${validation_result[0]}"
 	pack_source="${validation_result[1]}"
+	recover_language_pack_activation "${language_root}" "${pack_id}"
+	if ! validate_language_pack_collection \
+		"${language_root}" "${pack_source}" "${pack_id}"; then
+		safe_rm_dir "${temp_dir}"
+		die "language pack conflicts with the installed language collection"
+	fi
 	incoming="${language_root}/.incoming-${pack_id}-$$"
 	target="${language_root}/${pack_id}"
 	backup="${language_root}/.backup-${pack_id}-$$"
@@ -4376,16 +4673,309 @@ cmd_language_pack_install() {
 	fi
 	safe_rm_dir "${backup}"
 	safe_rm_dir "${temp_dir}"
+	ACTIVATED_LANGUAGE_PACK_ID="${pack_id}"
+}
+
+migrate_legacy_flat_language_packs() {
+	local app_version=$1 language_base=$2 language_root=$3
+	local marker="${language_root}/.legacy-flat-layout-reviewed"
+	local legacy_dir pack_id archive target state_status
+	local -a legacy_dirs=()
+	[[ -f "${marker}" ]] && return 0
+	mapfile -t legacy_dirs < <(
+		find "${language_base}" -mindepth 1 -maxdepth 1 -type d \
+			! -name 'versions' ! -name '.*' -print | sort
+	)
+	for legacy_dir in "${legacy_dirs[@]}"; do
+		pack_id="$(basename "${legacy_dir}")"
+		if [[ ! "${pack_id}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ \
+			|| ! -f "${legacy_dir}/manifest.json" ]]; then
+			warn "Ignoring unrecognized legacy language-pack directory ${legacy_dir}"
+			continue
+		fi
+		state_status=0
+		update_language_pack_state is-disabled "${pack_id}" "${language_base}" \
+			|| state_status=$?
+		if ((state_status == 0)); then
+			log "Legacy language pack ${pack_id} remains disabled"
+			continue
+		fi
+		((state_status == 1)) \
+			|| die "cannot migrate language packs while language-pack state is invalid"
+		target="${language_root}/${pack_id}"
+		[[ ! -d "${target}" ]] || continue
+		archive="$(mktemp "${language_root}/.legacy-${pack_id}-XXXXXX.tar.gz")"
+		if ! tar -C "${legacy_dir}" -czf "${archive}" .; then
+			safe_rm_file "${archive}"
+			warn "Could not stage legacy language pack ${pack_id}; reinstall a version-matched package"
+			continue
+		fi
+		if (
+			activate_language_pack_archive \
+				"${archive}" "${app_version}" "${language_root}"
+		); then
+			log "Migrated legacy language pack ${pack_id} to HyperFileLens ${app_version}"
+		else
+			warn "Legacy language pack ${pack_id} is not compatible with HyperFileLens ${app_version}; reinstall a version-matched package"
+		fi
+		safe_rm_file "${archive}"
+	done
+	refresh_language_pack_index "${language_root}"
+	local temporary_marker="${marker}.tmp.$$"
+	printf 'Legacy flat language-pack layout reviewed for HyperFileLens %s.\n' \
+		"${app_version}" >"${temporary_marker}"
+	chmod 0644 "${temporary_marker}"
+	mv -f "${temporary_marker}" "${marker}"
+}
+
+recover_bundled_language_pack_collection() {
+	local language_root=$1 language_base=$2
+	python3 - "${language_root}" "${language_base}/.state.json" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import re
+import shutil
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+state_path = pathlib.Path(sys.argv[2])
+pack_id_pattern = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+state = json.loads(state_path.read_text(encoding="utf-8"))
+disabled_packs = set(state.get("disabled_packs", []))
+
+# A process can be terminated between moving the installed package to the
+# backup collection and promoting its staged replacement. Restore the previous
+# known-good package first; the normal sync below will then replace it from the
+# current Release archive.
+backup_roots = sorted(
+    path
+    for path in root.glob(".collection-backup-*")
+    if path.is_dir() and not path.is_symlink()
+)
+for backup_root in backup_roots:
+    for backup in sorted(backup_root.iterdir()):
+        if (
+            not backup.is_dir()
+            or backup.is_symlink()
+            or pack_id_pattern.fullmatch(backup.name) is None
+        ):
+            raise SystemExit(
+                f"invalid interrupted language-pack backup entry: {backup}"
+            )
+        target = root / backup.name
+        if not target.exists() and backup.name not in disabled_packs:
+            os.replace(backup, target)
+            print(
+                f"Recovered interrupted language-pack collection entry {backup.name}",
+                file=sys.stderr,
+            )
+
+transaction_roots = sorted({*backup_roots, *root.glob(".collection-*")})
+for path in transaction_roots:
+    if not path.exists():
+        continue
+    if not path.is_dir() or path.is_symlink():
+        raise SystemExit(f"invalid language-pack transaction path: {path}")
+    shutil.rmtree(path)
+PY
+}
+
+commit_bundled_language_pack_collection() {
+	local language_root=$1 candidate_root=$2
+	shift 2
+	python3 - "${language_root}" "${candidate_root}" "$@" <<'PY'
+from __future__ import annotations
+
+import os
+import pathlib
+import shutil
+import sys
+import tempfile
+
+language_root = pathlib.Path(sys.argv[1]).resolve()
+candidate_root = pathlib.Path(sys.argv[2]).resolve()
+pack_ids = sys.argv[3:]
+backup_root = pathlib.Path(
+    tempfile.mkdtemp(prefix=".collection-backup-", dir=language_root)
+)
+moved_candidates: list[str] = []
+moved_backups: list[str] = []
+
+try:
+    for pack_id in pack_ids:
+        target = language_root / pack_id
+        candidate = candidate_root / pack_id
+        backup = backup_root / pack_id
+        if target.exists():
+            os.replace(target, backup)
+            moved_backups.append(pack_id)
+        if candidate.exists():
+            os.replace(candidate, target)
+            moved_candidates.append(pack_id)
+except BaseException as commit_error:
+    try:
+        for pack_id in reversed(moved_candidates):
+            target = language_root / pack_id
+            if target.exists():
+                shutil.rmtree(target)
+        for pack_id in reversed(moved_backups):
+            backup = backup_root / pack_id
+            if backup.exists():
+                os.replace(backup, language_root / pack_id)
+    except BaseException as rollback_error:
+        raise RuntimeError(
+            f"language-pack collection rollback failed; recovery data remains at {backup_root}"
+        ) from rollback_error
+    shutil.rmtree(backup_root, ignore_errors=True)
+    raise commit_error
+else:
+    shutil.rmtree(backup_root)
+PY
+}
+
+bundled_language_pack_archive() {
+	local pack_id=$1 app_version=$2
+	local archive="${ROOT}/payload/language-packs/hyperfilelens-lang-${pack_id}-${app_version}.tar.gz"
+	[[ -f "${archive}" ]] || return 1
+	printf '%s\n' "${archive}"
+}
+
+sync_bundled_language_packs() {
+	local bundle_root="${HFL_BUNDLED_LANGUAGE_PACKS_DIR:-${ROOT}/payload/language-packs}"
+	local language_base language_root candidate_root
+	local app_version archive name pack_id source_dir activated_id state_status
+	local -a archives=() pack_ids=()
+	[[ -d "${bundle_root}" ]] || return 0
+	app_version="$(read_language_pack_app_version)"
+	language_base="$(language_pack_data_root)"
+	language_root="$(language_pack_version_root "${app_version}")"
+	update_language_pack_state initialize "" "${language_base}" \
+		|| die "cannot synchronize language packs while language-pack state is invalid"
+	mkdir -p "${language_root}"
+	recover_bundled_language_pack_collection "${language_root}" "${language_base}"
+	recover_interrupted_language_pack_activations "${language_root}"
+	mapfile -t archives < <(find "${bundle_root}" -maxdepth 1 -type f \
+		-name 'hyperfilelens-lang-*.tar.gz' -print | sort)
+	((${#archives[@]} > 0)) || die "release contains no bundled language packs"
+	candidate_root="$(mktemp -d "${language_root}/.collection-XXXXXX")"
+	while IFS= read -r source_dir; do
+		if ! cp -a "${source_dir}" "${candidate_root}/$(basename "${source_dir}")"; then
+			safe_rm_dir "${candidate_root}"
+			die "failed to stage the installed language-pack collection"
+		fi
+	done < <(
+		find "${language_root}" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -print | sort
+	)
+	for archive in "${archives[@]}"; do
+		name="$(basename "${archive}")"
+		pack_id="${name#hyperfilelens-lang-}"
+		pack_id="${pack_id%-${app_version}.tar.gz}"
+		[[ "${name}" == "hyperfilelens-lang-${pack_id}-${app_version}.tar.gz" \
+			&& "${pack_id}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] \
+			|| {
+				safe_rm_dir "${candidate_root}"
+				die "invalid bundled language-pack filename: ${name}"
+			}
+		pack_ids+=("${pack_id}")
+		state_status=0
+		update_language_pack_state is-disabled "${pack_id}" "${language_base}" \
+			|| state_status=$?
+		if ((state_status == 0)); then
+			if [[ -d "${candidate_root}/${pack_id}" ]]; then
+				safe_rm_dir "${candidate_root}/${pack_id}"
+			fi
+			log "Bundled language pack ${pack_id} remains disabled"
+			continue
+		fi
+		if ((state_status != 1)); then
+			safe_rm_dir "${candidate_root}"
+			die "cannot synchronize language packs while language-pack state is invalid"
+		fi
+		if ! activated_id="$(
+			activate_language_pack_archive "${archive}" "${app_version}" "${candidate_root}"
+			printf '%s\n' "${ACTIVATED_LANGUAGE_PACK_ID}"
+		)"; then
+			safe_rm_dir "${candidate_root}"
+			die "bundled language-pack collection validation failed"
+		fi
+		if [[ "${activated_id}" != "${pack_id}" ]]; then
+			safe_rm_dir "${candidate_root}"
+			die "bundled language-pack identity does not match its filename"
+		fi
+	done
+	if ! commit_bundled_language_pack_collection \
+		"${language_root}" "${candidate_root}" "${pack_ids[@]}"; then
+		safe_rm_dir "${candidate_root}"
+		die "failed to commit bundled language-pack collection"
+	fi
+	safe_rm_dir "${candidate_root}"
+	refresh_language_pack_index "${language_root}"
+	for pack_id in "${pack_ids[@]}"; do
+		if [[ -d "${language_root}/${pack_id}" ]]; then
+			log "Installed bundled language pack ${pack_id} for HyperFileLens ${app_version}"
+		fi
+	done
+}
+
+cmd_language_pack_install() {
+	local archive="" requested_id="" language_base language_root app_version pack_id
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--file)
+			shift
+			archive="${1:-}"
+			[[ -n "${archive}" ]] || die "--file requires a package path"
+			;;
+		--id)
+			shift
+			requested_id="${1:-}"
+			[[ "${requested_id}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] \
+				|| die "--id requires a valid language-pack id"
+			;;
+		*) die "unknown lang-pack install option: $1" 2 ;;
+		esac
+		shift
+	done
+	[[ -z "${archive}" || -z "${requested_id}" ]] \
+		|| die "lang-pack install accepts either --id or --file, not both"
+	[[ -n "${archive}" || -n "${requested_id}" ]] \
+		|| die "lang-pack install requires --id <pack-id> or --file <package.tar.gz>"
+
+	init_language_pack_root
+	app_version="$(read_language_pack_app_version)"
+	language_base="$(language_pack_data_root)"
+	language_root="$(language_pack_version_root "${app_version}")"
+	update_language_pack_state initialize "" "${language_base}" \
+		|| die "cannot install a language pack while language-pack state is invalid"
+	mkdir -p "${language_root}"
+	recover_bundled_language_pack_collection "${language_root}" "${language_base}"
+	recover_interrupted_language_pack_activations "${language_root}"
+	if [[ -n "${requested_id}" ]]; then
+		archive="$(bundled_language_pack_archive "${requested_id}" "${app_version}")" \
+			|| die "language pack is not bundled with this release: ${requested_id}"
+	fi
+	activate_language_pack_archive "${archive}" "${app_version}" "${language_root}"
+	pack_id="${ACTIVATED_LANGUAGE_PACK_ID}"
+	update_language_pack_state enable "${pack_id}" "${language_base}"
 	refresh_language_pack_index "${language_root}"
 	log "Installed language pack ${pack_id} for HyperFileLens ${app_version}"
 	restart_language_pack_services
 }
 
 cmd_language_pack_list() {
-	local language_root
+	local language_base language_root app_version
 	init_language_pack_root
-	language_root="${ROOT}/data/lang-packs"
+	app_version="$(read_language_pack_app_version)"
+	language_base="$(language_pack_data_root)"
+	language_root="$(language_pack_version_root "${app_version}")"
+	update_language_pack_state initialize "" "${language_base}" \
+		|| die "cannot list language packs while language-pack state is invalid"
 	mkdir -p "${language_root}"
+	recover_bundled_language_pack_collection "${language_root}" "${language_base}"
+	recover_interrupted_language_pack_activations "${language_root}"
 	refresh_language_pack_index "${language_root}"
 	python3 - "${language_root}/installed.json" <<'PY'
 from __future__ import annotations
@@ -4407,19 +4997,58 @@ else:
 PY
 }
 
+reset_removed_language_preferences() {
+	local backend_code=$1
+	if [[ ! -f "${ROOT}/.env" ]] || ! command -v docker >/dev/null 2>&1 \
+		|| ! docker info >/dev/null 2>&1; then
+		warn "user preferences for ${backend_code} will fall back to English when profiles are next updated"
+		return 0
+	fi
+	local api_service color
+	if color="$(read_active_color)"; then
+		api_service="api-${color}"
+	else
+		api_service="api"
+	fi
+	if ! compose_in_root exec -T \
+		-e "HFL_REMOVED_LANGUAGE=${backend_code}" "${api_service}" \
+		python manage.py shell -c \
+		'import os; from apps.iam.profile_models import Profile; Profile.objects.filter(language=os.environ["HFL_REMOVED_LANGUAGE"]).update(language="en")'; then
+		warn "could not reset stored ${backend_code} user preferences; clients still fall back to English"
+	fi
+}
+
 cmd_language_pack_remove() {
-	local pack_id=${1:-} language_root target
-	[[ $# -eq 1 ]] || die "usage: install.sh lang-pack remove <pack-id>"
+	local pack_id=${1:-} language_base language_root target backend_code app_version
+	[[ $# -eq 1 ]] || die "usage: install.sh lang-pack uninstall <pack-id>"
 	[[ "${pack_id}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] \
 		|| die "invalid language-pack id: ${pack_id}"
 	init_language_pack_root
-	language_root="${ROOT}/data/lang-packs"
+	app_version="$(read_language_pack_app_version)"
+	language_base="$(language_pack_data_root)"
+	language_root="$(language_pack_version_root "${app_version}")"
+	update_language_pack_state initialize "" "${language_base}" \
+		|| die "cannot uninstall a language pack while language-pack state is invalid"
+	mkdir -p "${language_root}"
+	recover_bundled_language_pack_collection "${language_root}" "${language_base}"
+	recover_interrupted_language_pack_activations "${language_root}"
 	target="${language_root}/${pack_id}"
 	[[ -d "${target}" ]] || die "language pack is not installed: ${pack_id}"
+	backend_code="$(python3 - "${target}/manifest.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(manifest["backend_code"])
+PY
+)"
+	update_language_pack_state disable "${pack_id}" "${language_base}"
+	reset_removed_language_preferences "${backend_code}"
 	safe_assert_path_under_dir "${target}" "${language_root}" "language-pack path"
 	safe_rm_dir "${target}"
 	refresh_language_pack_index "${language_root}"
-	log "Removed language pack ${pack_id}"
+	log "Uninstalled language pack ${pack_id}"
 	restart_language_pack_services
 }
 
@@ -4435,11 +5064,11 @@ cmd_language_pack() {
 		[[ $# -eq 0 ]] || die "usage: install.sh lang-pack list"
 		cmd_language_pack_list
 		;;
-	remove)
+	uninstall | remove)
 		shift
 		cmd_language_pack_remove "$@"
 		;;
-	*) die "usage: install.sh lang-pack {install --file PATH|list|remove PACK_ID}" ;;
+	*) die "usage: install.sh lang-pack {install (--id ID|--file PATH)|list|uninstall PACK_ID}" ;;
 	esac
 }
 
@@ -4713,6 +5342,7 @@ cmd_upgrade() {
 	validate_tls_pair "${ROOT}/deploy/nginx/certs"
 
 	ensure_data_dirs
+	sync_bundled_language_packs
 	sync_runtime_media
 	compose_in_root up -d --no-build --pull never --no-recreate postgres redis
 	compose_in_root --profile tools run --rm --no-deps migration

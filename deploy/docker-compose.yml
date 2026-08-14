@@ -20,7 +20,8 @@ x-backend-image: &backend-image
     - bridge
 
 x-backend-volumes: &backend-volumes
-  - ./data/lang-packs:/opt/backend/lang-packs:ro
+  # Language packs follow the product Release, not the edition-specific image tag.
+  - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/backend/lang-packs:ro
   - ./data/media:/opt/backend/media
   - ./data/staticfiles:/opt/backend/staticfiles
   - ./data/logs:/var/log/hyperfilelens
@@ -76,7 +77,7 @@ x-web: &web
     LOGROTATE_INTERVAL_SECONDS: "3600"
   volumes:
     - ./deploy/nginx/web.conf:/etc/nginx/conf.d/default.conf:ro
-    - ./data/lang-packs:/opt/hyperfilelens/lang-packs:ro
+    - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/hyperfilelens/lang-packs:ro
   networks:
     - default
   mem_limit: 128m

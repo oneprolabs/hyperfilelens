@@ -8,7 +8,7 @@ import {
 } from './useDeployProfile'
 import { getCorrelationHeaders } from '../lib/requestContext'
 import { refreshAuthToken } from '../lib/authRefresh'
-import { i18n } from '../i18n'
+import { i18n, setAuthenticatedLocalePreference } from '../i18n'
 import {
   isSessionInvalidReason,
   sessionNoticeMessageKey,
@@ -83,6 +83,7 @@ export function getEffectiveOrgKey(): string {
 function setUser(userData: User | null) {
   currentUser.value = userData
   isLoggedIn.value = userData !== null
+  setAuthenticatedLocalePreference(userData?.language)
   const orgKey = userData?.access_profile?.org_key?.trim()
   if (orgKey) {
     setStoredOrgKey(orgKey)
@@ -213,6 +214,7 @@ export function clearAuth() {
   isLoggedIn.value = false
   isLoading.value = false
   setStoredOrgKey('')
+  setAuthenticatedLocalePreference(null)
   void import('./useDeployProfile').then(({ clearDeployProfileCache }) => {
     clearDeployProfileCache()
   })

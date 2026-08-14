@@ -30,12 +30,14 @@ python3 - "${pkg_root}" <<'PY'
 import hashlib
 import json
 import pathlib
+import re
 import sys
 import tarfile
 import zipfile
 
 root = pathlib.Path(sys.argv[1])
 manifest = json.loads((root / "MANIFEST.json").read_text(encoding="utf-8"))
+release_id = (root / "VERSION").read_text(encoding="utf-8").strip()
 for image in manifest.get("images", []):
     path = root / image["file"]
     if not path.is_file():
@@ -58,6 +60,82 @@ for artifact in tls_artifacts.values():
 if len(tls_artifacts) != 3:
     raise SystemExit("release manifest must describe three default TLS artifacts")
 
+language_packs = manifest.get("language_packs")
+if not isinstance(language_packs, list) or not language_packs:
+    raise SystemExit("release manifest must describe bundled language packs")
+seen_pack_ids: set[str] = set()
+for language_pack in language_packs:
+    if not isinstance(language_pack, dict):
+        raise SystemExit("release manifest has an invalid language-pack entry")
+    pack_id = language_pack.get("id")
+    if not isinstance(pack_id, str) or re.fullmatch(
+        r"[a-z0-9]+(?:-[a-z0-9]+)*", pack_id
+    ) is None:
+        raise SystemExit("release manifest has an invalid language-pack id")
+    if pack_id in seen_pack_ids:
+        raise SystemExit(f"release manifest has duplicate language-pack id: {pack_id}")
+    seen_pack_ids.add(pack_id)
+    expected_file = (
+        f"payload/language-packs/hyperfilelens-lang-{pack_id}-{release_id}.tar.gz"
+    )
+    if language_pack.get("file") != expected_file:
+        raise SystemExit(f"invalid bundled language-pack path: {language_pack.get('file')}")
+    archive_path = root / expected_file
+    if not archive_path.is_file():
+        raise SystemExit(f"missing bundled language pack: {expected_file}")
+    if archive_path.stat().st_size != language_pack.get("size"):
+        raise SystemExit(f"bundled language-pack size mismatch: {expected_file}")
+    if hashlib.sha256(archive_path.read_bytes()).hexdigest() != language_pack.get("sha256"):
+        raise SystemExit(f"bundled language-pack checksum mismatch: {expected_file}")
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        members: dict[str, tarfile.TarInfo] = {}
+        for member in archive.getmembers():
+            normalized = member.name.removeprefix("./")
+            member_path = pathlib.PurePosixPath(normalized)
+            if not normalized or member_path.is_absolute() or ".." in member_path.parts:
+                raise SystemExit(f"bundled language pack has an unsafe path: {expected_file}")
+            if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+                raise SystemExit(
+                    f"bundled language pack has an unsupported entry: {expected_file}"
+                )
+            if member.isfile():
+                if normalized in members:
+                    raise SystemExit(
+                        f"bundled language pack has a duplicate file: {expected_file}"
+                    )
+                members[normalized] = member
+        required_files = {
+            "manifest.json",
+            "frontend/messages.json",
+            "frontend/element-plus.json",
+        }
+        if not required_files.issubset(members):
+            raise SystemExit(f"bundled language pack is incomplete: {expected_file}")
+        backend_catalogs = [
+            name
+            for name in members
+            if re.fullmatch(r"backend/locale/[^/]+/LC_MESSAGES/django[.]mo", name)
+        ]
+        if len(backend_catalogs) != 1:
+            raise SystemExit(
+                f"bundled language pack must contain one backend catalog: {expected_file}"
+            )
+        manifest_stream = archive.extractfile(members["manifest.json"])
+        if manifest_stream is None:
+            raise SystemExit(f"cannot read bundled language-pack manifest: {expected_file}")
+        pack_manifest = json.load(manifest_stream)
+    if (
+        pack_manifest.get("schema") != 2
+        or pack_manifest.get("id") != pack_id
+        or pack_manifest.get("display_name") != language_pack.get("display_name")
+        or pack_manifest.get("version") != release_id
+        or pack_manifest.get("compatible_app") != f"=={release_id}"
+    ):
+        raise SystemExit(f"bundled language-pack identity mismatch: {expected_file}")
+if "zh-hans" not in seen_pack_ids:
+    raise SystemExit("required bundled language pack is missing: zh-hans")
+
 installer_root = root / "payload" / "media" / "enroll-bootstrap"
 installer_manifest_path = installer_root / "INSTALLER_MANIFEST.json"
 if not installer_manifest_path.is_file():
@@ -76,7 +154,6 @@ max_installer_bytes = 3_670_016
 installers = installer_manifest.get("artifacts") or {}
 if set(installers) != expected_installers:
     raise SystemExit("minimal installer manifest does not contain the complete platform matrix")
-release_id = (root / "VERSION").read_text(encoding="utf-8").strip()
 for key, artifact in installers.items():
     extension = "zip" if key.startswith("windows-") else "tar.gz"
     expected_filename = f"{release_id}/hfl-installer-{key}.{extension}"
@@ -110,6 +187,7 @@ for key, artifact in installers.items():
 print(
     f"verified {len(manifest.get('images', []))} image archives "
     f"and {len(tls_artifacts)} default TLS artifacts; "
+    f"verified {len(language_packs)} language packs; "
     f"verified {len(installers)} minimal installers"
 )
 PY
@@ -165,11 +243,49 @@ wait_for_release_services() {
 	return 1
 }
 
+verify_installed_language_packs() {
+	local installed_version language_root
+	installed_version="$(sudo sed -n 's/^HFL_PRODUCT_VERSION=//p' /opt/hyperfilelens/.env | head -1)"
+	[[ -n "${installed_version}" ]] || {
+		printf 'ERROR: installed product version is missing\n' >&2
+		return 1
+	}
+	language_root="/opt/hyperfilelens/data/lang-packs/versions/${installed_version}"
+	sudo python3 - "${language_root}/installed.json" "${installed_version}" <<'PY'
+import json
+import pathlib
+import sys
+
+index_path = pathlib.Path(sys.argv[1])
+version = sys.argv[2]
+index = json.loads(index_path.read_text(encoding="utf-8"))
+if index.get("app_version") != version:
+    raise SystemExit("installed language-pack index does not match the product version")
+packs = index.get("packs")
+if not isinstance(packs, list):
+    raise SystemExit("installed language-pack index has no pack list")
+zh_hans = [pack for pack in packs if isinstance(pack, dict) and pack.get("id") == "zh-hans"]
+if len(zh_hans) != 1 or zh_hans[0].get("version") != version:
+    raise SystemExit("Simplified Chinese language pack is not installed for this product version")
+PY
+	sudo bash /opt/hyperfilelens/install.sh lang-pack list \
+		| grep -Eq '^zh-hans[[:space:]]'
+	for catalog_path in \
+		/locales/installed.json \
+		/locales/zh-hans/frontend/messages.json \
+		/locales/zh-hans/frontend/element-plus.json; do
+		curl -kfsS "https://127.0.0.1:11443${catalog_path}" \
+			| python3 -c 'import json, sys; value = json.load(sys.stdin); assert isinstance(value, dict)'
+	done
+	printf 'Installed Simplified Chinese language pack verified for %s\n' "${installed_version}"
+}
+
 install_args=(install)
 [[ "${artifact_channel}" == "main" ]] && install_args+=(--allow-main-build)
 sudo env HFL_PUBLIC_HOST="${smoke_host}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
 	bash "${pkg_root}/install.sh" "${install_args[@]}"
 wait_for_release_services
+verify_installed_language_packs
 
 printf 'Running same-version in-place upgrade verification\n'
 upgrade_args=(upgrade --from "${pkg_root}" --yes)
@@ -177,6 +293,7 @@ upgrade_args=(upgrade --from "${pkg_root}" --yes)
 sudo env HFL_PUBLIC_HOST="${smoke_host}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
 	bash "${pkg_root}/install.sh" "${upgrade_args[@]}"
 wait_for_release_services
+verify_installed_language_packs
 
 export HFL_WEBSITE_PORT=11442
 export HFL_TENANT_PORT=11443

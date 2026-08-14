@@ -2,6 +2,7 @@
 Serializers for authentication and user profile.
 """
 
+from django.conf import settings
 from django.contrib.auth.models import User
 
 from rest_framework import serializers
@@ -26,7 +27,11 @@ class UserDetailsSerializer(serializers.ModelSerializer):
     Minimal user details serializer.
     """
 
-    language = serializers.SerializerMethodField()
+    language = serializers.CharField(
+        max_length=32,
+        required=False,
+        source="profile.language",
+    )
     timezone = serializers.SerializerMethodField()
     access_profile = serializers.SerializerMethodField()
     registered_at = serializers.SerializerMethodField()
@@ -50,11 +55,31 @@ class UserDetailsSerializer(serializers.ModelSerializer):
         read_only_fields = ["is_staff"]
 
     @staticmethod
-    def get_language(obj):
-        try:
-            return obj.profile.language
-        except Profile.DoesNotExist:
-            return "en"
+    def validate_language(value):
+        if value not in dict(settings.LANGUAGES):
+            raise serializers.ValidationError(
+                f"Language {value!r} is not installed.",
+            )
+        return value
+
+    def update(self, instance, validated_data):
+        profile_data = validated_data.pop("profile", {})
+        instance = super().update(instance, validated_data)
+        if "language" in profile_data:
+            try:
+                profile = instance.profile
+            except Profile.DoesNotExist:
+                profile = Profile.objects.create(user=instance)
+            profile.language = profile_data["language"]
+            profile.full_clean()
+            profile.save(update_fields=["language"])
+        return instance
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        if not representation.get("language"):
+            representation["language"] = "en"
+        return representation
 
     @staticmethod
     def get_timezone(obj):

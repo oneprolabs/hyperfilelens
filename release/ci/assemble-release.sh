@@ -68,6 +68,7 @@ required_bundles=(
 	_internal-hfl-images.tar
 	_internal-runtime-images.tar
 	_internal-sourcelens-bundle.tar
+	_internal-language-packs.tar
 	_internal-host-debs-ubuntu2004.tar
 	_internal-host-debs-ubuntu2204.tar
 	_internal-host-debs-ubuntu2404.tar
