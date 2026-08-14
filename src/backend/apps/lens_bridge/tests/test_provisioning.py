@@ -173,6 +173,7 @@ class BuildLensEnrollConfigTests(SimpleTestCase):
             result["lens_base_url"],
             "https://127.0.0.1:11443/sourcelens",
         )
+        self.assertEqual(result["lens_base_path"], "/sourcelens")
 
     @patch(
         "apps.lens_bridge.deploy.local_platform_lens_gateway_base_url",
@@ -199,6 +200,7 @@ class BuildLensEnrollConfigTests(SimpleTestCase):
             result["lens_base_url"],
             "https://console.example/sourcelens",
         )
+        self.assertEqual(result["lens_base_path"], "/sourcelens")
 
 
 class LensnodeWorkspaceReadinessTests(SimpleTestCase):

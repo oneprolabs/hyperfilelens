@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"runtime"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 type LensSidecarConfig struct {
 	GatewayScope  string
 	LensBaseURL   string
+	LensBasePath  string
 	LensnodeUUID  string
 	LensnodeToken string
 	LensnodeName  string
@@ -64,6 +66,12 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 		_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "failed", err.Error())
 		logFail("AI engine configuration is unavailable: "+err.Error(), 6)
 	}
+	logStep("Verifying AI engine endpoint.")
+	if err := verifyLensEndpoint(ctx, lensCfg.LensBaseURL); err != nil {
+		_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "failed", err.Error())
+		logFail("AI engine endpoint is unreachable: "+err.Error(), 6)
+	}
+	logOK("AI engine endpoint is reachable.")
 	// The authenticated console response is authoritative. Public Data Gateways
 	// receive the deployment Sentry policy; Private Data Gateways receive disabled.
 	// Observability convergence must never block enrollment or data operations.
@@ -127,7 +135,11 @@ func FetchGatewayLensConfig(ctx context.Context, cfg Config, nodeID string) (Len
 		return LensSidecarConfig{}, fmt.Errorf("HTTP %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
 
-	return parseGatewayLensConfig(raw)
+	lens, err := parseGatewayLensConfig(raw)
+	if err != nil {
+		return LensSidecarConfig{}, err
+	}
+	return resolveGatewayLensConfig(cfg.APIBase, lens)
 }
 
 func parseGatewayLensConfig(raw []byte) (LensSidecarConfig, error) {
@@ -147,6 +159,7 @@ func parseGatewayLensConfig(raw []byte) (LensSidecarConfig, error) {
 	cfgOut := LensSidecarConfig{
 		GatewayScope:  stringField(data, "gateway_scope"),
 		LensBaseURL:   stringField(lensRaw, "lens_base_url"),
+		LensBasePath:  stringField(lensRaw, "lens_base_path"),
 		LensnodeUUID:  stringField(lensRaw, "lensnode_uuid"),
 		LensnodeToken: stringField(lensRaw, "lensnode_token"),
 		LensnodeName:  stringField(lensRaw, "lensnode_name"),
@@ -162,13 +175,87 @@ func parseGatewayLensConfig(raw []byte) (LensSidecarConfig, error) {
 			TracesSampleRate: floatField(observabilityRaw, "traces_sample_rate"),
 		}.Normalized()
 	}
-	if cfgOut.LensBaseURL == "" || cfgOut.LensnodeToken == "" || cfgOut.LensnodeUUID == "" {
+	if (cfgOut.LensBaseURL == "" && cfgOut.LensBasePath == "") ||
+		cfgOut.LensnodeToken == "" || cfgOut.LensnodeUUID == "" {
 		return LensSidecarConfig{}, fmt.Errorf("incomplete lens configuration from console")
 	}
 	if cfgOut.WorkspaceRoot == "" {
 		cfgOut.WorkspaceRoot = "/workspace"
 	}
 	return cfgOut, nil
+}
+
+func resolveGatewayLensConfig(apiBase string, lens LensSidecarConfig) (LensSidecarConfig, error) {
+	if lens.LensBasePath != "" {
+		origin, err := parseHTTPOrigin(apiBase)
+		if err != nil {
+			return LensSidecarConfig{}, fmt.Errorf("invalid HFL_API_BASE for LensNode: %w", err)
+		}
+		path, err := url.Parse(lens.LensBasePath)
+		if err != nil || path.IsAbs() || path.Host != "" || !strings.HasPrefix(path.Path, "/") ||
+			path.RawQuery != "" || path.Fragment != "" {
+			return LensSidecarConfig{}, fmt.Errorf("invalid LensNode base path from console")
+		}
+		origin.Path = path.Path
+		lens.LensBaseURL = strings.TrimRight(origin.String(), "/")
+	}
+	if _, err := parseHTTPURL(lens.LensBaseURL); err != nil {
+		return LensSidecarConfig{}, fmt.Errorf("invalid LensNode base URL from console: %w", err)
+	}
+	return lens, nil
+}
+
+func parseHTTPOrigin(raw string) (*url.URL, error) {
+	parsed, err := parseHTTPURL(raw)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return nil, fmt.Errorf("URL must be an origin without a path")
+	}
+	parsed.Path = ""
+	return parsed, nil
+}
+
+func parseHTTPURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, err
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("URL must be an absolute HTTP(S) URL without credentials, query, or fragment")
+	}
+	return parsed, nil
+}
+
+func verifyLensEndpoint(ctx context.Context, lensBaseURL string) error {
+	client := &http.Client{Timeout: 30 * time.Second}
+	if tlsclient.InsecureTLSEnabled() {
+		client.Transport = tlsclient.Transport()
+	}
+	return verifyLensEndpointWithClient(ctx, client, lensBaseURL)
+}
+
+func verifyLensEndpointWithClient(ctx context.Context, client *http.Client, lensBaseURL string) error {
+	base, err := parseHTTPURL(lensBaseURL)
+	if err != nil {
+		return err
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/health"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("GET %s returned HTTP %s", base.Redacted(), resp.Status)
+	}
+	return nil
 }
 
 // ReportGatewayInstallStatus notifies the console when gateway-install succeeds or fails.

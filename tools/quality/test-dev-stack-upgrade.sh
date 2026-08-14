@@ -22,6 +22,24 @@ source "${ROOT_REPO}/tools/sourcelens/defaults.env"
 [[ "${SOURCELENS_GIT_REF}" == "v0.29.0" ]]
 ROOT="${original_root}"
 
+# Source deployments can persist the same canonical origins used by Release
+# and CI installs instead of editing .env by hand.
+source_deploy_root="${tmp}/source-deploy"
+mkdir -p "${source_deploy_root}/deploy/installer"
+cp "${ROOT_REPO}/.env.example" "${source_deploy_root}/.env"
+cp "${ROOT_REPO}/deploy/installer/apply-runtime-config.py" \
+	"${source_deploy_root}/deploy/installer/apply-runtime-config.py"
+ROOT="${source_deploy_root}"
+DEV_PUBLIC_URL="https://192.0.2.10:11443"
+DEV_ADMIN_PUBLIC_URL="https://192.0.2.10:11444"
+apply_dev_public_urls >/dev/null
+grep -Fx 'FRONTEND_URL=https://192.0.2.10:11443' "${ROOT}/.env" >/dev/null
+grep -Fx 'LENS_GATEWAY_BASE_URL=https://192.0.2.10:11443/sourcelens' "${ROOT}/.env" >/dev/null
+grep -Fx 'HFL_ADMIN_PUBLIC_URL=https://192.0.2.10:11444' "${ROOT}/.env" >/dev/null
+ROOT="${original_root}"
+DEV_PUBLIC_URL=""
+DEV_ADMIN_PUBLIC_URL=""
+
 dev_env_loader="$(sed -n '/^load_repo_env_defaults()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
 release_env_loader="$(sed -n '/^load_repo_env_defaults()/,/^}/p' "${ROOT_REPO}/release/build.sh")"
 if grep -qw SOURCELENS_GIT_REF <<<"${dev_env_loader}${release_env_loader}"; then

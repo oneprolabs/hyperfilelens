@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from urllib.parse import urlsplit
 
 from django.db import transaction
@@ -24,8 +25,12 @@ LOCAL_PLATFORM_GATEWAY_METADATA = {
 }
 
 
-def platform_gateway_api_base() -> str:
+def platform_gateway_api_base(*, require_remote: bool = False) -> str:
     """Return the configured tenant origin used by platform Data Gateways.
+
+    Args:
+        require_remote: Reject loopback hosts reserved for the installer-managed
+            local platform Gateway.
 
     Raises:
         ValueError: If ``FRONTEND_URL`` is not an absolute HTTP(S) origin.
@@ -52,6 +57,17 @@ def platform_gateway_api_base() -> str:
         raise ValueError(
             "FRONTEND_URL must be an absolute HTTP(S) origin for Data Gateway "
             "enrollment and must use HTTPS when TLS verification is enabled."
+        )
+    hostname = parsed.hostname.lower()
+    try:
+        address = ipaddress.ip_address(hostname)
+        non_routable = address.is_loopback or address.is_unspecified
+    except ValueError:
+        non_routable = hostname == "localhost" or hostname.endswith(".localhost")
+    if require_remote and non_routable:
+        raise ValueError(
+            "FRONTEND_URL must use a network-reachable host for remote Public "
+            "Data Gateway enrollment. Configure the deployment public URL first."
         )
     return api_base.rstrip("/")
 

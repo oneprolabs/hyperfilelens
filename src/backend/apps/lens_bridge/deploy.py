@@ -74,6 +74,18 @@ def lens_gateway_base_url() -> str:
     return base
 
 
+def lens_gateway_base_path() -> str:
+    """Return the control-plane-relative SourceLens path for bundled gateways.
+
+    New Agents resolve this path against the ``HFL_API_BASE`` they already used
+    to enroll.  The absolute URL remains in the response for compatibility with
+    older Agents and for external SourceLens deployments.
+    """
+    if sourcelens_mode() == "bundled":
+        return LENS_GATEWAY_PUBLIC_PATH
+    return ""
+
+
 def local_platform_lens_gateway_base_url() -> str:
     """Return the bundled SourceLens URL for the installer-managed local Gateway."""
     if sourcelens_mode() != "bundled":

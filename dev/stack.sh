@@ -83,6 +83,8 @@ LANGUAGE_PACK_BUILD_OUTPUT="${ROOT}/build/language-packs"
 # Open Core extensions: CLI --extension-source only (not a .env setting).
 EXTENSION_SOURCES=()
 EXTENSION_SOURCES_CSV=""
+DEV_PUBLIC_URL=""
+DEV_ADMIN_PUBLIC_URL=""
 
 usage() {
 	cat <<'USAGE'
@@ -127,6 +129,10 @@ Extensions (optional overlay; community default = empty socket):
   stack.sh materializes sources → build/docker-compose.extensions.yml.
   Runtime containers see HFL_EXTENSIONS paths only (never git clone in api/web).
 
+Deployment identity (optional for source deployments reached from another host):
+  --public-url URL                 Canonical tenant origin used by remote Agents and links.
+  --admin-public-url URL           Canonical Admin Console origin.
+
 Mirror options (Kopia fetch + Agent publishing + SourceLens git clone; env fallback):
   --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub token for API/release fetch, private SourceLens
@@ -157,6 +163,8 @@ Output options:
 Examples:
   ./dev/stack.sh up
   ./dev/stack.sh up --extension-source ../hyperfilelens-ee
+  ./dev/stack.sh up --public-url https://192.168.8.69:11443 \
+    --admin-public-url https://192.168.8.69:11444
   ./dev/stack.sh up --ubuntu2404-arch amd64
   ./dev/stack.sh down
   ./dev/stack.sh restart
@@ -268,6 +276,8 @@ pip_index_url=${OPT_PIP_INDEX_URL:-<official>}
 pip_trusted_host=${OPT_PIP_TRUSTED_HOST:-<unset>}
 npm_registry=${OPT_NPM_REGISTRY:-<official>}
 extension_sources=${EXTENSION_SOURCES_CSV:-<none>}
+public_url=${DEV_PUBLIC_URL:-<preserve>}
+admin_public_url=${DEV_ADMIN_PUBLIC_URL:-<preserve>}
 docker_pull_timeout=${DOCKER_PULL_TIMEOUT}
 docker_pull_retries=${DOCKER_PULL_RETRIES}
 offline=${DEV_OFFLINE}
@@ -384,6 +394,15 @@ ensure_env_file() {
 		chmod 600 "${env_file}"
 		log "Created .env from .env.example"
 	fi
+}
+
+apply_dev_public_urls() {
+	[[ -n "${DEV_PUBLIC_URL}" || -n "${DEV_ADMIN_PUBLIC_URL}" ]] || return 0
+	local -a args=(--env-file "${ROOT}/.env")
+	[[ -z "${DEV_PUBLIC_URL}" ]] || args+=(--public-url "${DEV_PUBLIC_URL}")
+	[[ -z "${DEV_ADMIN_PUBLIC_URL}" ]] || args+=(--admin-public-url "${DEV_ADMIN_PUBLIC_URL}")
+	python3 "${ROOT}/deploy/installer/apply-runtime-config.py" "${args[@]}"
+	log "Source deployment public origins synchronized"
 }
 
 ensure_tls_certs() {
@@ -1187,6 +1206,7 @@ cmd_up() {
 	apply_mirror_env_defaults
 	require_dev_build_tools
 	ensure_env_file
+	apply_dev_public_urls
 	require_docker
 	ensure_runtime_images
 	verify_amd64_runtime
@@ -1217,6 +1237,7 @@ cmd_restart() {
 	apply_mirror_env_defaults
 	require_dev_build_tools
 	ensure_env_file
+	apply_dev_public_urls
 	require_docker
 	ensure_runtime_images
 	verify_amd64_runtime
@@ -1523,6 +1544,16 @@ main() {
 			EXTENSION_SOURCES+=("$2")
 			shift 2
 			;;
+		--public-url)
+			require_value "$1" "${2:-}"
+			DEV_PUBLIC_URL="$2"
+			shift 2
+			;;
+		--admin-public-url)
+			require_value "$1" "${2:-}"
+			DEV_ADMIN_PUBLIC_URL="$2"
+			shift 2
+			;;
 		--github-download-mirror | --github-token | --docker-download-mirror | --apt-mirror | --ubuntu2404-arch | --kopia-mode | --kopia-git-url | --kopia-ref | --sourcelens-ref | --sourcelens-git-url | --go-proxy | --go-sumdb | --pip-index-url | --pip-trusted-host | --npm-registry | --pull-timeout | --pull-retries | --no-sourcelens | --hfl-only | --pull | --offline)
 			parse_common_option "$@" || die "failed to parse option: $1"
 			if [[ "$1" == "--no-sourcelens" || "$1" == "--hfl-only" \
@@ -1561,6 +1592,10 @@ main() {
 	fi
 	if [[ "${HFL_ONLY_DOWN}" -eq 1 && "${cmd}" != "down" ]]; then
 		die "--hfl-only is only valid with down" 2
+	fi
+	if [[ -n "${DEV_PUBLIC_URL}${DEV_ADMIN_PUBLIC_URL}" \
+		&& "${cmd}" != "up" && "${cmd}" != "restart" ]]; then
+		die "--public-url and --admin-public-url are only valid with up or restart" 2
 	fi
 	if [[ -n "${CLEAN_SCOPE}" && "${cmd}" != "clean" ]]; then
 		die "clean scope options are only valid with clean" 2
