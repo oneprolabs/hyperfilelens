@@ -19,8 +19,31 @@ afterEach(() => {
 describe('runtime Sentry', () => {
   it('remains disabled when runtime configuration is absent', async () => {
     const { initSentry } = await import('./sentry')
-    initSentry({} as App, { afterEach: vi.fn() } as unknown as Router)
+    const load = vi.fn(() => import('./sentrySdk'))
+    await initSentry({} as App, { afterEach: vi.fn() } as unknown as Router, load)
     expect(sentryInit).not.toHaveBeenCalled()
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  it('warns and continues when the optional SDK chunk cannot load', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    window.__HFL_APP_CONFIG__ = {
+      sentryEnabled: true,
+      sentryDsn: 'https://public@sentry.example.com/42',
+      sentryEnvironment: 'hfl-test',
+      sentryRelease: 'hyperfilelens-frontend@main-1234567',
+    }
+    const { initSentry } = await import('./sentry')
+
+    await expect(initSentry(
+      {} as App,
+      { afterEach: vi.fn() } as unknown as Router,
+      async () => { throw new Error('chunk unavailable') },
+    )).resolves.toBeUndefined()
+    expect(warn).toHaveBeenCalledWith(
+      '[sentry] Initialization failed; the application will continue.',
+      expect.any(Error),
+    )
   })
 
   it('warns and continues for malformed runtime configuration', async () => {
@@ -32,7 +55,7 @@ describe('runtime Sentry', () => {
       sentryRelease: 'hyperfilelens-frontend@main-1234567',
     }
     const { initSentry } = await import('./sentry')
-    initSentry({} as App, { afterEach: vi.fn() } as unknown as Router)
+    await initSentry({} as App, { afterEach: vi.fn() } as unknown as Router)
     expect(sentryInit).not.toHaveBeenCalled()
     expect(warn).toHaveBeenCalled()
   })
@@ -46,7 +69,7 @@ describe('runtime Sentry', () => {
       sentryRelease: 'hyperfilelens-frontend@main-1234567',
     }
     const { initSentry } = await import('./sentry')
-    initSentry({} as App, { afterEach: vi.fn() } as unknown as Router)
+    await initSentry({} as App, { afterEach: vi.fn() } as unknown as Router)
     expect(sentryInit).not.toHaveBeenCalled()
     expect(warn).toHaveBeenCalled()
   })
@@ -61,7 +84,7 @@ describe('runtime Sentry', () => {
       sentrySurface: 'admin',
     }
     const { initSentry } = await import('./sentry')
-    initSentry({} as App, { afterEach: vi.fn() } as unknown as Router)
+    await initSentry({} as App, { afterEach: vi.fn() } as unknown as Router)
 
     const options = sentryInit.mock.calls[0]?.[0]
     expect(options).toEqual(expect.objectContaining({

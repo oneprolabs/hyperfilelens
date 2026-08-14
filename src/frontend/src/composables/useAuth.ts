@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { router } from '../router'
 import {
+  clearDeployProfileCache,
   fetchDeployProfile,
   resolvePostLoginPath,
   shouldForceDeployProfileRefresh,
@@ -215,9 +216,7 @@ export function clearAuth() {
   isLoading.value = false
   setStoredOrgKey('')
   setAuthenticatedLocalePreference(null)
-  void import('./useDeployProfile').then(({ clearDeployProfileCache }) => {
-    clearDeployProfileCache()
-  })
+  clearDeployProfileCache()
 }
 
 const WATCHDOG_INTERVAL_MS = 15_000

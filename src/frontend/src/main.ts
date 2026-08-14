@@ -25,9 +25,9 @@ import { setupAuthGuard, setupSessionWatchdog } from './composables/useAuth'
 import { initSentry } from './lib/sentry'
 import { initAppAnalytics } from './lib/analytics'
 
-function bootstrap() {
+async function bootstrap() {
   const app = createApp(App)
-  initSentry(app, router)
+  await initSentry(app, router)
   initAppAnalytics(router)
   app.use(i18n)
   app.use(router)
@@ -46,4 +46,4 @@ function bootstrap() {
   })
 }
 
-bootstrap()
+void bootstrap()

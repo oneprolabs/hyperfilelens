@@ -1,9 +1,7 @@
 import { nextTick } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
-import AppShell from '../app/layout/AppShell.vue'
 import { resolvePlatformOpsRoutes } from '../platform-ops/resolveRoutes'
 import { resolveTenantOpsRoutes } from '../ops/resolveRoutes'
-import PlatformOpsShell from '../platform-ops/layout/PlatformOpsShell.vue'
 
 const platformOpsRoutes = resolvePlatformOpsRoutes()
 const tenantOpsRoutes = resolveTenantOpsRoutes()
@@ -22,6 +20,8 @@ const authTurnstilePrefetch = () => {
 
 const fullscreenRouteMeta = { layout: 'fullscreen' } as const
 
+const AppShell = () => import('../app/layout/AppShell.vue')
+const PlatformOpsShell = () => import('../platform-ops/layout/PlatformOpsShell.vue')
 const LoginPage = lazyRoute(() => import('../pages/auth/Login.vue'))
 const RegisterPage = lazyRoute(() => import('../pages/auth/Register.vue'))
 const OAuthCallbackPage = lazyRoute(() => import('../pages/auth/OAuthCallback.vue'))
