@@ -63,7 +63,7 @@ func upgradeCommand(archivePath string) (string, []string) {
 
 func uninstallCommand(bundleDir string, keepData, keepInstallationIdentity bool) (string, []string) {
 	if runtime.GOOS == "windows" {
-		args := []string{"uninstall"}
+		args := []string{"uninstall", "-QuietFooter"}
 		if !keepData {
 			args = append(args, "-PurgeAll")
 		} else if keepInstallationIdentity {
@@ -71,7 +71,7 @@ func uninstallCommand(bundleDir string, keepData, keepInstallationIdentity bool)
 		}
 		return filepath.Join(bundleDir, "install.ps1"), args
 	}
-	args := []string{"uninstall"}
+	args := []string{"uninstall", "--quiet-footer"}
 	if !keepData {
 		args = append(args, "--purge-all")
 	} else if keepInstallationIdentity {

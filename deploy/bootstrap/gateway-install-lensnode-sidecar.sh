@@ -10,24 +10,20 @@ DEFAULT_LENSNODE_IMAGE="${LENSNODE_IMAGE:-hyperfilelens-sourcelens-lensnode:late
 SENTRY_PRIVACY_FILE="${COMPOSE_DIR}/hfl-sentry-sitecustomize.py"
 SIDECAR_LOCK_FILE="${HFL_GATEWAY_SIDECAR_LOCK_FILE:-/run/lock/hyperfilelens-gateway-sidecar.lock}"
 
-hfl_now() {
-	date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
-}
-
 hfl_step() {
-	printf '[%s] [....] %s\n' "$(hfl_now)" "$1"
+	printf '  [....] %s\n' "$1"
 }
 
 hfl_ok() {
-	printf '[%s] [ OK  ] %s\n' "$(hfl_now)" "$1"
+	printf '  [ OK ] %s\n' "$1"
 }
 
 hfl_warn() {
-	printf '[%s] [WARN ] %s\n' "$(hfl_now)" "$1" >&2
+	printf '  [WARN] %s\n' "$1" >&2
 }
 
 hfl_fail() {
-	printf '[%s] [FAIL ] %s\n' "$(hfl_now)" "$1" >&2
+	printf '  [FAIL] %s\n' "$1" >&2
 	exit "${2:-1}"
 }
 
@@ -102,7 +98,7 @@ hfl_step "Verifying SourceLens connectivity at ${LENS_HOST_URL}."
 curl ${CURL_TLS[@]+"${CURL_TLS[@]}"} -fsSL "${LENS_HOST_URL%/}/health" >/dev/null
 hfl_ok "SourceLens health check passed."
 
-hfl_step "Preparing Gateway workspace mounts for LensNode."
+hfl_step "Preparing Gateway workspace mounts for the AI engine."
 mkdir -p "${HFL_WORKSPACE_ROOT}"
 HFL_GATEWAY_STATE_ROOT="$(dirname "${HFL_WORKSPACE_ROOT}")/.hyperfilelens"
 HFL_SOURCELENS_STATE_ROOT="${HFL_GATEWAY_STATE_ROOT}/sourcelens"
@@ -129,7 +125,7 @@ prepare_sentry_privacy_adapter() {
 	esac
 	local base="${HFL_API_BASE:-}" temporary="${SENTRY_PRIVACY_FILE}.tmp.$$"
 	if [[ -z "${base}" ]]; then
-		hfl_warn "Sentry privacy adapter URL is unavailable; LensNode reporting is disabled."
+		hfl_warn "Sentry privacy adapter URL is unavailable; AI engine reporting is disabled."
 		SENTRY_ENABLED=false
 		SENTRY_BACKEND_DSN=
 		return 0
@@ -139,7 +135,7 @@ prepare_sentry_privacy_adapter() {
 		-o "${temporary}" \
 		|| ! grep -Fx '# HFL_SENTRY_PRIVACY_ADAPTER=1' "${temporary}" >/dev/null; then
 		rm -f "${temporary}"
-		hfl_warn "Sentry privacy adapter download failed; LensNode reporting is disabled."
+		hfl_warn "Sentry privacy adapter download failed; AI engine reporting is disabled."
 		SENTRY_ENABLED=false
 		SENTRY_BACKEND_DSN=
 		return 0
@@ -208,9 +204,9 @@ install_docker_sidecar() {
 		fi
 	fi
 	if ! docker image inspect "${image}" >/dev/null 2>&1; then
-		hfl_fail "LensNode image ${image} is not available locally. Load the bundled lensnode-image archive before running gateway-install." 3
+		hfl_fail "AI engine image ${image} is not available locally. Load the bundled image archive before running gateway-install." 3
 	fi
-	hfl_step "Installing LensNode sidecar via Docker (${image})."
+	hfl_step "Installing AI engine via Docker (${image})."
 	EXTRA_HOSTS_BLOCK=""
 	if lens_url_needs_extra_hosts "${LENS_CONTAINER_URL}"; then
 		EXTRA_HOSTS_BLOCK=$'    extra_hosts:\n      - "host.docker.internal:host-gateway"\n'
@@ -282,23 +278,23 @@ EOF
 			fi
 			compose_args=(up -d --pull never)
 			if [[ -n "${current_container}" && "${current_image_id}" != "${desired_image_id}" ]]; then
-				hfl_step "Recreating LensNode because its loaded image ID changed."
+				hfl_step "Recreating the AI engine because its loaded image ID changed."
 				compose_args+=(--force-recreate)
 			fi
 			docker compose -p "${COMPOSE_PROJECT}" "${compose_args[@]}"
 		)
 	else
-		hfl_fail "Docker Compose v2 is required when using a LensNode container image." 3
+		hfl_fail "Docker Compose v2 is required when using the AI engine container image." 3
 	fi
-	hfl_ok "LensNode sidecar container started."
+	hfl_ok "AI engine container started."
 }
 
 SIDECAR_MODE=""
 if ! command -v docker >/dev/null 2>&1; then
-	hfl_fail "Docker is required to install the LensNode sidecar." 3
+	hfl_fail "Docker is required to install the AI engine." 3
 fi
 RESOLVED_IMAGE="$(resolve_lensnode_image)"
 install_docker_sidecar "${RESOLVED_IMAGE}"
 SIDECAR_MODE="docker"
 
-hfl_ok "LensNode sidecar install completed (${SIDECAR_MODE})."
+hfl_ok "AI engine installation completed (${SIDECAR_MODE})."

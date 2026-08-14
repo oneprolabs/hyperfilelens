@@ -13,21 +13,17 @@ export HFL_API_BASE="__HFL_API_BASE__"
 export HFL_WSS_URL="__HFL_WSS_URL__"
 export HFL_INSECURE_TLS="__HFL_INSECURE_TLS__"
 
-hfl_now() {
-	date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
-}
-
 hfl_fail() {
-	printf '[%s] [FAIL ] %s\n' "$(hfl_now)" "$1" >&2
+	printf '  [FAIL] %s\n' "$1" >&2
 	exit "${2:-1}"
 }
 
 hfl_step() {
-	printf '[%s] [....] %s\n' "$(hfl_now)" "$1"
+	printf '  [....] %s\n' "$1"
 }
 
 hfl_ok() {
-	printf '[%s] [ OK  ] %s\n' "$(hfl_now)" "$1"
+	printf '  [ OK ] %s\n' "$1"
 }
 
 hfl_format_bytes() {
@@ -59,7 +55,7 @@ hfl_download() {
 	fi
 	# ${arr[@]+...} keeps empty CURL_TLS safe under `set -u` on Bash < 4.4.
 	if ! curl ${CURL_TLS[@]+"${CURL_TLS[@]}"} \
-		--fail --show-error --location --progress-bar \
+		--fail --silent --show-error --location \
 		--retry 3 ${retry_connrefused[@]+"${retry_connrefused[@]}"} --retry-delay 2 \
 		"${url}" -o "${partial}"; then
 		rm -f "${partial}"

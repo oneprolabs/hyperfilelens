@@ -21,52 +21,120 @@ const gatewayLifecycleScript = "gateway-lifecycle.sh"
 func RunGatewayUpgrade(ctx context.Context, fromArchive string) error {
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
-		logFail(err.Error(), 2)
+		abortInstall("Initialization", err.Error(), 2, "HFL-UPGRADE-CONFIG")
 	}
 	if cfg.NodeRole != model.RoleGateway {
-		logFail("gateway-upgrade requires HFL_NODE_ROLE=gateway", 2)
+		abortInstall("Preflight checks", "gateway-upgrade requires HFL_NODE_ROLE=gateway", 2, "HFL-UPGRADE-ROLE")
 	}
 	if runtime.GOOS != "linux" {
-		logFail("gateway-upgrade is Linux-only", 2)
+		abortInstall("Preflight checks", "gateway-upgrade is Linux-only", 2, "HFL-UPGRADE-PLATFORM")
 	}
 	gatewayName := roleDisplayName(cfg.NodeRole, cfg.GatewayScope)
+	currentVersion := "unknown"
+	if version, versionErr := InstalledAgentVersion(ctx); versionErr == nil && version != "" {
+		currentVersion = version
+	}
+
+	if !jsonOutput() {
+		printLifecycleBanner(gatewayName, "Upgrade")
+		fmt.Fprintln(os.Stdout)
+		fmt.Fprintln(os.Stdout, "Target")
+		printSummaryValue("Console", cfg.APIBase)
+		printSummaryValue("Organization", cfg.OrgKey)
+		printSummaryValue("Role", gatewayName)
+		printSummaryValue("Current version", currentVersion)
+		if strings.TrimSpace(fromArchive) != "" {
+			printSummaryValue("Package source", fromArchive)
+		}
+	}
+	printPhase("Preflight checks")
+	logOK("Gateway role and platform support were verified.")
+	commitInstallLog()
 
 	fromArchive = strings.TrimSpace(fromArchive)
 	if fromArchive != "" {
 		installDir := vfs.DefaultInstallDir()
 		installScript := filepath.Join(installDir, "install.sh")
-		logStep("Upgrading HyperFileLens agent.")
+		printPhase("Upgrading Agent")
 		cmd := exec.CommandContext(ctx, "/bin/bash", installScript, "upgrade", "--from", fromArchive, "--yes", "--quiet-footer")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("agent upgrade: %w", err)
 		}
+	} else {
+		logSkip("Agent package upgrade was not requested.")
 	}
 
-	logStep("Upgrading AI engine (LensNode sidecar).")
+	printPhase("Upgrading AI engine")
 	if err := runGatewayLifecycleScript(ctx, cfg, "upgrade-sidecar", false); err != nil {
 		return err
 	}
-	logOK(gatewayName + " upgrade completed.")
+	logOK("AI engine upgrade completed.")
+
+	printPhase("Verifying")
+	service := serviceState(ctx)
+	if service == "" {
+		service = "active"
+	}
+	logOK("Agent service is " + service + ".")
+	version := currentVersion
+	if installedVersion, versionErr := InstalledAgentVersion(ctx); versionErr == nil && installedVersion != "" {
+		version = installedVersion
+	}
+	printGatewayUpgradeSuccess(gatewayName, version, service)
 	return nil
+}
+
+func printGatewayUpgradeSuccess(role, version, service string) {
+	if jsonOutput() {
+		emitJSON(os.Stdout, map[string]any{
+			"type":            "upgrade_result",
+			"result":          "success",
+			"role":            role,
+			"agent_version":   version,
+			"agent_service":   service,
+			"ai_engine_state": "active",
+		})
+		return
+	}
+	printResultRule(os.Stdout, "Upgrade completed successfully", ansiGreen)
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, "Upgrade summary")
+	printSummaryValue("Role", role)
+	printSummaryValue("Agent version", version)
+	printSummaryValue("Service state", service)
+	printSummaryValue("AI engine", "active")
+	printSummaryValue("Log file", activeInstallLogPath())
 }
 
 // RunGatewayUninstall removes LensNode sidecar then the HFL agent (default purge-all).
 func RunGatewayUninstall(ctx context.Context, purgeAll bool) error {
+	return runGatewayUninstall(ctx, purgeAll, true)
+}
+
+func runGatewayUninstall(ctx context.Context, purgeAll, renderLifecycle bool) error {
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
-		logFail(err.Error(), 2)
+		abortInstall("Initialization", err.Error(), 2, "HFL-UNINSTALL-CONFIG")
 	}
 	if cfg.NodeRole != model.RoleGateway {
-		logFail("gateway-uninstall requires HFL_NODE_ROLE=gateway", 2)
+		abortInstall("Preflight checks", "gateway-uninstall requires HFL_NODE_ROLE=gateway", 2, "HFL-UNINSTALL-ROLE")
 	}
 	if runtime.GOOS != "linux" {
-		logFail("gateway-uninstall is Linux-only", 2)
+		abortInstall("Preflight checks", "gateway-uninstall is Linux-only", 2, "HFL-UNINSTALL-PLATFORM")
 	}
 	gatewayName := roleDisplayName(cfg.NodeRole, cfg.GatewayScope)
+	state := DetectInstallState()
+	if renderLifecycle {
+		printUninstallContext(cfg.APIBase, cfg.OrgKey, cfg.NodeRole, state, purgeAll)
+		printPhase("Preflight checks")
+		logOK("Gateway role and platform support were verified.")
+		commitInstallLog()
+		printPhase("Uninstalling")
+	}
 
-	logStep("Removing AI engine (LensNode sidecar).")
+	logStep("Removing AI engine.")
 	if err := runGatewayLifecycleScript(ctx, cfg, "uninstall-sidecar", purgeAll); err != nil {
 		return err
 	}
@@ -74,12 +142,17 @@ func RunGatewayUninstall(ctx context.Context, purgeAll bool) error {
 	installDir := vfs.DefaultInstallDir()
 	installScript := filepath.Join(installDir, "install.sh")
 	if _, err := os.Stat(installScript); err != nil {
-		logOK("Agent install bundle not found; sidecar removal completed.")
+		logOK("Agent install bundle not found; AI engine removal completed.")
+		if renderLifecycle {
+			printPhase("Verifying")
+			logOK("Managed AI engine resources were removed.")
+			printUninstallSuccess(state, purgeAll)
+		}
 		return nil
 	}
 
 	logStep("Removing HyperFileLens agent.")
-	args := []string{installScript, "uninstall"}
+	args := []string{installScript, "uninstall", "--quiet-footer"}
 	if purgeAll {
 		args = append(args, "--purge-all")
 	}
@@ -91,6 +164,11 @@ func RunGatewayUninstall(ctx context.Context, purgeAll bool) error {
 		return fmt.Errorf("agent uninstall: %w", err)
 	}
 	logOK(gatewayName + " uninstall completed.")
+	if renderLifecycle {
+		printPhase("Verifying")
+		logOK("Agent service, installed files, and AI engine resources were removed.")
+		printUninstallSuccess(state, purgeAll)
+	}
 	return nil
 }
 

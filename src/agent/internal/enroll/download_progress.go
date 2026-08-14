@@ -50,19 +50,19 @@ func (display *downloadProgressDisplay) report(progress platforminstall.Download
 		}
 		display.lastLogged = progress.Elapsed
 	}
-	line := fmt.Sprintf("[....] %s %s", display.label, formatDownloadProgress(progress))
+	line := fmt.Sprintf("  [....] %s %s", display.label, formatDownloadProgress(progress))
 	if columns, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); columns > 20 && len(line) > columns {
-		line = fmt.Sprintf("[....] %s %s", display.label, compactDownloadProgress(progress))
+		line = fmt.Sprintf("  [....] %s %s", display.label, compactDownloadProgress(progress))
 		if len(line) > columns {
 			line = line[:columns]
 		}
 	}
 	if display.terminal {
-		fmt.Fprintf(os.Stdout, "\r%s\033[K", line)
-		display.terminalActive = !progress.Completed
 		if progress.Completed {
-			fmt.Fprintln(os.Stdout)
+			return
 		}
+		fmt.Fprintf(os.Stdout, "\r%s\033[K", line)
+		display.terminalActive = true
 		return
 	}
 	if jsonOutput() {
@@ -77,7 +77,10 @@ func (display *downloadProgressDisplay) report(progress platforminstall.Download
 		})
 		return
 	}
-	fmt.Fprintf(os.Stdout, "[INFO] Download progress: %s %s\n", display.label, compactDownloadProgress(progress))
+	if progress.Completed {
+		return
+	}
+	fmt.Fprintf(os.Stdout, "  [INFO] Download progress: %s %s\n", display.label, compactDownloadProgress(progress))
 }
 
 func compactDownloadProgress(progress platforminstall.DownloadProgress) string {
@@ -95,6 +98,21 @@ func (display *downloadProgressDisplay) abort() {
 	if display.terminal && display.terminalActive {
 		fmt.Fprintln(os.Stdout)
 		display.terminalActive = false
+	}
+}
+
+func (display *downloadProgressDisplay) success() {
+	message := display.successMessage()
+	display.mu.Lock()
+	terminal := display.terminal
+	if terminal {
+		styled := colorize(ansiGreen, " OK ")
+		fmt.Fprintf(os.Stdout, "\r  [%s] %s\033[K\n", styled, ensureSentence(message))
+		display.terminalActive = false
+	}
+	display.mu.Unlock()
+	if !terminal {
+		logOK(message)
 	}
 }
 
@@ -132,7 +150,7 @@ func downloadWithProgress(
 		display.abort()
 		return err
 	}
-	logOK(display.successMessage())
+	display.success()
 	return nil
 }
 

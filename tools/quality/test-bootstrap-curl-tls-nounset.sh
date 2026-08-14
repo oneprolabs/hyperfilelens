@@ -39,7 +39,7 @@ SH
 chmod +x "${tmp}/bin/curl"
 
 # Host Bash smoke: empty CURL_TLS must still drive hfl_download successfully.
-source <(sed -n '/^hfl_now()/,/^hfl_build_enroll_args()/p' "${bootstrap}" | sed '$d')
+source <(sed -n '/^hfl_fail()/,/^hfl_build_enroll_args()/p' "${bootstrap}" | sed '$d')
 CURL_TLS=()
 PATH="${tmp}/bin:${PATH}"
 export PATH

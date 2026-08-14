@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -85,7 +86,18 @@ func emitLine(level, message string, writer io.Writer) {
 	case "INFO":
 		styled = colorize(ansiCyan, level)
 	}
-	_, _ = fmt.Fprintf(writer, "[%s] %s\n", styled, message)
+	_, _ = fmt.Fprintf(writer, "  [%s] %s\n", styled, message)
+}
+
+func emitDetailLine(level, title, detail string, writer io.Writer) {
+	title = strings.TrimSpace(title)
+	detail = strings.TrimSpace(detail)
+	if detail == "" || jsonOutput() {
+		emitLine(level, joinDetail(title, detail), writer)
+		return
+	}
+	emitLine(level, title, writer)
+	_, _ = fmt.Fprintf(writer, "         %s\n", detail)
 }
 
 func logInfo(message string) { emitLine("INFO", message, os.Stdout) }
@@ -122,25 +134,34 @@ func RecoverInstallFailure(target *error) {
 
 // PrintCommandFailure renders a stable final failure block for returned errors.
 func PrintCommandFailure(err error) {
+	PrintCommandFailureFor("install", err)
+}
+
+// PrintCommandFailureFor renders a stable failure block for one lifecycle operation.
+func PrintCommandFailureFor(operation string, err error) {
 	if err == nil {
 		return
 	}
+	operation = normalizeFailureOperation(operation)
+	noun, codePrefix, activeStage := failureOperationLabels(operation)
 	failure := InstallFailure{
-		Stage:   "Initialization",
+		Stage:   activeStage,
 		Reason:  err.Error(),
 		Code:    1,
-		CodeKey: "HFL-INSTALL-001",
+		CodeKey: codePrefix + "-001",
 	}
 	var typed InstallFailure
 	if errors.As(err, &typed) {
 		failure = typed
 	} else if errors.Is(err, ErrInstallLocked) {
+		failure.Stage = "Initialization"
 		failure.Reason = "Another HyperFileLens installation is already running."
-		failure.CodeKey = "HFL-INSTALL-LOCKED"
+		failure.CodeKey = codePrefix + "-LOCKED"
 	}
 	if jsonOutput() {
 		emitJSON(os.Stderr, map[string]any{
 			"type":          "install_result",
+			"operation":     operation,
 			"result":        "failed",
 			"stage":         failure.Stage,
 			"reason":        ensureSentence(failure.Reason),
@@ -149,13 +170,13 @@ func PrintCommandFailure(err error) {
 		})
 		return
 	}
-	title := "Installation failed"
+	title := noun + " failed"
 	systemChange := "See the cleanup status above"
 	if failure.Stage == "Preflight checks" || failure.Stage == "Initialization" {
-		title = "Installation was not started"
+		title = noun + " was not started"
 		systemChange = "None"
 	}
-	if failure.Stage == "Post-install verification" {
+	if operation == "install" && failure.Stage == "Post-install verification" {
 		title = "Installation completed, but verification failed"
 		systemChange = "Agent installed; verification requires attention"
 	}
@@ -168,12 +189,36 @@ func PrintCommandFailure(err error) {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Error code:")
 	fmt.Fprintf(os.Stderr, "  %s\n", failure.CodeKey)
-	if failure.Stage == "Post-install verification" {
+	if operation == "install" && failure.Stage == "Post-install verification" {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Suggested actions:")
 		fmt.Fprintln(os.Stderr, "  1. Check outbound network access to the control plane.")
 		fmt.Fprintln(os.Stderr, "  2. Confirm that any proxy supports WebSocket connections.")
 		fmt.Fprintln(os.Stderr, "  3. Review the Agent service log and run hfl-enroll status.")
+	}
+}
+
+func normalizeFailureOperation(operation string) string {
+	switch strings.ToLower(strings.TrimSpace(operation)) {
+	case "upgrade", "uninstall", "registration", "status":
+		return strings.ToLower(strings.TrimSpace(operation))
+	default:
+		return "install"
+	}
+}
+
+func failureOperationLabels(operation string) (noun, codePrefix, activeStage string) {
+	switch operation {
+	case "upgrade":
+		return "Upgrade", "HFL-UPGRADE", "Upgrading Agent"
+	case "uninstall":
+		return "Uninstallation", "HFL-UNINSTALL", "Uninstalling"
+	case "registration":
+		return "Registration", "HFL-REGISTER", "Registering Agent"
+	case "status":
+		return "Status check", "HFL-STATUS", "Checking status"
+	default:
+		return "Installation", "HFL-INSTALL", "Initialization"
 	}
 }
 
@@ -191,6 +236,10 @@ func ensureSentence(message string) string {
 }
 
 func printBanner(role string) {
+	printLifecycleBanner(role, "Installer")
+}
+
+func printLifecycleBanner(role, operation string) {
 	if bannerPrinted || os.Getenv("HFL_NO_BANNER") != "" {
 		return
 	}
@@ -206,8 +255,20 @@ func printBanner(role string) {
 |_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/
        |___/|_|                     INSTALLER`))
 	}
-	fmt.Fprintf(os.Stdout, "\nHyperFileLens %s Installer\n", role)
+	fmt.Fprintf(os.Stdout, "\nHyperFileLens %s %s\n", role, operation)
 	fmt.Fprintln(os.Stdout, strings.Repeat("-", 64))
+}
+
+func printPhase(title string) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return
+	}
+	if jsonOutput() {
+		return
+	}
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, title)
 }
 
 // SummaryInfo is the final enrollment summary block.
@@ -254,6 +315,74 @@ func printEnrollmentContext(
 	fmt.Fprintln(os.Stdout, "Preflight checks")
 }
 
+func printUninstallContext(
+	consoleURL string,
+	orgKey string,
+	role model.Role,
+	state InstallState,
+	purgeAll bool,
+) {
+	displayRole := roleDisplayName(role, os.Getenv("HFL_GATEWAY_SCOPE"))
+	dataPolicy := "Preserve Agent data"
+	if purgeAll {
+		dataPolicy = "Remove Agent data"
+	}
+	if jsonOutput() {
+		emitJSON(os.Stdout, map[string]any{
+			"type":         "uninstall_target",
+			"console":      consoleURL,
+			"organization": orgKey,
+			"role":         displayRole,
+			"node_id":      state.NodeID,
+			"version":      state.Version,
+			"service":      state.Service,
+			"data_policy":  dataPolicy,
+		})
+		return
+	}
+	printLifecycleBanner(displayRole, "Uninstaller")
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, "Target")
+	printSummaryValue("Console", consoleURL)
+	printSummaryValue("Organization", orgKey)
+	printSummaryValue("Role", displayRole)
+	printSummaryValue("Node ID", state.NodeID)
+	printSummaryValue("Agent version", state.Version)
+	printSummaryValue("Service state", state.Service)
+	printSummaryValue("Install path", defaultInstallPath())
+	printSummaryValue("Data path", dataDirForAgent())
+	printSummaryValue("Data removal", dataPolicy)
+}
+
+func printUninstallSuccess(state InstallState, purgeAll bool) {
+	dataState := "preserved"
+	logState := filepath.Join(dataDirForAgent(), "logs", "uninstall.log")
+	if purgeAll {
+		dataState = "removed"
+		logState = "removed with Agent data"
+	}
+	if jsonOutput() {
+		emitJSON(os.Stdout, map[string]any{
+			"type":            "uninstall_result",
+			"result":          "success",
+			"node_id":         state.NodeID,
+			"install_path":    "removed",
+			"data_path_state": dataState,
+			"log_file":        logState,
+		})
+		return
+	}
+	printResultRule(os.Stdout, "Uninstallation completed successfully", ansiGreen)
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, "Uninstallation summary")
+	printSummaryValue("Node ID", state.NodeID)
+	printSummaryValue("Service", "removed")
+	printSummaryValue("Install path", "removed")
+	printSummaryValue("Data path", dataState)
+	printSummaryValue("Console record", "not changed by local uninstall")
+	printSummaryValue("Log file", logState)
+}
+
 func summaryFromState(consoleURL, nodeID, version, service string) SummaryInfo {
 	return SummaryInfo{
 		NodeID:      nodeID,
@@ -292,15 +421,35 @@ func printEnrollmentSuccess(info SummaryInfo) {
 	printSummaryValue("Role", info.Role)
 	printSummaryValue("Node ID", info.NodeID)
 	printSummaryValue("Agent version", info.Version)
-	printSummaryValue("Agent service", info.Service)
-	printSummaryValue("LensNode", info.LensNode)
+	printSummaryValue("Service state", info.Service)
+	printSummaryValue("AI engine", info.LensNode)
 	printSummaryValue("Console state", "online")
 	printSummaryValue("Install path", info.InstallPath)
 	printSummaryValue("Data path", info.DataPath)
 	printSummaryValue("Log file", info.LogPath)
 	fmt.Fprintln(os.Stdout)
-	fmt.Fprintln(os.Stdout, "Next step:")
-	fmt.Fprintln(os.Stdout, "  Open HyperFileLens and continue configuring this host.")
+	fmt.Fprintln(os.Stdout, "Next step")
+	if strings.Contains(info.Role, "Data Gateway") {
+		fmt.Fprintln(os.Stdout, "  Open HyperFileLens and configure the data sources available")
+		fmt.Fprintln(os.Stdout, "  through this Gateway.")
+	} else {
+		fmt.Fprintln(os.Stdout, "  Open HyperFileLens and configure backup sources and")
+		fmt.Fprintln(os.Stdout, "  protection policies.")
+	}
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, "Useful commands")
+	if runtime.GOOS == "windows" {
+		fmt.Fprintln(os.Stdout, "  sc.exe query HyperFileLensAgent")
+		fmt.Fprintln(os.Stdout, "  Get-Service HyperFileLensAgent")
+		fmt.Fprintln(os.Stdout, `  & "$env:ProgramFiles\HyperFileLens\Agent\install.cmd" status`)
+	} else if runtime.GOOS == "darwin" {
+		fmt.Fprintln(os.Stdout, "  launchctl print system/com.hyperfilelens.agent")
+		fmt.Fprintln(os.Stdout, "  sudo /opt/hyperfilelens-agent/install.sh status")
+	} else {
+		fmt.Fprintln(os.Stdout, "  systemctl status hyperfilelens-agent")
+		fmt.Fprintln(os.Stdout, "  journalctl -u hyperfilelens-agent -f")
+		fmt.Fprintln(os.Stdout, "  sudo /opt/hyperfilelens-agent/install.sh status")
+	}
 }
 
 func printAlreadyEnrolled(info SummaryInfo) {

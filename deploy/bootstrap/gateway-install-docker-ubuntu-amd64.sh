@@ -13,24 +13,20 @@ DOCKER_DEBS_ARCHIVE=""
 MIN_ENGINE_VERSION="${HFL_DOCKER_MIN_ENGINE:-24.0.0}"
 MIN_COMPOSE_VERSION="${HFL_COMPOSE_MIN_VERSION:-2.20.0}"
 
-hfl_now() {
-	date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
-}
-
 hfl_step() {
-	printf '[%s] [....] %s\n' "$(hfl_now)" "$1"
+	printf '  [....] %s\n' "$1"
 }
 
 hfl_ok() {
-	printf '[%s] [ OK  ] %s\n' "$(hfl_now)" "$1"
+	printf '  [ OK ] %s\n' "$1"
 }
 
 hfl_warn() {
-	printf '[%s] [WARN ] %s\n' "$(hfl_now)" "$1" >&2
+	printf '  [WARN] %s\n' "$1" >&2
 }
 
 hfl_fail() {
-	printf '[%s] [FAIL ] %s\n' "$(hfl_now)" "$1" >&2
+	printf '  [FAIL] %s\n' "$1" >&2
 	exit "${2:-1}"
 }
 
@@ -63,7 +59,7 @@ hfl_download() {
 	fi
 	# ${arr[@]+...} keeps empty CURL_TLS safe under `set -u` on Bash < 4.4.
 	if ! curl ${CURL_TLS[@]+"${CURL_TLS[@]}"} \
-		--fail --show-error --location --progress-bar \
+		--fail --silent --show-error --location \
 		--retry 3 ${retry_connrefused[@]+"${retry_connrefused[@]}"} --retry-delay 2 \
 		"${url}" -o "${partial}"; then
 		rm -f "${partial}"

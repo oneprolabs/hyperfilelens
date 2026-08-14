@@ -25,17 +25,13 @@ COMPOSE_PROJECT="hyperfilelens-gateway"
 DEFAULT_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
 OWNED_LENSNODE_IMAGES=("${DEFAULT_LENSNODE_IMAGE}")
 
-hfl_now() {
-	date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
-}
-
 hfl_log() {
-	printf '[%s] [INFO ] %s\n' "$(hfl_now)" "$*" >&2
+	printf '  [INFO] %s\n' "$*" >&2
 }
 
 hfl_fail() {
 	HFL_LAST_ERROR=$1
-	printf '[%s] [FAIL ] %s\n' "$(hfl_now)" "$1" >&2
+	printf '  [FAIL] %s\n' "$1" >&2
 	exit "${2:-1}"
 }
 
@@ -62,8 +58,8 @@ usage() {
 Usage: gateway-lifecycle.sh <command> [options]
 
 Commands:
-  upgrade-sidecar       Reload LensNode image and restart hyperfilelens-gateway-lensnode-1
-  uninstall-sidecar     Stop sidecar; use --purge-all to remove config, workspace, images
+  upgrade-sidecar       Reload the AI engine image and restart its container
+  uninstall-sidecar     Stop the AI engine; use --purge-all to remove its local data
 
 Options:
   --purge-all           Remove lensnode.env, compose dir, workspace, and local images
@@ -148,7 +144,7 @@ compose_down_sidecar() {
 	remove_owned_legacy_gateway_containers
 	if [[ -f "${COMPOSE_DIR}/docker-compose.yml" ]]; then
 		docker compose version >/dev/null 2>&1 \
-			|| hfl_fail "Docker Compose v2 is required to remove the LensNode sidecar" 3
+			|| hfl_fail "Docker Compose v2 is required to remove the AI engine" 3
 		while IFS= read -r image; do
 			remember_owned_lensnode_image "${image}"
 		done < <(
@@ -163,7 +159,7 @@ compose_down_sidecar() {
 	while IFS= read -r id; do
 		[[ -n "${id}" ]] || continue
 		remember_owned_lensnode_image "$(docker inspect --format '{{.Config.Image}}' "${id}" 2>/dev/null || true)"
-		hfl_log "Removing owned Gateway LensNode container ${id:0:12}."
+		hfl_log "Removing managed AI engine container ${id:0:12}."
 		docker rm -f "${id}" >/dev/null
 	done < <(
 		docker ps -aq \
@@ -174,7 +170,7 @@ compose_down_sidecar() {
 		--filter 'label=com.hyperfilelens.managed=true' \
 		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
 		| grep -q .; then
-		hfl_fail "Gateway LensNode containers remain after uninstall" 4
+		hfl_fail "AI engine containers remain after uninstall" 4
 	fi
 }
 
@@ -190,7 +186,7 @@ download_bootstrap_file() {
 	for ((attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++)); do
 		curl_rc=0
 		if curl "${curl_tls[@]}" \
-			--fail --show-error --location --progress-bar \
+			--fail --silent --show-error --location \
 			--continue-at - \
 			"${GATEWAY_BOOTSTRAP_BASE}/${name}" -o "${partial}"; then
 			if [[ ! -s "${partial}" ]]; then
@@ -232,7 +228,7 @@ load_lensnode_image() {
 	local work_dir=$1 ref
 	local archive="${work_dir}/${LENSNODE_IMAGE_ARCHIVE}"
 	download_bootstrap_file "${LENSNODE_IMAGE_ARCHIVE}" "${archive}"
-	hfl_log "Loading LensNode container image."
+	hfl_log "Loading AI engine container image."
 	docker load -i "${archive}"
 	for ref in \
 		"${DEFAULT_LENSNODE_IMAGE}" \
@@ -240,12 +236,12 @@ load_lensnode_image() {
 		oneprocloud/sourcelens-lensnode:latest; do
 		if docker image inspect "${ref}" >/dev/null 2>&1; then
 			if ! lensnode_image_supports_insecure_tls "${ref}"; then
-				hfl_fail "LensNode image ${ref} is missing configurable TLS verification support" 5
+				hfl_fail "AI engine image ${ref} is missing configurable TLS verification support" 5
 			fi
 			return 0
 		fi
 	done
-	hfl_fail "LensNode image not present after docker load (expected ${DEFAULT_LENSNODE_IMAGE})" 5
+	hfl_fail "AI engine image not present after docker load (expected ${DEFAULT_LENSNODE_IMAGE})" 5
 }
 
 run_sidecar_install_script() {
@@ -274,7 +270,7 @@ cmd_upgrade_sidecar() {
 	rm -rf "${tmp}"
 	report_lifecycle_status "sidecar_upgrade" "success"
 	trap - EXIT
-	hfl_log "LensNode sidecar upgrade completed."
+	hfl_log "AI engine upgrade completed."
 }
 
 gateway_upgrade_exit() {
@@ -284,7 +280,7 @@ gateway_upgrade_exit() {
 		report_lifecycle_status \
 			"sidecar_upgrade" \
 			"failed" \
-			"${HFL_LAST_ERROR:-LensNode sidecar upgrade failed (exit ${rc})}"
+			"${HFL_LAST_ERROR:-AI engine upgrade failed (exit ${rc})}"
 	fi
 	[[ -z "${tmp}" ]] || rm -rf "${tmp}"
 	return "${rc}"
@@ -297,11 +293,11 @@ remove_lensnode_images() {
 		[[ -n "${image}" && -z "${seen[${image}]:-}" ]] || continue
 		seen["${image}"]=1
 		if docker ps -aq --filter "ancestor=${image}" | grep -q .; then
-			hfl_log "Keeping shared LensNode image ${image}; another container still references it."
+			hfl_log "Keeping shared AI engine image ${image}; another container still references it."
 			continue
 		fi
 		docker image rm "${image}" >/dev/null 2>&1 \
-			|| hfl_log "LensNode image ${image} was absent or retained by Docker."
+			|| hfl_log "AI engine image ${image} was absent or retained by Docker."
 	done
 }
 
@@ -340,7 +336,7 @@ purge_sidecar_artifacts() {
 cmd_uninstall_sidecar() {
 	acquire_sidecar_lock
 	if ! load_agent_credentials_optional; then
-		hfl_log "Agent credentials are unavailable; continuing local LensNode cleanup without status reporting."
+		hfl_log "Agent credentials are unavailable; continuing local AI engine cleanup without status reporting."
 	fi
 	ensure_docker_ready
 	report_lifecycle_status "sidecar_uninstall" "running"
@@ -350,7 +346,7 @@ cmd_uninstall_sidecar() {
 		compose_down_sidecar
 	fi
 	report_lifecycle_status "sidecar_uninstall" "success"
-	hfl_log "LensNode sidecar uninstall completed."
+	hfl_log "AI engine uninstall completed."
 }
 
 main() {

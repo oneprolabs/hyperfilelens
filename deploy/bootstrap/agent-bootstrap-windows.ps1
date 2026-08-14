@@ -14,9 +14,15 @@ function Write-HflBootstrapLog {
     [Parameter(Mandatory = $true)][string]$Level,
     [Parameter(Mandatory = $true)][string]$Message
   )
-  $ts = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
   if ($Message -notmatch '[.!?]$') { $Message = "$Message." }
-  Write-Host "[$ts] [$Level] $Message"
+  $status = switch ($Level.Trim()) {
+    'OK' { ' OK '; break }
+    'WARN' { 'WARN'; break }
+    'FAIL' { 'FAIL'; break }
+    'INFO' { 'INFO'; break }
+    default { '....' }
+  }
+  Write-Host "  [$status] $Message"
 }
 
 function Format-HflBytes {
@@ -37,15 +43,14 @@ function Write-HflDownloadProgress {
     [Parameter(Mandatory = $true)][long]$Downloaded,
     [Parameter(Mandatory = $true)][long]$Total
   )
-  $ts = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
   if ($Total -gt 0) {
     $percent = [Math]::Min(100, [Math]::Round(($Downloaded * 100.0) / $Total))
-    Write-Host -NoNewline ("`r[{0}] [PROG ] Enrollment helper {1}% - {2} / {3}" -f `
-        $ts, $percent, (Format-HflBytes $Downloaded), (Format-HflBytes $Total))
+    Write-Host -NoNewline ("`r  [....] Enrollment helper {0}% - {1} / {2}" -f `
+        $percent, (Format-HflBytes $Downloaded), (Format-HflBytes $Total))
     return
   }
-  Write-Host -NoNewline ("`r[{0}] [PROG ] Enrollment helper - {1} downloaded" -f `
-      $ts, (Format-HflBytes $Downloaded))
+  Write-Host -NoNewline ("`r  [....] Enrollment helper - {0} downloaded" -f `
+      (Format-HflBytes $Downloaded))
 }
 
 if (-not (Test-HflAdmin)) {
@@ -78,7 +83,7 @@ function Get-HflEnrollmentBinary {
 
   if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
     $curlArgs = @(
-      '-fL', '--show-error', '--progress-bar',
+      '-fL', '--silent', '--show-error',
       '--retry', '3', '--retry-connrefused', '--retry-delay', '2',
       '-o', $partial, $Url
     )

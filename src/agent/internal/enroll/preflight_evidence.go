@@ -12,16 +12,16 @@ type preflightFailures struct {
 }
 
 func logOKDetail(title, detail string) {
-	logOK(joinDetail(title, detail))
+	emitDetailLine(" OK ", title, detail, os.Stdout)
 }
 
 func logWarnDetail(title, detail string) {
-	logWarn(joinDetail(title, detail))
+	emitDetailLine("WARN", title, detail, os.Stderr)
 }
 
 func (failures *preflightFailures) add(title, detail string, code int) {
 	message := joinDetail(title, detail)
-	emitLine("FAIL", message, os.Stderr)
+	emitDetailLine("FAIL", title, detail, os.Stderr)
 	failures.count++
 	if failures.first == nil {
 		failure := InstallFailure{

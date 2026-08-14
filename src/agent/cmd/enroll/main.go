@@ -36,7 +36,7 @@ func run() int {
 		if err := enroll.WithInstallLock(ctx, func() error {
 			return enroll.RunInstall(ctx, opts)
 		}); err != nil {
-			enroll.PrintCommandFailure(err)
+			enroll.PrintCommandFailureFor(installFailureOperation(opts.Mode), err)
 			return 1
 		}
 	case "gateway-install":
@@ -45,7 +45,7 @@ func run() int {
 		if err := enroll.WithInstallLock(ctx, func() error {
 			return enroll.RunGatewayInstall(ctx, opts)
 		}); err != nil {
-			enroll.PrintCommandFailure(err)
+			enroll.PrintCommandFailureFor(installFailureOperation(opts.Mode), err)
 			return 1
 		}
 	case "gateway-upgrade":
@@ -54,7 +54,7 @@ func run() int {
 		if err := enroll.WithInstallLock(ctx, func() error {
 			return enroll.RunGatewayUpgrade(ctx, fromArchive)
 		}); err != nil {
-			enroll.PrintCommandFailure(err)
+			enroll.PrintCommandFailureFor("upgrade", err)
 			return 1
 		}
 	case "gateway-uninstall":
@@ -63,7 +63,7 @@ func run() int {
 		if err := enroll.WithInstallLock(ctx, func() error {
 			return enroll.RunGatewayUninstall(ctx, purgeAll)
 		}); err != nil {
-			enroll.PrintCommandFailure(err)
+			enroll.PrintCommandFailureFor("uninstall", err)
 			return 1
 		}
 	case "register":
@@ -72,14 +72,14 @@ func run() int {
 		if err := enroll.WithInstallLock(ctx, func() error {
 			return enroll.RunRegister(ctx, opts)
 		}); err != nil {
-			enroll.PrintCommandFailure(err)
+			enroll.PrintCommandFailureFor("registration", err)
 			return 1
 		}
 	case "status":
 		if err := enroll.RunCommand(func() error {
 			return enroll.RunStatus(ctx)
 		}); err != nil {
-			enroll.PrintCommandFailure(err)
+			enroll.PrintCommandFailureFor("status", err)
 			return 1
 		}
 	case "help", "-h", "--help":
@@ -101,8 +101,8 @@ Usage:
   hfl-enroll install --reinstall          Reinstall the console release over an existing Agent
   hfl-enroll install --uninstall          Uninstall the Agent and preserve its data
   hfl-enroll gateway-install [--yes|-y]   Public or Private Data Gateway (Linux)
-  hfl-enroll gateway-upgrade [--from PATH] Upgrade agent bundle and LensNode sidecar (Linux)
-  hfl-enroll gateway-uninstall [--keep-data] Remove sidecar and agent (default: purge-all)
+  hfl-enroll gateway-upgrade [--from PATH] Upgrade Agent and AI engine (Linux)
+  hfl-enroll gateway-uninstall [--keep-data] Remove AI engine and Agent (default: purge-all)
   hfl-enroll register [--yes|-y]          HTTP heartbeat registration only (agent installed)
   hfl-enroll status                       Show node_id and service state
   hfl-enroll help                         Show this help
@@ -149,4 +149,15 @@ func hasFlag(args []string, name string) bool {
 		}
 	}
 	return false
+}
+
+func installFailureOperation(mode enroll.InstallMode) string {
+	switch mode {
+	case enroll.InstallModeUpgrade:
+		return "upgrade"
+	case enroll.InstallModeUninstall:
+		return "uninstall"
+	default:
+		return "install"
+	}
 }

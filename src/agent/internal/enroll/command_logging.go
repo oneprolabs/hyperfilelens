@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type commandLogSink struct {
@@ -55,11 +56,10 @@ func (stream *commandLogStream) Write(content []byte) (int, error) {
 }
 
 func (stream *commandLogStream) flush() {
-	if len(stream.line) == 0 {
-		_, _ = stream.sink.Write([]byte("\n"))
-		return
-	}
-	line := append(append([]byte{}, stream.line...), '\n')
+	timestamp := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	line := []byte("[" + timestamp + "] ")
+	line = append(line, stream.line...)
+	line = append(line, '\n')
 	_, _ = stream.sink.Write(line)
 	stream.line = stream.line[:0]
 }

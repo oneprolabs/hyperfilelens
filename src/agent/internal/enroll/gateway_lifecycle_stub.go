@@ -14,3 +14,7 @@ func RunGatewayUpgrade(_ context.Context, _ string) error {
 func RunGatewayUninstall(_ context.Context, _ bool) error {
 	return fmt.Errorf("gateway-uninstall is Linux-only")
 }
+
+func runGatewayUninstall(_ context.Context, _ bool, _ bool) error {
+	return fmt.Errorf("gateway-uninstall is Linux-only")
+}

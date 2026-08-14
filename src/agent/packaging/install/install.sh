@@ -44,8 +44,18 @@ AGENT_ONLY=0
 KOPIA_ONLY=0
 NO_RESTART=0
 QUIET_FOOTER=0
+HFL_ACTIVE_LOG_FILE=""
+HFL_ACTIVE_LOG_KIND=""
+HFL_DETAIL_LOG_PID=""
+HFL_FAILURE_REPORTED=0
+HFL_FAILURE_MARKER=""
+HFL_LOG_FINALIZING=0
 UPGRADE_FROM=""
 UPGRADE_YES=0
+
+# Preserve the caller's terminal while command stdout/stderr is mirrored to a
+# timestamped detail log during install, upgrade, and uninstall operations.
+exec 3>&1 4>&2
 
 usage() {
 	cat <<'USAGE'
@@ -86,7 +96,7 @@ Options:
 Install paths:
   /opt/hyperfilelens-agent                         Binaries and installer scripts
   /opt/hyperfilelens-agent/libexec/gateway-lifecycle.sh
-                                                   Data Gateway LensNode lifecycle helper
+                                                   Data Gateway AI engine lifecycle helper
   /var/lib/hyperfilelens-agent                     Runtime data, backup, and configuration
   /var/lib/hyperfilelens-agent/backup/state/       Pre-upgrade agent.env/agent.db snapshot (retained until uninstall --purge-all)
   /opt/hyperfilelens-agent/backup/                 Legacy upgrade archives (removed on uninstall)
@@ -167,6 +177,7 @@ parse_uninstall_flags() {
 		case "$1" in
 			--purge-all) PURGE_ALL=1; shift ;;
 			--keep-installation-identity) KEEP_INSTALLATION_IDENTITY=1; shift ;;
+			--quiet-footer) QUIET_FOOTER=1; shift ;;
 			-h|--help) usage; exit 0 ;;
 			*)
 				echo "Unknown option: $1" >&2
@@ -363,58 +374,252 @@ hfl_finish_sentence() {
 _hfl_emit_raw() {
 	local level="$1"
 	shift
-	printf '[%s] [%s] %s\n' "$(hfl_now)" "${level}" "$(hfl_finish_sentence "$*")"
+	local message display_level log_dir
+	message="$(hfl_finish_sentence "$*")"
+	display_level="$(printf '%s' "${level}" | sed 's/^ *//; s/ *$//')"
+	case "${display_level}" in
+	OK) display_level=" OK " ;;
+	STEP) display_level="...." ;;
+	INFO) display_level="INFO" ;;
+	WARN) display_level="WARN" ;;
+	FAIL) display_level="FAIL" ;;
+	SKIP) display_level="SKIP" ;;
+	esac
+	if [[ -n "${HFL_ACTIVE_LOG_FILE}" ]]; then
+		log_dir="$(dirname "${HFL_ACTIVE_LOG_FILE}")"
+		if [[ -d "${log_dir}" ]]; then
+			printf '[%s] [%s] %s\n' "$(hfl_now)" "${level}" "${message}" \
+				>>"${HFL_ACTIVE_LOG_FILE}" 2>/dev/null || true
+		fi
+	fi
+	if [[ "${QUIET_FOOTER}" -eq 0 || "${display_level}" == "FAIL" ]]; then
+		if [[ "${display_level}" == "WARN" || "${display_level}" == "FAIL" ]]; then
+			printf '  [%s] %s\n' "${display_level}" "${message}" >&4
+		else
+			printf '  [%s] %s\n' "${display_level}" "${message}" >&3
+		fi
+	fi
 }
 
-log_info() { _hfl_emit_raw "INFO " "$@" >&2; }
-log_ok() { _hfl_emit_raw " OK  " "$@" >&2; }
-log_step() { _hfl_emit_raw "STEP " "$@" >&2; }
-log_skip() { _hfl_emit_raw "SKIP " "$@" >&2; }
-log_warn() { _hfl_emit_raw "WARN " "$@" >&2; }
+log_info() { _hfl_emit_raw "INFO " "$@"; }
+log_ok() { _hfl_emit_raw " OK  " "$@"; }
+log_step() { _hfl_emit_raw "STEP " "$@"; }
+log_skip() { _hfl_emit_raw "SKIP " "$@"; }
+log_warn() { _hfl_emit_raw "WARN " "$@"; }
 log_fail() {
-	_hfl_emit_raw "FAIL " "$@" >&2
-	exit "${2:-1}"
+	local message="$1" code="${2:-1}"
+	HFL_FAILURE_REPORTED=1
+	if [[ -n "${HFL_FAILURE_MARKER}" ]]; then
+		: >"${HFL_FAILURE_MARKER}" 2>/dev/null || true
+	fi
+	_hfl_emit_raw "FAIL " "${message}"
+	exit "${code}"
+}
+
+hfl_detail_log_stream() {
+	local log_file="$1" line
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		printf '[%s] [DETAIL] %s\n' "$(hfl_now)" "${line}" >>"${log_file}" 2>/dev/null || true
+	done
+}
+
+hfl_role_display_name() {
+	local role="${1:-agent}" scope="${2:-}"
+	case "${role}" in
+	proxy) printf '%s' "Proxy Host" ;;
+	gateway)
+		case "${scope}" in
+		public | platform) printf '%s' "Public Data Gateway" ;;
+		*) printf '%s' "Private Data Gateway" ;;
+		esac
+		;;
+	*) printf '%s' "Source Host" ;;
+	esac
+}
+
+hfl_write_display_log() {
+	local line="$1" log_dir
+	[[ -n "${HFL_ACTIVE_LOG_FILE}" ]] || return 0
+	log_dir="$(dirname "${HFL_ACTIVE_LOG_FILE}")"
+	[[ -d "${log_dir}" ]] || return 0
+	printf '[%s] [INFO ] %s\n' "$(hfl_now)" "${line}" \
+		>>"${HFL_ACTIVE_LOG_FILE}" 2>/dev/null || true
+}
+
+hfl_emit_display_line() {
+	printf '%s\n' "$1" >&3
+	hfl_write_display_log "$1"
+}
+
+hfl_print_banner() {
+	local role="$1" operation="$2"
+	[[ "${QUIET_FOOTER}" -eq 0 ]] || return 0
+	while IFS= read -r line; do
+		hfl_emit_display_line "${line}"
+	done <<'BANNER'
+ _   _                       _____ _ _      _
+| | | |_   _ _ __   ___ _ _|  ___(_) | ___| |    ___ _ __  ___
+| |_| | | | | '_ \ / _ \ '__| |_  | | |/ _ \ |   / _ \ '_ \/ __|
+|  _  | |_| | |_) |  __/ |  |  _| | | |  __/ |__|  __/ | | \__ \
+|_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/
+       |___/|_|                     INSTALLER
+BANNER
+	printf '\n' >&3
+	hfl_emit_display_line "HyperFileLens ${role} ${operation}"
+	hfl_emit_display_line '----------------------------------------------------------------'
+}
+
+hfl_print_section() {
+	[[ "${QUIET_FOOTER}" -eq 0 ]] || return 0
+	printf '\n%s\n' "$1" >&3
+	hfl_write_display_log "$1"
+}
+
+hfl_print_value() {
+	local label="$1" value="$2"
+	[[ "${QUIET_FOOTER}" -eq 0 && -n "${value}" ]] || return 0
+	printf '  %-13s %s\n' "${label}" "${value}" >&3
+	hfl_write_display_log "${label}: ${value}"
+}
+
+hfl_print_result() {
+	local title="$1"
+	[[ "${QUIET_FOOTER}" -eq 0 ]] || return 0
+	printf '\n' >&3
+	hfl_emit_display_line '================================================================'
+	hfl_emit_display_line "${title}"
+	hfl_emit_display_line '================================================================'
+}
+
+begin_detail_log_capture() {
+	local log_file="$1"
+	exec > >(hfl_detail_log_stream "${log_file}") 2>&1
+	HFL_DETAIL_LOG_PID=$!
+}
+
+finish_detail_log_capture() {
+	exec 1>&3 2>&4
+	if [[ -n "${HFL_DETAIL_LOG_PID}" ]]; then
+		wait "${HFL_DETAIL_LOG_PID}" 2>/dev/null || true
+		HFL_DETAIL_LOG_PID=""
+	fi
 }
 
 begin_install_log() {
-	local data_dir="$1"
+	local data_dir="$1" operation="${2:-install}"
 	local log_file="${data_dir}/logs/install.log"
 	mkdir -p "$(dirname "${log_file}")"
-	if [[ $QUIET_FOOTER -eq 1 ]]; then
-		{
-			log_info "Install session started."
-		} >>"${log_file}" 2>&1
-		exec >>"${log_file}" 2>&1
-	else
-		log_info "Install session started."
-		exec > >(tee -a "${log_file}") 2>&1
-	fi
+	HFL_ACTIVE_LOG_FILE="${log_file}"
+	HFL_ACTIVE_LOG_KIND="${operation}"
+	HFL_FAILURE_REPORTED=0
+	HFL_FAILURE_MARKER="${log_file}.failure.$$"
+	rm -f "${HFL_FAILURE_MARKER}"
+	log_info "Install session started."
+	begin_detail_log_capture "${log_file}"
+	trap 'hfl_finalize_active_log $?' EXIT
 }
 
 finish_install_log() {
 	local rc="$1"
+	finish_detail_log_capture
 	if [[ "${rc}" -eq 0 ]]; then
 		log_info "Install session finished successfully."
 	else
 		log_warn "Install session finished with errors (exit=${rc})."
 	fi
+	HFL_ACTIVE_LOG_FILE=""
+	HFL_ACTIVE_LOG_KIND=""
+	HFL_FAILURE_REPORTED=0
+	[[ -z "${HFL_FAILURE_MARKER}" ]] || rm -f "${HFL_FAILURE_MARKER}"
+	HFL_FAILURE_MARKER=""
 }
 
 begin_uninstall_log() {
 	local data_dir="$1"
 	local log_file="${data_dir}/logs/uninstall.log"
 	mkdir -p "$(dirname "${log_file}")"
+	HFL_ACTIVE_LOG_FILE="${log_file}"
+	HFL_ACTIVE_LOG_KIND="uninstall"
+	HFL_FAILURE_REPORTED=0
+	HFL_FAILURE_MARKER="${log_file}.failure.$$"
+	rm -f "${HFL_FAILURE_MARKER}"
 	log_info "Uninstall session started."
-	exec > >(tee -a "${log_file}") 2>&1
+	begin_detail_log_capture "${log_file}"
+	trap 'hfl_finalize_active_log $?' EXIT
 }
 
 finish_uninstall_log() {
 	local rc="$1"
+	finish_detail_log_capture
 	if [[ "${rc}" -eq 0 ]]; then
 		log_info "Uninstall session finished successfully."
 	else
 		log_warn "Uninstall session finished with errors (exit=${rc})."
 	fi
+	HFL_ACTIVE_LOG_FILE=""
+	HFL_ACTIVE_LOG_KIND=""
+	HFL_FAILURE_REPORTED=0
+	[[ -z "${HFL_FAILURE_MARKER}" ]] || rm -f "${HFL_FAILURE_MARKER}"
+	HFL_FAILURE_MARKER=""
+}
+
+hfl_finalize_active_log() {
+	local rc="${1:-1}" operation failure_logged=0
+	[[ -n "${HFL_ACTIVE_LOG_FILE}" && "${HFL_LOG_FINALIZING}" -eq 0 ]] || return 0
+	HFL_LOG_FINALIZING=1
+	case "${HFL_ACTIVE_LOG_KIND}" in
+	install) operation="Installation" ;;
+	upgrade) operation="Upgrade" ;;
+	uninstall) operation="Uninstallation" ;;
+	*) operation="Operation" ;;
+	esac
+	if [[ "${HFL_FAILURE_REPORTED}" -eq 1 ]] \
+		|| [[ -n "${HFL_FAILURE_MARKER}" && -f "${HFL_FAILURE_MARKER}" ]]; then
+		failure_logged=1
+	fi
+	if [[ "${rc}" -ne 0 && "${failure_logged}" -eq 0 ]]; then
+		HFL_FAILURE_REPORTED=1
+		_hfl_emit_raw "FAIL " "${operation} failed (exit code ${rc}); review ${HFL_ACTIVE_LOG_FILE} for details."
+	fi
+	case "${HFL_ACTIVE_LOG_KIND}" in
+	uninstall) finish_uninstall_log "${rc}" ;;
+	*) finish_install_log "${rc}" ;;
+	esac
+	HFL_LOG_FINALIZING=0
+}
+
+hfl_print_install_success() {
+	local role="$1" version="$2" service="$3" data_dir="$4"
+	hfl_print_section "Verifying"
+	case "${service}" in
+	"not started" | "not managed") log_skip "Agent service is ${service}." ;;
+	*) log_ok "Agent service is ${service}." ;;
+	esac
+	hfl_print_result "Installation completed successfully"
+	hfl_print_section "Installation summary"
+	hfl_print_value "Role" "${role}"
+	hfl_print_value "Agent version" "${version}"
+	hfl_print_value "Service state" "${service}"
+	hfl_print_value "Install path" "${INSTALL_DIR}"
+	hfl_print_value "Data path" "${data_dir}"
+	hfl_print_value "Log file" "${data_dir}/logs/install.log"
+}
+
+hfl_print_upgrade_success() {
+	local version="$1" service="$2" data_dir="$3"
+	hfl_print_section "Verifying"
+	if [[ "${service}" == "not restarted" ]]; then
+		log_skip "Agent service was not restarted by request."
+	else
+		log_ok "Agent service is ${service}."
+	fi
+	hfl_print_result "Upgrade completed successfully"
+	hfl_print_section "Upgrade summary"
+	hfl_print_value "Agent version" "${version}"
+	hfl_print_value "Service state" "${service}"
+	hfl_print_value "Install path" "${INSTALL_DIR}"
+	hfl_print_value "Data path" "${data_dir}"
+	hfl_print_value "Log file" "${data_dir}/logs/install.log"
 }
 
 bundle_agent() { echo "${BUNDLE_ROOT}/bin/hfl-agent"; }
@@ -1175,8 +1380,19 @@ cmd_install() {
 	trap 'finish_install_log $?' RETURN
 
 	if [[ $QUIET_FOOTER -eq 0 ]]; then
-		log_info "Starting HyperFileLens agent installation (version $(bundle_version))."
-		log_info "Platform: $(uname -s | tr '[:upper:]' '[:lower:]')/$(bundle_arch) · Role: ${NODE_ROLE} · Install dir: ${INSTALL_DIR} · Data dir: ${DATA_DIR}."
+		hfl_print_banner "$(hfl_role_display_name "${NODE_ROLE}" "${HFL_GATEWAY_SCOPE:-}")" "Installer"
+		hfl_print_section "Target"
+		hfl_print_value "Console" "${API_BASE}"
+		hfl_print_value "Organization" "${ORG_KEY}"
+		hfl_print_value "Role" "$(hfl_role_display_name "${NODE_ROLE}" "${HFL_GATEWAY_SCOPE:-}")"
+		hfl_print_value "Agent version" "$(bundle_version)"
+		hfl_print_value "Platform" "$(uname -s | tr '[:upper:]' '[:lower:]')/$(bundle_arch)"
+		hfl_print_value "Install path" "${INSTALL_DIR}"
+		hfl_print_value "Data path" "${DATA_DIR}"
+		hfl_print_section "Preflight checks"
+		log_ok "Administrator privileges and service manager are available."
+		log_ok "Agent package layout is valid."
+		hfl_print_section "Installing Agent"
 	fi
 
 	gateway_resource_preflight "${NODE_ROLE}" "${DATA_DIR}"
@@ -1190,22 +1406,21 @@ cmd_install() {
 			install_launchd_plist "${DATA_DIR}/agent.env"
 			if [[ $QUIET_FOOTER -eq 0 ]]; then
 				log_skip "Launchd service ${LAUNCHD_LABEL} was not started (--no-start)."
-				log_info "Installation completed. Start the service with sudo ${INSTALL_DIR}/install.sh start."
+				hfl_print_install_success "$(hfl_role_display_name "${NODE_ROLE}" "${HFL_GATEWAY_SCOPE:-}")" "$(bundle_version)" "not started" "${DATA_DIR}"
 			fi
 			return 0
 		fi
 		start_launchd_service "${DATA_DIR}/agent.env"
 		if [[ $QUIET_FOOTER -eq 0 ]]; then
-			log_info "Installation completed successfully (service: ${LAUNCHD_LABEL}, $(launchd_service_status_line))."
-			log_info "Return to the HyperFileLens console to add backup sources and policies."
+			hfl_print_install_success "$(hfl_role_display_name "${NODE_ROLE}" "${HFL_GATEWAY_SCOPE:-}")" "$(bundle_version)" "$(launchd_service_status_line)" "${DATA_DIR}"
 		fi
 		return 0
 	fi
 
 	if ! agent_uses_systemd; then
 		if [[ $QUIET_FOOTER -eq 0 ]]; then
-			log_info "Installation completed, but systemd was not found on this host."
-			log_info "Start the agent manually from ${INSTALL_DIR}/hfl-agent."
+			log_warn "No supported service manager was found; start the Agent manually."
+			hfl_print_install_success "$(hfl_role_display_name "${NODE_ROLE}" "${HFL_GATEWAY_SCOPE:-}")" "$(bundle_version)" "not managed" "${DATA_DIR}"
 		fi
 		return 0
 	fi
@@ -1216,15 +1431,14 @@ cmd_install() {
 		log_ok "Systemd was reloaded successfully."
 		if [[ $QUIET_FOOTER -eq 0 ]]; then
 			log_skip "Service hyperfilelens-agent.service was not started (--no-start)."
-			log_info "Installation completed. Start the service with systemctl start hyperfilelens-agent."
+			hfl_print_install_success "$(hfl_role_display_name "${NODE_ROLE}" "${HFL_GATEWAY_SCOPE:-}")" "$(bundle_version)" "not started" "${DATA_DIR}"
 		fi
 		return 0
 	fi
 
 	start_service
 	if [[ $QUIET_FOOTER -eq 0 ]]; then
-		log_info "Installation completed successfully (service: hyperfilelens-agent.service, $(service_status_line))."
-		log_info "Return to the HyperFileLens console to add backup sources and policies."
+		hfl_print_install_success "$(hfl_role_display_name "${NODE_ROLE}" "${HFL_GATEWAY_SCOPE:-}")" "$(bundle_version)" "$(service_status_line)" "${DATA_DIR}"
 	fi
 }
 
@@ -1245,8 +1459,10 @@ cmd_upgrade() {
 	upgrade_ws="$(upgrade_workspace_dir "${data_dir}")"
 	prev_ver="unknown"
 	[[ -f "$INSTALLED_VERSION_FILE" ]] && prev_ver="$(tr -d ' \t\r\n' <"$INSTALLED_VERSION_FILE")"
+	begin_install_log "${data_dir}" "upgrade"
+	trap 'finish_install_log $?' RETURN
 
-	trap 'cleanup_upgrade_workspace "$upgrade_ws"' EXIT
+	trap 'rc=$?; cleanup_upgrade_workspace "$upgrade_ws"; hfl_finalize_active_log "$rc"' EXIT
 	src_root="$(prepare_upgrade_source "${UPGRADE_FROM}" "${data_dir}")"
 	new_ver="$(bundle_version_from "${src_root}")"
 
@@ -1260,11 +1476,21 @@ cmd_upgrade() {
 	fi
 
 	if [[ $QUIET_FOOTER -eq 0 ]]; then
-		log_info "Starting in-place upgrade (${prev_ver} → ${new_ver})."
-		log_info "Install dir: ${INSTALL_DIR} · Data dir: ${data_dir} · Source: ${UPGRADE_FROM}."
+		local installed_role gateway_scope
+		installed_role="$(read_env_value "${env_file}" "HFL_NODE_ROLE" || true)"
+		gateway_scope="$(read_env_value "${env_file}" "HFL_GATEWAY_SCOPE" || true)"
+		hfl_print_banner "$(hfl_role_display_name "${installed_role}" "${gateway_scope}")" "Upgrade"
+		hfl_print_section "Target"
+		hfl_print_value "Role" "$(hfl_role_display_name "${installed_role}" "${gateway_scope}")"
+		hfl_print_value "Current version" "${prev_ver}"
+		hfl_print_value "Target version" "${new_ver}"
+		hfl_print_value "Install path" "${INSTALL_DIR}"
+		hfl_print_value "Data path" "${data_dir}"
+		hfl_print_section "Preflight checks"
 	fi
 
 	upgrade_preflight "${data_dir}"
+	hfl_print_section "Upgrading Agent"
 	backup_upgrade_binaries "${data_dir}"
 	trap upgrade_rollback_on_error ERR
 
@@ -1292,7 +1518,7 @@ cmd_upgrade() {
 	if [[ $NO_RESTART -eq 1 ]]; then
 		if [[ $QUIET_FOOTER -eq 0 ]]; then
 			log_skip "Service $(service_display_name) was not restarted (--no-restart)."
-			log_info "Upgrade completed successfully (version ${new_ver})."
+			hfl_print_upgrade_success "${new_ver}" "not restarted" "${data_dir}"
 		fi
 		return 0
 	fi
@@ -1302,7 +1528,7 @@ cmd_upgrade() {
 	fi
 
 	if [[ $QUIET_FOOTER -eq 0 ]]; then
-		log_info "Upgrade completed successfully (version ${new_ver}, service: $(service_display_name), $(service_status_line))."
+		hfl_print_upgrade_success "${new_ver}" "$(service_status_line)" "${data_dir}"
 	fi
 }
 
@@ -1458,14 +1684,14 @@ uninstall_gateway_sidecar_if_needed() {
 	role="$(read_env_value "${env_file}" "HFL_NODE_ROLE" || true)"
 	[[ "${role}" == "gateway" ]] || return 0
 	[[ "$(uname -s)" == "Linux" ]] \
-		|| log_fail "Data Gateway LensNode uninstall is supported on Linux only." 2
+		|| log_fail "Data Gateway AI engine uninstall is supported on Linux only." 2
 	[[ -x "${GATEWAY_LIFECYCLE_SCRIPT}" ]] \
 		|| log_fail "Missing ${GATEWAY_LIFECYCLE_SCRIPT}; upgrade the Agent before uninstalling this Data Gateway." 2
 	[[ "${PURGE_ALL}" -eq 0 ]] || purge_args+=(--purge-all)
-	log_step "Removing the Data Gateway LensNode sidecar before the Agent."
+	log_step "Removing the Data Gateway AI engine before the Agent."
 	HFL_AGENT_ENV_FILE="${env_file}" \
 		bash "${GATEWAY_LIFECYCLE_SCRIPT}" uninstall-sidecar "${purge_args[@]}"
-	log_ok "Data Gateway LensNode sidecar removal completed."
+	log_ok "Data Gateway AI engine removal completed."
 }
 
 cmd_uninstall() {
@@ -1476,10 +1702,32 @@ cmd_uninstall() {
 	resolved_data="$(resolve_data_dir)"
 	env_file="${resolved_data}/agent.env"
 	begin_uninstall_log "${resolved_data}"
-	trap 'finish_uninstall_log $?' EXIT
+	trap 'hfl_finalize_active_log $?' EXIT
 
-	log_info "Starting HyperFileLens agent uninstallation."
-	log_info "Install dir: ${INSTALL_DIR} · Data dir: ${resolved_data} · Purge data: $([[ $PURGE_ALL -eq 1 ]] && echo yes || echo no)."
+	local installed_role gateway_scope node_id installed_version data_policy
+	installed_role="$(read_env_value "${env_file}" "HFL_NODE_ROLE" || true)"
+	gateway_scope="$(read_env_value "${env_file}" "HFL_GATEWAY_SCOPE" || true)"
+	node_id="$(read_env_value "${env_file}" "HFL_NODE_ID" || true)"
+	installed_version="unknown"
+	[[ -f "${INSTALLED_VERSION_FILE}" ]] && installed_version="$(tr -d ' \t\r\n' <"${INSTALLED_VERSION_FILE}")"
+	data_policy="preserve"
+	[[ "${PURGE_ALL}" -eq 0 ]] || data_policy="remove"
+	hfl_print_banner "$(hfl_role_display_name "${installed_role}" "${gateway_scope}")" "Uninstaller"
+	hfl_print_section "Target"
+	hfl_print_value "Role" "$(hfl_role_display_name "${installed_role}" "${gateway_scope}")"
+	hfl_print_value "Node ID" "${node_id}"
+	hfl_print_value "Agent version" "${installed_version}"
+	hfl_print_value "Service state" "$(service_status_line)"
+	hfl_print_value "Install path" "${INSTALL_DIR}"
+	hfl_print_value "Data path" "${resolved_data}"
+	hfl_print_value "Data removal" "${data_policy}"
+	hfl_print_section "Preflight checks"
+	if [[ "${PURGE_ALL}" -eq 0 && "${KEEP_INSTALLATION_IDENTITY}" -eq 0 \
+		&& ! -x "${INSTALL_DIR}/hfl-agent" ]]; then
+		log_fail "Cannot retire the installation identity because ${INSTALL_DIR}/hfl-agent is unavailable." 1
+	fi
+	log_ok "Installed Agent paths and data policy were verified."
+	hfl_print_section "Uninstalling"
 	uninstall_gateway_sidecar_if_needed "${env_file}"
 
 	stop_service
@@ -1538,7 +1786,18 @@ cmd_uninstall() {
 		log_skip "No data directory was resolved for removal."
 	fi
 
-	log_info "Uninstallation completed. If this node still appears in the console, remove it there."
+	hfl_print_section "Verifying"
+	log_ok "Agent service and installed files were removed."
+	hfl_print_result "Uninstallation completed successfully"
+	hfl_print_section "Uninstallation summary"
+	hfl_print_value "Node ID" "${node_id}"
+	hfl_print_value "Service" "removed"
+	hfl_print_value "Install path" "removed"
+	hfl_print_value "Data path" "$([[ "${PURGE_ALL}" -eq 1 ]] && echo removed || echo preserved)"
+	hfl_print_value "Console record" "not changed by local uninstall"
+	if [[ "${PURGE_ALL}" -eq 0 ]]; then
+		hfl_print_value "Log file" "${resolved_data}/logs/uninstall.log"
+	fi
 	finish_uninstall_log 0
 	trap - EXIT
 }

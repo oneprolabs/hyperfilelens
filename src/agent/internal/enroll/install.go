@@ -70,6 +70,7 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			logFail(err.Error(), 1)
 		}
 	}
+	printPhase(installActionPhase(plan.Action))
 	commitInstallLog()
 	if err := persistInstallationID(cfg.InstallationID); err != nil {
 		logFail("Failed to persist the installation identity: "+err.Error(), 3)
@@ -268,27 +269,43 @@ func runExplicitUninstall(ctx context.Context, cfg Config, opts InstallOptions) 
 		return nil
 	}
 	if state.OrgKey != "" && !strings.EqualFold(state.OrgKey, cfg.OrgKey) {
-		logFail("This Agent belongs to a different organization. Use its original installation environment to uninstall it.", 1)
+		abortInstall(
+			"Preflight checks",
+			"This Agent belongs to a different organization. Use its original installation environment to uninstall it.",
+			1,
+			"HFL-UNINSTALL-ORG",
+		)
 	}
+	printUninstallContext(cfg.APIBase, cfg.OrgKey, cfg.NodeRole, state, opts.PurgeAll)
+	printPhase("Preflight checks")
+	logOK("Installed Agent ownership was verified.")
 	message := "Uninstall the HyperFileLens Agent and preserve its data directory?"
 	if opts.PurgeAll {
 		message = "Uninstall the HyperFileLens Agent and permanently remove its managed data?"
 	}
 	if err := confirmAction(message, opts.AutoYes); err != nil {
-		logFail(err.Error(), 1)
+		abortInstall("Preflight checks", err.Error(), 1, "HFL-UNINSTALL-CONFIRM")
 	}
+	logOK("Uninstall request was confirmed.")
+	printPhase("Uninstalling")
+	var uninstallErr error
 	if cfg.NodeRole == model.RoleGateway {
-		return RunGatewayUninstall(ctx, opts.PurgeAll)
+		uninstallErr = runGatewayUninstall(ctx, opts.PurgeAll, false)
+	} else {
+		logStep("Removing the HyperFileLens Agent.")
+		uninstallErr = install.RunUninstallWithDataPolicy(
+			ctx,
+			install.DefaultInstallDir(),
+			!opts.PurgeAll,
+		)
 	}
-	logStep("Removing the HyperFileLens Agent.")
-	if err := install.RunUninstallWithDataPolicy(
-		ctx,
-		install.DefaultInstallDir(),
-		!opts.PurgeAll,
-	); err != nil {
-		return err
+	if uninstallErr != nil {
+		return uninstallErr
 	}
 	logOK("HyperFileLens Agent uninstall completed.")
+	printPhase("Verifying")
+	logOK("Agent service and installed files were removed.")
+	printUninstallSuccess(state, opts.PurgeAll)
 	return nil
 }
 
@@ -351,7 +368,7 @@ func finishEnrollment(
 			logFail("Node registration failed: "+err.Error(), 5)
 		}
 	} else {
-		logOK(fmt.Sprintf("Node registered successfully (id=%s).", nodeID))
+		logOK(fmt.Sprintf("Node registered successfully (ID %s).", nodeID))
 	}
 
 	envPath := EnvFilePath()
@@ -386,12 +403,13 @@ func finishEnrollment(
 		logFail("Agent service start failed: "+err.Error(), 6)
 	}
 
+	printPhase("Verifying")
 	service := serviceState(ctx)
 	if service == "" {
 		service = "active"
 	}
 	logOK(fmt.Sprintf("Agent service is %s.", service))
-	logStep("Waiting for the Agent to come online")
+	logStep("Waiting for the Agent to come online.")
 	if err := enrollmentclient.WaitNodeOnline(ctx, agentCfg, nodeID, 30*time.Second); err != nil {
 		abortInstall(
 			"Post-install verification",
@@ -409,6 +427,21 @@ func finishEnrollment(
 	}
 	printEnrollmentSuccess(info)
 	return nil
+}
+
+func installActionPhase(action ReinstallAction) string {
+	switch action {
+	case ActionUpgrade:
+		return "Upgrading Agent"
+	case ActionRepair:
+		return "Repairing Agent"
+	case ActionReinstall:
+		return "Reinstalling Agent"
+	case ActionRebind:
+		return "Registering Agent"
+	default:
+		return "Installing Agent"
+	}
 }
 
 func installerScriptName() string {
@@ -460,7 +493,7 @@ func installAgentPackage(ctx context.Context, cfg Config, agentVer *string) erro
 	if err := RunBundleInstall(ctx, bundleRoot, cfg); err != nil {
 		return err
 	}
-	logOK("Agent binaries and service were installed successfully.")
+	logOK("Agent files and service configuration were installed successfully.")
 
 	if ver, verErr := InstalledAgentVersion(ctx); verErr == nil && ver != "" {
 		*agentVer = ver
