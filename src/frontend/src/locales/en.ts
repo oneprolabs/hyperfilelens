@@ -885,6 +885,7 @@ export const en = {
       thinkingLiveProgress: 'Thinking… {seconds}s · step {count}',
       thinkingRetrievalHint: 'Retrieving and analyzing your workspace — the answer will stream in when ready.',
       messageTimeYesterday: 'Yesterday',
+      scrollToLatest: 'Back to latest',
       thinkingDone: 'Thought for {seconds}s · {count} steps',
       thinkingDoneSteps: '{count} reasoning steps',
       disclaimer: 'AI answers may be incomplete. Verify critical information.',

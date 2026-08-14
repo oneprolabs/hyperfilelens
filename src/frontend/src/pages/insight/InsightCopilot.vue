@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -72,7 +72,7 @@ const deleteTarget = ref<SessionRow | null>(null)
 const messagesBySession = ref<Record<number, CopilotDisplayMessage[]>>({})
 const selectedStarterBySession = ref<Record<number, string>>({})
 const input = ref('')
-const chatScrollRef = ref<HTMLElement | null>(null)
+const messageListRef = ref<{ scrollToBottom: () => void } | null>(null)
 const lifecyclePollingIds = new Set<number>()
 let componentUnmounted = false
 
@@ -538,20 +538,8 @@ async function confirmDeleteSession() {
 }
 
 function scrollToBottom() {
-  nextTick(() => {
-    const el = chatScrollRef.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
+  messageListRef.value?.scrollToBottom()
 }
-
-watch(
-  () => [
-    activeMessages.value.length,
-    activeStream.value?.partialAnswer,
-    activeStream.value?.isStreaming,
-  ],
-  () => scrollToBottom(),
-)
 
 async function applyStarterChip(key: string, text: string) {
   const sessionId = activeSessionId.value
@@ -565,7 +553,6 @@ async function applyStarterChip(key: string, text: string) {
 
 function retryQuestion(text: string) {
   input.value = text
-  scrollToBottom()
 }
 
 function onAttach() {
@@ -602,8 +589,6 @@ async function submitQuestion(question: string, { clearComposer = false } = {}) 
     const message = apiErrorMessage(err, t('errors.generic.requestFailed'))
     ElMessage.error({ message, grouping: true })
     await copilotStore.syncSession(sessionId, syncHandlers, activeSessionId.value).catch(() => undefined)
-  } finally {
-    scrollToBottom()
   }
 }
 
@@ -725,8 +710,10 @@ onUnmounted(() => {
           @delete="deleteActiveSession"
         />
 
-        <div v-if="activeSession?.lifecycle_status === 'ready'" ref="chatScrollRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div v-if="activeSession?.lifecycle_status === 'ready'" class="flex min-h-0 flex-1 flex-col overflow-hidden">
           <CopilotMessageList
+            :key="activeSessionId"
+            ref="messageListRef"
             :messages="activeMessages"
             :streaming="showLiveStream"
             :streaming-content="activeStream?.partialAnswer ?? ''"
