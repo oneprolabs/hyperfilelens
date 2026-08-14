@@ -103,11 +103,23 @@ func (h *Handler) Handle(ctx context.Context, raw []byte, sink Sender) error {
 			return nil
 		}
 		logging.InfoTask(ctx, "task.cancel received", dl.TaskCancel.NodeID, dl.TaskCancel.TaskID, "cancel")
+		if h.tasks != nil {
+			status, changed, cancelErr := h.tasks.MarkCancelledIfActive(ctx, dl.TaskCancel.TaskID)
+			if cancelErr != nil {
+				slog.Warn("persist task cancellation failed", "task_id", dl.TaskCancel.TaskID, "err", cancelErr)
+				return nil
+			}
+			if !changed {
+				slog.Info(
+					"late task.cancel ignored for terminal task",
+					"task_id", dl.TaskCancel.TaskID,
+					"status", status,
+				)
+				return nil
+			}
+		}
 		engine.New(h.provider).Cancel()
 		_ = h.tracker.Cancel(ctx, dl.TaskCancel.TaskID)
-		if h.tasks != nil {
-			_ = h.tasks.MarkCancelled(ctx, dl.TaskCancel.TaskID)
-		}
 		return nil
 	case TypeTaskResultAck:
 		if dl.TaskResultAck == nil || dl.TaskResultAck.TaskID == "" || h.tasks == nil {
@@ -285,9 +297,12 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 	}, wsSink)
 
 	status := out.Status
-	result := out.Result
+	result, resultStats := boundTaskResult(out.Result)
+	if resultStats.Truncated {
+		resultBoundLog(cmd.TaskID, resultStats)
+	}
 	errMsg := out.Error
-	if taskCtx.Err() != nil {
+	if taskCtx.Err() != nil && status != "success" {
 		status = "failed"
 		errMsg = "canceled"
 	}
@@ -320,16 +335,34 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 		localStatus = model.TaskStatusCancelled
 	}
 
+	persistCtx := context.WithoutCancel(ctx)
 	if h.tasks != nil {
-		if err := h.tasks.Finish(taskCtx, cmd.TaskID, localStatus, result, errMsg); err != nil {
+		stored, err := h.tasks.FinishIfActive(persistCtx, cmd.TaskID, localStatus, result, errMsg)
+		if err != nil {
 			slog.Warn("persist task result failed", "task_id", cmd.TaskID, "err", err)
+			return
+		}
+		if !stored {
+			persisted, getErr := h.tasks.Get(persistCtx, cmd.TaskID)
+			if getErr != nil {
+				slog.Warn("load competing terminal task result failed", "task_id", cmd.TaskID, "err", getErr)
+				return
+			}
+			status = database.WireStatus(persisted.Status)
+			result = persisted.Result
+			errMsg = persisted.Error
+			slog.Info(
+				"task result send converged to persisted terminal state",
+				"task_id", cmd.TaskID,
+				"status", persisted.Status,
+			)
 		}
 	}
 
-	if err := SendTaskResult(taskCtx, sink, cmd.TaskID, status, result, errMsg); err != nil {
+	if err := SendTaskResult(persistCtx, sink, cmd.TaskID, status, result, errMsg); err != nil {
 		slog.Warn("send task.result failed", "task_id", cmd.TaskID, "err", err)
 	} else if h.tasks != nil && !h.TaskResultAckEnabled() {
-		_ = h.tasks.MarkResultReported(taskCtx, cmd.TaskID)
+		_ = h.tasks.MarkResultReported(persistCtx, cmd.TaskID)
 	}
 }
 

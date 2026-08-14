@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from urllib.parse import parse_qs
@@ -13,6 +14,13 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 
 from apps.node import conf as node_conf
+from apps.node.metrics import (
+    AGENT_UPLINK_REJECTED,
+    AGENT_WS_DISCONNECTS,
+    TASK_RESULT_ACK_LATENCY,
+    TASK_RESULT_BYTES,
+    TASK_RESULT_TRUNCATED,
+)
 from apps.node.services.internal.agent_ws_auth import validate_agent_ws_credentials
 from apps.node.services.internal.client_ip import resolve_agent_client_ip_from_scope
 from apps.node.ws.groups import agent_group_name, ws_instance_group_name
@@ -38,6 +46,8 @@ logger = logging.getLogger(__name__)
 
 _CLOSE_UNAUTHORIZED = 4401
 _CLOSE_SERVICE_RESTART = 1012
+_CLOSE_MESSAGE_TOO_LARGE = 1009
+_MAX_AGENT_UPLINK_BYTES = 512 * 1024
 
 
 @dataclass(frozen=True)
@@ -106,6 +116,8 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
         )
 
     async def disconnect(self, close_code: int) -> None:
+        normalized_code = str(close_code) if close_code in {1000, 1001, 1006, 1009, 1012} else "other"
+        AGENT_WS_DISCONNECTS.labels(code=normalized_code).inc()
         if getattr(self, "agent_group", ""):
             await self.channel_layer.group_discard(
                 self.agent_group,
@@ -132,15 +144,58 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
         if not text_data:
             return
 
+        frame_bytes = len(text_data.encode("utf-8"))
+        if frame_bytes > _MAX_AGENT_UPLINK_BYTES:
+            AGENT_UPLINK_REJECTED.labels(reason="message_too_large").inc()
+            logger.warning(
+                "agent uplink rejected node_id=%s reason=message_too_large bytes=%s max_bytes=%s",
+                self.node_id,
+                frame_bytes,
+                _MAX_AGENT_UPLINK_BYTES,
+            )
+            await self.close(code=_CLOSE_MESSAGE_TOO_LARGE)
+            return
+
         data = loads_json(text_data)
         if data is None:
-            logger.debug("ignored non-json frame node_id=%s", self.node_id)
+            AGENT_UPLINK_REJECTED.labels(reason="invalid_json").inc()
+            logger.warning(
+                "agent uplink rejected node_id=%s reason=invalid_json bytes=%s",
+                self.node_id,
+                frame_bytes,
+            )
             return
 
         message = parse_uplink(data)
         if message is None:
-            logger.debug("ignored unknown uplink type node_id=%s", self.node_id)
+            AGENT_UPLINK_REJECTED.labels(reason="unknown_type").inc()
+            logger.warning(
+                "agent uplink rejected node_id=%s reason=unknown_type bytes=%s",
+                self.node_id,
+                frame_bytes,
+            )
             return
+
+        logger.debug(
+            "agent uplink received node_id=%s type=%s task_id=%s bytes=%s",
+            self.node_id,
+            message.msg_type,
+            message.task_id or "",
+            frame_bytes,
+        )
+
+        result_received_at = time.monotonic()
+        if message.msg_type == WireType.TASK_RESULT:
+            TASK_RESULT_BYTES.observe(frame_bytes)
+            if bool((message.result or {}).get("result_truncated")):
+                TASK_RESULT_TRUNCATED.inc()
+            logger.info(
+                "agent task result received node_id=%s task_id=%s bytes=%s truncated=%s",
+                self.node_id,
+                message.task_id,
+                frame_bytes,
+                bool((message.result or {}).get("result_truncated")),
+            )
 
         if message.msg_type == WireType.HEARTBEAT:
             await database_sync_to_async(touch_heartbeat_fast)(
@@ -164,11 +219,13 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
                 message=message,
             )
         except Exception:
+            AGENT_UPLINK_REJECTED.labels(reason="persistence_failed").inc()
             logger.exception(
-                "agent uplink persist failed node_id=%s task_id=%s type=%s",
+                "agent uplink persist failed node_id=%s task_id=%s type=%s bytes=%s category=persistence_failed",
                 self.node_id,
                 message.task_id,
                 message.msg_type,
+                frame_bytes,
             )
             return
 
@@ -179,6 +236,7 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
                 await self.send(
                     text_data=dumps_wire(task_result_ack_wire(task_id=task.id))
                 )
+                TASK_RESULT_ACK_LATENCY.observe(time.monotonic() - result_received_at)
             except Exception:
                 logger.warning(
                     "agent task result ACK send failed node_id=%s task_id=%s",

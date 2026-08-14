@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from django.test import TestCase
 from django.utils import timezone
 
@@ -9,6 +11,8 @@ from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.task import complete_task
+from apps.node.ws.uplink import _handle_task_result
+from apps.node.ws.wire import ParsedUplink, WireType
 
 
 class CompleteTaskIdempotencyTests(TestCase):
@@ -96,3 +100,63 @@ class CompleteTaskIdempotencyTests(TestCase):
         self.assertEqual(updated.status, NodeTask.Status.CANCELED)
         self.assertEqual(updated.last_error, "canceled by user")
         self.assertNotIn("kopia_snapshot_id", updated.result)
+
+    def test_late_backup_success_requires_snapshot_identity(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="backup.snapshot.create",
+            correlation_type="protection.backup",
+            correlation_id="backup-1",
+            status=NodeTask.Status.TIMEOUT,
+            last_error="watchdog timeout (no progress)",
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        updated = complete_task(
+            task_id=task.id,
+            node_id=self.node.id,
+            status="success",
+            result={"result_truncated": True},
+        )
+
+        self.assertEqual(updated.status, NodeTask.Status.TIMEOUT)
+        self.assertEqual(updated.last_error, "watchdog timeout (no progress)")
+
+    def test_late_backup_success_with_snapshot_identity_recovers_timeout(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="backup.snapshot.create",
+            correlation_type="protection.backup",
+            correlation_id="backup-2",
+            status=NodeTask.Status.TIMEOUT,
+            last_error="watchdog timeout (no progress)",
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        updated = complete_task(
+            task_id=task.id,
+            node_id=self.node.id,
+            status="success",
+            result={"kopia_snapshot_id": "late-snapshot"},
+        )
+
+        self.assertEqual(updated.status, NodeTask.Status.SUCCESS)
+        self.assertEqual(updated.last_error, "")
+        self.assertEqual(updated.result["kopia_snapshot_id"], "late-snapshot")
+
+    @patch("apps.node.ws.uplink.TASK_RESULT_RETRANSMISSIONS")
+    def test_repeated_success_is_idempotent_and_counted_as_retransmission(self, metric):
+        message = ParsedUplink(
+            msg_type=WireType.TASK_RESULT,
+            task_id=str(self.task.id),
+            status="success",
+            result={"kopia_snapshot_id": "snapshot-repeat"},
+        )
+
+        updated = _handle_task_result(node_id=self.node.id, message=message)
+
+        self.assertEqual(updated.status, NodeTask.Status.SUCCESS)
+        self.assertEqual(updated.result["kopia_snapshot_id"], "snapshot-repeat")
+        metric.inc.assert_called_once_with()

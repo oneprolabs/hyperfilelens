@@ -110,6 +110,9 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
     last_error = str(node_task.last_error or "").strip()
     lower = last_error.lower()
     if node_task.status == NodeTask.Status.TIMEOUT:
+        result = node_task.result if isinstance(node_task.result, dict) else {}
+        if str(result.get("diagnostic_error_code") or "") == "RESULT_ACK_TIMEOUT":
+            return "RESULT_ACK_TIMEOUT", last_error or "Agent result acknowledgement timed out."
         return "WATCHDOG_STALL", last_error or "Agent task watchdog timed out."
     if node_task.status == NodeTask.Status.CANCELED:
         return "USER_CANCELLED", last_error or "Backup canceled."
@@ -1075,6 +1078,7 @@ _STALE_DIRECTORY_FAILURE_CODES = frozenset(
         "AGENT_OFFLINE",
         "AGENT_TIMEOUT",
         "WATCHDOG_STALL",
+        "RESULT_ACK_TIMEOUT",
     }
 )
 

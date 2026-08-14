@@ -1229,9 +1229,6 @@ func runPreparedManagedSnapshot(
 	stalled := runCtx.Err() != nil && ctx.Err() == nil && progressState.stallExceeded(stallSeconds)
 	close(stallDone)
 	cancelRun()
-	for key, value := range commandResult(res) {
-		result[key] = value
-	}
 	result["snapshot_create"] = commandResult(res)
 	if parsed := parseSnapshotOutput(res.Stdout); len(parsed) > 0 {
 		for key, value := range parsed {
@@ -2591,10 +2588,22 @@ func kopiaServerIdentity(username string) (string, string) {
 }
 
 func commandResult(res process.Result) map[string]any {
+	stdoutTotal := res.StdoutTotalBytes
+	if stdoutTotal == 0 && res.Stdout != "" {
+		stdoutTotal = int64(len(res.Stdout))
+	}
+	stderrTotal := res.StderrTotalBytes
+	if stderrTotal == 0 && res.Stderr != "" {
+		stderrTotal = int64(len(res.Stderr))
+	}
 	out := map[string]any{
-		"exit_code": res.ExitCode,
-		"stdout":    res.Stdout,
-		"stderr":    res.Stderr,
+		"exit_code":          res.ExitCode,
+		"stdout":             res.Stdout,
+		"stderr":             res.Stderr,
+		"stdout_total_bytes": stdoutTotal,
+		"stderr_total_bytes": stderrTotal,
+		"stdout_truncated":   res.StdoutTruncated,
+		"stderr_truncated":   res.StderrTruncated,
 	}
 	if res.Stdout != "" {
 		out["stdout_tail"] = tailLines(res.Stdout, 20)

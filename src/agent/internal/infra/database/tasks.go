@@ -167,12 +167,14 @@ UPDATE tasks SET
   result=?,
   updated_at=?,
   result_reported=0
-WHERE id=?
+WHERE id=? AND status IN (?, ?)
 `,
 		string(model.TaskStatusRunning),
 		string(resultJSON),
 		formatTime(now),
 		taskID,
+		string(model.TaskStatusPending),
+		string(model.TaskStatusRunning),
 	)
 	return err
 }
@@ -220,15 +222,29 @@ func (r *TaskRepo) UpdateProgress(ctx context.Context, taskID string, progress m
 
 // Finish updates terminal status, result, and error after execution.
 func (r *TaskRepo) Finish(ctx context.Context, taskID string, status model.TaskStatus, result map[string]any, errMsg string) error {
+	_, err := r.FinishIfActive(ctx, taskID, status, result, errMsg)
+	return err
+}
+
+// FinishIfActive atomically stores a terminal result only while the task is
+// pending/running. The returned flag reports whether this result won a race
+// with cancellation or another terminal transition.
+func (r *TaskRepo) FinishIfActive(
+	ctx context.Context,
+	taskID string,
+	status model.TaskStatus,
+	result map[string]any,
+	errMsg string,
+) (bool, error) {
 	if taskID == "" {
-		return fmt.Errorf("empty task id")
+		return false, fmt.Errorf("empty task id")
 	}
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
-		return err
+		return false, err
 	}
 	now := time.Now().UTC()
-	_, err = r.db.conn.ExecContext(ctx, `
+	execResult, err := r.db.conn.ExecContext(ctx, `
 UPDATE tasks SET
   status=?,
   result=?,
@@ -236,7 +252,7 @@ UPDATE tasks SET
   finished_at=?,
   updated_at=?,
   result_reported=0
-WHERE id=?
+WHERE id=? AND status IN (?, ?)
 `,
 		string(status),
 		string(resultJSON),
@@ -244,13 +260,63 @@ WHERE id=?
 		formatTime(now),
 		formatTime(now),
 		taskID,
+		string(model.TaskStatusPending),
+		string(model.TaskStatusRunning),
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	rows, err := execResult.RowsAffected()
+	return rows == 1, err
 }
 
-// MarkCancelled sets a task to cancelled.
-func (r *TaskRepo) MarkCancelled(ctx context.Context, taskID string) error {
-	return r.Finish(ctx, taskID, model.TaskStatusCancelled, map[string]any{}, "canceled")
+// MarkCancelledIfActive cancels pending/running work without overwriting a
+// terminal result that may still be awaiting control-plane acknowledgement.
+func (r *TaskRepo) MarkCancelledIfActive(
+	ctx context.Context,
+	taskID string,
+) (model.TaskStatus, bool, error) {
+	if taskID == "" {
+		return "", false, fmt.Errorf("empty task id")
+	}
+	var status model.TaskStatus
+	changed := false
+	err := r.db.WithTx(ctx, func(tx *sql.Tx) error {
+		var rawStatus string
+		if err := tx.QueryRowContext(ctx, `SELECT status FROM tasks WHERE id=?`, taskID).Scan(&rawStatus); err != nil {
+			return wrapTaskNotFound(taskID, err)
+		}
+		status = model.TaskStatus(rawStatus)
+		if status != model.TaskStatusPending && status != model.TaskStatusRunning {
+			return nil
+		}
+		now := time.Now().UTC()
+		result, err := tx.ExecContext(ctx, `
+UPDATE tasks SET
+  status=?, result='{}', error='canceled', finished_at=?, updated_at=?, result_reported=0
+WHERE id=? AND status IN (?, ?)
+`,
+			string(model.TaskStatusCancelled),
+			formatTime(now),
+			formatTime(now),
+			taskID,
+			string(model.TaskStatusPending),
+			string(model.TaskStatusRunning),
+		)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		changed = rows == 1
+		if changed {
+			status = model.TaskStatusCancelled
+		}
+		return nil
+	})
+	return status, changed, err
 }
 
 // MarkResultReported marks task.result as delivered to the control plane.

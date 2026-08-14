@@ -849,10 +849,22 @@ def complete_task(
     if task is None:
         raise LookupError("task not found")
 
+    incoming = status.lower()
+    if (
+        task.status in {NodeTask.Status.FAILED, NodeTask.Status.TIMEOUT}
+        and incoming in {"success", "succeeded", "ok"}
+        and _is_protection_backup_task(task)
+        and not str((result or {}).get("kopia_snapshot_id") or (result or {}).get("snapshot_id") or "").strip()
+    ):
+        logger.warning(
+            "late backup success ignored without snapshot identity %s",
+            task_log_context(node_id=node_id, task_id=str(task_id), kind=task.kind),
+        )
+        return task
+
     if task.status in _TERMINAL_STATUSES:
         if isinstance(task.result, dict) and task.result.get("delivery_timeout_sealed"):
             return task
-        incoming = status.lower()
         if task.status == NodeTask.Status.SUCCESS and incoming not in (
             "success",
             "succeeded",
@@ -1164,8 +1176,16 @@ def sweep_watchdog_timeouts(*, queryset: QuerySet[NodeTask] | None = None, limit
                 )
                 continue
             task.status = NodeTask.Status.TIMEOUT
-            task.last_error = "watchdog timeout (no progress)"
-            task.save(update_fields=["status", "last_error", "updated_at"])
+            if "result" in message_type.lower():
+                merged = dict(task.result or {})
+                merged["diagnostic_error_code"] = "RESULT_ACK_TIMEOUT"
+                task.result = merged
+                task.last_error = "result acknowledgement timeout"
+                update_fields = ["status", "result", "last_error", "updated_at"]
+            else:
+                task.last_error = "watchdog timeout (no progress)"
+                update_fields = ["status", "last_error", "updated_at"]
+            task.save(update_fields=update_fields)
             logger.warning(
                 "agent task watchdog timeout %s",
                 task_log_context(

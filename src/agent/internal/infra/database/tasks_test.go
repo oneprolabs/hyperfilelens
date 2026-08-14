@@ -334,3 +334,44 @@ func TestTaskRepoFinish(t *testing.T) {
 		t.Fatalf("pending = %+v", pending)
 	}
 }
+
+func TestTaskRepoFinishIfActiveDoesNotOverwriteTerminalResult(t *testing.T) {
+	ctx := t.Context()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	repo := NewTaskRepo(db)
+	if err := repo.RecordCommand(ctx, RecordInput{TaskID: "terminal-1", Kind: "backup.run"}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.FinishIfActive(
+		ctx,
+		"terminal-1",
+		model.TaskStatusSucceeded,
+		map[string]any{"kopia_snapshot_id": "snapshot-1"},
+		"",
+	)
+	if err != nil || !stored {
+		t.Fatalf("first finish stored=%v err=%v", stored, err)
+	}
+	stored, err = repo.FinishIfActive(
+		ctx,
+		"terminal-1",
+		model.TaskStatusCancelled,
+		map[string]any{},
+		"canceled",
+	)
+	if err != nil || stored {
+		t.Fatalf("competing finish stored=%v err=%v", stored, err)
+	}
+	task, err := repo.Get(ctx, "terminal-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != model.TaskStatusSucceeded || task.Result["kopia_snapshot_id"] != "snapshot-1" {
+		t.Fatalf("terminal result changed: %#v", task)
+	}
+}
