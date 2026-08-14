@@ -57,6 +57,7 @@ src/backend/staticfiles/
 
 # --- Other ---
 *.mo
+.installer.lock
 .worktrees/
 .tmp/
 .tools/
