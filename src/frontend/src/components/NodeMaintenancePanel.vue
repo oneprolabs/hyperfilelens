@@ -54,7 +54,9 @@ async function copyCommand(command: string) {
       show-icon
       class="node-maintenance-panel__offline"
     >
-      <template #title>{{ t('nodeLifecycle.offlineMaintenanceTitle') }}</template>
+      <template #title>
+        {{ t('nodeLifecycle.offlineMaintenanceTitle') }}
+      </template>
       <div class="node-maintenance-panel__offline-body">
         <span>
           {{ node.last_seen_at
@@ -68,7 +70,11 @@ async function copyCommand(command: string) {
           :aria-label="t('nodeLifecycle.refreshNodeStatus')"
           @click="emit('refresh')"
         >
-          <RefreshCw v-if="!refreshing" :size="14" aria-hidden="true" />
+          <RefreshCw
+            v-if="!refreshing"
+            :size="14"
+            aria-hidden="true"
+          />
           {{ t('nodeLifecycle.refreshNodeStatus') }}
         </ElButton>
       </div>

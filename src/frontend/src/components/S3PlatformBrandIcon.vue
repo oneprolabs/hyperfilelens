@@ -10,7 +10,9 @@ const props = withDefaults(defineProps<{
   iconClass?: string
   lucideClass?: string
 }>(), {
+  platform: null,
   size: 18,
+  alt: '',
   iconClass: '',
   lucideClass: '',
 })
@@ -37,5 +39,5 @@ const usesDatabaseIcon = computed(() => {
     :height="size"
     loading="lazy"
     decoding="async"
-  />
+  >
 </template>

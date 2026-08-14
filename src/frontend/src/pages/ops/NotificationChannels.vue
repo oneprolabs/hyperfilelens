@@ -1207,7 +1207,10 @@ watch(
             :disabled="loading"
             @click="fetchChannels"
           >
-            <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+            <RefreshCw
+              :size="16"
+              :class="{ 'is-spinning': loading }"
+            />
           </el-button>
         </template>
 
@@ -1220,122 +1223,137 @@ watch(
           :title="listError"
         >
           <template #default>
-            <ElButton size="small" @click="fetchChannels">
+            <ElButton
+              size="small"
+              @click="fetchChannels"
+            >
               {{ t('common.retry') }}
             </ElButton>
           </template>
         </ElAlert>
 
         <template #table="{ tableMaxHeight }">
-        <el-table
-          ref="channelsTableRef"
-          v-table-column-resize="'ops.notificationChannels'"
-          v-loading="loading"
-          :data="channels"
-          stripe
-          class="hfl-list-table"
-          row-key="id"
-          :max-height="tableMaxHeight"
-          @selection-change="onChannelSelectionChange"
-        >
-          <el-table-column
-            type="selection"
-            width="35"
-            fixed="left"
-          />
-          <el-table-column
-            :label="t('ops.notification.colChannelName')"
-            min-width="190"
-            fixed="left"
+          <el-table
+            ref="channelsTableRef"
+            v-table-column-resize="'ops.notificationChannels'"
+            v-loading="loading"
+            :data="channels"
+            stripe
+            class="hfl-list-table"
+            row-key="id"
+            :max-height="tableMaxHeight"
+            @selection-change="onChannelSelectionChange"
           >
-            <template #default="{ row }">
-              <div class="hfl-ops-primary-cell">
-                <div class="min-w-0">
-                  <div class="flex min-w-0 items-center gap-1">
-                    <button
-                      type="button"
-                      class="hfl-table-name-link hfl-table-name-link--single min-w-0"
-                      @click="openDetails(row)"
-                    >
-                      {{ row.name }}
-                    </button>
+            <el-table-column
+              type="selection"
+              width="35"
+              fixed="left"
+            />
+            <el-table-column
+              :label="t('ops.notification.colChannelName')"
+              min-width="190"
+              fixed="left"
+            >
+              <template #default="{ row }">
+                <div class="hfl-ops-primary-cell">
+                  <div class="min-w-0">
+                    <div class="flex min-w-0 items-center gap-1">
+                      <button
+                        type="button"
+                        class="hfl-table-name-link hfl-table-name-link--single min-w-0"
+                        @click="openDetails(row)"
+                      >
+                        {{ row.name }}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column
-            :label="t('ops.notification.colType')"
-            width="130"
-          >
-            <template #default="{ row }">
-              <HflTypeLabel
-                :icon="getNotificationTypeIcon(row.type)"
-                :label="channelTypeLabel(row.type)"
-              />
-            </template>
-          </el-table-column>
-          <el-table-column
-            :label="t('ops.notification.colTarget')"
-            min-width="220"
-          >
-            <template #default="{ row }">
-              <span :class="hasChannelTarget(row) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ channelTarget(row) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column
-            :label="t('ops.notification.colStatus')"
-            width="100"
-          >
-            <template #default="{ row }">
-              <el-tag
-                :type="booleanStatusTag(row.enabled).type"
-                :class="booleanStatusTag(row.enabled).class"
-                size="small"
-              >
-                {{ row.enabled ? t('ops.notification.statusEnabled') : t('ops.notification.statusDisabled') }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column
-            :label="t('ops.notification.colLinkedPolicies')"
-            width="110"
-          >
-            <template #default="{ row }">
-              <span>{{ channelPoliciesCount(row) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column
-            :label="t('ops.notification.colLastDelivery')"
-            width="170"
-          >
-            <template #default="{ row }">
-              <div v-if="channelLastDeliveryStatus(row)" class="hfl-ops-cell-stack">
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.notification.colType')"
+              width="130"
+            >
+              <template #default="{ row }">
+                <HflTypeLabel
+                  :icon="getNotificationTypeIcon(row.type)"
+                  :label="channelTypeLabel(row.type)"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.notification.colTarget')"
+              min-width="220"
+            >
+              <template #default="{ row }">
+                <span :class="hasChannelTarget(row) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ channelTarget(row) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.notification.colStatus')"
+              width="100"
+            >
+              <template #default="{ row }">
                 <el-tag
-                  v-bind="lifecycleStatusTagAttrs(channelLastDeliveryStatus(row))"
+                  :type="booleanStatusTag(row.enabled).type"
+                  :class="booleanStatusTag(row.enabled).class"
                   size="small"
                 >
-                  {{ logStatusLabel(channelLastDeliveryStatus(row)) }}
+                  {{ row.enabled ? t('ops.notification.statusEnabled') : t('ops.notification.statusDisabled') }}
                 </el-tag>
-                <div class="hfl-ops-cell-stack__meta hfl-table-cell-time" :class="{ 'hfl-empty-mark': !channelLastDeliveryAt(row) }">
-                  {{ formatDate(channelLastDeliveryAt(row)) }}
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.notification.colLinkedPolicies')"
+              width="110"
+            >
+              <template #default="{ row }">
+                <span>{{ channelPoliciesCount(row) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.notification.colLastDelivery')"
+              width="170"
+            >
+              <template #default="{ row }">
+                <div
+                  v-if="channelLastDeliveryStatus(row)"
+                  class="hfl-ops-cell-stack"
+                >
+                  <el-tag
+                    v-bind="lifecycleStatusTagAttrs(channelLastDeliveryStatus(row))"
+                    size="small"
+                  >
+                    {{ logStatusLabel(channelLastDeliveryStatus(row)) }}
+                  </el-tag>
+                  <div
+                    class="hfl-ops-cell-stack__meta hfl-table-cell-time"
+                    :class="{ 'hfl-empty-mark': !channelLastDeliveryAt(row) }"
+                  >
+                    {{ formatDate(channelLastDeliveryAt(row)) }}
+                  </div>
                 </div>
-              </div>
-              <span v-else class="hfl-empty-mark">{{ t('common.empty') }}</span>
+                <span
+                  v-else
+                  class="hfl-empty-mark"
+                >{{ t('common.empty') }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.notification.colUpdatedAt')"
+              width="170"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !(row.updatedAt || row.updated_at) }"
+                >{{ formatDate(row.updatedAt || row.updated_at) }}</span>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty :description="emptyDescription" />
             </template>
-          </el-table-column>
-          <el-table-column
-            :label="t('ops.notification.colUpdatedAt')"
-            width="170"
-          >
-            <template #default="{ row }">
-              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.updatedAt || row.updated_at) }">{{ formatDate(row.updatedAt || row.updated_at) }}</span>
-            </template>
-          </el-table-column>
-          <template #empty>
-            <el-empty :description="emptyDescription" />
-          </template>
-        </el-table>
+          </el-table>
         </template>
 
         <template #footer>
@@ -1452,15 +1470,41 @@ watch(
                       <span class="hfl-detail-row__label">{{ t('ops.notification.colChannelName') }}</span>
                       <span class="hfl-detail-row__value hfl-detail-row__value--editable">
                         <template v-if="detailChannel(details) && isChannelInlineEditing('name')">
-                          <ElInput v-model="channelInlineDraft" size="small" class="hfl-detail-inline-edit__input" @keyup.enter="saveChannelInlineEdit" />
+                          <ElInput
+                            v-model="channelInlineDraft"
+                            size="small"
+                            class="hfl-detail-inline-edit__input"
+                            @keyup.enter="saveChannelInlineEdit"
+                          />
                           <span class="hfl-detail-inline-edit__actions">
-                            <ElButton text circle size="small" :title="t('common.save')" :disabled="channelInlineSaving" @click="saveChannelInlineEdit"><Check :size="14" /></ElButton>
-                            <ElButton text circle size="small" :title="t('common.cancel')" :disabled="channelInlineSaving" @click="cancelChannelInlineEdit"><X :size="14" /></ElButton>
+                            <ElButton
+                              text
+                              circle
+                              size="small"
+                              :title="t('common.save')"
+                              :disabled="channelInlineSaving"
+                              @click="saveChannelInlineEdit"
+                            ><Check :size="14" /></ElButton>
+                            <ElButton
+                              text
+                              circle
+                              size="small"
+                              :title="t('common.cancel')"
+                              :disabled="channelInlineSaving"
+                              @click="cancelChannelInlineEdit"
+                            ><X :size="14" /></ElButton>
                           </span>
                         </template>
                         <template v-else>
                           <span class="hfl-detail-row__text">{{ detailChannel(details)?.name }}</span>
-                          <ElButton text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" @click="beginChannelInlineEdit('name')">
+                          <ElButton
+                            text
+                            circle
+                            size="small"
+                            class="hfl-detail-row__edit"
+                            :title="t('common.edit')"
+                            @click="beginChannelInlineEdit('name')"
+                          >
                             <Pencil :size="13" />
                           </ElButton>
                         </template>
@@ -1476,8 +1520,22 @@ watch(
                         <template v-if="detailChannel(details) && isChannelInlineEditing('enabled')">
                           <ElSwitch v-model="channelInlineDraft" />
                           <span class="hfl-detail-inline-edit__actions">
-                            <ElButton text circle size="small" :title="t('common.save')" :disabled="channelInlineSaving" @click="saveChannelInlineEdit"><Check :size="14" /></ElButton>
-                            <ElButton text circle size="small" :title="t('common.cancel')" :disabled="channelInlineSaving" @click="cancelChannelInlineEdit"><X :size="14" /></ElButton>
+                            <ElButton
+                              text
+                              circle
+                              size="small"
+                              :title="t('common.save')"
+                              :disabled="channelInlineSaving"
+                              @click="saveChannelInlineEdit"
+                            ><Check :size="14" /></ElButton>
+                            <ElButton
+                              text
+                              circle
+                              size="small"
+                              :title="t('common.cancel')"
+                              :disabled="channelInlineSaving"
+                              @click="cancelChannelInlineEdit"
+                            ><X :size="14" /></ElButton>
                           </span>
                         </template>
                         <template v-else>
@@ -1488,7 +1546,14 @@ watch(
                           >
                             {{ detailChannel(details)?.enabled ? t('ops.notification.statusEnabled') : t('ops.notification.statusDisabled') }}
                           </el-tag>
-                          <ElButton text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" @click="beginChannelInlineEdit('enabled')">
+                          <ElButton
+                            text
+                            circle
+                            size="small"
+                            class="hfl-detail-row__edit"
+                            :title="t('common.edit')"
+                            @click="beginChannelInlineEdit('enabled')"
+                          >
                             <Pencil :size="13" />
                           </ElButton>
                         </template>
@@ -1496,25 +1561,37 @@ watch(
                     </div>
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('ops.notification.colCreatedAt') }}</span>
-                      <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !(detailChannel(details)?.createdAt || detailChannel(details)?.created_at) }">
+                      <span
+                        class="hfl-detail-row__value hfl-table-cell-time"
+                        :class="{ 'hfl-detail-row__empty': !(detailChannel(details)?.createdAt || detailChannel(details)?.created_at) }"
+                      >
                         {{ formatDate(detailChannel(details)?.createdAt || detailChannel(details)?.created_at) }}
                       </span>
                     </div>
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('ops.notification.colUpdatedAt') }}</span>
-                      <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !(detailChannel(details)?.updatedAt || detailChannel(details)?.updated_at) }">
+                      <span
+                        class="hfl-detail-row__value hfl-table-cell-time"
+                        :class="{ 'hfl-detail-row__empty': !(detailChannel(details)?.updatedAt || detailChannel(details)?.updated_at) }"
+                      >
                         {{ formatDate(detailChannel(details)?.updatedAt || detailChannel(details)?.updated_at) }}
                       </span>
                     </div>
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('ops.notification.lastSuccess') }}</span>
-                      <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !details.stats?.last_success_at }">
+                      <span
+                        class="hfl-detail-row__value hfl-table-cell-time"
+                        :class="{ 'hfl-detail-row__empty': !details.stats?.last_success_at }"
+                      >
                         {{ formatDate(details.stats?.last_success_at) }}
                       </span>
                     </div>
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('ops.notification.lastFailed') }}</span>
-                      <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !details.stats?.last_failed_at }">
+                      <span
+                        class="hfl-detail-row__value hfl-table-cell-time"
+                        :class="{ 'hfl-detail-row__empty': !details.stats?.last_failed_at }"
+                      >
                         {{ formatDate(details.stats?.last_failed_at) }}
                       </span>
                     </div>
@@ -1540,11 +1617,36 @@ watch(
                           :class="{ 'hfl-detail-row__value--editable': true, 'hfl-table-cell-mono': item.mono, 'hfl-detail-row__value--break': item.full }"
                         >
                           <template v-if="detailChannel(details) && isChannelInlineEditing(`config:${item.key}`)">
-                            <ElSwitch v-if="typeof item.value === 'boolean'" v-model="channelInlineDraft" />
-                            <ElInput v-else v-model="channelInlineDraft" size="small" :type="item.full ? 'textarea' : 'text'" :rows="item.full ? 2 : undefined" class="hfl-detail-inline-edit__input" @keyup.enter="saveChannelInlineEdit" />
+                            <ElSwitch
+                              v-if="typeof item.value === 'boolean'"
+                              v-model="channelInlineDraft"
+                            />
+                            <ElInput
+                              v-else
+                              v-model="channelInlineDraft"
+                              size="small"
+                              :type="item.full ? 'textarea' : 'text'"
+                              :rows="item.full ? 2 : undefined"
+                              class="hfl-detail-inline-edit__input"
+                              @keyup.enter="saveChannelInlineEdit"
+                            />
                             <span class="hfl-detail-inline-edit__actions">
-                              <ElButton text circle size="small" :title="t('common.save')" :disabled="channelInlineSaving" @click="saveChannelInlineEdit"><Check :size="14" /></ElButton>
-                              <ElButton text circle size="small" :title="t('common.cancel')" :disabled="channelInlineSaving" @click="cancelChannelInlineEdit"><X :size="14" /></ElButton>
+                              <ElButton
+                                text
+                                circle
+                                size="small"
+                                :title="t('common.save')"
+                                :disabled="channelInlineSaving"
+                                @click="saveChannelInlineEdit"
+                              ><Check :size="14" /></ElButton>
+                              <ElButton
+                                text
+                                circle
+                                size="small"
+                                :title="t('common.cancel')"
+                                :disabled="channelInlineSaving"
+                                @click="cancelChannelInlineEdit"
+                              ><X :size="14" /></ElButton>
                             </span>
                           </template>
                           <template v-else>
@@ -1683,7 +1785,10 @@ watch(
                   width="170"
                 >
                   <template #default="{ row }">
-                    <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.sent_at || row.sentAt) }">{{ formatDate(row.sent_at || row.sentAt) }}</span>
+                    <span
+                      class="hfl-table-cell-time"
+                      :class="{ 'hfl-empty-mark': !(row.sent_at || row.sentAt) }"
+                    >{{ formatDate(row.sent_at || row.sentAt) }}</span>
                   </template>
                 </el-table-column>
                 <template #empty>
@@ -1766,7 +1871,10 @@ watch(
       @cancel="closeBatchDialog"
     >
       <template #extra>
-        <section v-if="pendingBatch.impactItems.length" class="notification-batch-impact">
+        <section
+          v-if="pendingBatch.impactItems.length"
+          class="notification-batch-impact"
+        >
           <header class="notification-batch-impact__heading">
             {{ pendingBatch.impactItemsHeading }}
           </header>
@@ -1787,7 +1895,10 @@ watch(
               width="140"
             >
               <template #default="{ row }">
-                <span class="notification-batch-impact__hint" :class="{ 'hfl-empty-mark': !row.hint }">{{ row.hint || '—' }}</span>
+                <span
+                  class="notification-batch-impact__hint"
+                  :class="{ 'hfl-empty-mark': !row.hint }"
+                >{{ row.hint || '—' }}</span>
               </template>
             </ElTableColumn>
           </ElTable>

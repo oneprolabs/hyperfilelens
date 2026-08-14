@@ -314,7 +314,11 @@ watch(
   <div class="hfl-list-shell hfl-list-shell--fill">
     <div class="hfl-list-panel hfl-list-panel--fill">
       <div class="hfl-list-toolbar">
-        <ElButton type="primary" :disabled="!bridgeReady" @click="openCreate">
+        <ElButton
+          type="primary"
+          :disabled="!bridgeReady"
+          @click="openCreate"
+        >
           <Plus :size="16" />
           {{ isPlatformEngine ? t('platformOps.engineActions.addAssistant') : t('insight.assistants.btnAdd') }}
         </ElButton>
@@ -334,21 +338,40 @@ watch(
           </ElButton>
           <template #dropdown>
             <ElDropdownMenu>
-              <ElDropdownItem :disabled="batchDisabled || !singleSelected" @click="editSelected">
+              <ElDropdownItem
+                :disabled="batchDisabled || !singleSelected"
+                @click="editSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <Pencil :size="14" class="shrink-0" />
+                  <Pencil
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('common.edit') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem divided :disabled="batchDisabled || !singleSelected" @click="enableSelected">
+              <ElDropdownItem
+                divided
+                :disabled="batchDisabled || !singleSelected"
+                @click="enableSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <CirclePlay :size="14" class="shrink-0" />
+                  <CirclePlay
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('insight.assistants.enable') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem :disabled="batchDisabled || !singleSelected" @click="disableSelected">
+              <ElDropdownItem
+                :disabled="batchDisabled || !singleSelected"
+                @click="disableSelected"
+              >
                 <span class="el-dropdown-menu__item-content">
-                  <CircleStop :size="14" class="shrink-0" />
+                  <CircleStop
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('insight.assistants.disable') }}</span>
                 </span>
               </ElDropdownItem>
@@ -359,7 +382,10 @@ watch(
                 @click="deleteSelected"
               >
                 <span class="el-dropdown-menu__item-content">
-                  <Trash2 :size="14" class="shrink-0" />
+                  <Trash2
+                    :size="14"
+                    class="shrink-0"
+                  />
                   <span>{{ t('common.delete') }}</span>
                 </span>
               </ElDropdownItem>
@@ -377,7 +403,10 @@ watch(
             @clear="clearSearch"
           >
             <template #prefix>
-              <Search :size="16" class="hfl-list-search__icon" />
+              <Search
+                :size="16"
+                class="hfl-list-search__icon"
+              />
             </template>
           </ElInput>
           <div class="hfl-list-toolbar__utility">
@@ -387,13 +416,19 @@ watch(
               :disabled="loading"
               @click="load"
             >
-              <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+              <RefreshCw
+                :size="16"
+                :class="{ 'is-spinning': loading }"
+              />
             </ElButton>
           </div>
         </div>
       </div>
 
-      <div ref="tableBlockRef" class="hfl-list-table-block">
+      <div
+        ref="tableBlockRef"
+        class="hfl-list-table-block"
+      >
         <el-table
           ref="tableRef"
           v-table-overflow-title
@@ -407,7 +442,11 @@ watch(
           @scroll="handleTableScroll"
           @selection-change="onSelectionChange"
         >
-          <el-table-column type="selection" width="35" fixed="left" />
+          <el-table-column
+            type="selection"
+            width="35"
+            fixed="left"
+          />
           <el-table-column
             :label="t('insight.assistants.colName')"
             min-width="200"
@@ -415,23 +454,44 @@ watch(
             class-name="hfl-table-name-col"
           >
             <template #default="{ row }">
-              <button type="button" class="hfl-table-name-link hfl-table-name-link--full" @click="openDetail(row)">
+              <button
+                type="button"
+                class="hfl-table-name-link hfl-table-name-link--full"
+                @click="openDetail(row)"
+              >
                 {{ row.name }}
               </button>
-              <div class="insight-assistants-slug">{{ row.slug }}</div>
+              <div class="insight-assistants-slug">
+                {{ row.slug }}
+              </div>
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.assistants.colAgentModel')" min-width="180">
+          <el-table-column
+            :label="t('insight.assistants.colAgentModel')"
+            min-width="180"
+          >
             <template #default="{ row }">
-              <span class="insight-assistants-model" :class="{ 'hfl-empty-mark': agentModelLabel(row) === '—' }">{{ agentModelLabel(row) }}</span>
+              <span
+                class="insight-assistants-model"
+                :class="{ 'hfl-empty-mark': agentModelLabel(row) === '—' }"
+              >{{ agentModelLabel(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.assistants.colMultimodalModel')" min-width="180">
+          <el-table-column
+            :label="t('insight.assistants.colMultimodalModel')"
+            min-width="180"
+          >
             <template #default="{ row }">
-              <span class="insight-assistants-model" :class="{ 'hfl-empty-mark': multimodalModelLabel(row) === '—' }">{{ multimodalModelLabel(row) }}</span>
+              <span
+                class="insight-assistants-model"
+                :class="{ 'hfl-empty-mark': multimodalModelLabel(row) === '—' }"
+              >{{ multimodalModelLabel(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.assistants.colKnowledgeSource')" min-width="220">
+          <el-table-column
+            :label="t('insight.assistants.colKnowledgeSource')"
+            min-width="220"
+          >
             <template #default="{ row }">
               <div class="insight-assistants-identity">
                 <strong :class="{ 'hfl-empty-mark': knowledgeSourceName(row) === '—' }">{{ knowledgeSourceName(row) }}</strong>
@@ -439,12 +499,18 @@ watch(
               </div>
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.assistants.colScenario')" min-width="140">
+          <el-table-column
+            :label="t('insight.assistants.colScenario')"
+            min-width="140"
+          >
             <template #default="{ row }">
               {{ scenarioLabel(row) }}
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.assistants.colAnalysisDepth')" width="120">
+          <el-table-column
+            :label="t('insight.assistants.colAnalysisDepth')"
+            width="120"
+          >
             <template #default="{ row }">
               <HflTypeLabel :label="analysisDepthLabel(row)" />
             </template>
@@ -459,9 +525,15 @@ watch(
               </div>
             </template>
           </el-table-column>
-          <el-table-column :label="t('insight.assistants.colStatus')" width="110">
+          <el-table-column
+            :label="t('insight.assistants.colStatus')"
+            width="110"
+          >
             <template #default="{ row }">
-              <el-tag v-bind="lifecycleStatusTagAttrs(row.status)" size="small">
+              <el-tag
+                v-bind="lifecycleStatusTagAttrs(row.status)"
+                size="small"
+              >
                 {{ statusLabel(row.status) }}
               </el-tag>
             </template>

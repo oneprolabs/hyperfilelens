@@ -222,8 +222,13 @@ onMounted(loadAll)
 </script>
 
 <template>
-  <div v-loading="loading" class="subscription-page">
-    <p class="subscription-page__lead">{{ pageSubtitle }}</p>
+  <div
+    v-loading="loading"
+    class="subscription-page"
+  >
+    <p class="subscription-page__lead">
+      {{ pageSubtitle }}
+    </p>
     <ElAlert
       class="subscription-page__enforcement"
       :type="enforcementEnabled ? 'success' : 'info'"
@@ -235,7 +240,9 @@ onMounted(loadAll)
     />
     <section class="subscription-section">
       <header class="subscription-section__header">
-        <h2 class="subscription-section__title">{{ t('settings.subscription.overviewTitle') }}</h2>
+        <h2 class="subscription-section__title">
+          {{ t('settings.subscription.overviewTitle') }}
+        </h2>
         <ElButton
           text
           class="subscription-section__refresh"
@@ -243,7 +250,10 @@ onMounted(loadAll)
           :disabled="loading"
           @click="loadAll"
         >
-          <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+          <RefreshCw
+            :size="16"
+            :class="{ 'is-spinning': loading }"
+          />
         </ElButton>
       </header>
 
@@ -269,11 +279,19 @@ onMounted(loadAll)
 
     <section class="subscription-section">
       <header class="subscription-section__header">
-        <h2 class="subscription-section__title">{{ t('settings.subscription.limitsAndUsage') }}</h2>
+        <h2 class="subscription-section__title">
+          {{ t('settings.subscription.limitsAndUsage') }}
+        </h2>
       </header>
-      <p class="subscription-quota-lifetime-hint">{{ t('settings.subscription.aiTokensLifetimeHint') }}</p>
+      <p class="subscription-quota-lifetime-hint">
+        {{ t('settings.subscription.aiTokensLifetimeHint') }}
+      </p>
       <div class="subscription-quota-grid">
-        <div v-for="item in limitItems" :key="item.key" class="subscription-quota-item">
+        <div
+          v-for="item in limitItems"
+          :key="item.key"
+          class="subscription-quota-item"
+        >
           <span class="subscription-quota-item__label">{{ item.label }}</span>
           <span class="subscription-quota-item__numbers">
             {{ getUsage(item.usageKey) }}
@@ -293,24 +311,36 @@ onMounted(loadAll)
 
     <section class="subscription-section">
       <header class="subscription-section__header">
-        <h2 class="subscription-section__title">{{ t('settings.subscription.activationTitle') }}</h2>
+        <h2 class="subscription-section__title">
+          {{ t('settings.subscription.activationTitle') }}
+        </h2>
       </header>
 
       <div class="subscription-activation">
         <template v-if="canActivateHere">
           <div class="subscription-activation__step">
-            <h3 class="subscription-activation__step-title">{{ t('settings.subscription.activationStep1Title') }}</h3>
+            <h3 class="subscription-activation__step-title">
+              {{ t('settings.subscription.activationStep1Title') }}
+            </h3>
             <div class="subscription-activation__code-row">
               <code class="subscription-activation__code">{{ machineCode || '—' }}</code>
-              <ElButton type="primary" :disabled="!machineCode" @click="copyIdentification">
+              <ElButton
+                type="primary"
+                :disabled="!machineCode"
+                @click="copyIdentification"
+              >
                 {{ t('settings.subscription.copyIdentification') }}
               </ElButton>
             </div>
-            <p class="subscription-activation__hint">{{ t('settings.subscription.activationStep1Hint') }}</p>
+            <p class="subscription-activation__hint">
+              {{ t('settings.subscription.activationStep1Hint') }}
+            </p>
           </div>
 
           <div class="subscription-activation__step">
-            <h3 class="subscription-activation__step-title">{{ t('settings.subscription.activationStep2Title') }}</h3>
+            <h3 class="subscription-activation__step-title">
+              {{ t('settings.subscription.activationStep2Title') }}
+            </h3>
             <ElInput
               v-model="activationCode"
               type="textarea"
@@ -331,7 +361,10 @@ onMounted(loadAll)
             </div>
           </div>
         </template>
-        <p v-else class="subscription-activation__hint">
+        <p
+          v-else
+          class="subscription-activation__hint"
+        >
           {{ t('settings.subscription.instanceSharedHint') }}
         </p>
       </div>
@@ -339,7 +372,9 @@ onMounted(loadAll)
 
     <section class="subscription-section subscription-section--last">
       <header class="subscription-section__header">
-        <h2 class="subscription-section__title">{{ t('settings.subscription.historyTitle') }}</h2>
+        <h2 class="subscription-section__title">
+          {{ t('settings.subscription.historyTitle') }}
+        </h2>
       </header>
       <HflTablePanel>
         <el-table
@@ -353,25 +388,52 @@ onMounted(loadAll)
             <el-empty :description="t('settings.subscription.historyEmpty')" />
           </template>
 
-          <el-table-column :label="t('settings.subscription.historyLicenseKey')" min-width="220">
-            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.license_key }">{{ row.license_key || '—' }}</span></template>
-          </el-table-column>
-          <el-table-column :label="t('settings.subscription.historyChangeType')" min-width="180">
-            <template #default="{ row }">{{ historyChangeLabel(row) }}</template>
-          </el-table-column>
-          <el-table-column :label="t('settings.subscription.historyActivatedAt')" width="170">
+          <el-table-column
+            :label="t('settings.subscription.historyLicenseKey')"
+            min-width="220"
+          >
             <template #default="{ row }">
-              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.activated_at || row.archived_at) }">{{ formatDateTime(row.activated_at || row.archived_at) }}</span>
+              <span :class="{ 'hfl-empty-mark': !row.license_key }">{{ row.license_key || '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('settings.subscription.historyValidUntil')" width="140">
+          <el-table-column
+            :label="t('settings.subscription.historyChangeType')"
+            min-width="180"
+          >
+            <template #default="{ row }">
+              {{ historyChangeLabel(row) }}
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('settings.subscription.historyActivatedAt')"
+            width="170"
+          >
+            <template #default="{ row }">
+              <span
+                class="hfl-table-cell-time"
+                :class="{ 'hfl-empty-mark': !(row.activated_at || row.archived_at) }"
+              >{{ formatDateTime(row.activated_at || row.archived_at) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('settings.subscription.historyValidUntil')"
+            width="140"
+          >
             <template #default="{ row }">
               <span :class="{ 'hfl-empty-mark': !row.is_perpetual && !row.expires_at }">{{ row.is_perpetual ? t('settings.subscription.unlimited') : formatDateOnly(row.expires_at) }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('settings.subscription.historyStatus')" width="100">
+          <el-table-column
+            :label="t('settings.subscription.historyStatus')"
+            width="100"
+          >
             <template #default="{ row }">
-              <el-tag v-bind="historyStatusTagAttrs(row)" size="small">{{ historyStatusLabel(row) }}</el-tag>
+              <el-tag
+                v-bind="historyStatusTagAttrs(row)"
+                size="small"
+              >
+                {{ historyStatusLabel(row) }}
+              </el-tag>
             </template>
           </el-table-column>
         </el-table>

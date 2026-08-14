@@ -437,14 +437,29 @@ onUnmounted(() => {
 
 <template>
   <div class="reset-password-card">
-    <Transition name="reset-view-fade" mode="out-in">
+    <Transition
+      name="reset-view-fade"
+      mode="out-in"
+    >
       <!-- Request View -->
-      <div v-if="view === 'request'" key="request" class="reset-view">
-        <p class="reset-subtitle">{{ t('findPwd.requestSubtitle') }}</p>
+      <div
+        v-if="view === 'request'"
+        key="request"
+        class="reset-view"
+      >
+        <p class="reset-subtitle">
+          {{ t('findPwd.requestSubtitle') }}
+        </p>
 
-        <div class="input-wrapper" :class="{ 'has-error': formItems.email.showError }">
+        <div
+          class="input-wrapper"
+          :class="{ 'has-error': formItems.email.showError }"
+        >
           <div class="input-row">
-            <Mail class="input-icon" :size="18" />
+            <Mail
+              class="input-icon"
+              :size="18"
+            />
             <input
               v-model="formItems.email.value"
               type="text"
@@ -454,12 +469,24 @@ onUnmounted(() => {
               @blur="validateEmailOnInput"
               @input="validateEmailOnInput(); emailNotRegistered = false"
               @keyup.enter="sendResetCode"
-            />
+            >
           </div>
-          <p v-if="formItems.email.showError" class="error-msg">{{ formItems.email.errorMsg }}</p>
-          <p v-if="emailNotRegistered" class="register-hint">
+          <p
+            v-if="formItems.email.showError"
+            class="error-msg"
+          >
+            {{ formItems.email.errorMsg }}
+          </p>
+          <p
+            v-if="emailNotRegistered"
+            class="register-hint"
+          >
             <span>{{ t('findPwd.emailNotRegisteredHint') }}</span>
-            <a href="#" class="register-hint-link" @click.prevent="goRegister">{{ t('findPwd.signUp') }}</a>
+            <a
+              href="#"
+              class="register-hint-link"
+              @click.prevent="goRegister"
+            >{{ t('findPwd.signUp') }}</a>
           </p>
         </div>
 
@@ -497,13 +524,22 @@ onUnmounted(() => {
       </div>
 
       <!-- Reset View -->
-      <div v-else key="reset" class="reset-view">
-        <p class="reset-email-hint">{{ t('findPwd.codeSentTo', { email: maskedEmail }) }}</p>
+      <div
+        v-else
+        key="reset"
+        class="reset-view"
+      >
+        <p class="reset-email-hint">
+          {{ t('findPwd.codeSentTo', { email: maskedEmail }) }}
+        </p>
 
         <div class="input-wrapper">
           <div class="captcha-row">
             <div class="input-row captcha-input">
-              <Key class="input-icon" :size="18" />
+              <Key
+                class="input-icon"
+                :size="18"
+              />
               <input
                 v-model="resetCode"
                 type="text"
@@ -514,7 +550,7 @@ onUnmounted(() => {
                 tabindex="1"
                 autocomplete="one-time-code"
                 @input="clearResetError"
-              />
+              >
             </div>
             <button
               type="button"
@@ -533,7 +569,10 @@ onUnmounted(() => {
 
         <div class="input-wrapper">
           <div class="input-row">
-            <Lock class="input-icon" :size="18" />
+            <Lock
+              class="input-icon"
+              :size="18"
+            />
             <input
               v-model="newPassword"
               :type="showNewPassword ? 'text' : 'password'"
@@ -541,7 +580,7 @@ onUnmounted(() => {
               tabindex="2"
               autocomplete="new-password"
               @input="clearResetError"
-            />
+            >
             <button
               type="button"
               class="eye-btn"
@@ -549,15 +588,24 @@ onUnmounted(() => {
               :aria-pressed="showNewPassword"
               @click="showNewPassword = !showNewPassword"
             >
-              <EyeOff v-if="showNewPassword" :size="16" />
-              <Eye v-else :size="16" />
+              <EyeOff
+                v-if="showNewPassword"
+                :size="16"
+              />
+              <Eye
+                v-else
+                :size="16"
+              />
             </button>
           </div>
         </div>
 
         <div class="input-wrapper">
           <div class="input-row">
-            <Lock class="input-icon" :size="18" />
+            <Lock
+              class="input-icon"
+              :size="18"
+            />
             <input
               v-model="confirmPassword"
               :type="showConfirmPassword ? 'text' : 'password'"
@@ -567,7 +615,7 @@ onUnmounted(() => {
               @input="onConfirmPasswordInput"
               @blur="confirmPasswordTouched = true"
               @keyup.enter="handleUpdatePassword"
-            />
+            >
             <button
               type="button"
               class="eye-btn"
@@ -575,24 +623,46 @@ onUnmounted(() => {
               :aria-pressed="showConfirmPassword"
               @click="showConfirmPassword = !showConfirmPassword"
             >
-              <EyeOff v-if="showConfirmPassword" :size="16" />
-              <Eye v-else :size="16" />
+              <EyeOff
+                v-if="showConfirmPassword"
+                :size="16"
+              />
+              <Eye
+                v-else
+                :size="16"
+              />
             </button>
           </div>
-          <p v-if="confirmPasswordError" class="error-msg">{{ confirmPasswordError }}</p>
+          <p
+            v-if="confirmPasswordError"
+            class="error-msg"
+          >
+            {{ confirmPasswordError }}
+          </p>
         </div>
 
-        <div v-if="newPassword" class="strength-bar-wrapper">
+        <div
+          v-if="newPassword"
+          class="strength-bar-wrapper"
+        >
           <div class="strength-bar">
             <div
               class="strength-fill"
               :style="{ width: (passwordStrength.level / 3 * 100) + '%', background: passwordStrength.color }"
-            ></div>
+            />
           </div>
-          <span class="strength-text" :style="{ color: passwordStrength.color }">{{ passwordStrength.text }}</span>
+          <span
+            class="strength-text"
+            :style="{ color: passwordStrength.color }"
+          >{{ passwordStrength.text }}</span>
         </div>
 
-        <p v-if="resetError" class="error-msg reset-error">{{ resetError }}</p>
+        <p
+          v-if="resetError"
+          class="error-msg reset-error"
+        >
+          {{ resetError }}
+        </p>
 
         <ElButton
           type="primary"
@@ -602,7 +672,10 @@ onUnmounted(() => {
           :loading="resetLoading"
           @click="handleUpdatePassword"
         >
-          <span v-if="resetSuccess" class="btn-success-content">
+          <span
+            v-if="resetSuccess"
+            class="btn-success-content"
+          >
             <CheckCircle2 :size="18" />
           </span>
           <span v-else>{{ t('findPwd.updatePassword') }}</span>
@@ -612,7 +685,11 @@ onUnmounted(() => {
 
     <div class="reset-footer">
       <span class="footer-text">{{ t('findPwd.alreadyHaveAccount') }}</span>
-      <a href="#" class="footer-link sign-in-link" @click.prevent="emit('back-to-login')">
+      <a
+        href="#"
+        class="footer-link sign-in-link"
+        @click.prevent="emit('back-to-login')"
+      >
         {{ t('findPwd.signIn') }}
       </a>
     </div>

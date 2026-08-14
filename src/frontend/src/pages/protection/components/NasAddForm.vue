@@ -108,7 +108,11 @@ defineExpose({
             >
               <div class="add-nas-protocol-card__inner">
                 <span class="add-nas-protocol-card__icon">
-                  <component :is="nasProtocolSmbIcon" :size="20" stroke-width="2" />
+                  <component
+                    :is="nasProtocolSmbIcon"
+                    :size="20"
+                    stroke-width="2"
+                  />
                 </span>
                 <div class="add-nas-protocol-card__text">
                   <div class="add-nas-protocol-card__title">
@@ -124,7 +128,11 @@ defineExpose({
             >
               <div class="add-nas-protocol-card__inner">
                 <span class="add-nas-protocol-card__icon">
-                  <component :is="nasProtocolNfsIcon" :size="20" stroke-width="2" />
+                  <component
+                    :is="nasProtocolNfsIcon"
+                    :size="20"
+                    stroke-width="2"
+                  />
                 </span>
                 <div class="add-nas-protocol-card__text">
                   <div class="add-nas-protocol-card__title">
@@ -148,61 +156,109 @@ defineExpose({
             label-position="top"
             class="add-nas-form fullscreen-form-el-form"
           >
-            <div v-if="protocol === 'smb'" class="add-nas-form-row add-nas-form-row--triple">
-              <ElFormItem data-validation-field="smbServer" :error="validationErrors?.smbServer" :label="t('addNasRepo.fieldSmbHost')" required class="flex-1">
+            <div
+              v-if="protocol === 'smb'"
+              class="add-nas-form-row add-nas-form-row--triple"
+            >
+              <ElFormItem
+                data-validation-field="smbServer"
+                :error="validationErrors?.smbServer"
+                :label="t('addNasRepo.fieldSmbHost')"
+                required
+                class="flex-1"
+              >
                 <ElInput
                   :model-value="smbServer"
                   :placeholder="t('protection.sourceResources.nasPhSmbHost')"
                   @update:model-value="emit('update:smbServer', $event as string)"
                   @input="emit('clearValidationError', 'smbServer')"
                 />
-                <p class="add-nas-field-hint">{{ t('protection.sourceResources.nasHintSmbHost') }}</p>
+                <p class="add-nas-field-hint">
+                  {{ t('protection.sourceResources.nasHintSmbHost') }}
+                </p>
               </ElFormItem>
-              <ElFormItem data-validation-field="smbShare" :error="validationErrors?.smbShare" :label="t('addNasRepo.fieldSmbShare')" required class="flex-1">
+              <ElFormItem
+                data-validation-field="smbShare"
+                :error="validationErrors?.smbShare"
+                :label="t('addNasRepo.fieldSmbShare')"
+                required
+                class="flex-1"
+              >
                 <ElInput
                   :model-value="smbShare"
                   :placeholder="t('protection.sourceResources.nasPhSmbShare')"
                   @update:model-value="emit('update:smbShare', $event as string)"
                   @input="emit('clearValidationError', 'smbShare')"
                 />
-                <p class="add-nas-field-hint">{{ t('protection.sourceResources.nasHintSmbShare') }}</p>
+                <p class="add-nas-field-hint">
+                  {{ t('protection.sourceResources.nasHintSmbShare') }}
+                </p>
               </ElFormItem>
-              <ElFormItem :label="t('addNasRepo.fieldMountOptions')" class="flex-1">
+              <ElFormItem
+                :label="t('addNasRepo.fieldMountOptions')"
+                class="flex-1"
+              >
                 <ElInput
                   :model-value="nfsOptions"
                   :placeholder="t('protection.sourceResources.nasPhMountOptionsSmb')"
                   @update:model-value="emit('update:nfsOptions', $event as string)"
                 />
-                <p class="add-nas-field-hint">{{ t('protection.sourceResources.nasHintMountOptionsSmb') }}</p>
+                <p class="add-nas-field-hint">
+                  {{ t('protection.sourceResources.nasHintMountOptionsSmb') }}
+                </p>
               </ElFormItem>
             </div>
 
-            <div v-else class="add-nas-form-row add-nas-form-row--triple">
-              <ElFormItem data-validation-field="nfsHost" :error="validationErrors?.nfsHost" :label="t('addNasRepo.fieldNfsHost')" required class="flex-1">
+            <div
+              v-else
+              class="add-nas-form-row add-nas-form-row--triple"
+            >
+              <ElFormItem
+                data-validation-field="nfsHost"
+                :error="validationErrors?.nfsHost"
+                :label="t('addNasRepo.fieldNfsHost')"
+                required
+                class="flex-1"
+              >
                 <ElInput
                   :model-value="nfsHost"
                   :placeholder="t('protection.sourceResources.nasPhNfsHost')"
                   @update:model-value="emit('update:nfsHost', $event as string)"
                   @input="emit('clearValidationError', 'nfsHost')"
                 />
-                <p class="add-nas-field-hint">{{ t('protection.sourceResources.nasHintNfsHost') }}</p>
+                <p class="add-nas-field-hint">
+                  {{ t('protection.sourceResources.nasHintNfsHost') }}
+                </p>
               </ElFormItem>
-              <ElFormItem data-validation-field="nfsExport" :error="validationErrors?.nfsExport" :label="t('addNasRepo.fieldNfsExport')" required class="flex-1">
+              <ElFormItem
+                data-validation-field="nfsExport"
+                :error="validationErrors?.nfsExport"
+                :label="t('addNasRepo.fieldNfsExport')"
+                required
+                class="flex-1"
+              >
                 <ElInput
                   :model-value="nfsExport"
                   :placeholder="t('protection.sourceResources.nasPhNfsExport')"
                   @update:model-value="emit('update:nfsExport', $event as string)"
                   @input="emit('clearValidationError', 'nfsExport')"
                 />
-                <p class="add-nas-field-hint">{{ t('protection.sourceResources.nasHintNfsExport') }}</p>
+                <p class="add-nas-field-hint">
+                  {{ t('protection.sourceResources.nasHintNfsExport') }}
+                </p>
               </ElFormItem>
-              <ElFormItem :label="t('addNasRepo.fieldMountOptions')" class="flex-1">
+              <ElFormItem
+                :label="t('addNasRepo.fieldMountOptions')"
+                class="flex-1"
+              >
                 <ElInput
                   :model-value="nfsOptions"
                   :placeholder="t('protection.sourceResources.nasPhMountOptionsNfs')"
                   @update:model-value="emit('update:nfsOptions', $event as string)"
                 />
-                <p class="add-nas-field-hint">{{ t('protection.sourceResources.nasHintMountOptionsNfs') }}</p>
+                <p class="add-nas-field-hint">
+                  {{ t('protection.sourceResources.nasHintMountOptionsNfs') }}
+                </p>
               </ElFormItem>
             </div>
           </ElForm>
@@ -213,33 +269,54 @@ defineExpose({
               class="add-nas-form add-nas-form--auth fullscreen-form-el-form"
             >
               <div class="add-nas-form-row add-nas-form-row--triple">
-                <ElFormItem data-validation-field="smbUsername" :error="validationErrors?.smbUsername" :label="t('protection.sourceResources.nasFieldSmbUsername')" required class="flex-1">
+                <ElFormItem
+                  data-validation-field="smbUsername"
+                  :error="validationErrors?.smbUsername"
+                  :label="t('protection.sourceResources.nasFieldSmbUsername')"
+                  required
+                  class="flex-1"
+                >
                   <ElInput
                     :model-value="smbUsername"
                     :placeholder="t('protection.sourceResources.nasPhSmbUsername')"
-                  @update:model-value="emit('update:smbUsername', $event as string)"
-                  @input="emit('clearValidationError', 'smbUsername')"
-                />
-                  <p class="add-nas-field-hint">{{ t('protection.sourceResources.nasHintSmbUsername') }}</p>
+                    @update:model-value="emit('update:smbUsername', $event as string)"
+                    @input="emit('clearValidationError', 'smbUsername')"
+                  />
+                  <p class="add-nas-field-hint">
+                    {{ t('protection.sourceResources.nasHintSmbUsername') }}
+                  </p>
                 </ElFormItem>
-                <ElFormItem data-validation-field="smbPassword" :error="validationErrors?.smbPassword" :label="t('protection.sourceResources.nasFieldSmbPassword')" required class="flex-1">
+                <ElFormItem
+                  data-validation-field="smbPassword"
+                  :error="validationErrors?.smbPassword"
+                  :label="t('protection.sourceResources.nasFieldSmbPassword')"
+                  required
+                  class="flex-1"
+                >
                   <ElInput
                     :model-value="smbPassword"
                     type="password"
                     show-password
                     :placeholder="t('protection.sourceResources.nasPhSmbPassword')"
-                  @update:model-value="emit('update:smbPassword', $event as string)"
-                  @input="emit('clearValidationError', 'smbPassword')"
-                />
-                  <p class="add-nas-field-hint">{{ t('protection.sourceResources.nasHintSmbPassword') }}</p>
+                    @update:model-value="emit('update:smbPassword', $event as string)"
+                    @input="emit('clearValidationError', 'smbPassword')"
+                  />
+                  <p class="add-nas-field-hint">
+                    {{ t('protection.sourceResources.nasHintSmbPassword') }}
+                  </p>
                 </ElFormItem>
-                <ElFormItem :label="t('protection.sourceResources.nasFieldSmbDomain')" class="flex-1">
+                <ElFormItem
+                  :label="t('protection.sourceResources.nasFieldSmbDomain')"
+                  class="flex-1"
+                >
                   <ElInput
                     :model-value="smbDomain"
                     :placeholder="t('protection.sourceResources.nasPhSmbDomain')"
                     @update:model-value="emit('update:smbDomain', $event as string)"
                   />
-                  <p class="add-nas-field-hint">{{ t('protection.sourceResources.nasHintSmbDomain') }}</p>
+                  <p class="add-nas-field-hint">
+                    {{ t('protection.sourceResources.nasHintSmbDomain') }}
+                  </p>
                 </ElFormItem>
               </div>
             </ElForm>
@@ -247,7 +324,10 @@ defineExpose({
         </section>
       </div>
 
-      <div ref="bindSectionRef" class="fullscreen-form-card">
+      <div
+        ref="bindSectionRef"
+        class="fullscreen-form-card"
+      >
         <section class="fullscreen-form-section">
           <h3 class="fullscreen-form-section__title">
             <span class="fullscreen-form-section__indicator" />
@@ -309,7 +389,10 @@ defineExpose({
                       :disabled="proxyNodesRefreshing"
                       @click="emit('refreshProxyNodes')"
                     >
-                      <RefreshCw :size="16" :class="{ 'is-spinning': proxyNodesRefreshing }" />
+                      <RefreshCw
+                        :size="16"
+                        :class="{ 'is-spinning': proxyNodesRefreshing }"
+                      />
                     </ElButton>
                     <ElButton
                       class="fullscreen-form-icon-btn add-nas-select-row__deploy"
@@ -328,7 +411,13 @@ defineExpose({
                   {{ bindNodeError || proxySelectEmptyHint() || t('protection.sourceResources.nasHintBindProxy') }}
                 </p>
               </ElFormItem>
-              <ElFormItem data-validation-field="dir" :error="validationErrors?.dir" :label="t('protection.sourceResources.nasFieldDir')" required class="add-nas-dir-form-item flex-1">
+              <ElFormItem
+                data-validation-field="dir"
+                :error="validationErrors?.dir"
+                :label="t('protection.sourceResources.nasFieldDir')"
+                required
+                class="add-nas-dir-form-item flex-1"
+              >
                 <div class="add-nas-control-field">
                   <ElInput
                     :model-value="dir"
@@ -337,7 +426,9 @@ defineExpose({
                     @input="emit('dirTouched')"
                   />
                 </div>
-                <p class="add-nas-field-hint add-nas-bind-row__dir-hint">{{ t('protection.sourceResources.nasFieldDirHint') }}</p>
+                <p class="add-nas-field-hint add-nas-bind-row__dir-hint">
+                  {{ t('protection.sourceResources.nasFieldDirHint') }}
+                </p>
               </ElFormItem>
             </div>
           </ElForm>
@@ -354,17 +445,31 @@ defineExpose({
             label-position="top"
             class="add-nas-form fullscreen-form-el-form"
           >
-            <ElFormItem data-validation-field="name" :error="validationErrors?.name" :label="t('protection.sourceResources.nasFieldName')" required class="flex-1">
+            <ElFormItem
+              data-validation-field="name"
+              :error="validationErrors?.name"
+              :label="t('protection.sourceResources.nasFieldName')"
+              required
+              class="flex-1"
+            >
               <ElInput
                 :model-value="name"
                 :placeholder="generatedName"
                 @update:model-value="emit('update:name', $event as string); emit('clearValidationError', 'name')"
                 @input="emit('nameTouched')"
               />
-              <p v-if="nameConflictMessage" class="add-nas-field-hint add-nas-field-hint--warn">
+              <p
+                v-if="nameConflictMessage"
+                class="add-nas-field-hint add-nas-field-hint--warn"
+              >
                 {{ nameConflictMessage }}
               </p>
-              <p v-else class="add-nas-field-hint">{{ t('protection.sourceResources.nasHintName') }}</p>
+              <p
+                v-else
+                class="add-nas-field-hint"
+              >
+                {{ t('protection.sourceResources.nasHintName') }}
+              </p>
             </ElFormItem>
           </ElForm>
         </section>

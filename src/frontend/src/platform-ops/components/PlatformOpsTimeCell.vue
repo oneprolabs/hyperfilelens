@@ -5,5 +5,8 @@ defineProps<{ value?: string | null }>()
 </script>
 
 <template>
-  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !value }">{{ formatLocalDateTime(value, '—') }}</span>
+  <span
+    class="hfl-table-cell-time"
+    :class="{ 'hfl-empty-mark': !value }"
+  >{{ formatLocalDateTime(value, '—') }}</span>
 </template>

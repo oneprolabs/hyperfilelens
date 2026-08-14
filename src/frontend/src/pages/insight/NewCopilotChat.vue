@@ -298,198 +298,395 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
   <div class="fullscreen-form-fullscreen resource-add-fullscreen">
     <div class="fullscreen-form-page new-copilot-chat-page">
       <div class="fullscreen-form-header">
-        <button type="button" class="fullscreen-form-header__back" aria-label="Back to Copilot" @click="router.push('/insight/copilot')">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+        <button
+          type="button"
+          class="fullscreen-form-header__back"
+          aria-label="Back to Copilot"
+          @click="router.push('/insight/copilot')"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
-          <h1 class="fullscreen-form-header__title">New Chat</h1>
-          <p class="fullscreen-form-header__desc">Choose the backup data you want AI Copilot to analyze.</p>
+          <h1 class="fullscreen-form-header__title">
+            New Chat
+          </h1>
+          <p class="fullscreen-form-header__desc">
+            Choose the backup data you want AI Copilot to analyze.
+          </p>
         </div>
       </div>
 
-      <div v-loading="loading" class="fullscreen-form-layout">
+      <div
+        v-loading="loading"
+        class="fullscreen-form-layout"
+      >
         <main class="fullscreen-form-main">
           <div class="fullscreen-form-step-stack">
-            <div class="fullscreen-form-card"><section class="fullscreen-form-section">
-              <div class="new-chat-section-head">
-                <div class="new-chat-section-head__copy">
-                  <h2 class="fullscreen-form-section__title"><span class="fullscreen-form-section__indicator" />Data Source</h2>
-                </div>
-              </div>
-              <div class="new-chat-grid">
-                <div class="fullscreen-form-field">
-                  <label for="copilot-backup-source" class="fullscreen-form-field__label">Backup Source <span class="fullscreen-form-field__required">*</span></label>
-                  <ElSelect id="copilot-backup-source" v-model="selectedBackupConfigId" filterable placeholder="Select a backup source">
-                    <ElOption v-for="row in backupSourceOptions" :key="row.backupConfigId" :label="row.label" :value="row.backupConfigId" />
-                  </ElSelect>
-                  <p class="fullscreen-form-field__hint">Choose the backup source that contains the data you want to analyze.</p>
-                </div>
-                <div class="fullscreen-form-field">
-                  <label for="copilot-snapshot" class="fullscreen-form-field__label">Snapshot <span class="fullscreen-form-field__required">*</span></label>
-                  <ElSelect id="copilot-snapshot" v-model="snapshotPickerValue" :loading="snapshotLoading" :disabled="!selectedBackupConfigId" placeholder="Select a snapshot">
-                    <ElOption label="Latest available snapshot" :value="SNAPSHOT_PICKER_LATEST" />
-                    <ElOption v-for="row in snapshotsForSelectedBackupSource" :key="row.id" :label="snapshotOptionLabel(row)" :value="row.id" />
-                  </ElSelect>
-                  <p class="fullscreen-form-field__hint">Choose the backup snapshot you want to analyze.</p>
-                </div>
-              </div>
-              <div class="new-chat-source-divider" />
-              <div class="new-chat-source-subsection">
-                <div class="new-chat-source-subsection__head">
-                  <h3 class="fullscreen-form-field__label">Files and Folders <span class="fullscreen-form-field__required">*</span></h3>
-                </div>
-                <div ref="backupScopeStackRef" class="new-chat-scope-stack">
-                  <div class="new-chat-scope-stack__header" aria-hidden="true"><span /><span>Path</span><span>Actions</span></div>
-                  <div v-for="(scopeEntry, scopeIndex) in backupScopeEntries" :key="scopeEntry.id" class="new-chat-scope-row">
-                    <span class="new-chat-scope-row__index">{{ String(scopeIndex + 1).padStart(2, '0') }}</span>
-                    <HflPopover
-                      :visible="isBackupScopePickerOpen(scopeEntry.id)"
-                      trigger="click"
-                      placement="bottom-start"
-                      :width="backupScopePickerWidth"
-                      popper-class="ks-backup-scope-popover"
-                      @update:visible="(open) => setBackupScopePickerOpen(scopeEntry.id, open)"
-                    >
-                      <template #reference>
-                        <ElInput
-                          class="new-chat-scope-input"
-                          :model-value="scopeEntry.path"
-                          clearable
-                          placeholder="Select a file or folder"
-                          :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0"
-                          @update:model-value="updateBackupScopeEntryInput(scopeEntry.id, $event)"
-                          @blur="validateBackupScopeEntryOnBlur(scopeEntry.id)"
-                          @keydown.enter.prevent="validateBackupScopeEntry(scopeEntry.id)"
-                        >
-                          <template #prefix><TextCursorInput :size="14" /></template>
-                          <template #append>
-                            <ElButton aria-label="Browse backup content" :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0" @click.stop="setBackupScopePickerOpen(scopeEntry.id, !isBackupScopePickerOpen(scopeEntry.id))"><FolderOpen :size="16" /></ElButton>
-                          </template>
-                        </ElInput>
-                      </template>
-                      <div class="new-chat-scope-tree hfl-dir-tree-shell">
-                        <el-tree
-                          :key="`copilot-scope-${scopeEntry.id}-${effectiveSnapshotId}-${backupScopeTreeRevision}`"
-                          v-loading="backupScopeBrowseLoading"
-                          class="hfl-dir-tree hfl-dir-tree--tall"
-                          node-key="id"
-                          lazy
-                          highlight-current
-                          :expand-on-click-node="false"
-                          :load="loadBackupScopePickerNode"
-                          :props="{ label: 'label', children: 'children', isLeaf: 'isLeaf' }"
-                          @node-click="(data) => handleBackupScopeNodeClick(scopeEntry.id, data)"
-                        >
-                          <template #default="{ data }">
-                            <div class="hfl-dir-tree-node">
-                              <FolderOpen v-if="data.type === 'dir'" :size="15" class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--dir" />
-                              <File v-else :size="15" class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--file" />
-                              <div class="hfl-dir-tree-node__text"><span class="hfl-dir-tree-node__label">{{ data.label }}</span><span v-if="data.path" class="hfl-dir-tree-node__path">{{ data.path }}</span></div>
-                            </div>
-                          </template>
-                        </el-tree>
-                      </div>
-                    </HflPopover>
-                    <ElButton type="danger" size="small" :disabled="backupScopeEntries.length <= 1" aria-label="Remove scope" @click="removeBackupScopeEntry(scopeEntry.id)"><Trash2 :size="14" /></ElButton>
+            <div class="fullscreen-form-card">
+              <section class="fullscreen-form-section">
+                <div class="new-chat-section-head">
+                  <div class="new-chat-section-head__copy">
+                    <h2 class="fullscreen-form-section__title">
+                      <span class="fullscreen-form-section__indicator" />Data Source
+                    </h2>
                   </div>
-                  <div class="new-chat-scope-stack__add"><button type="button" :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0" @click="addBackupScopeEntry"><CirclePlus :size="16" /> Add File or Folder</button></div>
                 </div>
-                <p v-if="!effectiveSnapshotId" class="fullscreen-form-field__hint new-chat-scope-hint">Select a snapshot to browse its files and folders.</p>
-                <p v-else-if="snapshotDirectories.length === 0" class="fullscreen-form-field__hint new-chat-scope-hint new-chat-hint--warn">No files or folders are available in this snapshot.</p>
-                <p v-else class="fullscreen-form-field__hint new-chat-scope-hint">Select one or more files or folders for this chat.</p>
-                <p class="fullscreen-form-field__hint new-chat-scope-hint">{{ t('insight.copilot.documentFormatHint') }}</p>
-                <p class="fullscreen-form-field__hint new-chat-scope-hint">{{ t('insight.copilot.dataOriginHint') }}</p>
-              </div>
-            </section></div>
-
-            <div class="fullscreen-form-card"><section class="fullscreen-form-section">
-              <div class="new-chat-section-head">
-                <div class="new-chat-section-head__copy">
-                  <h2 class="fullscreen-form-section__title"><span class="fullscreen-form-section__indicator" />Data Privacy</h2>
+                <div class="new-chat-grid">
+                  <div class="fullscreen-form-field">
+                    <label
+                      for="copilot-backup-source"
+                      class="fullscreen-form-field__label"
+                    >Backup Source <span class="fullscreen-form-field__required">*</span></label>
+                    <ElSelect
+                      id="copilot-backup-source"
+                      v-model="selectedBackupConfigId"
+                      filterable
+                      placeholder="Select a backup source"
+                    >
+                      <ElOption
+                        v-for="row in backupSourceOptions"
+                        :key="row.backupConfigId"
+                        :label="row.label"
+                        :value="row.backupConfigId"
+                      />
+                    </ElSelect>
+                    <p class="fullscreen-form-field__hint">
+                      Choose the backup source that contains the data you want to analyze.
+                    </p>
+                  </div>
+                  <div class="fullscreen-form-field">
+                    <label
+                      for="copilot-snapshot"
+                      class="fullscreen-form-field__label"
+                    >Snapshot <span class="fullscreen-form-field__required">*</span></label>
+                    <ElSelect
+                      id="copilot-snapshot"
+                      v-model="snapshotPickerValue"
+                      :loading="snapshotLoading"
+                      :disabled="!selectedBackupConfigId"
+                      placeholder="Select a snapshot"
+                    >
+                      <ElOption
+                        label="Latest available snapshot"
+                        :value="SNAPSHOT_PICKER_LATEST"
+                      />
+                      <ElOption
+                        v-for="row in snapshotsForSelectedBackupSource"
+                        :key="row.id"
+                        :label="snapshotOptionLabel(row)"
+                        :value="row.id"
+                      />
+                    </ElSelect>
+                    <p class="fullscreen-form-field__hint">
+                      Choose the backup snapshot you want to analyze.
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <div class="new-chat-privacy-options">
-                <label class="new-chat-choice" :class="{ 'new-chat-choice--selected': gatewayMode === 'auto' }"><input v-model="gatewayMode" type="radio" value="auto"><span><strong>{{ t('insight.copilot.gatewayPublicTitle') }}</strong><small>{{ t('insight.copilot.gatewayPublicDescription') }}</small></span></label>
-                <div ref="privateGatewayCardRef" class="new-chat-choice new-chat-choice--private" :class="{ 'new-chat-choice--selected': gatewayMode === 'manual' }">
-                  <label class="new-chat-choice__radio"><input v-model="gatewayMode" type="radio" value="manual"><span><strong>{{ t('insight.copilot.gatewayPrivateTitle') }}</strong><small>{{ t('insight.copilot.gatewayPrivateDescription') }}</small></span></label>
-                  <div class="new-chat-choice__control">
-                    <div class="new-chat-gateway-select-row">
-                      <ElSelect
-                        v-model="gatewayLinkId"
-                        class="new-chat-gateway-select"
-                        filterable
-                        :loading="gatewayRefreshing"
-                        :no-data-text="t('insight.copilot.gatewayPrivateNoOnline')"
-                        placement="top-start"
-                        :fallback-placements="['bottom-start', 'top-end', 'bottom-end']"
-                        :placeholder="t('insight.copilot.gatewayPrivateSelectPlaceholder')"
-                        popper-class="new-chat-gateway-select-popper"
-                        @change="gatewayMode = 'manual'"
-                        @visible-change="(visible) => visible && ensurePrivateGatewayVisible()"
+                <div class="new-chat-source-divider" />
+                <div class="new-chat-source-subsection">
+                  <div class="new-chat-source-subsection__head">
+                    <h3 class="fullscreen-form-field__label">
+                      Files and Folders <span class="fullscreen-form-field__required">*</span>
+                    </h3>
+                  </div>
+                  <div
+                    ref="backupScopeStackRef"
+                    class="new-chat-scope-stack"
+                  >
+                    <div
+                      class="new-chat-scope-stack__header"
+                      aria-hidden="true"
+                    >
+                      <span /><span>Path</span><span>Actions</span>
+                    </div>
+                    <div
+                      v-for="(scopeEntry, scopeIndex) in backupScopeEntries"
+                      :key="scopeEntry.id"
+                      class="new-chat-scope-row"
+                    >
+                      <span class="new-chat-scope-row__index">{{ String(scopeIndex + 1).padStart(2, '0') }}</span>
+                      <HflPopover
+                        :visible="isBackupScopePickerOpen(scopeEntry.id)"
+                        trigger="click"
+                        placement="bottom-start"
+                        :width="backupScopePickerWidth"
+                        popper-class="ks-backup-scope-popover"
+                        @update:visible="(open) => setBackupScopePickerOpen(scopeEntry.id, open)"
                       >
-                        <ElOption
-                          v-for="row in privateGateways"
-                          :key="row.gateway_link_id"
-                          :label="row.name"
-                          :value="row.gateway_link_id"
-                        >
-                          <div class="new-chat-gateway-option">
-                            <span class="new-chat-gateway-option__name">{{ row.name }}</span>
-                            <span class="new-chat-gateway-option__status"><span class="new-chat-gateway-option__dot" />Online</span>
-                          </div>
-                        </ElOption>
-                      </ElSelect>
+                        <template #reference>
+                          <ElInput
+                            class="new-chat-scope-input"
+                            :model-value="scopeEntry.path"
+                            clearable
+                            placeholder="Select a file or folder"
+                            :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0"
+                            @update:model-value="updateBackupScopeEntryInput(scopeEntry.id, $event)"
+                            @blur="validateBackupScopeEntryOnBlur(scopeEntry.id)"
+                            @keydown.enter.prevent="validateBackupScopeEntry(scopeEntry.id)"
+                          >
+                            <template #prefix>
+                              <TextCursorInput :size="14" />
+                            </template>
+                            <template #append>
+                              <ElButton
+                                aria-label="Browse backup content"
+                                :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0"
+                                @click.stop="setBackupScopePickerOpen(scopeEntry.id, !isBackupScopePickerOpen(scopeEntry.id))"
+                              >
+                                <FolderOpen :size="16" />
+                              </ElButton>
+                            </template>
+                          </ElInput>
+                        </template>
+                        <div class="new-chat-scope-tree hfl-dir-tree-shell">
+                          <el-tree
+                            :key="`copilot-scope-${scopeEntry.id}-${effectiveSnapshotId}-${backupScopeTreeRevision}`"
+                            v-loading="backupScopeBrowseLoading"
+                            class="hfl-dir-tree hfl-dir-tree--tall"
+                            node-key="id"
+                            lazy
+                            highlight-current
+                            :expand-on-click-node="false"
+                            :load="loadBackupScopePickerNode"
+                            :props="{ label: 'label', children: 'children', isLeaf: 'isLeaf' }"
+                            @node-click="(data) => handleBackupScopeNodeClick(scopeEntry.id, data)"
+                          >
+                            <template #default="{ data }">
+                              <div class="hfl-dir-tree-node">
+                                <FolderOpen
+                                  v-if="data.type === 'dir'"
+                                  :size="15"
+                                  class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--dir"
+                                />
+                                <File
+                                  v-else
+                                  :size="15"
+                                  class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--file"
+                                />
+                                <div class="hfl-dir-tree-node__text">
+                                  <span class="hfl-dir-tree-node__label">{{ data.label }}</span><span
+                                    v-if="data.path"
+                                    class="hfl-dir-tree-node__path"
+                                  >{{ data.path }}</span>
+                                </div>
+                              </div>
+                            </template>
+                          </el-tree>
+                        </div>
+                      </HflPopover>
                       <ElButton
-                        class="hfl-refresh-button new-chat-gateway-select-row__refresh"
-                        :title="t('insight.copilot.gatewayPrivateRefreshAction')"
-                        :aria-label="t('insight.copilot.gatewayPrivateRefreshAction')"
-                        :disabled="gatewayRefreshing"
-                        @click="refreshGatewayOptions()"
+                        type="danger"
+                        size="small"
+                        :disabled="backupScopeEntries.length <= 1"
+                        aria-label="Remove scope"
+                        @click="removeBackupScopeEntry(scopeEntry.id)"
                       >
-                        <RefreshCw :size="16" :class="{ 'is-spinning': gatewayRefreshing }" />
-                      </ElButton>
-                      <ElButton
-                        class="fullscreen-form-icon-btn new-chat-gateway-select-row__deploy"
-                        :title="t('insight.copilot.gatewayPrivateInstallAction')"
-                        :aria-label="t('insight.copilot.gatewayPrivateInstallAction')"
-                        @click="openGatewayDeploy"
-                      >
-                        <Plus :size="14" />
+                        <Trash2 :size="14" />
                       </ElButton>
                     </div>
-                    <p v-if="!gatewayRefreshing && privateGateways.length === 0" class="new-chat-hint new-chat-hint--warn">{{ t('insight.copilot.gatewayPrivateNoOnline') }}</p>
+                    <div class="new-chat-scope-stack__add">
+                      <button
+                        type="button"
+                        :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0"
+                        @click="addBackupScopeEntry"
+                      >
+                        <CirclePlus :size="16" /> Add File or Folder
+                      </button>
+                    </div>
+                  </div>
+                  <p
+                    v-if="!effectiveSnapshotId"
+                    class="fullscreen-form-field__hint new-chat-scope-hint"
+                  >
+                    Select a snapshot to browse its files and folders.
+                  </p>
+                  <p
+                    v-else-if="snapshotDirectories.length === 0"
+                    class="fullscreen-form-field__hint new-chat-scope-hint new-chat-hint--warn"
+                  >
+                    No files or folders are available in this snapshot.
+                  </p>
+                  <p
+                    v-else
+                    class="fullscreen-form-field__hint new-chat-scope-hint"
+                  >
+                    Select one or more files or folders for this chat.
+                  </p>
+                  <p class="fullscreen-form-field__hint new-chat-scope-hint">
+                    {{ t('insight.copilot.documentFormatHint') }}
+                  </p>
+                  <p class="fullscreen-form-field__hint new-chat-scope-hint">
+                    {{ t('insight.copilot.dataOriginHint') }}
+                  </p>
+                </div>
+              </section>
+            </div>
+
+            <div class="fullscreen-form-card">
+              <section class="fullscreen-form-section">
+                <div class="new-chat-section-head">
+                  <div class="new-chat-section-head__copy">
+                    <h2 class="fullscreen-form-section__title">
+                      <span class="fullscreen-form-section__indicator" />Data Privacy
+                    </h2>
                   </div>
                 </div>
-                <div
-                  v-if="publicGatewayUnavailable"
-                  class="new-chat-gateway-warning"
-                  role="alert"
-                >
-                  <TriangleAlert :size="16" aria-hidden="true" />
-                  <span>{{ t('insight.copilot.gatewayPublicUnavailable') }}</span>
+                <div class="new-chat-privacy-options">
+                  <label
+                    class="new-chat-choice"
+                    :class="{ 'new-chat-choice--selected': gatewayMode === 'auto' }"
+                  ><input
+                    v-model="gatewayMode"
+                    type="radio"
+                    value="auto"
+                  ><span><strong>{{ t('insight.copilot.gatewayPublicTitle') }}</strong><small>{{ t('insight.copilot.gatewayPublicDescription') }}</small></span></label>
+                  <div
+                    ref="privateGatewayCardRef"
+                    class="new-chat-choice new-chat-choice--private"
+                    :class="{ 'new-chat-choice--selected': gatewayMode === 'manual' }"
+                  >
+                    <label class="new-chat-choice__radio"><input
+                      v-model="gatewayMode"
+                      type="radio"
+                      value="manual"
+                    ><span><strong>{{ t('insight.copilot.gatewayPrivateTitle') }}</strong><small>{{ t('insight.copilot.gatewayPrivateDescription') }}</small></span></label>
+                    <div class="new-chat-choice__control">
+                      <div class="new-chat-gateway-select-row">
+                        <ElSelect
+                          v-model="gatewayLinkId"
+                          class="new-chat-gateway-select"
+                          filterable
+                          :loading="gatewayRefreshing"
+                          :no-data-text="t('insight.copilot.gatewayPrivateNoOnline')"
+                          placement="top-start"
+                          :fallback-placements="['bottom-start', 'top-end', 'bottom-end']"
+                          :placeholder="t('insight.copilot.gatewayPrivateSelectPlaceholder')"
+                          popper-class="new-chat-gateway-select-popper"
+                          @change="gatewayMode = 'manual'"
+                          @visible-change="(visible) => visible && ensurePrivateGatewayVisible()"
+                        >
+                          <ElOption
+                            v-for="row in privateGateways"
+                            :key="row.gateway_link_id"
+                            :label="row.name"
+                            :value="row.gateway_link_id"
+                          >
+                            <div class="new-chat-gateway-option">
+                              <span class="new-chat-gateway-option__name">{{ row.name }}</span>
+                              <span class="new-chat-gateway-option__status"><span class="new-chat-gateway-option__dot" />Online</span>
+                            </div>
+                          </ElOption>
+                        </ElSelect>
+                        <ElButton
+                          class="hfl-refresh-button new-chat-gateway-select-row__refresh"
+                          :title="t('insight.copilot.gatewayPrivateRefreshAction')"
+                          :aria-label="t('insight.copilot.gatewayPrivateRefreshAction')"
+                          :disabled="gatewayRefreshing"
+                          @click="refreshGatewayOptions()"
+                        >
+                          <RefreshCw
+                            :size="16"
+                            :class="{ 'is-spinning': gatewayRefreshing }"
+                          />
+                        </ElButton>
+                        <ElButton
+                          class="fullscreen-form-icon-btn new-chat-gateway-select-row__deploy"
+                          :title="t('insight.copilot.gatewayPrivateInstallAction')"
+                          :aria-label="t('insight.copilot.gatewayPrivateInstallAction')"
+                          @click="openGatewayDeploy"
+                        >
+                          <Plus :size="14" />
+                        </ElButton>
+                      </div>
+                      <p
+                        v-if="!gatewayRefreshing && privateGateways.length === 0"
+                        class="new-chat-hint new-chat-hint--warn"
+                      >
+                        {{ t('insight.copilot.gatewayPrivateNoOnline') }}
+                      </p>
+                    </div>
+                  </div>
+                  <div
+                    v-if="publicGatewayUnavailable"
+                    class="new-chat-gateway-warning"
+                    role="alert"
+                  >
+                    <TriangleAlert
+                      :size="16"
+                      aria-hidden="true"
+                    />
+                    <span>{{ t('insight.copilot.gatewayPublicUnavailable') }}</span>
+                  </div>
                 </div>
-              </div>
-            </section></div>
+              </section>
+            </div>
           </div>
         </main>
 
         <aside class="fullscreen-form-sidebar add-form-preview-sidebar">
           <div class="add-form-preview-card">
-            <div class="add-form-preview-header"><div class="add-form-preview-header__icon"><MessageSquare class="add-form-preview-header__icon-lucide" :size="25" /></div><div class="add-form-preview-header__info"><h2 class="add-form-preview-header__name">New Chat</h2><p class="add-form-preview-header__type">AI Copilot</p></div></div>
+            <div class="add-form-preview-header">
+              <div class="add-form-preview-header__icon">
+                <MessageSquare
+                  class="add-form-preview-header__icon-lucide"
+                  :size="25"
+                />
+              </div><div class="add-form-preview-header__info">
+                <h2 class="add-form-preview-header__name">
+                  New Chat
+                </h2><p class="add-form-preview-header__type">
+                  AI Copilot
+                </p>
+              </div>
+            </div>
             <div class="add-form-preview-body">
               <section class="add-form-preview-section">
-                <h3 class="add-form-preview-section__title">Data Source</h3>
-                <div class="add-form-preview-row"><span class="add-form-preview-row__label">Backup Source</span><span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !selectedBackupSource }">{{ selectedBackupSource?.label || '—' }}</span></div>
-                <div class="add-form-preview-row"><span class="add-form-preview-row__label">{{ t('insight.copilot.dataOriginLabel') }}</span><span class="add-form-preview-row__value">{{ t('insight.copilot.dataOriginProtected') }}</span></div>
-                <div class="add-form-preview-row"><span class="add-form-preview-row__label">Snapshot</span><span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !selectedSnapshot }">{{ selectedSnapshot ? snapshotOptionLabel(selectedSnapshot) : '—' }}</span></div>
-                <div class="add-form-preview-row"><span class="add-form-preview-row__label">Files and Folders</span><span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !sourceScopes.length }">{{ selectedScopeSummary }}</span></div>
+                <h3 class="add-form-preview-section__title">
+                  Data Source
+                </h3>
+                <div class="add-form-preview-row">
+                  <span class="add-form-preview-row__label">Backup Source</span><span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !selectedBackupSource }"
+                  >{{ selectedBackupSource?.label || '—' }}</span>
+                </div>
+                <div class="add-form-preview-row">
+                  <span class="add-form-preview-row__label">{{ t('insight.copilot.dataOriginLabel') }}</span><span class="add-form-preview-row__value">{{ t('insight.copilot.dataOriginProtected') }}</span>
+                </div>
+                <div class="add-form-preview-row">
+                  <span class="add-form-preview-row__label">Snapshot</span><span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !selectedSnapshot }"
+                  >{{ selectedSnapshot ? snapshotOptionLabel(selectedSnapshot) : '—' }}</span>
+                </div>
+                <div class="add-form-preview-row">
+                  <span class="add-form-preview-row__label">Files and Folders</span><span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !sourceScopes.length }"
+                  >{{ selectedScopeSummary }}</span>
+                </div>
               </section>
               <section class="add-form-preview-section">
-                <h3 class="add-form-preview-section__title">Data Privacy</h3>
-                <div class="add-form-preview-row"><span class="add-form-preview-row__label">{{ t('insight.copilot.gatewayTypeLabel') }}</span><span class="add-form-preview-row__value">{{ gatewayMode === 'auto' ? t('insight.copilot.gatewayTypePublic') : t('insight.copilot.gatewayTypePrivate') }}</span></div>
-                <div class="add-form-preview-row"><span class="add-form-preview-row__label">{{ t('insight.copilot.gatewayNameLabel') }}</span><span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !selectedGateway }">{{ selectedGateway?.name || t('insight.copilot.gatewayNotReady') }}</span></div>
+                <h3 class="add-form-preview-section__title">
+                  Data Privacy
+                </h3>
+                <div class="add-form-preview-row">
+                  <span class="add-form-preview-row__label">{{ t('insight.copilot.gatewayTypeLabel') }}</span><span class="add-form-preview-row__value">{{ gatewayMode === 'auto' ? t('insight.copilot.gatewayTypePublic') : t('insight.copilot.gatewayTypePrivate') }}</span>
+                </div>
+                <div class="add-form-preview-row">
+                  <span class="add-form-preview-row__label">{{ t('insight.copilot.gatewayNameLabel') }}</span><span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !selectedGateway }"
+                  >{{ selectedGateway?.name || t('insight.copilot.gatewayNotReady') }}</span>
+                </div>
               </section>
-              <p v-if="!visualModelReady" class="new-chat-visual-warning">
+              <p
+                v-if="!visualModelReady"
+                class="new-chat-visual-warning"
+              >
                 Visual understanding is unavailable. Text documents remain searchable, but images and scanned PDFs may not be readable.
               </p>
             </div>
@@ -498,9 +695,21 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
       </div>
 
       <footer class="fullscreen-form-footer">
-        <p v-if="footerSubmitBlockReason" class="form-submit-hint">{{ footerSubmitBlockReason }}</p>
-        <ElButton @click="router.push('/insight/copilot')">Cancel</ElButton>
-        <ElButton type="primary" :loading="submitting" :disabled="!canCreate" @click="createChat">
+        <p
+          v-if="footerSubmitBlockReason"
+          class="form-submit-hint"
+        >
+          {{ footerSubmitBlockReason }}
+        </p>
+        <ElButton @click="router.push('/insight/copilot')">
+          Cancel
+        </ElButton>
+        <ElButton
+          type="primary"
+          :loading="submitting"
+          :disabled="!canCreate"
+          @click="createChat"
+        >
           {{ submitting ? 'Starting Chat…' : 'Start Chat' }}
         </ElButton>
       </footer>

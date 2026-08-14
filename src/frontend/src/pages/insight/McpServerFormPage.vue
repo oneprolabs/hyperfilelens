@@ -163,47 +163,113 @@ watch(
 </script>
 
 <template>
-  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen">
+  <div
+    ref="pageRef"
+    class="fullscreen-form-fullscreen resource-add-fullscreen"
+  >
     <div class="fullscreen-form-page">
       <header class="fullscreen-form-header">
-        <button type="button" class="fullscreen-form-header__back" @click="handleBack">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+        <button
+          type="button"
+          class="fullscreen-form-header__back"
+          @click="handleBack"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
-          <h1 class="fullscreen-form-header__title">{{ pageTitle }}</h1>
-          <p class="fullscreen-form-header__desc">{{ pageDesc }}</p>
+          <h1 class="fullscreen-form-header__title">
+            {{ pageTitle }}
+          </h1>
+          <p class="fullscreen-form-header__desc">
+            {{ pageDesc }}
+          </p>
         </div>
       </header>
 
-      <div v-loading="loading" class="fullscreen-form-layout">
+      <div
+        v-loading="loading"
+        class="fullscreen-form-layout"
+      >
         <div class="fullscreen-form-main">
           <div class="fullscreen-form-step-stack">
             <section class="fullscreen-form-card fullscreen-form-section">
-              <ElForm label-position="top" class="fullscreen-form-el-form">
-                <ElFormItem data-validation-field="name" :error="errors.name" :label="t('insight.mcpServers.fieldName')" required>
-                  <ElInput v-model="name" :placeholder="t('insight.mcpServers.fieldNamePh')" @input="clearFieldError('name')" />
-                  <p class="mcp-field-hint">{{ t('insight.mcpServers.fieldNameHint') }}</p>
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form"
+              >
+                <ElFormItem
+                  data-validation-field="name"
+                  :error="errors.name"
+                  :label="t('insight.mcpServers.fieldName')"
+                  required
+                >
+                  <ElInput
+                    v-model="name"
+                    :placeholder="t('insight.mcpServers.fieldNamePh')"
+                    @input="clearFieldError('name')"
+                  />
+                  <p class="mcp-field-hint">
+                    {{ t('insight.mcpServers.fieldNameHint') }}
+                  </p>
                 </ElFormItem>
 
                 <div class="fullscreen-form-grid mcp-connection-grid">
-                  <ElFormItem :label="t('insight.mcpServers.fieldTransport')" required>
-                    <ElSelect v-model="transport" class="w-full">
-                      <ElOption label="URL" value="url" />
-                      <ElOption label="STDIO" value="stdio" />
+                  <ElFormItem
+                    :label="t('insight.mcpServers.fieldTransport')"
+                    required
+                  >
+                    <ElSelect
+                      v-model="transport"
+                      class="w-full"
+                    >
+                      <ElOption
+                        label="URL"
+                        value="url"
+                      />
+                      <ElOption
+                        label="STDIO"
+                        value="stdio"
+                      />
                     </ElSelect>
-                    <p class="mcp-field-hint">{{ t('insight.mcpServers.fieldTransportHint') }}</p>
+                    <p class="mcp-field-hint">
+                      {{ t('insight.mcpServers.fieldTransportHint') }}
+                    </p>
                   </ElFormItem>
-                  <ElFormItem data-validation-field="endpoint" :error="errors.endpoint" :label="t('insight.mcpServers.fieldEndpoint')" required>
-                    <ElInput v-model="endpoint" :placeholder="endpointPlaceholder" @input="clearFieldError('endpoint')" />
-                    <p class="mcp-field-hint">{{ t('insight.mcpServers.fieldEndpointHint') }}</p>
+                  <ElFormItem
+                    data-validation-field="endpoint"
+                    :error="errors.endpoint"
+                    :label="t('insight.mcpServers.fieldEndpoint')"
+                    required
+                  >
+                    <ElInput
+                      v-model="endpoint"
+                      :placeholder="endpointPlaceholder"
+                      @input="clearFieldError('endpoint')"
+                    />
+                    <p class="mcp-field-hint">
+                      {{ t('insight.mcpServers.fieldEndpointHint') }}
+                    </p>
                   </ElFormItem>
                 </div>
 
                 <ElFormItem :label="t('insight.mcpServers.fieldConfig')">
                   <div class="mcp-config-panel">
-                    <div v-for="(row, index) in configRows" :key="index" class="mcp-config-row">
-                      <ElInput v-model="row.key" :placeholder="t('insight.mcpServers.fieldConfigKey')" />
-                      <ElInput v-model="row.value" :placeholder="t('insight.mcpServers.fieldConfigValue')" />
+                    <div
+                      v-for="(row, index) in configRows"
+                      :key="index"
+                      class="mcp-config-row"
+                    >
+                      <ElInput
+                        v-model="row.key"
+                        :placeholder="t('insight.mcpServers.fieldConfigKey')"
+                      />
+                      <ElInput
+                        v-model="row.value"
+                        :placeholder="t('insight.mcpServers.fieldConfigValue')"
+                      />
                       <button
                         type="button"
                         class="mcp-config-row__remove"
@@ -213,17 +279,24 @@ watch(
                         <Trash2 :size="16" />
                       </button>
                     </div>
-                    <ElButton size="small" @click="addConfigRow">
+                    <ElButton
+                      size="small"
+                      @click="addConfigRow"
+                    >
                       <Plus :size="14" />
                       {{ t('insight.mcpServers.addConfigRow') }}
                     </ElButton>
                   </div>
-                  <p class="mcp-field-hint">{{ t('insight.mcpServers.fieldConfigHint') }}</p>
+                  <p class="mcp-field-hint">
+                    {{ t('insight.mcpServers.fieldConfigHint') }}
+                  </p>
                 </ElFormItem>
 
                 <ElFormItem :label="t('insight.mcpServers.fieldEnabled')">
                   <ElSwitch v-model="enabled" />
-                  <p class="mcp-field-hint">{{ t('insight.mcpServers.fieldEnabledHint') }}</p>
+                  <p class="mcp-field-hint">
+                    {{ t('insight.mcpServers.fieldEnabledHint') }}
+                  </p>
                 </ElFormItem>
               </ElForm>
             </section>

@@ -1029,11 +1029,17 @@ function onMoreDisable() {
     <div class="hfl-list-shell hfl-list-shell--fill">
       <HflTablePanel fill>
         <template #toolbar>
-          <ElButton type="primary" @click="openAddDialog">
+          <ElButton
+            type="primary"
+            @click="openAddDialog"
+          >
             <Plus :size="16" />
             {{ t('protection.policiesPage.btnCreate') }}
           </ElButton>
-          <ElDropdown trigger="click" @visible-change="moreActionsOpen = $event">
+          <ElDropdown
+            trigger="click"
+            @visible-change="moreActionsOpen = $event"
+          >
             <ElButton :loading="listActionLoading">
               {{ t('protection.policiesPage.btnMoreActions') }}
               <ChevronDown
@@ -1044,27 +1050,54 @@ function onMoreDisable() {
             </ElButton>
             <template #dropdown>
               <ElDropdownMenu>
-                <ElDropdownItem :disabled="moreEditDisabled" @click="onMoreEdit">
+                <ElDropdownItem
+                  :disabled="moreEditDisabled"
+                  @click="onMoreEdit"
+                >
                   <span class="el-dropdown-menu__item-content">
-                    <SquarePen :size="14" class="shrink-0" />
+                    <SquarePen
+                      :size="14"
+                      class="shrink-0"
+                    />
                     <span>{{ t('protection.policiesPage.btnEdit') }}</span>
                   </span>
                 </ElDropdownItem>
-                <ElDropdownItem divided :disabled="batchEnableDisabled" @click="onMoreEnable">
+                <ElDropdownItem
+                  divided
+                  :disabled="batchEnableDisabled"
+                  @click="onMoreEnable"
+                >
                   <span class="el-dropdown-menu__item-content">
-                    <CirclePlay :size="14" class="shrink-0" />
+                    <CirclePlay
+                      :size="14"
+                      class="shrink-0"
+                    />
                     <span>{{ t('protection.policiesPage.btnEnable') }}</span>
                   </span>
                 </ElDropdownItem>
-                <ElDropdownItem :disabled="batchDisableDisabled" @click="onMoreDisable">
+                <ElDropdownItem
+                  :disabled="batchDisableDisabled"
+                  @click="onMoreDisable"
+                >
                   <span class="el-dropdown-menu__item-content">
-                    <CircleStop :size="14" class="shrink-0" />
+                    <CircleStop
+                      :size="14"
+                      class="shrink-0"
+                    />
                     <span>{{ t('protection.policiesPage.btnDisable') }}</span>
                   </span>
                 </ElDropdownItem>
-                <ElDropdownItem divided class="el-dropdown-menu__item--danger" :disabled="moreBatchDisabled" @click="onMoreDelete">
+                <ElDropdownItem
+                  divided
+                  class="el-dropdown-menu__item--danger"
+                  :disabled="moreBatchDisabled"
+                  @click="onMoreDelete"
+                >
                   <span class="el-dropdown-menu__item-content">
-                    <Trash2 :size="14" class="shrink-0" />
+                    <Trash2
+                      :size="14"
+                      class="shrink-0"
+                    />
                     <span>{{ t('protection.policiesPage.btnDelete') }}</span>
                   </span>
                 </ElDropdownItem>
@@ -1084,11 +1117,17 @@ function onMoreDisable() {
             >
               <template #prepend>
                 <ElSelect v-model="searchField">
-                  <ElOption value="name" :label="t('protection.listSearchFields.name')" />
+                  <ElOption
+                    value="name"
+                    :label="t('protection.listSearchFields.name')"
+                  />
                 </ElSelect>
               </template>
               <template #prefix>
-                <Search :size="16" class="hfl-list-search__icon" />
+                <Search
+                  :size="16"
+                  class="hfl-list-search__icon"
+                />
               </template>
             </ElInput>
             <div class="hfl-list-toolbar__utility">
@@ -1099,7 +1138,10 @@ function onMoreDisable() {
                 :disabled="listLoading"
                 @click="refreshPoliciesList"
               >
-                <RefreshCw :size="16" :class="{ 'is-spinning': listLoading }" />
+                <RefreshCw
+                  :size="16"
+                  :class="{ 'is-spinning': listLoading }"
+                />
               </ElButton>
             </div>
           </div>
@@ -1114,518 +1156,687 @@ function onMoreDisable() {
           :title="listError"
         >
           <template #default>
-            <ElButton size="small" @click="refreshPoliciesList">
+            <ElButton
+              size="small"
+              @click="refreshPoliciesList"
+            >
               {{ t('protection.policiesPage.btnRetry') }}
             </ElButton>
           </template>
         </ElAlert>
 
         <template #table="{ tableMaxHeight }">
-        <el-table
-          v-if="listTab === 'backup'"
-          v-table-overflow-title
-          v-table-header-scroll-sync
-          v-table-column-resize="'protection.policies.backup'"
-          ref="policyTableRef"
-          v-loading="listLoading"
-          class="hfl-list-table"
-          :data="pagedPolicyRows"
-          stripe
-          row-key="id"
-          :max-height="tableMaxHeight"
-          :header-cell-style="TABLE_HEADER_STYLE"
-          @selection-change="onPolicySelectionChange"
-        >
-          <el-table-column type="selection" width="35" fixed="left" />
-          <el-table-column
-            :label="t('protection.policiesPage.colName')"
-            min-width="200"
-            fixed="left"
-            class-name="hfl-table-name-col"
+          <el-table
+            v-if="listTab === 'backup'"
+            ref="policyTableRef"
+            v-table-overflow-title
+            v-table-header-scroll-sync
+            v-table-column-resize="'protection.policies.backup'"
+            v-loading="listLoading"
+            class="hfl-list-table"
+            :data="pagedPolicyRows"
+            stripe
+            row-key="id"
+            :max-height="tableMaxHeight"
+            :header-cell-style="TABLE_HEADER_STYLE"
+            @selection-change="onPolicySelectionChange"
           >
-            <template #default="{ row }">
-              <button
-                type="button"
-                class="hfl-table-name-link hfl-table-name-link--full"
-                @click="openPolicyDetail(row)"
-              >
-                {{ row.name }}
-              </button>
+            <el-table-column
+              type="selection"
+              width="35"
+              fixed="left"
+            />
+            <el-table-column
+              :label="t('protection.policiesPage.colName')"
+              min-width="200"
+              fixed="left"
+              class-name="hfl-table-name-col"
+            >
+              <template #default="{ row }">
+                <button
+                  type="button"
+                  class="hfl-table-name-link hfl-table-name-link--full"
+                  @click="openPolicyDetail(row)"
+                >
+                  {{ row.name }}
+                </button>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.policiesPage.colAssociatedSourceCount')"
+              width="100"
+              align="left"
+            >
+              <template #default="{ row }">
+                <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ row.relatedBackupCount }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.policiesPage.colSchedule')"
+              min-width="180"
+            >
+              <template #default="{ row }">
+                <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ row.scheduleSummary }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.policiesPage.colRetention')"
+              min-width="260"
+            >
+              <template #default="{ row }">
+                <HflPopover
+                  trigger="hover"
+                  placement="top-start"
+                  :width="420"
+                  popper-class="policy-retention-popover"
+                >
+                  <template #reference>
+                    <span class="hfl-table-cell-full hfl-table-no-tooltip policy-retention-cell">
+                      <span class="policy-retention-cell__summary">{{ policyRetentionListSummary(row) }}</span>
+                    </span>
+                  </template>
+                  <div class="policy-retention-popover__content">
+                    <section class="policy-retention-popover__section">
+                      <div class="policy-retention-detail-list">
+                        <div
+                          v-for="line in policyRetentionDetailLines(row)"
+                          :key="`${line.label || ''}${line.text}`"
+                          class="policy-retention-detail-list__line"
+                          :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
+                        >
+                          <span
+                            v-if="line.label"
+                            class="policy-retention-detail-list__label"
+                          >{{ line.label }}</span>
+                          <span class="policy-retention-detail-list__text">{{ line.text }}</span>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </HflPopover>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.policiesPage.colStatus')"
+              width="98"
+            >
+              <template #default="{ row }">
+                <div class="hfl-table-no-tooltip">
+                  <HflBooleanStatusTag
+                    :value="row.is_active"
+                    :label="row.is_active ? t('protection.policiesPage.switchEnabledOn') : t('protection.policiesPage.switchEnabledOff')"
+                  />
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.policiesPage.colUpdated')"
+              width="180"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !row.updatedAt }"
+                >{{ fmtLocalTime(row.updatedAt) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.policiesPage.colCreated')"
+              width="180"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !row.createdAt }"
+                >{{ fmtLocalTime(row.createdAt) }}</span>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty
+                :description="t('protection.policiesPage.emptyPolicies')"
+                :image-size="72"
+              />
             </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.policiesPage.colAssociatedSourceCount')" width="100" align="left">
-            <template #default="{ row }">
-              <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ row.relatedBackupCount }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.policiesPage.colSchedule')" min-width="180">
-            <template #default="{ row }">
-              <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ row.scheduleSummary }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.policiesPage.colRetention')" min-width="260">
-            <template #default="{ row }">
-              <HflPopover
-                trigger="hover"
-                placement="top-start"
-                :width="420"
-                popper-class="policy-retention-popover"
-              >
-                <template #reference>
-                  <span class="hfl-table-cell-full hfl-table-no-tooltip policy-retention-cell">
-                    <span class="policy-retention-cell__summary">{{ policyRetentionListSummary(row) }}</span>
-                  </span>
-                </template>
-                <div class="policy-retention-popover__content">
-                  <section class="policy-retention-popover__section">
-                    <div class="policy-retention-detail-list">
-                      <div
-                        v-for="line in policyRetentionDetailLines(row)"
-                        :key="`${line.label || ''}${line.text}`"
-                        class="policy-retention-detail-list__line"
-                        :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
-                      >
-                        <span v-if="line.label" class="policy-retention-detail-list__label">{{ line.label }}</span>
-                        <span class="policy-retention-detail-list__text">{{ line.text }}</span>
+          </el-table>
+          <el-table
+            v-else
+            ref="filterTableRef"
+            v-table-overflow-title
+            v-table-header-scroll-sync
+            v-table-column-resize="'protection.policies.filters'"
+            v-loading="listLoading"
+            class="hfl-list-table"
+            :data="pagedFilterRows"
+            stripe
+            row-key="id"
+            :max-height="tableMaxHeight"
+            :header-cell-style="TABLE_HEADER_STYLE"
+            :row-class-name="filterRowClassName"
+            @selection-change="onFilterSelectionChange"
+          >
+            <el-table-column
+              type="selection"
+              width="35"
+              fixed="left"
+            />
+            <el-table-column
+              :label="t('protection.policiesPage.colName')"
+              min-width="220"
+              fixed="left"
+              class-name="hfl-table-name-col"
+            >
+              <template #default="{ row }">
+                <button
+                  type="button"
+                  class="hfl-table-name-link hfl-table-name-link--full"
+                  @click="openFilterDetail(row)"
+                >
+                  {{ row.name }}
+                </button>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.policiesPage.colAssociatedSourceCount')"
+              width="100"
+              align="left"
+            >
+              <template #default="{ row }">
+                <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ row.relatedBackupCount }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.policiesPage.colFilterSummary')"
+              min-width="430"
+            >
+              <template #default="{ row }">
+                <HflPopover
+                  v-if="row.excludeRuleLines.length"
+                  trigger="hover"
+                  placement="top-start"
+                  :width="460"
+                  popper-class="hfl-filter-rules-popover"
+                >
+                  <template #reference>
+                    <div class="hfl-table-cell-full hfl-table-no-tooltip hfl-filter-rules-cell">
+                      <span class="hfl-filter-rules-cell__prefix">{{ t('protection.policiesPage.filterExcludeRulesTitle') }}:</span>
+                      <div class="hfl-filter-rules-cell__list">
+                        <code
+                          v-for="(line, index) in row.excludeRuleLines"
+                          :key="`${index}-${line}`"
+                          class="hfl-filter-rules-cell__rule"
+                        >
+                          {{ line }}
+                        </code>
                       </div>
                     </div>
-                  </section>
-                </div>
-              </HflPopover>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.policiesPage.colStatus')" width="98">
-            <template #default="{ row }">
-              <div class="hfl-table-no-tooltip">
-                <HflBooleanStatusTag
-                  :value="row.is_active"
-                  :label="row.is_active ? t('protection.policiesPage.switchEnabledOn') : t('protection.policiesPage.switchEnabledOff')"
-                />
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.policiesPage.colUpdated')" width="180">
-            <template #default="{ row }">
-              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.updatedAt }">{{ fmtLocalTime(row.updatedAt) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.policiesPage.colCreated')" width="180">
-            <template #default="{ row }">
-              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.createdAt }">{{ fmtLocalTime(row.createdAt) }}</span>
-            </template>
-          </el-table-column>
-          <template #empty>
-            <el-empty :description="t('protection.policiesPage.emptyPolicies')" :image-size="72" />
-          </template>
-        </el-table>
-        <el-table
-          v-else
-          v-table-overflow-title
-          v-table-header-scroll-sync
-          v-table-column-resize="'protection.policies.filters'"
-          ref="filterTableRef"
-          v-loading="listLoading"
-          class="hfl-list-table"
-          :data="pagedFilterRows"
-          stripe
-          row-key="id"
-          :max-height="tableMaxHeight"
-          :header-cell-style="TABLE_HEADER_STYLE"
-          :row-class-name="filterRowClassName"
-          @selection-change="onFilterSelectionChange"
-        >
-          <el-table-column type="selection" width="35" fixed="left" />
-          <el-table-column
-            :label="t('protection.policiesPage.colName')"
-            min-width="220"
-            fixed="left"
-            class-name="hfl-table-name-col"
-          >
-            <template #default="{ row }">
-              <button
-                type="button"
-                class="hfl-table-name-link hfl-table-name-link--full"
-                @click="openFilterDetail(row)"
-              >
-                {{ row.name }}
-              </button>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.policiesPage.colAssociatedSourceCount')" width="100" align="left">
-            <template #default="{ row }">
-              <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ row.relatedBackupCount }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.policiesPage.colFilterSummary')" min-width="430">
-            <template #default="{ row }">
-              <HflPopover
-                v-if="row.excludeRuleLines.length"
-                trigger="hover"
-                placement="top-start"
-                :width="460"
-                popper-class="hfl-filter-rules-popover"
-              >
-                <template #reference>
-                  <div class="hfl-table-cell-full hfl-table-no-tooltip hfl-filter-rules-cell">
-                    <span class="hfl-filter-rules-cell__prefix">{{ t('protection.policiesPage.filterExcludeRulesTitle') }}:</span>
-                    <div class="hfl-filter-rules-cell__list">
+                  </template>
+                  <div class="hfl-filter-rules-popover__content">
+                    <div class="hfl-filter-rules-popover__divider">
+                      {{ t('protection.policiesPage.filterExcludeRulesTitle') }}
+                    </div>
+                    <div class="hfl-filter-rules-popover__lines">
                       <code
                         v-for="(line, index) in row.excludeRuleLines"
                         :key="`${index}-${line}`"
-                        class="hfl-filter-rules-cell__rule"
+                        class="hfl-filter-rules-popover__line"
                       >
                         {{ line }}
                       </code>
                     </div>
                   </div>
-                </template>
-                <div class="hfl-filter-rules-popover__content">
-                  <div class="hfl-filter-rules-popover__divider">{{ t('protection.policiesPage.filterExcludeRulesTitle') }}</div>
-                  <div class="hfl-filter-rules-popover__lines">
-                    <code
-                      v-for="(line, index) in row.excludeRuleLines"
-                      :key="`${index}-${line}`"
-                      class="hfl-filter-rules-popover__line"
-                    >
-                      {{ line }}
-                    </code>
-                  </div>
+                </HflPopover>
+                <div
+                  v-else
+                  class="hfl-table-cell-full hfl-table-no-tooltip hfl-filter-rules-cell"
+                >
+                  <span class="hfl-filter-rules-cell__prefix">{{ t('protection.policiesPage.filterExcludeRulesTitle') }}:</span>
+                  <span class="hfl-filter-rules-cell__empty">
+                    {{ t('protection.policiesPage.filterNoActiveRules') }}
+                  </span>
                 </div>
-              </HflPopover>
-              <div v-else class="hfl-table-cell-full hfl-table-no-tooltip hfl-filter-rules-cell">
-                <span class="hfl-filter-rules-cell__prefix">{{ t('protection.policiesPage.filterExcludeRulesTitle') }}:</span>
-                <span class="hfl-filter-rules-cell__empty">
-                  {{ t('protection.policiesPage.filterNoActiveRules') }}
-                </span>
-              </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.policiesPage.colStatus')"
+              width="98"
+            >
+              <template #default="{ row }">
+                <div class="hfl-table-no-tooltip">
+                  <HflBooleanStatusTag
+                    :value="row.is_active"
+                    :label="row.is_active ? t('protection.policiesPage.switchEnabledOn') : t('protection.policiesPage.switchEnabledOff')"
+                  />
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.policiesPage.colUpdated')"
+              width="180"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !row.updatedAt }"
+                >{{ fmtLocalTime(row.updatedAt) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.policiesPage.colCreated')"
+              width="180"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !row.createdAt }"
+                >{{ fmtLocalTime(row.createdAt) }}</span>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty
+                :description="t('protection.policiesPage.emptyFilters')"
+                :image-size="72"
+              />
             </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.policiesPage.colStatus')" width="98">
-            <template #default="{ row }">
-              <div class="hfl-table-no-tooltip">
-                <HflBooleanStatusTag
-                  :value="row.is_active"
-                  :label="row.is_active ? t('protection.policiesPage.switchEnabledOn') : t('protection.policiesPage.switchEnabledOff')"
-                />
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.policiesPage.colUpdated')" width="180">
-            <template #default="{ row }">
-              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.updatedAt }">{{ fmtLocalTime(row.updatedAt) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.policiesPage.colCreated')" width="180">
-            <template #default="{ row }">
-              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.createdAt }">{{ fmtLocalTime(row.createdAt) }}</span>
-            </template>
-          </el-table-column>
-          <template #empty>
-            <el-empty :description="t('protection.policiesPage.emptyFilters')" :image-size="72" />
-          </template>
-        </el-table>
+          </el-table>
         </template>
 
         <template #footer>
-          <span v-if="activeSelectedCount > 0" class="hfl-list-footer__selected">
+          <span
+            v-if="activeSelectedCount > 0"
+            class="hfl-list-footer__selected"
+          >
             {{ t('protection.policiesPage.selectedCount', { n: activeSelectedCount }) }}
           </span>
           <HflPagination
-            class="hfl-list-footer__pagination"
             v-model:current-page="currentPage"
             v-model:page-size="pageSize"
+            class="hfl-list-footer__pagination"
             :total="totalFiltered"
           />
         </template>
       </HflTablePanel>
 
-    <ElDrawer
-      v-model="detailDrawerOpen"
-      direction="rtl"
-      :size="drawerSize"
-      destroy-on-close
-      :modal="true"
-      class="hfl-detail-drawer policy-detail-drawer"
-      @closed="onPolicyDetailClosed"
-    >
-      <template #header>
-        <span class="hfl-detail-drawer__title">{{ activePolicy?.name || t('protection.policiesPage.detailDrawerTitle') }}</span>
-      </template>
+      <ElDrawer
+        v-model="detailDrawerOpen"
+        direction="rtl"
+        :size="drawerSize"
+        destroy-on-close
+        :modal="true"
+        class="hfl-detail-drawer policy-detail-drawer"
+        @closed="onPolicyDetailClosed"
+      >
+        <template #header>
+          <span class="hfl-detail-drawer__title">{{ activePolicy?.name || t('protection.policiesPage.detailDrawerTitle') }}</span>
+        </template>
 
-      <div v-if="activePolicy" class="hfl-detail-drawer__body policy-detail-body">
-        <ElTabs v-model="policyDetailTab" class="hfl-detail-tabs policy-detail-tabs">
-          <ElTabPane :label="t('protection.sourceResources.detailTabBasic')" name="basic">
-            <PolicyDetailBasicPanel
-              :key="activePolicy.apiId"
-              :policy-id="activePolicy.apiId"
-              :created-at="activePolicy.createdAt"
-              :associated-source-count="activePolicy.relatedBackupCount"
-              :updated-at="activePolicy.updatedAt"
-              @updated="loadActiveList"
-            />
-          </ElTabPane>
-
-          <ElTabPane :label="t('protection.policiesPage.tabRelatedBackupSources')" name="backups">
-            <el-alert
-              v-if="relatedBackupConfigsError"
-              :title="relatedBackupConfigsError"
-              type="error"
-              show-icon
-              :closable="false"
-              class="mb-3"
-            />
-            <el-table
-              v-table-column-resize="'protection.policies.backup.related'"
-              v-table-overflow-title
-              v-loading="relatedBackupConfigsLoading"
-              :data="pagedRelatedBackupConfigs"
-              stripe
-              row-key="id"
-              class="hfl-list-table policy-related-backup-table"
+        <div
+          v-if="activePolicy"
+          class="hfl-detail-drawer__body policy-detail-body"
+        >
+          <ElTabs
+            v-model="policyDetailTab"
+            class="hfl-detail-tabs policy-detail-tabs"
+          >
+            <ElTabPane
+              :label="t('protection.sourceResources.detailTabBasic')"
+              name="basic"
             >
-              <el-table-column :label="t('repositoriesPage.associatedSourceColId')" width="90" fixed="left">
-                <template #default="{ row }">
-                  <span class="hfl-table-mono">{{ row.source_ref_id }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="260" fixed="left">
-                <template #default="{ row }">
-                  <div class="policy-related-source-cell">
-                    <span class="policy-related-source-cell__name">{{ backupConfigSourceLabel(row) }}</span>
-                    <span class="policy-related-source-cell__meta">
-                      <ElTag size="small" effect="plain">{{ sourceTypeLabel(row.source_type) }}</ElTag>
-                      <ElTooltip
-                        v-if="relatedSourceTraitLabel(row)"
-                        :content="relatedSourceTraitLabel(row)"
-                        placement="top"
-                      >
-                        <span
-                          v-if="relatedSourceKind(row) === 'host'"
-                          class="source-os-cell__icon-wrap policy-related-source-cell__trait-icon"
+              <PolicyDetailBasicPanel
+                :key="activePolicy.apiId"
+                :policy-id="activePolicy.apiId"
+                :created-at="activePolicy.createdAt"
+                :associated-source-count="activePolicy.relatedBackupCount"
+                :updated-at="activePolicy.updatedAt"
+                @updated="loadActiveList"
+              />
+            </ElTabPane>
+
+            <ElTabPane
+              :label="t('protection.policiesPage.tabRelatedBackupSources')"
+              name="backups"
+            >
+              <el-alert
+                v-if="relatedBackupConfigsError"
+                :title="relatedBackupConfigsError"
+                type="error"
+                show-icon
+                :closable="false"
+                class="mb-3"
+              />
+              <el-table
+                v-table-column-resize="'protection.policies.backup.related'"
+                v-table-overflow-title
+                v-loading="relatedBackupConfigsLoading"
+                :data="pagedRelatedBackupConfigs"
+                stripe
+                row-key="id"
+                class="hfl-list-table policy-related-backup-table"
+              >
+                <el-table-column
+                  :label="t('repositoriesPage.associatedSourceColId')"
+                  width="90"
+                  fixed="left"
+                >
+                  <template #default="{ row }">
+                    <span class="hfl-table-mono">{{ row.source_ref_id }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('protection.backupsPage.colBackupSource')"
+                  min-width="260"
+                  fixed="left"
+                >
+                  <template #default="{ row }">
+                    <div class="policy-related-source-cell">
+                      <span class="policy-related-source-cell__name">{{ backupConfigSourceLabel(row) }}</span>
+                      <span class="policy-related-source-cell__meta">
+                        <ElTag
+                          size="small"
+                          effect="plain"
+                        >{{ sourceTypeLabel(row.source_type) }}</ElTag>
+                        <ElTooltip
+                          v-if="relatedSourceTraitLabel(row)"
+                          :content="relatedSourceTraitLabel(row)"
+                          placement="top"
                         >
-                          <AgentPlatformBrandIcon :os="relatedSource(row)?.platform || 'linux'" />
-                        </span>
+                          <span
+                            v-if="relatedSourceKind(row) === 'host'"
+                            class="source-os-cell__icon-wrap policy-related-source-cell__trait-icon"
+                          >
+                            <AgentPlatformBrandIcon :os="relatedSource(row)?.platform || 'linux'" />
+                          </span>
+                          <span
+                            v-else
+                            class="repo-protocol-pill repo-protocol-pill--icon-only policy-related-source-cell__trait-icon"
+                            :class="`repo-protocol-pill--${relatedSource(row)?.protocol || 'nfs'}`"
+                          >
+                            <component
+                              :is="nasMountProtocolIcon(relatedSource(row)?.protocol)"
+                              :size="12"
+                              stroke-width="2.25"
+                            />
+                          </span>
+                        </ElTooltip>
                         <span
                           v-else
-                          class="repo-protocol-pill repo-protocol-pill--icon-only policy-related-source-cell__trait-icon"
-                          :class="`repo-protocol-pill--${relatedSource(row)?.protocol || 'nfs'}`"
+                          class="hfl-empty-mark"
                         >
-                          <component
-                            :is="nasMountProtocolIcon(relatedSource(row)?.protocol)"
-                            :size="12"
-                            stroke-width="2.25"
-                          />
+                          {{ t('protection.policiesPage.timeDash') }}
                         </span>
-                      </ElTooltip>
-                      <span v-else class="hfl-empty-mark">
-                        {{ t('protection.policiesPage.timeDash') }}
                       </span>
-                    </span>
-                  </div>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('repositoriesPage.associatedSourceColEndpoint')"
+                  min-width="220"
+                >
+                  <template #default="{ row }">
+                    <FlowSourceConnectionCell :row="relatedSourceEndpointRow(row)" />
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('repositoriesPage.associatedSourceColAvailability')"
+                  min-width="130"
+                >
+                  <template #default="{ row }">
+                    <ElTag
+                      size="small"
+                      v-bind="lifecycleStatusTagAttrs(relatedSourceAvailability(row))"
+                    >
+                      {{ relatedSourceAvailabilityLabel(row) }}
+                    </ElTag>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('protection.sourceResources.colRegisteredAt')"
+                  min-width="170"
+                >
+                  <template #default="{ row }">
+                    <span
+                      class="hfl-table-cell-time"
+                      :class="{ 'hfl-empty-mark': !relatedSourceRegisteredAt(row) }"
+                    >{{ relatedSourceRegisteredAt(row) || '—' }}</span>
+                  </template>
+                </el-table-column>
+                <template #empty>
+                  <el-empty
+                    :description="t('protection.policiesPage.emptyRelatedBackupSourcesPolicy')"
+                    :image-size="72"
+                  />
                 </template>
-              </el-table-column>
-              <el-table-column :label="t('repositoriesPage.associatedSourceColEndpoint')" min-width="220">
-                <template #default="{ row }">
-                  <FlowSourceConnectionCell :row="relatedSourceEndpointRow(row)" />
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('repositoriesPage.associatedSourceColAvailability')" min-width="130">
-                <template #default="{ row }">
-                  <ElTag size="small" v-bind="lifecycleStatusTagAttrs(relatedSourceAvailability(row))">
-                    {{ relatedSourceAvailabilityLabel(row) }}
-                  </ElTag>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" min-width="170">
-                <template #default="{ row }">
-                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !relatedSourceRegisteredAt(row) }">{{ relatedSourceRegisteredAt(row) || '—' }}</span>
-                </template>
-              </el-table-column>
-              <template #empty>
-                <el-empty :description="t('protection.policiesPage.emptyRelatedBackupSourcesPolicy')" :image-size="72" />
-              </template>
-            </el-table>
-            <div v-if="relatedBackupConfigs.length > 0" class="policy-related-backup-footer">
-              <HflPagination
-                v-model:current-page="relatedBackupPage"
-                v-model:page-size="relatedBackupPageSize"
-                :total="relatedBackupConfigs.length"
-                @update:page-size="relatedBackupPage = 1"
-              />
-            </div>
-          </ElTabPane>
-        </ElTabs>
-      </div>
-    </ElDrawer>
+              </el-table>
+              <div
+                v-if="relatedBackupConfigs.length > 0"
+                class="policy-related-backup-footer"
+              >
+                <HflPagination
+                  v-model:current-page="relatedBackupPage"
+                  v-model:page-size="relatedBackupPageSize"
+                  :total="relatedBackupConfigs.length"
+                  @update:page-size="relatedBackupPage = 1"
+                />
+              </div>
+            </ElTabPane>
+          </ElTabs>
+        </div>
+      </ElDrawer>
 
-    <ElDrawer
-      v-model="filterDetailDrawerOpen"
-      direction="rtl"
-      :size="drawerSize"
-      destroy-on-close
-      :modal="true"
-      class="hfl-detail-drawer policy-detail-drawer"
-      @closed="onFilterDetailClosed"
-    >
-      <template #header>
-        <span class="hfl-detail-drawer__title">{{ activeFilter?.name || t('protection.policiesPage.filterDetailDrawerTitle') }}</span>
-      </template>
-      <div v-if="activeFilter" class="hfl-detail-drawer__body policy-detail-body">
-        <ElTabs v-model="filterDetailTab" class="hfl-detail-tabs policy-detail-tabs">
-          <ElTabPane :label="t('protection.sourceResources.detailTabBasic')" name="basic">
-            <FileFilterDetailBasicPanel
-              :key="activeFilter.apiId"
-              :filter-id="activeFilter.apiId"
-              :created-at="activeFilter.createdAt"
-              :associated-source-count="activeFilter.relatedBackupCount"
-              :updated-at="activeFilter.updatedAt"
-              @updated="loadActiveList"
-            />
-          </ElTabPane>
-
-          <ElTabPane :label="t('protection.policiesPage.tabRelatedBackupSources')" name="backups">
-            <el-alert
-              v-if="filterRelatedBackupConfigsError"
-              :title="filterRelatedBackupConfigsError"
-              type="error"
-              show-icon
-              :closable="false"
-              class="mb-3"
-            />
-            <el-table
-              v-table-column-resize="'protection.policies.filters.related'"
-              v-table-overflow-title
-              v-loading="filterRelatedBackupConfigsLoading"
-              :data="pagedFilterRelatedBackupConfigs"
-              stripe
-              row-key="id"
-              class="hfl-list-table policy-related-backup-table"
+      <ElDrawer
+        v-model="filterDetailDrawerOpen"
+        direction="rtl"
+        :size="drawerSize"
+        destroy-on-close
+        :modal="true"
+        class="hfl-detail-drawer policy-detail-drawer"
+        @closed="onFilterDetailClosed"
+      >
+        <template #header>
+          <span class="hfl-detail-drawer__title">{{ activeFilter?.name || t('protection.policiesPage.filterDetailDrawerTitle') }}</span>
+        </template>
+        <div
+          v-if="activeFilter"
+          class="hfl-detail-drawer__body policy-detail-body"
+        >
+          <ElTabs
+            v-model="filterDetailTab"
+            class="hfl-detail-tabs policy-detail-tabs"
+          >
+            <ElTabPane
+              :label="t('protection.sourceResources.detailTabBasic')"
+              name="basic"
             >
-              <el-table-column :label="t('repositoriesPage.associatedSourceColId')" width="90" fixed="left">
-                <template #default="{ row }">
-                  <span class="hfl-table-mono">{{ row.source_ref_id }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="260" fixed="left">
-                <template #default="{ row }">
-                  <div class="policy-related-source-cell">
-                    <span class="policy-related-source-cell__name">{{ backupConfigSourceLabel(row) }}</span>
-                    <span class="policy-related-source-cell__meta">
-                      <ElTag size="small" effect="plain">{{ sourceTypeLabel(row.source_type) }}</ElTag>
-                      <ElTooltip
-                        v-if="relatedSourceTraitLabel(row)"
-                        :content="relatedSourceTraitLabel(row)"
-                        placement="top"
-                      >
-                        <span
-                          v-if="relatedSourceKind(row) === 'host'"
-                          class="source-os-cell__icon-wrap policy-related-source-cell__trait-icon"
+              <FileFilterDetailBasicPanel
+                :key="activeFilter.apiId"
+                :filter-id="activeFilter.apiId"
+                :created-at="activeFilter.createdAt"
+                :associated-source-count="activeFilter.relatedBackupCount"
+                :updated-at="activeFilter.updatedAt"
+                @updated="loadActiveList"
+              />
+            </ElTabPane>
+
+            <ElTabPane
+              :label="t('protection.policiesPage.tabRelatedBackupSources')"
+              name="backups"
+            >
+              <el-alert
+                v-if="filterRelatedBackupConfigsError"
+                :title="filterRelatedBackupConfigsError"
+                type="error"
+                show-icon
+                :closable="false"
+                class="mb-3"
+              />
+              <el-table
+                v-table-column-resize="'protection.policies.filters.related'"
+                v-table-overflow-title
+                v-loading="filterRelatedBackupConfigsLoading"
+                :data="pagedFilterRelatedBackupConfigs"
+                stripe
+                row-key="id"
+                class="hfl-list-table policy-related-backup-table"
+              >
+                <el-table-column
+                  :label="t('repositoriesPage.associatedSourceColId')"
+                  width="90"
+                  fixed="left"
+                >
+                  <template #default="{ row }">
+                    <span class="hfl-table-mono">{{ row.source_ref_id }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('protection.backupsPage.colBackupSource')"
+                  min-width="260"
+                  fixed="left"
+                >
+                  <template #default="{ row }">
+                    <div class="policy-related-source-cell">
+                      <span class="policy-related-source-cell__name">{{ backupConfigSourceLabel(row) }}</span>
+                      <span class="policy-related-source-cell__meta">
+                        <ElTag
+                          size="small"
+                          effect="plain"
+                        >{{ sourceTypeLabel(row.source_type) }}</ElTag>
+                        <ElTooltip
+                          v-if="relatedSourceTraitLabel(row)"
+                          :content="relatedSourceTraitLabel(row)"
+                          placement="top"
                         >
-                          <AgentPlatformBrandIcon :os="relatedSource(row)?.platform || 'linux'" />
-                        </span>
+                          <span
+                            v-if="relatedSourceKind(row) === 'host'"
+                            class="source-os-cell__icon-wrap policy-related-source-cell__trait-icon"
+                          >
+                            <AgentPlatformBrandIcon :os="relatedSource(row)?.platform || 'linux'" />
+                          </span>
+                          <span
+                            v-else
+                            class="repo-protocol-pill repo-protocol-pill--icon-only policy-related-source-cell__trait-icon"
+                            :class="`repo-protocol-pill--${relatedSource(row)?.protocol || 'nfs'}`"
+                          >
+                            <component
+                              :is="nasMountProtocolIcon(relatedSource(row)?.protocol)"
+                              :size="12"
+                              stroke-width="2.25"
+                            />
+                          </span>
+                        </ElTooltip>
                         <span
                           v-else
-                          class="repo-protocol-pill repo-protocol-pill--icon-only policy-related-source-cell__trait-icon"
-                          :class="`repo-protocol-pill--${relatedSource(row)?.protocol || 'nfs'}`"
+                          class="hfl-empty-mark"
                         >
-                          <component
-                            :is="nasMountProtocolIcon(relatedSource(row)?.protocol)"
-                            :size="12"
-                            stroke-width="2.25"
-                          />
+                          {{ t('protection.policiesPage.timeDash') }}
                         </span>
-                      </ElTooltip>
-                      <span v-else class="hfl-empty-mark">
-                        {{ t('protection.policiesPage.timeDash') }}
                       </span>
-                    </span>
-                  </div>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('repositoriesPage.associatedSourceColEndpoint')"
+                  min-width="220"
+                >
+                  <template #default="{ row }">
+                    <FlowSourceConnectionCell :row="relatedSourceEndpointRow(row)" />
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('repositoriesPage.associatedSourceColAvailability')"
+                  min-width="130"
+                >
+                  <template #default="{ row }">
+                    <ElTag
+                      size="small"
+                      v-bind="lifecycleStatusTagAttrs(relatedSourceAvailability(row))"
+                    >
+                      {{ relatedSourceAvailabilityLabel(row) }}
+                    </ElTag>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('protection.sourceResources.colRegisteredAt')"
+                  min-width="170"
+                >
+                  <template #default="{ row }">
+                    <span
+                      class="hfl-table-cell-time"
+                      :class="{ 'hfl-empty-mark': !relatedSourceRegisteredAt(row) }"
+                    >{{ relatedSourceRegisteredAt(row) || '—' }}</span>
+                  </template>
+                </el-table-column>
+                <template #empty>
+                  <el-empty
+                    :description="t('protection.policiesPage.emptyRelatedBackupSourcesFilter')"
+                    :image-size="72"
+                  />
                 </template>
-              </el-table-column>
-              <el-table-column :label="t('repositoriesPage.associatedSourceColEndpoint')" min-width="220">
-                <template #default="{ row }">
-                  <FlowSourceConnectionCell :row="relatedSourceEndpointRow(row)" />
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('repositoriesPage.associatedSourceColAvailability')" min-width="130">
-                <template #default="{ row }">
-                  <ElTag size="small" v-bind="lifecycleStatusTagAttrs(relatedSourceAvailability(row))">
-                    {{ relatedSourceAvailabilityLabel(row) }}
-                  </ElTag>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" min-width="170">
-                <template #default="{ row }">
-                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !relatedSourceRegisteredAt(row) }">{{ relatedSourceRegisteredAt(row) || '—' }}</span>
-                </template>
-              </el-table-column>
-              <template #empty>
-                <el-empty :description="t('protection.policiesPage.emptyRelatedBackupSourcesFilter')" :image-size="72" />
-              </template>
-            </el-table>
-            <div v-if="filterRelatedBackupConfigs.length > 0" class="policy-related-backup-footer">
-              <HflPagination
-                v-model:current-page="filterRelatedBackupPage"
-                v-model:page-size="filterRelatedBackupPageSize"
-                :total="filterRelatedBackupConfigs.length"
-                @update:page-size="filterRelatedBackupPage = 1"
-              />
-            </div>
-          </ElTabPane>
-        </ElTabs>
-      </div>
-    </ElDrawer>
-    <DangerConfirmDialog
-      v-model="deleteConfirmOpen"
-      :title="deleteConfirmTitle"
-      :message="deleteConfirmMessage"
-      :items="deleteConfirmItems"
-      :items-heading="deleteConfirmItemsHeading"
-      :item-name-label="t('protection.policiesPage.colName')"
-      :item-status-label="t('protection.policiesPage.colStatus')"
-      :item-details-label="deleteConfirmKind === 'policy'
-        ? t('protection.policiesPage.colSchedule')
-        : t('protection.policiesPage.colFilterSummary')"
-      confirm-mode="keyword"
-      :confirm-keyword="t('protection.policiesPage.deleteKeyword')"
-      :confirm-keyword-hint="t('protection.policiesPage.deleteKeywordHint', { n: deleteConfirmRows.length })"
-      :confirm-keyword-placeholder="t('protection.policiesPage.deleteKeyword')"
-      :cancel-text="t('common.cancel')"
-      :confirm-text="t('protection.policiesPage.btnDeleteConfirm')"
-      :loading="listActionLoading"
-      level="high"
-      width="640px"
-      @confirm="executeDeleteConfirm"
-      @cancel="closeDeleteConfirm"
-    />
-    <DangerConfirmDialog
-      v-model="stateConfirmOpen"
-      :title="stateConfirmTitle"
-      :message="stateConfirmMessage"
-      :warning="stateConfirmWarning"
-      :items="stateConfirmItems"
-      :items-heading="stateConfirmEntityLabel"
-      :item-name-label="t('protection.policiesPage.colName')"
-      :item-status-label="t('protection.policiesPage.colStatus')"
-      :item-details-label="stateConfirmKind === 'policy'
-        ? t('protection.policiesPage.colSchedule')
-        : t('protection.policiesPage.colFilterSummary')"
-      confirm-mode="keyword"
-      :confirm-keyword="stateConfirmKeyword"
-      :confirm-keyword-hint="stateConfirmKeywordHint"
-      :confirm-keyword-placeholder="stateConfirmKeyword"
-      :irreversible-hint="t('protection.policiesPage.stateChangeIrreversible')"
-      irreversible-tone="neutral"
-      :cancel-text="t('common.cancel')"
-      :confirm-text="stateConfirmEnabled
-        ? t('protection.policiesPage.confirmEnableCount', { n: stateConfirmRows.length })
-        : t('protection.policiesPage.confirmDisableCount', { n: stateConfirmRows.length })"
-      :loading="listActionLoading"
-      level="medium"
-      width="640px"
-      @confirm="executeStateConfirm"
-      @cancel="closeStateConfirm"
-    />
+              </el-table>
+              <div
+                v-if="filterRelatedBackupConfigs.length > 0"
+                class="policy-related-backup-footer"
+              >
+                <HflPagination
+                  v-model:current-page="filterRelatedBackupPage"
+                  v-model:page-size="filterRelatedBackupPageSize"
+                  :total="filterRelatedBackupConfigs.length"
+                  @update:page-size="filterRelatedBackupPage = 1"
+                />
+              </div>
+            </ElTabPane>
+          </ElTabs>
+        </div>
+      </ElDrawer>
+      <DangerConfirmDialog
+        v-model="deleteConfirmOpen"
+        :title="deleteConfirmTitle"
+        :message="deleteConfirmMessage"
+        :items="deleteConfirmItems"
+        :items-heading="deleteConfirmItemsHeading"
+        :item-name-label="t('protection.policiesPage.colName')"
+        :item-status-label="t('protection.policiesPage.colStatus')"
+        :item-details-label="deleteConfirmKind === 'policy'
+          ? t('protection.policiesPage.colSchedule')
+          : t('protection.policiesPage.colFilterSummary')"
+        confirm-mode="keyword"
+        :confirm-keyword="t('protection.policiesPage.deleteKeyword')"
+        :confirm-keyword-hint="t('protection.policiesPage.deleteKeywordHint', { n: deleteConfirmRows.length })"
+        :confirm-keyword-placeholder="t('protection.policiesPage.deleteKeyword')"
+        :cancel-text="t('common.cancel')"
+        :confirm-text="t('protection.policiesPage.btnDeleteConfirm')"
+        :loading="listActionLoading"
+        level="high"
+        width="640px"
+        @confirm="executeDeleteConfirm"
+        @cancel="closeDeleteConfirm"
+      />
+      <DangerConfirmDialog
+        v-model="stateConfirmOpen"
+        :title="stateConfirmTitle"
+        :message="stateConfirmMessage"
+        :warning="stateConfirmWarning"
+        :items="stateConfirmItems"
+        :items-heading="stateConfirmEntityLabel"
+        :item-name-label="t('protection.policiesPage.colName')"
+        :item-status-label="t('protection.policiesPage.colStatus')"
+        :item-details-label="stateConfirmKind === 'policy'
+          ? t('protection.policiesPage.colSchedule')
+          : t('protection.policiesPage.colFilterSummary')"
+        confirm-mode="keyword"
+        :confirm-keyword="stateConfirmKeyword"
+        :confirm-keyword-hint="stateConfirmKeywordHint"
+        :confirm-keyword-placeholder="stateConfirmKeyword"
+        :irreversible-hint="t('protection.policiesPage.stateChangeIrreversible')"
+        irreversible-tone="neutral"
+        :cancel-text="t('common.cancel')"
+        :confirm-text="stateConfirmEnabled
+          ? t('protection.policiesPage.confirmEnableCount', { n: stateConfirmRows.length })
+          : t('protection.policiesPage.confirmDisableCount', { n: stateConfirmRows.length })"
+        :loading="listActionLoading"
+        level="medium"
+        width="640px"
+        @confirm="executeStateConfirm"
+        @cancel="closeStateConfirm"
+      />
     </div>
   </ModulePage>
 </template>

@@ -673,27 +673,53 @@ onUnmounted(() => {
             </ElButton>
             <template #dropdown>
               <ElDropdownMenu>
-                <ElDropdownItem command="rename" :disabled="batchRenameDisabled">
+                <ElDropdownItem
+                  command="rename"
+                  :disabled="batchRenameDisabled"
+                >
                   <span class="el-dropdown-menu__item-content">
-                    <Pencil :size="14" class="shrink-0" />
+                    <Pencil
+                      :size="14"
+                      class="shrink-0"
+                    />
                     <span>{{ t('nodesPage.btnBatchRename') }}</span>
                   </span>
                 </ElDropdownItem>
-                <ElDropdownItem command="upgrade" :disabled="batchUpgradeDisabled">
+                <ElDropdownItem
+                  command="upgrade"
+                  :disabled="batchUpgradeDisabled"
+                >
                   <span class="el-dropdown-menu__item-content">
-                    <ArrowUpCircle :size="14" class="shrink-0" />
+                    <ArrowUpCircle
+                      :size="14"
+                      class="shrink-0"
+                    />
                     <span>{{ t('nodesPage.actionUpgrade') }}</span>
                   </span>
                 </ElDropdownItem>
-                <ElDropdownItem command="maintenance" :disabled="batchRenameDisabled">
+                <ElDropdownItem
+                  command="maintenance"
+                  :disabled="batchRenameDisabled"
+                >
                   <span class="el-dropdown-menu__item-content">
-                    <Wrench :size="14" class="shrink-0" />
+                    <Wrench
+                      :size="14"
+                      class="shrink-0"
+                    />
                     <span>{{ t('nodeLifecycle.maintenanceCommands') }}</span>
                   </span>
                 </ElDropdownItem>
-                <ElDropdownItem command="remove" divided class="el-dropdown-menu__item--danger" :disabled="batchDisabled">
+                <ElDropdownItem
+                  command="remove"
+                  divided
+                  class="el-dropdown-menu__item--danger"
+                  :disabled="batchDisabled"
+                >
                   <span class="el-dropdown-menu__item-content">
-                    <Trash2 :size="14" class="shrink-0" />
+                    <Trash2
+                      :size="14"
+                      class="shrink-0"
+                    />
                     <span>{{ t('nodesPage.actionDelete') }}</span>
                   </span>
                 </ElDropdownItem>
@@ -712,7 +738,10 @@ onUnmounted(() => {
             @clear="clearSearch"
           >
             <template #prefix>
-              <Search :size="16" class="hfl-list-search__icon" />
+              <Search
+                :size="16"
+                class="hfl-list-search__icon"
+              />
             </template>
           </ElInput>
           <div class="hfl-list-toolbar__utility">
@@ -722,15 +751,24 @@ onUnmounted(() => {
               :disabled="busy"
               @click="load()"
             >
-              <RefreshCw :size="16" :class="{ 'is-spinning': busy }" />
+              <RefreshCw
+                :size="16"
+                :class="{ 'is-spinning': busy }"
+              />
             </ElButton>
           </div>
         </div>
       </div>
 
-      <NodeLifecycleBanner :snapshot="lifecycleOps.snapshot" @cancel-queued="lifecycleOps.cancelQueued" />
+      <NodeLifecycleBanner
+        :snapshot="lifecycleOps.snapshot"
+        @cancel-queued="lifecycleOps.cancelQueued"
+      />
 
-      <div ref="tableBlockRef" class="hfl-list-table-block">
+      <div
+        ref="tableBlockRef"
+        class="hfl-list-table-block"
+      >
         <el-table
           ref="tableRef"
           v-table-overflow-title
@@ -771,18 +809,31 @@ onUnmounted(() => {
               <span v-else>{{ row.name }}</span>
             </template>
           </el-table-column>
-          <el-table-column v-if="isPlatformEngine" :label="t('insight.dataGateway.colOrigin')" min-width="110">
+          <el-table-column
+            v-if="isPlatformEngine"
+            :label="t('insight.dataGateway.colOrigin')"
+            min-width="110"
+          >
             <template #default="{ row }">
               <span>{{ originLabel(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column v-if="isPlatformEngine" label="HFL Readiness" min-width="190">
+          <el-table-column
+            v-if="isPlatformEngine"
+            label="HFL Readiness"
+            min-width="190"
+          >
             <template #default="{ row }">
               <span>{{ readinessLabel(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('protection.sourceResources.colHostIp')" min-width="140">
-            <template #default="{ row }">{{ ipLine(row) }}</template>
+          <el-table-column
+            :label="t('protection.sourceResources.colHostIp')"
+            min-width="140"
+          >
+            <template #default="{ row }">
+              {{ ipLine(row) }}
+            </template>
           </el-table-column>
           <el-table-column
             v-if="isPlatformEngine"
@@ -804,7 +855,10 @@ onUnmounted(() => {
                       : undefined
                   "
                 />
-                <span v-else class="hfl-empty-mark">—</span>
+                <span
+                  v-else
+                  class="hfl-empty-mark"
+                >—</span>
                 <span
                   v-if="capacityFor(row)?.used_incomplete"
                   class="dg-capacity-cell__incomplete"
@@ -823,7 +877,11 @@ onUnmounted(() => {
               </div>
             </template>
           </el-table-column>
-          <el-table-column v-if="!isPlatformEngine" label="OS" min-width="120">
+          <el-table-column
+            v-if="!isPlatformEngine"
+            label="OS"
+            min-width="120"
+          >
             <template #default="{ row }">
               <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
                 <span class="source-os-cell__icon-wrap">
@@ -833,20 +891,38 @@ onUnmounted(() => {
               </div>
             </template>
           </el-table-column>
-          <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colCpu')" min-width="88">
+          <el-table-column
+            v-if="!isPlatformEngine"
+            :label="t('protection.sourceResources.colCpu')"
+            min-width="88"
+          >
             <template #default="{ row }">
               <span :class="{ 'hfl-empty-mark': nodeCpuCores(row) == null }">{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colMemory')" min-width="100">
+          <el-table-column
+            v-if="!isPlatformEngine"
+            :label="t('protection.sourceResources.colMemory')"
+            min-width="100"
+          >
             <template #default="{ row }">
               <span :class="{ 'hfl-empty-mark': nodeMemoryTotalBytes(row) == null }">{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colDiskCount')" min-width="96">
-            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }">{{ nodeDiskCount(row) ?? '—' }}</span></template>
+          <el-table-column
+            v-if="!isPlatformEngine"
+            :label="t('protection.sourceResources.colDiskCount')"
+            min-width="96"
+          >
+            <template #default="{ row }">
+              <span :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }">{{ nodeDiskCount(row) ?? '—' }}</span>
+            </template>
           </el-table-column>
-          <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colCapacity')" min-width="200">
+          <el-table-column
+            v-if="!isPlatformEngine"
+            :label="t('protection.sourceResources.colCapacity')"
+            min-width="200"
+          >
             <template #default="{ row }">
               <HflCapacityCell
                 :used-bytes="nodeDiskUsageParts(row).used"
@@ -871,10 +947,16 @@ onUnmounted(() => {
               >
                 {{ row.knowledge_source_count }}
               </button>
-              <span v-else class="dg-muted">0</span>
+              <span
+                v-else
+                class="dg-muted"
+              >0</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="120">
+          <el-table-column
+            :label="t('protection.sourceResources.colStatus')"
+            min-width="120"
+          >
             <template #default="{ row }">
               <GatewayCompositeStatusCell
                 :node="row"
@@ -883,7 +965,10 @@ onUnmounted(() => {
               />
             </template>
           </el-table-column>
-          <el-table-column :label="t('protection.sourceResources.colVersion')" min-width="130">
+          <el-table-column
+            :label="t('protection.sourceResources.colVersion')"
+            min-width="130"
+          >
             <template #default="{ row }">
               <NodeVersionCell
                 :node="row"
@@ -892,9 +977,15 @@ onUnmounted(() => {
               />
             </template>
           </el-table-column>
-          <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="170">
+          <el-table-column
+            :label="t('protection.sourceResources.colRegistered')"
+            min-width="170"
+          >
             <template #default="{ row }">
-              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatNodeDate(row.created_at) }}</span>
+              <span
+                class="hfl-table-cell-time"
+                :class="{ 'hfl-empty-mark': !row.created_at }"
+              >{{ formatNodeDate(row.created_at) }}</span>
             </template>
           </el-table-column>
           <el-table-column
@@ -905,7 +996,12 @@ onUnmounted(() => {
             align="right"
           >
             <template #default="{ row }">
-              <ElButton v-if="canManageGateway(row)" link type="primary" @click="openDetail(row)">
+              <ElButton
+                v-if="canManageGateway(row)"
+                link
+                type="primary"
+                @click="openDetail(row)"
+              >
                 {{ t('platformOps.engineGateway.viewDetails') }}
               </ElButton>
               <ElButton
@@ -916,17 +1012,26 @@ onUnmounted(() => {
               >
                 {{ t('insight.dataGateway.defaultSet') }}
               </ElButton>
-              <span v-else-if="!canManageGateway(row)" class="hfl-empty-mark">—</span>
+              <span
+                v-else-if="!canManageGateway(row)"
+                class="hfl-empty-mark"
+              >—</span>
             </template>
           </el-table-column>
           <template #empty>
-            <el-empty :description="t('nodesPage.emptyGateway')" :image-size="80" />
+            <el-empty
+              :description="t('nodesPage.emptyGateway')"
+              :image-size="80"
+            />
           </template>
         </el-table>
       </div>
 
       <div class="hfl-list-footer">
-        <span v-if="selectedRows.length > 0" class="hfl-list-footer__selected">
+        <span
+          v-if="selectedRows.length > 0"
+          class="hfl-list-footer__selected"
+        >
           {{ t('nodesPage.selectedCount', { n: selectedRows.length }) }}
         </span>
         <PlatformOpsPagination
@@ -957,14 +1062,33 @@ onUnmounted(() => {
       align-center
       destroy-on-close
     >
-      <ElForm label-position="top" class="source-action-dialog__form" @submit.prevent="submitRename">
-        <ElFormItem :label="t('nodesPage.renameLabel')" required>
-          <ElInput v-model="renameInput" :placeholder="t('nodesPage.renamePlaceholder')" maxlength="128" show-word-limit />
+      <ElForm
+        label-position="top"
+        class="source-action-dialog__form"
+        @submit.prevent="submitRename"
+      >
+        <ElFormItem
+          :label="t('nodesPage.renameLabel')"
+          required
+        >
+          <ElInput
+            v-model="renameInput"
+            :placeholder="t('nodesPage.renamePlaceholder')"
+            maxlength="128"
+            show-word-limit
+          />
         </ElFormItem>
       </ElForm>
       <template #footer>
-        <el-button @click="renameDialogOpen = false">{{ t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="submitRename">{{ t('common.save') }}</el-button>
+        <el-button @click="renameDialogOpen = false">
+          {{ t('common.cancel') }}
+        </el-button>
+        <el-button
+          type="primary"
+          @click="submitRename"
+        >
+          {{ t('common.save') }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -976,14 +1100,20 @@ onUnmounted(() => {
       align-center
       destroy-on-close
     >
-      <p class="dg-capacity-dialog__hint">{{ t('platformOps.engineGateway.capacityDialogHint') }}</p>
+      <p class="dg-capacity-dialog__hint">
+        {{ t('platformOps.engineGateway.capacityDialogHint') }}
+      </p>
       <p
         v-if="capacityTarget && capacityFor(capacityTarget)?.used_incomplete"
         class="dg-capacity-dialog__warn"
       >
         {{ t('platformOps.engineGateway.capacityUsedIncomplete') }}
       </p>
-      <ElForm label-position="top" class="source-action-dialog__form" @submit.prevent="submitCapacity">
+      <ElForm
+        label-position="top"
+        class="source-action-dialog__form"
+        @submit.prevent="submitCapacity"
+      >
         <ElFormItem>
           <ElCheckbox v-model="capacityUnlimited">
             {{ t('platformOps.engineGateway.capacityUnlimited') }}
@@ -994,14 +1124,27 @@ onUnmounted(() => {
           :label="t('platformOps.engineGateway.capacityLabel')"
           required
         >
-          <ElInputNumber v-model="capacityGbDraft" class="w-full" :min="0" :step="1" :precision="0" />
+          <ElInputNumber
+            v-model="capacityGbDraft"
+            class="w-full"
+            :min="0"
+            :step="1"
+            :precision="0"
+          />
         </ElFormItem>
       </ElForm>
       <template #footer>
-        <el-button :disabled="capacitySaving" @click="capacityDialogOpen = false">
+        <el-button
+          :disabled="capacitySaving"
+          @click="capacityDialogOpen = false"
+        >
           {{ t('common.cancel') }}
         </el-button>
-        <el-button type="primary" :loading="capacitySaving" @click="submitCapacity">
+        <el-button
+          type="primary"
+          :loading="capacitySaving"
+          @click="submitCapacity"
+        >
           {{ t('common.save') }}
         </el-button>
       </template>

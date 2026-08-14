@@ -34,39 +34,74 @@ async function copyDetails() {
     :show-close="false"
     @update:model-value="(open: boolean) => { if (!open) closeErrorDetails() }"
   >
-    <template v-if="details" #header>
+    <template
+      v-if="details"
+      #header
+    >
       <div class="hfl-error-details__header">
-        <span class="hfl-error-details__icon" aria-hidden="true"><AlertTriangle :size="24" /></span>
+        <span
+          class="hfl-error-details__icon"
+          aria-hidden="true"
+        ><AlertTriangle :size="24" /></span>
         <div class="hfl-error-details__heading">
           <div class="hfl-error-details__title-line">
             <h2>{{ details.title }}</h2>
-            <span v-if="details.errorCode" class="hfl-error-details__code">{{ details.errorCode }}</span>
+            <span
+              v-if="details.errorCode"
+              class="hfl-error-details__code"
+            >{{ details.errorCode }}</span>
           </div>
           <p>{{ details.summary }}</p>
         </div>
-        <button type="button" class="hfl-error-details__close" :aria-label="t('common.close')" @click="closeErrorDetails">
+        <button
+          type="button"
+          class="hfl-error-details__close"
+          :aria-label="t('common.close')"
+          @click="closeErrorDetails"
+        >
           <X :size="17" />
         </button>
       </div>
     </template>
 
     <template v-if="details">
-      <section v-if="details.issue" class="hfl-error-details__section">
+      <section
+        v-if="details.issue"
+        class="hfl-error-details__section"
+      >
         <h3>{{ t('feedback.errorDetails.issue') }}</h3>
-        <div class="hfl-error-details__issue">{{ details.issue }}</div>
+        <div class="hfl-error-details__issue">
+          {{ details.issue }}
+        </div>
       </section>
 
-      <section v-if="details.reasons?.length" class="hfl-error-details__section">
+      <section
+        v-if="details.reasons?.length"
+        class="hfl-error-details__section"
+      >
         <h3>{{ t('feedback.errorDetails.reasons') }}</h3>
         <ol class="hfl-error-details__list">
-          <li v-for="reason in details.reasons" :key="reason">{{ reason }}</li>
+          <li
+            v-for="reason in details.reasons"
+            :key="reason"
+          >
+            {{ reason }}
+          </li>
         </ol>
       </section>
 
-      <section v-if="details.resolutions?.length" class="hfl-error-details__section">
+      <section
+        v-if="details.resolutions?.length"
+        class="hfl-error-details__section"
+      >
         <h3>{{ t('feedback.errorDetails.resolutions') }}</h3>
         <ul class="hfl-error-details__list hfl-error-details__list--resolve">
-          <li v-for="resolution in details.resolutions" :key="resolution">{{ resolution }}</li>
+          <li
+            v-for="resolution in details.resolutions"
+            :key="resolution"
+          >
+            {{ resolution }}
+          </li>
         </ul>
       </section>
 
@@ -75,11 +110,17 @@ async function copyDetails() {
         class="hfl-error-details__section hfl-error-details__technical-desktop"
       >
         <h3>{{ t('feedback.errorDetails.technical') }}</h3>
-        <div v-if="details.traceId" class="hfl-error-details__trace">
+        <div
+          v-if="details.traceId"
+          class="hfl-error-details__trace"
+        >
           <span>{{ t('errors.generic.traceId') }}</span>
           <code>{{ details.traceId }}</code>
         </div>
-        <pre v-if="rawText" class="hfl-error-details__raw">{{ rawText }}</pre>
+        <pre
+          v-if="rawText"
+          class="hfl-error-details__raw"
+        >{{ rawText }}</pre>
       </section>
 
       <details
@@ -94,23 +135,47 @@ async function copyDetails() {
           />
         </summary>
         <div class="hfl-error-details__technical-content">
-          <div v-if="details.traceId" class="hfl-error-details__trace">
+          <div
+            v-if="details.traceId"
+            class="hfl-error-details__trace"
+          >
             <span>{{ t('errors.generic.traceId') }}</span>
             <code>{{ details.traceId }}</code>
           </div>
-          <pre v-if="rawText" class="hfl-error-details__raw">{{ rawText }}</pre>
+          <pre
+            v-if="rawText"
+            class="hfl-error-details__raw"
+          >{{ rawText }}</pre>
         </div>
       </details>
     </template>
 
-    <template v-if="details" #footer>
+    <template
+      v-if="details"
+      #footer
+    >
       <div class="hfl-error-details__footer">
-        <button type="button" class="hfl-error-details__copy" @click="copyDetails">
-          <Check v-if="copied" :size="15" />
-          <Copy v-else :size="15" />
+        <button
+          type="button"
+          class="hfl-error-details__copy"
+          @click="copyDetails"
+        >
+          <Check
+            v-if="copied"
+            :size="15"
+          />
+          <Copy
+            v-else
+            :size="15"
+          />
           {{ copied ? t('feedback.toast.copied') : t('feedback.errorDetails.copy') }}
         </button>
-        <ElButton type="primary" @click="closeErrorDetails">{{ t('common.confirm') }}</ElButton>
+        <ElButton
+          type="primary"
+          @click="closeErrorDetails"
+        >
+          {{ t('common.confirm') }}
+        </ElButton>
       </div>
     </template>
   </ElDialog>

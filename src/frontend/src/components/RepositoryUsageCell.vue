@@ -51,12 +51,21 @@ const unavailableSupportingLabel = computed(() => (
 </script>
 
 <template>
-  <div class="repository-estimated-usage" :class="`repository-estimated-usage--${variant}`">
+  <div
+    class="repository-estimated-usage"
+    :class="`repository-estimated-usage--${variant}`"
+  >
     <template v-if="status === 'success'">
       <div class="repository-estimated-usage__numbers">
         <span class="repository-estimated-usage__used">≈ {{ formatBytes(used) }}</span>
-        <span v-if="hasLimit" class="repository-estimated-usage__limit">/ {{ formatBytes(limit) }}</span>
-        <span v-if="hasLimit" class="repo-usage-cell__percent hfl-table-no-tooltip">{{ percent }}%</span>
+        <span
+          v-if="hasLimit"
+          class="repository-estimated-usage__limit"
+        >/ {{ formatBytes(limit) }}</span>
+        <span
+          v-if="hasLimit"
+          class="repo-usage-cell__percent hfl-table-no-tooltip"
+        >{{ percent }}%</span>
         <HflPopover
           v-if="warning"
           trigger="hover"
@@ -66,11 +75,18 @@ const unavailableSupportingLabel = computed(() => (
           popper-class="repository-info-popper repository-warning-popper"
         >
           <template #reference>
-            <AlertTriangle class="repository-estimated-usage__warning" :size="15" aria-hidden="true" />
+            <AlertTriangle
+              class="repository-estimated-usage__warning"
+              :size="15"
+              aria-hidden="true"
+            />
           </template>
           <div class="repository-info-popover repository-capacity-popover">
             <div class="repository-info-popover__head repository-capacity-popover__head">
-              <span class="repository-capacity-popover__icon" aria-hidden="true">
+              <span
+                class="repository-capacity-popover__icon"
+                aria-hidden="true"
+              >
                 <AlertTriangle :size="17" />
               </span>
               <div class="repository-info-popover__title">
@@ -96,14 +112,26 @@ const unavailableSupportingLabel = computed(() => (
           </div>
         </HflPopover>
       </div>
-      <div v-if="hasLimit && showBar" class="repo-usage-bar">
-        <span class="repo-usage-bar__fill" :style="{ width: `${percent}%` }" />
+      <div
+        v-if="hasLimit && showBar"
+        class="repo-usage-bar"
+      >
+        <span
+          class="repo-usage-bar__fill"
+          :style="{ width: `${percent}%` }"
+        />
       </div>
-      <span v-if="showSupporting" class="repository-estimated-usage__supporting">{{ supportingLabel }}</span>
+      <span
+        v-if="showSupporting"
+        class="repository-estimated-usage__supporting"
+      >{{ supportingLabel }}</span>
     </template>
     <template v-else>
       <span class="repository-estimated-usage__state">{{ stateLabel }}</span>
-      <span v-if="unavailableSupportingLabel" class="repository-estimated-usage__supporting">
+      <span
+        v-if="unavailableSupportingLabel"
+        class="repository-estimated-usage__supporting"
+      >
         {{ unavailableSupportingLabel }}
       </span>
     </template>

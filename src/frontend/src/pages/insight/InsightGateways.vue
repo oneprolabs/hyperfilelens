@@ -7,7 +7,11 @@ const insightMenus = useInsightSideNav()
 </script>
 
 <template>
-  <ModulePage :menus="insightMenus" body-flush body-fill>
+  <ModulePage
+    :menus="insightMenus"
+    body-flush
+    body-fill
+  >
     <InsightDataGateways />
   </ModulePage>
 </template>

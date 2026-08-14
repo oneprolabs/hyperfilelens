@@ -111,49 +111,74 @@ watch(pageSize, () => {
 </script>
 
 <template>
-  <ModulePage :menus="nodeMenus" body-fill>
+  <ModulePage
+    :menus="nodeMenus"
+    body-fill
+  >
     <HflTablePanel fill>
       <template #table="{ tableMaxHeight }">
-      <el-table
-        v-table-column-resize="'settings.members'"
-        v-loading="busy"
-        :data="paginatedRows"
-        stripe
-        row-key="id"
-        class="hfl-list-table"
-        :max-height="tableMaxHeight"
-      >
-        <el-table-column :label="t('settings.member.colName')" min-width="180">
-          <template #default="{ row }">{{ memberDisplayName(row) }}</template>
-        </el-table-column>
-        <el-table-column
-          v-if="showMemberRoles"
-          :label="t('settings.member.colRole')"
-          width="120"
+        <el-table
+          v-table-column-resize="'settings.members'"
+          v-loading="busy"
+          :data="paginatedRows"
+          stripe
+          row-key="id"
+          class="hfl-list-table"
+          :max-height="tableMaxHeight"
         >
-          <template #default="{ row }">
-            <HflTypeLabel :label="roleLabel(row.role)" />
+          <el-table-column
+            :label="t('settings.member.colName')"
+            min-width="180"
+          >
+            <template #default="{ row }">
+              {{ memberDisplayName(row) }}
+            </template>
+          </el-table-column>
+          <el-table-column
+            v-if="showMemberRoles"
+            :label="t('settings.member.colRole')"
+            width="120"
+          >
+            <template #default="{ row }">
+              <HflTypeLabel :label="roleLabel(row.role)" />
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('settings.member.colOrg')"
+            min-width="140"
+          >
+            <template #default="{ row }">
+              {{ row.organization_name || primaryOrgName }}
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('settings.member.colStatus')"
+            width="100"
+          >
+            <template #default="{ row }">
+              <el-tag
+                v-bind="booleanStatusTag(row.is_active)"
+                size="small"
+              >
+                {{ row.is_active ? t('settings.member.statusActive') : t('settings.member.statusInactive') }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('settings.member.colCreated')"
+            width="170"
+          >
+            <template #default="{ row }">
+              <span
+                class="hfl-table-cell-time"
+                :class="{ 'hfl-empty-mark': !row.created_at }"
+              >{{ formatCreatedAt(row.created_at) }}</span>
+            </template>
+          </el-table-column>
+          <template #empty>
+            <el-empty :description="t('settings.member.empty')" />
           </template>
-        </el-table-column>
-        <el-table-column :label="t('settings.member.colOrg')" min-width="140">
-          <template #default="{ row }">{{ row.organization_name || primaryOrgName }}</template>
-        </el-table-column>
-        <el-table-column :label="t('settings.member.colStatus')" width="100">
-          <template #default="{ row }">
-            <el-tag v-bind="booleanStatusTag(row.is_active)" size="small">
-              {{ row.is_active ? t('settings.member.statusActive') : t('settings.member.statusInactive') }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('settings.member.colCreated')" width="170">
-          <template #default="{ row }">
-            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatCreatedAt(row.created_at) }}</span>
-          </template>
-        </el-table-column>
-        <template #empty>
-          <el-empty :description="t('settings.member.empty')" />
-        </template>
-      </el-table>
+        </el-table>
       </template>
 
       <template #footer>

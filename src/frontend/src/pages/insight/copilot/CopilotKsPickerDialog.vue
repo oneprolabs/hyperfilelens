@@ -79,7 +79,9 @@ function confirm() {
     destroy-on-close
     @update:model-value="openChanged"
   >
-    <p class="source-action-dialog__hint">{{ t('insight.copilot.pickKnowledgeSourceHint') }}</p>
+    <p class="source-action-dialog__hint">
+      {{ t('insight.copilot.pickKnowledgeSourceHint') }}
+    </p>
 
     <ElInput
       v-model="query"
@@ -88,11 +90,18 @@ function confirm() {
       :placeholder="t('insight.copilot.contextSearchPlaceholder')"
     >
       <template #prefix>
-        <Search :size="16" class="hfl-list-search__icon" />
+        <Search
+          :size="16"
+          class="hfl-list-search__icon"
+        />
       </template>
     </ElInput>
 
-    <div class="copilot-ks-picker-dialog__list" role="listbox" :aria-label="t('insight.copilot.pickKnowledgeSource')">
+    <div
+      class="copilot-ks-picker-dialog__list"
+      role="listbox"
+      :aria-label="t('insight.copilot.pickKnowledgeSource')"
+    >
       <button
         v-for="row in filtered"
         :key="row.id"
@@ -103,19 +112,34 @@ function confirm() {
         :aria-selected="draftId === row.id"
         @click="draftId = row.id"
       >
-        <span class="copilot-ks-picker-card__indicator" aria-hidden="true" />
+        <span
+          class="copilot-ks-picker-card__indicator"
+          aria-hidden="true"
+        />
         <span class="copilot-ks-picker-card__body">
           <span class="copilot-ks-picker-card__head">
-            <span class="copilot-ks-picker-card__type" aria-hidden="true">
-              <BookOpen v-if="isBackupSource(row)" :size="14" />
-              <FolderOpen v-else :size="14" />
+            <span
+              class="copilot-ks-picker-card__type"
+              aria-hidden="true"
+            >
+              <BookOpen
+                v-if="isBackupSource(row)"
+                :size="14"
+              />
+              <FolderOpen
+                v-else
+                :size="14"
+              />
             </span>
             <span class="copilot-ks-picker-card__title">{{ row.name }}</span>
           </span>
           <span class="copilot-ks-picker-card__meta">
             <span class="copilot-ks-picker-card__gateway">{{ row.gateway_name }}</span>
             <span class="copilot-ks-picker-card__sep">·</span>
-            <span class="copilot-ks-picker-card__path" :title="row.source_path">{{ row.source_path }}</span>
+            <span
+              class="copilot-ks-picker-card__path"
+              :title="row.source_path"
+            >{{ row.source_path }}</span>
           </span>
           <span class="copilot-ks-picker-card__tags">
             <span :class="statusPillClass(row.status)">{{ statusLabel(row.status) }}</span>
@@ -129,14 +153,23 @@ function confirm() {
         </span>
       </button>
 
-      <div v-if="!filtered.length" class="copilot-ks-picker-dialog__empty">
+      <div
+        v-if="!filtered.length"
+        class="copilot-ks-picker-dialog__empty"
+      >
         {{ t('insight.copilot.contextSearchEmpty') }}
       </div>
     </div>
 
     <template #footer>
-      <ElButton @click="emit('update:open', false)">{{ t('common.cancel') }}</ElButton>
-      <ElButton type="primary" :disabled="draftId == null" @click="confirm">
+      <ElButton @click="emit('update:open', false)">
+        {{ t('common.cancel') }}
+      </ElButton>
+      <ElButton
+        type="primary"
+        :disabled="draftId == null"
+        @click="confirm"
+      >
         {{ t('insight.copilot.btnStartChat') }}
       </ElButton>
     </template>

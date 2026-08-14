@@ -409,11 +409,25 @@ watch(
 </script>
 
 <template>
-  <ModulePage :title="t('ops.audit.pageTitle')" :menus="opsMenus" body-fill>
+  <ModulePage
+    :title="t('ops.audit.pageTitle')"
+    :menus="opsMenus"
+    body-fill
+  >
     <div class="hfl-ops-page hfl-ops-page--fill">
       <div class="hfl-ops-stats-grid hfl-ops-stats-grid--4">
-        <OpsStatCard :label="t('ops.audit.statTotal')" :value="stats.total_count" accent="indigo" accent-side="left" />
-        <OpsStatCard :label="t('ops.audit.statToday')" :value="stats.today_count" accent="green" accent-side="left" />
+        <OpsStatCard
+          :label="t('ops.audit.statTotal')"
+          :value="stats.total_count"
+          accent="indigo"
+          accent-side="left"
+        />
+        <OpsStatCard
+          :label="t('ops.audit.statToday')"
+          :value="stats.today_count"
+          accent="green"
+          accent-side="left"
+        />
         <OpsStatCard
           :label="t('ops.audit.statFailures')"
           :value="stats.failure_count"
@@ -432,13 +446,20 @@ watch(
       <HflTablePanel fill>
         <template #toolbar>
           <el-dropdown>
-            <el-button :title="t('ops.audit.export')" :aria-label="t('ops.audit.export')">
+            <el-button
+              :title="t('ops.audit.export')"
+              :aria-label="t('ops.audit.export')"
+            >
               <Download :size="16" />
             </el-button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item @click="exportLogs('json')">JSON</el-dropdown-item>
-                <el-dropdown-item @click="exportLogs('csv')">CSV</el-dropdown-item>
+                <el-dropdown-item @click="exportLogs('json')">
+                  JSON
+                </el-dropdown-item>
+                <el-dropdown-item @click="exportLogs('csv')">
+                  CSV
+                </el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -452,13 +473,31 @@ watch(
             @clear="clearSearch"
           >
             <template #prepend>
-              <el-select v-model="filters.search_field" @change="handleSearchFieldChange">
-                <el-option v-for="st in searchTypes" :key="st.value" :value="st.value" :label="st.label" />
+              <el-select
+                v-model="filters.search_field"
+                @change="handleSearchFieldChange"
+              >
+                <el-option
+                  v-for="st in searchTypes"
+                  :key="st.value"
+                  :value="st.value"
+                  :label="st.label"
+                />
               </el-select>
             </template>
           </el-input>
-          <el-select v-model="filters.time_range" clearable style="width: 130px" @change="onAuditTimeRangeChange">
-            <el-option v-for="p in datePresets" :key="p.value" :value="p.value" :label="p.label" />
+          <el-select
+            v-model="filters.time_range"
+            clearable
+            style="width: 130px"
+            @change="onAuditTimeRangeChange"
+          >
+            <el-option
+              v-for="p in datePresets"
+              :key="p.value"
+              :value="p.value"
+              :label="p.label"
+            />
           </el-select>
         </template>
         <template #toolbar-utility>
@@ -469,20 +508,48 @@ watch(
             :aria-label="t('ops.audit.advancedFilter')"
             @click="openAdvancedFilterDrawer"
           >
-            <el-badge v-if="advancedFilterCount > 0" :value="advancedFilterCount" :max="9" class="hfl-filter-badge">
+            <el-badge
+              v-if="advancedFilterCount > 0"
+              :value="advancedFilterCount"
+              :max="9"
+              class="hfl-filter-badge"
+            >
               <Filter :size="16" />
             </el-badge>
-            <Filter v-else :size="16" />
+            <Filter
+              v-else
+              :size="16"
+            />
           </el-button>
-          <el-button class="hfl-refresh-button" :title="t('ops.task.btnRefresh')" :aria-label="t('ops.task.btnRefresh')" :disabled="loading" @click="applyFilters">
-            <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+          <el-button
+            class="hfl-refresh-button"
+            :title="t('ops.task.btnRefresh')"
+            :aria-label="t('ops.task.btnRefresh')"
+            :disabled="loading"
+            @click="applyFilters"
+          >
+            <RefreshCw
+              :size="16"
+              :class="{ 'is-spinning': loading }"
+            />
           </el-button>
         </template>
 
-        <el-alert v-if="activeCorrelation" type="info" :closable="false" show-icon class="mx-4 mt-4">
+        <el-alert
+          v-if="activeCorrelation"
+          type="info"
+          :closable="false"
+          show-icon
+          class="mx-4 mt-4"
+        >
           <div class="flex flex-wrap items-center gap-2">
             <span>{{ t('ops.audit.bannerCorrelation', { id: activeCorrelation }) }}</span>
-            <el-button size="small" text type="primary" @click="clearCorrelationFilter">
+            <el-button
+              size="small"
+              text
+              type="primary"
+              @click="clearCorrelationFilter"
+            >
               <X class="mr-1 h-3.5 w-3.5" />
               {{ t('ops.audit.clearCorrelationFilter') }}
             </el-button>
@@ -501,7 +568,11 @@ watch(
             row-key="id"
             :max-height="tableMaxHeight"
           >
-            <el-table-column :label="t('ops.audit.colAction')" width="220" fixed="left">
+            <el-table-column
+              :label="t('ops.audit.colAction')"
+              width="220"
+              fixed="left"
+            >
               <template #default="{ row }">
                 <div class="hfl-ops-primary-cell">
                   <div class="min-w-0">
@@ -514,19 +585,32 @@ watch(
                         {{ actionLabel(row.action) }}
                       </button>
                     </div>
-                    <div v-if="row.resource_type" class="hfl-ops-cell-stack__meta uppercase">
+                    <div
+                      v-if="row.resource_type"
+                      class="hfl-ops-cell-stack__meta uppercase"
+                    >
                       {{ row.resource_type }}
                     </div>
                   </div>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.audit.colTime')" width="170">
+            <el-table-column
+              :label="t('ops.audit.colTime')"
+              width="170"
+            >
               <template #default="{ row }">
-                <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.timestamp || row.created_at) }">{{ formatTime(row.timestamp || row.created_at) }}</span>
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !(row.timestamp || row.created_at) }"
+                >{{ formatTime(row.timestamp || row.created_at) }}</span>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.audit.colUser')" min-width="150" class-name="hfl-audit-user-column">
+            <el-table-column
+              :label="t('ops.audit.colUser')"
+              min-width="150"
+              class-name="hfl-audit-user-column"
+            >
               <template #default="{ row }">
                 <span class="hfl-ops-user-chip hfl-audit-user-cell">
                   <span class="hfl-audit-user-cell__name font-medium text-slate-800">
@@ -535,7 +619,10 @@ watch(
                 </span>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.audit.colResult')" width="100">
+            <el-table-column
+              :label="t('ops.audit.colResult')"
+              width="100"
+            >
               <template #default="{ row }">
                 <el-tag
                   class="hfl-ops-result-tag"
@@ -559,7 +646,10 @@ watch(
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.audit.colResource')" min-width="160">
+            <el-table-column
+              :label="t('ops.audit.colResource')"
+              min-width="160"
+            >
               <template #default="{ row }">
                 <div class="hfl-ops-cell-stack">
                   <div :class="hasDisplayValue(row.resource_name || row.resource_type) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">
@@ -574,9 +664,16 @@ watch(
                 </div>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.audit.colIp')" width="130" prop="ip_address">
+            <el-table-column
+              :label="t('ops.audit.colIp')"
+              width="130"
+              prop="ip_address"
+            >
               <template #default="{ row }">
-                <span class="hfl-table-cell-mono" :class="{ 'hfl-empty-mark': !row.ip_address }">{{ row.ip_address || '—' }}</span>
+                <span
+                  class="hfl-table-cell-mono"
+                  :class="{ 'hfl-empty-mark': !row.ip_address }"
+                >{{ row.ip_address || '—' }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -618,7 +715,10 @@ watch(
       class="hfl-audit-filter-drawer"
       @closed="onAdvancedFilterClosed"
     >
-      <el-form label-position="top" class="hfl-audit-filter-form">
+      <el-form
+        label-position="top"
+        class="hfl-audit-filter-form"
+      >
         <el-form-item :label="t('ops.audit.phFilterAction')">
           <el-select
             v-model="advancedFilterDraft.action"
@@ -626,7 +726,12 @@ watch(
             class="w-full"
             :placeholder="t('ops.audit.phFilterAction')"
           >
-            <el-option v-for="a in actionOptions" :key="a" :value="a" :label="actionLabel(a)" />
+            <el-option
+              v-for="a in actionOptions"
+              :key="a"
+              :value="a"
+              :label="actionLabel(a)"
+            />
           </el-select>
         </el-form-item>
         <el-form-item :label="t('ops.audit.phFilterResourceType')">
@@ -651,9 +756,18 @@ watch(
             class="w-full"
             :placeholder="t('ops.audit.phFilterResult')"
           >
-            <el-option value="success" :label="t('ops.audit.resultSuccess')" />
-            <el-option value="failure" :label="t('ops.audit.resultFailure')" />
-            <el-option value="partial" :label="t('ops.audit.resultPartial')" />
+            <el-option
+              value="success"
+              :label="t('ops.audit.resultSuccess')"
+            />
+            <el-option
+              value="failure"
+              :label="t('ops.audit.resultFailure')"
+            />
+            <el-option
+              value="partial"
+              :label="t('ops.audit.resultPartial')"
+            />
           </el-select>
         </el-form-item>
         <el-form-item :label="t('ops.audit.dateCustom')">
@@ -674,10 +788,19 @@ watch(
       </el-form>
       <template #footer>
         <div class="el-drawer__footer-main">
-          <el-button @click="cancelAdvancedFilter">{{ t('ops.audit.cancelFilter') }}</el-button>
+          <el-button @click="cancelAdvancedFilter">
+            {{ t('ops.audit.cancelFilter') }}
+          </el-button>
           <div class="el-drawer__footer-actions">
-            <el-button @click="resetAdvancedFilterDraft">{{ t('ops.audit.resetFilter') }}</el-button>
-            <el-button type="primary" @click="applyAdvancedFilters">{{ t('ops.audit.applyFilter') }}</el-button>
+            <el-button @click="resetAdvancedFilterDraft">
+              {{ t('ops.audit.resetFilter') }}
+            </el-button>
+            <el-button
+              type="primary"
+              @click="applyAdvancedFilters"
+            >
+              {{ t('ops.audit.applyFilter') }}
+            </el-button>
           </div>
         </div>
       </template>
@@ -694,22 +817,36 @@ watch(
         <span class="hfl-detail-drawer__title">{{ t('ops.audit.detailTitle') }}</span>
       </template>
 
-      <div v-if="detailLog" class="hfl-detail-drawer__body">
+      <div
+        v-if="detailLog"
+        class="hfl-detail-drawer__body"
+      >
         <div class="hfl-detail-sections">
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('ops.audit.detailSectionBasic') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.audit.detailSectionBasic') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colTime') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !(detailLog.timestamp || detailLog.created_at) }">{{ formatTime(detailLog.timestamp || detailLog.created_at) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !(detailLog.timestamp || detailLog.created_at) }"
+                >{{ formatTime(detailLog.timestamp || detailLog.created_at) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colUser') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.user_display) }">{{ displayValue(detailLog.user_display) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.user_display) }"
+                >{{ displayValue(detailLog.user_display) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colAction') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.action) }">{{ actionLabel(detailLog.action) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.action) }"
+                >{{ actionLabel(detailLog.action) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colResult') }}</span>
@@ -733,79 +870,131 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colIp') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.ip_address) }">{{ displayValue(detailLog.ip_address) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.ip_address) }"
+                >{{ displayValue(detailLog.ip_address) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colOrg') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.organization_name || detailLog.organization) }">{{ displayValue(detailLog.organization_name || detailLog.organization) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.organization_name || detailLog.organization) }"
+                >{{ displayValue(detailLog.organization_name || detailLog.organization) }}</span>
               </div>
             </div>
           </section>
 
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('ops.audit.detailSectionResource') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.audit.detailSectionResource') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.phFilterResourceType') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.resource_type) }">{{ displayValue(detailLog.resource_type) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.resource_type) }"
+                >{{ displayValue(detailLog.resource_type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colResourceName') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.resource_name) }">{{ displayValue(detailLog.resource_name) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.resource_name) }"
+                >{{ displayValue(detailLog.resource_name) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.detailResourceId') }}</span>
-                <span class="hfl-detail-row__value" :class="hasDisplayValue(detailLog.resource_id) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ displayValue(detailLog.resource_id) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="hasDisplayValue(detailLog.resource_id) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
+                >{{ displayValue(detailLog.resource_id) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.detailTargetType') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.target_type) }">{{ displayValue(detailLog.target_type) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.target_type) }"
+                >{{ displayValue(detailLog.target_type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.detailTargetId') }}</span>
-                <span class="hfl-detail-row__value" :class="hasDisplayValue(detailLog.target_id) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ displayValue(detailLog.target_id) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="hasDisplayValue(detailLog.target_id) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
+                >{{ displayValue(detailLog.target_id) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colId') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-mono" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.id) }">{{ displayValue(detailLog.id) }}</span>
+                <span
+                  class="hfl-detail-row__value hfl-table-cell-mono"
+                  :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.id) }"
+                >{{ displayValue(detailLog.id) }}</span>
               </div>
             </div>
           </section>
 
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('ops.audit.detailSectionRequest') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.audit.detailSectionRequest') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.detailRequestMethod') }}</span>
-                <span class="hfl-detail-row__value" :class="hasDisplayValue(detailLog.request_method) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ displayValue(detailLog.request_method) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="hasDisplayValue(detailLog.request_method) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
+                >{{ displayValue(detailLog.request_method) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.requestPath') }}</span>
-                <span class="hfl-detail-row__value" :class="hasDisplayValue(detailLog.request_path) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ displayValue(detailLog.request_path) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="hasDisplayValue(detailLog.request_path) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
+                >{{ displayValue(detailLog.request_path) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.detailRequestId') }}</span>
-                <span class="hfl-detail-row__value" :class="hasDisplayValue(detailLog.request_id) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ displayValue(detailLog.request_id) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="hasDisplayValue(detailLog.request_id) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
+                >{{ displayValue(detailLog.request_id) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colCorrelationId') }}</span>
-                <span class="hfl-detail-row__value" :class="hasDisplayValue(detailLog.correlation_id) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ displayValue(detailLog.correlation_id) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="hasDisplayValue(detailLog.correlation_id) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
+                >{{ displayValue(detailLog.correlation_id) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.detailSessionId') }}</span>
-                <span class="hfl-detail-row__value" :class="hasDisplayValue(detailLog.session_id) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ displayValue(detailLog.session_id) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="hasDisplayValue(detailLog.session_id) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
+                >{{ displayValue(detailLog.session_id) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.detailErrorCode') }}</span>
-                <span class="hfl-detail-row__value" :class="hasDisplayValue(detailLog.error_code) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ displayValue(detailLog.error_code) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="hasDisplayValue(detailLog.error_code) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
+                >{{ displayValue(detailLog.error_code) }}</span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.userAgent') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.user_agent) }">{{ displayValue(detailLog.user_agent) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.user_agent) }"
+                >{{ displayValue(detailLog.user_agent) }}</span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.errorMessage') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'text-red-600': detailLog.error_message, 'hfl-detail-row__empty': !hasDisplayValue(detailLog.error_message) }">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'text-red-600': detailLog.error_message, 'hfl-detail-row__empty': !hasDisplayValue(detailLog.error_message) }"
+                >
                   {{ displayValue(detailLog.error_message) }}
                 </span>
               </div>
@@ -813,38 +1002,67 @@ watch(
           </section>
 
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('ops.audit.detailSectionPayload') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.audit.detailSectionPayload') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colDetails') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.details) }">{{ displayValue(detailLog.details) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.details) }"
+                >{{ displayValue(detailLog.details) }}</span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.changes') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <pre v-if="hasObjectValue(detailLog.changes)" class="hfl-audit-detail-json">{{ formatJson(detailLog.changes) }}</pre>
-                  <span v-else class="hfl-empty-mark">{{ t('ops.audit.emptyMark') }}</span>
+                  <pre
+                    v-if="hasObjectValue(detailLog.changes)"
+                    class="hfl-audit-detail-json"
+                  >{{ formatJson(detailLog.changes) }}</pre>
+                  <span
+                    v-else
+                    class="hfl-empty-mark"
+                  >{{ t('ops.audit.emptyMark') }}</span>
                 </span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.queryParams') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <pre v-if="hasObjectValue(detailLog.request_query)" class="hfl-audit-detail-json">{{ formatJson(detailLog.request_query) }}</pre>
-                  <span v-else class="hfl-empty-mark">{{ t('ops.audit.emptyMark') }}</span>
+                  <pre
+                    v-if="hasObjectValue(detailLog.request_query)"
+                    class="hfl-audit-detail-json"
+                  >{{ formatJson(detailLog.request_query) }}</pre>
+                  <span
+                    v-else
+                    class="hfl-empty-mark"
+                  >{{ t('ops.audit.emptyMark') }}</span>
                 </span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.requestBody') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <pre v-if="hasObjectValue(detailLog.request_body)" class="hfl-audit-detail-json">{{ formatJson(detailLog.request_body) }}</pre>
-                  <span v-else class="hfl-empty-mark">{{ t('ops.audit.emptyMark') }}</span>
+                  <pre
+                    v-if="hasObjectValue(detailLog.request_body)"
+                    class="hfl-audit-detail-json"
+                  >{{ formatJson(detailLog.request_body) }}</pre>
+                  <span
+                    v-else
+                    class="hfl-empty-mark"
+                  >{{ t('ops.audit.emptyMark') }}</span>
                 </span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.metadata') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <pre v-if="hasObjectValue(detailLog.metadata)" class="hfl-audit-detail-json">{{ formatJson(detailLog.metadata) }}</pre>
-                  <span v-else class="hfl-empty-mark">{{ t('ops.audit.emptyMark') }}</span>
+                  <pre
+                    v-if="hasObjectValue(detailLog.metadata)"
+                    class="hfl-audit-detail-json"
+                  >{{ formatJson(detailLog.metadata) }}</pre>
+                  <span
+                    v-else
+                    class="hfl-empty-mark"
+                  >{{ t('ops.audit.emptyMark') }}</span>
                 </span>
               </div>
             </div>

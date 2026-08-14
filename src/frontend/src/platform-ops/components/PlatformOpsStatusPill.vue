@@ -11,6 +11,13 @@ const label = computed(() => {
 </script>
 
 <template>
-  <span v-if="label !== '—'" class="hfl-ops-status-pill" :class="opsStatusPillClass(label)">{{ label }}</span>
-  <span v-else class="hfl-empty-mark">—</span>
+  <span
+    v-if="label !== '—'"
+    class="hfl-ops-status-pill"
+    :class="opsStatusPillClass(label)"
+  >{{ label }}</span>
+  <span
+    v-else
+    class="hfl-empty-mark"
+  >—</span>
 </template>

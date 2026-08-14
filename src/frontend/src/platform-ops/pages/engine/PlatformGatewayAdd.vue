@@ -88,8 +88,15 @@ onUnmounted(() => {
     >
       <div class="fullscreen-form-page source-deploy-page">
         <div class="fullscreen-form-header">
-          <button type="button" class="fullscreen-form-header__back" @click="handleBack">
-            <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+          <button
+            type="button"
+            class="fullscreen-form-header__back"
+            @click="handleBack"
+          >
+            <ArrowLeft
+              class="fullscreen-form-header__back-icon"
+              :size="18"
+            />
           </button>
           <div class="fullscreen-form-header__content">
             <h1 class="fullscreen-form-header__title">

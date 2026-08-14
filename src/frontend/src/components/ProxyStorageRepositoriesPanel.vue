@@ -431,8 +431,14 @@ watch(
           <template #header>
             <span class="repo-table-header-with-help">
               {{ t('repositoriesPage.colRepositoryUsage') }}
-              <ElTooltip :content="t('repositoriesPage.repositoryUsageHelp')" placement="top">
-                <Info :size="13" aria-hidden="true" />
+              <ElTooltip
+                :content="t('repositoriesPage.repositoryUsageHelp')"
+                placement="top"
+              >
+                <Info
+                  :size="13"
+                  aria-hidden="true"
+                />
               </ElTooltip>
             </span>
           </template>

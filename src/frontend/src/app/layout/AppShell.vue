@@ -506,7 +506,10 @@ function applyThemeVars(t: string) {
       :timezone-offset-display="timezoneOffsetDisplay"
       @toggle-locale="toggleLocale"
     />
-    <div v-if="supportOrgKey" class="support-banner">
+    <div
+      v-if="supportOrgKey"
+      class="support-banner"
+    >
       {{ t('common.supportModeBanner', { org: supportOrgKey }) }}
     </div>
     <main class="content-wrapper">
@@ -546,32 +549,32 @@ function applyThemeVars(t: string) {
                   aria-hidden="true"
                 >
                   <div class="app-route-generic-skeleton__header">
-                    <span class="app-route-generic-skeleton__back"></span>
+                    <span class="app-route-generic-skeleton__back" />
                     <div class="app-route-generic-skeleton__title-group">
-                      <span></span>
-                      <i></i>
+                      <span />
+                      <i />
                     </div>
                   </div>
                   <div class="app-route-generic-skeleton__body">
                     <section class="app-route-generic-skeleton__section app-route-generic-skeleton__section--hero">
-                      <span></span>
-                      <i></i>
-                      <b></b>
+                      <span />
+                      <i />
+                      <b />
                     </section>
                     <section
                       v-for="idx in 3"
                       :key="`generic-section-${idx}`"
                       class="app-route-generic-skeleton__section"
                     >
-                      <span></span>
-                      <i></i>
-                      <i></i>
-                      <b></b>
+                      <span />
+                      <i />
+                      <i />
+                      <b />
                     </section>
                   </div>
                   <div class="app-route-generic-skeleton__footer">
-                    <span></span>
-                    <i></i>
+                    <span />
+                    <i />
                   </div>
                 </div>
                 <div
@@ -580,226 +583,326 @@ function applyThemeVars(t: string) {
                   aria-hidden="true"
                 >
                   <div class="app-route-skeleton__header">
-                    <span class="app-route-skeleton__title"></span>
+                    <span class="app-route-skeleton__title" />
                     <div class="app-route-skeleton__actions">
-                      <span></span>
-                      <span></span>
+                      <span />
+                      <span />
                     </div>
                   </div>
                   <div class="app-route-flow-skeleton__steps">
-                    <template v-for="idx in 3" :key="`flow-step-${idx}`">
+                    <template
+                      v-for="idx in 3"
+                      :key="`flow-step-${idx}`"
+                    >
                       <span class="app-route-flow-skeleton__step">
-                        <i></i>
-                        <b></b>
-                        <em></em>
-                        <small></small>
+                        <i />
+                        <b />
+                        <em />
+                        <small />
                       </span>
-                      <span v-if="idx < 3" class="app-route-flow-skeleton__connector"></span>
+                      <span
+                        v-if="idx < 3"
+                        class="app-route-flow-skeleton__connector"
+                      />
                     </template>
                   </div>
                   <div class="app-route-skeleton__panel app-route-flow-skeleton__panel">
                     <div class="app-route-skeleton__toolbar">
-                      <span></span>
-                      <i></i>
+                      <span />
+                      <i />
                     </div>
                     <div class="app-route-skeleton__table">
-                      <span v-for="idx in 8" :key="`flow-row-${idx}`">
-                        <i></i>
-                        <i></i>
-                        <i></i>
-                        <i></i>
+                      <span
+                        v-for="idx in 8"
+                        :key="`flow-row-${idx}`"
+                      >
+                        <i />
+                        <i />
+                        <i />
+                        <i />
                       </span>
                     </div>
                   </div>
                 </div>
-                <div v-else-if="fallbackIsDashboard" class="app-route-skeleton app-route-dashboard-skeleton" aria-hidden="true">
+                <div
+                  v-else-if="fallbackIsDashboard"
+                  class="app-route-skeleton app-route-dashboard-skeleton"
+                  aria-hidden="true"
+                >
                   <div class="app-route-dashboard-skeleton__pipeline">
                     <div class="app-route-dashboard-skeleton__pipeline-head">
-                      <span></span>
-                      <i></i>
+                      <span />
+                      <i />
                     </div>
                     <div class="app-route-dashboard-skeleton__pipeline-flow">
-                      <template v-for="idx in 3" :key="`dashboard-pipeline-${idx}`">
+                      <template
+                        v-for="idx in 3"
+                        :key="`dashboard-pipeline-${idx}`"
+                      >
                         <span class="app-route-dashboard-skeleton__pipeline-step">
-                          <i></i>
-                          <b></b>
-                          <em></em>
-                          <small></small>
+                          <i />
+                          <b />
+                          <em />
+                          <small />
                         </span>
-                        <span v-if="idx < 3" class="app-route-dashboard-skeleton__pipeline-connector"></span>
+                        <span
+                          v-if="idx < 3"
+                          class="app-route-dashboard-skeleton__pipeline-connector"
+                        />
                       </template>
                     </div>
                   </div>
                   <div class="app-route-dashboard-skeleton__grid">
-                    <span v-for="idx in 3" :key="`dashboard-card-${idx}`" class="app-route-dashboard-skeleton__card">
-                      <i></i>
-                      <b></b>
-                      <em></em>
+                    <span
+                      v-for="idx in 3"
+                      :key="`dashboard-card-${idx}`"
+                      class="app-route-dashboard-skeleton__card"
+                    >
+                      <i />
+                      <b />
+                      <em />
                     </span>
                   </div>
                   <div class="app-route-dashboard-skeleton__cockpit">
                     <span class="app-route-dashboard-skeleton__panel app-route-dashboard-skeleton__panel--attention">
-                      <i></i>
-                      <b v-for="idx in 5" :key="`dashboard-attention-${idx}`"></b>
+                      <i />
+                      <b
+                        v-for="idx in 5"
+                        :key="`dashboard-attention-${idx}`"
+                      />
                     </span>
                     <span class="app-route-dashboard-skeleton__panel app-route-dashboard-skeleton__panel--storage">
-                      <i></i>
-                      <b v-for="idx in 4" :key="`dashboard-storage-${idx}`"></b>
+                      <i />
+                      <b
+                        v-for="idx in 4"
+                        :key="`dashboard-storage-${idx}`"
+                      />
                     </span>
                     <span class="app-route-dashboard-skeleton__panel app-route-dashboard-skeleton__panel--quota">
-                      <i></i>
-                      <b v-for="idx in 4" :key="`dashboard-quota-${idx}`"></b>
+                      <i />
+                      <b
+                        v-for="idx in 4"
+                        :key="`dashboard-quota-${idx}`"
+                      />
                     </span>
                     <span class="app-route-dashboard-skeleton__panel app-route-dashboard-skeleton__panel--running">
-                      <i></i>
-                      <b v-for="idx in 4" :key="`dashboard-running-${idx}`"></b>
+                      <i />
+                      <b
+                        v-for="idx in 4"
+                        :key="`dashboard-running-${idx}`"
+                      />
                     </span>
                     <span class="app-route-dashboard-skeleton__panel app-route-dashboard-skeleton__panel--chart">
-                      <i></i>
-                      <em v-for="idx in 7" :key="`dashboard-chart-${idx}`"></em>
+                      <i />
+                      <em
+                        v-for="idx in 7"
+                        :key="`dashboard-chart-${idx}`"
+                      />
                     </span>
                   </div>
                 </div>
-                <div v-else-if="fallbackIsHostMonitor" class="app-route-skeleton app-route-monitor-skeleton" aria-hidden="true">
+                <div
+                  v-else-if="fallbackIsHostMonitor"
+                  class="app-route-skeleton app-route-monitor-skeleton"
+                  aria-hidden="true"
+                >
                   <div class="app-route-skeleton__header">
-                    <span class="app-route-skeleton__title"></span>
+                    <span class="app-route-skeleton__title" />
                     <div class="app-route-skeleton__actions">
-                      <span></span>
-                      <span></span>
+                      <span />
+                      <span />
                     </div>
                   </div>
                   <div class="app-route-skeleton__stats">
-                    <span v-for="idx in 4" :key="`monitor-kpi-${idx}`" class="app-route-skeleton__stat">
-                      <i></i>
-                      <b></b>
-                      <em></em>
+                    <span
+                      v-for="idx in 4"
+                      :key="`monitor-kpi-${idx}`"
+                      class="app-route-skeleton__stat"
+                    >
+                      <i />
+                      <b />
+                      <em />
                     </span>
                   </div>
                   <div class="app-route-monitor-skeleton__charts">
-                    <span v-for="idx in 4" :key="`monitor-chart-${idx}`" class="app-route-monitor-skeleton__chart">
-                      <i></i>
-                      <b></b>
+                    <span
+                      v-for="idx in 4"
+                      :key="`monitor-chart-${idx}`"
+                      class="app-route-monitor-skeleton__chart"
+                    >
+                      <i />
+                      <b />
                     </span>
                   </div>
                   <div class="app-route-monitor-skeleton__charts app-route-monitor-skeleton__charts--pair">
-                    <span v-for="idx in 2" :key="`monitor-wide-chart-${idx}`" class="app-route-monitor-skeleton__chart">
-                      <i></i>
-                      <b></b>
+                    <span
+                      v-for="idx in 2"
+                      :key="`monitor-wide-chart-${idx}`"
+                      class="app-route-monitor-skeleton__chart"
+                    >
+                      <i />
+                      <b />
                     </span>
                   </div>
                 </div>
-                <div v-else-if="fallbackIsCopilot" class="app-route-skeleton app-route-copilot-skeleton" aria-hidden="true">
+                <div
+                  v-else-if="fallbackIsCopilot"
+                  class="app-route-skeleton app-route-copilot-skeleton"
+                  aria-hidden="true"
+                >
                   <aside class="app-route-copilot-skeleton__aside">
-                    <span></span>
-                    <i v-for="idx in 7" :key="`copilot-session-${idx}`"></i>
+                    <span />
+                    <i
+                      v-for="idx in 7"
+                      :key="`copilot-session-${idx}`"
+                    />
                   </aside>
                   <section class="app-route-copilot-skeleton__main">
                     <div class="app-route-copilot-skeleton__topbar">
-                      <span></span>
-                      <i></i>
+                      <span />
+                      <i />
                     </div>
                     <div class="app-route-copilot-skeleton__messages">
-                      <span class="app-route-copilot-skeleton__bubble app-route-copilot-skeleton__bubble--ai"></span>
-                      <span class="app-route-copilot-skeleton__bubble app-route-copilot-skeleton__bubble--user"></span>
-                      <span class="app-route-copilot-skeleton__bubble app-route-copilot-skeleton__bubble--ai app-route-copilot-skeleton__bubble--long"></span>
+                      <span class="app-route-copilot-skeleton__bubble app-route-copilot-skeleton__bubble--ai" />
+                      <span class="app-route-copilot-skeleton__bubble app-route-copilot-skeleton__bubble--user" />
+                      <span class="app-route-copilot-skeleton__bubble app-route-copilot-skeleton__bubble--ai app-route-copilot-skeleton__bubble--long" />
                     </div>
-                    <div class="app-route-copilot-skeleton__composer"></div>
+                    <div class="app-route-copilot-skeleton__composer" />
                   </section>
                 </div>
-                <div v-else-if="fallbackIsAccountProfile" class="app-route-skeleton app-route-profile-skeleton" aria-hidden="true">
+                <div
+                  v-else-if="fallbackIsAccountProfile"
+                  class="app-route-skeleton app-route-profile-skeleton"
+                  aria-hidden="true"
+                >
                   <div class="app-route-skeleton__header">
-                    <span class="app-route-skeleton__title"></span>
+                    <span class="app-route-skeleton__title" />
                   </div>
-                  <section v-for="idx in 3" :key="`profile-section-${idx}`" class="app-route-profile-skeleton__section">
-                    <span></span>
-                    <i v-for="row in idx === 2 ? 4 : 3" :key="`profile-row-${idx}-${row}`"></i>
+                  <section
+                    v-for="idx in 3"
+                    :key="`profile-section-${idx}`"
+                    class="app-route-profile-skeleton__section"
+                  >
+                    <span />
+                    <i
+                      v-for="row in idx === 2 ? 4 : 3"
+                      :key="`profile-row-${idx}-${row}`"
+                    />
                   </section>
                 </div>
-                <div v-else-if="fallbackIsNodeSubscription" class="app-route-skeleton app-route-subscription-skeleton" aria-hidden="true">
+                <div
+                  v-else-if="fallbackIsNodeSubscription"
+                  class="app-route-skeleton app-route-subscription-skeleton"
+                  aria-hidden="true"
+                >
                   <section class="app-route-subscription-skeleton__section app-route-subscription-skeleton__section--overview">
                     <div class="app-route-subscription-skeleton__section-head">
-                      <span></span>
-                      <i></i>
+                      <span />
+                      <i />
                     </div>
                     <div class="app-route-subscription-skeleton__overview-grid">
-                      <b v-for="idx in 4" :key="`subscription-overview-${idx}`"></b>
+                      <b
+                        v-for="idx in 4"
+                        :key="`subscription-overview-${idx}`"
+                      />
                     </div>
                   </section>
                   <section class="app-route-subscription-skeleton__section">
                     <div class="app-route-subscription-skeleton__section-head">
-                      <span></span>
+                      <span />
                     </div>
                     <div class="app-route-subscription-skeleton__quota-grid">
-                      <b v-for="idx in 4" :key="`subscription-quota-${idx}`"></b>
+                      <b
+                        v-for="idx in 4"
+                        :key="`subscription-quota-${idx}`"
+                      />
                     </div>
                   </section>
                   <section class="app-route-subscription-skeleton__section app-route-subscription-skeleton__section--activation">
                     <div class="app-route-subscription-skeleton__section-head">
-                      <span></span>
+                      <span />
                     </div>
                     <div class="app-route-subscription-skeleton__activation">
                       <div class="app-route-subscription-skeleton__activation-step">
-                        <span></span>
+                        <span />
                         <div class="app-route-subscription-skeleton__code-row">
-                          <i></i>
-                          <b></b>
+                          <i />
+                          <b />
                         </div>
-                        <em></em>
+                        <em />
                       </div>
                       <div class="app-route-subscription-skeleton__activation-step">
-                        <span></span>
-                        <i></i>
-                        <b></b>
+                        <span />
+                        <i />
+                        <b />
                       </div>
                     </div>
                   </section>
                   <section class="app-route-subscription-skeleton__section app-route-subscription-skeleton__section--history">
                     <div class="app-route-subscription-skeleton__section-head">
-                      <span></span>
+                      <span />
                     </div>
                     <div class="app-route-skeleton__panel">
                       <div class="app-route-skeleton__table">
-                        <span v-for="idx in 5" :key="`subscription-history-${idx}`">
-                          <i></i>
-                          <i></i>
-                          <i></i>
-                          <i></i>
+                        <span
+                          v-for="idx in 5"
+                          :key="`subscription-history-${idx}`"
+                        >
+                          <i />
+                          <i />
+                          <i />
+                          <i />
                         </span>
                       </div>
                     </div>
                   </section>
                 </div>
-                <div v-else-if="fallbackIsNodeSystem" class="app-route-skeleton app-route-system-skeleton" aria-hidden="true">
+                <div
+                  v-else-if="fallbackIsNodeSystem"
+                  class="app-route-skeleton app-route-system-skeleton"
+                  aria-hidden="true"
+                >
                   <div class="app-route-system-skeleton__panel">
-                    <section v-for="idx in 2" :key="`system-row-${idx}`" class="app-route-system-skeleton__row">
-                      <span></span>
-                      <b></b>
-                      <i></i>
+                    <section
+                      v-for="idx in 2"
+                      :key="`system-row-${idx}`"
+                      class="app-route-system-skeleton__row"
+                    >
+                      <span />
+                      <b />
+                      <i />
                     </section>
                   </div>
                   <div class="app-route-system-skeleton__footer">
-                    <span></span>
+                    <span />
                   </div>
                 </div>
-                <div v-else class="app-route-skeleton" aria-hidden="true">
+                <div
+                  v-else
+                  class="app-route-skeleton"
+                  aria-hidden="true"
+                >
                   <div class="app-route-skeleton__header">
-                    <span class="app-route-skeleton__title"></span>
+                    <span class="app-route-skeleton__title" />
                     <div class="app-route-skeleton__actions">
-                      <span></span>
-                      <span></span>
+                      <span />
+                      <span />
                     </div>
                   </div>
                   <div class="app-route-skeleton__panel">
                     <div class="app-route-skeleton__toolbar">
-                      <span></span>
-                      <i></i>
+                      <span />
+                      <i />
                     </div>
                     <div class="app-route-skeleton__table">
-                      <span v-for="idx in 8" :key="`row-${idx}`">
-                        <i></i>
-                        <i></i>
-                        <i></i>
-                        <i></i>
+                      <span
+                        v-for="idx in 8"
+                        :key="`row-${idx}`"
+                      >
+                        <i />
+                        <i />
+                        <i />
+                        <i />
                       </span>
                     </div>
                   </div>

@@ -32,7 +32,11 @@ const label = computed(() => {
 
 <template>
   <div class="dg-composite-status">
-    <el-tag :type="display.tagType" size="small" :class="['dg-composite-status__tag', display.tagClass]">
+    <el-tag
+      :type="display.tagType"
+      size="small"
+      :class="['dg-composite-status__tag', display.tagClass]"
+    >
       <LoaderCircle
         v-if="display.spinning"
         :size="12"

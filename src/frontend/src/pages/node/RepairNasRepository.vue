@@ -388,29 +388,52 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen">
+  <div
+    ref="pageRef"
+    class="fullscreen-form-fullscreen resource-add-fullscreen"
+  >
     <div class="fullscreen-form-page add-nas-page">
       <header class="fullscreen-form-header">
-        <button class="fullscreen-form-header__back" @click="handleBack">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+        <button
+          class="fullscreen-form-header__back"
+          @click="handleBack"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
           <h1 class="fullscreen-form-header__title">
-            <Wrench :size="18" class="inline-block align-[-3px] mr-1 text-[rgb(37_99_235)]" />
+            <Wrench
+              :size="18"
+              class="inline-block align-[-3px] mr-1 text-[rgb(37_99_235)]"
+            />
             {{ t('repairNasRepo.pageTitle') }}
           </h1>
-          <p class="fullscreen-form-header__desc">{{ t('repairNasRepo.pageDesc') }}</p>
+          <p class="fullscreen-form-header__desc">
+            {{ t('repairNasRepo.pageDesc') }}
+          </p>
         </div>
       </header>
 
-      <div v-if="loading" class="p-10 text-center text-sm text-[rgb(100_116_139)]">
+      <div
+        v-if="loading"
+        class="p-10 text-center text-sm text-[rgb(100_116_139)]"
+      >
         {{ t('common.loading') }}
       </div>
-      <div v-else-if="loadError" class="p-10 text-center text-sm text-red-500">
+      <div
+        v-else-if="loadError"
+        class="p-10 text-center text-sm text-red-500"
+      >
         {{ loadError }}
       </div>
 
-      <div v-else class="fullscreen-form-layout add-nas-layout">
+      <div
+        v-else
+        class="fullscreen-form-layout add-nas-layout"
+      >
         <div class="fullscreen-form-main add-nas-main">
           <section class="add-nas-card add-nas-step-section">
             <div class="add-nas-section">
@@ -418,22 +441,45 @@ onMounted(async () => {
                 <span class="add-nas-section__indicator" />
                 {{ t('repairNasRepo.sectionNasReadonly') }}
               </h3>
-              <ElForm label-position="top" class="add-nas-form">
+              <ElForm
+                label-position="top"
+                class="add-nas-form"
+              >
                 <div class="add-nas-form-row add-nas-form-row--responsive">
-                  <ElFormItem :label="t('repairNasRepo.labelProtocol')" class="flex-1">
-                    <ElTag size="large" effect="plain" class="!text-sm">
-                      <component :is="nasMountProtocolIcon(protocol)" :size="14" class="inline-block align-[-2px] mr-1" />
+                  <ElFormItem
+                    :label="t('repairNasRepo.labelProtocol')"
+                    class="flex-1"
+                  >
+                    <ElTag
+                      size="large"
+                      effect="plain"
+                      class="!text-sm"
+                    >
+                      <component
+                        :is="nasMountProtocolIcon(protocol)"
+                        :size="14"
+                        class="inline-block align-[-2px] mr-1"
+                      />
                       {{ protocol === 'smb' ? t('repositoriesPage.protocolSmb') : t('repositoriesPage.protocolNfs') }}
                     </ElTag>
                   </ElFormItem>
-                  <ElFormItem :label="t('repairNasRepo.labelServer')" class="flex-1">
-                    <ElInput :model-value="nasServer" disabled />
+                  <ElFormItem
+                    :label="t('repairNasRepo.labelServer')"
+                    class="flex-1"
+                  >
+                    <ElInput
+                      :model-value="nasServer"
+                      disabled
+                    />
                   </ElFormItem>
                   <ElFormItem
                     :label="protocol === 'smb' ? t('repairNasRepo.labelShareName') : t('repairNasRepo.labelExportPath')"
                     class="flex-1"
                   >
-                    <ElInput :model-value="nasShare" disabled />
+                    <ElInput
+                      :model-value="nasShare"
+                      disabled
+                    />
                   </ElFormItem>
                 </div>
                 <p class="text-xs text-[rgb(100_116_139)]">
@@ -443,16 +489,28 @@ onMounted(async () => {
             </div>
           </section>
 
-          <section v-if="protocol === 'smb'" class="add-nas-card add-nas-step-section">
+          <section
+            v-if="protocol === 'smb'"
+            class="add-nas-card add-nas-step-section"
+          >
             <div class="add-nas-section">
               <h3 class="add-nas-section__title">
                 <span class="add-nas-section__indicator" />
-                <ShieldCheck :size="16" class="inline-block align-[-3px] mr-1" />
+                <ShieldCheck
+                  :size="16"
+                  class="inline-block align-[-3px] mr-1"
+                />
                 {{ t('repairNasRepo.smbSection') }}
               </h3>
-              <ElForm label-position="top" class="add-nas-form">
+              <ElForm
+                label-position="top"
+                class="add-nas-form"
+              >
                 <div class="add-nas-form-row add-nas-form-row--responsive">
-                  <ElFormItem :label="t('repositoriesPage.fieldSmbUsername')" class="flex-1">
+                  <ElFormItem
+                    :label="t('repositoriesPage.fieldSmbUsername')"
+                    class="flex-1"
+                  >
                     <div
                       v-if="!smbUsernameRewriting"
                       class="repair-nas-credential"
@@ -485,7 +543,10 @@ onMounted(async () => {
                       </ElButton>
                     </div>
                   </ElFormItem>
-                  <ElFormItem :label="t('repositoriesPage.fieldSmbPassword')" class="flex-1">
+                  <ElFormItem
+                    :label="t('repositoriesPage.fieldSmbPassword')"
+                    class="flex-1"
+                  >
                     <div
                       v-if="!smbPasswordRewriting"
                       class="repair-nas-credential"
@@ -521,8 +582,14 @@ onMounted(async () => {
                       </ElButton>
                     </div>
                   </ElFormItem>
-                  <ElFormItem :label="t('repositoriesPage.fieldSmbDomain')" class="flex-1">
-                    <ElInput v-model="smbDomain" :placeholder="t('repositoriesPage.phSmbDomain')" />
+                  <ElFormItem
+                    :label="t('repositoriesPage.fieldSmbDomain')"
+                    class="flex-1"
+                  >
+                    <ElInput
+                      v-model="smbDomain"
+                      :placeholder="t('repositoriesPage.phSmbDomain')"
+                    />
                   </ElFormItem>
                 </div>
               </ElForm>
@@ -535,11 +602,26 @@ onMounted(async () => {
                 <span class="add-nas-section__indicator" />
                 {{ t('repairNasRepo.sectionRepo') }}
               </h3>
-              <ElForm label-position="top" class="add-nas-form">
-                <ElFormItem data-validation-field="displayName" :error="errors.displayName" :label="t('repairNasRepo.labelDisplayName')" required>
-                  <ElInput v-model="displayName" :placeholder="t('repairNasRepo.phDisplayName')" @input="clearFieldError('displayName')" />
+              <ElForm
+                label-position="top"
+                class="add-nas-form"
+              >
+                <ElFormItem
+                  data-validation-field="displayName"
+                  :error="errors.displayName"
+                  :label="t('repairNasRepo.labelDisplayName')"
+                  required
+                >
+                  <ElInput
+                    v-model="displayName"
+                    :placeholder="t('repairNasRepo.phDisplayName')"
+                    @input="clearFieldError('displayName')"
+                  />
                 </ElFormItem>
-                <ElFormItem id="nas-mount-options" :label="t('repairNasRepo.labelMountOptions')">
+                <ElFormItem
+                  id="nas-mount-options"
+                  :label="t('repairNasRepo.labelMountOptions')"
+                >
                   <ElInput
                     ref="mountOptionsInputRef"
                     v-model="mountOptionsDraft"
@@ -550,7 +632,13 @@ onMounted(async () => {
                       ? 'Saved value replaces the current mount options. If SMB auto-negotiation fails, copy one example below and test.'
                       : t('repairNasRepo.hintMountOptions') }}
                   </div>
-                  <ElAlert v-if="protocol === 'smb'" type="warning" :closable="false" show-icon class="mt-2">
+                  <ElAlert
+                    v-if="protocol === 'smb'"
+                    type="warning"
+                    :closable="false"
+                    show-icon
+                    class="mt-2"
+                  >
                     <div class="text-xs leading-5 text-[rgb(51_65_85)]">
                       <div>
                         Different NAS devices, SMB servers, and client kernels may support different protocol versions. For Operation not supported, Invalid argument, or mount.cifs errors, specify a protocol version here.
@@ -577,7 +665,10 @@ onMounted(async () => {
                 <span class="add-nas-section__indicator" />
                 {{ t('repairNasRepo.sectionQuota') }}
               </h3>
-              <ElForm label-position="top" class="add-nas-form">
+              <ElForm
+                label-position="top"
+                class="add-nas-form"
+              >
                 <div class="add-nas-form-row add-nas-form-row--responsive">
                   <div class="fullscreen-form-field add-nas-quota-col">
                     <label class="fullscreen-form-field__label add-nas-quota-head">
@@ -592,11 +683,16 @@ onMounted(async () => {
                           :min="0"
                           controls-position="right"
                         />
-                        <div class="hfl-detail-form-input__suffix">GB</div>
+                        <div class="hfl-detail-form-input__suffix">
+                          GB
+                        </div>
                       </div>
                     </div>
                   </div>
-                  <div data-validation-field="quotaThreshold" class="fullscreen-form-field add-nas-quota-col add-nas-quota-panel">
+                  <div
+                    data-validation-field="quotaThreshold"
+                    class="fullscreen-form-field add-nas-quota-col add-nas-quota-panel"
+                  >
                     <div class="fullscreen-form-field__label add-nas-quota-head add-nas-quota-title-row">
                       <ElCheckbox v-model="quotaAlertEnabled">
                         {{ t('repairNasRepo.labelQuotaAlert') }}
@@ -613,13 +709,20 @@ onMounted(async () => {
                           controls-position="right"
                           @change="clearFieldError('quotaThreshold')"
                         />
-                        <div class="hfl-detail-form-input__suffix">%</div>
+                        <div class="hfl-detail-form-input__suffix">
+                          %
+                        </div>
                       </div>
                     </div>
                     <p class="fullscreen-form-field__hint">
                       {{ t('repairNasRepo.labelQuotaAlertThreshold') }}
                     </p>
-                    <p v-if="errors.quotaThreshold" class="el-form-item__error">{{ errors.quotaThreshold }}</p>
+                    <p
+                      v-if="errors.quotaThreshold"
+                      class="el-form-item__error"
+                    >
+                      {{ errors.quotaThreshold }}
+                    </p>
                   </div>
                 </div>
               </ElForm>
@@ -634,9 +737,15 @@ onMounted(async () => {
                     <span class="add-nas-section__indicator" />
                     {{ bindLabel }}
                   </h3>
-                  <span v-if="!isCurrentlyBound" class="add-nas-optional-badge">{{ t('addNasRepo.optional') }}</span>
+                  <span
+                    v-if="!isCurrentlyBound"
+                    class="add-nas-optional-badge"
+                  >{{ t('addNasRepo.optional') }}</span>
                 </div>
-                <ElButton class="add-nas-proxy-action" @click="openProxyDeploy">
+                <ElButton
+                  class="add-nas-proxy-action"
+                  @click="openProxyDeploy"
+                >
                   <Plus :size="14" />
                   {{ t('addNasRepo.deployProxy') }}
                 </ElButton>
@@ -667,9 +776,14 @@ onMounted(async () => {
 
               <div class="add-nas-proxy-layout">
                 <div class="add-nas-proxy-form">
-                  <ElForm label-position="top" class="add-nas-form">
+                  <ElForm
+                    label-position="top"
+                    class="add-nas-form"
+                  >
                     <ElFormItem class="add-nas-bind-form-item">
-                      <template #label>{{ t('addNasRepo.fieldSourceProxyNode') }}</template>
+                      <template #label>
+                        {{ t('addNasRepo.fieldSourceProxyNode') }}
+                      </template>
                       <div class="add-nas-select-row">
                         <ElSelect
                           v-model="proxyNodeId"
@@ -680,7 +794,10 @@ onMounted(async () => {
                           :placeholder="t('repairNasRepo.phBindProxy')"
                         >
                           <template v-if="!isCurrentlyBound">
-                            <ElOption :value="undefined" :label="t('repairNasRepo.optionNoProxy')" />
+                            <ElOption
+                              :value="undefined"
+                              :label="t('repairNasRepo.optionNoProxy')"
+                            />
                           </template>
                           <ElOption
                             v-for="n in availableProxyNodes"
@@ -696,7 +813,10 @@ onMounted(async () => {
                           :disabled="proxyNodesRefreshing"
                           @click="refreshProxyNodesManually"
                         >
-                          <RefreshCw :size="16" :class="{ 'is-spinning': proxyNodesRefreshing }" />
+                          <RefreshCw
+                            :size="16"
+                            :class="{ 'is-spinning': proxyNodesRefreshing }"
+                          />
                         </ElButton>
                       </div>
                       <div class="mt-2 text-xs text-[rgb(100_116_139)]">
@@ -733,10 +853,18 @@ onMounted(async () => {
 
           <div class="fullscreen-form-footer add-nas-footer">
             <div class="add-nas-footer__actions">
-              <ElButton :disabled="busy" @click="handleBack">
+              <ElButton
+                :disabled="busy"
+                @click="handleBack"
+              >
                 {{ t('repositoriesPage.btnCancel') }}
               </ElButton>
-              <ElButton type="primary" :loading="busy" :disabled="busy" @click="onSubmit">
+              <ElButton
+                type="primary"
+                :loading="busy"
+                :disabled="busy"
+                @click="onSubmit"
+              >
                 {{ submitLabel }}
               </ElButton>
             </div>
@@ -748,7 +876,11 @@ onMounted(async () => {
             <div class="add-nas-preview-header">
               <div class="add-nas-preview-header__glow" />
               <div class="add-nas-preview-header__icon">
-                <component :is="nasMountProtocolIcon(protocol)" class="add-nas-preview-header__drive" :size="28" />
+                <component
+                  :is="nasMountProtocolIcon(protocol)"
+                  class="add-nas-preview-header__drive"
+                  :size="28"
+                />
               </div>
               <div class="add-nas-preview-header__info">
                 <h4 class="add-nas-preview-header__name">
@@ -761,16 +893,24 @@ onMounted(async () => {
             </div>
             <div class="add-nas-preview-body">
               <div class="add-nas-preview-section">
-                <h5 class="add-nas-preview-section__title">{{ t('addS3Repo.previewBasicInfo') }}</h5>
+                <h5 class="add-nas-preview-section__title">
+                  {{ t('addS3Repo.previewBasicInfo') }}
+                </h5>
                 <div class="add-nas-preview-row">
                   <span class="add-nas-preview-row__label">{{ t('repairNasRepo.labelDisplayName') }}</span>
-                  <span class="add-nas-preview-row__value" :class="{ 'add-nas-preview-row__value--empty': !displayName }">
+                  <span
+                    class="add-nas-preview-row__value"
+                    :class="{ 'add-nas-preview-row__value--empty': !displayName }"
+                  >
                     {{ displayName || '—' }}
                   </span>
                 </div>
                 <div class="add-nas-preview-row">
                   <span class="add-nas-preview-row__label">{{ t('addNasRepo.fieldSourceProxyNode') }}</span>
-                  <span class="add-nas-preview-row__value" :class="{ 'add-nas-preview-row__value--empty': !proxyNodeId }">
+                  <span
+                    class="add-nas-preview-row__value"
+                    :class="{ 'add-nas-preview-row__value--empty': !proxyNodeId }"
+                  >
                     {{ availableProxyNodes.find((n) => n.id === proxyNodeId)?.name || t('addNasRepo.notBoundProxy') }}
                   </span>
                 </div>
@@ -780,14 +920,23 @@ onMounted(async () => {
                 </div>
                 <div class="add-nas-preview-row">
                   <span class="add-nas-preview-row__label">{{ t('repairNasRepo.labelQuota') }}</span>
-                  <span class="add-nas-preview-row__value" :class="{ 'add-nas-preview-row__value--highlight': quotaGb > 0 }">
+                  <span
+                    class="add-nas-preview-row__value"
+                    :class="{ 'add-nas-preview-row__value--highlight': quotaGb > 0 }"
+                  >
                     {{ quotaGb > 0 ? `${quotaGb} GB` : t('addS3Repo.previewUnlimited') }}
                   </span>
                 </div>
                 <div class="add-nas-preview-row">
                   <span class="add-nas-preview-row__label">{{ t('repairNasRepo.labelQuotaAlert') }}</span>
-                  <span class="add-nas-preview-row__value add-nas-preview-row__value--badge" :class="quotaAlertEnabled ? 'add-nas-preview-row__value--success' : 'add-nas-preview-row__value--muted'">
-                    <span v-if="quotaAlertEnabled" class="add-nas-preview-row__dot add-nas-preview-row__dot--green" />
+                  <span
+                    class="add-nas-preview-row__value add-nas-preview-row__value--badge"
+                    :class="quotaAlertEnabled ? 'add-nas-preview-row__value--success' : 'add-nas-preview-row__value--muted'"
+                  >
+                    <span
+                      v-if="quotaAlertEnabled"
+                      class="add-nas-preview-row__dot add-nas-preview-row__dot--green"
+                    />
                     <template v-if="quotaAlertEnabled">
                       {{ t('repositoriesPage.enabled') }} ({{ quotaAlertThreshold || 0 }}%)
                     </template>

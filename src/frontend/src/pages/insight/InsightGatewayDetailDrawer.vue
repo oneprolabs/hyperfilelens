@@ -193,10 +193,19 @@ onUnmounted(() => {
       <span class="hfl-detail-drawer__title">{{ node?.name || '—' }}</span>
     </template>
 
-    <div v-loading="busy" class="hfl-detail-drawer__body">
+    <div
+      v-loading="busy"
+      class="hfl-detail-drawer__body"
+    >
       <template v-if="node">
-        <ElTabs v-model="drawerTab" class="hfl-detail-tabs">
-          <ElTabPane :label="t('protection.sourceResources.detailTabBasic')" name="basic">
+        <ElTabs
+          v-model="drawerTab"
+          class="hfl-detail-tabs"
+        >
+          <ElTabPane
+            :label="t('protection.sourceResources.detailTabBasic')"
+            name="basic"
+          >
             <NodeBasicInfoPanel
               ref="basicPanelRef"
               :node="node"
@@ -211,7 +220,10 @@ onUnmounted(() => {
             </NodeBasicInfoPanel>
           </ElTabPane>
 
-          <ElTabPane :label="t('protection.sourceResources.detailTabAdvanced')" name="performance">
+          <ElTabPane
+            :label="t('protection.sourceResources.detailTabAdvanced')"
+            name="performance"
+          >
             <NodePerfSettingsPanel
               ref="perfPanelRef"
               hide-actions
@@ -221,7 +233,11 @@ onUnmounted(() => {
             />
           </ElTabPane>
 
-          <ElTabPane :label="t('nodeLifecycle.maintenance')" name="maintenance" lazy>
+          <ElTabPane
+            :label="t('nodeLifecycle.maintenance')"
+            name="maintenance"
+            lazy
+          >
             <NodeMaintenancePanel
               :node="node"
               :gateway-scope="gatewayScope ?? 'user'"
@@ -232,10 +248,17 @@ onUnmounted(() => {
         </ElTabs>
       </template>
 
-      <ElEmpty v-else-if="!busy" :description="t('nodesPage.gatewayDetailEmpty')" :image-size="72" />
+      <ElEmpty
+        v-else-if="!busy"
+        :description="t('nodesPage.gatewayDetailEmpty')"
+        :image-size="72"
+      />
     </div>
 
-    <template v-if="node && drawerTab === 'performance'" #footer>
+    <template
+      v-if="node && drawerTab === 'performance'"
+      #footer
+    >
       <HflDetailDrawerFooter
         :saving="saving"
         :save-disabled="!hasDrawerChanges"

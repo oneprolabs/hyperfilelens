@@ -623,20 +623,37 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen alert-policy-editor-fullscreen">
+  <div
+    ref="pageRef"
+    class="fullscreen-form-fullscreen resource-add-fullscreen alert-policy-editor-fullscreen"
+  >
     <div class="fullscreen-form-page add-s3-page alert-policy-editor-page">
       <div class="fullscreen-form-header">
-        <button type="button" class="fullscreen-form-header__back" @click="handleBack">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+        <button
+          type="button"
+          class="fullscreen-form-header__back"
+          @click="handleBack"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
-          <h1 class="fullscreen-form-header__title">{{ pageTitle }}</h1>
-          <p class="fullscreen-form-header__desc">{{ t('ops.alertsCenter.policies.createSubtitle') }}</p>
+          <h1 class="fullscreen-form-header__title">
+            {{ pageTitle }}
+          </h1>
+          <p class="fullscreen-form-header__desc">
+            {{ t('ops.alertsCenter.policies.createSubtitle') }}
+          </p>
         </div>
       </div>
 
       <div class="fullscreen-form-layout">
-        <div ref="mainRef" class="fullscreen-form-main">
+        <div
+          ref="mainRef"
+          class="fullscreen-form-main"
+        >
           <el-form
             ref="formRef"
             :model="form"
@@ -646,435 +663,711 @@ onMounted(async () => {
             require-asterisk-position="right"
           >
             <div class="fullscreen-form-step-stack">
-        <section class="fullscreen-form-card fullscreen-form-section">
-          <h3 class="fullscreen-form-section__title">
-            <span class="fullscreen-form-section__indicator" />
-            {{ t('ops.alertsCenter.editor.sectionBasic') }}
-          </h3>
-          <p class="fullscreen-form-section__subtitle">{{ t('ops.alertsCenter.editor.sectionBasicDesc') }}</p>
-          <div class="fullscreen-form-grid">
-            <el-form-item
-              :label="t('ops.alertsCenter.common.name')"
-              prop="name"
-              class="fullscreen-form-item--in-card"
-              data-alert-policy-field="name"
-            >
-              <el-input
-                v-model="form.name"
-                :placeholder="t('ops.alertsCenter.policies.alertNamePlaceholder')"
-              />
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldNameHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.policies.alertType')" class="fullscreen-form-item--in-card">
-              <el-select v-model="form.type" class="w-full">
-                <el-option
-                  v-for="opt in policyTypeOptions"
-                  :key="opt.value"
-                  :value="opt.value"
-                  :label="opt.label"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldTypeHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.common.severity')" class="fullscreen-form-item--in-card">
-              <el-select v-model="form.severity" class="w-full">
-                <el-option value="critical" :label="t('ops.alertsCenter.common.critical')" />
-                <el-option value="warning" :label="t('ops.alertsCenter.common.warning')" />
-                <el-option value="info" :label="t('ops.alertsCenter.common.info')" />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldSeverityHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.common.status')" class="fullscreen-form-status-item">
-              <el-switch
-                v-model="form.enabled"
-                :active-text="t('ops.alertsCenter.common.enabled')"
-                :inactive-text="t('ops.alertsCenter.common.disabled')"
-              />
-            </el-form-item>
-          </div>
-          <el-form-item :label="t('ops.alertsCenter.policies.description')" class="fullscreen-form-item--in-card">
-            <el-input
-              v-model="form.description"
-              type="textarea"
-              :rows="3"
-              :placeholder="t('ops.alertsCenter.policies.description')"
-            />
-            <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldDescriptionHint') }}</p>
-          </el-form-item>
-        </section>
+              <section class="fullscreen-form-card fullscreen-form-section">
+                <h3 class="fullscreen-form-section__title">
+                  <span class="fullscreen-form-section__indicator" />
+                  {{ t('ops.alertsCenter.editor.sectionBasic') }}
+                </h3>
+                <p class="fullscreen-form-section__subtitle">
+                  {{ t('ops.alertsCenter.editor.sectionBasicDesc') }}
+                </p>
+                <div class="fullscreen-form-grid">
+                  <el-form-item
+                    :label="t('ops.alertsCenter.common.name')"
+                    prop="name"
+                    class="fullscreen-form-item--in-card"
+                    data-alert-policy-field="name"
+                  >
+                    <el-input
+                      v-model="form.name"
+                      :placeholder="t('ops.alertsCenter.policies.alertNamePlaceholder')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldNameHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.policies.alertType')"
+                    class="fullscreen-form-item--in-card"
+                  >
+                    <el-select
+                      v-model="form.type"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="opt in policyTypeOptions"
+                        :key="opt.value"
+                        :value="opt.value"
+                        :label="opt.label"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldTypeHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.common.severity')"
+                    class="fullscreen-form-item--in-card"
+                  >
+                    <el-select
+                      v-model="form.severity"
+                      class="w-full"
+                    >
+                      <el-option
+                        value="critical"
+                        :label="t('ops.alertsCenter.common.critical')"
+                      />
+                      <el-option
+                        value="warning"
+                        :label="t('ops.alertsCenter.common.warning')"
+                      />
+                      <el-option
+                        value="info"
+                        :label="t('ops.alertsCenter.common.info')"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldSeverityHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.common.status')"
+                    class="fullscreen-form-status-item"
+                  >
+                    <el-switch
+                      v-model="form.enabled"
+                      :active-text="t('ops.alertsCenter.common.enabled')"
+                      :inactive-text="t('ops.alertsCenter.common.disabled')"
+                    />
+                  </el-form-item>
+                </div>
+                <el-form-item
+                  :label="t('ops.alertsCenter.policies.description')"
+                  class="fullscreen-form-item--in-card"
+                >
+                  <el-input
+                    v-model="form.description"
+                    type="textarea"
+                    :rows="3"
+                    :placeholder="t('ops.alertsCenter.policies.description')"
+                  />
+                  <p class="fullscreen-form-field__hint">
+                    {{ t('ops.alertsCenter.editor.fieldDescriptionHint') }}
+                  </p>
+                </el-form-item>
+              </section>
 
-        <section class="fullscreen-form-card fullscreen-form-section">
-          <h3 class="fullscreen-form-section__title">
-            <span class="fullscreen-form-section__indicator" />
-            {{ t('ops.alertsCenter.editor.sectionTarget') }}
-          </h3>
-          <p class="fullscreen-form-section__subtitle">{{ t('ops.alertsCenter.editor.sectionTargetDesc') }}</p>
-          <div class="fullscreen-form-grid">
-            <el-form-item :label="t('ops.alertsCenter.policies.targetColumn')" class="fullscreen-form-item--in-card">
-              <el-select v-model="form.resourceType" class="w-full">
-                <el-option
-                  v-for="opt in resourceTypeOptions"
-                  :key="opt.value"
-                  :value="opt.value"
-                  :label="opt.label"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldResourceTypeHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.policies.scope')" class="fullscreen-form-item--in-card">
-              <el-select v-model="form.scope" class="w-full">
-                <el-option
-                  v-for="opt in scopeOptions"
-                  :key="opt.value"
-                  :value="opt.value"
-                  :label="opt.label"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldScopeHint') }}</p>
-            </el-form-item>
-          </div>
-          <el-form-item
-            v-if="form.scope === 'selected' && form.type !== 'event'"
-            :label="t('ops.alertsCenter.editor.fieldMonitoringResources')"
-            prop="resourceIds"
-            class="fullscreen-form-item--in-card mt-2"
-            data-alert-policy-field="resources"
-          >
-            <div class="fullscreen-form-control-row">
-              <el-select
-                v-model="form.resourceIds"
-                multiple
-                filterable
-                collapse-tags
-                collapse-tags-tooltip
-                fit-input-width
-                :max-collapse-tags="2"
-                popper-class="alert-policy-editor-resource-select-popper"
-                class="fullscreen-form-control-main alert-policy-editor-resource-select"
-                :loading="resourcesLoading"
-                :placeholder="t('ops.alertsCenter.editor.fieldMonitoringResources')"
-              >
-                <el-option
-                  v-for="resource in resourceOptions"
-                  :key="resource.id"
-                  :value="resource.id"
-                  :label="`${resource.name}${resource.status ? ` · ${resource.status}` : ''}`"
-                />
-              </el-select>
-              <el-button
-                class="fullscreen-form-icon-btn hfl-refresh-button"
-                native-type="button"
-                :title="t('ops.alertsCenter.editor.refreshResources')"
-                :aria-label="t('ops.alertsCenter.editor.refreshResources')"
-                :disabled="resourcesLoading"
-                @click="loadResources"
-              >
-                <RefreshCw :size="16" :class="{ 'is-spinning': resourcesLoading }" />
-              </el-button>
-            </div>
-            <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.resourceMultiSelectHint') }}</p>
-          </el-form-item>
-        </section>
+              <section class="fullscreen-form-card fullscreen-form-section">
+                <h3 class="fullscreen-form-section__title">
+                  <span class="fullscreen-form-section__indicator" />
+                  {{ t('ops.alertsCenter.editor.sectionTarget') }}
+                </h3>
+                <p class="fullscreen-form-section__subtitle">
+                  {{ t('ops.alertsCenter.editor.sectionTargetDesc') }}
+                </p>
+                <div class="fullscreen-form-grid">
+                  <el-form-item
+                    :label="t('ops.alertsCenter.policies.targetColumn')"
+                    class="fullscreen-form-item--in-card"
+                  >
+                    <el-select
+                      v-model="form.resourceType"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="opt in resourceTypeOptions"
+                        :key="opt.value"
+                        :value="opt.value"
+                        :label="opt.label"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldResourceTypeHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.policies.scope')"
+                    class="fullscreen-form-item--in-card"
+                  >
+                    <el-select
+                      v-model="form.scope"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="opt in scopeOptions"
+                        :key="opt.value"
+                        :value="opt.value"
+                        :label="opt.label"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldScopeHint') }}
+                    </p>
+                  </el-form-item>
+                </div>
+                <el-form-item
+                  v-if="form.scope === 'selected' && form.type !== 'event'"
+                  :label="t('ops.alertsCenter.editor.fieldMonitoringResources')"
+                  prop="resourceIds"
+                  class="fullscreen-form-item--in-card mt-2"
+                  data-alert-policy-field="resources"
+                >
+                  <div class="fullscreen-form-control-row">
+                    <el-select
+                      v-model="form.resourceIds"
+                      multiple
+                      filterable
+                      collapse-tags
+                      collapse-tags-tooltip
+                      fit-input-width
+                      :max-collapse-tags="2"
+                      popper-class="alert-policy-editor-resource-select-popper"
+                      class="fullscreen-form-control-main alert-policy-editor-resource-select"
+                      :loading="resourcesLoading"
+                      :placeholder="t('ops.alertsCenter.editor.fieldMonitoringResources')"
+                    >
+                      <el-option
+                        v-for="resource in resourceOptions"
+                        :key="resource.id"
+                        :value="resource.id"
+                        :label="`${resource.name}${resource.status ? ` · ${resource.status}` : ''}`"
+                      />
+                    </el-select>
+                    <el-button
+                      class="fullscreen-form-icon-btn hfl-refresh-button"
+                      native-type="button"
+                      :title="t('ops.alertsCenter.editor.refreshResources')"
+                      :aria-label="t('ops.alertsCenter.editor.refreshResources')"
+                      :disabled="resourcesLoading"
+                      @click="loadResources"
+                    >
+                      <RefreshCw
+                        :size="16"
+                        :class="{ 'is-spinning': resourcesLoading }"
+                      />
+                    </el-button>
+                  </div>
+                  <p class="fullscreen-form-field__hint">
+                    {{ t('ops.alertsCenter.editor.resourceMultiSelectHint') }}
+                  </p>
+                </el-form-item>
+              </section>
 
-        <section class="fullscreen-form-card fullscreen-form-section">
-          <h3 class="fullscreen-form-section__title">
-            <span class="fullscreen-form-section__indicator" />
-            {{ t('ops.alertsCenter.editor.sectionTrigger') }}
-          </h3>
-          <p class="fullscreen-form-section__subtitle">{{ t('ops.alertsCenter.editor.sectionTriggerDesc') }}</p>
+              <section class="fullscreen-form-card fullscreen-form-section">
+                <h3 class="fullscreen-form-section__title">
+                  <span class="fullscreen-form-section__indicator" />
+                  {{ t('ops.alertsCenter.editor.sectionTrigger') }}
+                </h3>
+                <p class="fullscreen-form-section__subtitle">
+                  {{ t('ops.alertsCenter.editor.sectionTriggerDesc') }}
+                </p>
 
-          <div v-if="form.type === 'metric'" class="fullscreen-form-grid">
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.fieldMetric')"
-              prop="triggerRule.metric_key"
-              data-alert-policy-field="metric_key"
-            >
-              <el-select v-model="metricKey" class="w-full" filterable allow-create default-first-option>
-                <el-option v-for="key in metricKeys" :key="key" :value="key" :label="key" />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldMetricHint') }}</p>
-            </el-form-item>
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.fieldOperator')"
-              prop="triggerRule.operator"
-              data-alert-policy-field="operator"
-            >
-              <el-select v-model="metricOperator" class="w-full">
-                <el-option v-for="op in operatorOptions" :key="op" :value="op" :label="op" />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldOperatorHint') }}</p>
-            </el-form-item>
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.fieldThreshold')"
-              prop="triggerRule.threshold"
-              data-alert-policy-field="threshold"
-            >
-              <el-input-number v-model="metricThreshold" class="w-full" :min="0" />
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldThresholdHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.editor.fieldUnit')">
-              <el-input v-model="metricUnit" />
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldUnitHint') }}</p>
-            </el-form-item>
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.fieldDuration')"
-              prop="triggerRule.duration_seconds"
-              data-alert-policy-field="duration_seconds"
-            >
-              <el-select v-model="metricDuration" class="w-full">
-                <el-option
-                  v-for="opt in durationOptions"
-                  :key="opt.value"
-                  :value="opt.value"
-                  :label="opt.label"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldDurationHint') }}</p>
-            </el-form-item>
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.fieldEvaluationInterval')"
-              prop="triggerRule.evaluation_interval_seconds"
-              data-alert-policy-field="evaluation_interval_seconds"
-            >
-              <el-select v-model="metricInterval" class="w-full">
-                <el-option
-                  v-for="opt in durationOptions"
-                  :key="`interval-${opt.value}`"
-                  :value="opt.value"
-                  :label="opt.label"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldEvaluationIntervalHint') }}</p>
-            </el-form-item>
-          </div>
+                <div
+                  v-if="form.type === 'metric'"
+                  class="fullscreen-form-grid"
+                >
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.fieldMetric')"
+                    prop="triggerRule.metric_key"
+                    data-alert-policy-field="metric_key"
+                  >
+                    <el-select
+                      v-model="metricKey"
+                      class="w-full"
+                      filterable
+                      allow-create
+                      default-first-option
+                    >
+                      <el-option
+                        v-for="key in metricKeys"
+                        :key="key"
+                        :value="key"
+                        :label="key"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldMetricHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.fieldOperator')"
+                    prop="triggerRule.operator"
+                    data-alert-policy-field="operator"
+                  >
+                    <el-select
+                      v-model="metricOperator"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="op in operatorOptions"
+                        :key="op"
+                        :value="op"
+                        :label="op"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldOperatorHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.fieldThreshold')"
+                    prop="triggerRule.threshold"
+                    data-alert-policy-field="threshold"
+                  >
+                    <el-input-number
+                      v-model="metricThreshold"
+                      class="w-full"
+                      :min="0"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldThresholdHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item :label="t('ops.alertsCenter.editor.fieldUnit')">
+                    <el-input v-model="metricUnit" />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldUnitHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.fieldDuration')"
+                    prop="triggerRule.duration_seconds"
+                    data-alert-policy-field="duration_seconds"
+                  >
+                    <el-select
+                      v-model="metricDuration"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="opt in durationOptions"
+                        :key="opt.value"
+                        :value="opt.value"
+                        :label="opt.label"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldDurationHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.fieldEvaluationInterval')"
+                    prop="triggerRule.evaluation_interval_seconds"
+                    data-alert-policy-field="evaluation_interval_seconds"
+                  >
+                    <el-select
+                      v-model="metricInterval"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="opt in durationOptions"
+                        :key="`interval-${opt.value}`"
+                        :value="opt.value"
+                        :label="opt.label"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldEvaluationIntervalHint') }}
+                    </p>
+                  </el-form-item>
+                </div>
 
-          <div v-else-if="form.type === 'task'" class="fullscreen-form-grid">
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.taskType')"
-              prop="triggerRule.task_type"
-              data-alert-policy-field="task_type"
-            >
-              <el-select v-model="taskType" class="w-full">
-                <el-option v-for="item in taskTypes" :key="item" :value="item" :label="item" />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.taskTypeHint') }}</p>
-            </el-form-item>
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.eventType')"
-              prop="triggerRule.event_type"
-              data-alert-policy-field="event_type"
-            >
-              <el-select v-model="taskEventType" class="w-full">
-                <el-option v-for="item in taskEventTypes" :key="item" :value="item" :label="item" />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.eventTypeHint') }}</p>
-            </el-form-item>
-          </div>
+                <div
+                  v-else-if="form.type === 'task'"
+                  class="fullscreen-form-grid"
+                >
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.taskType')"
+                    prop="triggerRule.task_type"
+                    data-alert-policy-field="task_type"
+                  >
+                    <el-select
+                      v-model="taskType"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="item in taskTypes"
+                        :key="item"
+                        :value="item"
+                        :label="item"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.taskTypeHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.eventType')"
+                    prop="triggerRule.event_type"
+                    data-alert-policy-field="event_type"
+                  >
+                    <el-select
+                      v-model="taskEventType"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="item in taskEventTypes"
+                        :key="item"
+                        :value="item"
+                        :label="item"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.eventTypeHint') }}
+                    </p>
+                  </el-form-item>
+                </div>
 
-          <div v-else-if="form.type === 'availability'" class="fullscreen-form-grid">
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.checkType')"
-              prop="triggerRule.check_type"
-              data-alert-policy-field="check_type"
-            >
-              <el-select v-model="checkType" class="w-full">
-                <el-option v-for="item in availabilityCheckTypes" :key="item" :value="item" :label="item" />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.checkTypeHint') }}</p>
-            </el-form-item>
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.fieldDuration')"
-              prop="triggerRule.duration_seconds"
-              data-alert-policy-field="duration_seconds"
-            >
-              <el-select v-model="availabilityDuration" class="w-full">
-                <el-option
-                  v-for="opt in durationOptions"
-                  :key="`avail-${opt.value}`"
-                  :value="opt.value"
-                  :label="opt.label"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldDurationHint') }}</p>
-            </el-form-item>
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.fieldAvailabilityTimeout')"
-              prop="triggerRule.timeout_seconds"
-              data-alert-policy-field="timeout_seconds"
-            >
-              <el-input-number v-model="availabilityTimeout" class="w-full" :min="0" />
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldAvailabilityTimeoutHint') }}</p>
-            </el-form-item>
-          </div>
+                <div
+                  v-else-if="form.type === 'availability'"
+                  class="fullscreen-form-grid"
+                >
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.checkType')"
+                    prop="triggerRule.check_type"
+                    data-alert-policy-field="check_type"
+                  >
+                    <el-select
+                      v-model="checkType"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="item in availabilityCheckTypes"
+                        :key="item"
+                        :value="item"
+                        :label="item"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.checkTypeHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.fieldDuration')"
+                    prop="triggerRule.duration_seconds"
+                    data-alert-policy-field="duration_seconds"
+                  >
+                    <el-select
+                      v-model="availabilityDuration"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="opt in durationOptions"
+                        :key="`avail-${opt.value}`"
+                        :value="opt.value"
+                        :label="opt.label"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldDurationHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.fieldAvailabilityTimeout')"
+                    prop="triggerRule.timeout_seconds"
+                    data-alert-policy-field="timeout_seconds"
+                  >
+                    <el-input-number
+                      v-model="availabilityTimeout"
+                      class="w-full"
+                      :min="0"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldAvailabilityTimeoutHint') }}
+                    </p>
+                  </el-form-item>
+                </div>
 
-          <div v-else-if="form.type === 'system'" class="fullscreen-form-grid">
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.checkType')"
-              prop="triggerRule.check_type"
-              data-alert-policy-field="check_type"
-            >
-              <el-select v-model="systemCheckType" class="w-full">
-                <el-option v-for="item in systemCheckTypes" :key="item" :value="item" :label="item" />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.checkTypeHint') }}</p>
-            </el-form-item>
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.fieldDuration')"
-              prop="triggerRule.duration_seconds"
-              data-alert-policy-field="duration_seconds"
-            >
-              <el-select v-model="systemDuration" class="w-full">
-                <el-option
-                  v-for="opt in durationOptions"
-                  :key="`sys-${opt.value}`"
-                  :value="opt.value"
-                  :label="opt.label"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldDurationHint') }}</p>
-            </el-form-item>
-          </div>
+                <div
+                  v-else-if="form.type === 'system'"
+                  class="fullscreen-form-grid"
+                >
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.checkType')"
+                    prop="triggerRule.check_type"
+                    data-alert-policy-field="check_type"
+                  >
+                    <el-select
+                      v-model="systemCheckType"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="item in systemCheckTypes"
+                        :key="item"
+                        :value="item"
+                        :label="item"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.checkTypeHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.fieldDuration')"
+                    prop="triggerRule.duration_seconds"
+                    data-alert-policy-field="duration_seconds"
+                  >
+                    <el-select
+                      v-model="systemDuration"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="opt in durationOptions"
+                        :key="`sys-${opt.value}`"
+                        :value="opt.value"
+                        :label="opt.label"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldDurationHint') }}
+                    </p>
+                  </el-form-item>
+                </div>
 
-          <div v-else-if="form.type === 'event'" class="fullscreen-form-grid">
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.eventCategory')"
-              prop="triggerRule.event_category"
-              data-alert-policy-field="event_category"
-            >
-              <el-select v-model="eventCategory" class="w-full">
-                <el-option v-for="item in eventCategories" :key="item" :value="item" :label="item" />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.eventCategoryHint') }}</p>
-            </el-form-item>
-            <el-form-item
-              :label="t('ops.alertsCenter.editor.eventTypes')"
-              prop="triggerRule.event_types"
-              data-alert-policy-field="event_types"
-            >
-              <el-select
-                v-model="eventTypes"
-                multiple
-                filterable
-                collapse-tags
-                collapse-tags-tooltip
-                :max-collapse-tags="1"
-                :tag-tooltip="{ popperClass: 'alert-policy-editor-event-types-tooltip', placement: 'bottom' }"
-                class="w-full alert-policy-editor-event-types"
-              >
-                <el-option
-                  v-for="item in eventTypesByCategory[eventCategory] || []"
-                  :key="item"
-                  :value="item"
-                  :label="item"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.eventTypesHint') }}</p>
-            </el-form-item>
-          </div>
-        </section>
+                <div
+                  v-else-if="form.type === 'event'"
+                  class="fullscreen-form-grid"
+                >
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.eventCategory')"
+                    prop="triggerRule.event_category"
+                    data-alert-policy-field="event_category"
+                  >
+                    <el-select
+                      v-model="eventCategory"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="item in eventCategories"
+                        :key="item"
+                        :value="item"
+                        :label="item"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.eventCategoryHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.eventTypes')"
+                    prop="triggerRule.event_types"
+                    data-alert-policy-field="event_types"
+                  >
+                    <el-select
+                      v-model="eventTypes"
+                      multiple
+                      filterable
+                      collapse-tags
+                      collapse-tags-tooltip
+                      :max-collapse-tags="1"
+                      :tag-tooltip="{ popperClass: 'alert-policy-editor-event-types-tooltip', placement: 'bottom' }"
+                      class="w-full alert-policy-editor-event-types"
+                    >
+                      <el-option
+                        v-for="item in eventTypesByCategory[eventCategory] || []"
+                        :key="item"
+                        :value="item"
+                        :label="item"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.eventTypesHint') }}
+                    </p>
+                  </el-form-item>
+                </div>
+              </section>
 
-        <section class="fullscreen-form-card fullscreen-form-section">
-          <h3 class="fullscreen-form-section__title">
-            <span class="fullscreen-form-section__indicator" />
-            {{ t('ops.alertsCenter.editor.sectionRecovery') }}
-          </h3>
-          <p class="fullscreen-form-section__subtitle">{{ t('ops.alertsCenter.editor.sectionRecoveryDesc') }}</p>
-          <el-form-item class="fullscreen-form-status-item">
-            <el-switch v-model="recoveryEnabled" :active-text="t('ops.alertsCenter.editor.fieldRecoveryEnabled')" />
-          </el-form-item>
-          <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldRecoveryEnabledHint') }}</p>
-          <div v-if="recoveryEnabled" class="fullscreen-form-grid mt-3">
-            <el-form-item :label="t('ops.alertsCenter.editor.fieldRecoveryCondition')">
-              <el-select v-model="recoveryCondition" class="w-full">
-                <el-option
-                  value="below_threshold"
-                  :label="t('ops.alertsCenter.editor.conditionBelowThreshold')"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldRecoveryConditionHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.editor.fieldOperator')">
-              <el-select v-model="recoveryOperator" class="w-full">
-                <el-option v-for="op in operatorOptions" :key="`recovery-${op}`" :value="op" :label="op" />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldOperatorHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.editor.fieldThreshold')">
-              <el-input-number v-model="recoveryThreshold" class="w-full" :min="0" />
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldRecoveryThresholdHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.editor.fieldRecoveryDuration')">
-              <el-select v-model="recoveryDuration" class="w-full">
-                <el-option
-                  v-for="opt in durationOptions"
-                  :key="`recovery-${opt.value}`"
-                  :value="opt.value"
-                  :label="opt.label"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldRecoveryDurationHint') }}</p>
-            </el-form-item>
-          </div>
-        </section>
+              <section class="fullscreen-form-card fullscreen-form-section">
+                <h3 class="fullscreen-form-section__title">
+                  <span class="fullscreen-form-section__indicator" />
+                  {{ t('ops.alertsCenter.editor.sectionRecovery') }}
+                </h3>
+                <p class="fullscreen-form-section__subtitle">
+                  {{ t('ops.alertsCenter.editor.sectionRecoveryDesc') }}
+                </p>
+                <el-form-item class="fullscreen-form-status-item">
+                  <el-switch
+                    v-model="recoveryEnabled"
+                    :active-text="t('ops.alertsCenter.editor.fieldRecoveryEnabled')"
+                  />
+                </el-form-item>
+                <p class="fullscreen-form-field__hint">
+                  {{ t('ops.alertsCenter.editor.fieldRecoveryEnabledHint') }}
+                </p>
+                <div
+                  v-if="recoveryEnabled"
+                  class="fullscreen-form-grid mt-3"
+                >
+                  <el-form-item :label="t('ops.alertsCenter.editor.fieldRecoveryCondition')">
+                    <el-select
+                      v-model="recoveryCondition"
+                      class="w-full"
+                    >
+                      <el-option
+                        value="below_threshold"
+                        :label="t('ops.alertsCenter.editor.conditionBelowThreshold')"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldRecoveryConditionHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item :label="t('ops.alertsCenter.editor.fieldOperator')">
+                    <el-select
+                      v-model="recoveryOperator"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="op in operatorOptions"
+                        :key="`recovery-${op}`"
+                        :value="op"
+                        :label="op"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldOperatorHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item :label="t('ops.alertsCenter.editor.fieldThreshold')">
+                    <el-input-number
+                      v-model="recoveryThreshold"
+                      class="w-full"
+                      :min="0"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldRecoveryThresholdHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item :label="t('ops.alertsCenter.editor.fieldRecoveryDuration')">
+                    <el-select
+                      v-model="recoveryDuration"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="opt in durationOptions"
+                        :key="`recovery-${opt.value}`"
+                        :value="opt.value"
+                        :label="opt.label"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldRecoveryDurationHint') }}
+                    </p>
+                  </el-form-item>
+                </div>
+              </section>
 
-        <section class="fullscreen-form-card fullscreen-form-section">
-          <h3 class="fullscreen-form-section__title">
-            <span class="fullscreen-form-section__indicator" />
-            {{ t('ops.alertsCenter.editor.sectionNotification') }}
-          </h3>
-          <p class="fullscreen-form-section__subtitle">{{ t('ops.alertsCenter.editor.sectionNotificationDesc') }}</p>
-          <div class="fullscreen-form-grid">
-            <el-form-item :label="t('ops.alertsCenter.policies.notificationChannels')">
-              <el-select v-model="form.notificationChannelIds" multiple class="w-full" filterable>
-                <el-option v-for="ch in channels" :key="ch.id" :value="ch.id" :label="ch.name" />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldNotificationChannelsHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.editor.fieldNotifyOnFiring')">
-              <el-select v-model="notifyOnFiring" class="w-full">
-                <el-option
-                  v-for="opt in yesNoOptions"
-                  :key="`firing-${opt.label}`"
-                  :value="opt.value"
-                  :label="opt.label"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldNotifyOnFiringHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.editor.fieldNotifyOnResolved')">
-              <el-select v-model="notifyOnResolved" class="w-full">
-                <el-option
-                  v-for="opt in yesNoOptions"
-                  :key="`resolved-${opt.label}`"
-                  :value="opt.value"
-                  :label="opt.label"
-                />
-              </el-select>
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldNotifyOnResolvedHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.editor.fieldRepeatInterval')">
-              <el-input-number v-model="repeatIntervalSeconds" class="w-full" :min="0" :step="60" />
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldRepeatIntervalHint') }}</p>
-            </el-form-item>
-            <el-form-item :label="t('ops.alertsCenter.editor.fieldMergeNotification')" class="fullscreen-form-status-item">
-              <el-switch
-                v-model="mergeEnabled"
-                :active-text="t('ops.alertsCenter.common.enabled')"
-                :inactive-text="t('ops.alertsCenter.common.disabled')"
-                @change="handleMergeEnabledChange"
-              />
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldMergeNotificationHint') }}</p>
-            </el-form-item>
-            <el-form-item v-if="mergeEnabled" :label="t('ops.alertsCenter.editor.fieldMergeKey')">
-              <el-input v-model="mergeKey" :placeholder="t('ops.alertsCenter.editor.phMergeKey')" />
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldMergeKeyHint') }}</p>
-            </el-form-item>
-            <el-form-item v-if="mergeEnabled" :label="t('ops.alertsCenter.editor.fieldMergeWindow')">
-              <el-input-number v-model="mergeWindowSeconds" class="w-full" :min="60" :step="60" />
-              <p class="fullscreen-form-field__hint">{{ t('ops.alertsCenter.editor.fieldMergeWindowHint') }}</p>
-            </el-form-item>
-          </div>
-        </section>
+              <section class="fullscreen-form-card fullscreen-form-section">
+                <h3 class="fullscreen-form-section__title">
+                  <span class="fullscreen-form-section__indicator" />
+                  {{ t('ops.alertsCenter.editor.sectionNotification') }}
+                </h3>
+                <p class="fullscreen-form-section__subtitle">
+                  {{ t('ops.alertsCenter.editor.sectionNotificationDesc') }}
+                </p>
+                <div class="fullscreen-form-grid">
+                  <el-form-item :label="t('ops.alertsCenter.policies.notificationChannels')">
+                    <el-select
+                      v-model="form.notificationChannelIds"
+                      multiple
+                      class="w-full"
+                      filterable
+                    >
+                      <el-option
+                        v-for="ch in channels"
+                        :key="ch.id"
+                        :value="ch.id"
+                        :label="ch.name"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldNotificationChannelsHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item :label="t('ops.alertsCenter.editor.fieldNotifyOnFiring')">
+                    <el-select
+                      v-model="notifyOnFiring"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="opt in yesNoOptions"
+                        :key="`firing-${opt.label}`"
+                        :value="opt.value"
+                        :label="opt.label"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldNotifyOnFiringHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item :label="t('ops.alertsCenter.editor.fieldNotifyOnResolved')">
+                    <el-select
+                      v-model="notifyOnResolved"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="opt in yesNoOptions"
+                        :key="`resolved-${opt.label}`"
+                        :value="opt.value"
+                        :label="opt.label"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldNotifyOnResolvedHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item :label="t('ops.alertsCenter.editor.fieldRepeatInterval')">
+                    <el-input-number
+                      v-model="repeatIntervalSeconds"
+                      class="w-full"
+                      :min="0"
+                      :step="60"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldRepeatIntervalHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.fieldMergeNotification')"
+                    class="fullscreen-form-status-item"
+                  >
+                    <el-switch
+                      v-model="mergeEnabled"
+                      :active-text="t('ops.alertsCenter.common.enabled')"
+                      :inactive-text="t('ops.alertsCenter.common.disabled')"
+                      @change="handleMergeEnabledChange"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldMergeNotificationHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    v-if="mergeEnabled"
+                    :label="t('ops.alertsCenter.editor.fieldMergeKey')"
+                  >
+                    <el-input
+                      v-model="mergeKey"
+                      :placeholder="t('ops.alertsCenter.editor.phMergeKey')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldMergeKeyHint') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    v-if="mergeEnabled"
+                    :label="t('ops.alertsCenter.editor.fieldMergeWindow')"
+                  >
+                    <el-input-number
+                      v-model="mergeWindowSeconds"
+                      class="w-full"
+                      :min="60"
+                      :step="60"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldMergeWindowHint') }}
+                    </p>
+                  </el-form-item>
+                </div>
+              </section>
             </div>
           </el-form>
 
@@ -1098,19 +1391,26 @@ onMounted(async () => {
             <div class="add-form-preview-header">
               <div class="add-form-preview-header__glow" />
               <div class="add-form-preview-header__icon alert-policy-editor-preview__icon">
-                <BellRing class="add-form-preview-header__cloud" :size="28" />
+                <BellRing
+                  class="add-form-preview-header__cloud"
+                  :size="28"
+                />
               </div>
               <div class="add-form-preview-header__info">
                 <h4 class="add-form-preview-header__name">
                   {{ form.name.trim() || t('ops.alertsCenter.policies.unnamedPolicy') }}
                 </h4>
-                <p class="add-form-preview-header__type">{{ policyTypeLabel(form.type) }}</p>
+                <p class="add-form-preview-header__type">
+                  {{ policyTypeLabel(form.type) }}
+                </p>
               </div>
             </div>
 
             <div class="add-form-preview-body">
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('ops.alertsCenter.editor.previewTitle') }}</h5>
+                <h5 class="add-form-preview-section__title">
+                  {{ t('ops.alertsCenter.editor.previewTitle') }}
+                </h5>
                 <div
                   v-for="row in previewBasicRows"
                   :key="row.label"
@@ -1136,7 +1436,9 @@ onMounted(async () => {
               </div>
 
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('ops.alertsCenter.editor.sectionTrigger') }}</h5>
+                <h5 class="add-form-preview-section__title">
+                  {{ t('ops.alertsCenter.editor.sectionTrigger') }}
+                </h5>
                 <div
                   v-for="row in previewRuleRows"
                   :key="row.label"
@@ -1157,7 +1459,9 @@ onMounted(async () => {
               </div>
 
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('ops.alertsCenter.editor.sectionNotification') }}</h5>
+                <h5 class="add-form-preview-section__title">
+                  {{ t('ops.alertsCenter.editor.sectionNotification') }}
+                </h5>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('ops.alertsCenter.editor.previewNotification') }}</span>
                   <span

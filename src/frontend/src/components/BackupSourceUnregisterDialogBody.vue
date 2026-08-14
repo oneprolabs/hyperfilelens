@@ -29,8 +29,10 @@ const props = withDefaults(defineProps<{
   previousFailureSummary?: string
   previousFailureClickable?: boolean
 }>(), {
+  sources: () => [],
   showSnapshots: true,
   isStep3: false,
+  displayRisks: () => [],
   preflightLoading: false,
   preflightError: false,
   loading: false,
@@ -215,7 +217,10 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
               >
                 {{ row.statusLabel }}
               </ElTag>
-              <span v-else class="hfl-empty-mark">—</span>
+              <span
+                v-else
+                class="hfl-empty-mark"
+              >—</span>
             </template>
           </ElTableColumn>
           <ElTableColumn
@@ -225,7 +230,10 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
             align="right"
           >
             <template #default="{ row }">
-              <span class="hfl-flow-action-dialog__count tabular-nums" :class="{ 'hfl-empty-mark': row.snapshotCount == null }">
+              <span
+                class="hfl-flow-action-dialog__count tabular-nums"
+                :class="{ 'hfl-empty-mark': row.snapshotCount == null }"
+              >
                 {{ row.snapshotCount ?? '—' }}
               </span>
             </template>
@@ -235,7 +243,10 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
             width="150"
           >
             <template #default="{ row }">
-              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt || row.registeredAt === '—' }">
+              <span
+                class="hfl-table-cell-time"
+                :class="{ 'hfl-empty-mark': !row.registeredAt || row.registeredAt === '—' }"
+              >
                 {{ row.registeredAt || '—' }}
               </span>
             </template>

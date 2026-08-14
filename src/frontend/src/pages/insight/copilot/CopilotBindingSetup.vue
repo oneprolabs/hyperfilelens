@@ -120,9 +120,17 @@ onMounted(() => {
       <p>{{ t('insight.copilot.bindingDesc') }}</p>
     </header>
 
-    <el-form v-loading="loading" label-position="top" class="copilot-binding-setup__form">
+    <el-form
+      v-loading="loading"
+      label-position="top"
+      class="copilot-binding-setup__form"
+    >
       <el-form-item :label="t('insight.copilot.bindingBackupSource')">
-        <el-select v-model="backupConfigId" filterable style="width: 100%">
+        <el-select
+          v-model="backupConfigId"
+          filterable
+          style="width: 100%"
+        >
           <el-option
             v-for="row in backupConfigs"
             :key="row.id"
@@ -165,8 +173,15 @@ onMounted(() => {
       </el-form-item>
 
       <el-form-item :label="t('insight.copilot.bindingGateway')">
-        <el-select v-model="gatewayLinkId" clearable style="width: 100%">
-          <el-option :label="t('insight.copilot.bindingGatewayAuto')" :value="null" />
+        <el-select
+          v-model="gatewayLinkId"
+          clearable
+          style="width: 100%"
+        >
+          <el-option
+            :label="t('insight.copilot.bindingGatewayAuto')"
+            :value="null"
+          />
           <el-option
             v-for="row in gatewayOptions"
             :key="row.gateway_link_id"
@@ -176,7 +191,11 @@ onMounted(() => {
         </el-select>
       </el-form-item>
 
-      <el-button type="primary" :loading="submitting" @click="submit">
+      <el-button
+        type="primary"
+        :loading="submitting"
+        @click="submit"
+      >
         {{ submitting ? t('insight.copilot.bindingSubmitting') : t('insight.copilot.bindingSubmit') }}
       </el-button>
     </el-form>

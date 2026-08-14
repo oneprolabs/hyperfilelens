@@ -275,15 +275,29 @@ watch(() => form.type, () => {
 </script>
 
 <template>
-  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen">
+  <div
+    ref="pageRef"
+    class="fullscreen-form-fullscreen resource-add-fullscreen"
+  >
     <div class="fullscreen-form-page add-s3-page">
       <div class="fullscreen-form-header">
-        <button type="button" class="fullscreen-form-header__back" @click="handleBack">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+        <button
+          type="button"
+          class="fullscreen-form-header__back"
+          @click="handleBack"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
-          <h1 class="fullscreen-form-header__title">{{ pageTitle }}</h1>
-          <p class="fullscreen-form-header__desc">{{ t('ops.notification.modalSubtitle') }}</p>
+          <h1 class="fullscreen-form-header__title">
+            {{ pageTitle }}
+          </h1>
+          <p class="fullscreen-form-header__desc">
+            {{ t('ops.notification.modalSubtitle') }}
+          </p>
         </div>
       </div>
 
@@ -314,10 +328,20 @@ watch(() => form.type, () => {
                       v-model="form.name"
                       :placeholder="t('ops.notification.phChannelNameEmail')"
                     />
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipChannelName') }}</p>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipChannelName') }}
+                    </p>
                   </el-form-item>
-                  <el-form-item :label="t('ops.notification.formChannelType')" required class="fullscreen-form-item--in-card">
-                    <el-select v-model="form.type" class="w-full" :disabled="!!editingId">
+                  <el-form-item
+                    :label="t('ops.notification.formChannelType')"
+                    required
+                    class="fullscreen-form-item--in-card"
+                  >
+                    <el-select
+                      v-model="form.type"
+                      class="w-full"
+                      :disabled="!!editingId"
+                    >
                       <el-option
                         v-for="opt in typeOptions"
                         :key="opt.value"
@@ -325,15 +349,22 @@ watch(() => form.type, () => {
                         :label="opt.label"
                       />
                     </el-select>
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipChannelType') }}</p>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipChannelType') }}
+                    </p>
                   </el-form-item>
-                  <el-form-item :label="t('ops.notification.formEnabled')" class="fullscreen-form-status-item">
+                  <el-form-item
+                    :label="t('ops.notification.formEnabled')"
+                    class="fullscreen-form-status-item"
+                  >
                     <el-switch
                       v-model="form.enabled"
                       :active-text="t('ops.notification.statusEnabled')"
                       :inactive-text="t('ops.notification.statusDisabled')"
                     />
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipEnabled') }}</p>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipEnabled') }}
+                    </p>
                   </el-form-item>
                 </div>
               </section>
@@ -344,221 +375,374 @@ watch(() => form.type, () => {
                   {{ t('ops.notification.sectionTarget') }}
                 </h3>
 
-              <template v-if="form.type === 'email'">
-                <div class="fullscreen-form-grid">
+                <template v-if="form.type === 'email'">
+                  <div class="fullscreen-form-grid">
+                    <el-form-item
+                      :label="t('ops.notification.emailSmtpHost')"
+                      prop="email.smtp_host"
+                      class="fullscreen-form-item--in-card"
+                      data-notification-channel-field="email.smtp_host"
+                    >
+                      <el-input
+                        v-model="form.email.smtp_host"
+                        :placeholder="t('ops.notification.phSmtpHost')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipSmtpHost') }}
+                      </p>
+                    </el-form-item>
+                    <el-form-item
+                      :label="t('ops.notification.emailSmtpPort')"
+                      prop="email.smtp_port"
+                      class="fullscreen-form-item--in-card"
+                      data-notification-channel-field="email.smtp_port"
+                    >
+                      <el-input
+                        v-model="form.email.smtp_port"
+                        :placeholder="t('ops.notification.phSmtpPort')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipSmtpPort') }}
+                      </p>
+                    </el-form-item>
+                    <el-form-item
+                      :label="t('ops.notification.emailSmtpUsername')"
+                      class="fullscreen-form-item--in-card"
+                    >
+                      <el-input
+                        v-model="form.email.smtp_username"
+                        :placeholder="t('ops.notification.phSmtpUsername')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipSmtpUsername') }}
+                      </p>
+                    </el-form-item>
+                    <el-form-item
+                      :label="t('ops.notification.emailSmtpPassword')"
+                      class="fullscreen-form-item--in-card"
+                    >
+                      <el-input
+                        v-model="form.email.smtp_password"
+                        type="password"
+                        show-password
+                        :placeholder="t('ops.notification.phSmtpPassword')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipSmtpPassword') }}
+                      </p>
+                    </el-form-item>
+                  </div>
                   <el-form-item
-                    :label="t('ops.notification.emailSmtpHost')"
-                    prop="email.smtp_host"
+                    :label="t('ops.notification.emailFrom')"
+                    prop="email.from_email"
                     class="fullscreen-form-item--in-card"
-                    data-notification-channel-field="email.smtp_host"
+                    data-notification-channel-field="email.from_email"
                   >
-                    <el-input v-model="form.email.smtp_host" :placeholder="t('ops.notification.phSmtpHost')" />
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipSmtpHost') }}</p>
-                  </el-form-item>
-                  <el-form-item
-                    :label="t('ops.notification.emailSmtpPort')"
-                    prop="email.smtp_port"
-                    class="fullscreen-form-item--in-card"
-                    data-notification-channel-field="email.smtp_port"
-                  >
-                    <el-input v-model="form.email.smtp_port" :placeholder="t('ops.notification.phSmtpPort')" />
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipSmtpPort') }}</p>
-                  </el-form-item>
-                  <el-form-item :label="t('ops.notification.emailSmtpUsername')" class="fullscreen-form-item--in-card">
                     <el-input
-                      v-model="form.email.smtp_username"
-                      :placeholder="t('ops.notification.phSmtpUsername')"
+                      v-model="form.email.from_email"
+                      :placeholder="t('ops.notification.phFromEmail')"
                     />
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipSmtpUsername') }}</p>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipEmailFrom') }}
+                    </p>
                   </el-form-item>
-                  <el-form-item :label="t('ops.notification.emailSmtpPassword')" class="fullscreen-form-item--in-card">
+                  <el-form-item
+                    :label="t('ops.notification.emailSubjectOptional')"
+                    class="fullscreen-form-item--in-card"
+                  >
                     <el-input
-                      v-model="form.email.smtp_password"
+                      v-model="form.email.email_subject"
+                      :placeholder="t('ops.notification.phEmailSubject')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipEmailSubject') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.notification.emailTo')"
+                    prop="email.to_emails"
+                    class="fullscreen-form-item--in-card"
+                    data-notification-channel-field="email.to_emails"
+                  >
+                    <el-input
+                      v-model="form.email.to_emails"
+                      :placeholder="t('ops.notification.phRecipientsComma')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipEmailRecipients') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.notification.emailEncryption')"
+                    class="fullscreen-form-item--in-card"
+                  >
+                    <el-select
+                      v-model="form.email.encryption"
+                      class="w-full"
+                    >
+                      <el-option
+                        v-for="opt in emailEncryptionOptions"
+                        :key="opt.value"
+                        :value="opt.value"
+                        :label="opt.label"
+                      />
+                    </el-select>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipEmailEncryption') }}
+                    </p>
+                  </el-form-item>
+                </template>
+
+                <template v-else-if="form.type === 'webhook'">
+                  <el-form-item
+                    :label="t('ops.notification.formWebhookUrl')"
+                    prop="webhook.url"
+                    class="fullscreen-form-item--in-card"
+                    data-notification-channel-field="webhook.url"
+                  >
+                    <el-input
+                      v-model="form.webhook.url"
+                      :placeholder="t('ops.notification.phWebhookUrl')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipWebhookUrl') }}
+                    </p>
+                  </el-form-item>
+                  <div class="fullscreen-form-grid">
+                    <el-form-item
+                      :label="t('ops.notification.webhookMethod')"
+                      class="fullscreen-form-item--in-card"
+                    >
+                      <el-select
+                        v-model="form.webhook.method"
+                        class="w-full"
+                      >
+                        <el-option
+                          value="POST"
+                          label="POST"
+                        />
+                        <el-option
+                          value="PUT"
+                          label="PUT"
+                        />
+                      </el-select>
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipWebhookMethod') }}
+                      </p>
+                    </el-form-item>
+                    <el-form-item
+                      :label="t('ops.notification.webhookTimeout')"
+                      class="fullscreen-form-item--in-card"
+                    >
+                      <el-input-number
+                        v-model="form.webhook.timeout"
+                        class="w-full"
+                        :min="1"
+                        :max="120"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipWebhookTimeout') }}
+                      </p>
+                    </el-form-item>
+                  </div>
+                  <el-form-item
+                    :label="t('ops.notification.webhookHeaders')"
+                    class="fullscreen-form-item--in-card"
+                  >
+                    <el-input
+                      v-model="form.webhook.headers"
+                      type="textarea"
+                      :rows="4"
+                      :placeholder="t('ops.notification.phWebhookHeaders')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipWebhookHeaders') }}
+                    </p>
+                  </el-form-item>
+                </template>
+
+                <template v-else-if="form.type === 'dingtalk'">
+                  <el-form-item
+                    :label="t('ops.notification.formWebhookUrl')"
+                    prop="dingtalk.webhook_url"
+                    class="fullscreen-form-item--in-card"
+                    data-notification-channel-field="dingtalk.webhook_url"
+                  >
+                    <el-input
+                      v-model="form.dingtalk.webhook_url"
+                      :placeholder="t('ops.notification.phWebhookUrl')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipWebhookUrl') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.notification.formSecret')"
+                    class="fullscreen-form-item--in-card"
+                  >
+                    <el-input
+                      v-model="form.dingtalk.secret"
                       type="password"
                       show-password
-                      :placeholder="t('ops.notification.phSmtpPassword')"
+                      :placeholder="t('ops.notification.phSecret')"
                     />
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipSmtpPassword') }}</p>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipSecret') }}
+                    </p>
                   </el-form-item>
-                </div>
-                <el-form-item
-                  :label="t('ops.notification.emailFrom')"
-                  prop="email.from_email"
-                  class="fullscreen-form-item--in-card"
-                  data-notification-channel-field="email.from_email"
-                >
-                  <el-input v-model="form.email.from_email" :placeholder="t('ops.notification.phFromEmail')" />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipEmailFrom') }}</p>
-                </el-form-item>
-                <el-form-item :label="t('ops.notification.emailSubjectOptional')" class="fullscreen-form-item--in-card">
-                  <el-input
-                    v-model="form.email.email_subject"
-                    :placeholder="t('ops.notification.phEmailSubject')"
-                  />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipEmailSubject') }}</p>
-                </el-form-item>
-                <el-form-item
-                  :label="t('ops.notification.emailTo')"
-                  prop="email.to_emails"
-                  class="fullscreen-form-item--in-card"
-                  data-notification-channel-field="email.to_emails"
-                >
-                  <el-input
-                    v-model="form.email.to_emails"
-                    :placeholder="t('ops.notification.phRecipientsComma')"
-                  />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipEmailRecipients') }}</p>
-                </el-form-item>
-                <el-form-item :label="t('ops.notification.emailEncryption')" class="fullscreen-form-item--in-card">
-                  <el-select v-model="form.email.encryption" class="w-full">
-                    <el-option
-                      v-for="opt in emailEncryptionOptions"
-                      :key="opt.value"
-                      :value="opt.value"
-                      :label="opt.label"
+                  <div class="fullscreen-form-grid">
+                    <el-form-item
+                      :label="t('ops.notification.formAtMobiles')"
+                      class="fullscreen-form-item--in-card"
+                    >
+                      <el-input
+                        v-model="form.dingtalk.at_mobiles"
+                        :placeholder="t('ops.notification.phAtMobiles')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipDingtalkAtMobiles') }}
+                      </p>
+                    </el-form-item>
+                    <el-form-item
+                      :label="t('ops.notification.formAtUserIds')"
+                      class="fullscreen-form-item--in-card"
+                    >
+                      <el-input
+                        v-model="form.dingtalk.at_user_ids"
+                        :placeholder="t('ops.notification.phAtUserIds')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipDingtalkAtUserIds') }}
+                      </p>
+                    </el-form-item>
+                  </div>
+                  <el-form-item
+                    :label="t('ops.notification.formAtAll')"
+                    class="fullscreen-form-status-item"
+                  >
+                    <el-switch
+                      v-model="form.dingtalk.is_at_all"
+                      :active-text="t('ops.notification.statusEnabled')"
+                      :inactive-text="t('ops.notification.statusDisabled')"
                     />
-                  </el-select>
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipEmailEncryption') }}</p>
-                </el-form-item>
-              </template>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipAtAll') }}
+                    </p>
+                  </el-form-item>
+                </template>
 
-              <template v-else-if="form.type === 'webhook'">
-                <el-form-item
-                  :label="t('ops.notification.formWebhookUrl')"
-                  prop="webhook.url"
-                  class="fullscreen-form-item--in-card"
-                  data-notification-channel-field="webhook.url"
-                >
-                  <el-input v-model="form.webhook.url" :placeholder="t('ops.notification.phWebhookUrl')" />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipWebhookUrl') }}</p>
-                </el-form-item>
-                <div class="fullscreen-form-grid">
-                  <el-form-item :label="t('ops.notification.webhookMethod')" class="fullscreen-form-item--in-card">
-                    <el-select v-model="form.webhook.method" class="w-full">
-                      <el-option value="POST" label="POST" />
-                      <el-option value="PUT" label="PUT" />
-                    </el-select>
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipWebhookMethod') }}</p>
+                <template v-else-if="form.type === 'sms'">
+                  <el-form-item
+                    :label="t('ops.notification.smsApiUrl')"
+                    prop="sms.url"
+                    class="fullscreen-form-item--in-card"
+                    data-notification-channel-field="sms.url"
+                  >
+                    <el-input
+                      v-model="form.sms.url"
+                      :placeholder="t('ops.notification.phSmsApiUrl')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipSmsApiUrl') }}
+                    </p>
                   </el-form-item>
-                  <el-form-item :label="t('ops.notification.webhookTimeout')" class="fullscreen-form-item--in-card">
-                    <el-input-number v-model="form.webhook.timeout" class="w-full" :min="1" :max="120" />
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipWebhookTimeout') }}</p>
+                  <el-form-item
+                    :label="t('ops.notification.smsPhoneNumbers')"
+                    prop="sms.phone_numbers"
+                    class="fullscreen-form-item--in-card"
+                    data-notification-channel-field="sms.phone_numbers"
+                  >
+                    <el-input
+                      v-model="form.sms.phone_numbers"
+                      :placeholder="t('ops.notification.phSmsPhoneNumbers')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipSmsPhoneNumbers') }}
+                    </p>
                   </el-form-item>
-                </div>
-                <el-form-item :label="t('ops.notification.webhookHeaders')" class="fullscreen-form-item--in-card">
-                  <el-input
-                    v-model="form.webhook.headers"
-                    type="textarea"
-                    :rows="4"
-                    :placeholder="t('ops.notification.phWebhookHeaders')"
-                  />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipWebhookHeaders') }}</p>
-                </el-form-item>
-              </template>
+                  <el-form-item
+                    :label="t('ops.notification.smsApiKey')"
+                    class="fullscreen-form-item--in-card"
+                  >
+                    <el-input
+                      v-model="form.sms.api_key"
+                      type="password"
+                      show-password
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipSmsApiKey') }}
+                    </p>
+                  </el-form-item>
+                  <el-form-item
+                    :label="t('ops.notification.smsMessageTemplate')"
+                    class="fullscreen-form-item--in-card"
+                  >
+                    <el-input
+                      v-model="form.sms.message_template"
+                      :placeholder="t('ops.notification.phSmsMessageTemplate')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipSmsMessageTemplate') }}
+                    </p>
+                  </el-form-item>
+                </template>
 
-              <template v-else-if="form.type === 'dingtalk'">
-                <el-form-item
-                  :label="t('ops.notification.formWebhookUrl')"
-                  prop="dingtalk.webhook_url"
-                  class="fullscreen-form-item--in-card"
-                  data-notification-channel-field="dingtalk.webhook_url"
-                >
-                  <el-input v-model="form.dingtalk.webhook_url" :placeholder="t('ops.notification.phWebhookUrl')" />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipWebhookUrl') }}</p>
-                </el-form-item>
-                <el-form-item :label="t('ops.notification.formSecret')" class="fullscreen-form-item--in-card">
-                  <el-input
-                    v-model="form.dingtalk.secret"
-                    type="password"
-                    show-password
-                    :placeholder="t('ops.notification.phSecret')"
-                  />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipSecret') }}</p>
-                </el-form-item>
-                <div class="fullscreen-form-grid">
-                  <el-form-item :label="t('ops.notification.formAtMobiles')" class="fullscreen-form-item--in-card">
-                    <el-input v-model="form.dingtalk.at_mobiles" :placeholder="t('ops.notification.phAtMobiles')" />
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipDingtalkAtMobiles') }}</p>
+                <template v-else>
+                  <el-form-item
+                    :label="t('ops.notification.formWebhookUrl')"
+                    prop="wecom.webhook_url"
+                    class="fullscreen-form-item--in-card"
+                    data-notification-channel-field="wecom.webhook_url"
+                  >
+                    <el-input
+                      v-model="form.wecom.webhook_url"
+                      :placeholder="t('ops.notification.phWebhookUrl')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipWebhookUrl') }}
+                    </p>
                   </el-form-item>
-                  <el-form-item :label="t('ops.notification.formAtUserIds')" class="fullscreen-form-item--in-card">
-                    <el-input v-model="form.dingtalk.at_user_ids" :placeholder="t('ops.notification.phAtUserIds')" />
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipDingtalkAtUserIds') }}</p>
+                  <div class="fullscreen-form-grid">
+                    <el-form-item
+                      :label="t('ops.notification.formMentionedList')"
+                      class="fullscreen-form-item--in-card"
+                    >
+                      <el-input
+                        v-model="form.wecom.mentioned_list"
+                        :placeholder="t('ops.notification.phMentionedList')"
+                        :disabled="form.wecom.is_at_all"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipWecomMentionedList') }}
+                      </p>
+                    </el-form-item>
+                    <el-form-item
+                      :label="t('ops.notification.formMentionedMobileList')"
+                      class="fullscreen-form-item--in-card"
+                    >
+                      <el-input
+                        v-model="form.wecom.mentioned_mobile_list"
+                        :placeholder="t('ops.notification.phAtMobiles')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipWecomMentionedMobileList') }}
+                      </p>
+                    </el-form-item>
+                  </div>
+                  <el-form-item
+                    :label="t('ops.notification.formAtAll')"
+                    class="fullscreen-form-status-item"
+                  >
+                    <el-switch
+                      v-model="form.wecom.is_at_all"
+                      :active-text="t('ops.notification.statusEnabled')"
+                      :inactive-text="t('ops.notification.statusDisabled')"
+                    />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.notification.tipAtAll') }}
+                    </p>
                   </el-form-item>
-                </div>
-                <el-form-item :label="t('ops.notification.formAtAll')" class="fullscreen-form-status-item">
-                  <el-switch
-                    v-model="form.dingtalk.is_at_all"
-                    :active-text="t('ops.notification.statusEnabled')"
-                    :inactive-text="t('ops.notification.statusDisabled')"
-                  />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipAtAll') }}</p>
-                </el-form-item>
-              </template>
-
-              <template v-else-if="form.type === 'sms'">
-                <el-form-item
-                  :label="t('ops.notification.smsApiUrl')"
-                  prop="sms.url"
-                  class="fullscreen-form-item--in-card"
-                  data-notification-channel-field="sms.url"
-                >
-                  <el-input v-model="form.sms.url" :placeholder="t('ops.notification.phSmsApiUrl')" />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipSmsApiUrl') }}</p>
-                </el-form-item>
-                <el-form-item
-                  :label="t('ops.notification.smsPhoneNumbers')"
-                  prop="sms.phone_numbers"
-                  class="fullscreen-form-item--in-card"
-                  data-notification-channel-field="sms.phone_numbers"
-                >
-                  <el-input
-                    v-model="form.sms.phone_numbers"
-                    :placeholder="t('ops.notification.phSmsPhoneNumbers')"
-                  />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipSmsPhoneNumbers') }}</p>
-                </el-form-item>
-                <el-form-item :label="t('ops.notification.smsApiKey')" class="fullscreen-form-item--in-card">
-                  <el-input v-model="form.sms.api_key" type="password" show-password />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipSmsApiKey') }}</p>
-                </el-form-item>
-                <el-form-item :label="t('ops.notification.smsMessageTemplate')" class="fullscreen-form-item--in-card">
-                  <el-input
-                    v-model="form.sms.message_template"
-                    :placeholder="t('ops.notification.phSmsMessageTemplate')"
-                  />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipSmsMessageTemplate') }}</p>
-                </el-form-item>
-              </template>
-
-              <template v-else>
-                <el-form-item
-                  :label="t('ops.notification.formWebhookUrl')"
-                  prop="wecom.webhook_url"
-                  class="fullscreen-form-item--in-card"
-                  data-notification-channel-field="wecom.webhook_url"
-                >
-                  <el-input v-model="form.wecom.webhook_url" :placeholder="t('ops.notification.phWebhookUrl')" />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipWebhookUrl') }}</p>
-                </el-form-item>
-                <div class="fullscreen-form-grid">
-                  <el-form-item :label="t('ops.notification.formMentionedList')" class="fullscreen-form-item--in-card">
-                    <el-input v-model="form.wecom.mentioned_list" :placeholder="t('ops.notification.phMentionedList')" :disabled="form.wecom.is_at_all" />
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipWecomMentionedList') }}</p>
-                  </el-form-item>
-                  <el-form-item :label="t('ops.notification.formMentionedMobileList')" class="fullscreen-form-item--in-card">
-                    <el-input v-model="form.wecom.mentioned_mobile_list" :placeholder="t('ops.notification.phAtMobiles')" />
-                    <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipWecomMentionedMobileList') }}</p>
-                  </el-form-item>
-                </div>
-                <el-form-item :label="t('ops.notification.formAtAll')" class="fullscreen-form-status-item">
-                  <el-switch
-                    v-model="form.wecom.is_at_all"
-                    :active-text="t('ops.notification.statusEnabled')"
-                    :inactive-text="t('ops.notification.statusDisabled')"
-                  />
-                  <p class="fullscreen-form-field__hint">{{ t('ops.notification.tipAtAll') }}</p>
-                </el-form-item>
-              </template>
+                </template>
               </section>
             </div>
           </el-form>
@@ -592,19 +776,27 @@ watch(() => form.type, () => {
             <div class="add-form-preview-header">
               <div class="add-form-preview-header__glow" />
               <div class="add-form-preview-header__icon">
-                <component :is="previewTypeIcon" class="add-form-preview-header__cloud" :size="28" />
+                <component
+                  :is="previewTypeIcon"
+                  class="add-form-preview-header__cloud"
+                  :size="28"
+                />
               </div>
               <div class="add-form-preview-header__info">
                 <h4 class="add-form-preview-header__name">
                   {{ form.name.trim() || t('ops.notification.previewUnnamed') }}
                 </h4>
-                <p class="add-form-preview-header__type">{{ channelTypeLabel(form.type) }}</p>
+                <p class="add-form-preview-header__type">
+                  {{ channelTypeLabel(form.type) }}
+                </p>
               </div>
             </div>
 
             <div class="add-form-preview-body">
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('ops.notification.basicInfo') }}</h5>
+                <h5 class="add-form-preview-section__title">
+                  {{ t('ops.notification.basicInfo') }}
+                </h5>
                 <div
                   v-for="row in previewBasicRows"
                   :key="row.label"
@@ -623,7 +815,9 @@ watch(() => form.type, () => {
               </div>
 
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('ops.notification.sectionTarget') }}</h5>
+                <h5 class="add-form-preview-section__title">
+                  {{ t('ops.notification.sectionTarget') }}
+                </h5>
                 <div
                   v-for="row in previewTargetRows"
                   :key="row.label"

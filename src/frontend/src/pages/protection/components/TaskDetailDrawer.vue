@@ -689,9 +689,14 @@ watch(
   >
     <template #header>
       <div class="hfl-task-drawer__header-bar">
-        <div v-if="activeTask" class="hfl-task-drawer__header-summary">
+        <div
+          v-if="activeTask"
+          class="hfl-task-drawer__header-summary"
+        >
           <div class="hfl-task-drawer__header-title-row">
-            <h2 class="hfl-task-drawer__header-title">{{ taskDescription(activeTask) }}</h2>
+            <h2 class="hfl-task-drawer__header-title">
+              {{ taskDescription(activeTask) }}
+            </h2>
             <TaskStatusTag :status="activeTask.status" />
           </div>
           <div class="hfl-task-drawer__header-meta">
@@ -699,13 +704,23 @@ watch(
             <span class="hfl-task-drawer__header-divider" />
             <span class="hfl-task-drawer__uuid">
               {{ activeTask.task_uuid }}
-              <ElButton class="hfl-task-drawer__copy-button" text :title="t('ops.task.copyUuid')" @click.stop="copyTaskUuid">
+              <ElButton
+                class="hfl-task-drawer__copy-button"
+                text
+                :title="t('ops.task.copyUuid')"
+                @click.stop="copyTaskUuid"
+              >
                 <Copy :size="13" />
               </ElButton>
             </span>
           </div>
         </div>
-        <h2 v-else class="hfl-task-drawer__header-title">{{ t('ops.task.detailTitle') }}</h2>
+        <h2
+          v-else
+          class="hfl-task-drawer__header-title"
+        >
+          {{ t('ops.task.detailTitle') }}
+        </h2>
         <div class="hfl-task-drawer__header-actions">
           <ElButton
             v-if="canCancel"
@@ -728,49 +743,93 @@ watch(
             :disabled="detailRefreshing || actionBusy"
             @click="refreshActiveTask"
           >
-            <RefreshCw :size="20" :class="{ 'is-spinning': detailRefreshing }" />
+            <RefreshCw
+              :size="20"
+              :class="{ 'is-spinning': detailRefreshing }"
+            />
           </button>
         </div>
       </div>
     </template>
 
-    <div v-if="activeTask" ref="drawerScrollAnchorRef" v-loading="detailRefreshing" class="hfl-task-drawer__body">
+    <div
+      v-if="activeTask"
+      ref="drawerScrollAnchorRef"
+      v-loading="detailRefreshing"
+      class="hfl-task-drawer__body"
+    >
       <section class="hfl-task-drawer__hero">
-        <div class="hfl-task-drawer__hero-section-title">{{ t('ops.task.basicData') }}</div>
+        <div class="hfl-task-drawer__hero-section-title">
+          {{ t('ops.task.basicData') }}
+        </div>
         <div class="hfl-task-drawer__hero-grid">
           <div class="hfl-task-drawer__metric">
-            <Globe :size="18" class="hfl-task-drawer__metric-icon hfl-task-drawer__metric-icon--blue" />
+            <Globe
+              :size="18"
+              class="hfl-task-drawer__metric-icon hfl-task-drawer__metric-icon--blue"
+            />
             <div class="hfl-task-drawer__metric-copy">
               <span class="hfl-task-drawer__metric-label">{{ t('ops.task.typeAndTrigger') }}</span>
               <div class="hfl-task-drawer__metric-tags">
                 <template v-if="usesTargetRepositoryResources">
-                  <span class="hfl-task-drawer__type-pill" :class="`hfl-task-drawer__type-pill--${activeTask.task_type}`">
+                  <span
+                    class="hfl-task-drawer__type-pill"
+                    :class="`hfl-task-drawer__type-pill--${activeTask.task_type}`"
+                  >
                     <span class="hfl-task-drawer__pill-text">{{ labelFor('taskType', activeTask.task_type) }}</span>
                   </span>
-                  <span class="hfl-task-drawer__trigger-pill" :class="`hfl-task-drawer__trigger-pill--${activeTask.trigger_type}`">
+                  <span
+                    class="hfl-task-drawer__trigger-pill"
+                    :class="`hfl-task-drawer__trigger-pill--${activeTask.trigger_type}`"
+                  >
                     <span class="hfl-task-drawer__pill-text">{{ labelFor('triggerType', activeTask.trigger_type) }}</span>
                   </span>
                 </template>
                 <template v-else>
-                  <el-tag class="hfl-task-meta-tag" size="small" type="info">{{ labelFor('taskType', activeTask.task_type) }}</el-tag>
-                  <el-tag class="hfl-task-meta-tag" size="small" type="info">{{ labelFor('triggerType', activeTask.trigger_type) }}</el-tag>
+                  <el-tag
+                    class="hfl-task-meta-tag"
+                    size="small"
+                    type="info"
+                  >
+                    {{ labelFor('taskType', activeTask.task_type) }}
+                  </el-tag>
+                  <el-tag
+                    class="hfl-task-meta-tag"
+                    size="small"
+                    type="info"
+                  >
+                    {{ labelFor('triggerType', activeTask.trigger_type) }}
+                  </el-tag>
                 </template>
               </div>
             </div>
           </div>
           <div class="hfl-task-drawer__metric">
-            <RotateCcw :size="18" class="hfl-task-drawer__metric-icon hfl-task-drawer__metric-icon--indigo" />
+            <RotateCcw
+              :size="18"
+              class="hfl-task-drawer__metric-icon hfl-task-drawer__metric-icon--indigo"
+            />
             <div class="hfl-task-drawer__metric-copy">
               <span class="hfl-task-drawer__metric-label">{{ t('ops.task.retryCount') }}</span>
               <span class="hfl-task-drawer__metric-value">{{ t('ops.task.retryCountValue', { count: activeTask.retry_count }) }}</span>
             </div>
           </div>
-          <div v-if="cleanupMetadata" class="hfl-task-drawer__metric hfl-task-drawer__metric--wide">
-            <Link2 :size="18" class="hfl-task-drawer__metric-icon hfl-task-drawer__metric-icon--indigo" />
+          <div
+            v-if="cleanupMetadata"
+            class="hfl-task-drawer__metric hfl-task-drawer__metric--wide"
+          >
+            <Link2
+              :size="18"
+              class="hfl-task-drawer__metric-icon hfl-task-drawer__metric-icon--indigo"
+            />
             <div class="hfl-task-drawer__metric-copy">
               <span class="hfl-task-drawer__metric-label">{{ t('ops.task.cleanupMode') }}</span>
               <div class="hfl-task-drawer__metric-tags">
-                <ElTag :type="cleanupMetadata.force ? 'danger' : 'info'" size="small" effect="plain">
+                <ElTag
+                  :type="cleanupMetadata.force ? 'danger' : 'info'"
+                  size="small"
+                  effect="plain"
+                >
                   {{ cleanupMetadata.force ? t('ops.task.cleanupModeForce') : t('ops.task.cleanupModeNormal') }}
                 </ElTag>
                 <ElButton
@@ -786,19 +845,31 @@ watch(
             </div>
           </div>
           <div class="hfl-task-drawer__metric hfl-task-drawer__metric--wide">
-            <Clock3 :size="18" class="hfl-task-drawer__metric-icon" />
+            <Clock3
+              :size="18"
+              class="hfl-task-drawer__metric-icon"
+            />
             <div class="hfl-task-drawer__time-grid">
               <div>
                 <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startedAt') }}</span>
-                <span class="hfl-task-drawer__time-value" :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }">{{ formatTime(activeTask.started_at || activeTask.created_at) }}</span>
+                <span
+                  class="hfl-task-drawer__time-value"
+                  :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }"
+                >{{ formatTime(activeTask.started_at || activeTask.created_at) }}</span>
               </div>
               <div>
                 <span class="hfl-task-drawer__metric-label">{{ t('ops.task.finishedAt') }}</span>
-                <span class="hfl-task-drawer__time-value" :class="{ 'hfl-empty-mark': !activeTask.finished_at }">{{ formatTime(activeTask.finished_at) }}</span>
+                <span
+                  class="hfl-task-drawer__time-value"
+                  :class="{ 'hfl-empty-mark': !activeTask.finished_at }"
+                >{{ formatTime(activeTask.finished_at) }}</span>
               </div>
               <div>
                 <span class="hfl-task-drawer__metric-label">{{ t('ops.task.totalDuration') }}</span>
-                <span class="hfl-task-drawer__time-value hfl-task-drawer__time-value--strong" :class="{ 'hfl-empty-mark': taskDuration(activeTask) === t('ops.task.emptyMark') }">{{ taskDuration(activeTask) }}</span>
+                <span
+                  class="hfl-task-drawer__time-value hfl-task-drawer__time-value--strong"
+                  :class="{ 'hfl-empty-mark': taskDuration(activeTask) === t('ops.task.emptyMark') }"
+                >{{ taskDuration(activeTask) }}</span>
               </div>
             </div>
           </div>
@@ -835,7 +906,10 @@ watch(
       >
         <p>{{ activeTask.status === 'blocked' ? t('ops.task.blockedDescription') : t('ops.task.waitingDescription') }}</p>
         <ul>
-          <li v-for="dependency in activeDependencies" :key="dependency.id">
+          <li
+            v-for="dependency in activeDependencies"
+            :key="dependency.id"
+          >
             <span>{{ dependency.detail }}</span>
             <ElButton
               v-if="dependency.blocking_task_uuid"
@@ -849,7 +923,11 @@ watch(
         </ul>
       </ElAlert>
 
-      <ElTabs v-model="activeDetailTab" class="hfl-detail-tabs hfl-task-drawer__tabs" @tab-change="onDetailTabChange">
+      <ElTabs
+        v-model="activeDetailTab"
+        class="hfl-detail-tabs hfl-task-drawer__tabs"
+        @tab-change="onDetailTabChange"
+      >
         <ElTabPane name="steps">
           <template #label>
             <span class="hfl-detail-tab-label">
@@ -858,97 +936,197 @@ watch(
             </span>
           </template>
           <section class="hfl-task-drawer__tab-panel hfl-task-drawer__tab-panel--borderless">
-        <div class="hfl-task-drawer__steps-head">
-          <span>{{ t('ops.task.stepsHealthy') }}</span>
-          <ElButton
-            v-if="hasExpandableSteps"
-            size="small"
-            class="hfl-btn-with-icon"
-            @click="toggleAllStepsExpanded"
-          >
-            {{ hasAnyExpandedStep ? t('ops.task.collapseAll') : t('ops.task.expandAll') }}
-            <ChevronDown v-if="hasAnyExpandedStep" :size="16" class="hfl-task-step-chevron" />
-            <ChevronRight v-else :size="16" class="hfl-task-step-chevron" />
-          </ElButton>
-        </div>
-        <div v-if="stepsWithEvents.length" class="hfl-task-drawer__step-list">
-          <div
-            v-for="(step, index) in stepsWithEvents"
-            :key="step.id"
-            class="hfl-task-drawer__step-item"
-            :class="{ 'hfl-task-drawer__step-item--last': index === stepsWithEvents.length - 1 && unlinkedEvents.length === 0 }"
-          >
-            <div class="hfl-task-drawer__step-anchor" :class="timelineIconClass(step.status)">
-              <Check v-if="step.status === 'success'" :size="15" />
-              <X v-else-if="step.status === 'failed' || step.status === 'timeout'" :size="15" />
-              <LoaderCircle v-else-if="step.status === 'running'" :size="15" />
-              <Circle v-else :size="9" />
-            </div>
-            <article class="hfl-task-drawer__step-card">
-              <button
-                type="button"
-                class="hfl-task-drawer__step-card-head"
-                :class="{ 'hfl-task-drawer__step-card-head--disabled': step.events.length === 0 }"
-                :aria-expanded="step.events.length > 0 && isStepExpanded(step.id)"
-                :aria-disabled="step.events.length === 0"
-                :aria-description="step.events.length === 0 ? t('ops.task.emptyEvents') : undefined"
-                @click="toggleStep(step.id, step.events.length)"
+            <div class="hfl-task-drawer__steps-head">
+              <span>{{ t('ops.task.stepsHealthy') }}</span>
+              <ElButton
+                v-if="hasExpandableSteps"
+                size="small"
+                class="hfl-btn-with-icon"
+                @click="toggleAllStepsExpanded"
               >
-                <span class="hfl-task-drawer__step-title">
-                  {{ stepDisplayName(step.step_name) }}
-                  <span class="hfl-task-drawer__step-executed-at" :class="{ 'hfl-empty-mark': !(step.created_at || activeTask.created_at) }">{{ formatTime(step.created_at || activeTask.created_at) }}</span>
-                </span>
-                <TaskStatusTag :status="step.status" />
-                <span class="hfl-task-drawer__step-duration"><Clock3 :size="12" /> {{ stepDuration(index) }}</span>
-                <ElTooltip
-                  v-if="step.events.length === 0"
-                  :content="t('ops.task.emptyEvents')"
-                  teleported
-                  append-to="body"
-                  :z-index="3600"
-                  placement="top"
-                  :show-after="200"
+                {{ hasAnyExpandedStep ? t('ops.task.collapseAll') : t('ops.task.expandAll') }}
+                <ChevronDown
+                  v-if="hasAnyExpandedStep"
+                  :size="16"
+                  class="hfl-task-step-chevron"
+                />
+                <ChevronRight
+                  v-else
+                  :size="16"
+                  class="hfl-task-step-chevron"
+                />
+              </ElButton>
+            </div>
+            <div
+              v-if="stepsWithEvents.length"
+              class="hfl-task-drawer__step-list"
+            >
+              <div
+                v-for="(step, index) in stepsWithEvents"
+                :key="step.id"
+                class="hfl-task-drawer__step-item"
+                :class="{ 'hfl-task-drawer__step-item--last': index === stepsWithEvents.length - 1 && unlinkedEvents.length === 0 }"
+              >
+                <div
+                  class="hfl-task-drawer__step-anchor"
+                  :class="timelineIconClass(step.status)"
                 >
-                  <span class="hfl-task-step-chevron hfl-task-step-chevron--disabled">
-                    <ChevronRight :size="16" aria-hidden="true" />
-                  </span>
-                </ElTooltip>
-                <ChevronDown v-else-if="isStepExpanded(step.id)" :size="16" class="hfl-task-step-chevron" />
-                <ChevronRight v-else :size="16" class="hfl-task-step-chevron" />
-              </button>
-              <div v-if="isStepExpanded(step.id) && step.events.length > 0" class="hfl-task-drawer__event-list">
-                <div v-for="event in step.events" :key="event.id" class="hfl-task-drawer__event-row">
-                  <span class="hfl-task-drawer__event-dot" :class="`hfl-task-drawer__event-dot--${eventTone(event)}`">
-                    <X v-if="eventTone(event) === 'danger'" :size="9" />
-                    <Circle v-else-if="eventTone(event) === 'muted'" :size="7" />
-                    <Check v-else :size="9" />
+                  <Check
+                    v-if="step.status === 'success'"
+                    :size="15"
+                  />
+                  <X
+                    v-else-if="step.status === 'failed' || step.status === 'timeout'"
+                    :size="15"
+                  />
+                  <LoaderCircle
+                    v-else-if="step.status === 'running'"
+                    :size="15"
+                  />
+                  <Circle
+                    v-else
+                    :size="9"
+                  />
+                </div>
+                <article class="hfl-task-drawer__step-card">
+                  <button
+                    type="button"
+                    class="hfl-task-drawer__step-card-head"
+                    :class="{ 'hfl-task-drawer__step-card-head--disabled': step.events.length === 0 }"
+                    :aria-expanded="step.events.length > 0 && isStepExpanded(step.id)"
+                    :aria-disabled="step.events.length === 0"
+                    :aria-description="step.events.length === 0 ? t('ops.task.emptyEvents') : undefined"
+                    @click="toggleStep(step.id, step.events.length)"
+                  >
+                    <span class="hfl-task-drawer__step-title">
+                      {{ stepDisplayName(step.step_name) }}
+                      <span
+                        class="hfl-task-drawer__step-executed-at"
+                        :class="{ 'hfl-empty-mark': !(step.created_at || activeTask.created_at) }"
+                      >{{ formatTime(step.created_at || activeTask.created_at) }}</span>
+                    </span>
+                    <TaskStatusTag :status="step.status" />
+                    <span class="hfl-task-drawer__step-duration"><Clock3 :size="12" /> {{ stepDuration(index) }}</span>
+                    <ElTooltip
+                      v-if="step.events.length === 0"
+                      :content="t('ops.task.emptyEvents')"
+                      teleported
+                      append-to="body"
+                      :z-index="3600"
+                      placement="top"
+                      :show-after="200"
+                    >
+                      <span class="hfl-task-step-chevron hfl-task-step-chevron--disabled">
+                        <ChevronRight
+                          :size="16"
+                          aria-hidden="true"
+                        />
+                      </span>
+                    </ElTooltip>
+                    <ChevronDown
+                      v-else-if="isStepExpanded(step.id)"
+                      :size="16"
+                      class="hfl-task-step-chevron"
+                    />
+                    <ChevronRight
+                      v-else
+                      :size="16"
+                      class="hfl-task-step-chevron"
+                    />
+                  </button>
+                  <div
+                    v-if="isStepExpanded(step.id) && step.events.length > 0"
+                    class="hfl-task-drawer__event-list"
+                  >
+                    <div
+                      v-for="event in step.events"
+                      :key="event.id"
+                      class="hfl-task-drawer__event-row"
+                    >
+                      <span
+                        class="hfl-task-drawer__event-dot"
+                        :class="`hfl-task-drawer__event-dot--${eventTone(event)}`"
+                      >
+                        <X
+                          v-if="eventTone(event) === 'danger'"
+                          :size="9"
+                        />
+                        <Circle
+                          v-else-if="eventTone(event) === 'muted'"
+                          :size="7"
+                        />
+                        <Check
+                          v-else
+                          :size="9"
+                        />
+                      </span>
+                      <span class="hfl-task-drawer__event-content">
+                        <span
+                          class="hfl-task-drawer__event-msg"
+                          :class="eventMessageClass(event)"
+                        >{{ eventDisplayMessage(event) }}</span>
+                        <span
+                          v-if="eventObjectText(event)"
+                          class="hfl-task-drawer__event-object"
+                        ><Link2 :size="11" /><span>{{ eventObjectText(event) }}</span></span>
+                        <span
+                          v-if="eventErrorText(event)"
+                          class="hfl-task-drawer__event-error"
+                        >{{ eventErrorText(event) }}</span>
+                      </span>
+                      <span
+                        class="hfl-task-drawer__event-time"
+                        :class="{ 'hfl-empty-mark': !event.created_at }"
+                      >{{ formatTime(event.created_at) }}</span>
+                    </div>
+                  </div>
+                </article>
+              </div>
+              <div
+                v-if="unlinkedEvents.length"
+                class="hfl-task-drawer__event-only"
+              >
+                <div
+                  v-for="event in unlinkedEvents"
+                  :key="event.id"
+                  class="hfl-task-drawer__event-row"
+                >
+                  <span
+                    class="hfl-task-drawer__event-dot"
+                    :class="`hfl-task-drawer__event-dot--${eventTone(event)}`"
+                  >
+                    <X
+                      v-if="eventTone(event) === 'danger'"
+                      :size="9"
+                    />
+                    <Circle
+                      v-else-if="eventTone(event) === 'muted'"
+                      :size="7"
+                    />
+                    <Check
+                      v-else
+                      :size="9"
+                    />
                   </span>
                   <span class="hfl-task-drawer__event-content">
-                    <span class="hfl-task-drawer__event-msg" :class="eventMessageClass(event)">{{ eventDisplayMessage(event) }}</span>
-                    <span v-if="eventObjectText(event)" class="hfl-task-drawer__event-object"><Link2 :size="11" /><span>{{ eventObjectText(event) }}</span></span>
-                    <span v-if="eventErrorText(event)" class="hfl-task-drawer__event-error">{{ eventErrorText(event) }}</span>
+                    <span
+                      class="hfl-task-drawer__event-msg"
+                      :class="eventMessageClass(event)"
+                    >{{ eventDisplayMessage(event) }}</span>
+                    <span
+                      v-if="eventErrorText(event)"
+                      class="hfl-task-drawer__event-error"
+                    >{{ eventErrorText(event) }}</span>
                   </span>
-                  <span class="hfl-task-drawer__event-time" :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span>
+                  <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
                 </div>
               </div>
-            </article>
-          </div>
-          <div v-if="unlinkedEvents.length" class="hfl-task-drawer__event-only">
-            <div v-for="event in unlinkedEvents" :key="event.id" class="hfl-task-drawer__event-row">
-              <span class="hfl-task-drawer__event-dot" :class="`hfl-task-drawer__event-dot--${eventTone(event)}`">
-                <X v-if="eventTone(event) === 'danger'" :size="9" />
-                <Circle v-else-if="eventTone(event) === 'muted'" :size="7" />
-                <Check v-else :size="9" />
-              </span>
-              <span class="hfl-task-drawer__event-content">
-                <span class="hfl-task-drawer__event-msg" :class="eventMessageClass(event)">{{ eventDisplayMessage(event) }}</span>
-                <span v-if="eventErrorText(event)" class="hfl-task-drawer__event-error">{{ eventErrorText(event) }}</span>
-              </span>
-              <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
             </div>
-          </div>
-        </div>
-        <el-empty v-else :description="t('ops.task.emptySteps')" :image-size="52" />
+            <el-empty
+              v-else
+              :description="t('ops.task.emptySteps')"
+              :image-size="52"
+            />
           </section>
         </ElTabPane>
 
@@ -960,131 +1138,228 @@ watch(
             </span>
           </template>
           <section class="hfl-task-drawer__tab-panel hfl-task-drawer__tab-panel--borderless">
-        <template v-if="usesTargetRepositoryResources">
-          <div v-if="repositoryResourceLoadError" class="hfl-task-drawer__resource-error">
-            {{ repositoryResourceLoadError }}
-          </div>
-          <el-table
-            v-if="targetRepositoryResources.length"
-            v-table-column-resize="'repositories.taskDetail.resources'"
-            v-table-overflow-title
-            v-loading="repositoryResourceLoading"
-            :data="repositoryResourceRows"
-            class="hfl-list-table hfl-list-table--compact hfl-task-drawer__resource-table"
-          >
-            <el-table-column :label="t('ops.task.resourceId')" width="120">
-              <template #default="{ row }"><span class="hfl-table-cell-mono">{{ row.id }}</span></template>
-            </el-table-column>
-            <el-table-column :label="t('repositoriesPage.colListName')" min-width="180">
-              <template #default="{ row }"><span>{{ row.name }}</span></template>
-            </el-table-column>
-            <el-table-column :label="t('ops.task.resourceTypeLabel')" width="150">
-              <template #default="{ row }">
-                <ElTag size="small" effect="plain" :class="[repositoryTypeTagClass(row.repoType), 'hfl-task-drawer__repository-type-tag']">
-                  {{ repositoryTypeLabel(row.repoType) }}
-                </ElTag>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('repositoriesPage.colStatus')" width="116">
-              <template #default="{ row }">
-                <ElTag v-if="row.health" :type="row.health === 'online' ? 'success' : row.health === 'unverified' ? 'warning' : 'danger'" size="small">
-                  {{ repositoryHealthLabel(row.health) }}
-                </ElTag>
-                <span v-else class="hfl-empty-mark">{{ t('ops.task.emptyMark') }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('repositoriesPage.colRegistered')" width="180">
-              <template #default="{ row }"><span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt }">{{ formatTime(row.registeredAt) }}</span></template>
-            </el-table-column>
-          </el-table>
-          <el-empty v-else :description="t('ops.task.emptyResources')" :image-size="52" />
-        </template>
-        <template v-else>
-        <div v-if="resourceTypeTabs.length" class="hfl-task-drawer__resource-switcher">
-          <button
-            v-for="item in resourceTypeTabs"
-            :key="item.type"
-            type="button"
-            class="hfl-task-drawer__resource-switch"
-            :class="{ 'hfl-task-drawer__resource-switch--active': selectedResourceType === item.type }"
-            @click="selectResourceType(item.type)"
-          >
-            <Link2 :size="14" />
-            {{ item.label }}
-            <span class="hfl-task-drawer__resource-switch-count">{{ item.count }}</span>
-          </button>
-        </div>
-        <el-table
-          v-if="resourceTypeTabs.length && selectedResourceType === 'backup_source'"
-          v-table-column-resize="'protection.taskDetail.resources'"
-          v-table-overflow-title
-          v-loading="backupSourceLoading"
-          :data="backupSourceRows"
-          class="hfl-list-table hfl-list-table--compact hfl-task-drawer__resource-table"
-        >
-          <el-table-column :label="t('ops.task.resourceId')" width="120">
-            <template #default="{ row }"><span class="hfl-table-cell-mono">{{ row.id }}</span></template>
-          </el-table-column>
-          <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="180">
-            <template #default="{ row }">
-              <FlowSourceSummaryCell
-                :row="row.flowSource"
-                :interactive="false"
+            <template v-if="usesTargetRepositoryResources">
+              <div
+                v-if="repositoryResourceLoadError"
+                class="hfl-task-drawer__resource-error"
+              >
+                {{ repositoryResourceLoadError }}
+              </div>
+              <el-table
+                v-if="targetRepositoryResources.length"
+                v-table-column-resize="'repositories.taskDetail.resources'"
+                v-table-overflow-title
+                v-loading="repositoryResourceLoading"
+                :data="repositoryResourceRows"
+                class="hfl-list-table hfl-list-table--compact hfl-task-drawer__resource-table"
+              >
+                <el-table-column
+                  :label="t('ops.task.resourceId')"
+                  width="120"
+                >
+                  <template #default="{ row }">
+                    <span class="hfl-table-cell-mono">{{ row.id }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('repositoriesPage.colListName')"
+                  min-width="180"
+                >
+                  <template #default="{ row }">
+                    <span>{{ row.name }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('ops.task.resourceTypeLabel')"
+                  width="150"
+                >
+                  <template #default="{ row }">
+                    <ElTag
+                      size="small"
+                      effect="plain"
+                      :class="[repositoryTypeTagClass(row.repoType), 'hfl-task-drawer__repository-type-tag']"
+                    >
+                      {{ repositoryTypeLabel(row.repoType) }}
+                    </ElTag>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('repositoriesPage.colStatus')"
+                  width="116"
+                >
+                  <template #default="{ row }">
+                    <ElTag
+                      v-if="row.health"
+                      :type="row.health === 'online' ? 'success' : row.health === 'unverified' ? 'warning' : 'danger'"
+                      size="small"
+                    >
+                      {{ repositoryHealthLabel(row.health) }}
+                    </ElTag>
+                    <span
+                      v-else
+                      class="hfl-empty-mark"
+                    >{{ t('ops.task.emptyMark') }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('repositoriesPage.colRegistered')"
+                  width="180"
+                >
+                  <template #default="{ row }">
+                    <span
+                      class="hfl-table-cell-time"
+                      :class="{ 'hfl-empty-mark': !row.registeredAt }"
+                    >{{ formatTime(row.registeredAt) }}</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-empty
+                v-else
+                :description="t('ops.task.emptyResources')"
+                :image-size="52"
               />
             </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.backupsPage.colConnectionAddress')" min-width="200">
-            <template #default="{ row }">
-              <FlowSourceConnectionCell :row="row.flowSource" />
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.sourceResources.colConnectivity')" width="110">
-            <template #default="{ row }">
-              <ElTag
-                v-if="row.availability"
-                :type="backupSourceConnectivityTagType(row.availability)"
-                size="small"
+            <template v-else>
+              <div
+                v-if="resourceTypeTabs.length"
+                class="hfl-task-drawer__resource-switcher"
               >
-                {{ backupSourceConnectivityLabel(row.availability) }}
-              </ElTag>
-              <span v-else class="hfl-empty-mark">{{ t('ops.task.emptyMark') }}</span>
+                <button
+                  v-for="item in resourceTypeTabs"
+                  :key="item.type"
+                  type="button"
+                  class="hfl-task-drawer__resource-switch"
+                  :class="{ 'hfl-task-drawer__resource-switch--active': selectedResourceType === item.type }"
+                  @click="selectResourceType(item.type)"
+                >
+                  <Link2 :size="14" />
+                  {{ item.label }}
+                  <span class="hfl-task-drawer__resource-switch-count">{{ item.count }}</span>
+                </button>
+              </div>
+              <el-table
+                v-if="resourceTypeTabs.length && selectedResourceType === 'backup_source'"
+                v-table-column-resize="'protection.taskDetail.resources'"
+                v-table-overflow-title
+                v-loading="backupSourceLoading"
+                :data="backupSourceRows"
+                class="hfl-list-table hfl-list-table--compact hfl-task-drawer__resource-table"
+              >
+                <el-table-column
+                  :label="t('ops.task.resourceId')"
+                  width="120"
+                >
+                  <template #default="{ row }">
+                    <span class="hfl-table-cell-mono">{{ row.id }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('protection.backupsPage.colBackupSource')"
+                  min-width="180"
+                >
+                  <template #default="{ row }">
+                    <FlowSourceSummaryCell
+                      :row="row.flowSource"
+                      :interactive="false"
+                    />
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('protection.backupsPage.colConnectionAddress')"
+                  min-width="200"
+                >
+                  <template #default="{ row }">
+                    <FlowSourceConnectionCell :row="row.flowSource" />
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('protection.sourceResources.colConnectivity')"
+                  width="110"
+                >
+                  <template #default="{ row }">
+                    <ElTag
+                      v-if="row.availability"
+                      :type="backupSourceConnectivityTagType(row.availability)"
+                      size="small"
+                    >
+                      {{ backupSourceConnectivityLabel(row.availability) }}
+                    </ElTag>
+                    <span
+                      v-else
+                      class="hfl-empty-mark"
+                    >{{ t('ops.task.emptyMark') }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('protection.backupsPage.colRegistered')"
+                  width="180"
+                >
+                  <template #default="{ row }">
+                    <span
+                      class="hfl-table-cell-time"
+                      :class="{ 'hfl-empty-mark': !row.registeredAt }"
+                    >{{ formatTime(row.registeredAt) }}</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-table
+                v-else
+                v-table-column-resize="'protection.taskDetail.resources'"
+                v-table-overflow-title
+                :data="selectedResources"
+                class="hfl-list-table hfl-list-table--compact hfl-task-drawer__resource-table"
+              >
+                <el-table-column
+                  :label="t('ops.task.resourceId')"
+                  width="120"
+                >
+                  <template #default="{ row }">
+                    <span class="hfl-table-cell-mono">{{ row.id }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('ops.task.resourceTypeLabel')"
+                  min-width="160"
+                >
+                  <template #default="{ row }">
+                    <ElTag
+                      type="info"
+                      size="small"
+                      effect="plain"
+                    >
+                      {{ row.type }}
+                    </ElTag>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  :label="t('ops.task.resourceSubtype')"
+                  min-width="140"
+                  prop="subtype"
+                />
+              </el-table>
+              <el-empty
+                v-if="!resourceTypeTabs.length"
+                :description="t('ops.task.emptyResources')"
+                :image-size="52"
+              />
             </template>
-          </el-table-column>
-          <el-table-column :label="t('protection.backupsPage.colRegistered')" width="180">
-            <template #default="{ row }"><span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt }">{{ formatTime(row.registeredAt) }}</span></template>
-          </el-table-column>
-        </el-table>
-        <el-table
-          v-else
-          v-table-column-resize="'protection.taskDetail.resources'"
-          v-table-overflow-title
-          :data="selectedResources"
-          class="hfl-list-table hfl-list-table--compact hfl-task-drawer__resource-table"
-        >
-          <el-table-column :label="t('ops.task.resourceId')" width="120">
-            <template #default="{ row }">
-              <span class="hfl-table-cell-mono">{{ row.id }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('ops.task.resourceTypeLabel')" min-width="160">
-            <template #default="{ row }">
-              <ElTag type="info" size="small" effect="plain">
-                {{ row.type }}
-              </ElTag>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('ops.task.resourceSubtype')" min-width="140" prop="subtype" />
-        </el-table>
-        <el-empty v-if="!resourceTypeTabs.length" :description="t('ops.task.emptyResources')" :image-size="52" />
-        </template>
           </section>
         </ElTabPane>
-
       </ElTabs>
     </div>
-    <div v-else ref="drawerScrollAnchorRef" class="hfl-task-drawer__body">
-      <div class="hfl-task-drawer__loading" aria-busy="true">
-        <el-skeleton :rows="6" animated />
+    <div
+      v-else
+      ref="drawerScrollAnchorRef"
+      class="hfl-task-drawer__body"
+    >
+      <div
+        class="hfl-task-drawer__loading"
+        aria-busy="true"
+      >
+        <el-skeleton
+          :rows="6"
+          animated
+        />
       </div>
     </div>
   </ElDrawer>

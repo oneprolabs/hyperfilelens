@@ -4,9 +4,17 @@ import { toastState } from '../../lib/toast/store'
 </script>
 
 <template>
-  <div class="hfl-toast-viewport" aria-live="polite" aria-relevant="additions removals">
+  <div
+    class="hfl-toast-viewport"
+    aria-live="polite"
+    aria-relevant="additions removals"
+  >
     <TransitionGroup name="hfl-toast-list">
-      <HflToastItem v-for="toast in toastState.items" :key="toast.id" :toast="toast" />
+      <HflToastItem
+        v-for="toast in toastState.items"
+        :key="toast.id"
+        :toast="toast"
+      />
     </TransitionGroup>
   </div>
 </template>

@@ -449,7 +449,10 @@ onMounted(refresh)
 </script>
 
 <template>
-  <div v-loading="loading" class="dashboard-page">
+  <div
+    v-loading="loading"
+    class="dashboard-page"
+  >
     <ErrorState
       v-if="loadError && !overview"
       :error="loadError"
@@ -457,717 +460,882 @@ onMounted(refresh)
       @retry="refresh"
     />
     <template v-else>
-    <!-- DataFlowPipeline -->
-    <section class="pipeline">
-      <div class="pipeline__accent" aria-hidden="true" />
-      <div class="pipeline__head">
-        <div>
-          <h3 class="pipeline__title">{{ t('dashboard.pipeline.title') }}</h3>
-          <p class="pipeline__subtitle">{{ t('dashboard.pipeline.subtitle') }}</p>
-        </div>
-      </div>
-
-      <div class="pipeline__flow">
-        <!-- Step 1 -->
-        <div class="pipeline__step">
-          <div class="pipeline__orb pipeline__orb--indigo">
-            <div class="pipeline__orbit pipeline__orbit--indigo" />
-            <div class="pipeline__orb-glow pipeline__orb-glow--indigo" />
-            <div class="pipeline__orb-core">
-              <Server class="pipeline__orb-icon" />
-            </div>
-            <span class="pipeline__orb-pulse">
-              <span class="pipeline__orb-pulse-ring" />
-              <span class="pipeline__orb-pulse-dot" />
-            </span>
-          </div>
-          <div class="pipeline__step-text">
-            <h4>{{ t('dashboard.pipeline.step1Title') }}</h4>
-            <p>{{ t('dashboard.pipeline.step1Desc') }}</p>
-            <div class="pipeline__chip pipeline__chip--indigo">
-              <span>{{ pipelineStep1Chip }}</span>
-            </div>
+      <!-- DataFlowPipeline -->
+      <section class="pipeline">
+        <div
+          class="pipeline__accent"
+          aria-hidden="true"
+        />
+        <div class="pipeline__head">
+          <div>
+            <h3 class="pipeline__title">
+              {{ t('dashboard.pipeline.title') }}
+            </h3>
+            <p class="pipeline__subtitle">
+              {{ t('dashboard.pipeline.subtitle') }}
+            </p>
           </div>
         </div>
 
-        <div class="pipeline__connector">
-          <div class="pipeline__connector-line">
-            <div class="pipeline__connector-flow pipeline__connector-flow--indigo" />
-          </div>
-          <div class="pipeline__connector-badge">
-            <span class="pipeline__connector-dot" />
-            <span>{{ t('dashboard.pipeline.connectorBackup') }}</span>
-          </div>
-        </div>
-
-        <!-- Step 2 -->
-        <div class="pipeline__step">
-          <div class="pipeline__orb pipeline__orb--emerald">
-            <div class="pipeline__orbit pipeline__orbit--emerald" />
-            <div class="pipeline__orb-glow pipeline__orb-glow--emerald" />
-            <div class="pipeline__orb-core pipeline__orb-core--emerald">
-              <Database class="pipeline__orb-icon pipeline__orb-icon--emerald" />
-            </div>
-            <span class="pipeline__orb-pulse">
-              <span class="pipeline__orb-pulse-ring pipeline__orb-pulse-ring--emerald" />
-              <span class="pipeline__orb-pulse-dot pipeline__orb-pulse-dot--emerald" />
-            </span>
-          </div>
-          <div class="pipeline__step-text">
-            <h4>{{ t('dashboard.pipeline.step2Title') }}</h4>
-            <p>{{ t('dashboard.pipeline.step2Desc') }}</p>
-            <div class="pipeline__chip pipeline__chip--emerald">
-              <span>{{ pipelineStep2Chip }}</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="pipeline__connector">
-          <div class="pipeline__connector-line">
-            <div class="pipeline__connector-flow pipeline__connector-flow--emerald" />
-          </div>
-          <div class="pipeline__connector-badge pipeline__connector-badge--emerald">
-            <span class="pipeline__connector-dot pipeline__connector-dot--emerald" />
-            <span>{{ t('dashboard.pipeline.connectorVerify') }}</span>
-          </div>
-        </div>
-
-        <!-- Step 3 -->
-        <div class="pipeline__step">
-          <div class="pipeline__orb pipeline__orb--indigo">
-            <div class="pipeline__orbit pipeline__orbit--indigo pipeline__orbit--fast" />
-            <div class="pipeline__orb-glow pipeline__orb-glow--violet" />
-            <div class="pipeline__orb-core">
-              <ShieldCheck class="pipeline__orb-icon" />
-            </div>
-            <span class="pipeline__orb-pulse">
-              <span class="pipeline__orb-pulse-ring" />
-              <span class="pipeline__orb-pulse-dot pipeline__orb-pulse-dot--indigo" />
-            </span>
-          </div>
-          <div class="pipeline__step-text">
-            <h4>{{ t('dashboard.pipeline.step3Title') }}</h4>
-            <p>{{ t('dashboard.pipeline.step3Desc') }}</p>
-            <div class="pipeline__chip pipeline__chip--indigo">
-              <span>{{ pipelineStep3Chip }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- 3 Ribbon Metric Cards -->
-    <div class="ribbon-grid">
-      <!-- Production source -->
-      <RouterLink :to="routes.sources" class="ribbon-card ribbon-card--indigo">
-        <div class="ribbon-card__glow ribbon-card__glow--indigo" />
-        <div>
-          <div class="ribbon-card__head">
-            <div>
-              <h3>{{ t('dashboard.ribbon.infraTitle') }}</h3>
-            </div>
-            <div class="ribbon-card__icon ribbon-card__icon--indigo">
-              <Server class="w-5 h-5" />
-            </div>
-          </div>
-          <div class="ribbon-card__value-row">
-            <span class="ribbon-card__value">{{ sourceAvailabilityPct }}%</span>
-          </div>
-        </div>
-        <div class="ribbon-card__progress-block">
-          <div class="ribbon-card__progress-meta">
-            <span>{{ infraSourceMainValue }}</span>
-          </div>
-          <div class="ribbon-track">
-            <div class="ribbon-fill ribbon-fill--indigo" :style="{ width: `${sourceAvailabilityPct}%` }" />
-          </div>
-        </div>
-        <div class="ribbon-card__stats">
-          <div>
-            <span>{{ t('dashboard.ribbon.sourceTotal') }}</span>
-            <strong>{{ overview?.productionSources.total ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}</strong>
-          </div>
-          <div>
-            <span>{{ t('dashboard.ribbon.sourceAvailableLabel') }}</span>
-            <strong class="text-emerald-600">{{ overview?.productionSources.available ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}</strong>
-          </div>
-          <div>
-            <span>{{ t('dashboard.ribbon.sourceUnavailableLabel') }}</span>
-            <strong :class="(overview?.productionSources.unavailable ?? 0) > 0 ? 'ribbon-stat--danger' : 'ribbon-stat--muted'">
-              <span class="ribbon-stat-dot" :class="(overview?.productionSources.unavailable ?? 0) > 0 ? 'ribbon-stat-dot--danger' : 'ribbon-stat-dot--muted'" />
-              {{ overview?.productionSources.unavailable ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
-            </strong>
-          </div>
-        </div>
-      </RouterLink>
-
-      <!-- Target storage -->
-      <RouterLink :to="routes.repositories" class="ribbon-card ribbon-card--emerald">
-        <div class="ribbon-card__glow ribbon-card__glow--emerald" />
-        <div>
-          <div class="ribbon-card__head">
-            <div>
-              <h3>{{ t('dashboard.ribbon.storageTitle') }}</h3>
-            </div>
-            <div class="ribbon-card__icon ribbon-card__icon--emerald">
-              <Database class="w-5 h-5" />
-            </div>
-          </div>
-          <div class="ribbon-card__value-row">
-            <span class="ribbon-card__value">{{ storagePct != null ? `${storagePct}%` : '0%' }}</span>
-            <span
-              v-if="storageRibbonBadgeVisible"
-              class="ribbon-card__badge"
-              :class="storageRibbonBadgeClass"
-            >
-              {{ storageRibbonBadge }}
-            </span>
-          </div>
-        </div>
-        <div class="ribbon-card__progress-block">
-          <div class="ribbon-card__progress-meta">
-            <span>{{ storageUsedProgressLabel }}</span>
-          </div>
-          <div class="ribbon-track">
-            <div class="ribbon-fill ribbon-fill--indigo" :style="{ width: `${storagePct ?? 0}%` }" />
-          </div>
-        </div>
-        <div class="ribbon-card__stats">
-          <div>
-            <span>{{ t('dashboard.ribbon.repositories') }}</span>
-            <strong class="text-emerald-600">{{ overview?.storage.repoCount ?? 0 }}</strong>
-          </div>
-          <div>
-            <span>{{ t('dashboard.ribbon.used') }}</span>
-            <strong class="text-emerald-600">{{ formatGB(overview?.storage.usedBytes ?? 0) }}</strong>
-          </div>
-          <div>
-            <span>{{ t('dashboard.ribbon.capacityTotal') }}</span>
-            <strong :class="{ 'hfl-empty-mark': storageTotalCapacityLabel === '—' }">{{ storageTotalCapacityLabel }}</strong>
-          </div>
-        </div>
-      </RouterLink>
-
-      <!-- Recovery drill -->
-      <RouterLink :to="routes.recoveryDrillTasks" class="ribbon-card ribbon-card--indigo">
-        <div class="ribbon-card__glow ribbon-card__glow--indigo" />
-        <div>
-          <div class="ribbon-card__head">
-            <div>
-              <h3>{{ t('dashboard.ribbon.slaTitle') }}</h3>
-            </div>
-            <div class="ribbon-card__icon ribbon-card__icon--indigo">
-              <ShieldCheck class="w-5 h-5" />
-            </div>
-          </div>
-          <div class="ribbon-card__value-row">
-            <span class="ribbon-card__value">
-              {{ overview?.recoveryDrill24h?.successRate != null ? `${overview.recoveryDrill24h.successRate}%` : '—' }}
-            </span>
-            <span v-if="slaRibbonBadgeVisible" class="ribbon-card__badge" :class="slaRibbonBadgeClass">
-              {{ slaRibbonBadge }}
-            </span>
-          </div>
-        </div>
-        <div class="ribbon-card__progress-block">
-          <div class="ribbon-card__progress-meta">
-            <span>{{ t('dashboard.ribbon.tasks24hSuccessRate') }}</span>
-          </div>
-          <div class="ribbon-track">
-            <div
-              class="ribbon-fill ribbon-fill--indigo"
-              :style="{ width: `${overview?.recoveryDrill24h?.successRate ?? 0}%` }"
-            />
-          </div>
-        </div>
-        <div class="ribbon-card__stats">
-          <div>
-            <span>{{ t('dashboard.ribbon.succeeded') }}</span>
-            <strong class="text-emerald-600">
-              <span class="ribbon-stat-dot ribbon-stat-dot--success" />
-              {{ overview?.recoveryDrill24h?.success ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
-            </strong>
-          </div>
-          <div>
-            <span>{{ t('dashboard.ribbon.running') }}</span>
-            <strong class="ribbon-stat--primary">
-              <span class="ribbon-stat-pulse">
-                <span class="ribbon-stat-pulse__ring" />
-                <span class="ribbon-stat-pulse__dot" />
+        <div class="pipeline__flow">
+          <!-- Step 1 -->
+          <div class="pipeline__step">
+            <div class="pipeline__orb pipeline__orb--indigo">
+              <div class="pipeline__orbit pipeline__orbit--indigo" />
+              <div class="pipeline__orb-glow pipeline__orb-glow--indigo" />
+              <div class="pipeline__orb-core">
+                <Server class="pipeline__orb-icon" />
+              </div>
+              <span class="pipeline__orb-pulse">
+                <span class="pipeline__orb-pulse-ring" />
+                <span class="pipeline__orb-pulse-dot" />
               </span>
-              {{ overview?.recoveryDrill24h?.running ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
-            </strong>
-          </div>
-          <div>
-            <span>{{ t('dashboard.ribbon.failed') }}</span>
-            <strong :class="(overview?.recoveryDrill24h?.failed ?? 0) > 0 ? 'ribbon-stat--danger' : 'ribbon-stat--muted'">
-              <span class="ribbon-stat-dot" :class="(overview?.recoveryDrill24h?.failed ?? 0) > 0 ? 'ribbon-stat-dot--danger ribbon-stat-dot--pulse' : 'ribbon-stat-dot--muted'" />
-              {{ overview?.recoveryDrill24h?.failed ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
-            </strong>
-          </div>
-        </div>
-      </RouterLink>
-    </div>
-
-    <!-- 3-Column Cockpit -->
-    <div class="cockpit-grid">
-      <!-- Column 1: Attention -->
-      <div class="cockpit-stack">
-        <section class="panel panel--fixed panel--attention cockpit-attention">
-          <div class="panel-head panel-head--border">
-            <div class="panel-head__left">
-              <span class="panel-head-icon" aria-hidden="true">
-                <AlertTriangle :size="14" />
-              </span>
-              <h3 class="panel-title">{{ t('dashboard.attentionTitle') }}</h3>
-              <span v-if="overview?.attentionCount" class="attention-count">{{ overview.attentionCount }}</span>
             </div>
-            <RouterLink :to="routes.attention" class="panel-link">
-              {{ t('dashboard.viewAllAttention') }}
-              <ArrowUpRight class="panel-link__arrow" />
-            </RouterLink>
-          </div>
-          <div class="panel-body panel-body--attention">
-            <el-empty
-              v-if="!overview?.attention.length"
-              :description="t('dashboard.attentionEmptyDesc')"
-              :image-size="72"
-              class="dashboard-panel-empty dashboard-panel-empty--attention"
-            >
-              <template #image>
-                <DashboardIdleShieldIllustration />
-              </template>
-            </el-empty>
-            <div v-else class="attention-list scrollbar">
-              <div
-                v-for="item in overview.attention"
-                :key="item.id"
-                class="attention-item"
-                :class="attentionClass(item.kind)"
-              >
-                <div class="attention-item__content">
-                  <AlertCircle class="attention-item__icon" />
-                  <div>
-                    <p class="attention-item__title">{{ item.title }}</p>
-                    <span v-if="item.detail" class="attention-item__detail">{{ item.detail }}</span>
-                    <span v-if="item.at" class="attention-item__time">{{ formatTime(item.at) }}</span>
-                  </div>
-                </div>
-                <div class="attention-item__actions">
-                  <RouterLink :to="item.to" class="attention-item__solve">
-                    {{ t('dashboard.openAttentionItem') }}
-                  </RouterLink>
-                </div>
+            <div class="pipeline__step-text">
+              <h4>{{ t('dashboard.pipeline.step1Title') }}</h4>
+              <p>{{ t('dashboard.pipeline.step1Desc') }}</p>
+              <div class="pipeline__chip pipeline__chip--indigo">
+                <span>{{ pipelineStep1Chip }}</span>
               </div>
             </div>
-            <div
-              v-if="overview && overview.attention.length < overview.attentionCount"
-              class="attention-list__summary"
-            >
-              <span>{{ t('dashboard.attentionPreview', { shown: overview.attention.length, total: overview.attentionCount }) }}</span>
+          </div>
+
+          <div class="pipeline__connector">
+            <div class="pipeline__connector-line">
+              <div class="pipeline__connector-flow pipeline__connector-flow--indigo" />
+            </div>
+            <div class="pipeline__connector-badge">
+              <span class="pipeline__connector-dot" />
+              <span>{{ t('dashboard.pipeline.connectorBackup') }}</span>
             </div>
           </div>
-        </section>
+
+          <!-- Step 2 -->
+          <div class="pipeline__step">
+            <div class="pipeline__orb pipeline__orb--emerald">
+              <div class="pipeline__orbit pipeline__orbit--emerald" />
+              <div class="pipeline__orb-glow pipeline__orb-glow--emerald" />
+              <div class="pipeline__orb-core pipeline__orb-core--emerald">
+                <Database class="pipeline__orb-icon pipeline__orb-icon--emerald" />
+              </div>
+              <span class="pipeline__orb-pulse">
+                <span class="pipeline__orb-pulse-ring pipeline__orb-pulse-ring--emerald" />
+                <span class="pipeline__orb-pulse-dot pipeline__orb-pulse-dot--emerald" />
+              </span>
+            </div>
+            <div class="pipeline__step-text">
+              <h4>{{ t('dashboard.pipeline.step2Title') }}</h4>
+              <p>{{ t('dashboard.pipeline.step2Desc') }}</p>
+              <div class="pipeline__chip pipeline__chip--emerald">
+                <span>{{ pipelineStep2Chip }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="pipeline__connector">
+            <div class="pipeline__connector-line">
+              <div class="pipeline__connector-flow pipeline__connector-flow--emerald" />
+            </div>
+            <div class="pipeline__connector-badge pipeline__connector-badge--emerald">
+              <span class="pipeline__connector-dot pipeline__connector-dot--emerald" />
+              <span>{{ t('dashboard.pipeline.connectorVerify') }}</span>
+            </div>
+          </div>
+
+          <!-- Step 3 -->
+          <div class="pipeline__step">
+            <div class="pipeline__orb pipeline__orb--indigo">
+              <div class="pipeline__orbit pipeline__orbit--indigo pipeline__orbit--fast" />
+              <div class="pipeline__orb-glow pipeline__orb-glow--violet" />
+              <div class="pipeline__orb-core">
+                <ShieldCheck class="pipeline__orb-icon" />
+              </div>
+              <span class="pipeline__orb-pulse">
+                <span class="pipeline__orb-pulse-ring" />
+                <span class="pipeline__orb-pulse-dot pipeline__orb-pulse-dot--indigo" />
+              </span>
+            </div>
+            <div class="pipeline__step-text">
+              <h4>{{ t('dashboard.pipeline.step3Title') }}</h4>
+              <p>{{ t('dashboard.pipeline.step3Desc') }}</p>
+              <div class="pipeline__chip pipeline__chip--indigo">
+                <span>{{ pipelineStep3Chip }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3 Ribbon Metric Cards -->
+      <div class="ribbon-grid">
+        <!-- Production source -->
+        <RouterLink
+          :to="routes.sources"
+          class="ribbon-card ribbon-card--indigo"
+        >
+          <div class="ribbon-card__glow ribbon-card__glow--indigo" />
+          <div>
+            <div class="ribbon-card__head">
+              <div>
+                <h3>{{ t('dashboard.ribbon.infraTitle') }}</h3>
+              </div>
+              <div class="ribbon-card__icon ribbon-card__icon--indigo">
+                <Server class="w-5 h-5" />
+              </div>
+            </div>
+            <div class="ribbon-card__value-row">
+              <span class="ribbon-card__value">{{ sourceAvailabilityPct }}%</span>
+            </div>
+          </div>
+          <div class="ribbon-card__progress-block">
+            <div class="ribbon-card__progress-meta">
+              <span>{{ infraSourceMainValue }}</span>
+            </div>
+            <div class="ribbon-track">
+              <div
+                class="ribbon-fill ribbon-fill--indigo"
+                :style="{ width: `${sourceAvailabilityPct}%` }"
+              />
+            </div>
+          </div>
+          <div class="ribbon-card__stats">
+            <div>
+              <span>{{ t('dashboard.ribbon.sourceTotal') }}</span>
+              <strong>{{ overview?.productionSources.total ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}</strong>
+            </div>
+            <div>
+              <span>{{ t('dashboard.ribbon.sourceAvailableLabel') }}</span>
+              <strong class="text-emerald-600">{{ overview?.productionSources.available ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}</strong>
+            </div>
+            <div>
+              <span>{{ t('dashboard.ribbon.sourceUnavailableLabel') }}</span>
+              <strong :class="(overview?.productionSources.unavailable ?? 0) > 0 ? 'ribbon-stat--danger' : 'ribbon-stat--muted'">
+                <span
+                  class="ribbon-stat-dot"
+                  :class="(overview?.productionSources.unavailable ?? 0) > 0 ? 'ribbon-stat-dot--danger' : 'ribbon-stat-dot--muted'"
+                />
+                {{ overview?.productionSources.unavailable ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
+              </strong>
+            </div>
+          </div>
+        </RouterLink>
+
+        <!-- Target storage -->
+        <RouterLink
+          :to="routes.repositories"
+          class="ribbon-card ribbon-card--emerald"
+        >
+          <div class="ribbon-card__glow ribbon-card__glow--emerald" />
+          <div>
+            <div class="ribbon-card__head">
+              <div>
+                <h3>{{ t('dashboard.ribbon.storageTitle') }}</h3>
+              </div>
+              <div class="ribbon-card__icon ribbon-card__icon--emerald">
+                <Database class="w-5 h-5" />
+              </div>
+            </div>
+            <div class="ribbon-card__value-row">
+              <span class="ribbon-card__value">{{ storagePct != null ? `${storagePct}%` : '0%' }}</span>
+              <span
+                v-if="storageRibbonBadgeVisible"
+                class="ribbon-card__badge"
+                :class="storageRibbonBadgeClass"
+              >
+                {{ storageRibbonBadge }}
+              </span>
+            </div>
+          </div>
+          <div class="ribbon-card__progress-block">
+            <div class="ribbon-card__progress-meta">
+              <span>{{ storageUsedProgressLabel }}</span>
+            </div>
+            <div class="ribbon-track">
+              <div
+                class="ribbon-fill ribbon-fill--indigo"
+                :style="{ width: `${storagePct ?? 0}%` }"
+              />
+            </div>
+          </div>
+          <div class="ribbon-card__stats">
+            <div>
+              <span>{{ t('dashboard.ribbon.repositories') }}</span>
+              <strong class="text-emerald-600">{{ overview?.storage.repoCount ?? 0 }}</strong>
+            </div>
+            <div>
+              <span>{{ t('dashboard.ribbon.used') }}</span>
+              <strong class="text-emerald-600">{{ formatGB(overview?.storage.usedBytes ?? 0) }}</strong>
+            </div>
+            <div>
+              <span>{{ t('dashboard.ribbon.capacityTotal') }}</span>
+              <strong :class="{ 'hfl-empty-mark': storageTotalCapacityLabel === '—' }">{{ storageTotalCapacityLabel }}</strong>
+            </div>
+          </div>
+        </RouterLink>
+
+        <!-- Recovery drill -->
+        <RouterLink
+          :to="routes.recoveryDrillTasks"
+          class="ribbon-card ribbon-card--indigo"
+        >
+          <div class="ribbon-card__glow ribbon-card__glow--indigo" />
+          <div>
+            <div class="ribbon-card__head">
+              <div>
+                <h3>{{ t('dashboard.ribbon.slaTitle') }}</h3>
+              </div>
+              <div class="ribbon-card__icon ribbon-card__icon--indigo">
+                <ShieldCheck class="w-5 h-5" />
+              </div>
+            </div>
+            <div class="ribbon-card__value-row">
+              <span class="ribbon-card__value">
+                {{ overview?.recoveryDrill24h?.successRate != null ? `${overview.recoveryDrill24h.successRate}%` : '—' }}
+              </span>
+              <span
+                v-if="slaRibbonBadgeVisible"
+                class="ribbon-card__badge"
+                :class="slaRibbonBadgeClass"
+              >
+                {{ slaRibbonBadge }}
+              </span>
+            </div>
+          </div>
+          <div class="ribbon-card__progress-block">
+            <div class="ribbon-card__progress-meta">
+              <span>{{ t('dashboard.ribbon.tasks24hSuccessRate') }}</span>
+            </div>
+            <div class="ribbon-track">
+              <div
+                class="ribbon-fill ribbon-fill--indigo"
+                :style="{ width: `${overview?.recoveryDrill24h?.successRate ?? 0}%` }"
+              />
+            </div>
+          </div>
+          <div class="ribbon-card__stats">
+            <div>
+              <span>{{ t('dashboard.ribbon.succeeded') }}</span>
+              <strong class="text-emerald-600">
+                <span class="ribbon-stat-dot ribbon-stat-dot--success" />
+                {{ overview?.recoveryDrill24h?.success ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
+              </strong>
+            </div>
+            <div>
+              <span>{{ t('dashboard.ribbon.running') }}</span>
+              <strong class="ribbon-stat--primary">
+                <span class="ribbon-stat-pulse">
+                  <span class="ribbon-stat-pulse__ring" />
+                  <span class="ribbon-stat-pulse__dot" />
+                </span>
+                {{ overview?.recoveryDrill24h?.running ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
+              </strong>
+            </div>
+            <div>
+              <span>{{ t('dashboard.ribbon.failed') }}</span>
+              <strong :class="(overview?.recoveryDrill24h?.failed ?? 0) > 0 ? 'ribbon-stat--danger' : 'ribbon-stat--muted'">
+                <span
+                  class="ribbon-stat-dot"
+                  :class="(overview?.recoveryDrill24h?.failed ?? 0) > 0 ? 'ribbon-stat-dot--danger ribbon-stat-dot--pulse' : 'ribbon-stat-dot--muted'"
+                />
+                {{ overview?.recoveryDrill24h?.failed ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
+              </strong>
+            </div>
+          </div>
+        </RouterLink>
       </div>
 
-      <!-- Column 2: Storage + Quota -->
-      <div class="cockpit-stack">
-        <section class="panel panel--fixed panel--storage-capacity cockpit-storage">
-          <div class="panel-head panel-head--border">
-            <div class="panel-head__left">
-              <span class="panel-head-icon" aria-hidden="true">
-                <Database :size="14" />
-              </span>
-              <h4 class="panel-title panel-title--sm">{{ t('dashboard.storageTitle') }}</h4>
-            </div>
-            <div class="storage-capacity-head__actions">
-              <RouterLink :to="routes.repositories" class="panel-link">
-                {{ t('dashboard.viewRepos') }} ({{ overview?.storage.repoCount ?? 0 }})
+      <!-- 3-Column Cockpit -->
+      <div class="cockpit-grid">
+        <!-- Column 1: Attention -->
+        <div class="cockpit-stack">
+          <section class="panel panel--fixed panel--attention cockpit-attention">
+            <div class="panel-head panel-head--border">
+              <div class="panel-head__left">
+                <span
+                  class="panel-head-icon"
+                  aria-hidden="true"
+                >
+                  <AlertTriangle :size="14" />
+                </span>
+                <h3 class="panel-title">
+                  {{ t('dashboard.attentionTitle') }}
+                </h3>
+                <span
+                  v-if="overview?.attentionCount"
+                  class="attention-count"
+                >{{ overview.attentionCount }}</span>
+              </div>
+              <RouterLink
+                :to="routes.attention"
+                class="panel-link"
+              >
+                {{ t('dashboard.viewAllAttention') }}
                 <ArrowUpRight class="panel-link__arrow" />
               </RouterLink>
             </div>
-          </div>
-
-          <div class="storage-capacity-body">
-            <section
-              class="storage-capacity-repos"
-              :class="{ 'storage-capacity-repos--selecting': capacityPlanRepositories.length > 0 && !selectedCapacityPlanRepo }"
-            >
-              <div v-if="!overview?.topRepos.length" class="storage-empty">
-                <p>{{ t('dashboard.noRepos') }}</p>
-              </div>
-	              <div v-else class="storage-list">
-	                <div
-	                  v-for="repo in visibleStorageRepos"
-	                  :key="repo.id"
-	                  class="storage-item"
-	                  :class="{ 'storage-item--selected': selectedCapacityPlanRepo?.id === repo.id }"
-	                >
-	                  <div class="storage-item__head">
-	                    <div class="storage-item__name">
-	                      <span class="storage-item__name-main">
-	                        <span class="storage-item__health" :class="`storage-item__health--${repoHealthKind(repo)}`" aria-hidden="true" />
-                        <span class="storage-item__name-text">{{ repo.name }}</span>
-                      </span>
-                      <span class="storage-item__health-label" :class="`storage-item__health-label--${repoHealthKind(repo)}`">
-	                        {{ repoHealthLabel(repo) }}
-	                      </span>
-	                    </div>
-	                    <span
-	                      class="storage-item__bytes"
-	                      :class="{ 'storage-item__bytes--unlimited': repo.capacityMode !== 'known' }"
-	                    >
-	                      <span class="storage-item__used">{{ formatBytes(repo.usedBytes) }}</span>
-                      <span class="storage-item__capacity" :class="{ 'hfl-empty-mark': repoCapacityLabel(repo) === '—' }">{{ repoCapacityLabel(repo) === '—' ? '—' : `/ ${repoCapacityLabel(repo)}` }}</span>
-	                      <span v-if="repo.capacityMode === 'known' && repo.pct !== null" class="storage-item__pct">
-	                        {{ repo.pct }}%
-	                      </span>
-	                    </span>
-	                    <button
-	                      type="button"
-	                      class="storage-item__plan"
-	                      :aria-pressed="selectedCapacityPlanRepo?.id === repo.id"
-	                      @click="selectCapacityPlanRepository(repo.id)"
-	                    >
-	                      {{ selectedCapacityPlanRepo?.id === repo.id
-	                        ? t('dashboard.capacityPlanner.planning')
-	                        : t('dashboard.capacityPlanner.plan') }}
-	                    </button>
-	                  </div>
-	                  <div v-if="repo.capacityMode === 'known'" class="storage-track">
-                    <div class="storage-fill" :style="{ width: `${repo.pct ?? 0}%` }" />
+            <div class="panel-body panel-body--attention">
+              <el-empty
+                v-if="!overview?.attention.length"
+                :description="t('dashboard.attentionEmptyDesc')"
+                :image-size="72"
+                class="dashboard-panel-empty dashboard-panel-empty--attention"
+              >
+                <template #image>
+                  <DashboardIdleShieldIllustration />
+                </template>
+              </el-empty>
+              <div
+                v-else
+                class="attention-list scrollbar"
+              >
+                <div
+                  v-for="item in overview.attention"
+                  :key="item.id"
+                  class="attention-item"
+                  :class="attentionClass(item.kind)"
+                >
+                  <div class="attention-item__content">
+                    <AlertCircle class="attention-item__icon" />
+                    <div>
+                      <p class="attention-item__title">
+                        {{ item.title }}
+                      </p>
+                      <span
+                        v-if="item.detail"
+                        class="attention-item__detail"
+                      >{{ item.detail }}</span>
+                      <span
+                        v-if="item.at"
+                        class="attention-item__time"
+                      >{{ formatTime(item.at) }}</span>
+                    </div>
+                  </div>
+                  <div class="attention-item__actions">
+                    <RouterLink
+                      :to="item.to"
+                      class="attention-item__solve"
+                    >
+                      {{ t('dashboard.openAttentionItem') }}
+                    </RouterLink>
                   </div>
                 </div>
               </div>
-            </section>
-
-            <section
-              class="storage-capacity-planner"
-              :class="{ 'storage-capacity-planner--selecting': capacityPlanRepositories.length > 0 && !selectedCapacityPlanRepo }"
-            >
-              <div class="storage-capacity-planner__title">
-                <span class="storage-capacity-planner__title-main">
-                  <Calculator :size="13" />
-                  <span>{{ t('dashboard.capacityPlanner.title') }}</span>
-                </span>
-                <span
-                  v-if="selectedCapacityPlanRepo"
-                  class="capacity-planner__status-chip"
-                  :class="`capacity-planner__status-chip--${capacityPlanStatus}`"
-                >
-                  {{ capacityPlanStatusLabel }}
-                </span>
-              </div>
-              <div v-if="!capacityPlanRepositories.length" class="capacity-planner__empty">
-                <span>{{ t('dashboard.capacityPlanner.empty') }}</span>
-                <RouterLink :to="routes.repositories">{{ t('dashboard.capacityPlanner.createRepository') }}</RouterLink>
-              </div>
               <div
-                v-else
-                class="capacity-planner__body"
-                :class="{ 'capacity-planner__body--selecting': !selectedCapacityPlanRepo }"
+                v-if="overview && overview.attention.length < overview.attentionCount"
+                class="attention-list__summary"
               >
-                <div class="capacity-planner__field">
-                  <label
-                    class="capacity-planner__label"
-                    for="dashboard-capacity-plan-repository"
-                  >
-                    {{ selectedCapacityPlanRepo
-                      ? t('dashboard.capacityPlanner.repository')
-                      : t('dashboard.capacityPlanner.selectRepositoryTitle') }}
-                  </label>
-                  <ElSelect
-                    id="dashboard-capacity-plan-repository"
-                    v-model="capacityPlanRepositoryId"
-                    class="capacity-planner__repository"
-                    :aria-label="selectedCapacityPlanRepo
-                      ? t('dashboard.capacityPlanner.repository')
-                      : t('dashboard.capacityPlanner.selectRepositoryTitle')"
-                    :placeholder="t('dashboard.capacityPlanner.selectRepository')"
-                    :teleported="false"
-                  >
-                    <ElOption
-                      v-for="repo in capacityPlanRepositories"
-                      :key="repo.id"
-                      :label="repo.name"
-                      :value="repo.id"
-                    />
-                  </ElSelect>
+                <span>{{ t('dashboard.attentionPreview', { shown: overview.attention.length, total: overview.attentionCount }) }}</span>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Column 2: Storage + Quota -->
+        <div class="cockpit-stack">
+          <section class="panel panel--fixed panel--storage-capacity cockpit-storage">
+            <div class="panel-head panel-head--border">
+              <div class="panel-head__left">
+                <span
+                  class="panel-head-icon"
+                  aria-hidden="true"
+                >
+                  <Database :size="14" />
+                </span>
+                <h4 class="panel-title panel-title--sm">
+                  {{ t('dashboard.storageTitle') }}
+                </h4>
+              </div>
+              <div class="storage-capacity-head__actions">
+                <RouterLink
+                  :to="routes.repositories"
+                  class="panel-link"
+                >
+                  {{ t('dashboard.viewRepos') }} ({{ overview?.storage.repoCount ?? 0 }})
+                  <ArrowUpRight class="panel-link__arrow" />
+                </RouterLink>
+              </div>
+            </div>
+
+            <div class="storage-capacity-body">
+              <section
+                class="storage-capacity-repos"
+                :class="{ 'storage-capacity-repos--selecting': capacityPlanRepositories.length > 0 && !selectedCapacityPlanRepo }"
+              >
+                <div
+                  v-if="!overview?.topRepos.length"
+                  class="storage-empty"
+                >
+                  <p>{{ t('dashboard.noRepos') }}</p>
                 </div>
-                <p v-if="!selectedCapacityPlanRepo" class="capacity-planner__select-hint">
-                  {{ t('dashboard.capacityPlanner.selectRepositoryHint') }}
-                </p>
-                <template v-if="selectedCapacityPlanRepo">
-                  <div class="capacity-planner__form">
-                    <div class="capacity-planner__field">
-                      <label
-                        class="capacity-planner__label"
-                        for="dashboard-capacity-plan-amount"
+                <div
+                  v-else
+                  class="storage-list"
+                >
+                  <div
+                    v-for="repo in visibleStorageRepos"
+                    :key="repo.id"
+                    class="storage-item"
+                    :class="{ 'storage-item--selected': selectedCapacityPlanRepo?.id === repo.id }"
+                  >
+                    <div class="storage-item__head">
+                      <div class="storage-item__name">
+                        <span class="storage-item__name-main">
+                          <span
+                            class="storage-item__health"
+                            :class="`storage-item__health--${repoHealthKind(repo)}`"
+                            aria-hidden="true"
+                          />
+                          <span class="storage-item__name-text">{{ repo.name }}</span>
+                        </span>
+                        <span
+                          class="storage-item__health-label"
+                          :class="`storage-item__health-label--${repoHealthKind(repo)}`"
+                        >
+                          {{ repoHealthLabel(repo) }}
+                        </span>
+                      </div>
+                      <span
+                        class="storage-item__bytes"
+                        :class="{ 'storage-item__bytes--unlimited': repo.capacityMode !== 'known' }"
                       >
-                        {{ t('dashboard.capacityPlanner.plannedAdd') }}
-                      </label>
-                      <div class="capacity-planner__controls">
+                        <span class="storage-item__used">{{ formatBytes(repo.usedBytes) }}</span>
+                        <span
+                          class="storage-item__capacity"
+                          :class="{ 'hfl-empty-mark': repoCapacityLabel(repo) === '—' }"
+                        >{{ repoCapacityLabel(repo) === '—' ? '—' : `/ ${repoCapacityLabel(repo)}` }}</span>
+                        <span
+                          v-if="repo.capacityMode === 'known' && repo.pct !== null"
+                          class="storage-item__pct"
+                        >
+                          {{ repo.pct }}%
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        class="storage-item__plan"
+                        :aria-pressed="selectedCapacityPlanRepo?.id === repo.id"
+                        @click="selectCapacityPlanRepository(repo.id)"
+                      >
+                        {{ selectedCapacityPlanRepo?.id === repo.id
+                          ? t('dashboard.capacityPlanner.planning')
+                          : t('dashboard.capacityPlanner.plan') }}
+                      </button>
+                    </div>
+                    <div
+                      v-if="repo.capacityMode === 'known'"
+                      class="storage-track"
+                    >
+                      <div
+                        class="storage-fill"
+                        :style="{ width: `${repo.pct ?? 0}%` }"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section
+                class="storage-capacity-planner"
+                :class="{ 'storage-capacity-planner--selecting': capacityPlanRepositories.length > 0 && !selectedCapacityPlanRepo }"
+              >
+                <div class="storage-capacity-planner__title">
+                  <span class="storage-capacity-planner__title-main">
+                    <Calculator :size="13" />
+                    <span>{{ t('dashboard.capacityPlanner.title') }}</span>
+                  </span>
+                  <span
+                    v-if="selectedCapacityPlanRepo"
+                    class="capacity-planner__status-chip"
+                    :class="`capacity-planner__status-chip--${capacityPlanStatus}`"
+                  >
+                    {{ capacityPlanStatusLabel }}
+                  </span>
+                </div>
+                <div
+                  v-if="!capacityPlanRepositories.length"
+                  class="capacity-planner__empty"
+                >
+                  <span>{{ t('dashboard.capacityPlanner.empty') }}</span>
+                  <RouterLink :to="routes.repositories">
+                    {{ t('dashboard.capacityPlanner.createRepository') }}
+                  </RouterLink>
+                </div>
+                <div
+                  v-else
+                  class="capacity-planner__body"
+                  :class="{ 'capacity-planner__body--selecting': !selectedCapacityPlanRepo }"
+                >
+                  <div class="capacity-planner__field">
+                    <label
+                      class="capacity-planner__label"
+                      for="dashboard-capacity-plan-repository"
+                    >
+                      {{ selectedCapacityPlanRepo
+                        ? t('dashboard.capacityPlanner.repository')
+                        : t('dashboard.capacityPlanner.selectRepositoryTitle') }}
+                    </label>
+                    <ElSelect
+                      id="dashboard-capacity-plan-repository"
+                      v-model="capacityPlanRepositoryId"
+                      class="capacity-planner__repository"
+                      :aria-label="selectedCapacityPlanRepo
+                        ? t('dashboard.capacityPlanner.repository')
+                        : t('dashboard.capacityPlanner.selectRepositoryTitle')"
+                      :placeholder="t('dashboard.capacityPlanner.selectRepository')"
+                      :teleported="false"
+                    >
+                      <ElOption
+                        v-for="repo in capacityPlanRepositories"
+                        :key="repo.id"
+                        :label="repo.name"
+                        :value="repo.id"
+                      />
+                    </ElSelect>
+                  </div>
+                  <p
+                    v-if="!selectedCapacityPlanRepo"
+                    class="capacity-planner__select-hint"
+                  >
+                    {{ t('dashboard.capacityPlanner.selectRepositoryHint') }}
+                  </p>
+                  <template v-if="selectedCapacityPlanRepo">
+                    <div class="capacity-planner__form">
+                      <div class="capacity-planner__field">
+                        <label
+                          class="capacity-planner__label"
+                          for="dashboard-capacity-plan-amount"
+                        >
+                          {{ t('dashboard.capacityPlanner.plannedAdd') }}
+                        </label>
+                        <div class="capacity-planner__controls">
+                          <ElInputNumber
+                            id="dashboard-capacity-plan-amount"
+                            v-model="capacityPlanAmount"
+                            class="capacity-planner__amount"
+                            name="dashboard_capacity_plan_amount"
+                            :aria-label="t('dashboard.capacityPlanner.plannedAdd')"
+                            :min="0"
+                            :step="0.1"
+                            :precision="1"
+                            controls-position="right"
+                          />
+                          <ElSelect
+                            v-model="capacityPlanUnit"
+                            class="capacity-planner__unit"
+                            :aria-label="t('dashboard.capacityPlanner.unit')"
+                            :teleported="false"
+                          >
+                            <ElOption
+                              label="GB"
+                              value="GB"
+                            />
+                            <ElOption
+                              label="TB"
+                              value="TB"
+                            />
+                          </ElSelect>
+                        </div>
+                      </div>
+                      <div class="capacity-planner__field">
+                        <label
+                          class="capacity-planner__label"
+                          for="dashboard-capacity-plan-factor"
+                        >
+                          {{ t('dashboard.capacityPlanner.factor') }}
+                        </label>
                         <ElInputNumber
-                          id="dashboard-capacity-plan-amount"
-                          v-model="capacityPlanAmount"
-                          class="capacity-planner__amount"
-                          name="dashboard_capacity_plan_amount"
-                          :aria-label="t('dashboard.capacityPlanner.plannedAdd')"
+                          id="dashboard-capacity-plan-factor"
+                          v-model="capacityPlanFactor"
+                          class="capacity-planner__factor"
+                          name="dashboard_capacity_plan_factor"
+                          :aria-label="t('dashboard.capacityPlanner.factor')"
                           :min="0"
                           :step="0.1"
                           :precision="1"
                           controls-position="right"
                         />
-                        <ElSelect
-                          v-model="capacityPlanUnit"
-                          class="capacity-planner__unit"
-                          :aria-label="t('dashboard.capacityPlanner.unit')"
-                          :teleported="false"
-                        >
-                          <ElOption label="GB" value="GB" />
-                          <ElOption label="TB" value="TB" />
-                        </ElSelect>
                       </div>
                     </div>
-                    <div class="capacity-planner__field">
-                      <label
-                        class="capacity-planner__label"
-                        for="dashboard-capacity-plan-factor"
-                      >
-                        {{ t('dashboard.capacityPlanner.factor') }}
-                      </label>
-                      <ElInputNumber
-                        id="dashboard-capacity-plan-factor"
-                        v-model="capacityPlanFactor"
-                        class="capacity-planner__factor"
-                        name="dashboard_capacity_plan_factor"
-                        :aria-label="t('dashboard.capacityPlanner.factor')"
-                        :min="0"
-                        :step="0.1"
-                        :precision="1"
-                        controls-position="right"
-                      />
-                    </div>
-                  </div>
-                  <div class="capacity-planner__metrics">
-                    <div class="capacity-planner__metric">
-                      <span>{{ capacityPlanPrimaryMetric.label }}</span>
-                      <strong>{{ capacityPlanPrimaryMetric.value }}</strong>
-                    </div>
-                    <div class="capacity-planner__metric">
-                      <span>{{ capacityPlanSecondaryMetric.label }}</span>
-                      <strong>{{ capacityPlanSecondaryMetric.value }}</strong>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </section>
-          </div>
-        </section>
-
-        <section v-if="quotaItems.length" class="panel panel--fixed panel--quota cockpit-quota">
-          <div class="panel-head panel-head--border">
-            <div class="panel-head__left">
-              <span class="panel-head-icon" aria-hidden="true">
-                <CreditCard :size="14" />
-              </span>
-              <h3 class="panel-title">{{ t('dashboard.quotaTitle') }}</h3>
-            </div>
-            <RouterLink :to="routes.subscription" class="panel-link">
-              {{ t('dashboard.viewLicense') }}
-              <ArrowUpRight class="panel-link__arrow" />
-            </RouterLink>
-          </div>
-          <div class="quota-grid scrollbar">
-            <div v-for="q in quotaItems" :key="q.key" class="quota-item">
-              <div class="quota-item__head">
-                <ElTooltip :content="q.label" placement="top" :enterable="true" :show-after="200">
-                  <span class="quota-item__label">{{ q.label }}</span>
-                </ElTooltip>
-                <span class="quota-item__nums">
-                  {{ q.used }} <span class="quota-item__limit">/ {{ formatQuotaLimit(q.limit) }}</span>
-                  <span v-if="q.suffix" class="quota-item__unit">{{ q.suffix }}</span>
-                  <span class="quota-pct" :class="quotaPctClass(quotaPct(q.used, q.limit))">
-                    {{ quotaPct(q.used, q.limit) }}%
-                  </span>
-                </span>
-              </div>
-              <div class="quota-track">
-                <div
-                  class="quota-bar"
-                  :class="quotaBarClass(quotaPct(q.used, q.limit))"
-                  :style="{ width: `${quotaPct(q.used, q.limit)}%` }"
-                />
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <!-- Column 3: Running Tasks + Chart -->
-      <div class="cockpit-stack">
-        <section class="panel panel--fixed cockpit-running">
-          <div class="panel-head panel-head--border">
-            <div class="panel-head__left">
-              <span class="panel-head-icon" aria-hidden="true">
-                <History :size="14" />
-              </span>
-              <h4 class="panel-title panel-title--sm">{{ t('dashboard.runningTasksTitle') }}</h4>
-            </div>
-            <RouterLink :to="routes.taskList" class="panel-link">
-              {{ t('dashboard.linkTasks') }}
-              <ArrowUpRight class="panel-link__arrow" />
-            </RouterLink>
-          </div>
-          <el-empty
-            v-if="!overview?.runningTasks.length"
-            :description="t('dashboard.noRunningBackupTasks')"
-            :image-size="72"
-            class="dashboard-panel-empty dashboard-panel-empty--running"
-          >
-            <template #image>
-              <DashboardIdleGearIllustration />
-            </template>
-          </el-empty>
-          <div v-else class="running-list scrollbar">
-            <div v-for="task in overview.runningTasks" :key="task.id" class="running-item">
-              <div class="running-item__head">
-                <span class="running-item__name">{{ runningTaskLabel(task) }}</span>
-                <span class="running-item__pct">{{ taskProgressValue(task.progress) }}%</span>
-              </div>
-              <div class="running-track">
-                <div class="running-fill" :style="{ width: `${taskProgressValue(task.progress)}%` }" />
-              </div>
-              <div class="running-item__meta">
-                <span>{{ taskTypeLabel(task.task_type) }}</span>
-                <span :class="{ 'hfl-empty-mark': !(task.started_at || task.created_at) }">{{ formatTime(task.started_at || task.created_at) }}</span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel panel--fixed panel--chart cockpit-chart">
-          <div class="panel-head panel-head--border panel-head--chart">
-            <div class="panel-head__left">
-              <span class="panel-head-icon" aria-hidden="true">
-                <History :size="14" />
-              </span>
-              <h3 class="panel-title">{{ t('dashboard.chartTasks7d') }}</h3>
-            </div>
-            <RouterLink :to="routes.taskList" class="panel-link">
-              {{ t('dashboard.linkTasks') }}
-              <ArrowUpRight class="panel-link__arrow" />
-            </RouterLink>
-          </div>
-
-          <div class="chart-area">
-            <div class="chart-plot">
-              <div
-                v-for="(tick, idx) in chartYTicks"
-                :key="idx"
-                class="chart-y-row"
-                :style="{ top: `${(idx / 4) * 100}%` }"
-              >
-                <span class="chart-y-label">{{ tick }}</span>
-                <div class="chart-y-line" />
-              </div>
-              <div class="chart-bars">
-                <HflPopover
-                  v-for="(day, idx) in chartBuckets"
-                  :key="day.label"
-                  trigger="hover"
-                  placement="top"
-                  :show-after="0"
-                  :width="280"
-                  :fallback-placements="['bottom']"
-                  popper-class="dashboard-chart-outcome-popper"
-                >
-                  <template #reference>
-                    <div
-                      class="chart-col"
-                      role="link"
-                      tabindex="0"
-                      :aria-label="t('dashboard.goTo', { target: `${day.label} ${t('dashboard.linkTasks')}` })"
-                      @click="openTaskOutcomes(day)"
-                      @mouseenter="chartHoveredIdx = idx"
-                      @mouseleave="chartHoveredIdx = null"
-                      @keydown.enter.prevent="openTaskOutcomes(day)"
-                      @keydown.space.prevent="openTaskOutcomes(day)"
-                    >
-                      <div class="chart-col__pillar" :style="{ height: `${dayHeightPercent(day)}%` }">
-                        <div
-                          v-if="dayTotal(day) > 0"
-                          class="chart-pillar"
-                          :class="{ 'chart-pillar--hover': chartHoveredIdx === idx }"
-                        >
-                          <div
-                            v-if="day.cancel > 0"
-                            class="chart-seg chart-seg--cancel"
-                            :style="{ height: `${(day.cancel / dayTotal(day)) * 100}%` }"
-                          />
-                          <div
-                            v-if="day.fail > 0"
-                            class="chart-seg chart-seg--fail"
-                            :style="{ height: `${(day.fail / dayTotal(day)) * 100}%` }"
-                          />
-                          <div
-                            v-if="day.success > 0"
-                            class="chart-seg chart-seg--success"
-                            :style="{ height: `${(day.success / dayTotal(day)) * 100}%` }"
-                          />
-                        </div>
-                        <div v-else class="chart-zero" />
+                    <div class="capacity-planner__metrics">
+                      <div class="capacity-planner__metric">
+                        <span>{{ capacityPlanPrimaryMetric.label }}</span>
+                        <strong>{{ capacityPlanPrimaryMetric.value }}</strong>
                       </div>
-                      <span class="chart-x-label" :class="{ 'chart-x-label--active': chartHoveredIdx === idx }">
-                        {{ day.label }}
-                      </span>
+                      <div class="capacity-planner__metric">
+                        <span>{{ capacityPlanSecondaryMetric.label }}</span>
+                        <strong>{{ capacityPlanSecondaryMetric.value }}</strong>
+                      </div>
                     </div>
                   </template>
-                  <div class="chart-inline-tip">
-                    <div class="chart-inline-tip__head">
-                      <span class="chart-inline-tip__date">{{ day.label }}</span>
-                      <span class="chart-inline-tip__rate">
-                        <span class="chart-inline-tip__rate-label">{{ t('dashboard.chartSuccessRate') }}</span>
-                        {{ daySuccessRate(day) }}
-                      </span>
-                    </div>
-                    <div class="chart-inline-tip__metrics">
-                      <div class="chart-inline-tip__metric chart-inline-tip__metric--success">
-                        <span>{{ t('dashboard.chartSuccess') }}</span>
-                        <strong>{{ day.success }}</strong>
-                      </div>
-                      <div class="chart-inline-tip__metric chart-inline-tip__metric--fail">
-                        <span>{{ t('dashboard.chartFailed') }}</span>
-                        <strong>{{ day.fail }}</strong>
-                      </div>
-                      <div class="chart-inline-tip__metric chart-inline-tip__metric--cancel">
-                        <span>{{ t('dashboard.chartCancelled') }}</span>
-                        <strong>{{ day.cancel }}</strong>
-                      </div>
-                    </div>
-                  </div>
-                </HflPopover>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section
+            v-if="quotaItems.length"
+            class="panel panel--fixed panel--quota cockpit-quota"
+          >
+            <div class="panel-head panel-head--border">
+              <div class="panel-head__left">
+                <span
+                  class="panel-head-icon"
+                  aria-hidden="true"
+                >
+                  <CreditCard :size="14" />
+                </span>
+                <h3 class="panel-title">
+                  {{ t('dashboard.quotaTitle') }}
+                </h3>
+              </div>
+              <RouterLink
+                :to="routes.subscription"
+                class="panel-link"
+              >
+                {{ t('dashboard.viewLicense') }}
+                <ArrowUpRight class="panel-link__arrow" />
+              </RouterLink>
+            </div>
+            <div class="quota-grid scrollbar">
+              <div
+                v-for="q in quotaItems"
+                :key="q.key"
+                class="quota-item"
+              >
+                <div class="quota-item__head">
+                  <ElTooltip
+                    :content="q.label"
+                    placement="top"
+                    :enterable="true"
+                    :show-after="200"
+                  >
+                    <span class="quota-item__label">{{ q.label }}</span>
+                  </ElTooltip>
+                  <span class="quota-item__nums">
+                    {{ q.used }} <span class="quota-item__limit">/ {{ formatQuotaLimit(q.limit) }}</span>
+                    <span
+                      v-if="q.suffix"
+                      class="quota-item__unit"
+                    >{{ q.suffix }}</span>
+                    <span
+                      class="quota-pct"
+                      :class="quotaPctClass(quotaPct(q.used, q.limit))"
+                    >
+                      {{ quotaPct(q.used, q.limit) }}%
+                    </span>
+                  </span>
+                </div>
+                <div class="quota-track">
+                  <div
+                    class="quota-bar"
+                    :class="quotaBarClass(quotaPct(q.used, q.limit))"
+                    :style="{ width: `${quotaPct(q.used, q.limit)}%` }"
+                  />
+                </div>
               </div>
             </div>
-          </div>
+          </section>
+        </div>
 
-          <div class="chart-legend">
-            <div class="chart-legend__item">
-              <span class="chart-legend__swatch chart-legend__swatch--success" />
-              <span>{{ t('dashboard.chartSuccess') }}</span>
+        <!-- Column 3: Running Tasks + Chart -->
+        <div class="cockpit-stack">
+          <section class="panel panel--fixed cockpit-running">
+            <div class="panel-head panel-head--border">
+              <div class="panel-head__left">
+                <span
+                  class="panel-head-icon"
+                  aria-hidden="true"
+                >
+                  <History :size="14" />
+                </span>
+                <h4 class="panel-title panel-title--sm">
+                  {{ t('dashboard.runningTasksTitle') }}
+                </h4>
+              </div>
+              <RouterLink
+                :to="routes.taskList"
+                class="panel-link"
+              >
+                {{ t('dashboard.linkTasks') }}
+                <ArrowUpRight class="panel-link__arrow" />
+              </RouterLink>
             </div>
-            <div class="chart-legend__item">
-              <span class="chart-legend__swatch chart-legend__swatch--fail" />
-              <span>{{ t('dashboard.chartFailed') }}</span>
+            <el-empty
+              v-if="!overview?.runningTasks.length"
+              :description="t('dashboard.noRunningBackupTasks')"
+              :image-size="72"
+              class="dashboard-panel-empty dashboard-panel-empty--running"
+            >
+              <template #image>
+                <DashboardIdleGearIllustration />
+              </template>
+            </el-empty>
+            <div
+              v-else
+              class="running-list scrollbar"
+            >
+              <div
+                v-for="task in overview.runningTasks"
+                :key="task.id"
+                class="running-item"
+              >
+                <div class="running-item__head">
+                  <span class="running-item__name">{{ runningTaskLabel(task) }}</span>
+                  <span class="running-item__pct">{{ taskProgressValue(task.progress) }}%</span>
+                </div>
+                <div class="running-track">
+                  <div
+                    class="running-fill"
+                    :style="{ width: `${taskProgressValue(task.progress)}%` }"
+                  />
+                </div>
+                <div class="running-item__meta">
+                  <span>{{ taskTypeLabel(task.task_type) }}</span>
+                  <span :class="{ 'hfl-empty-mark': !(task.started_at || task.created_at) }">{{ formatTime(task.started_at || task.created_at) }}</span>
+                </div>
+              </div>
             </div>
-            <div class="chart-legend__item">
-              <span class="chart-legend__swatch chart-legend__swatch--cancel" />
-              <span>{{ t('dashboard.chartCancelled') }}</span>
+          </section>
+
+          <section class="panel panel--fixed panel--chart cockpit-chart">
+            <div class="panel-head panel-head--border panel-head--chart">
+              <div class="panel-head__left">
+                <span
+                  class="panel-head-icon"
+                  aria-hidden="true"
+                >
+                  <History :size="14" />
+                </span>
+                <h3 class="panel-title">
+                  {{ t('dashboard.chartTasks7d') }}
+                </h3>
+              </div>
+              <RouterLink
+                :to="routes.taskList"
+                class="panel-link"
+              >
+                {{ t('dashboard.linkTasks') }}
+                <ArrowUpRight class="panel-link__arrow" />
+              </RouterLink>
             </div>
-          </div>
-        </section>
+
+            <div class="chart-area">
+              <div class="chart-plot">
+                <div
+                  v-for="(tick, idx) in chartYTicks"
+                  :key="idx"
+                  class="chart-y-row"
+                  :style="{ top: `${(idx / 4) * 100}%` }"
+                >
+                  <span class="chart-y-label">{{ tick }}</span>
+                  <div class="chart-y-line" />
+                </div>
+                <div class="chart-bars">
+                  <HflPopover
+                    v-for="(day, idx) in chartBuckets"
+                    :key="day.label"
+                    trigger="hover"
+                    placement="top"
+                    :show-after="0"
+                    :width="280"
+                    :fallback-placements="['bottom']"
+                    popper-class="dashboard-chart-outcome-popper"
+                  >
+                    <template #reference>
+                      <div
+                        class="chart-col"
+                        role="link"
+                        tabindex="0"
+                        :aria-label="t('dashboard.goTo', { target: `${day.label} ${t('dashboard.linkTasks')}` })"
+                        @click="openTaskOutcomes(day)"
+                        @mouseenter="chartHoveredIdx = idx"
+                        @mouseleave="chartHoveredIdx = null"
+                        @keydown.enter.prevent="openTaskOutcomes(day)"
+                        @keydown.space.prevent="openTaskOutcomes(day)"
+                      >
+                        <div
+                          class="chart-col__pillar"
+                          :style="{ height: `${dayHeightPercent(day)}%` }"
+                        >
+                          <div
+                            v-if="dayTotal(day) > 0"
+                            class="chart-pillar"
+                            :class="{ 'chart-pillar--hover': chartHoveredIdx === idx }"
+                          >
+                            <div
+                              v-if="day.cancel > 0"
+                              class="chart-seg chart-seg--cancel"
+                              :style="{ height: `${(day.cancel / dayTotal(day)) * 100}%` }"
+                            />
+                            <div
+                              v-if="day.fail > 0"
+                              class="chart-seg chart-seg--fail"
+                              :style="{ height: `${(day.fail / dayTotal(day)) * 100}%` }"
+                            />
+                            <div
+                              v-if="day.success > 0"
+                              class="chart-seg chart-seg--success"
+                              :style="{ height: `${(day.success / dayTotal(day)) * 100}%` }"
+                            />
+                          </div>
+                          <div
+                            v-else
+                            class="chart-zero"
+                          />
+                        </div>
+                        <span
+                          class="chart-x-label"
+                          :class="{ 'chart-x-label--active': chartHoveredIdx === idx }"
+                        >
+                          {{ day.label }}
+                        </span>
+                      </div>
+                    </template>
+                    <div class="chart-inline-tip">
+                      <div class="chart-inline-tip__head">
+                        <span class="chart-inline-tip__date">{{ day.label }}</span>
+                        <span class="chart-inline-tip__rate">
+                          <span class="chart-inline-tip__rate-label">{{ t('dashboard.chartSuccessRate') }}</span>
+                          {{ daySuccessRate(day) }}
+                        </span>
+                      </div>
+                      <div class="chart-inline-tip__metrics">
+                        <div class="chart-inline-tip__metric chart-inline-tip__metric--success">
+                          <span>{{ t('dashboard.chartSuccess') }}</span>
+                          <strong>{{ day.success }}</strong>
+                        </div>
+                        <div class="chart-inline-tip__metric chart-inline-tip__metric--fail">
+                          <span>{{ t('dashboard.chartFailed') }}</span>
+                          <strong>{{ day.fail }}</strong>
+                        </div>
+                        <div class="chart-inline-tip__metric chart-inline-tip__metric--cancel">
+                          <span>{{ t('dashboard.chartCancelled') }}</span>
+                          <strong>{{ day.cancel }}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  </HflPopover>
+                </div>
+              </div>
+            </div>
+
+            <div class="chart-legend">
+              <div class="chart-legend__item">
+                <span class="chart-legend__swatch chart-legend__swatch--success" />
+                <span>{{ t('dashboard.chartSuccess') }}</span>
+              </div>
+              <div class="chart-legend__item">
+                <span class="chart-legend__swatch chart-legend__swatch--fail" />
+                <span>{{ t('dashboard.chartFailed') }}</span>
+              </div>
+              <div class="chart-legend__item">
+                <span class="chart-legend__swatch chart-legend__swatch--cancel" />
+                <span>{{ t('dashboard.chartCancelled') }}</span>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
-    </div>
     </template>
   </div>
 </template>

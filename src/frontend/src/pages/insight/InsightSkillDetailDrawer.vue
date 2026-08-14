@@ -121,15 +121,23 @@ onUnmounted(() => {
       <span class="hfl-detail-drawer__title">{{ activeRow?.name || DETAIL_EMPTY }}</span>
     </template>
 
-    <div v-loading="loading" class="hfl-detail-drawer__body">
+    <div
+      v-loading="loading"
+      class="hfl-detail-drawer__body"
+    >
       <template v-if="activeRow">
         <div class="hfl-detail-sections">
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('insight.skills.detailSectionBasics') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.skills.detailSectionBasics') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.skills.fieldName') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(activeRow.name)">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(activeRow.name)"
+                >
                   {{ displayValue(activeRow.name) }}
                 </span>
               </div>
@@ -144,10 +152,17 @@ onUnmounted(() => {
                   />
                 </span>
               </div>
-              <div v-if="isWorkspaceGuideSkill(activeRow)" class="hfl-detail-row">
+              <div
+                v-if="isWorkspaceGuideSkill(activeRow)"
+                class="hfl-detail-row"
+              >
                 <span class="hfl-detail-row__label">{{ t('insight.skills.colType') }}</span>
                 <span class="hfl-detail-row__value">
-                  <ElTag size="small" type="primary" effect="plain">
+                  <ElTag
+                    size="small"
+                    type="primary"
+                    effect="plain"
+                  >
                     {{ t('insight.skills.typeWorkspaceGuide') }}
                   </ElTag>
                 </span>
@@ -165,15 +180,23 @@ onUnmounted(() => {
           </section>
 
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('insight.skills.fieldContent') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.skills.fieldContent') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('insight.skills.colContent') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <div v-if="contentText !== DETAIL_EMPTY" class="create-filter-rules-preview">
+                  <div
+                    v-if="contentText !== DETAIL_EMPTY"
+                    class="create-filter-rules-preview"
+                  >
                     <pre class="create-filter-rules-preview__line">{{ contentText }}</pre>
                   </div>
-                  <span v-else class="hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
+                  <span
+                    v-else
+                    class="hfl-detail-row__empty"
+                  >{{ DETAIL_EMPTY }}</span>
                 </span>
               </div>
             </div>
@@ -182,7 +205,10 @@ onUnmounted(() => {
       </template>
     </div>
 
-    <template v-if="activeRow" #footer>
+    <template
+      v-if="activeRow"
+      #footer
+    >
       <HflDetailDrawerFooter
         :save-label="t('common.edit')"
         @cancel="drawerOpen = false"

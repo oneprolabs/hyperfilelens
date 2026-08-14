@@ -118,8 +118,14 @@ onMounted(load)
 </script>
 
 <template>
-  <ModulePage :menus="sideNav" body-fill>
-    <div v-loading="busy" class="platform-settings">
+  <ModulePage
+    :menus="sideNav"
+    body-fill
+  >
+    <div
+      v-loading="busy"
+      class="platform-settings"
+    >
       <el-alert
         v-if="meta && !enterpriseIdentityEnabled"
         type="info"
@@ -130,10 +136,19 @@ onMounted(load)
         :description="t('platformOps.settings.identity.extensionRequiredBody')"
       />
 
-      <el-form label-position="top" class="platform-settings__form">
+      <el-form
+        label-position="top"
+        class="platform-settings__form"
+      >
         <el-form-item :label="t('platformOps.settings.identity.platformOps')">
-          <el-switch v-model="form.platform_ops_enabled" :disabled="platformOpsManaged" />
-          <p v-if="platformOpsManaged" class="platform-settings__hint">
+          <el-switch
+            v-model="form.platform_ops_enabled"
+            :disabled="platformOpsManaged"
+          />
+          <p
+            v-if="platformOpsManaged"
+            class="platform-settings__hint"
+          >
             Admin Console availability is managed by deployment configuration and is read-only here.
           </p>
         </el-form-item>
@@ -158,22 +173,33 @@ onMounted(load)
         </el-alert>
 
         <template v-if="enterpriseIdentityEnabled">
-          <h3 class="platform-settings__section">{{ t('platformOps.settings.identity.tenantAuthTitle') }}</h3>
+          <h3 class="platform-settings__section">
+            {{ t('platformOps.settings.identity.tenantAuthTitle') }}
+          </h3>
           <el-form-item :label="t('platformOps.settings.identity.emailSignup')">
             <el-switch v-model="form.email_signup_enabled" />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.identity.emailCodeLogin')">
             <el-switch v-model="form.email_code_login_enabled" />
-            <p class="platform-settings__hint">{{ t('platformOps.settings.identity.emailCodeLoginHint') }}</p>
+            <p class="platform-settings__hint">
+              {{ t('platformOps.settings.identity.emailCodeLoginHint') }}
+            </p>
           </el-form-item>
 
-          <h3 class="platform-settings__section">{{ t('platformOps.settings.googleOAuthTitle') }}</h3>
-          <p class="platform-settings__intro">{{ t('platformOps.settings.googleOAuth.intro') }}</p>
+          <h3 class="platform-settings__section">
+            {{ t('platformOps.settings.googleOAuthTitle') }}
+          </h3>
+          <p class="platform-settings__intro">
+            {{ t('platformOps.settings.googleOAuth.intro') }}
+          </p>
           <el-form-item :label="t('platformOps.settings.identity.googleOAuthEnabled')">
             <el-switch v-model="form.google_oauth_enabled" />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.identity.googleClientId')">
-            <el-input v-model="form.google_client_id" autocomplete="off" />
+            <el-input
+              v-model="form.google_client_id"
+              autocomplete="off"
+            />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.identity.googleClientSecret')">
             <el-input
@@ -185,12 +211,21 @@ onMounted(load)
             />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.identity.googleRedirect')">
-            <el-input :model-value="meta?.google_oauth_redirect_uri || '—'" disabled />
-            <p class="platform-settings__hint">{{ t('platformOps.settings.googleOAuth.redirectHint') }}</p>
+            <el-input
+              :model-value="meta?.google_oauth_redirect_uri || '—'"
+              disabled
+            />
+            <p class="platform-settings__hint">
+              {{ t('platformOps.settings.googleOAuth.redirectHint') }}
+            </p>
           </el-form-item>
 
-          <h3 class="platform-settings__section">{{ t('platformOps.settings.turnstileTitle') }}</h3>
-          <p class="platform-settings__intro">{{ t('platformOps.settings.turnstile.intro') }}</p>
+          <h3 class="platform-settings__section">
+            {{ t('platformOps.settings.turnstileTitle') }}
+          </h3>
+          <p class="platform-settings__intro">
+            {{ t('platformOps.settings.turnstile.intro') }}
+          </p>
           <el-form-item :label="t('platformOps.settings.turnstile.statusLabel')">
             <el-tag :type="meta?.turnstile_enabled ? 'success' : 'info'">
               {{
@@ -199,10 +234,15 @@ onMounted(load)
                   : t('platformOps.settings.turnstile.disabled')
               }}
             </el-tag>
-            <p class="platform-settings__hint">{{ t('platformOps.settings.turnstile.enableHint') }}</p>
+            <p class="platform-settings__hint">
+              {{ t('platformOps.settings.turnstile.enableHint') }}
+            </p>
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.identity.turnstileSiteKey')">
-            <el-input v-model="form.turnstile_site_key" autocomplete="off" />
+            <el-input
+              v-model="form.turnstile_site_key"
+              autocomplete="off"
+            />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.identity.turnstileSecret')">
             <el-input
@@ -212,31 +252,64 @@ onMounted(load)
               autocomplete="new-password"
               :placeholder="meta?.turnstile_secret_configured ? '••••••••' : ''"
             />
-            <p class="platform-settings__hint">{{ t('platformOps.settings.turnstile.secretHint') }}</p>
+            <p class="platform-settings__hint">
+              {{ t('platformOps.settings.turnstile.secretHint') }}
+            </p>
           </el-form-item>
 
-          <h3 class="platform-settings__section">{{ t('platformOps.settings.identity.iamTitle') }}</h3>
+          <h3 class="platform-settings__section">
+            {{ t('platformOps.settings.identity.iamTitle') }}
+          </h3>
           <el-form-item :label="t('platformOps.settings.identity.regCodeMinutes')">
-            <el-input-number v-model="form.registration_verification_code_minutes" :min="1" :max="120" />
+            <el-input-number
+              v-model="form.registration_verification_code_minutes"
+              :min="1"
+              :max="120"
+            />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.identity.regTokenHours')">
-            <el-input-number v-model="form.registration_token_expiry_hours" :min="1" :max="168" />
+            <el-input-number
+              v-model="form.registration_token_expiry_hours"
+              :min="1"
+              :max="168"
+            />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.identity.resetCodeMinutes')">
-            <el-input-number v-model="form.password_reset_verification_code_minutes" :min="1" :max="120" />
+            <el-input-number
+              v-model="form.password_reset_verification_code_minutes"
+              :min="1"
+              :max="120"
+            />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.identity.resetTimeoutSeconds')">
-            <el-input-number v-model="form.password_reset_timeout_seconds" :min="60" :max="86400" />
+            <el-input-number
+              v-model="form.password_reset_timeout_seconds"
+              :min="60"
+              :max="86400"
+            />
           </el-form-item>
           <el-form-item :label="t('platformOps.settings.identity.loginCodeMinutes')">
-            <el-input-number v-model="form.login_verification_code_minutes" :min="1" :max="30" />
+            <el-input-number
+              v-model="form.login_verification_code_minutes"
+              :min="1"
+              :max="30"
+            />
           </el-form-item>
         </template>
       </el-form>
 
       <div class="platform-settings__footer">
-        <PlatformOpsRefreshButton :loading="busy" @click="load" />
-        <el-button type="primary" :loading="saving" @click="save">{{ t('common.save') }}</el-button>
+        <PlatformOpsRefreshButton
+          :loading="busy"
+          @click="load"
+        />
+        <el-button
+          type="primary"
+          :loading="saving"
+          @click="save"
+        >
+          {{ t('common.save') }}
+        </el-button>
       </div>
     </div>
     <DangerConfirmDialog

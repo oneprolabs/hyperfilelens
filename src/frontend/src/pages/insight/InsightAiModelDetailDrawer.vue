@@ -204,15 +204,23 @@ onUnmounted(() => {
       <span class="hfl-detail-drawer__title">{{ title }}</span>
     </template>
 
-    <div v-loading="busy" class="hfl-detail-drawer__body">
+    <div
+      v-loading="busy"
+      class="hfl-detail-drawer__body"
+    >
       <template v-if="detail">
         <div class="hfl-detail-sections">
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('insight.aiSettings.sectionCredentials') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.aiSettings.sectionCredentials') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.aiSettings.colName') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(displayName)">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(displayName)"
+                >
                   {{ displayName }}
                 </span>
               </div>
@@ -285,18 +293,27 @@ onUnmounted(() => {
                 </span>
               </div>
 
-              <div class="hfl-detail-row ai-model-drawer__divider" aria-hidden="true" />
+              <div
+                class="hfl-detail-row ai-model-drawer__divider"
+                aria-hidden="true"
+              />
 
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelModel') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(modelVersion, true)">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(modelVersion, true)"
+                >
                   {{ modelVersion }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelCapabilities') }}</span>
                 <span class="hfl-detail-row__value">
-                  <span v-if="modelCapabilities.length" class="ai-model-drawer__caps">
+                  <span
+                    v-if="modelCapabilities.length"
+                    class="ai-model-drawer__caps"
+                  >
                     <span
                       v-for="cap in modelCapabilities"
                       :key="cap"
@@ -306,12 +323,18 @@ onUnmounted(() => {
                       {{ capabilityLabel(cap) }}
                     </span>
                   </span>
-                  <span v-else class="hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
+                  <span
+                    v-else
+                    class="hfl-detail-row__empty"
+                  >{{ DETAIL_EMPTY }}</span>
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelApiBase') }}</span>
-                <span class="hfl-detail-row__value" :class="detailValueClass(apiBase, true)">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(apiBase, true)"
+                >
                   {{ apiBase }}
                 </span>
               </div>
@@ -329,16 +352,36 @@ onUnmounted(() => {
         </div>
       </template>
 
-      <ElEmpty v-else-if="!busy" :description="t('errors.generic.loadFailed')" :image-size="72" />
+      <ElEmpty
+        v-else-if="!busy"
+        :description="t('errors.generic.loadFailed')"
+        :image-size="72"
+      />
     </div>
 
-    <template v-if="detail" #footer>
+    <template
+      v-if="detail"
+      #footer
+    >
       <div class="el-drawer__footer-actions">
-        <ElButton :disabled="testing" @click="open = false">{{ t('common.cancel') }}</ElButton>
-        <ElButton :loading="testing" @click="testConnection">
+        <ElButton
+          :disabled="testing"
+          @click="open = false"
+        >
+          {{ t('common.cancel') }}
+        </ElButton>
+        <ElButton
+          :loading="testing"
+          @click="testConnection"
+        >
           {{ t('insight.aiSettings.testConnection') }}
         </ElButton>
-        <ElButton v-if="!detail.deployment_managed" type="primary" :disabled="testing" @click="onEdit">
+        <ElButton
+          v-if="!detail.deployment_managed"
+          type="primary"
+          :disabled="testing"
+          @click="onEdit"
+        >
           {{ t('common.edit') }}
         </ElButton>
       </div>

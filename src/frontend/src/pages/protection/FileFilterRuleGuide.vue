@@ -55,7 +55,11 @@ const recipes = [
       <section class="rule-guide__section">
         <h2>Pattern Operators</h2>
         <div class="rule-guide__table">
-          <div v-for="row in operators" :key="row.token" class="rule-guide__table-row">
+          <div
+            v-for="row in operators"
+            :key="row.token"
+            class="rule-guide__table-row"
+          >
             <code>{{ row.token }}</code>
             <span>{{ row.meaning }}</span>
           </div>
@@ -65,7 +69,11 @@ const recipes = [
       <section class="rule-guide__section">
         <h2>Common Examples</h2>
         <div class="rule-guide__table">
-          <div v-for="row in examples" :key="row.rule" class="rule-guide__table-row">
+          <div
+            v-for="row in examples"
+            :key="row.rule"
+            class="rule-guide__table-row"
+          >
             <code>{{ row.rule }}</code>
             <span>{{ row.use }}</span>
           </div>
@@ -75,7 +83,11 @@ const recipes = [
       <section class="rule-guide__section">
         <h2>Reusable Recipes</h2>
         <div class="rule-guide__recipes">
-          <article v-for="recipe in recipes" :key="recipe.title" class="rule-guide__recipe">
+          <article
+            v-for="recipe in recipes"
+            :key="recipe.title"
+            class="rule-guide__recipe"
+          >
             <h3>{{ recipe.title }}</h3>
             <pre><code>{{ recipe.lines.join('\n') }}</code></pre>
           </article>

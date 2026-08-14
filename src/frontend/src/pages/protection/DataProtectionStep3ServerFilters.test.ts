@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { compactSourceText } from '../../test/sourceText'
 
 
 const page = readFileSync(resolve(process.cwd(), 'src/pages/protection/DataProtection.vue'), 'utf8')
+const compactPage = compactSourceText(page)
 const locale = readFileSync(resolve(process.cwd(), 'src/locales/enProtectionPages.ts'), 'utf8')
 
 function sourceBetween(startMarker: string, endMarker: string) {
@@ -69,8 +71,12 @@ describe('Backup Wizard Step 3 server filters', () => {
   })
 
   it('uses aligned Reset and Cancel buttons with compact label-control rows', () => {
-    const footer = sourceBetween('<div class="flow-filter-drawer__footer">', '</template>\n    </el-drawer>')
+    const start = compactPage.indexOf('<div class="flow-filter-drawer__footer">')
+    const end = compactPage.indexOf('</template></el-drawer>', start)
+    const footer = compactPage.slice(start, end)
 
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
     expect(footer).toContain('<ElButton @click="resetStep3AdvancedFilterDrafts">')
     expect(footer).toContain('<ElButton @click="cancelAdvancedFilters">')
     expect(footer).not.toContain('text class="flow-filter-drawer__reset-btn"')

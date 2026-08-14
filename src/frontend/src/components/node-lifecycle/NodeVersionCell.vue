@@ -28,13 +28,19 @@ const display = computed(() => {
 </script>
 
 <template>
-  <div class="node-version-cell" :class="{ 'node-version-cell--upgrading': display.upgrading }">
+  <div
+    class="node-version-cell"
+    :class="{ 'node-version-cell--upgrading': display.upgrading }"
+  >
     <template v-if="display.upgrading && display.targetVersion">
       <span class="node-version-cell__from">{{ display.versionLabel }}</span>
       <span class="node-version-cell__arrow">→</span>
       <span class="node-version-cell__to">{{ display.targetVersion }}</span>
     </template>
-    <span v-else class="node-version-cell__value">{{ display.versionLabel }}</span>
+    <span
+      v-else
+      class="node-version-cell__value"
+    >{{ display.versionLabel }}</span>
   </div>
 </template>
 

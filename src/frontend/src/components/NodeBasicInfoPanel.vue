@@ -216,7 +216,9 @@ function detailValueClass(text: string, monoWhenPresent = false) {
 <template>
   <div class="hfl-detail-sections">
     <section class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('protection.sourceResources.detailSectionIdentity') }}</h4>
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.sourceResources.detailSectionIdentity') }}
+      </h4>
       <div class="hfl-detail-grid">
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldSourceName') }}</span>
@@ -231,13 +233,34 @@ function detailValueClass(text: string, monoWhenPresent = false) {
                 @keyup.enter="saveName"
               />
               <span class="hfl-detail-inline-edit__actions">
-                <ElButton text circle size="small" :title="t('common.save')" :disabled="savingName" @click="saveName"><Check :size="14" /></ElButton>
-                <ElButton text circle size="small" :title="t('common.cancel')" :disabled="savingName" @click="discardNameEdit"><X :size="14" /></ElButton>
+                <ElButton
+                  text
+                  circle
+                  size="small"
+                  :title="t('common.save')"
+                  :disabled="savingName"
+                  @click="saveName"
+                ><Check :size="14" /></ElButton>
+                <ElButton
+                  text
+                  circle
+                  size="small"
+                  :title="t('common.cancel')"
+                  :disabled="savingName"
+                  @click="discardNameEdit"
+                ><X :size="14" /></ElButton>
               </span>
             </template>
             <template v-else>
               <span class="hfl-detail-row__text">{{ node.name }}</span>
-              <ElButton text circle size="small" class="hfl-detail-row__edit" :title="t('protection.sourceResources.editBtn')" @click="beginNameEdit">
+              <ElButton
+                text
+                circle
+                size="small"
+                class="hfl-detail-row__edit"
+                :title="t('protection.sourceResources.editBtn')"
+                @click="beginNameEdit"
+              >
                 <Pencil :size="13" />
               </ElButton>
             </template>
@@ -255,7 +278,14 @@ function detailValueClass(text: string, monoWhenPresent = false) {
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldSourceId') }}</span>
           <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
             <span class="hfl-detail-row__text">{{ externalId }}</span>
-            <ElButton text circle size="small" class="hfl-detail-row__edit" :title="t('common.copy')" @click="copyText(externalId)">
+            <ElButton
+              text
+              circle
+              size="small"
+              class="hfl-detail-row__edit"
+              :title="t('common.copy')"
+              @click="copyText(externalId)"
+            >
               <Copy :size="13" />
             </ElButton>
           </span>
@@ -277,7 +307,10 @@ function detailValueClass(text: string, monoWhenPresent = false) {
             </ElButton>
           </span>
         </div>
-        <div v-if="showRepositoryServerAddress" class="hfl-detail-row">
+        <div
+          v-if="showRepositoryServerAddress"
+          class="hfl-detail-row"
+        >
           <span class="hfl-detail-row__label">{{ t('nodesPage.repositoryServerAddress') }}</span>
           <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
             <span class="hfl-detail-row__text">{{ repositoryServerAddress }}</span>
@@ -301,7 +334,9 @@ function detailValueClass(text: string, monoWhenPresent = false) {
     </section>
 
     <section class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('protection.sourceResources.detailSectionSpecs') }}</h4>
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.sourceResources.detailSectionSpecs') }}
+      </h4>
       <div class="hfl-detail-grid">
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colOperatingSystem') }}</span>
@@ -309,27 +344,45 @@ function detailValueClass(text: string, monoWhenPresent = false) {
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldArch') }}</span>
-          <span class="hfl-detail-row__value" :class="detailValueClass(arch, true)">{{ arch }}</span>
+          <span
+            class="hfl-detail-row__value"
+            :class="detailValueClass(arch, true)"
+          >{{ arch }}</span>
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colCpu') }}</span>
-          <span class="hfl-detail-row__value" :class="detailValueClass(cpuText)">{{ cpuText }}</span>
+          <span
+            class="hfl-detail-row__value"
+            :class="detailValueClass(cpuText)"
+          >{{ cpuText }}</span>
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colMemory') }}</span>
-          <span class="hfl-detail-row__value" :class="detailValueClass(memoryText)">{{ memoryText }}</span>
+          <span
+            class="hfl-detail-row__value"
+            :class="detailValueClass(memoryText)"
+          >{{ memoryText }}</span>
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colDiskCount') }}</span>
-          <span class="hfl-detail-row__value" :class="detailValueClass(diskCountText)">{{ diskCountText }}</span>
+          <span
+            class="hfl-detail-row__value"
+            :class="detailValueClass(diskCountText)"
+          >{{ diskCountText }}</span>
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldMacAddress') }}</span>
-          <span class="hfl-detail-row__value" :class="detailValueClass(macText, true)">{{ macText }}</span>
+          <span
+            class="hfl-detail-row__value"
+            :class="detailValueClass(macText, true)"
+          >{{ macText }}</span>
         </div>
         <div class="hfl-detail-row hfl-detail-row--full">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colCapacity') }}</span>
-          <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__value--stacked': capacityParts.total > 0 }">
+          <span
+            class="hfl-detail-row__value"
+            :class="{ 'hfl-detail-row__value--stacked': capacityParts.total > 0 }"
+          >
             <HflCapacityCell
               v-if="useUnifiedCapacity"
               :used-bytes="capacityParts.used"
@@ -339,14 +392,26 @@ function detailValueClass(text: string, monoWhenPresent = false) {
               :empty-label="DETAIL_EMPTY"
             />
             <template v-else>
-              <span v-if="capacityParts.total > 0" class="hfl-detail-row__text repo-usage-cell__numbers">
+              <span
+                v-if="capacityParts.total > 0"
+                class="hfl-detail-row__text repo-usage-cell__numbers"
+              >
                 <span class="repo-usage-cell__used">{{ formatNodeBytes(capacityParts.used) }}</span>
                 <span class="repo-usage-cell__capacity">/ {{ formatNodeBytes(capacityParts.total) }}</span>
                 <span class="repo-usage-cell__percent">{{ capacityParts.pct }}%</span>
               </span>
-              <span v-else class="hfl-detail-row__text hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
-              <div v-if="capacityParts.total > 0" class="hfl-detail-capacity-bar">
-                <div class="hfl-detail-capacity-bar__fill" :style="{ width: `${capacityParts.pct}%` }" />
+              <span
+                v-else
+                class="hfl-detail-row__text hfl-detail-row__empty"
+              >{{ DETAIL_EMPTY }}</span>
+              <div
+                v-if="capacityParts.total > 0"
+                class="hfl-detail-capacity-bar"
+              >
+                <div
+                  class="hfl-detail-capacity-bar__fill"
+                  :style="{ width: `${capacityParts.pct}%` }"
+                />
               </div>
             </template>
           </span>
@@ -357,7 +422,9 @@ function detailValueClass(text: string, monoWhenPresent = false) {
     <slot name="before-runtime" />
 
     <section class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('protection.sourceResources.detailSectionRuntime') }}</h4>
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.sourceResources.detailSectionRuntime') }}
+      </h4>
       <div class="hfl-detail-grid">
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.colLifecycleStatus' : 'protection.sourceResources.colStatus') }}</span>
@@ -366,7 +433,10 @@ function detailValueClass(text: string, monoWhenPresent = false) {
               :node="node"
               :resolve-display-status="resolveNodeDisplayStatus"
             />
-            <span v-if="uptimeLabel" class="node-basic-info-status__meta">({{ uptimeLabel }})</span>
+            <span
+              v-if="uptimeLabel"
+              class="node-basic-info-status__meta"
+            >({{ uptimeLabel }})</span>
           </div>
         </div>
         <div class="hfl-detail-row">
@@ -376,20 +446,32 @@ function detailValueClass(text: string, monoWhenPresent = false) {
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.colConnectivity' : 'protection.sourceResources.colAvailability') }}</span>
           <span class="hfl-detail-row__value">
-            <ElTag :type="availabilityTagType" size="small">{{ availabilityLabel }}</ElTag>
+            <ElTag
+              :type="availabilityTagType"
+              size="small"
+            >{{ availabilityLabel }}</ElTag>
           </span>
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.fieldConnectivityUpdatedAt' : 'protection.sourceResources.fieldAvailabilityUpdatedAt') }}</span>
-          <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !node.availability_updated_at }">{{ formatNodeDate(node.availability_updated_at) }}</span>
+          <span
+            class="hfl-detail-row__value"
+            :class="{ 'hfl-detail-row__empty': !node.availability_updated_at }"
+          >{{ formatNodeDate(node.availability_updated_at) }}</span>
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.colRegisteredAt' : 'protection.sourceResources.colRegistered') }}</span>
-          <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !node.created_at }">{{ formatNodeDate(node.created_at) }}</span>
+          <span
+            class="hfl-detail-row__value"
+            :class="{ 'hfl-detail-row__empty': !node.created_at }"
+          >{{ formatNodeDate(node.created_at) }}</span>
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('nodesPage.proxyDetailLastSeen') }}</span>
-          <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !node.last_seen_at }">{{ formatNodeDate(node.last_seen_at) }}</span>
+          <span
+            class="hfl-detail-row__value"
+            :class="{ 'hfl-detail-row__empty': !node.last_seen_at }"
+          >{{ formatNodeDate(node.last_seen_at) }}</span>
         </div>
       </div>
     </section>

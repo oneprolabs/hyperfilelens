@@ -76,12 +76,17 @@ function detailValueClass(text: string, monoWhenPresent = false) {
 
 <template>
   <section class="hfl-detail-section">
-    <h4 class="hfl-detail-section__title">{{ t('insight.dataGateway.detailSectionAiEngine') }}</h4>
+    <h4 class="hfl-detail-section__title">
+      {{ t('insight.dataGateway.detailSectionAiEngine') }}
+    </h4>
     <div class="hfl-detail-grid">
       <div class="hfl-detail-row">
         <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colStatus') }}</span>
         <span class="hfl-detail-row__value">
-          <el-tag :type="slStatusTagType" size="small">
+          <el-tag
+            :type="slStatusTagType"
+            size="small"
+          >
             {{ slStatusLabel }}
           </el-tag>
         </span>
@@ -164,12 +169,18 @@ function detailValueClass(text: string, monoWhenPresent = false) {
       </div>
       <div class="hfl-detail-row">
         <span class="hfl-detail-row__label">{{ t('insight.dataGateway.fieldSlTasks') }}</span>
-        <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': tasksLabel === DETAIL_EMPTY }">
+        <span
+          class="hfl-detail-row__value"
+          :class="{ 'hfl-detail-row__empty': tasksLabel === DETAIL_EMPTY }"
+        >
           {{ tasksLabel }}
         </span>
       </div>
     </div>
-    <p v-if="aiPhase === 'not_provisioned'" class="dg-lens-basic__hint">
+    <p
+      v-if="aiPhase === 'not_provisioned'"
+      class="dg-lens-basic__hint"
+    >
       {{ t('insight.dataGateway.aiNotProvisionedHint') }}
     </p>
   </section>

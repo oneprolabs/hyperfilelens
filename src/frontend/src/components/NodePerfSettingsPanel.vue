@@ -187,10 +187,14 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
 <template>
   <div class="hfl-detail-sections node-perf-drawer-sections">
     <section class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('nodesDetail.perfResSection') }}</h4>
+      <h4 class="hfl-detail-section__title">
+        {{ t('nodesDetail.perfResSection') }}
+      </h4>
       <div class="hfl-detail-config-grid">
         <div class="hfl-detail-config-cell">
-          <div class="hfl-detail-config-cell__label">{{ t('nodesDetail.perfCpuCap') }}</div>
+          <div class="hfl-detail-config-cell__label">
+            {{ t('nodesDetail.perfCpuCap') }}
+          </div>
           <div class="hfl-detail-config-cell__slider-row">
             <ElSlider
               v-model="perfCpuCapCores"
@@ -202,11 +206,15 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
             />
             <span class="hfl-detail-config-cell__metric">{{ perfCpuDisplay }}</span>
           </div>
-          <p class="hfl-detail-config-cell__hint">{{ t('nodesDetail.perfDescCpu') }}</p>
+          <p class="hfl-detail-config-cell__hint">
+            {{ t('nodesDetail.perfDescCpu') }}
+          </p>
         </div>
 
         <div class="hfl-detail-config-cell">
-          <div class="hfl-detail-config-cell__label">{{ t('nodesDetail.perfMemSoft') }}</div>
+          <div class="hfl-detail-config-cell__label">
+            {{ t('nodesDetail.perfMemSoft') }}
+          </div>
           <div class="hfl-detail-config-cell__slider-row">
             <ElSlider
               v-model="perfMemCapMb"
@@ -218,11 +226,15 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
             />
             <span class="hfl-detail-config-cell__metric">{{ perfMemDisplay }}</span>
           </div>
-          <p class="hfl-detail-config-cell__hint">{{ t('nodesDetail.perfDescMem') }}</p>
+          <p class="hfl-detail-config-cell__hint">
+            {{ t('nodesDetail.perfDescMem') }}
+          </p>
         </div>
 
         <div class="hfl-detail-config-cell">
-          <div class="hfl-detail-config-cell__label">{{ t('nodesDetail.perfBandwidth') }}</div>
+          <div class="hfl-detail-config-cell__label">
+            {{ t('nodesDetail.perfBandwidth') }}
+          </div>
           <div class="hfl-detail-config-cell__control">
             <div class="hfl-detail-form-input hfl-detail-form-input--bandwidth">
               <ElInputNumber
@@ -237,29 +249,55 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
               </div>
             </div>
           </div>
-          <p class="hfl-detail-config-cell__hint">{{ t('nodesDetail.perfDescBandwidth') }}</p>
+          <p class="hfl-detail-config-cell__hint">
+            {{ t('nodesDetail.perfDescBandwidth') }}
+          </p>
         </div>
       </div>
     </section>
 
     <section class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('nodesDetail.perfLogSection') }}</h4>
+      <h4 class="hfl-detail-section__title">
+        {{ t('nodesDetail.perfLogSection') }}
+      </h4>
       <div class="hfl-detail-config-grid">
         <div class="hfl-detail-config-cell">
-          <div class="hfl-detail-config-cell__label">{{ t('nodesDetail.perfLogLevel') }}</div>
+          <div class="hfl-detail-config-cell__label">
+            {{ t('nodesDetail.perfLogLevel') }}
+          </div>
           <div class="hfl-detail-config-cell__control">
-            <ElSelect v-model="perfLogLevel" class="hfl-detail-config-cell__select" teleported>
-              <ElOption value="debug" :label="t('nodesDetail.perfLogLevelDebug')" />
-              <ElOption value="info" :label="t('nodesDetail.perfLogLevelInfo')" />
-              <ElOption value="warning" :label="t('nodesDetail.perfLogLevelWarning')" />
-              <ElOption value="error" :label="t('nodesDetail.perfLogLevelError')" />
+            <ElSelect
+              v-model="perfLogLevel"
+              class="hfl-detail-config-cell__select"
+              teleported
+            >
+              <ElOption
+                value="debug"
+                :label="t('nodesDetail.perfLogLevelDebug')"
+              />
+              <ElOption
+                value="info"
+                :label="t('nodesDetail.perfLogLevelInfo')"
+              />
+              <ElOption
+                value="warning"
+                :label="t('nodesDetail.perfLogLevelWarning')"
+              />
+              <ElOption
+                value="error"
+                :label="t('nodesDetail.perfLogLevelError')"
+              />
             </ElSelect>
           </div>
-          <p class="hfl-detail-config-cell__hint">{{ t('nodesDetail.perfDescLogLevel') }}</p>
+          <p class="hfl-detail-config-cell__hint">
+            {{ t('nodesDetail.perfDescLogLevel') }}
+          </p>
         </div>
 
         <div class="hfl-detail-config-cell">
-          <div class="hfl-detail-config-cell__label">{{ t('nodesDetail.perfLogRetention') }}</div>
+          <div class="hfl-detail-config-cell__label">
+            {{ t('nodesDetail.perfLogRetention') }}
+          </div>
           <div class="hfl-detail-config-cell__control">
             <div class="hfl-detail-form-input hfl-detail-form-input--narrow">
               <ElInputNumber
@@ -274,11 +312,15 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
               </div>
             </div>
           </div>
-          <p class="hfl-detail-config-cell__hint">{{ t('nodesDetail.perfDescLogRetention') }}</p>
+          <p class="hfl-detail-config-cell__hint">
+            {{ t('nodesDetail.perfDescLogRetention') }}
+          </p>
         </div>
 
         <div class="hfl-detail-config-cell">
-          <div class="hfl-detail-config-cell__label">{{ t('nodesDetail.perfLogSpace') }}</div>
+          <div class="hfl-detail-config-cell__label">
+            {{ t('nodesDetail.perfLogSpace') }}
+          </div>
           <div class="hfl-detail-config-cell__control">
             <div class="hfl-detail-form-input hfl-detail-form-input--narrow">
               <ElInputNumber
@@ -294,17 +336,34 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
               </div>
             </div>
           </div>
-          <p class="hfl-detail-config-cell__hint">{{ t('nodesDetail.perfDescLogSpace') }}</p>
+          <p class="hfl-detail-config-cell__hint">
+            {{ t('nodesDetail.perfDescLogSpace') }}
+          </p>
         </div>
       </div>
     </section>
   </div>
 
-  <div v-if="!hideActions" class="node-perf-drawer-inline-actions">
-    <p class="hfl-detail-row__hint">{{ t('nodesDetail.perfApplyFooter') }}</p>
+  <div
+    v-if="!hideActions"
+    class="node-perf-drawer-inline-actions"
+  >
+    <p class="hfl-detail-row__hint">
+      {{ t('nodesDetail.perfApplyFooter') }}
+    </p>
     <div class="node-perf-drawer-inline-actions__btns">
-      <ElButton text @click="cancelPerfEdits">{{ t('nodesDetail.perfCancelEdits') }}</ElButton>
-      <ElButton plain @click="resetPerfDefaults">{{ t('nodesDetail.perfResetDefaults') }}</ElButton>
+      <ElButton
+        text
+        @click="cancelPerfEdits"
+      >
+        {{ t('nodesDetail.perfCancelEdits') }}
+      </ElButton>
+      <ElButton
+        plain
+        @click="resetPerfDefaults"
+      >
+        {{ t('nodesDetail.perfResetDefaults') }}
+      </ElButton>
       <ElButton
         type="primary"
         :disabled="!node || !hasPerfChanges"

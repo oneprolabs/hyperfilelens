@@ -26,7 +26,11 @@ const label = computed(() => {
 
 <template>
   <div class="node-lifecycle-status">
-    <el-tag :type="display.tagType" size="small" :class="['node-lifecycle-status__tag', display.tagClass]">
+    <el-tag
+      :type="display.tagType"
+      size="small"
+      :class="['node-lifecycle-status__tag', display.tagClass]"
+    >
       <LoaderCircle
         v-if="display.spinning"
         :size="12"

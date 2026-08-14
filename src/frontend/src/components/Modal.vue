@@ -16,6 +16,11 @@ const props = withDefaults(defineProps<{
   inline?: boolean
   showBack?: boolean
 }>(), {
+  width: undefined,
+  description: '',
+  size: 'default',
+  minHeight: undefined,
+  variant: 'modal',
   showBack: true,
   theme: 'default',
   inline: false,
@@ -106,8 +111,15 @@ onUnmounted(() => {
     v-if="visible"
     :class="isPageVariant ? (props.inline ? 'relative z-auto flex min-h-0 w-full flex-1' : 'absolute inset-0 z-50') : 'fixed inset-0 z-50'"
   >
-    <div v-if="!isPageVariant" class="absolute inset-0 bg-black/30" @click="requestClose" />
-    <div :class="[shellClass, { 'modal-page-shell modal-page-shell--policy': isPolicyTheme }]" :style="shellStyle">
+    <div
+      v-if="!isPageVariant"
+      class="absolute inset-0 bg-black/30"
+      @click="requestClose"
+    />
+    <div
+      :class="[shellClass, { 'modal-page-shell modal-page-shell--policy': isPolicyTheme }]"
+      :style="shellStyle"
+    >
       <template v-if="isPageVariant">
         <div
           :class="[
@@ -120,16 +132,30 @@ onUnmounted(() => {
               v-if="props.showBack"
               :class="isPolicyTheme ? 'modal-page-shell__back !p-1.5' : '!p-1.5'"
               aria-label="Back"
-              @click="requestClose"
               text
+              @click="requestClose"
             >
-              <ArrowLeft :size="20" class="text-slate-600" />
+              <ArrowLeft
+                :size="20"
+                class="text-slate-600"
+              />
             </ElButton>
-            <div v-if="isPolicyTheme" class="modal-page-shell__headline">
+            <div
+              v-if="isPolicyTheme"
+              class="modal-page-shell__headline"
+            >
               <span class="modal-page-shell__title">{{ title }}</span>
-              <p v-if="description" class="modal-page-shell__desc">{{ description }}</p>
+              <p
+                v-if="description"
+                class="modal-page-shell__desc"
+              >
+                {{ description }}
+              </p>
             </div>
-            <span v-else class="text-base font-semibold text-slate-900">{{ title }}</span>
+            <span
+              v-else
+              class="text-base font-semibold text-slate-900"
+            >{{ title }}</span>
           </div>
         </div>
         <div
@@ -153,17 +179,32 @@ onUnmounted(() => {
       <template v-else>
         <div class="flex shrink-0 items-center justify-between border-b border-[var(--color-border-light,#f1f5f9)] px-5 py-3">
           <div class="min-w-0">
-            <div class="text-sm font-semibold text-slate-900">{{ title }}</div>
-            <p v-if="description" class="mt-1 text-xs text-slate-500">{{ description }}</p>
+            <div class="text-sm font-semibold text-slate-900">
+              {{ title }}
+            </div>
+            <p
+              v-if="description"
+              class="mt-1 text-xs text-slate-500"
+            >
+              {{ description }}
+            </p>
           </div>
-          <ElButton class="!p-1.5" aria-label="Close" @click="requestClose" text>
+          <ElButton
+            class="!p-1.5"
+            aria-label="Close"
+            text
+            @click="requestClose"
+          >
             <X :size="16" />
           </ElButton>
         </div>
         <div class="scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-5 py-4">
           <slot />
         </div>
-        <div v-if="$slots.footer" class="modal-footer-actions shrink-0 border-t border-[var(--color-border-light,#f1f5f9)] bg-[var(--modal-bg,#fff)] px-5 py-3">
+        <div
+          v-if="$slots.footer"
+          class="modal-footer-actions shrink-0 border-t border-[var(--color-border-light,#f1f5f9)] bg-[var(--modal-bg,#fff)] px-5 py-3"
+        >
           <slot name="footer" />
         </div>
       </template>

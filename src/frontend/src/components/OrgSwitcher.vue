@@ -23,7 +23,10 @@ const {
     class="org-switcher"
     :class="`org-switcher--${props.variant}`"
   >
-    <label class="org-switcher__label" :for="controlId">{{ t('nav.orgSwitcher') }}</label>
+    <label
+      class="org-switcher__label"
+      :for="controlId"
+    >{{ t('nav.orgSwitcher') }}</label>
     <select
       :id="controlId"
       class="org-switcher__select"
@@ -31,7 +34,11 @@ const {
       :value="currentKey"
       @change="switchOrganization(($event.target as HTMLSelectElement).value)"
     >
-      <option v-for="org in organizations" :key="org.key" :value="org.key">
+      <option
+        v-for="org in organizations"
+        :key="org.key"
+        :value="org.key"
+      >
         {{ org.name }}
       </option>
     </select>

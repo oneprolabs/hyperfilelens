@@ -1,18 +1,20 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { compactSourceText } from '../../test/sourceText'
 
 const page = readFileSync(resolve(process.cwd(), 'src/pages/protection/DataProtection.vue'), 'utf8')
+const compactPage = compactSourceText(page)
 const createWizard = readFileSync(resolve(process.cwd(), 'src/pages/protection/BackupCreateWizard.vue'), 'utf8')
 const restoreTargetCatalog = readFileSync(resolve(process.cwd(), 'src/composables/useRestoreTargetCatalog.ts'), 'utf8')
 
 function tableForStep(step: number) {
   const startMarker = `<div v-if="flowMainStep === ${step}"`
-  const start = page.indexOf(startMarker)
-  const end = page.indexOf('</el-table>', start)
+  const start = compactPage.indexOf(startMarker)
+  const end = compactPage.indexOf('</el-table>', start)
   expect(start).toBeGreaterThan(-1)
   expect(end).toBeGreaterThan(start)
-  return page.slice(start, end)
+  return compactPage.slice(start, end)
 }
 
 function expectOrdered(text: string, markers: string[]) {

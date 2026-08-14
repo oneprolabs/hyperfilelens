@@ -11,6 +11,7 @@ const props = withDefaults(defineProps<{
   popperClass?: string
   triggerClass?: string
 }>(), {
+  content: '',
   placement: 'top',
   ariaLabel: 'More information',
   size: 14,

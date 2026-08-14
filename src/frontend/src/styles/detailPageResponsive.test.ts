@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { compactSourceText } from '../test/sourceText'
 
 const styles = readFileSync(resolve(process.cwd(), 'src/styles/detail-page-ui.css'), 'utf8')
 const capacityCell = readFileSync(resolve(process.cwd(), 'src/components/HflCapacityCell.vue'), 'utf8')
+const compactCapacityCell = compactSourceText(capacityCell)
 const repositoryPage = readFileSync(resolve(process.cwd(), 'src/pages/node/Repositories.vue'), 'utf8')
 
 describe('responsive detail rows', () => {
@@ -12,7 +14,7 @@ describe('responsive detail rows', () => {
     expect(styles).toContain('text-align: left')
     expect(styles).toContain('.hfl-empty-mark {')
     expect(styles).toContain('align-self: flex-start')
-    expect(capacityCell).toContain('<span v-else class="hfl-empty-mark">{{ emptyLabel }}</span>')
+    expect(compactCapacityCell).toContain('<span v-else class="hfl-empty-mark">{{ emptyLabel }}</span>')
     const stackedRepositoryUsageRows = repositoryPage.match(
       /class="hfl-detail-row__value hfl-detail-row__value--stacked"/g,
     )

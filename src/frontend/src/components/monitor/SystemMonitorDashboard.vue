@@ -55,7 +55,10 @@ const { t } = useI18n()
         accent-side="left"
       >
         <template #icon>
-          <component :is="card.icon" :size="17" />
+          <component
+            :is="card.icon"
+            :size="17"
+          />
         </template>
       </OpsStatCard>
     </div>
@@ -70,8 +73,16 @@ const { t } = useI18n()
           <div class="chart-card__head">
             <h3>{{ t('ops.monitorPage.cpuUsage') }}</h3>
           </div>
-          <VChart v-if="hasChartData(cpuOption)" class="chart-card__chart" :option="cpuOption" autoresize />
-          <div v-else class="chart-card__empty">
+          <VChart
+            v-if="hasChartData(cpuOption)"
+            class="chart-card__chart"
+            :option="cpuOption"
+            autoresize
+          />
+          <div
+            v-else
+            class="chart-card__empty"
+          >
             <ChartSpline :size="28" />
             <span>{{ t('ops.monitorPage.noChartData') }}</span>
           </div>
@@ -80,8 +91,16 @@ const { t } = useI18n()
           <div class="chart-card__head">
             <h3>{{ t('ops.monitorPage.loadAverage') }}</h3>
           </div>
-          <VChart v-if="hasChartData(loadOption)" class="chart-card__chart" :option="loadOption" autoresize />
-          <div v-else class="chart-card__empty">
+          <VChart
+            v-if="hasChartData(loadOption)"
+            class="chart-card__chart"
+            :option="loadOption"
+            autoresize
+          />
+          <div
+            v-else
+            class="chart-card__empty"
+          >
             <ChartSpline :size="28" />
             <span>{{ t('ops.monitorPage.noChartData') }}</span>
           </div>
@@ -90,8 +109,16 @@ const { t } = useI18n()
           <div class="chart-card__head">
             <h3>{{ t('ops.monitorPage.memoryUsage') }}</h3>
           </div>
-          <VChart v-if="hasChartData(memoryOption)" class="chart-card__chart" :option="memoryOption" autoresize />
-          <div v-else class="chart-card__empty">
+          <VChart
+            v-if="hasChartData(memoryOption)"
+            class="chart-card__chart"
+            :option="memoryOption"
+            autoresize
+          />
+          <div
+            v-else
+            class="chart-card__empty"
+          >
             <ChartSpline :size="28" />
             <span>{{ t('ops.monitorPage.noChartData') }}</span>
           </div>
@@ -106,12 +133,28 @@ const { t } = useI18n()
               class="chart-card__filter"
               @update:model-value="emit('update:selectedDisk', $event)"
             >
-              <ElOption :label="t('ops.monitorPage.all')" value="all" />
-              <ElOption v-for="name in uniqueDiskNames" :key="name" :label="name" :value="name" />
+              <ElOption
+                :label="t('ops.monitorPage.all')"
+                value="all"
+              />
+              <ElOption
+                v-for="name in uniqueDiskNames"
+                :key="name"
+                :label="name"
+                :value="name"
+              />
             </ElSelect>
           </div>
-          <VChart v-if="hasChartData(diskUsageOption)" class="chart-card__chart" :option="diskUsageOption" autoresize />
-          <div v-else class="chart-card__empty">
+          <VChart
+            v-if="hasChartData(diskUsageOption)"
+            class="chart-card__chart"
+            :option="diskUsageOption"
+            autoresize
+          />
+          <div
+            v-else
+            class="chart-card__empty"
+          >
             <ChartSpline :size="28" />
             <span>{{ t('ops.monitorPage.noChartData') }}</span>
           </div>
@@ -129,8 +172,16 @@ const { t } = useI18n()
           <div class="chart-card__head">
             <h3>{{ t('ops.monitorPage.diskThroughput') }}</h3>
           </div>
-          <VChart v-if="hasChartData(diskThroughputOption)" class="chart-card__chart" :option="diskThroughputOption" autoresize />
-          <div v-else class="chart-card__empty">
+          <VChart
+            v-if="hasChartData(diskThroughputOption)"
+            class="chart-card__chart"
+            :option="diskThroughputOption"
+            autoresize
+          />
+          <div
+            v-else
+            class="chart-card__empty"
+          >
             <ChartSpline :size="28" />
             <span>{{ t('ops.monitorPage.noChartData') }}</span>
           </div>
@@ -139,8 +190,16 @@ const { t } = useI18n()
           <div class="chart-card__head">
             <h3>{{ t('ops.monitorPage.diskIops') }}</h3>
           </div>
-          <VChart v-if="hasChartData(diskIopsOption)" class="chart-card__chart" :option="diskIopsOption" autoresize />
-          <div v-else class="chart-card__empty">
+          <VChart
+            v-if="hasChartData(diskIopsOption)"
+            class="chart-card__chart"
+            :option="diskIopsOption"
+            autoresize
+          />
+          <div
+            v-else
+            class="chart-card__empty"
+          >
             <ChartSpline :size="28" />
             <span>{{ t('ops.monitorPage.noChartData') }}</span>
           </div>
@@ -164,12 +223,28 @@ const { t } = useI18n()
               class="chart-card__filter"
               @update:model-value="emit('update:selectedNetwork', $event)"
             >
-              <ElOption :label="t('ops.monitorPage.all')" value="all" />
-              <ElOption v-for="name in uniqueNetworkNames" :key="name" :label="name" :value="name" />
+              <ElOption
+                :label="t('ops.monitorPage.all')"
+                value="all"
+              />
+              <ElOption
+                v-for="name in uniqueNetworkNames"
+                :key="name"
+                :label="name"
+                :value="name"
+              />
             </ElSelect>
           </div>
-          <VChart v-if="hasChartData(networkBytesOption)" class="chart-card__chart" :option="networkBytesOption" autoresize />
-          <div v-else class="chart-card__empty">
+          <VChart
+            v-if="hasChartData(networkBytesOption)"
+            class="chart-card__chart"
+            :option="networkBytesOption"
+            autoresize
+          />
+          <div
+            v-else
+            class="chart-card__empty"
+          >
             <ChartSpline :size="28" />
             <span>{{ t('ops.monitorPage.noChartData') }}</span>
           </div>
@@ -178,8 +253,16 @@ const { t } = useI18n()
           <div class="chart-card__head">
             <h3>{{ t('ops.monitorPage.networkPackets') }}</h3>
           </div>
-          <VChart v-if="hasChartData(networkPacketsOption)" class="chart-card__chart" :option="networkPacketsOption" autoresize />
-          <div v-else class="chart-card__empty">
+          <VChart
+            v-if="hasChartData(networkPacketsOption)"
+            class="chart-card__chart"
+            :option="networkPacketsOption"
+            autoresize
+          />
+          <div
+            v-else
+            class="chart-card__empty"
+          >
             <ChartSpline :size="28" />
             <span>{{ t('ops.monitorPage.noChartData') }}</span>
           </div>

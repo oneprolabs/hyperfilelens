@@ -2015,7 +2015,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <ModulePage :menus="sideNav" :page-title-override="pageTitle" body-fill>
+  <ModulePage
+    :menus="sideNav"
+    :page-title-override="pageTitle"
+    body-fill
+  >
     <div class="hfl-list-shell hfl-list-shell--fill">
       <div class="hfl-list-panel hfl-list-panel--fill">
         <div class="hfl-list-toolbar">
@@ -2050,39 +2054,60 @@ onUnmounted(() => {
                 :class="{ 'hfl-list-more__chev--open': hostMoreActionsOpen }"
               />
             </ElButton>
-              <template #dropdown>
-                <ElDropdownMenu>
-                  <ElDropdownItem :disabled="hostRenameDisabled" @click="openHostRenameDialog">
-                    <span class="el-dropdown-menu__item-content">
-                      <Pencil :size="14" class="shrink-0" />
-                      <span>{{ t('protection.sourceResources.btnBatchRename') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                  <ElDropdownItem :disabled="hostUpgradeDisabled" @click="onUpgradeSelectedHosts">
-                    <span class="el-dropdown-menu__item-content">
-                      <ArrowUpCircle :size="14" class="shrink-0" />
-                      <span>{{ t('nodesPage.actionUpgrade') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                  <ElDropdownItem :disabled="hostRenameDisabled" @click="openSelectedHostMaintenance">
-                    <span class="el-dropdown-menu__item-content">
-                      <Wrench :size="14" class="shrink-0" />
-                      <span>{{ t('nodeLifecycle.maintenanceCommands') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                  <ElDropdownItem
-                    divided
-                    class="el-dropdown-menu__item--danger"
-                    :disabled="hostDeleteDisabled"
-                    @click="onRemoveSelectedHosts()"
-                  >
-                    <span class="el-dropdown-menu__item-content">
-                      <Trash2 :size="14" class="shrink-0" />
-                      <span>{{ t('protection.sourceResources.deleteBtn') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                </ElDropdownMenu>
-              </template>
+            <template #dropdown>
+              <ElDropdownMenu>
+                <ElDropdownItem
+                  :disabled="hostRenameDisabled"
+                  @click="openHostRenameDialog"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Pencil
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('protection.sourceResources.btnBatchRename') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  :disabled="hostUpgradeDisabled"
+                  @click="onUpgradeSelectedHosts"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <ArrowUpCircle
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('nodesPage.actionUpgrade') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  :disabled="hostRenameDisabled"
+                  @click="openSelectedHostMaintenance"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Wrench
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('nodeLifecycle.maintenanceCommands') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  divided
+                  class="el-dropdown-menu__item--danger"
+                  :disabled="hostDeleteDisabled"
+                  @click="onRemoveSelectedHosts()"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Trash2
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('protection.sourceResources.deleteBtn') }}</span>
+                  </span>
+                </ElDropdownItem>
+              </ElDropdownMenu>
+            </template>
           </ElDropdown>
 
           <ElDropdown
@@ -2099,39 +2124,61 @@ onUnmounted(() => {
                 :class="{ 'hfl-list-more__chev--open': nasMoreActionsOpen }"
               />
             </ElButton>
-              <template #dropdown>
-                <ElDropdownMenu>
-                  <ElDropdownItem :disabled="nasRenameDisabled" @click="openNasRenameDialog">
-                    <span class="el-dropdown-menu__item-content">
-                      <Pencil :size="14" class="shrink-0" />
-                      <span>{{ t('protection.sourceResources.btnBatchRename') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                  <ElDropdownItem :disabled="nasBatchDisabled" @click="openNasRebindDialog">
-                    <span class="el-dropdown-menu__item-content">
-                      <component :is="sourceAgentSidebarIcon" :size="14" class="shrink-0" />
-                      <span>{{ t('protection.sourceResources.changeProxyNode') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                  <ElDropdownItem :disabled="nasTestDisabled" @click="onTestSelectedNas">
-                    <span class="el-dropdown-menu__item-content">
-                      <Link2 :size="14" class="shrink-0" />
-                      <span>{{ t('protection.sourceResources.testConnection') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                  <ElDropdownItem
-                    divided
-                    class="el-dropdown-menu__item--danger"
-                    :disabled="nasDeleteDisabled"
-                    @click="deleteSelectedNasRows(selectedNas)"
-                  >
-                    <span class="el-dropdown-menu__item-content">
-                      <Trash2 :size="14" class="shrink-0" />
-                      <span>{{ t('protection.sourceResources.deleteBtn') }}</span>
-                    </span>
-                  </ElDropdownItem>
-                </ElDropdownMenu>
-              </template>
+            <template #dropdown>
+              <ElDropdownMenu>
+                <ElDropdownItem
+                  :disabled="nasRenameDisabled"
+                  @click="openNasRenameDialog"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Pencil
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('protection.sourceResources.btnBatchRename') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  :disabled="nasBatchDisabled"
+                  @click="openNasRebindDialog"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <component
+                      :is="sourceAgentSidebarIcon"
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('protection.sourceResources.changeProxyNode') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  :disabled="nasTestDisabled"
+                  @click="onTestSelectedNas"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Link2
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('protection.sourceResources.testConnection') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  divided
+                  class="el-dropdown-menu__item--danger"
+                  :disabled="nasDeleteDisabled"
+                  @click="deleteSelectedNasRows(selectedNas)"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Trash2
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('protection.sourceResources.deleteBtn') }}</span>
+                  </span>
+                </ElDropdownItem>
+              </ElDropdownMenu>
+            </template>
           </ElDropdown>
 
           <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
@@ -2145,7 +2192,10 @@ onUnmounted(() => {
               @clear="clearSearch"
             >
               <template #prepend>
-                <ElSelect v-model="filters.search_field" @change="handleSearchFieldChange">
+                <ElSelect
+                  v-model="filters.search_field"
+                  @change="handleSearchFieldChange"
+                >
                   <ElOption
                     v-for="option in searchFieldOptions"
                     :key="option.value"
@@ -2155,7 +2205,10 @@ onUnmounted(() => {
                 </ElSelect>
               </template>
               <template #prefix>
-                <Search :size="16" class="hfl-list-search__icon" />
+                <Search
+                  :size="16"
+                  class="hfl-list-search__icon"
+                />
               </template>
             </ElInput>
             <div class="hfl-list-toolbar__utility">
@@ -2166,7 +2219,10 @@ onUnmounted(() => {
                 :disabled="busy"
                 @click="load"
               >
-                <RefreshCw :size="16" :class="{ 'is-spinning': busy }" />
+                <RefreshCw
+                  :size="16"
+                  :class="{ 'is-spinning': busy }"
+                />
               </ElButton>
             </div>
           </div>
@@ -2178,250 +2234,385 @@ onUnmounted(() => {
           @cancel-queued="lifecycleOps.cancelQueued"
         />
 
-        <div v-show="activeTab === 'hostFileSystem'" ref="hostTableBlockRef" class="hfl-list-table-block">
-        <el-table
-          v-table-overflow-title
-          v-table-header-scroll-sync
-          v-table-column-resize="'protection.backupSources.host'"
-          ref="hostTableRef"
-          v-loading="hostTableLoading"
-          row-key="id"
-          :data="pagedHostAgents"
-          stripe
-          class="hfl-list-table"
-          :max-height="hostTableMaxHeight"
-          :header-cell-style="TABLE_HEADER_STYLE"
-          @scroll="onHostTableScroll"
-          @selection-change="onHostSelectionChange"
+        <div
+          v-show="activeTab === 'hostFileSystem'"
+          ref="hostTableBlockRef"
+          class="hfl-list-table-block"
         >
-              <el-table-column type="selection" width="35" fixed="left" />
-              <el-table-column
-                :label="t('protection.sourceResources.colName')"
-                min-width="170"
-                fixed="left"
-                class-name="hfl-table-name-col"
-              >
-                <template #default="{ row }">
-                  <button type="button" class="hfl-table-name-link hfl-table-name-link--full" @click="openHostRowDetail(row)">
-                    {{ row.name }}
-                  </button>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colLifecycleStatus')" min-width="155" align="center" header-align="center">
-                <template #default="{ row }">
-                  <div class="hfl-table-no-tooltip">
-                    <FlowSourceReadyStatusCell
-                      v-if="resolveSourcePendingStatus(hostSelectableId(row))"
-                      v-bind="resolveSourcePendingStatus(hostSelectableId(row))!"
-                      @click="openSourcePendingFailureDetails(hostSelectableId(row))"
-                    />
-                    <NodeLifecycleStatusCell
-                      v-else
-                      :node="row"
-                      :resolve-display-status="resolveBackupSourceLifecycleStatus"
-                    />
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colHostIp')" min-width="120">
-                <template #default="{ row }">
-                  <span :class="{ 'hfl-empty-mark': !row.ip_address?.trim() }">{{ row.ip_address?.trim() || '—' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="OS" min-width="105">
-                <template #default="{ row }">
-                  <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
-                    <span class="source-os-cell__icon-wrap">
-                      <AgentPlatformBrandIcon :os="agentEnrollmentOs(row)" />
-                    </span>
-                    <span class="source-os-cell__platform">{{ agentPlatformLabel(row) }}</span>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colCpu')" min-width="76">
-                <template #default="{ row }">
-                  <span :class="{ 'hfl-empty-mark': nodeCpuCores(row) == null }">{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colMemory')" min-width="90">
-                <template #default="{ row }">
-                  <span :class="{ 'hfl-empty-mark': nodeMemoryTotalBytes(row) == null }">{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colDiskCount')" min-width="78">
-                <template #default="{ row }">
-                  <span :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }">{{ nodeDiskCount(row) ?? '—' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="170">
-                <template #default="{ row }">
-                  <HflCapacityCell
-                    :used-bytes="agentUsageParts(row).used"
-                    :total-bytes="agentUsageParts(row).total"
-                    variant="compact"
-                    :format-bytes="formatBytes"
-                  />
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colConnectivity')" min-width="110" align="center" header-align="center">
-                <template #default="{ row }">
-                  <div class="hfl-table-no-tooltip">
-                    <ElTag :type="availabilityTagType(row.availability)" size="small">
-                      {{ availabilityLabel(row.availability) }}
-                    </ElTag>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colVersion')" min-width="115">
-                <template #default="{ row }">
-                  <NodeVersionCell
-                    :node="row"
-                    :version-label="agentVersion(row)"
-                    :resolve-version-display="lifecycleOps.resolveVersionDisplay"
-                  />
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" min-width="145">
-                <template #default="{ row }">
-                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatDate(row.created_at) }}</span>
-                </template>
-              </el-table-column>
-              <template #empty>
-                <el-empty :description="t('protection.sourceResources.emptyHostSources')" :image-size="80" />
+          <el-table
+            ref="hostTableRef"
+            v-table-overflow-title
+            v-table-header-scroll-sync
+            v-table-column-resize="'protection.backupSources.host'"
+            v-loading="hostTableLoading"
+            row-key="id"
+            :data="pagedHostAgents"
+            stripe
+            class="hfl-list-table"
+            :max-height="hostTableMaxHeight"
+            :header-cell-style="TABLE_HEADER_STYLE"
+            @scroll="onHostTableScroll"
+            @selection-change="onHostSelectionChange"
+          >
+            <el-table-column
+              type="selection"
+              width="35"
+              fixed="left"
+            />
+            <el-table-column
+              :label="t('protection.sourceResources.colName')"
+              min-width="170"
+              fixed="left"
+              class-name="hfl-table-name-col"
+            >
+              <template #default="{ row }">
+                <button
+                  type="button"
+                  class="hfl-table-name-link hfl-table-name-link--full"
+                  @click="openHostRowDetail(row)"
+                >
+                  {{ row.name }}
+                </button>
               </template>
-        </el-table>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colLifecycleStatus')"
+              min-width="155"
+              align="center"
+              header-align="center"
+            >
+              <template #default="{ row }">
+                <div class="hfl-table-no-tooltip">
+                  <FlowSourceReadyStatusCell
+                    v-if="resolveSourcePendingStatus(hostSelectableId(row))"
+                    v-bind="resolveSourcePendingStatus(hostSelectableId(row))!"
+                    @click="openSourcePendingFailureDetails(hostSelectableId(row))"
+                  />
+                  <NodeLifecycleStatusCell
+                    v-else
+                    :node="row"
+                    :resolve-display-status="resolveBackupSourceLifecycleStatus"
+                  />
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colHostIp')"
+              min-width="120"
+            >
+              <template #default="{ row }">
+                <span :class="{ 'hfl-empty-mark': !row.ip_address?.trim() }">{{ row.ip_address?.trim() || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="OS"
+              min-width="105"
+            >
+              <template #default="{ row }">
+                <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
+                  <span class="source-os-cell__icon-wrap">
+                    <AgentPlatformBrandIcon :os="agentEnrollmentOs(row)" />
+                  </span>
+                  <span class="source-os-cell__platform">{{ agentPlatformLabel(row) }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colCpu')"
+              min-width="76"
+            >
+              <template #default="{ row }">
+                <span :class="{ 'hfl-empty-mark': nodeCpuCores(row) == null }">{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colMemory')"
+              min-width="90"
+            >
+              <template #default="{ row }">
+                <span :class="{ 'hfl-empty-mark': nodeMemoryTotalBytes(row) == null }">{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colDiskCount')"
+              min-width="78"
+            >
+              <template #default="{ row }">
+                <span :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }">{{ nodeDiskCount(row) ?? '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colCapacity')"
+              min-width="170"
+            >
+              <template #default="{ row }">
+                <HflCapacityCell
+                  :used-bytes="agentUsageParts(row).used"
+                  :total-bytes="agentUsageParts(row).total"
+                  variant="compact"
+                  :format-bytes="formatBytes"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colConnectivity')"
+              min-width="110"
+              align="center"
+              header-align="center"
+            >
+              <template #default="{ row }">
+                <div class="hfl-table-no-tooltip">
+                  <ElTag
+                    :type="availabilityTagType(row.availability)"
+                    size="small"
+                  >
+                    {{ availabilityLabel(row.availability) }}
+                  </ElTag>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colVersion')"
+              min-width="115"
+            >
+              <template #default="{ row }">
+                <NodeVersionCell
+                  :node="row"
+                  :version-label="agentVersion(row)"
+                  :resolve-version-display="lifecycleOps.resolveVersionDisplay"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colRegisteredAt')"
+              min-width="145"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !row.created_at }"
+                >{{ formatDate(row.created_at) }}</span>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty
+                :description="t('protection.sourceResources.emptyHostSources')"
+                :image-size="80"
+              />
+            </template>
+          </el-table>
         </div>
 
-        <div v-show="activeTab === 'nas'" ref="nasTableBlockRef" class="hfl-list-table-block">
-        <el-table
-          v-table-overflow-title
-          v-table-header-scroll-sync
-          v-table-column-resize="'protection.backupSources.nas'"
-          ref="nasTableRef"
-          v-loading="nasTableLoading"
-          row-key="id"
-          :data="nasRows"
-          stripe
-          class="hfl-list-table"
-          :max-height="nasTableMaxHeight"
-          :header-cell-style="TABLE_HEADER_STYLE"
-          @scroll="onNasTableScroll"
-          @selection-change="onNasSelectionChange"
+        <div
+          v-show="activeTab === 'nas'"
+          ref="nasTableBlockRef"
+          class="hfl-list-table-block"
         >
-              <el-table-column type="selection" width="35" fixed="left" />
-              <el-table-column
-                :label="t('protection.sourceResources.colName')"
-                min-width="170"
-                fixed="left"
-                class-name="hfl-table-name-col"
-              >
-                <template #default="{ row }">
-                  <button
-                    type="button"
-                    class="hfl-table-name-link hfl-table-name-link--full"
-                    @click="openRowDetail(row)"
-                  >
-                    {{ row.name }}
-                  </button>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colLifecycleStatus')" min-width="165" align="center" header-align="center">
-                <template #default="{ row }">
-                  <div class="hfl-table-no-tooltip">
-                    <FlowSourceReadyStatusCell
-                      v-if="resolveSourcePendingStatus(nasSelectableId(row))"
-                      v-bind="resolveSourcePendingStatus(nasSelectableId(row))!"
-                    />
-                    <el-tag v-else :type="sourceNodeOnlineTagType(row)" size="small">
-                      {{ sourceNodeOnlineLabel(row) }}
-                    </el-tag>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colProtocol')" width="85">
-                <template #default="{ row }">
-                  <span v-if="nasProtocolType(row) !== 'nas'" :class="nasProtocolPillClass(row)">
-                    <component :is="nasMountProtocolIcon(nasProtocolType(row))" :size="12" stroke-width="2.25" />
-                    {{ nasProtocolLabel(row) }}
-                  </span>
-                  <span v-else class="hfl-empty-mark">—</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colNasServer')" min-width="115">
-                <template #default="{ row }">
-                  {{ nasServerAddress(row) }}
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colNasShareExport')" min-width="120">
-                <template #default="{ row }">
-                  <div class="table-stack-cell">
-                    <span class="table-stack-cell__secondary">{{ t(nasPathKindLabelKey(row)) }}</span>
-                    <span class="table-stack-cell__primary">{{ nasShareOrExport(row) }}</span>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colSourceProxy')" min-width="120">
-                <template #header>
-                  <span class="hfl-table-header-with-tip">
-                    <span>{{ t('protection.sourceResources.colSourceProxy') }}</span>
-                    <HflHelpTip
-                      :content="t('protection.sourceResources.sourceProxyColumnTip')"
-                      :aria-label="t('protection.sourceResources.sourceProxyColumnHelp')"
-                    />
-                  </span>
-                </template>
-                <template #default="{ row }">
-                  <div class="table-stack-cell">
-                    <span class="table-stack-cell__primary" :class="{ 'hfl-empty-mark': !nasSourceProxyName(row) }">{{ nasSourceProxyName(row) || '—' }}</span>
-                    <span v-if="sourceNeedsProxyRebind(row)" class="table-stack-cell__secondary source-needs-proxy">
-                      {{ t('protection.sourceResources.needsProxyRebind') }}
-                    </span>
-                    <span v-else-if="nasSourceProxyIp(row)" class="table-stack-cell__secondary">{{ nasSourceProxyIp(row) }}</span>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colProxyMountPoint')" min-width="165">
-                <template #default="{ row }">
-                  <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ nasProxyMountPoint(row) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="170">
-                <template #default="{ row }">
-                  <HflCapacityCell
-                    v-if="row.total_size"
-                    :used-bytes="Number(row.used_size || 0)"
-                    :total-bytes="Number(row.total_size || 0)"
-                    variant="compact"
-                    :format-bytes="formatBytes"
-                  />
-                  <span v-else-if="nasShouldRefreshCapacity(row)" class="source-capacity-pending">
-                    {{ t('protection.sourceResources.capacitySyncing') }}
-                  </span>
-                  <span v-else class="hfl-empty-mark">—</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colConnectivity')" min-width="110" align="center" header-align="center">
-                <template #default="{ row }">
-                  <div class="hfl-table-no-tooltip">
-                    <ElTag :type="availabilityTagType(row.availability)" size="small">
-                      {{ availabilityLabel(row.availability) }}
-                    </ElTag>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colRegisteredAt')" min-width="145">
-                <template #default="{ row }">
-                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !sourceRegisteredAt(row) }">{{ formatDate(sourceRegisteredAt(row)) }}</span>
-                </template>
-              </el-table-column>
-              <template #empty>
-                <el-empty :description="t('protection.sourceResources.emptyNasSources')" :image-size="80" />
+          <el-table
+            ref="nasTableRef"
+            v-table-overflow-title
+            v-table-header-scroll-sync
+            v-table-column-resize="'protection.backupSources.nas'"
+            v-loading="nasTableLoading"
+            row-key="id"
+            :data="nasRows"
+            stripe
+            class="hfl-list-table"
+            :max-height="nasTableMaxHeight"
+            :header-cell-style="TABLE_HEADER_STYLE"
+            @scroll="onNasTableScroll"
+            @selection-change="onNasSelectionChange"
+          >
+            <el-table-column
+              type="selection"
+              width="35"
+              fixed="left"
+            />
+            <el-table-column
+              :label="t('protection.sourceResources.colName')"
+              min-width="170"
+              fixed="left"
+              class-name="hfl-table-name-col"
+            >
+              <template #default="{ row }">
+                <button
+                  type="button"
+                  class="hfl-table-name-link hfl-table-name-link--full"
+                  @click="openRowDetail(row)"
+                >
+                  {{ row.name }}
+                </button>
               </template>
-        </el-table>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colLifecycleStatus')"
+              min-width="165"
+              align="center"
+              header-align="center"
+            >
+              <template #default="{ row }">
+                <div class="hfl-table-no-tooltip">
+                  <FlowSourceReadyStatusCell
+                    v-if="resolveSourcePendingStatus(nasSelectableId(row))"
+                    v-bind="resolveSourcePendingStatus(nasSelectableId(row))!"
+                  />
+                  <el-tag
+                    v-else
+                    :type="sourceNodeOnlineTagType(row)"
+                    size="small"
+                  >
+                    {{ sourceNodeOnlineLabel(row) }}
+                  </el-tag>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colProtocol')"
+              width="85"
+            >
+              <template #default="{ row }">
+                <span
+                  v-if="nasProtocolType(row) !== 'nas'"
+                  :class="nasProtocolPillClass(row)"
+                >
+                  <component
+                    :is="nasMountProtocolIcon(nasProtocolType(row))"
+                    :size="12"
+                    stroke-width="2.25"
+                  />
+                  {{ nasProtocolLabel(row) }}
+                </span>
+                <span
+                  v-else
+                  class="hfl-empty-mark"
+                >—</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colNasServer')"
+              min-width="115"
+            >
+              <template #default="{ row }">
+                {{ nasServerAddress(row) }}
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colNasShareExport')"
+              min-width="120"
+            >
+              <template #default="{ row }">
+                <div class="table-stack-cell">
+                  <span class="table-stack-cell__secondary">{{ t(nasPathKindLabelKey(row)) }}</span>
+                  <span class="table-stack-cell__primary">{{ nasShareOrExport(row) }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colSourceProxy')"
+              min-width="120"
+            >
+              <template #header>
+                <span class="hfl-table-header-with-tip">
+                  <span>{{ t('protection.sourceResources.colSourceProxy') }}</span>
+                  <HflHelpTip
+                    :content="t('protection.sourceResources.sourceProxyColumnTip')"
+                    :aria-label="t('protection.sourceResources.sourceProxyColumnHelp')"
+                  />
+                </span>
+              </template>
+              <template #default="{ row }">
+                <div class="table-stack-cell">
+                  <span
+                    class="table-stack-cell__primary"
+                    :class="{ 'hfl-empty-mark': !nasSourceProxyName(row) }"
+                  >{{ nasSourceProxyName(row) || '—' }}</span>
+                  <span
+                    v-if="sourceNeedsProxyRebind(row)"
+                    class="table-stack-cell__secondary source-needs-proxy"
+                  >
+                    {{ t('protection.sourceResources.needsProxyRebind') }}
+                  </span>
+                  <span
+                    v-else-if="nasSourceProxyIp(row)"
+                    class="table-stack-cell__secondary"
+                  >{{ nasSourceProxyIp(row) }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colProxyMountPoint')"
+              min-width="165"
+            >
+              <template #default="{ row }">
+                <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ nasProxyMountPoint(row) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colCapacity')"
+              min-width="170"
+            >
+              <template #default="{ row }">
+                <HflCapacityCell
+                  v-if="row.total_size"
+                  :used-bytes="Number(row.used_size || 0)"
+                  :total-bytes="Number(row.total_size || 0)"
+                  variant="compact"
+                  :format-bytes="formatBytes"
+                />
+                <span
+                  v-else-if="nasShouldRefreshCapacity(row)"
+                  class="source-capacity-pending"
+                >
+                  {{ t('protection.sourceResources.capacitySyncing') }}
+                </span>
+                <span
+                  v-else
+                  class="hfl-empty-mark"
+                >—</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colConnectivity')"
+              min-width="110"
+              align="center"
+              header-align="center"
+            >
+              <template #default="{ row }">
+                <div class="hfl-table-no-tooltip">
+                  <ElTag
+                    :type="availabilityTagType(row.availability)"
+                    size="small"
+                  >
+                    {{ availabilityLabel(row.availability) }}
+                  </ElTag>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.sourceResources.colRegisteredAt')"
+              min-width="145"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !sourceRegisteredAt(row) }"
+                >{{ formatDate(sourceRegisteredAt(row)) }}</span>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty
+                :description="t('protection.sourceResources.emptyNasSources')"
+                :image-size="80"
+              />
+            </template>
+          </el-table>
         </div>
 
         <div class="hfl-list-footer">
-          <span v-if="tabSelectedCount > 0" class="hfl-list-footer__selected">
+          <span
+            v-if="tabSelectedCount > 0"
+            class="hfl-list-footer__selected"
+          >
             {{ t('protection.sourceResources.selectedCount', { n: tabSelectedCount }) }}
           </span>
           <HflPagination
@@ -2436,163 +2627,252 @@ onUnmounted(() => {
       </div>
     </div>
 
-      <!-- ===== Edit Dialog ===== -->
-      <el-dialog
-        v-model="dialogOpen"
-        :title="editing ? t('protection.sourceResources.edit') : t('protection.sourceResources.add')"
-        width="560px"
-        destroy-on-close
+    <!-- ===== Edit Dialog ===== -->
+    <el-dialog
+      v-model="dialogOpen"
+      :title="editing ? t('protection.sourceResources.edit') : t('protection.sourceResources.add')"
+      width="560px"
+      destroy-on-close
+    >
+      <el-form
+        label-width="120px"
+        @submit.prevent="saveForm"
       >
-        <el-form label-width="120px" @submit.prevent="saveForm">
-          <el-form-item :label="t('protection.sourceResources.formName')" required>
-            <el-input v-model="form.name" />
-          </el-form-item>
-          <el-form-item :label="t('protection.sourceResources.formType')">
-            <el-select v-model="form.resource_type" :disabled="!!editing">
-              <el-option v-for="rt in resourceTypes" :key="rt" :label="typeLabel(rt)" :value="rt" />
-            </el-select>
-          </el-form-item>
-          <el-form-item :label="t('protection.sourceResources.formDesc')">
-            <el-input v-model="form.description" type="textarea" :rows="2" />
-          </el-form-item>
-          <el-form-item :label="t('protection.sourceResources.formNode')">
-            <el-select
-              v-model="form.bound_node_id"
-              clearable
-              :placeholder="t('protection.sourceResources.selectNode')"
-            >
-              <el-option
-                v-for="n in proxyNodes"
-                :key="n.id"
-                :label="n.name"
-                :value="n.id"
-              />
-            </el-select>
-            <p v-if="!proxyNodes.length" class="hint-warn">
-              {{ t('protection.sourceResources.noProxy') }}
-              <RouterLink class="hint-link" to="/node/nodes/deploy?role=proxy">
-                {{ t('protection.sourceResources.deployProxy') }}
-              </RouterLink>
-            </p>
-          </el-form-item>
-
-          <template v-if="form.resource_type === 'local'">
-            <el-form-item :label="t('protection.sourceResources.rootPath')" required>
-              <el-input v-model="form.root_path" placeholder="/data/backup" />
-            </el-form-item>
-          </template>
-          <template v-else-if="form.resource_type === 'nfs'">
-            <el-form-item :label="t('protection.sourceResources.server')" required>
-              <el-input v-model="form.server" />
-            </el-form-item>
-            <el-form-item :label="t('protection.sourceResources.exportPath')" required>
-              <el-input v-model="form.export_path" />
-            </el-form-item>
-          </template>
-          <template v-else-if="form.resource_type === 'cifs'">
-            <el-form-item :label="t('protection.sourceResources.server')" required>
-              <el-input v-model="form.server" />
-            </el-form-item>
-            <el-form-item :label="t('protection.sourceResources.share')" required>
-              <el-input v-model="form.share" />
-            </el-form-item>
-            <el-form-item :label="t('protection.sourceResources.username')" required>
-              <el-input v-model="form.username" />
-            </el-form-item>
-            <el-form-item :label="t('protection.sourceResources.password')" required>
-              <el-input v-model="form.password" type="password" show-password />
-            </el-form-item>
-          </template>
-          <template v-else-if="form.resource_type === 'nas'">
-            <el-form-item :label="t('protection.sourceResources.server')" required>
-              <el-input v-model="form.server" />
-            </el-form-item>
-            <el-form-item :label="t('protection.sourceResources.share')">
-              <el-input v-model="form.share" />
-            </el-form-item>
-          </template>
-          <template v-else-if="form.resource_type === 's3'">
-            <el-form-item :label="t('protection.sourceResources.endpoint')" required>
-              <el-input v-model="form.endpoint" />
-            </el-form-item>
-            <el-form-item :label="t('protection.sourceResources.bucket')" required>
-              <el-input v-model="form.bucket" />
-            </el-form-item>
-            <el-form-item :label="t('protection.sourceResources.accessKey')" required>
-              <el-input v-model="form.access_key" />
-            </el-form-item>
-            <el-form-item :label="t('protection.sourceResources.secretKey')" required>
-              <el-input v-model="form.secret_key" type="password" show-password />
-            </el-form-item>
-          </template>
-        </el-form>
-        <template #footer>
-          <el-button @click="dialogOpen = false">{{ t('common.cancel') }}</el-button>
-          <el-button type="primary" :loading="formBusy" @click="saveForm">{{ t('common.save') }}</el-button>
-        </template>
-      </el-dialog>
-
-      <!-- ===== Rename Dialog ===== -->
-      <el-dialog
-        v-model="renameDialogOpen"
-        class="source-action-dialog"
-        :title="t('protection.sourceResources.renameTitle')"
-        width="480px"
-        align-center
-        destroy-on-close
-      >
-        <ElForm
-          label-position="top"
-          class="source-action-dialog__form"
-          @submit.prevent="submitRename"
+        <el-form-item
+          :label="t('protection.sourceResources.formName')"
+          required
         >
-          <ElFormItem :label="t('protection.sourceResources.renameLabel')" required>
-            <ElInput
-              v-model="renameInput"
-              :placeholder="t('protection.sourceResources.renamePlaceholder')"
-              maxlength="128"
-              show-word-limit
+          <el-input v-model="form.name" />
+        </el-form-item>
+        <el-form-item :label="t('protection.sourceResources.formType')">
+          <el-select
+            v-model="form.resource_type"
+            :disabled="!!editing"
+          >
+            <el-option
+              v-for="rt in resourceTypes"
+              :key="rt"
+              :label="typeLabel(rt)"
+              :value="rt"
             />
-          </ElFormItem>
-        </ElForm>
-        <template #footer>
-          <el-button @click="closeRenameDialog">{{ t('common.cancel') }}</el-button>
-          <el-button type="primary" @click="submitRename">{{ t('common.save') }}</el-button>
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="t('protection.sourceResources.formDesc')">
+          <el-input
+            v-model="form.description"
+            type="textarea"
+            :rows="2"
+          />
+        </el-form-item>
+        <el-form-item :label="t('protection.sourceResources.formNode')">
+          <el-select
+            v-model="form.bound_node_id"
+            clearable
+            :placeholder="t('protection.sourceResources.selectNode')"
+          >
+            <el-option
+              v-for="n in proxyNodes"
+              :key="n.id"
+              :label="n.name"
+              :value="n.id"
+            />
+          </el-select>
+          <p
+            v-if="!proxyNodes.length"
+            class="hint-warn"
+          >
+            {{ t('protection.sourceResources.noProxy') }}
+            <RouterLink
+              class="hint-link"
+              to="/node/nodes/deploy?role=proxy"
+            >
+              {{ t('protection.sourceResources.deployProxy') }}
+            </RouterLink>
+          </p>
+        </el-form-item>
+
+        <template v-if="form.resource_type === 'local'">
+          <el-form-item
+            :label="t('protection.sourceResources.rootPath')"
+            required
+          >
+            <el-input
+              v-model="form.root_path"
+              placeholder="/data/backup"
+            />
+          </el-form-item>
         </template>
-      </el-dialog>
+        <template v-else-if="form.resource_type === 'nfs'">
+          <el-form-item
+            :label="t('protection.sourceResources.server')"
+            required
+          >
+            <el-input v-model="form.server" />
+          </el-form-item>
+          <el-form-item
+            :label="t('protection.sourceResources.exportPath')"
+            required
+          >
+            <el-input v-model="form.export_path" />
+          </el-form-item>
+        </template>
+        <template v-else-if="form.resource_type === 'cifs'">
+          <el-form-item
+            :label="t('protection.sourceResources.server')"
+            required
+          >
+            <el-input v-model="form.server" />
+          </el-form-item>
+          <el-form-item
+            :label="t('protection.sourceResources.share')"
+            required
+          >
+            <el-input v-model="form.share" />
+          </el-form-item>
+          <el-form-item
+            :label="t('protection.sourceResources.username')"
+            required
+          >
+            <el-input v-model="form.username" />
+          </el-form-item>
+          <el-form-item
+            :label="t('protection.sourceResources.password')"
+            required
+          >
+            <el-input
+              v-model="form.password"
+              type="password"
+              show-password
+            />
+          </el-form-item>
+        </template>
+        <template v-else-if="form.resource_type === 'nas'">
+          <el-form-item
+            :label="t('protection.sourceResources.server')"
+            required
+          >
+            <el-input v-model="form.server" />
+          </el-form-item>
+          <el-form-item :label="t('protection.sourceResources.share')">
+            <el-input v-model="form.share" />
+          </el-form-item>
+        </template>
+        <template v-else-if="form.resource_type === 's3'">
+          <el-form-item
+            :label="t('protection.sourceResources.endpoint')"
+            required
+          >
+            <el-input v-model="form.endpoint" />
+          </el-form-item>
+          <el-form-item
+            :label="t('protection.sourceResources.bucket')"
+            required
+          >
+            <el-input v-model="form.bucket" />
+          </el-form-item>
+          <el-form-item
+            :label="t('protection.sourceResources.accessKey')"
+            required
+          >
+            <el-input v-model="form.access_key" />
+          </el-form-item>
+          <el-form-item
+            :label="t('protection.sourceResources.secretKey')"
+            required
+          >
+            <el-input
+              v-model="form.secret_key"
+              type="password"
+              show-password
+            />
+          </el-form-item>
+        </template>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogOpen = false">
+          {{ t('common.cancel') }}
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="formBusy"
+          @click="saveForm"
+        >
+          {{ t('common.save') }}
+        </el-button>
+      </template>
+    </el-dialog>
 
-      <ChangeProxyHostDialog
-        v-model="rebindDialogOpen"
-        v-model:node-id="rebindNodeId"
-        :selected-count="selectedNas.length"
-        :offline-proxy-count="offlineProxyNodeCount"
-        :proxy-nodes-refreshing="proxyNodesRefreshing"
-        :online-proxy-nodes="onlineProxyNodes"
-        :saving="nasRebindBusy"
-        @refresh="refreshProxyNodesManually"
-        @deploy="openProxyDeploy"
-        @save="submitNasRebind"
-      />
+    <!-- ===== Rename Dialog ===== -->
+    <el-dialog
+      v-model="renameDialogOpen"
+      class="source-action-dialog"
+      :title="t('protection.sourceResources.renameTitle')"
+      width="480px"
+      align-center
+      destroy-on-close
+    >
+      <ElForm
+        label-position="top"
+        class="source-action-dialog__form"
+        @submit.prevent="submitRename"
+      >
+        <ElFormItem
+          :label="t('protection.sourceResources.renameLabel')"
+          required
+        >
+          <ElInput
+            v-model="renameInput"
+            :placeholder="t('protection.sourceResources.renamePlaceholder')"
+            maxlength="128"
+            show-word-limit
+          />
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <el-button @click="closeRenameDialog">
+          {{ t('common.cancel') }}
+        </el-button>
+        <el-button
+          type="primary"
+          @click="submitRename"
+        >
+          {{ t('common.save') }}
+        </el-button>
+      </template>
+    </el-dialog>
 
-      <!-- ===== Host Detail Drawer ===== -->
-      <HostSourceDetailDrawer
-        :model-value="hostDetailOpen"
-        :node-id="hostDetailNodeId"
-        :source="hostDetailSource"
-        :initial-tab="hostDetailInitialTab"
-        :resolve-display-status="resolveBackupSourceLifecycleStatus"
-        @update:model-value="onHostDetailDrawerClose"
-        @saved="onHostDetailDrawerSaved"
-      />
+    <ChangeProxyHostDialog
+      v-model="rebindDialogOpen"
+      v-model:node-id="rebindNodeId"
+      :selected-count="selectedNas.length"
+      :offline-proxy-count="offlineProxyNodeCount"
+      :proxy-nodes-refreshing="proxyNodesRefreshing"
+      :online-proxy-nodes="onlineProxyNodes"
+      :saving="nasRebindBusy"
+      @refresh="refreshProxyNodesManually"
+      @deploy="openProxyDeploy"
+      @save="submitNasRebind"
+    />
 
-      <!-- ===== NAS Detail Drawer ===== -->
-      <NasSourceDetailDrawer
-        v-if="detailOpen && isNasDetail"
-        v-model="detailOpen"
-        :resource="detail"
-        :proxy-nodes="proxyNodes"
-        @updated="onNasDetailUpdated"
-      />
+    <!-- ===== Host Detail Drawer ===== -->
+    <HostSourceDetailDrawer
+      :model-value="hostDetailOpen"
+      :node-id="hostDetailNodeId"
+      :source="hostDetailSource"
+      :initial-tab="hostDetailInitialTab"
+      :resolve-display-status="resolveBackupSourceLifecycleStatus"
+      @update:model-value="onHostDetailDrawerClose"
+      @saved="onHostDetailDrawerSaved"
+    />
+
+    <!-- ===== NAS Detail Drawer ===== -->
+    <NasSourceDetailDrawer
+      v-if="detailOpen && isNasDetail"
+      v-model="detailOpen"
+      :resource="detail"
+      :proxy-nodes="proxyNodes"
+      @updated="onNasDetailUpdated"
+    />
 
     <!-- ===== Agent Deploy Fullscreen (Host File System) ===== -->
     <Teleport to="body">
@@ -2607,12 +2887,23 @@ onUnmounted(() => {
       >
         <div class="fullscreen-form-page source-deploy-page">
           <div class="fullscreen-form-header">
-            <button type="button" class="fullscreen-form-header__back" @click="closeAgentDeploy">
-              <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+            <button
+              type="button"
+              class="fullscreen-form-header__back"
+              @click="closeAgentDeploy"
+            >
+              <ArrowLeft
+                class="fullscreen-form-header__back-icon"
+                :size="18"
+              />
             </button>
             <div class="fullscreen-form-header__content">
-              <h1 class="fullscreen-form-header__title">{{ t('protection.sourceResources.deployAgent') }}</h1>
-              <p class="fullscreen-form-header__desc">{{ t('protection.sourceResources.deployAgentHint') }}</p>
+              <h1 class="fullscreen-form-header__title">
+                {{ t('protection.sourceResources.deployAgent') }}
+              </h1>
+              <p class="fullscreen-form-header__desc">
+                {{ t('protection.sourceResources.deployAgentHint') }}
+              </p>
             </div>
           </div>
 
@@ -2652,12 +2943,23 @@ onUnmounted(() => {
       >
         <div class="fullscreen-form-page source-deploy-page">
           <div class="fullscreen-form-header">
-            <button type="button" class="fullscreen-form-header__back" @click="closeNasAdd">
-              <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+            <button
+              type="button"
+              class="fullscreen-form-header__back"
+              @click="closeNasAdd"
+            >
+              <ArrowLeft
+                class="fullscreen-form-header__back-icon"
+                :size="18"
+              />
             </button>
             <div class="fullscreen-form-header__content">
-              <h1 class="fullscreen-form-header__title">{{ t('protection.sourceResources.addNas') }}</h1>
-              <p class="fullscreen-form-header__desc">{{ t('protection.sourceResources.addSourceTypeNasHint') }}</p>
+              <h1 class="fullscreen-form-header__title">
+                {{ t('protection.sourceResources.addNas') }}
+              </h1>
+              <p class="fullscreen-form-header__desc">
+                {{ t('protection.sourceResources.addSourceTypeNasHint') }}
+              </p>
             </div>
           </div>
 
@@ -2719,7 +3021,10 @@ onUnmounted(() => {
     >
       <div class="source-unregister-blocked-dialog__body">
         <div class="source-unregister-blocked-dialog__lead">
-          <span class="source-unregister-blocked-dialog__icon" aria-hidden="true">
+          <span
+            class="source-unregister-blocked-dialog__icon"
+            aria-hidden="true"
+          >
             <TriangleAlert :size="18" />
           </span>
           <div class="source-unregister-blocked-dialog__copy">
@@ -2732,7 +3037,10 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="source-unregister-blocked-dialog__impact" role="alert">
+        <div
+          class="source-unregister-blocked-dialog__impact"
+          role="alert"
+        >
           <ol class="source-unregister-blocked-dialog__impact-list">
             <li class="source-unregister-blocked-dialog__impact-item">
               <span class="source-unregister-blocked-dialog__impact-index">1</span>
@@ -2772,8 +3080,13 @@ onUnmounted(() => {
         </section>
       </div>
       <template #footer>
-        <el-button @click="closeUnregisterStep3BlockedDialog">{{ t('common.close') }}</el-button>
-        <el-button type="primary" @click="goToStartBackupForUnregister">
+        <el-button @click="closeUnregisterStep3BlockedDialog">
+          {{ t('common.close') }}
+        </el-button>
+        <el-button
+          type="primary"
+          @click="goToStartBackupForUnregister"
+        >
           {{ t('protection.backupsPage.btnGoToStartBackup') }}
         </el-button>
       </template>

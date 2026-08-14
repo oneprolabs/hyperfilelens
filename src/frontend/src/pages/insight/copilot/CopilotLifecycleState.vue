@@ -86,39 +86,88 @@ function stepState(index: number) {
 
 <template>
   <main class="copilot-lifecycle-state">
-    <div v-if="session.lifecycle_status === 'failed'" class="copilot-lifecycle-card is-failed">
+    <div
+      v-if="session.lifecycle_status === 'failed'"
+      class="copilot-lifecycle-card is-failed"
+    >
       <span class="copilot-lifecycle-icon is-failed"><AlertCircle :size="30" /></span>
       <h2>We Couldn't Prepare This Chat</h2>
       <p>Something went wrong while preparing the selected data. Try again, or delete this chat and create a new one.</p>
-      <div v-if="showFailedConversionPanel" class="copilot-conversion copilot-conversion--failed">
-        <p v-if="countsLabel" class="copilot-conversion__counts">{{ countsLabel }}</p>
-        <p v-if="conversion?.error" class="copilot-conversion__detail">{{ conversion.error }}</p>
-        <ul v-if="problemItems.length" class="copilot-conversion__list">
-          <li v-for="(item, index) in problemItems" :key="`${item.name}-${index}`">
+      <div
+        v-if="showFailedConversionPanel"
+        class="copilot-conversion copilot-conversion--failed"
+      >
+        <p
+          v-if="countsLabel"
+          class="copilot-conversion__counts"
+        >
+          {{ countsLabel }}
+        </p>
+        <p
+          v-if="conversion?.error"
+          class="copilot-conversion__detail"
+        >
+          {{ conversion.error }}
+        </p>
+        <ul
+          v-if="problemItems.length"
+          class="copilot-conversion__list"
+        >
+          <li
+            v-for="(item, index) in problemItems"
+            :key="`${item.name}-${index}`"
+          >
             <strong>{{ item.name }}</strong>
             <span>{{ item.reason_label }}</span>
           </li>
         </ul>
-        <ul v-if="conversionWarnings.length" class="copilot-conversion__list">
-          <li v-for="(warning, index) in conversionWarnings" :key="`${warning.code}-${index}`">
+        <ul
+          v-if="conversionWarnings.length"
+          class="copilot-conversion__list"
+        >
+          <li
+            v-for="(warning, index) in conversionWarnings"
+            :key="`${warning.code}-${index}`"
+          >
             <span>{{ warning.label || warning.code }}</span>
           </li>
         </ul>
       </div>
       <div class="copilot-lifecycle-actions">
-        <ElButton @click="emit('delete')">Delete Chat</ElButton>
-        <ElButton type="primary" @click="emit('retry')">Try Again</ElButton>
+        <ElButton @click="emit('delete')">
+          Delete Chat
+        </ElButton>
+        <ElButton
+          type="primary"
+          @click="emit('retry')"
+        >
+          Try Again
+        </ElButton>
       </div>
     </div>
 
-    <div v-else-if="session.lifecycle_status === 'deleting'" class="copilot-lifecycle-card">
-      <span class="copilot-lifecycle-icon"><LoaderCircle :size="30" class="copilot-lifecycle-spin" /></span>
+    <div
+      v-else-if="session.lifecycle_status === 'deleting'"
+      class="copilot-lifecycle-card"
+    >
+      <span class="copilot-lifecycle-icon"><LoaderCircle
+        :size="30"
+        class="copilot-lifecycle-spin"
+      /></span>
       <h2>Deleting Chat</h2>
       <p>The chat and its temporary data are being removed.</p>
     </div>
 
-    <div v-else class="copilot-lifecycle-card" :class="{ 'has-conversion': showConversionPanel }">
-      <div class="copilot-lifecycle-heading" role="status" aria-live="polite">
+    <div
+      v-else
+      class="copilot-lifecycle-card"
+      :class="{ 'has-conversion': showConversionPanel }"
+    >
+      <div
+        class="copilot-lifecycle-heading"
+        role="status"
+        aria-live="polite"
+      >
         <span class="copilot-lifecycle-icon"><Sparkles :size="25" /></span>
         <div>
           <h2>Preparing Your Chat</h2>
@@ -127,48 +176,119 @@ function stepState(index: number) {
       </div>
 
       <div class="copilot-lifecycle-body">
-        <ol class="copilot-lifecycle-steps" aria-label="Chat preparation progress">
-          <li v-for="(step, index) in steps" :key="step.label" :class="`is-${stepState(index)}`">
+        <ol
+          class="copilot-lifecycle-steps"
+          aria-label="Chat preparation progress"
+        >
+          <li
+            v-for="(step, index) in steps"
+            :key="step.label"
+            :class="`is-${stepState(index)}`"
+          >
             <span>
-              <Check v-if="stepState(index) === 'done'" :size="14" />
-              <LoaderCircle v-else-if="stepState(index) === 'active'" :size="14" class="copilot-lifecycle-spin" />
-              <Circle v-else :size="12" />
+              <Check
+                v-if="stepState(index) === 'done'"
+                :size="14"
+              />
+              <LoaderCircle
+                v-else-if="stepState(index) === 'active'"
+                :size="14"
+                class="copilot-lifecycle-spin"
+              />
+              <Circle
+                v-else
+                :size="12"
+              />
             </span>
             {{ step.label }}
           </li>
         </ol>
 
-        <section v-if="showConversionPanel" class="copilot-conversion" aria-label="Document preparation details">
+        <section
+          v-if="showConversionPanel"
+          class="copilot-conversion"
+          aria-label="Document preparation details"
+        >
           <span class="copilot-conversion__eyebrow">Document preparation</span>
-          <p v-if="conversionDetail" class="copilot-conversion__detail">{{ conversionDetail }}</p>
-          <p v-else-if="showRunningMessage" class="copilot-conversion__detail">{{ t('insight.copilot.documentConversionRunning') }}</p>
-          <p v-if="countsLabel" class="copilot-conversion__counts">{{ countsLabel }}</p>
+          <p
+            v-if="conversionDetail"
+            class="copilot-conversion__detail"
+          >
+            {{ conversionDetail }}
+          </p>
+          <p
+            v-else-if="showRunningMessage"
+            class="copilot-conversion__detail"
+          >
+            {{ t('insight.copilot.documentConversionRunning') }}
+          </p>
+          <p
+            v-if="countsLabel"
+            class="copilot-conversion__counts"
+          >
+            {{ countsLabel }}
+          </p>
 
-          <details v-if="attentionCount || showFormatHint" class="copilot-conversion__details">
+          <details
+            v-if="attentionCount || showFormatHint"
+            class="copilot-conversion__details"
+          >
             <summary>
-              <span class="copilot-conversion__summary-icon" :class="{ 'has-attention': attentionCount }">
-                <TriangleAlert v-if="attentionCount" :size="14" />
-                <Circle v-else :size="12" />
+              <span
+                class="copilot-conversion__summary-icon"
+                :class="{ 'has-attention': attentionCount }"
+              >
+                <TriangleAlert
+                  v-if="attentionCount"
+                  :size="14"
+                />
+                <Circle
+                  v-else
+                  :size="12"
+                />
               </span>
               <span>{{ attentionLabel }}</span>
-              <ChevronDown :size="15" class="copilot-conversion__chevron" />
+              <ChevronDown
+                :size="15"
+                class="copilot-conversion__chevron"
+              />
             </summary>
             <div class="copilot-conversion__details-body">
-              <ul v-if="problemItems.length" class="copilot-conversion__list">
-                <li v-for="(item, index) in problemItems" :key="`${item.name}-${index}`">
+              <ul
+                v-if="problemItems.length"
+                class="copilot-conversion__list"
+              >
+                <li
+                  v-for="(item, index) in problemItems"
+                  :key="`${item.name}-${index}`"
+                >
                   <strong>{{ item.name }}</strong>
                   <span>{{ item.reason_label }}</span>
                 </li>
               </ul>
-              <p v-if="allProblemItems.length > problemItems.length" class="copilot-conversion__more">
+              <p
+                v-if="allProblemItems.length > problemItems.length"
+                class="copilot-conversion__more"
+              >
                 {{ allProblemItems.length - problemItems.length }} more files are available in Chat Details.
               </p>
-              <ul v-if="conversionWarnings.length" class="copilot-conversion__list is-warnings">
-                <li v-for="(warning, index) in conversionWarnings" :key="`${warning.code}-${index}`">
+              <ul
+                v-if="conversionWarnings.length"
+                class="copilot-conversion__list is-warnings"
+              >
+                <li
+                  v-for="(warning, index) in conversionWarnings"
+                  :key="`${warning.code}-${index}`"
+                >
                   <span>{{ warning.label || warning.code }}</span>
                 </li>
               </ul>
-              <p v-if="showFormatHint" class="copilot-conversion__hint">{{ t('insight.copilot.documentFormatHint') }}</p>
+              <p
+                v-if="showFormatHint"
+                class="copilot-conversion__hint"
+              >
+                {{ t('insight.copilot.documentFormatHint') }}
+              </p>
             </div>
           </details>
         </section>

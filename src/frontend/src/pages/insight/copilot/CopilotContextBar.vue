@@ -102,16 +102,34 @@ function openBackupDetail() {
   <header class="copilot-context-bar">
     <div class="copilot-context-bar__top">
       <div class="copilot-context-bar__identity">
-        <MessageSquare :size="16" class="copilot-context-bar__icon" aria-hidden="true" />
-        <h1 :title="session.title">{{ session.title }}</h1>
-        <span class="copilot-context-bar__status" :class="statusClass"><i />{{ statusLabel }}</span>
+        <MessageSquare
+          :size="16"
+          class="copilot-context-bar__icon"
+          aria-hidden="true"
+        />
+        <h1 :title="session.title">
+          {{ session.title }}
+        </h1>
+        <span
+          class="copilot-context-bar__status"
+          :class="statusClass"
+        ><i />{{ statusLabel }}</span>
       </div>
     </div>
 
-    <div class="copilot-context-bar__summary" :title="`${originLabel} · ${sourceName} · ${firstPath} · ${processingLabel} · Created ${createdShort}`">
+    <div
+      class="copilot-context-bar__summary"
+      :title="`${originLabel} · ${sourceName} · ${firstPath} · ${processingLabel} · Created ${createdShort}`"
+    >
       <span class="copilot-context-bar__origin">{{ originLabel }}</span><em>·</em>
       <span class="copilot-context-bar__source">{{ sourceName }}</span><em>·</em>
-      <button type="button" class="copilot-context-bar__path" @click="detailsOpen = true">{{ firstPath }}<b v-if="additionalPathCount"> +{{ additionalPathCount }}</b></button><em>·</em>
+      <button
+        type="button"
+        class="copilot-context-bar__path"
+        @click="detailsOpen = true"
+      >
+        {{ firstPath }}<b v-if="additionalPathCount"> +{{ additionalPathCount }}</b>
+      </button><em>·</em>
       <span class="copilot-context-bar__gateway">{{ processingLabel }}</span><em>·</em>
       <span class="copilot-context-bar__created">Created {{ createdShort }}</span>
     </div>
@@ -121,53 +139,136 @@ function openBackupDetail() {
       role="status"
       aria-live="polite"
     >
-      <TriangleAlert :size="13" aria-hidden="true" />
+      <TriangleAlert
+        :size="13"
+        aria-hidden="true"
+      />
       <span>Visual understanding is unavailable. Images and scanned PDFs may not be searchable.</span>
     </div>
   </header>
 
-  <ElDialog v-model="detailsOpen" :title="t('insight.copilot.chatDetailsTitle')" width="560px" append-to-body>
+  <ElDialog
+    v-model="detailsOpen"
+    :title="t('insight.copilot.chatDetailsTitle')"
+    width="560px"
+    append-to-body
+  >
     <div class="copilot-details">
       <section>
         <h3>{{ t('insight.copilot.detailsDataSource') }}</h3>
         <dl><dt>{{ t('insight.copilot.dataOriginLabel') }}</dt><dd>{{ originLabel }}</dd></dl>
         <dl><dt>{{ t('insight.kb.fieldBackupSource') }}</dt><dd>{{ sourceName }}</dd></dl>
-        <dl><dt>{{ t('insight.kb.fieldSnapshot') }}</dt><dd :class="{ 'hfl-empty-mark': !session.snapshot_created_at }">{{ session.snapshot_created_at ? formatLocalDateTime(session.snapshot_created_at) : '—' }}</dd></dl>
-        <dl><dt>{{ t('insight.copilot.snapshotSizeLabel') }}</dt><dd :class="{ 'hfl-empty-mark': session.snapshot_size_bytes == null }">{{ session.snapshot_size_bytes != null ? formatBytes(session.snapshot_size_bytes) : '—' }}</dd></dl>
-        <div v-if="dataContext?.restore_path || dataContext?.backup_detail_path" class="copilot-details__actions">
-          <ElButton v-if="dataContext?.restore_path" size="small" @click="openRestore">{{ t('insight.copilot.openSnapshotRestore') }}</ElButton>
-          <ElButton v-if="dataContext?.backup_detail_path" size="small" @click="openBackupDetail">{{ t('insight.copilot.openBackupDetail') }}</ElButton>
+        <dl>
+          <dt>{{ t('insight.kb.fieldSnapshot') }}</dt><dd :class="{ 'hfl-empty-mark': !session.snapshot_created_at }">
+            {{ session.snapshot_created_at ? formatLocalDateTime(session.snapshot_created_at) : '—' }}
+          </dd>
+        </dl>
+        <dl>
+          <dt>{{ t('insight.copilot.snapshotSizeLabel') }}</dt><dd :class="{ 'hfl-empty-mark': session.snapshot_size_bytes == null }">
+            {{ session.snapshot_size_bytes != null ? formatBytes(session.snapshot_size_bytes) : '—' }}
+          </dd>
+        </dl>
+        <div
+          v-if="dataContext?.restore_path || dataContext?.backup_detail_path"
+          class="copilot-details__actions"
+        >
+          <ElButton
+            v-if="dataContext?.restore_path"
+            size="small"
+            @click="openRestore"
+          >
+            {{ t('insight.copilot.openSnapshotRestore') }}
+          </ElButton>
+          <ElButton
+            v-if="dataContext?.backup_detail_path"
+            size="small"
+            @click="openBackupDetail"
+          >
+            {{ t('insight.copilot.openBackupDetail') }}
+          </ElButton>
         </div>
       </section>
       <section>
         <h3>{{ t('insight.copilot.detailsFilesFolders') }}</h3>
-        <ol><li v-for="(scope, index) in scopes" :key="`${scope.backup_snapshot_directory_id}-${index}`">{{ scope.source_path }}</li></ol>
+        <ol>
+          <li
+            v-for="(scope, index) in scopes"
+            :key="`${scope.backup_snapshot_directory_id}-${index}`"
+          >
+            {{ scope.source_path }}
+          </li>
+        </ol>
       </section>
       <section>
         <h3>{{ t('insight.copilot.detailsProcessingLocation') }}</h3>
         <dl><dt>{{ t('insight.copilot.gatewayTypeLabel') }}</dt><dd>{{ compactGatewayType }}</dd></dl>
-        <dl><dt>{{ t('insight.copilot.gatewayNameLabel') }}</dt><dd :class="{ 'hfl-empty-mark': !session.gateway_name }">{{ session.gateway_name || '—' }}</dd></dl>
-        <p class="copilot-details__note">{{ t('insight.copilot.processingLocationNote') }}</p>
+        <dl>
+          <dt>{{ t('insight.copilot.gatewayNameLabel') }}</dt><dd :class="{ 'hfl-empty-mark': !session.gateway_name }">
+            {{ session.gateway_name || '—' }}
+          </dd>
+        </dl>
+        <p class="copilot-details__note">
+          {{ t('insight.copilot.processingLocationNote') }}
+        </p>
       </section>
       <section v-if="conversion">
         <h3>{{ t('insight.copilot.documentConversionTitle') }}</h3>
-        <dl v-if="conversionLabel"><dt>{{ t('insight.copilot.documentConversionSummary') }}</dt><dd>{{ conversionLabel }}</dd></dl>
-        <p v-if="conversion?.error" class="copilot-details__note">{{ conversion.error }}</p>
-        <ul v-if="problemItems.length" class="copilot-details__problems">
-          <li v-for="(item, index) in problemItems" :key="`${item.name}-${index}`">
+        <dl v-if="conversionLabel">
+          <dt>{{ t('insight.copilot.documentConversionSummary') }}</dt><dd>{{ conversionLabel }}</dd>
+        </dl>
+        <p
+          v-if="conversion?.error"
+          class="copilot-details__note"
+        >
+          {{ conversion.error }}
+        </p>
+        <ul
+          v-if="problemItems.length"
+          class="copilot-details__problems"
+        >
+          <li
+            v-for="(item, index) in problemItems"
+            :key="`${item.name}-${index}`"
+          >
             <strong>{{ item.name }}</strong>
             <span>{{ item.reason_label }}</span>
           </li>
         </ul>
-        <ul v-if="conversionWarnings.length" class="copilot-details__problems">
-          <li v-for="(warning, index) in conversionWarnings" :key="`${warning.code}-${index}`">
+        <ul
+          v-if="conversionWarnings.length"
+          class="copilot-details__problems"
+        >
+          <li
+            v-for="(warning, index) in conversionWarnings"
+            :key="`${warning.code}-${index}`"
+          >
             <span>{{ warning.label || warning.code }}</span>
           </li>
         </ul>
-        <p v-if="!problemItems.length && conversionOk" class="copilot-details__note">{{ t('insight.copilot.documentConversionOk') }}</p>
-        <p v-else-if="!problemItems.length && conversionEmpty" class="copilot-details__note">{{ t('insight.copilot.documentConversionEmpty') }}</p>
-        <p v-else-if="!problemItems.length && conversionRunning" class="copilot-details__note">{{ t('insight.copilot.documentConversionRunning') }}</p>
-        <p v-else-if="!problemItems.length && (conversionFailed || (conversionLabel && !conversionOk))" class="copilot-details__note">{{ t('insight.copilot.documentConversionPartial') }}</p>
+        <p
+          v-if="!problemItems.length && conversionOk"
+          class="copilot-details__note"
+        >
+          {{ t('insight.copilot.documentConversionOk') }}
+        </p>
+        <p
+          v-else-if="!problemItems.length && conversionEmpty"
+          class="copilot-details__note"
+        >
+          {{ t('insight.copilot.documentConversionEmpty') }}
+        </p>
+        <p
+          v-else-if="!problemItems.length && conversionRunning"
+          class="copilot-details__note"
+        >
+          {{ t('insight.copilot.documentConversionRunning') }}
+        </p>
+        <p
+          v-else-if="!problemItems.length && (conversionFailed || (conversionLabel && !conversionOk))"
+          class="copilot-details__note"
+        >
+          {{ t('insight.copilot.documentConversionPartial') }}
+        </p>
       </section>
     </div>
   </ElDialog>

@@ -590,15 +590,32 @@ watch(enableQuotaAlert, (enabled) => {
 </script>
 
 <template>
-  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen" :class="{ 'resource-add-fullscreen--embedded': embedded }">
+  <div
+    ref="pageRef"
+    class="fullscreen-form-fullscreen resource-add-fullscreen"
+    :class="{ 'resource-add-fullscreen--embedded': embedded }"
+  >
     <div class="fullscreen-form-page add-proxy-fs-page">
-      <header v-if="!embedded" class="fullscreen-form-header">
-        <button class="fullscreen-form-header__back" @click="handleBack">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+      <header
+        v-if="!embedded"
+        class="fullscreen-form-header"
+      >
+        <button
+          class="fullscreen-form-header__back"
+          @click="handleBack"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
-          <h1 class="fullscreen-form-header__title">{{ t('repositoriesPage.addProxyFsPage') }}</h1>
-          <p class="fullscreen-form-header__desc">{{ t('repositoriesPage.addProxyFsPageDesc') }}</p>
+          <h1 class="fullscreen-form-header__title">
+            {{ t('repositoriesPage.addProxyFsPage') }}
+          </h1>
+          <p class="fullscreen-form-header__desc">
+            {{ t('repositoriesPage.addProxyFsPageDesc') }}
+          </p>
         </div>
       </header>
 
@@ -614,21 +631,43 @@ watch(enableQuotaAlert, (enabled) => {
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('repositoriesPage.stepRepo') }}
               </h3>
-              <ElForm label-position="top" class="fullscreen-form-el-form add-proxy-fs-form">
-                <ElFormItem data-validation-field="repoName" :error="errors.repoName" :label="t('repositoriesPage.fieldRepoName')" required class="fullscreen-form-item--in-card">
-                  <ElInput v-model="repoName" :placeholder="t('repositoriesPage.phRepoName')" @input="clearFieldError('repoName')" />
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form add-proxy-fs-form"
+              >
+                <ElFormItem
+                  data-validation-field="repoName"
+                  :error="errors.repoName"
+                  :label="t('repositoriesPage.fieldRepoName')"
+                  required
+                  class="fullscreen-form-item--in-card"
+                >
+                  <ElInput
+                    v-model="repoName"
+                    :placeholder="t('repositoriesPage.phRepoName')"
+                    @input="clearFieldError('repoName')"
+                  />
                   <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">
                     {{ t('repositoriesPage.hintRepoNameAuto') }}
                   </div>
                 </ElFormItem>
 
-                <ElFormItem data-validation-field="proxyNode" :error="errors.proxyNode" required class="fullscreen-form-item--in-card add-proxy-fs-bind-form-item is-no-asterisk">
+                <ElFormItem
+                  data-validation-field="proxyNode"
+                  :error="errors.proxyNode"
+                  required
+                  class="fullscreen-form-item--in-card add-proxy-fs-bind-form-item is-no-asterisk"
+                >
                   <template #label>
                     <div class="add-proxy-fs-proxy-label">
                       <span class="add-proxy-fs-proxy-label__title">
                         {{ t('repositoriesPage.fieldProxyNode') }}<span class="add-proxy-fs-proxy-label__required">*</span>
                       </span>
-                      <ElButton type="primary" :icon="Plus" @click="openProxyDeploy">
+                      <ElButton
+                        type="primary"
+                        :icon="Plus"
+                        @click="openProxyDeploy"
+                      >
                         {{ t('addNasRepo.deployProxy') }}
                       </ElButton>
                     </div>
@@ -655,12 +694,21 @@ watch(enableQuotaAlert, (enabled) => {
                       :disabled="proxyNodesRefreshing"
                       @click="refreshProxyNodesManually"
                     >
-                      <RefreshCw :size="16" :class="{ 'is-spinning': proxyNodesRefreshing }" />
+                      <RefreshCw
+                        :size="16"
+                        :class="{ 'is-spinning': proxyNodesRefreshing }"
+                      />
                     </ElButton>
                   </div>
                 </ElFormItem>
 
-                <ElFormItem data-validation-field="proxyNodeDir" :error="errors.proxyNodeDir" :label="t('repositoriesPage.fieldProxyNodeBaseDir')" required class="fullscreen-form-item--in-card">
+                <ElFormItem
+                  data-validation-field="proxyNodeDir"
+                  :error="errors.proxyNodeDir"
+                  :label="t('repositoriesPage.fieldProxyNodeBaseDir')"
+                  required
+                  class="fullscreen-form-item--in-card"
+                >
                   <div class="dir-selector-container">
                     <div class="dir-selector-toggle">
                       <button
@@ -669,7 +717,10 @@ watch(enableQuotaAlert, (enabled) => {
                         type="button"
                         @click="useTreeSelect = true"
                       >
-                        <FolderTree :size="14" class="mr-1" />
+                        <FolderTree
+                          :size="14"
+                          class="mr-1"
+                        />
                         {{ t('repositoriesPage.dirSelectTree') }}
                       </button>
                       <button
@@ -678,18 +729,34 @@ watch(enableQuotaAlert, (enabled) => {
                         type="button"
                         @click="useTreeSelect = false"
                       >
-                        <HardDrive :size="14" class="mr-1" />
+                        <HardDrive
+                          :size="14"
+                          class="mr-1"
+                        />
                         {{ t('repositoriesPage.dirSelectInput') }}
                       </button>
                     </div>
 
-                    <div v-if="useTreeSelect" class="dir-tree-select hfl-dir-tree-shell">
-                      <div v-if="!proxyNodeId" class="dir-tree-select__empty hfl-dir-tree-empty">
+                    <div
+                      v-if="useTreeSelect"
+                      class="dir-tree-select hfl-dir-tree-shell"
+                    >
+                      <div
+                        v-if="!proxyNodeId"
+                        class="dir-tree-select__empty hfl-dir-tree-empty"
+                      >
                         {{ t('repositoriesPage.errProxyNode') }}
                       </div>
-                      <div v-else-if="treeError" class="dir-tree-select__empty hfl-dir-tree-empty">
+                      <div
+                        v-else-if="treeError"
+                        class="dir-tree-select__empty hfl-dir-tree-empty"
+                      >
                         <div>{{ treeError }}</div>
-                        <ElButton size="small" class="mt-2" @click="loadProxyRootDirectories()">
+                        <ElButton
+                          size="small"
+                          class="mt-2"
+                          @click="loadProxyRootDirectories()"
+                        >
                           {{ t('repositoriesPage.dirTreeRetry') }}
                         </ElButton>
                       </div>
@@ -708,8 +775,15 @@ watch(enableQuotaAlert, (enabled) => {
                               :size="14"
                               class="dir-tree-root-row__caret"
                             />
-                            <span v-else class="dir-tree-root-row__caret" aria-hidden="true" />
-                            <Folder :size="15" class="dir-tree-root-row__icon hfl-dir-tree-node__icon" />
+                            <span
+                              v-else
+                              class="dir-tree-root-row__caret"
+                              aria-hidden="true"
+                            />
+                            <Folder
+                              :size="15"
+                              class="dir-tree-root-row__icon hfl-dir-tree-node__icon"
+                            />
                             <span class="dir-tree-root-row__text hfl-dir-tree-node__text">
                               <span class="dir-tree-root-row__label hfl-dir-tree-node__label">/</span>
                               <span class="dir-tree-root-row__path hfl-dir-tree-node__path">/</span>
@@ -730,7 +804,10 @@ watch(enableQuotaAlert, (enabled) => {
                             />
                           </button>
                         </div>
-                        <div v-if="treeData.length === 0" class="dir-tree-empty-nested hfl-dir-tree-empty">
+                        <div
+                          v-if="treeData.length === 0"
+                          class="dir-tree-empty-nested hfl-dir-tree-empty"
+                        >
                           {{ t('repositoriesPage.dirTreeEmptyProxy') }}
                         </div>
                       </template>
@@ -759,12 +836,18 @@ watch(enableQuotaAlert, (enabled) => {
                       >
                         <template #default="{ data }">
                           <div class="tree-node-content hfl-dir-tree-node">
-                            <Folder :size="15" class="tree-node-content__icon hfl-dir-tree-node__icon" />
+                            <Folder
+                              :size="15"
+                              class="tree-node-content__icon hfl-dir-tree-node__icon"
+                            />
                             <div class="tree-node-content__text hfl-dir-tree-node__text">
                               <span class="tree-node-content__label hfl-dir-tree-node__label">{{ data.label }}</span>
                               <span class="tree-node-content__path hfl-dir-tree-node__path">{{ data.pathLabel }}</span>
                             </div>
-                            <span v-if="data.loadingChildren" class="tree-node-content__status">
+                            <span
+                              v-if="data.loadingChildren"
+                              class="tree-node-content__status"
+                            >
                               {{ t('common.loading') }}
                             </span>
                             <ElButton
@@ -791,7 +874,10 @@ watch(enableQuotaAlert, (enabled) => {
                               />
                             </button>
                           </div>
-                          <div v-if="data.loadError" class="tree-node-content__error">
+                          <div
+                            v-if="data.loadError"
+                            class="tree-node-content__error"
+                          >
                             {{ t('repositoriesPage.dirTreeNodeLoadFailed') }}
                           </div>
                         </template>
@@ -822,7 +908,10 @@ watch(enableQuotaAlert, (enabled) => {
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('repositoriesPage.fieldQuota') }}
               </h3>
-              <ElForm label-position="top" class="fullscreen-form-el-form add-proxy-fs-form">
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form add-proxy-fs-form"
+              >
                 <div class="fullscreen-form-grid">
                   <div class="fullscreen-form-field repository-quota-field">
                     <label class="fullscreen-form-field__label repository-quota-head">{{ t('repositoriesPage.fieldQuota') }}</label>
@@ -835,15 +924,24 @@ watch(enableQuotaAlert, (enabled) => {
                           :min="0"
                           controls-position="right"
                         />
-                        <div class="repository-quota-number__suffix">GB</div>
+                        <div class="repository-quota-number__suffix">
+                          GB
+                        </div>
                       </div>
                     </div>
-                    <p class="fullscreen-form-field__hint">{{ t('repositoriesPage.hintQuota') }}</p>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('repositoriesPage.hintQuota') }}
+                    </p>
                   </div>
 
-                  <div data-validation-field="quotaThreshold" class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring">
+                  <div
+                    data-validation-field="quotaThreshold"
+                    class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring"
+                  >
                     <div class="fullscreen-form-field__label repository-quota-head repository-quota-title-row">
-                      <ElCheckbox v-model="enableQuotaAlert">{{ t('repositoriesPage.fieldQuotaAlert') }}</ElCheckbox>
+                      <ElCheckbox v-model="enableQuotaAlert">
+                        {{ t('repositoriesPage.fieldQuotaAlert') }}
+                      </ElCheckbox>
                     </div>
                     <div class="repository-quota-control">
                       <div class="repository-quota-number repository-quota-input">
@@ -856,11 +954,20 @@ watch(enableQuotaAlert, (enabled) => {
                           controls-position="right"
                           @change="clearFieldError('quotaThreshold')"
                         />
-                        <div class="repository-quota-number__suffix">%</div>
+                        <div class="repository-quota-number__suffix">
+                          %
+                        </div>
                       </div>
                     </div>
-                      <p class="fullscreen-form-field__hint">{{ t('repositoriesPage.hintQuotaAlertThreshold') }}</p>
-                      <p v-if="errors.quotaThreshold" class="el-form-item__error">{{ errors.quotaThreshold }}</p>
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('repositoriesPage.hintQuotaAlertThreshold') }}
+                    </p>
+                    <p
+                      v-if="errors.quotaThreshold"
+                      class="el-form-item__error"
+                    >
+                      {{ errors.quotaThreshold }}
+                    </p>
                   </div>
                 </div>
               </ElForm>
@@ -872,51 +979,83 @@ watch(enableQuotaAlert, (enabled) => {
               <ElButton @click="handleBack">
                 {{ t('repositoriesPage.btnCancel') }}
               </ElButton>
-              <ElButton type="primary" :loading="busy" :disabled="busy" @click="onSubmit">
+              <ElButton
+                type="primary"
+                :loading="busy"
+                :disabled="busy"
+                @click="onSubmit"
+              >
                 {{ t('repositoriesPage.btnCreateRepo') }}
               </ElButton>
             </div>
           </div>
         </div>
 
-        <aside v-if="!embedded" class="fullscreen-form-sidebar add-form-preview-sidebar">
+        <aside
+          v-if="!embedded"
+          class="fullscreen-form-sidebar add-form-preview-sidebar"
+        >
           <div class="add-form-preview-card">
             <div class="add-form-preview-header">
               <div class="add-form-preview-header__glow" />
               <div class="add-form-preview-header__icon">
-                <HardDrive class="add-form-preview-header__icon-lucide" :size="28" />
+                <HardDrive
+                  class="add-form-preview-header__icon-lucide"
+                  :size="28"
+                />
               </div>
               <div class="add-form-preview-header__info">
-                <h4 class="add-form-preview-header__name">{{ repoName || t('addS3Repo.previewUnnamed') }}</h4>
-                <p class="add-form-preview-header__type">{{ t('repositoriesPage.kindProxyFs') }}</p>
+                <h4 class="add-form-preview-header__name">
+                  {{ repoName || t('addS3Repo.previewUnnamed') }}
+                </h4>
+                <p class="add-form-preview-header__type">
+                  {{ t('repositoriesPage.kindProxyFs') }}
+                </p>
               </div>
             </div>
 
             <div class="add-form-preview-body">
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('addS3Repo.previewBasicInfo') }}</h5>
+                <h5 class="add-form-preview-section__title">
+                  {{ t('addS3Repo.previewBasicInfo') }}
+                </h5>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldRepoName') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !repoName }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !repoName }"
+                  >
                     {{ repoName || '—' }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldProxyNode') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !selectedProxyNodeName }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !selectedProxyNodeName }"
+                  >
                     {{ selectedProxyNodeName || '—' }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldQuota') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--highlight': quota > 0 }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--highlight': quota > 0 }"
+                  >
                     {{ quota > 0 ? `${quota} GB` : t('addS3Repo.previewUnlimited') }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldQuotaAlert') }}</span>
-                  <span class="add-form-preview-row__value" :class="enableQuotaAlert ? 'add-form-preview-row__value--success' : 'add-form-preview-row__value--muted'">
-                    <span v-if="enableQuotaAlert" class="add-form-preview-row__dot add-form-preview-row__dot--green" />
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="enableQuotaAlert ? 'add-form-preview-row__value--success' : 'add-form-preview-row__value--muted'"
+                  >
+                    <span
+                      v-if="enableQuotaAlert"
+                      class="add-form-preview-row__dot add-form-preview-row__dot--green"
+                    />
                     <template v-if="enableQuotaAlert">
                       {{ t('repositoriesPage.enabled') }} ({{ quotaAlertThreshold }}%)
                     </template>
@@ -928,16 +1067,24 @@ watch(enableQuotaAlert, (enabled) => {
               </div>
 
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('addS3Repo.previewConnection') }}</h5>
+                <h5 class="add-form-preview-section__title">
+                  {{ t('addS3Repo.previewConnection') }}
+                </h5>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldProxyNodeBaseDir') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !proxyNodeDir }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !proxyNodeDir }"
+                  >
                     {{ proxyNodeDir || '—' }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldManagedRepoPath') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !managedRepositoryPathPreview }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !managedRepositoryPathPreview }"
+                  >
                     {{ managedRepositoryPathPreview || '—' }}
                   </span>
                 </div>

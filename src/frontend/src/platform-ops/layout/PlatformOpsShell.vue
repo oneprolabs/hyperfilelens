@@ -91,12 +91,15 @@ watch(
         :aria-expanded="mobileNavigationOpen"
         @click="mobileNavigationOpen = !mobileNavigationOpen"
       >
-        <Menu :size="21" aria-hidden="true" />
+        <Menu
+          :size="21"
+          aria-hidden="true"
+        />
       </button>
       <div class="platform-ops-header__brand">
         <AppLogoMark :size="18" />
         <span class="platform-ops-header__brand-name"><span>Hyper</span><strong>FileLens</strong></span>
-        <i aria-hidden="true"></i>
+        <i aria-hidden="true" />
         <span class="platform-ops-header__product">{{ t('platformOps.nav.title') }}</span>
       </div>
       <div class="platform-ops-header__actions">
@@ -107,7 +110,10 @@ watch(
           :disabled="!tenantUrl"
           @click="goTenantConsole"
         >
-          <ArrowLeft :size="16" aria-hidden="true" />
+          <ArrowLeft
+            :size="16"
+            aria-hidden="true"
+          />
           <span>{{ t('platformOps.nav.backToConsole') }}</span>
         </button>
         <NavUserMenu />
@@ -120,7 +126,10 @@ watch(
     />
     <main class="platform-ops-main">
       <RouterView v-slot="{ Component, route: viewRoute }">
-        <Suspense :key="platformOpsRouteViewKey(viewRoute)" timeout="0">
+        <Suspense
+          :key="platformOpsRouteViewKey(viewRoute)"
+          timeout="0"
+        >
           <component :is="Component" />
           <template #fallback>
             <div
@@ -143,30 +152,40 @@ watch(
                   aria-hidden="true"
                 >
                   <div class="platform-ops-route-skeleton__header">
-                    <span class="platform-ops-route-skeleton__title"></span>
+                    <span class="platform-ops-route-skeleton__title" />
                     <div class="platform-ops-route-skeleton__actions">
-                      <span></span>
-                      <span></span>
+                      <span />
+                      <span />
                     </div>
                   </div>
-                  <div v-if="routeSkeletonShowsCards" class="platform-ops-route-skeleton__cards">
-                    <span v-for="idx in 4" :key="`ops-card-${idx}`" class="platform-ops-route-skeleton__card">
-                      <i></i>
-                      <b></b>
-                      <em></em>
+                  <div
+                    v-if="routeSkeletonShowsCards"
+                    class="platform-ops-route-skeleton__cards"
+                  >
+                    <span
+                      v-for="idx in 4"
+                      :key="`ops-card-${idx}`"
+                      class="platform-ops-route-skeleton__card"
+                    >
+                      <i />
+                      <b />
+                      <em />
                     </span>
                   </div>
                   <div class="platform-ops-route-skeleton__panel">
                     <div class="platform-ops-route-skeleton__toolbar">
-                      <span></span>
-                      <i></i>
+                      <span />
+                      <i />
                     </div>
                     <div class="platform-ops-route-skeleton__rows">
-                      <span v-for="idx in 8" :key="`ops-row-${idx}`">
-                        <i></i>
-                        <i></i>
-                        <i></i>
-                        <i></i>
+                      <span
+                        v-for="idx in 8"
+                        :key="`ops-row-${idx}`"
+                      >
+                        <i />
+                        <i />
+                        <i />
+                        <i />
                       </span>
                     </div>
                   </div>

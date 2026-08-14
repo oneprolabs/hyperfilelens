@@ -314,20 +314,50 @@ onBeforeUnmount(() => {
 
 <template>
   <ModulePage :menus="insightMenus">
-    <div v-loading="loading && !usage" class="usage-page">
-      <section class="usage-period" aria-label="Usage period">
+    <div
+      v-loading="loading && !usage"
+      class="usage-page"
+    >
+      <section
+        class="usage-period"
+        aria-label="Usage period"
+      >
         <span class="usage-period__label">Date Range</span>
         <div class="usage-segments">
-          <button :class="{ active: periodPreset === 'today' }" type="button" @click="selectPreset('today')">Today</button>
-          <button :class="{ active: periodPreset === '7d' }" type="button" @click="selectPreset('7d')">Last 7 Days</button>
-          <button :class="{ active: periodPreset === '30d' }" type="button" @click="selectPreset('30d')">Last 30 Days</button>
-          <button :class="{ active: periodPreset === 'month' }" type="button" @click="selectPreset('month')">This Month</button>
+          <button
+            :class="{ active: periodPreset === 'today' }"
+            type="button"
+            @click="selectPreset('today')"
+          >
+            Today
+          </button>
+          <button
+            :class="{ active: periodPreset === '7d' }"
+            type="button"
+            @click="selectPreset('7d')"
+          >
+            Last 7 Days
+          </button>
+          <button
+            :class="{ active: periodPreset === '30d' }"
+            type="button"
+            @click="selectPreset('30d')"
+          >
+            Last 30 Days
+          </button>
+          <button
+            :class="{ active: periodPreset === 'month' }"
+            type="button"
+            @click="selectPreset('month')"
+          >
+            This Month
+          </button>
         </div>
         <div class="usage-period__tail">
           <ElDatePicker
+            :id="['usage-start-date', 'usage-end-date']"
             v-model="customRange"
             type="daterange"
-            :id="['usage-start-date', 'usage-end-date']"
             unlink-panels
             format="YYYY-MM-DD"
             value-format="YYYY-MM-DD"
@@ -339,9 +369,21 @@ onBeforeUnmount(() => {
             class="usage-date-picker"
             @change="applyCustomRange"
           />
-          <span v-if="usageFreshness" class="usage-freshness">{{ usageFreshness }}</span>
-          <button class="usage-icon-button" type="button" aria-label="Refresh usage" :disabled="loading" @click="loadUsage">
-            <RefreshCw :size="17" :class="{ 'is-spinning': loading }" />
+          <span
+            v-if="usageFreshness"
+            class="usage-freshness"
+          >{{ usageFreshness }}</span>
+          <button
+            class="usage-icon-button"
+            type="button"
+            aria-label="Refresh usage"
+            :disabled="loading"
+            @click="loadUsage"
+          >
+            <RefreshCw
+              :size="17"
+              :class="{ 'is-spinning': loading }"
+            />
           </button>
         </div>
       </section>
@@ -369,22 +411,53 @@ onBeforeUnmount(() => {
         <div class="usage-panel__head">
           <div><h2>Usage Trend</h2></div>
           <div class="usage-segments usage-segments--small">
-            <button :class="{ active: chartMetric === 'cost' }" type="button" @click="chartMetric = 'cost'">Cost</button>
-            <button :class="{ active: chartMetric === 'tokens' }" type="button" @click="chartMetric = 'tokens'">Tokens</button>
+            <button
+              :class="{ active: chartMetric === 'cost' }"
+              type="button"
+              @click="chartMetric = 'cost'"
+            >
+              Cost
+            </button>
+            <button
+              :class="{ active: chartMetric === 'tokens' }"
+              type="button"
+              @click="chartMetric = 'tokens'"
+            >
+              Tokens
+            </button>
           </div>
         </div>
-        <VChart v-if="usage?.trend.length" class="usage-chart" :option="chartOption" autoresize />
-        <div v-else class="usage-chart-empty"><ChartNoAxesCombined :size="25" /><span>No Usage for This Period</span></div>
+        <VChart
+          v-if="usage?.trend.length"
+          class="usage-chart"
+          :option="chartOption"
+          autoresize
+        />
+        <div
+          v-else
+          class="usage-chart-empty"
+        >
+          <ChartNoAxesCombined :size="25" /><span>No Usage for This Period</span>
+        </div>
       </section>
 
       <div class="usage-breakdown-grid">
         <section class="usage-panel">
-          <div class="usage-panel__head"><div><h2>Token Usage</h2></div></div>
+          <div class="usage-panel__head">
+            <div><h2>Token Usage</h2></div>
+          </div>
           <div class="token-breakdown">
-            <div v-for="row in tokenBreakdown" :key="row.label" class="token-breakdown__row" :class="{ 'is-detail': row.percent == null }">
+            <div
+              v-for="row in tokenBreakdown"
+              :key="row.label"
+              class="token-breakdown__row"
+              :class="{ 'is-detail': row.percent == null }"
+            >
               <div><span>{{ row.label }}</span><strong>{{ formatCompact(row.value) }}</strong></div>
               <template v-if="row.percent != null">
-                <div class="token-breakdown__track"><i :style="{ width: `${row.percent}%`, background: row.color }" /></div>
+                <div class="token-breakdown__track">
+                  <i :style="{ width: `${row.percent}%`, background: row.color }" />
+                </div>
                 <small>{{ row.percent.toFixed(1) }}%</small>
               </template>
             </div>
@@ -392,13 +465,18 @@ onBeforeUnmount(() => {
         </section>
 
         <section class="usage-panel">
-          <div class="usage-panel__head"><div><h2>Usage by Backup Source</h2></div></div>
+          <div class="usage-panel__head">
+            <div><h2>Usage by Backup Source</h2></div>
+          </div>
           <ElTable
             :data="usage?.by_backup_source || []"
             class="hfl-list-table usage-source-table"
             @row-click="filterByBackupSource"
           >
-            <ElTableColumn label="Backup Source" min-width="240">
+            <ElTableColumn
+              label="Backup Source"
+              min-width="240"
+            >
               <template #default="{ row }">
                 <div class="source-usage-list__identity">
                   <span class="source-usage-list__icon"><DatabaseBackup :size="16" /></span>
@@ -406,17 +484,41 @@ onBeforeUnmount(() => {
                 </div>
               </template>
             </ElTableColumn>
-            <ElTableColumn label="Questions" width="110" align="right">
-              <template #default="{ row }">{{ formatNumber(row.q_and_a_requests) }}</template>
+            <ElTableColumn
+              label="Questions"
+              width="110"
+              align="right"
+            >
+              <template #default="{ row }">
+                {{ formatNumber(row.q_and_a_requests) }}
+              </template>
             </ElTableColumn>
-            <ElTableColumn label="AI Calls" width="110" align="right">
-              <template #default="{ row }">{{ formatNumber(row.model_calls) }}</template>
+            <ElTableColumn
+              label="AI Calls"
+              width="110"
+              align="right"
+            >
+              <template #default="{ row }">
+                {{ formatNumber(row.model_calls) }}
+              </template>
             </ElTableColumn>
-            <ElTableColumn label="Total Tokens" width="120" align="right">
-              <template #default="{ row }">{{ formatCompact(row.total_tokens) }}</template>
+            <ElTableColumn
+              label="Total Tokens"
+              width="120"
+              align="right"
+            >
+              <template #default="{ row }">
+                {{ formatCompact(row.total_tokens) }}
+              </template>
             </ElTableColumn>
-            <ElTableColumn label="Cost" width="130" align="right">
-              <template #default="{ row }"><strong>{{ formatCost(row.estimated_cost) }}</strong></template>
+            <ElTableColumn
+              label="Cost"
+              width="130"
+              align="right"
+            >
+              <template #default="{ row }">
+                <strong>{{ formatCost(row.estimated_cost) }}</strong>
+              </template>
             </ElTableColumn>
             <template #empty>
               <ElEmpty description="No Backup Source Usage for This Period" />
@@ -443,13 +545,37 @@ onBeforeUnmount(() => {
                 placeholder="Search Chats or Questions..."
               >
             </div>
-            <ElSelect v-model="backupSourceFilter" clearable placeholder="All Backup Sources" class="usage-filter-select">
-              <ElOption v-for="name in usage?.backup_sources || []" :key="name" :label="name" :value="name" />
+            <ElSelect
+              v-model="backupSourceFilter"
+              clearable
+              placeholder="All Backup Sources"
+              class="usage-filter-select"
+            >
+              <ElOption
+                v-for="name in usage?.backup_sources || []"
+                :key="name"
+                :label="name"
+                :value="name"
+              />
             </ElSelect>
-            <ElSelect v-model="statusFilter" clearable placeholder="All Statuses" class="usage-filter-select usage-filter-select--status">
-              <ElOption label="Completed" value="done" />
-              <ElOption label="Failed" value="failed" />
-              <ElOption label="Cancelled" value="cancelled" />
+            <ElSelect
+              v-model="statusFilter"
+              clearable
+              placeholder="All Statuses"
+              class="usage-filter-select usage-filter-select--status"
+            >
+              <ElOption
+                label="Completed"
+                value="done"
+              />
+              <ElOption
+                label="Failed"
+                value="failed"
+              />
+              <ElOption
+                label="Cancelled"
+                value="cancelled"
+              />
             </ElSelect>
           </div>
         </div>
@@ -462,16 +588,35 @@ onBeforeUnmount(() => {
           class="hfl-list-table usage-history-table"
           row-key="run_uuid"
         >
-          <ElTableColumn label="Question" min-width="280" fixed="left">
+          <ElTableColumn
+            label="Question"
+            min-width="280"
+            fixed="left"
+          >
             <template #default="{ row }">
               <span class="usage-history-question">{{ row.question || 'Question Unavailable' }}</span>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="Time" width="150">
-            <template #default="{ row }"><span class="usage-table__time" :class="{ 'hfl-empty-mark': !row.time }">{{ formatShortDateTime(row.time) }}</span></template>
+          <ElTableColumn
+            label="Time"
+            width="150"
+          >
+            <template #default="{ row }">
+              <span
+                class="usage-table__time"
+                :class="{ 'hfl-empty-mark': !row.time }"
+              >{{ formatShortDateTime(row.time) }}</span>
+            </template>
           </ElTableColumn>
-          <ElTableColumn label="Chat" min-width="180" prop="chat_title" />
-          <ElTableColumn label="Backup Source" min-width="220">
+          <ElTableColumn
+            label="Chat"
+            min-width="180"
+            prop="chat_title"
+          />
+          <ElTableColumn
+            label="Backup Source"
+            min-width="220"
+          >
             <template #default="{ row }">
               <div class="usage-history-source">
                 <strong>{{ row.backup_source_name }}</strong>
@@ -479,24 +624,53 @@ onBeforeUnmount(() => {
               </div>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="AI Calls" width="100" align="right">
-            <template #default="{ row }">{{ formatNumber(row.model_calls) }}</template>
+          <ElTableColumn
+            label="AI Calls"
+            width="100"
+            align="right"
+          >
+            <template #default="{ row }">
+              {{ formatNumber(row.model_calls) }}
+            </template>
           </ElTableColumn>
-          <ElTableColumn label="Total Tokens" width="120" align="right">
-            <template #default="{ row }">{{ formatCompact(row.total_tokens) }}</template>
+          <ElTableColumn
+            label="Total Tokens"
+            width="120"
+            align="right"
+          >
+            <template #default="{ row }">
+              {{ formatCompact(row.total_tokens) }}
+            </template>
           </ElTableColumn>
-          <ElTableColumn label="Cost" width="120" align="right">
-            <template #default="{ row }">{{ formatCost(row.estimated_cost, row.cost_currency) }}</template>
+          <ElTableColumn
+            label="Cost"
+            width="120"
+            align="right"
+          >
+            <template #default="{ row }">
+              {{ formatCost(row.estimated_cost, row.cost_currency) }}
+            </template>
           </ElTableColumn>
-          <ElTableColumn label="Status" width="110">
-            <template #default="{ row }"><span class="usage-status" :class="`is-${row.status}`"><i />{{ statusLabel(row.status) }}</span></template>
+          <ElTableColumn
+            label="Status"
+            width="110"
+          >
+            <template #default="{ row }">
+              <span
+                class="usage-status"
+                :class="`is-${row.status}`"
+              ><i />{{ statusLabel(row.status) }}</span>
+            </template>
           </ElTableColumn>
           <template #empty>
             <ElEmpty :description="questionHistoryEmptyDescription" />
           </template>
         </ElTable>
 
-        <div v-if="usage && usage.total > 0" class="hfl-list-footer usage-history-footer">
+        <div
+          v-if="usage && usage.total > 0"
+          class="hfl-list-footer usage-history-footer"
+        >
           <HflPagination
             v-model:current-page="page"
             v-model:page-size="pageSize"

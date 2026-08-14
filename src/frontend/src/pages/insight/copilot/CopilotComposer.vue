@@ -42,7 +42,10 @@ watch(
 
 <template>
   <footer class="copilot-composer">
-    <div class="copilot-input-shell" :class="{ 'is-disabled': disabled }">
+    <div
+      class="copilot-input-shell"
+      :class="{ 'is-disabled': disabled }"
+    >
       <textarea
         ref="fieldRef"
         :value="modelValue"
@@ -71,11 +74,16 @@ watch(
         :title="t('insight.copilot.send')"
         @click="emit('send')"
       >
-        <ArrowUp :size="18" :stroke-width="2.25" />
+        <ArrowUp
+          :size="18"
+          :stroke-width="2.25"
+        />
       </button>
     </div>
 
-    <p class="copilot-disclaimer">{{ t('insight.copilot.disclaimer') }}</p>
+    <p class="copilot-disclaimer">
+      {{ t('insight.copilot.disclaimer') }}
+    </p>
   </footer>
 </template>
 

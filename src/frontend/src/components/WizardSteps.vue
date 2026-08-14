@@ -87,8 +87,8 @@ function onStepClick(item: WizardStepItem, index: number) {
         <span class="wizard-steps__num">
           <template v-if="isStepDone(item, index)">✓</template>
           <component
-            v-else-if="item.icon"
             :is="item.icon"
+            v-else-if="item.icon"
             class="wizard-steps__icon"
             :size="14"
             stroke-width="2"
@@ -111,8 +111,8 @@ function onStepClick(item: WizardStepItem, index: number) {
         <span class="wizard-steps__num">
           <template v-if="isStepDone(item, index)">✓</template>
           <component
-            v-else-if="item.icon"
             :is="item.icon"
+            v-else-if="item.icon"
             class="wizard-steps__icon"
             :size="14"
             stroke-width="2"

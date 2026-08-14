@@ -25,7 +25,10 @@ const label = computed(() => {
 </script>
 
 <template>
-  <ElTag v-bind="lifecycleStatusTagAttrs(status)" size="small">
+  <ElTag
+    v-bind="lifecycleStatusTagAttrs(status)"
+    size="small"
+  >
     {{ label }}
   </ElTag>
 </template>

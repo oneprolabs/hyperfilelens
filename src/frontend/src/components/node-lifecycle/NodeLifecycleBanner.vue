@@ -62,8 +62,14 @@ const summary = computed(() => {
 </script>
 
 <template>
-  <div v-if="visible" class="node-lifecycle-banner">
-    <LoaderCircle :size="16" class="node-lifecycle-banner__icon is-spinning" />
+  <div
+    v-if="visible"
+    class="node-lifecycle-banner"
+  >
+    <LoaderCircle
+      :size="16"
+      class="node-lifecycle-banner__icon is-spinning"
+    />
     <span class="node-lifecycle-banner__text">{{ summary }}</span>
     <button
       v-if="queuedCount > 0"

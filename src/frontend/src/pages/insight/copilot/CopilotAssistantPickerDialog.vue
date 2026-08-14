@@ -114,7 +114,9 @@ function confirm() {
     destroy-on-close
     @update:model-value="openChanged"
   >
-    <p class="source-action-dialog__hint">{{ t('insight.copilot.pickAssistantHint') }}</p>
+    <p class="source-action-dialog__hint">
+      {{ t('insight.copilot.pickAssistantHint') }}
+    </p>
 
     <div class="copilot-assistant-picker-dialog__toolbar">
       <ElInput
@@ -124,12 +126,19 @@ function confirm() {
         :placeholder="t('insight.copilot.assistantSearchPlaceholder')"
       >
         <template #prefix>
-          <Search :size="16" class="hfl-list-search__icon" />
+          <Search
+            :size="16"
+            class="hfl-list-search__icon"
+          />
         </template>
       </ElInput>
     </div>
 
-    <div class="copilot-assistant-picker-dialog__list" role="listbox" :aria-label="t('insight.copilot.pickAssistant')">
+    <div
+      class="copilot-assistant-picker-dialog__list"
+      role="listbox"
+      :aria-label="t('insight.copilot.pickAssistant')"
+    >
       <button
         v-for="row in filtered"
         :key="row.uuid"
@@ -140,18 +149,30 @@ function confirm() {
         :aria-selected="draftUuid === row.uuid"
         @click="draftUuid = row.uuid"
       >
-        <span class="copilot-assistant-picker-card__indicator" aria-hidden="true" />
+        <span
+          class="copilot-assistant-picker-card__indicator"
+          aria-hidden="true"
+        />
         <span class="copilot-assistant-picker-card__body">
           <span class="copilot-assistant-picker-card__head">
             <span class="copilot-assistant-picker-card__identity">
-              <span class="copilot-assistant-picker-card__type" aria-hidden="true">
+              <span
+                class="copilot-assistant-picker-card__type"
+                aria-hidden="true"
+              >
                 <Bot :size="15" />
               </span>
-              <span class="copilot-assistant-picker-card__title" :title="displayName(row)">
+              <span
+                class="copilot-assistant-picker-card__title"
+                :title="displayName(row)"
+              >
                 {{ displayName(row) }}
               </span>
             </span>
-            <span v-if="row.knowledge_source_status" class="copilot-assistant-picker-card__badges">
+            <span
+              v-if="row.knowledge_source_status"
+              class="copilot-assistant-picker-card__badges"
+            >
               <span :class="ksStatusPillClass(row.knowledge_source_status)">
                 {{ ksStatusLabel(row.knowledge_source_status) }}
               </span>
@@ -203,17 +224,29 @@ function confirm() {
         </span>
       </button>
 
-      <div v-if="!availableAssistants.length" class="copilot-assistant-picker-dialog__empty">
+      <div
+        v-if="!availableAssistants.length"
+        class="copilot-assistant-picker-dialog__empty"
+      >
         {{ t('insight.copilot.assistantPickerAvailableEmpty') }}
       </div>
-      <div v-else-if="!filtered.length" class="copilot-assistant-picker-dialog__empty">
+      <div
+        v-else-if="!filtered.length"
+        class="copilot-assistant-picker-dialog__empty"
+      >
         {{ t('insight.copilot.assistantSearchEmpty') }}
       </div>
     </div>
 
     <template #footer>
-      <ElButton @click="emit('update:open', false)">{{ t('common.cancel') }}</ElButton>
-      <ElButton type="primary" :disabled="!draftUuid" @click="confirm">
+      <ElButton @click="emit('update:open', false)">
+        {{ t('common.cancel') }}
+      </ElButton>
+      <ElButton
+        type="primary"
+        :disabled="!draftUuid"
+        @click="confirm"
+      >
         {{ t('insight.copilot.btnStartChat') }}
       </ElButton>
     </template>

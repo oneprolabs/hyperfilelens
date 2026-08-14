@@ -28,15 +28,35 @@ withDefaults(
     ]"
   >
     <div class="hfl-ops-stat-card__head">
-      <div class="hfl-ops-stat-card__label">{{ label }}</div>
-      <div v-if="$slots.icon" class="hfl-ops-stat-card__icon" aria-hidden="true">
+      <div class="hfl-ops-stat-card__label">
+        {{ label }}
+      </div>
+      <div
+        v-if="$slots.icon"
+        class="hfl-ops-stat-card__icon"
+        aria-hidden="true"
+      >
         <slot name="icon" />
       </div>
     </div>
     <div class="hfl-ops-stat-card__value-row">
-      <div class="hfl-ops-stat-card__value" :class="valueClass">{{ value }}</div>
-      <span v-if="pulse" class="hfl-ops-stat-card__pulse" aria-hidden="true" />
+      <div
+        class="hfl-ops-stat-card__value"
+        :class="valueClass"
+      >
+        {{ value }}
+      </div>
+      <span
+        v-if="pulse"
+        class="hfl-ops-stat-card__pulse"
+        aria-hidden="true"
+      />
     </div>
-    <div v-if="sub" class="hfl-ops-stat-card__sub">{{ sub }}</div>
+    <div
+      v-if="sub"
+      class="hfl-ops-stat-card__sub"
+    >
+      {{ sub }}
+    </div>
   </div>
 </template>

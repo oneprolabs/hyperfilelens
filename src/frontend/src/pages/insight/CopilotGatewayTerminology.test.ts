@@ -3,8 +3,9 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { en } from '../../locales/en'
 import { copilotGatewayKind } from '../../lib/copilotGatewayTerminology'
+import { compactSourceText } from '../../test/sourceText'
 
-const source = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8')
+const source = (path: string) => compactSourceText(readFileSync(resolve(process.cwd(), path), 'utf8'))
 
 const newChat = source('src/pages/insight/NewCopilotChat.vue')
 const contextBar = source('src/pages/insight/copilot/CopilotContextBar.vue')

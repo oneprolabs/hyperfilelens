@@ -94,7 +94,10 @@ onMounted(() => {
 
     <!-- Document Content -->
     <template v-if="showDocumentBlock">
-      <h4 v-if="showGroupTitles" class="fullscreen-form-section__subtitle ks-retrieval-group-head">
+      <h4
+        v-if="showGroupTitles"
+        class="fullscreen-form-section__subtitle ks-retrieval-group-head"
+      >
         {{ t('insight.kb.retrieval.documentContentTitle') }}
       </h4>
       <p class="fullscreen-form-field__hint ks-retrieval-section-intro">
@@ -109,10 +112,15 @@ onMounted(() => {
           />
           <span class="ks-retrieval-checkline__text">{{ t('insight.kb.retrieval.convertDocuments') }}</span>
         </div>
-        <p class="fullscreen-form-field__hint">{{ t('insight.kb.retrieval.convertDocumentsHint') }}</p>
+        <p class="fullscreen-form-field__hint">
+          {{ t('insight.kb.retrieval.convertDocumentsHint') }}
+        </p>
       </div>
 
-      <div v-if="policy.document" class="ks-retrieval-nest">
+      <div
+        v-if="policy.document"
+        class="ks-retrieval-nest"
+      >
         <div class="fullscreen-form-field">
           <div
             class="fullscreen-form-checkline"
@@ -125,10 +133,15 @@ onMounted(() => {
             />
             <span class="ks-retrieval-checkline__text">{{ t('insight.kb.retrieval.convertEmbeddedImages') }}</span>
           </div>
-          <p class="fullscreen-form-field__hint">{{ t('insight.kb.retrieval.convertEmbeddedImagesHint') }}</p>
+          <p class="fullscreen-form-field__hint">
+            {{ t('insight.kb.retrieval.convertEmbeddedImagesHint') }}
+          </p>
         </div>
 
-        <div v-if="policy.embedded_image" class="ks-retrieval-nest ks-retrieval-nest--inner">
+        <div
+          v-if="policy.embedded_image"
+          class="ks-retrieval-nest ks-retrieval-nest--inner"
+        >
           <div class="fullscreen-form-field">
             <div class="fullscreen-form-checkline">
               <ElCheckbox
@@ -137,10 +150,15 @@ onMounted(() => {
               />
               <span class="ks-retrieval-checkline__text">{{ t('insight.kb.retrieval.pdfAdvancedTitle') }}</span>
             </div>
-            <p class="fullscreen-form-field__hint">{{ t('insight.kb.retrieval.pdfAdvancedHint') }}</p>
+            <p class="fullscreen-form-field__hint">
+              {{ t('insight.kb.retrieval.pdfAdvancedHint') }}
+            </p>
           </div>
 
-          <div v-if="pdfAdvancedOpen" class="ks-retrieval-nest ks-retrieval-nest--inner">
+          <div
+            v-if="pdfAdvancedOpen"
+            class="ks-retrieval-nest ks-retrieval-nest--inner"
+          >
             <div class="fullscreen-form-field">
               <div class="fullscreen-form-checkline">
                 <ElCheckbox
@@ -149,7 +167,9 @@ onMounted(() => {
                 />
                 <span class="ks-retrieval-checkline__text">{{ t('insight.kb.retrieval.pdfExtractImages') }}</span>
               </div>
-              <p class="fullscreen-form-field__hint">{{ t('insight.kb.retrieval.pdfExtractImagesHint') }}</p>
+              <p class="fullscreen-form-field__hint">
+                {{ t('insight.kb.retrieval.pdfExtractImagesHint') }}
+              </p>
             </div>
 
             <div class="fullscreen-form-field">
@@ -258,7 +278,10 @@ onMounted(() => {
 
     <!-- Standalone Images -->
     <template v-if="showImagesBlock">
-      <h4 v-if="showGroupTitles" class="fullscreen-form-section__subtitle ks-retrieval-group-head">
+      <h4
+        v-if="showGroupTitles"
+        class="fullscreen-form-section__subtitle ks-retrieval-group-head"
+      >
         {{ t('insight.kb.retrieval.standaloneImagesTitle') }}
       </h4>
       <p class="fullscreen-form-field__hint ks-retrieval-section-intro">
@@ -273,17 +296,25 @@ onMounted(() => {
           />
           <span class="ks-retrieval-checkline__text">{{ t('insight.kb.retrieval.convertImages') }}</span>
         </div>
-        <p class="fullscreen-form-field__hint">{{ t('insight.kb.retrieval.convertImagesHint') }}</p>
+        <p class="fullscreen-form-field__hint">
+          {{ t('insight.kb.retrieval.convertImagesHint') }}
+        </p>
       </div>
 
-      <p v-if="policy.image" class="fullscreen-form-field__hint">
+      <p
+        v-if="policy.image"
+        class="fullscreen-form-field__hint"
+      >
         {{ t('insight.kb.retrieval.adminMultimodalModelHint') }}
       </p>
     </template>
 
     <!-- Global Conversion Limits -->
     <template v-if="showLimitsBlock">
-      <h4 v-if="showGroupTitles" class="fullscreen-form-section__subtitle ks-retrieval-group-head">
+      <h4
+        v-if="showGroupTitles"
+        class="fullscreen-form-section__subtitle ks-retrieval-group-head"
+      >
         {{ t('insight.kb.retrieval.globalConversionLimitsTitle') }}
       </h4>
       <p class="fullscreen-form-field__hint ks-retrieval-section-intro">

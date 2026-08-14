@@ -18,7 +18,10 @@ const { t } = useI18n()
 
 <template>
   <div class="el-drawer__footer-actions">
-    <ElButton :disabled="cancelDisabled || saving" @click="$emit('cancel')">
+    <ElButton
+      :disabled="cancelDisabled || saving"
+      @click="$emit('cancel')"
+    >
       {{ t('repositoriesPage.btnCancel') }}
     </ElButton>
     <ElButton

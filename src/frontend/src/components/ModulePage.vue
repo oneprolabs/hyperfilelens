@@ -130,10 +130,21 @@ watch(
 </script>
 
 <template>
-  <div class="module-page" :class="{ 'module-page--admin': isAdminSettingsShell }">
+  <div
+    class="module-page"
+    :class="{ 'module-page--admin': isAdminSettingsShell }"
+  >
     <div class="sidebar-wrapper">
-      <Sidebar v-if="menuItems.length > 0" :collapsed="effectiveCollapsed" :menus="menuItems" @toggle="toggleSidebar">
-        <template v-if="slots.sidebarPrepend" #prepend>
+      <Sidebar
+        v-if="menuItems.length > 0"
+        :collapsed="effectiveCollapsed"
+        :menus="menuItems"
+        @toggle="toggleSidebar"
+      >
+        <template
+          v-if="slots.sidebarPrepend"
+          #prepend
+        >
           <slot name="sidebar-prepend" />
         </template>
       </Sidebar>
@@ -144,9 +155,14 @@ watch(
       class="main-content"
     >
       <div class="main-content-route-surface">
-        <div v-if="!hidePageTitle" class="page-header">
+        <div
+          v-if="!hidePageTitle"
+          class="page-header"
+        >
           <div class="page-title-row">
-            <h1 class="page-title">{{ displayTitle }}</h1>
+            <h1 class="page-title">
+              {{ displayTitle }}
+            </h1>
           </div>
         </div>
         <div
@@ -154,7 +170,10 @@ watch(
           class="page-body"
           :class="{ 'page-body--fill': bodyFill }"
         >
-          <div v-if="slots.actions" class="page-actions">
+          <div
+            v-if="slots.actions"
+            class="page-actions"
+          >
             <slot name="actions" />
           </div>
           <slot />

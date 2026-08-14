@@ -245,15 +245,32 @@ watch(enableQuotaAlert, (enabled) => {
 </script>
 
 <template>
-  <div ref="pageRef" class="fullscreen-form-fullscreen resource-add-fullscreen" :class="{ 'resource-add-fullscreen--embedded': embedded }">
+  <div
+    ref="pageRef"
+    class="fullscreen-form-fullscreen resource-add-fullscreen"
+    :class="{ 'resource-add-fullscreen--embedded': embedded }"
+  >
     <div class="fullscreen-form-page add-nas-page">
-      <header v-if="!embedded" class="fullscreen-form-header">
-        <button class="fullscreen-form-header__back" @click="handleBack">
-          <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+      <header
+        v-if="!embedded"
+        class="fullscreen-form-header"
+      >
+        <button
+          class="fullscreen-form-header__back"
+          @click="handleBack"
+        >
+          <ArrowLeft
+            class="fullscreen-form-header__back-icon"
+            :size="18"
+          />
         </button>
         <div class="fullscreen-form-header__content">
-          <h1 class="fullscreen-form-header__title">{{ t('repositoriesPage.addNasPage') }}</h1>
-          <p class="fullscreen-form-header__desc">{{ t('repositoriesPage.addNasPageDesc') }}</p>
+          <h1 class="fullscreen-form-header__title">
+            {{ t('repositoriesPage.addNasPage') }}
+          </h1>
+          <p class="fullscreen-form-header__desc">
+            {{ t('repositoriesPage.addNasPageDesc') }}
+          </p>
         </div>
       </header>
 
@@ -269,24 +286,47 @@ watch(enableQuotaAlert, (enabled) => {
                   {{ t('repositoriesPage.fieldProtocol') }}
                 </h3>
 
-                <ElRadioGroup v-model="protocol" class="add-nas-protocol-grid">
-                  <ElRadio value="smb" border class="add-nas-protocol-card !mr-0">
+                <ElRadioGroup
+                  v-model="protocol"
+                  class="add-nas-protocol-grid"
+                >
+                  <ElRadio
+                    value="smb"
+                    border
+                    class="add-nas-protocol-card !mr-0"
+                  >
                     <div class="add-nas-protocol-card__inner">
                       <span class="add-nas-protocol-card__icon">
-                        <component :is="nasMountProtocolIcon('smb')" :size="20" stroke-width="2" />
+                        <component
+                          :is="nasMountProtocolIcon('smb')"
+                          :size="20"
+                          stroke-width="2"
+                        />
                       </span>
                       <div class="add-nas-protocol-card__text">
-                        <div class="font-semibold">{{ t('repositoriesPage.protocolSmb') }}</div>
+                        <div class="font-semibold">
+                          {{ t('repositoriesPage.protocolSmb') }}
+                        </div>
                       </div>
                     </div>
                   </ElRadio>
-                  <ElRadio value="nfs" border class="add-nas-protocol-card !mr-0">
+                  <ElRadio
+                    value="nfs"
+                    border
+                    class="add-nas-protocol-card !mr-0"
+                  >
                     <div class="add-nas-protocol-card__inner">
                       <span class="add-nas-protocol-card__icon">
-                        <component :is="nasMountProtocolIcon('nfs')" :size="20" stroke-width="2" />
+                        <component
+                          :is="nasMountProtocolIcon('nfs')"
+                          :size="20"
+                          stroke-width="2"
+                        />
                       </span>
                       <div class="add-nas-protocol-card__text">
-                        <div class="font-semibold">{{ t('repositoriesPage.protocolNfs') }}</div>
+                        <div class="font-semibold">
+                          {{ t('repositoriesPage.protocolNfs') }}
+                        </div>
                       </div>
                     </div>
                   </ElRadio>
@@ -305,26 +345,83 @@ watch(enableQuotaAlert, (enabled) => {
                   {{ t('addNasRepo.titleNasInfo') }}
                 </h3>
 
-                <ElForm label-position="top" class="fullscreen-form-el-form add-nas-form">
-                  <div v-if="protocol === 'smb'" class="fullscreen-form-grid">
-                    <ElFormItem data-validation-field="smbHost" :error="errors.smbHost" :label="t('addNasRepo.fieldSmbHost')" required class="flex-1">
-                      <ElInput v-model="smbHost" :placeholder="t('addNasRepo.phSmbHost')" @input="clearFieldError('smbHost')" />
-                      <div class="mt-1 text-xs text-[rgb(100_116_139)]">{{ t('addNasRepo.hintSmbHost') }}</div>
+                <ElForm
+                  label-position="top"
+                  class="fullscreen-form-el-form add-nas-form"
+                >
+                  <div
+                    v-if="protocol === 'smb'"
+                    class="fullscreen-form-grid"
+                  >
+                    <ElFormItem
+                      data-validation-field="smbHost"
+                      :error="errors.smbHost"
+                      :label="t('addNasRepo.fieldSmbHost')"
+                      required
+                      class="flex-1"
+                    >
+                      <ElInput
+                        v-model="smbHost"
+                        :placeholder="t('addNasRepo.phSmbHost')"
+                        @input="clearFieldError('smbHost')"
+                      />
+                      <div class="mt-1 text-xs text-[rgb(100_116_139)]">
+                        {{ t('addNasRepo.hintSmbHost') }}
+                      </div>
                     </ElFormItem>
-                    <ElFormItem data-validation-field="smbShare" :error="errors.smbShare" :label="t('addNasRepo.fieldSmbShare')" required class="flex-1">
-                      <ElInput v-model="smbShare" :placeholder="t('addNasRepo.phSmbShare')" @input="clearFieldError('smbShare')" />
-                      <div class="mt-1 text-xs text-[rgb(100_116_139)]">{{ t('addNasRepo.hintSmbShare') }}</div>
+                    <ElFormItem
+                      data-validation-field="smbShare"
+                      :error="errors.smbShare"
+                      :label="t('addNasRepo.fieldSmbShare')"
+                      required
+                      class="flex-1"
+                    >
+                      <ElInput
+                        v-model="smbShare"
+                        :placeholder="t('addNasRepo.phSmbShare')"
+                        @input="clearFieldError('smbShare')"
+                      />
+                      <div class="mt-1 text-xs text-[rgb(100_116_139)]">
+                        {{ t('addNasRepo.hintSmbShare') }}
+                      </div>
                     </ElFormItem>
                   </div>
 
-                  <div v-if="protocol === 'nfs'" class="fullscreen-form-grid">
-                    <ElFormItem data-validation-field="nfsHost" :error="errors.nfsHost" :label="t('addNasRepo.fieldNfsHost')" required class="flex-1">
-                      <ElInput v-model="nfsHost" :placeholder="t('addNasRepo.phNfsHost')" @input="clearFieldError('nfsHost')" />
-                      <div class="mt-1 text-xs text-[rgb(100_116_139)]">{{ t('addNasRepo.hintNfsHost') }}</div>
+                  <div
+                    v-if="protocol === 'nfs'"
+                    class="fullscreen-form-grid"
+                  >
+                    <ElFormItem
+                      data-validation-field="nfsHost"
+                      :error="errors.nfsHost"
+                      :label="t('addNasRepo.fieldNfsHost')"
+                      required
+                      class="flex-1"
+                    >
+                      <ElInput
+                        v-model="nfsHost"
+                        :placeholder="t('addNasRepo.phNfsHost')"
+                        @input="clearFieldError('nfsHost')"
+                      />
+                      <div class="mt-1 text-xs text-[rgb(100_116_139)]">
+                        {{ t('addNasRepo.hintNfsHost') }}
+                      </div>
                     </ElFormItem>
-                    <ElFormItem data-validation-field="nfsExport" :error="errors.nfsExport" :label="t('addNasRepo.fieldNfsExport')" required class="flex-1">
-                      <ElInput v-model="nfsExport" :placeholder="t('addNasRepo.phNfsExport')" @input="clearFieldError('nfsExport')" />
-                      <div class="mt-1 text-xs text-[rgb(100_116_139)]">{{ t('addNasRepo.hintNfsExport') }}</div>
+                    <ElFormItem
+                      data-validation-field="nfsExport"
+                      :error="errors.nfsExport"
+                      :label="t('addNasRepo.fieldNfsExport')"
+                      required
+                      class="flex-1"
+                    >
+                      <ElInput
+                        v-model="nfsExport"
+                        :placeholder="t('addNasRepo.phNfsExport')"
+                        @input="clearFieldError('nfsExport')"
+                      />
+                      <div class="mt-1 text-xs text-[rgb(100_116_139)]">
+                        {{ t('addNasRepo.hintNfsExport') }}
+                      </div>
                     </ElFormItem>
                   </div>
 
@@ -338,7 +435,13 @@ watch(enableQuotaAlert, (enabled) => {
                         ? 'If SMB auto-negotiation fails, explicitly set the protocol version or authentication option.'
                         : t('addNasRepo.hintMountOptionsNfs') }}
                     </div>
-                    <ElAlert v-if="protocol === 'smb'" type="info" :closable="false" show-icon class="mt-2">
+                    <ElAlert
+                      v-if="protocol === 'smb'"
+                      type="info"
+                      :closable="false"
+                      show-icon
+                      class="mt-2"
+                    >
                       <div class="text-xs leading-5 text-[rgb(51_65_85)]">
                         <div>
                           Different NAS devices, SMB servers, and client kernels may support different protocol versions. Copy one example into Mount Options and test:
@@ -362,22 +465,53 @@ watch(enableQuotaAlert, (enabled) => {
                     <ShieldCheck :size="16" />
                     {{ t('addNasRepo.titleAuth') }}
                   </h4>
-                  <ElForm label-position="top" class="fullscreen-form-el-form add-nas-form">
+                  <ElForm
+                    label-position="top"
+                    class="fullscreen-form-el-form add-nas-form"
+                  >
                     <div class="fullscreen-form-grid">
-                      <ElFormItem data-validation-field="smbUsername" :error="errors.smbUsername" :label="t('repositoriesPage.fieldSmbUsername')" required class="flex-1">
-                        <ElInput v-model="smbUsername" :placeholder="t('repositoriesPage.phSmbUsername')" @input="clearFieldError('smbUsername')" />
+                      <ElFormItem
+                        data-validation-field="smbUsername"
+                        :error="errors.smbUsername"
+                        :label="t('repositoriesPage.fieldSmbUsername')"
+                        required
+                        class="flex-1"
+                      >
+                        <ElInput
+                          v-model="smbUsername"
+                          :placeholder="t('repositoriesPage.phSmbUsername')"
+                          @input="clearFieldError('smbUsername')"
+                        />
                         <div class="mt-1 text-xs text-[rgb(100_116_139)]">
                           SMB user used to access the shared directory, e.g. backup_user.
                         </div>
                       </ElFormItem>
-                      <ElFormItem data-validation-field="smbPassword" :error="errors.smbPassword" :label="t('repositoriesPage.fieldSmbPassword')" required class="flex-1">
-                        <ElInput v-model="smbPassword" type="password" show-password :placeholder="t('repositoriesPage.phSmbPassword')" @input="clearFieldError('smbPassword')" />
+                      <ElFormItem
+                        data-validation-field="smbPassword"
+                        :error="errors.smbPassword"
+                        :label="t('repositoriesPage.fieldSmbPassword')"
+                        required
+                        class="flex-1"
+                      >
+                        <ElInput
+                          v-model="smbPassword"
+                          type="password"
+                          show-password
+                          :placeholder="t('repositoriesPage.phSmbPassword')"
+                          @input="clearFieldError('smbPassword')"
+                        />
                         <div class="mt-1 text-xs text-[rgb(100_116_139)]">
                           Password for the shared directory; logs and errors are masked.
                         </div>
                       </ElFormItem>
-                      <ElFormItem :label="t('repositoriesPage.fieldSmbDomain')" class="flex-1">
-                        <ElInput v-model="smbDomain" :placeholder="t('repositoriesPage.phSmbDomain')" />
+                      <ElFormItem
+                        :label="t('repositoriesPage.fieldSmbDomain')"
+                        class="flex-1"
+                      >
+                        <ElInput
+                          v-model="smbDomain"
+                          :placeholder="t('repositoriesPage.phSmbDomain')"
+                        />
                         <div class="mt-1 text-xs text-[rgb(100_116_139)]">
                           Use CORP or WORKGROUP for domain environments; leave empty for local users.
                         </div>
@@ -401,15 +535,26 @@ watch(enableQuotaAlert, (enabled) => {
                       {{ t('addNasRepo.titleBindProxy') }}
                     </h3>
                   </div>
-                  <ElButton class="add-nas-proxy-action" @click="openProxyDeploy">
+                  <ElButton
+                    class="add-nas-proxy-action"
+                    @click="openProxyDeploy"
+                  >
                     <Plus :size="14" />
                     {{ t('addNasRepo.deployProxy') }}
                   </ElButton>
                 </div>
 
-                <ElAlert type="warning" :closable="false" class="add-nas-proxy-alert">
+                <ElAlert
+                  type="warning"
+                  :closable="false"
+                  class="add-nas-proxy-alert"
+                >
                   <ol class="add-nas-proxy-alert__list">
-                    <li v-for="(item, index) in bindProxyLeadItems" :key="item" class="add-nas-proxy-alert__item">
+                    <li
+                      v-for="(item, index) in bindProxyLeadItems"
+                      :key="item"
+                      class="add-nas-proxy-alert__item"
+                    >
                       <span class="add-nas-proxy-alert__index">{{ index + 1 }}</span>
                       <span class="add-nas-proxy-alert__text">{{ item }}</span>
                     </li>
@@ -418,9 +563,19 @@ watch(enableQuotaAlert, (enabled) => {
 
                 <div class="add-nas-proxy-layout">
                   <div class="add-nas-proxy-form">
-                    <ElForm label-position="top" class="fullscreen-form-el-form add-nas-form">
-                      <ElFormItem data-validation-field="proxyNode" :error="errors.proxyNode" required class="add-nas-bind-form-item">
-                        <template #label>{{ t('addNasRepo.fieldSourceProxyNode') }}</template>
+                    <ElForm
+                      label-position="top"
+                      class="fullscreen-form-el-form add-nas-form"
+                    >
+                      <ElFormItem
+                        data-validation-field="proxyNode"
+                        :error="errors.proxyNode"
+                        required
+                        class="add-nas-bind-form-item"
+                      >
+                        <template #label>
+                          {{ t('addNasRepo.fieldSourceProxyNode') }}
+                        </template>
                         <div class="add-nas-select-row">
                           <ElSelect
                             v-model="proxyNodeId"
@@ -437,7 +592,10 @@ watch(enableQuotaAlert, (enabled) => {
                               :value="n.id"
                               :label="n.ip_address ? `${n.name} (${n.ip_address})` : n.name"
                             />
-                            <ElOption :value="0" :label="t('addNasRepo.optionNoProxy')" />
+                            <ElOption
+                              :value="0"
+                              :label="t('addNasRepo.optionNoProxy')"
+                            />
                           </ElSelect>
                           <ElButton
                             class="hfl-refresh-button add-nas-select-row__refresh"
@@ -446,13 +604,22 @@ watch(enableQuotaAlert, (enabled) => {
                             :disabled="proxyNodesRefreshing"
                             @click="refreshProxyNodesManually"
                           >
-                            <RefreshCw :size="16" :class="{ 'is-spinning': proxyNodesRefreshing }" />
+                            <RefreshCw
+                              :size="16"
+                              :class="{ 'is-spinning': proxyNodesRefreshing }"
+                            />
                           </ElButton>
                         </div>
-                        <div v-if="hasBoundProxy" class="mt-2 text-xs text-[rgb(100_116_139)]">
+                        <div
+                          v-if="hasBoundProxy"
+                          class="mt-2 text-xs text-[rgb(100_116_139)]"
+                        >
                           {{ t('addNasRepo.hintProxySelected') }}
                         </div>
-                        <div v-else-if="!hasProxyDecision" class="mt-2 text-xs text-[rgb(100_116_139)]">
+                        <div
+                          v-else-if="!hasProxyDecision"
+                          class="mt-2 text-xs text-[rgb(100_116_139)]"
+                        >
                           {{ t('addNasRepo.hintProxyUndecided') }}
                         </div>
                         <ElAlert
@@ -493,7 +660,6 @@ watch(enableQuotaAlert, (enabled) => {
                     :source-labels="topologySourceLabels"
                   />
                 </div>
-
               </div>
             </section>
 
@@ -507,9 +673,21 @@ watch(enableQuotaAlert, (enabled) => {
                   <span class="fullscreen-form-section__indicator" />
                   {{ t('repositoriesPage.stepRepo') }}
                 </h3>
-                <ElForm label-position="top" class="fullscreen-form-el-form add-nas-form">
-                  <ElFormItem data-validation-field="repoName" :error="errors.repoName" :label="t('repositoriesPage.fieldRepoName')" required>
-                    <ElInput v-model="repoName" :placeholder="t('repositoriesPage.phRepoName')" @input="clearFieldError('repoName')" />
+                <ElForm
+                  label-position="top"
+                  class="fullscreen-form-el-form add-nas-form"
+                >
+                  <ElFormItem
+                    data-validation-field="repoName"
+                    :error="errors.repoName"
+                    :label="t('repositoriesPage.fieldRepoName')"
+                    required
+                  >
+                    <ElInput
+                      v-model="repoName"
+                      :placeholder="t('repositoriesPage.phRepoName')"
+                      @input="clearFieldError('repoName')"
+                    />
                     <div class="mt-1 text-xs text-[rgb(100_116_139)]">
                       Display name used in repository lists and backup configs, e.g. Production NAS backup.
                     </div>
@@ -526,15 +704,24 @@ watch(enableQuotaAlert, (enabled) => {
                             :min="0"
                             controls-position="right"
                           />
-                          <div class="repository-quota-number__suffix">GB</div>
+                          <div class="repository-quota-number__suffix">
+                            GB
+                          </div>
                         </div>
                       </div>
-                      <p class="fullscreen-form-field__hint">{{ t('repositoriesPage.hintQuota') }}</p>
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('repositoriesPage.hintQuota') }}
+                      </p>
                     </div>
 
-                    <div data-validation-field="quotaThreshold" class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring">
+                    <div
+                      data-validation-field="quotaThreshold"
+                      class="fullscreen-form-field repository-quota-field repository-quota-field--monitoring"
+                    >
                       <div class="fullscreen-form-field__label repository-quota-head repository-quota-title-row">
-                        <ElCheckbox v-model="enableQuotaAlert">{{ t('repositoriesPage.fieldQuotaAlert') }}</ElCheckbox>
+                        <ElCheckbox v-model="enableQuotaAlert">
+                          {{ t('repositoriesPage.fieldQuotaAlert') }}
+                        </ElCheckbox>
                       </div>
                       <div class="repository-quota-control">
                         <div class="repository-quota-number repository-quota-input">
@@ -547,11 +734,20 @@ watch(enableQuotaAlert, (enabled) => {
                             controls-position="right"
                             @change="clearFieldError('quotaThreshold')"
                           />
-                          <div class="repository-quota-number__suffix">%</div>
+                          <div class="repository-quota-number__suffix">
+                            %
+                          </div>
                         </div>
                       </div>
-                      <p class="fullscreen-form-field__hint">{{ t('repositoriesPage.hintQuotaAlertThreshold') }}</p>
-                      <p v-if="errors.quotaThreshold" class="el-form-item__error">{{ errors.quotaThreshold }}</p>
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('repositoriesPage.hintQuotaAlertThreshold') }}
+                      </p>
+                      <p
+                        v-if="errors.quotaThreshold"
+                        class="el-form-item__error"
+                      >
+                        {{ errors.quotaThreshold }}
+                      </p>
                     </div>
                   </div>
                 </ElForm>
@@ -564,32 +760,53 @@ watch(enableQuotaAlert, (enabled) => {
               <ElButton @click="handleBack">
                 {{ t('repositoriesPage.btnCancel') }}
               </ElButton>
-              <ElButton type="primary" :loading="busy" :disabled="busy" @click="onSubmit">
+              <ElButton
+                type="primary"
+                :loading="busy"
+                :disabled="busy"
+                @click="onSubmit"
+              >
                 {{ submitButtonLabel }}
               </ElButton>
             </div>
           </div>
         </div>
 
-        <aside v-if="!embedded" class="fullscreen-form-sidebar add-form-preview-sidebar">
+        <aside
+          v-if="!embedded"
+          class="fullscreen-form-sidebar add-form-preview-sidebar"
+        >
           <div class="add-form-preview-card">
             <div class="add-form-preview-header">
               <div class="add-form-preview-header__glow" />
               <div class="add-form-preview-header__icon">
-                <component :is="nasMountProtocolIcon(protocol)" class="add-form-preview-header__icon-lucide" :size="28" />
+                <component
+                  :is="nasMountProtocolIcon(protocol)"
+                  class="add-form-preview-header__icon-lucide"
+                  :size="28"
+                />
               </div>
               <div class="add-form-preview-header__info">
-                <h4 class="add-form-preview-header__name">{{ repoName || t('addS3Repo.previewUnnamed') }}</h4>
-                <p class="add-form-preview-header__type">{{ protocolLabel }}</p>
+                <h4 class="add-form-preview-header__name">
+                  {{ repoName || t('addS3Repo.previewUnnamed') }}
+                </h4>
+                <p class="add-form-preview-header__type">
+                  {{ protocolLabel }}
+                </p>
               </div>
             </div>
 
             <div class="add-form-preview-body">
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('addS3Repo.previewBasicInfo') }}</h5>
+                <h5 class="add-form-preview-section__title">
+                  {{ t('addS3Repo.previewBasicInfo') }}
+                </h5>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldRepoName') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !repoName }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !repoName }"
+                  >
                     {{ repoName || '—' }}
                   </span>
                 </div>
@@ -599,7 +816,10 @@ watch(enableQuotaAlert, (enabled) => {
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('addNasRepo.fieldSourceProxyNode') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !selectedProxyNodeName }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !selectedProxyNodeName }"
+                  >
                     {{ proxyPreviewLabel }}
                   </span>
                 </div>
@@ -609,14 +829,23 @@ watch(enableQuotaAlert, (enabled) => {
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldQuota') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--highlight': quota > 0 }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--highlight': quota > 0 }"
+                  >
                     {{ quota > 0 ? `${quota} GB` : t('addS3Repo.previewUnlimited') }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldQuotaAlert') }}</span>
-                  <span class="add-form-preview-row__value" :class="enableQuotaAlert ? 'add-form-preview-row__value--success' : 'add-form-preview-row__value--muted'">
-                    <span v-if="enableQuotaAlert" class="add-form-preview-row__dot add-form-preview-row__dot--green" />
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="enableQuotaAlert ? 'add-form-preview-row__value--success' : 'add-form-preview-row__value--muted'"
+                  >
+                    <span
+                      v-if="enableQuotaAlert"
+                      class="add-form-preview-row__dot add-form-preview-row__dot--green"
+                    />
                     <template v-if="enableQuotaAlert">
                       {{ t('repositoriesPage.enabled') }} ({{ quotaAlertThreshold }}%)
                     </template>
@@ -628,46 +857,87 @@ watch(enableQuotaAlert, (enabled) => {
               </div>
 
               <div class="add-form-preview-section">
-                <h5 class="add-form-preview-section__title">{{ t('addS3Repo.previewConnection') }}</h5>
-                <div v-if="protocol === 'smb'" class="add-form-preview-row">
+                <h5 class="add-form-preview-section__title">
+                  {{ t('addS3Repo.previewConnection') }}
+                </h5>
+                <div
+                  v-if="protocol === 'smb'"
+                  class="add-form-preview-row"
+                >
                   <span class="add-form-preview-row__label">{{ t('addNasRepo.fieldSmbHost') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !smbHost }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !smbHost }"
+                  >
                     {{ smbHost || '—' }}
                   </span>
                 </div>
-                <div v-if="protocol === 'smb'" class="add-form-preview-row">
+                <div
+                  v-if="protocol === 'smb'"
+                  class="add-form-preview-row"
+                >
                   <span class="add-form-preview-row__label">{{ t('addNasRepo.fieldSmbShare') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !smbShare }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !smbShare }"
+                  >
                     {{ smbShare || '—' }}
                   </span>
                 </div>
-                <div v-if="protocol === 'smb'" class="add-form-preview-row">
+                <div
+                  v-if="protocol === 'smb'"
+                  class="add-form-preview-row"
+                >
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldSmbUsername') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !smbUsername }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !smbUsername }"
+                  >
                     {{ smbUsername || '—' }}
                   </span>
                 </div>
-                <div v-if="protocol === 'smb'" class="add-form-preview-row">
+                <div
+                  v-if="protocol === 'smb'"
+                  class="add-form-preview-row"
+                >
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldSmbDomain') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !smbDomain }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !smbDomain }"
+                  >
                     {{ smbDomain || '—' }}
                   </span>
                 </div>
-                <div v-if="protocol === 'nfs'" class="add-form-preview-row">
+                <div
+                  v-if="protocol === 'nfs'"
+                  class="add-form-preview-row"
+                >
                   <span class="add-form-preview-row__label">{{ t('addNasRepo.fieldNfsHost') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !nfsHost }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !nfsHost }"
+                  >
                     {{ nfsHost || '—' }}
                   </span>
                 </div>
-                <div v-if="protocol === 'nfs'" class="add-form-preview-row">
+                <div
+                  v-if="protocol === 'nfs'"
+                  class="add-form-preview-row"
+                >
                   <span class="add-form-preview-row__label">{{ t('addNasRepo.fieldNfsExport') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !nfsExport }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !nfsExport }"
+                  >
                     {{ nfsExport || '—' }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('addNasRepo.fieldMountOptions') }}</span>
-                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !mountOptions }">
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !mountOptions }"
+                  >
                     {{ mountOptions || '—' }}
                   </span>
                 </div>
@@ -675,9 +945,7 @@ watch(enableQuotaAlert, (enabled) => {
             </div>
           </div>
         </aside>
-
       </div>
-
     </div>
   </div>
 </template>

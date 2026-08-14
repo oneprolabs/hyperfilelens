@@ -14,5 +14,8 @@ const label = computed(() => policyTypeLabel(props.type))
 </script>
 
 <template>
-  <HflTypeLabel :icon="icon" :label="label" />
+  <HflTypeLabel
+    :icon="icon"
+    :label="label"
+  />
 </template>

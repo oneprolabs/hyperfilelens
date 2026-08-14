@@ -19,7 +19,11 @@ const label = computed(() =>
 </script>
 
 <template>
-  <el-tag size="small" effect="plain" :type="row.type === 'host' ? 'info' : 'success'">
+  <el-tag
+    size="small"
+    effect="plain"
+    :type="row.type === 'host' ? 'info' : 'success'"
+  >
     {{ label }}
   </el-tag>
 </template>

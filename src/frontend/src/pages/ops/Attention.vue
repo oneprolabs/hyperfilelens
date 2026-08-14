@@ -68,48 +68,124 @@ watch(() => [pagination.page, pagination.pageSize], () => void loadItems())
 </script>
 
 <template>
-  <ModulePage :title="t('ops.attention.title')" :menus="opsMenus" body-fill>
+  <ModulePage
+    :title="t('ops.attention.title')"
+    :menus="opsMenus"
+    body-fill
+  >
     <div class="attention-page">
-      <p class="attention-page__subtitle">{{ t('ops.attention.subtitle') }}</p>
-      <p v-if="loadError" class="attention-page__error">{{ t('ops.attention.loadFailed') }}: {{ loadError }}</p>
+      <p class="attention-page__subtitle">
+        {{ t('ops.attention.subtitle') }}
+      </p>
+      <p
+        v-if="loadError"
+        class="attention-page__error"
+      >
+        {{ t('ops.attention.loadFailed') }}: {{ loadError }}
+      </p>
       <HflTablePanel fill>
         <template #toolbar>
-          <el-select v-model="filters.kind" clearable :placeholder="t('ops.attention.allTypes')" style="width: 160px">
-            <el-option v-for="kind in ['task', 'alert', 'node', 'source']" :key="kind" :value="kind" :label="itemKindLabel(kind as AttentionKind)" />
+          <el-select
+            v-model="filters.kind"
+            clearable
+            :placeholder="t('ops.attention.allTypes')"
+            style="width: 160px"
+          >
+            <el-option
+              v-for="kind in ['task', 'alert', 'node', 'source']"
+              :key="kind"
+              :value="kind"
+              :label="itemKindLabel(kind as AttentionKind)"
+            />
           </el-select>
         </template>
         <template #toolbar-utility>
-          <el-button class="hfl-refresh-button" :disabled="loading" :title="t('ops.task.btnRefresh')" :aria-label="t('ops.task.btnRefresh')" @click="loadItems">
-            <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+          <el-button
+            class="hfl-refresh-button"
+            :disabled="loading"
+            :title="t('ops.task.btnRefresh')"
+            :aria-label="t('ops.task.btnRefresh')"
+            @click="loadItems"
+          >
+            <RefreshCw
+              :size="16"
+              :class="{ 'is-spinning': loading }"
+            />
           </el-button>
         </template>
         <template #table="{ tableMaxHeight }">
-          <el-table v-table-column-resize="'ops.attention'" v-table-overflow-title v-loading="loading" :data="filteredItems" row-key="id" class="hfl-list-table" stripe :max-height="tableMaxHeight">
-            <el-table-column :label="t('ops.attention.type')" width="120" fixed="left">
+          <el-table
+            v-table-column-resize="'ops.attention'"
+            v-table-overflow-title
+            v-loading="loading"
+            :data="filteredItems"
+            row-key="id"
+            class="hfl-list-table"
+            stripe
+            :max-height="tableMaxHeight"
+          >
+            <el-table-column
+              :label="t('ops.attention.type')"
+              width="120"
+              fixed="left"
+            >
               <template #default="{ row }">
-                <el-tag :type="itemTagType(row.kind)" size="small">{{ itemKindLabel(row.kind) }}</el-tag>
+                <el-tag
+                  :type="itemTagType(row.kind)"
+                  size="small"
+                >
+                  {{ itemKindLabel(row.kind) }}
+                </el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.alertsCenter.common.title')" min-width="260">
+            <el-table-column
+              :label="t('ops.alertsCenter.common.title')"
+              min-width="260"
+            >
               <template #default="{ row }">
-                <div class="attention-page__title">{{ row.title }}</div>
+                <div class="attention-page__title">
+                  {{ row.title }}
+                </div>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.attention.details')" min-width="280">
+            <el-table-column
+              :label="t('ops.attention.details')"
+              min-width="280"
+            >
               <template #default="{ row }">
                 <span :class="row.detail ? '' : 'hfl-empty-mark'">{{ row.detail || '—' }}</span>
               </template>
             </el-table-column>
-            <el-table-column :label="t('ops.attention.occurredAt')" width="180">
-              <template #default="{ row }">{{ itemTime(row) }}</template>
-            </el-table-column>
-            <el-table-column :label="t('ops.attention.action')" width="100" fixed="right">
+            <el-table-column
+              :label="t('ops.attention.occurredAt')"
+              width="180"
+            >
               <template #default="{ row }">
-                <el-button class="hfl-table-no-tooltip" link type="primary" @click="router.push(row.to)">{{ t('ops.attention.open') }}</el-button>
+                {{ itemTime(row) }}
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.attention.action')"
+              width="100"
+              fixed="right"
+            >
+              <template #default="{ row }">
+                <el-button
+                  class="hfl-table-no-tooltip"
+                  link
+                  type="primary"
+                  @click="router.push(row.to)"
+                >
+                  {{ t('ops.attention.open') }}
+                </el-button>
               </template>
             </el-table-column>
             <template #empty>
-              <el-empty v-if="!loading" :description="t('ops.attention.empty')" :image-size="72" />
+              <el-empty
+                v-if="!loading"
+                :description="t('ops.attention.empty')"
+                :image-size="72"
+              />
             </template>
           </el-table>
         </template>

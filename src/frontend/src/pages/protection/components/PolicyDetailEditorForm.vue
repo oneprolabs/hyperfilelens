@@ -115,15 +115,24 @@ function enabledText(enabled: boolean) {
 
 <template>
   <div class="hfl-detail-sections policy-detail-overview">
-    <section v-if="!hideInfoSection" class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('protection.policiesPage.sectionPolicyInfo') }}</h4>
+    <section
+      v-if="!hideInfoSection"
+      class="hfl-detail-section"
+    >
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.policiesPage.sectionPolicyInfo') }}
+      </h4>
       <div class="hfl-detail-grid">
         <div class="policy-detail-editor__pair-row">
           <div class="hfl-detail-row policy-detail-editor__pair-item">
             <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldName') }}</span>
             <span class="hfl-detail-row__value policy-detail-overview__name-value">
               <span class="hfl-detail-row__text policy-detail-overview__primary">{{ policyForm.name || emptyText }}</span>
-              <ElTag :type="booleanStatusTag(policyForm.policyActive).type" :class="booleanStatusTag(policyForm.policyActive).class" size="small">{{ enabledText(policyForm.policyActive) }}</ElTag>
+              <ElTag
+                :type="booleanStatusTag(policyForm.policyActive).type"
+                :class="booleanStatusTag(policyForm.policyActive).class"
+                size="small"
+              >{{ enabledText(policyForm.policyActive) }}</ElTag>
             </span>
           </div>
           <div class="hfl-detail-row policy-detail-editor__pair-item">
@@ -146,14 +155,25 @@ function enabledText(enabled: boolean) {
       </div>
     </section>
 
-    <section class="hfl-detail-section" :class="{ 'policy-detail-overview__section--off': !policyForm.sectionScheduleEnabled }">
-      <h4 class="hfl-detail-section__title">{{ t('protection.policiesPage.sectionSchedule') }}</h4>
+    <section
+      class="hfl-detail-section"
+      :class="{ 'policy-detail-overview__section--off': !policyForm.sectionScheduleEnabled }"
+    >
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.policiesPage.sectionSchedule') }}
+      </h4>
       <div class="hfl-detail-grid">
-        <div v-if="!policyForm.sectionScheduleEnabled" class="hfl-detail-row hfl-detail-row--full">
+        <div
+          v-if="!policyForm.sectionScheduleEnabled"
+          class="hfl-detail-row hfl-detail-row--full"
+        >
           <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldSchedule') }}</span>
           <span class="hfl-detail-row__value">{{ notConfiguredText }}</span>
         </div>
-        <div v-else class="policy-detail-editor__pair-row">
+        <div
+          v-else
+          class="policy-detail-editor__pair-row"
+        >
           <div class="hfl-detail-row policy-detail-editor__pair-item">
             <span class="hfl-detail-row__label">{{ t('protection.policiesPage.labelFreqMode') }}</span>
             <span class="hfl-detail-row__value">
@@ -166,44 +186,76 @@ function enabledText(enabled: boolean) {
               class="hfl-detail-row__value"
               :class="{ 'hfl-detail-row__value--stacked': policyForm.freqMode === 'advanced' }"
             >
-              <code v-if="policyForm.freqMode === 'advanced'" class="policy-detail-overview__code">{{ policyForm.cronExpr }}</code>
-              <span v-else class="hfl-detail-row__text">{{ quickScheduleLabel }}</span>
-              <span v-if="policyForm.freqMode === 'advanced'" class="hfl-detail-row__hint">{{ cronDescription }}</span>
+              <code
+                v-if="policyForm.freqMode === 'advanced'"
+                class="policy-detail-overview__code"
+              >{{ policyForm.cronExpr }}</code>
+              <span
+                v-else
+                class="hfl-detail-row__text"
+              >{{ quickScheduleLabel }}</span>
+              <span
+                v-if="policyForm.freqMode === 'advanced'"
+                class="hfl-detail-row__hint"
+              >{{ cronDescription }}</span>
             </span>
           </div>
         </div>
-        <div v-if="policyForm.sectionScheduleEnabled" class="policy-detail-editor__pair-row">
+        <div
+          v-if="policyForm.sectionScheduleEnabled"
+          class="policy-detail-editor__pair-row"
+        >
           <div class="hfl-detail-row policy-detail-editor__pair-item">
             <span class="hfl-detail-row__label">{{ t('protection.policiesPage.scheduleTimezone') }}</span>
             <span class="hfl-detail-row__value">{{ policyForm.scheduleTimezone || 'UTC' }}</span>
           </div>
           <div class="hfl-detail-row policy-detail-editor__pair-item">
             <span class="hfl-detail-row__label">{{ t('protection.policiesPage.scheduleStartsAt') }}</span>
-            <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !policyForm.scheduleStartsAt }">{{ formatScheduleStartForDisplay(policyForm.scheduleStartsAt, emptyText) }}</span>
+            <span
+              class="hfl-detail-row__value"
+              :class="{ 'hfl-detail-row__empty': !policyForm.scheduleStartsAt }"
+            >{{ formatScheduleStartForDisplay(policyForm.scheduleStartsAt, emptyText) }}</span>
           </div>
         </div>
-        <div v-if="policyForm.sectionScheduleEnabled" class="hfl-detail-row hfl-detail-row--full">
+        <div
+          v-if="policyForm.sectionScheduleEnabled"
+          class="hfl-detail-row hfl-detail-row--full"
+        >
           <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldSchedule') }}</span>
           <span class="hfl-detail-row__value">{{ scheduleSummary }}</span>
         </div>
       </div>
     </section>
 
-    <section class="hfl-detail-section" :class="{ 'policy-detail-overview__section--off': !policyForm.sectionRetentionEnabled }">
-      <h4 class="hfl-detail-section__title">{{ t('protection.policiesPage.sectionRetention') }}</h4>
+    <section
+      class="hfl-detail-section"
+      :class="{ 'policy-detail-overview__section--off': !policyForm.sectionRetentionEnabled }"
+    >
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.policiesPage.sectionRetention') }}
+      </h4>
       <div class="hfl-detail-grid">
-        <div v-if="retentionDetailLines.length" class="policy-detail-overview__retention-list">
+        <div
+          v-if="retentionDetailLines.length"
+          class="policy-detail-overview__retention-list"
+        >
           <div
             v-for="line in retentionDetailLines"
             :key="`${line.label}${line.text}`"
             class="policy-detail-overview__retention-line"
             :class="{ 'policy-detail-overview__retention-line--summary': !line.label }"
           >
-            <span v-if="line.label" class="policy-detail-overview__retention-label">{{ line.label }}</span>
+            <span
+              v-if="line.label"
+              class="policy-detail-overview__retention-label"
+            >{{ line.label }}</span>
             <span class="policy-detail-overview__retention-text">{{ line.text }}</span>
           </div>
         </div>
-        <div v-else class="hfl-detail-row hfl-detail-row--full">
+        <div
+          v-else
+          class="hfl-detail-row hfl-detail-row--full"
+        >
           <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldRetention') }}</span>
           <span class="hfl-detail-row__value">{{ notConfiguredText }}</span>
         </div>
@@ -211,14 +263,26 @@ function enabledText(enabled: boolean) {
     </section>
 
     <section class="hfl-detail-section">
-      <h4 class="hfl-detail-section__title">{{ t('protection.policiesPage.sectionErrorHandling') }}</h4>
+      <h4 class="hfl-detail-section__title">
+        {{ t('protection.policiesPage.sectionErrorHandling') }}
+      </h4>
       <div class="policy-detail-overview__list">
-        <div v-for="row in errorHandlingRows" :key="row.key" class="policy-detail-overview__list-row">
+        <div
+          v-for="row in errorHandlingRows"
+          :key="row.key"
+          class="policy-detail-overview__list-row"
+        >
           <div class="policy-detail-overview__list-copy">
             <span class="policy-detail-overview__list-title">{{ row.title }}</span>
             <span class="policy-detail-overview__list-desc">{{ row.desc }}</span>
           </div>
-          <ElTag :type="booleanStatusTag(policyForm[row.key]).type" :class="booleanStatusTag(policyForm[row.key]).class" size="small">{{ enabledText(policyForm[row.key]) }}</ElTag>
+          <ElTag
+            :type="booleanStatusTag(policyForm[row.key]).type"
+            :class="booleanStatusTag(policyForm[row.key]).class"
+            size="small"
+          >
+            {{ enabledText(policyForm[row.key]) }}
+          </ElTag>
         </div>
       </div>
     </section>

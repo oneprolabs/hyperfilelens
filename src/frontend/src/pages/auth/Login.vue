@@ -601,22 +601,28 @@ onMounted(async () => {
 
     <!-- Login Form Box -->
     <div class="login-form-box">
-      <div class="login-box-title" :class="{ 'title-en': locale === 'en' }">
+      <div
+        class="login-box-title"
+        :class="{ 'title-en': locale === 'en' }"
+      >
         <span :class="{ '!text-base': locale === 'en' }">
           {{ cardTitle }}
         </span>
         <button
           v-if="canSwitchLocale"
           class="lang-toggle"
-          @click="toggleLocale"
           :title="`Switch to ${nextLocaleLabel}`"
+          @click="toggleLocale"
         >
           <Globe :size="18" />
           <span class="lang-label">{{ nextLocaleCode.toUpperCase() }}</span>
         </button>
       </div>
 
-      <Transition name="card-view-fade" mode="out-in">
+      <Transition
+        name="card-view-fade"
+        mode="out-in"
+      >
         <ResetPasswordCard
           v-if="cardView === 'reset'"
           key="reset"
@@ -626,207 +632,282 @@ onMounted(async () => {
           @update:step="onResetStepChange"
         />
 
-        <div v-else key="login" class="login-box-content">
-        <ElAlert
-          v-if="sessionNoticeMessage"
-          class="session-alert"
-          type="warning"
-          :title="sessionNoticeMessage"
-          show-icon
-          :closable="true"
-          @close="dismissSessionNotice"
-        />
-
         <div
-          v-if="emailCodeLoginAvailable"
-          class="login-method-tabs"
-          role="tablist"
-          :aria-label="t('login.methodLabel')"
-          aria-orientation="horizontal"
+          v-else
+          key="login"
+          class="login-box-content"
         >
-          <button
-            id="login-method-tab-password"
-            type="button"
-            class="login-method-tabs__tab"
-            :class="{ 'is-active': authMode === 'password' }"
-            role="tab"
-            :aria-selected="authMode === 'password'"
-            aria-controls="login-method-panel"
-            :tabindex="authMode === 'password' ? 0 : -1"
-            :ref="element => setAuthModeTabRef('password', element)"
-            @click="selectAuthMode('password')"
-            @keydown="onAuthModeKeydown"
-          >
-            {{ t('login.passwordMethod') }}
-          </button>
-          <button
-            id="login-method-tab-email-code"
-            type="button"
-            class="login-method-tabs__tab"
-            :class="{ 'is-active': authMode === 'email-code' }"
-            role="tab"
-            :aria-selected="authMode === 'email-code'"
-            aria-controls="login-method-panel"
-            :tabindex="authMode === 'email-code' ? 0 : -1"
-            :ref="element => setAuthModeTabRef('email-code', element)"
-            @click="selectAuthMode('email-code')"
-            @keydown="onAuthModeKeydown"
-          >
-            {{ t('login.emailCodeMethod') }}
-          </button>
-        </div>
-
-        <div
-          id="login-method-panel"
-          class="login-method-panel"
-          role="tabpanel"
-          :aria-labelledby="`login-method-tab-${authMode}`"
-        >
-        <!-- Email -->
-        <div v-if="authMode === 'password'" class="input-wrapper" :class="{ 'has-error': formItems.email.showError }">
-          <div class="input-row">
-            <Mail class="input-icon" :size="18" />
-            <input
-              v-model="formItems.email.value"
-              type="text"
-              :placeholder="formItems.email.placeholder"
-              tabindex="1"
-              autocomplete="email"
-              @blur="validateEmailOnInput"
-              @input="validateEmailOnInput"
-            />
-          </div>
-          <p v-if="formItems.email.showError" class="error-msg">{{ formItems.email.errorMsg }}</p>
-        </div>
-
-        <!-- Password -->
-        <div v-if="authMode === 'password'" class="input-wrapper" :class="{ 'has-error': formItems.password.showError }">
-          <div class="input-row">
-            <Lock class="input-icon" :size="18" />
-            <input
-              v-model="formItems.password.value"
-              :type="showPassword ? 'text' : 'password'"
-              :placeholder="formItems.password.placeholder"
-              tabindex="2"
-              autocomplete="current-password"
-              @blur="validatePasswordPresenceOnInput"
-              @input="validatePasswordPresenceOnInput"
-              @keyup.enter="handleSubmit"
-            />
-            <button
-              type="button"
-              class="eye-btn"
-              :aria-label="showPassword ? t('common.hidePassword') : t('common.showPassword')"
-              :aria-pressed="showPassword"
-              @click="showPassword = !showPassword"
-            >
-              <EyeOff v-if="showPassword" class="eye-icon" :size="16" />
-              <Eye v-else class="eye-icon" :size="16" />
-            </button>
-          </div>
-          <p v-if="formItems.password.showError" class="error-msg">{{ formItems.password.errorMsg }}</p>
-        </div>
-
-        <AuthTurnstileField
-          v-if="authMode === 'password'"
-          :key="authTurnstileMountGeneration"
-          ref="turnstileFieldRef"
-          :pending="isTurnstilePending"
-          :ready="isTurnstileReady"
-          :blocked="isTurnstileBlocked"
-          :verified="Boolean(turnstileToken)"
-          :site-key="turnstileSiteKey"
-          action="login"
-          :loading-message="t('login.captchaLoading')"
-          :blocked-message="t('login.captchaUnavailable')"
-          :retry-label="t('login.captchaRetry')"
-          :manual-retry-label="t('login.captchaManualRetry')"
-          :error-code-label="turnstileErrorCode ? t('login.captchaReferenceCode', { code: turnstileErrorCode }) : ''"
-          :error-message="turnstileError"
-          @retry="retryTurnstile"
-          @success="onTurnstileSuccess"
-          @expire="onTurnstileExpire"
-          @invalidate="onTurnstileInvalidate"
-          @error="onTurnstileError"
-          @load-failed="onTurnstileLoadFailed"
-        />
-
-        <div class="login-actions">
-          <div v-if="authMode === 'password'">
-            <!-- Submit Button -->
-            <ElButton
-              type="primary"
-              class="submit-btn"
-              :disabled="submitLoading || !canSubmitLogin"
-              :loading="submitLoading"
-              @click="handleSubmit"
-            >
-              {{ submitLoading ? t('login.btnSubmitLoading') : t('login.btnSubmit') }}
-            </ElButton>
-          </div>
-
-          <EmailCodeLoginForm
-            v-if="authMode === 'email-code'"
-            v-model:email="formItems.email.value"
-            @verified="handleEmailCodeVerified"
+          <ElAlert
+            v-if="sessionNoticeMessage"
+            class="session-alert"
+            type="warning"
+            :title="sessionNoticeMessage"
+            show-icon
+            :closable="true"
+            @close="dismissSessionNotice"
           />
 
-          <!-- Forgot Password -->
-          <div v-if="passwordResetAvailable" class="forgot-row">
-            <a href="#" class="forgot-link" @click.prevent="goForgetPwd">{{ t('login.forgotPwd') }}</a>
+          <div
+            v-if="emailCodeLoginAvailable"
+            class="login-method-tabs"
+            role="tablist"
+            :aria-label="t('login.methodLabel')"
+            aria-orientation="horizontal"
+          >
+            <button
+              id="login-method-tab-password"
+              :ref="element => setAuthModeTabRef('password', element)"
+              type="button"
+              class="login-method-tabs__tab"
+              :class="{ 'is-active': authMode === 'password' }"
+              role="tab"
+              :aria-selected="authMode === 'password'"
+              aria-controls="login-method-panel"
+              :tabindex="authMode === 'password' ? 0 : -1"
+              @click="selectAuthMode('password')"
+              @keydown="onAuthModeKeydown"
+            >
+              {{ t('login.passwordMethod') }}
+            </button>
+            <button
+              id="login-method-tab-email-code"
+              :ref="element => setAuthModeTabRef('email-code', element)"
+              type="button"
+              class="login-method-tabs__tab"
+              :class="{ 'is-active': authMode === 'email-code' }"
+              role="tab"
+              :aria-selected="authMode === 'email-code'"
+              aria-controls="login-method-panel"
+              :tabindex="authMode === 'email-code' ? 0 : -1"
+              @click="selectAuthMode('email-code')"
+              @keydown="onAuthModeKeydown"
+            >
+              {{ t('login.emailCodeMethod') }}
+            </button>
+          </div>
+
+          <div
+            id="login-method-panel"
+            class="login-method-panel"
+            role="tabpanel"
+            :aria-labelledby="`login-method-tab-${authMode}`"
+          >
+            <!-- Email -->
+            <div
+              v-if="authMode === 'password'"
+              class="input-wrapper"
+              :class="{ 'has-error': formItems.email.showError }"
+            >
+              <div class="input-row">
+                <Mail
+                  class="input-icon"
+                  :size="18"
+                />
+                <input
+                  v-model="formItems.email.value"
+                  type="text"
+                  :placeholder="formItems.email.placeholder"
+                  tabindex="1"
+                  autocomplete="email"
+                  @blur="validateEmailOnInput"
+                  @input="validateEmailOnInput"
+                >
+              </div>
+              <p
+                v-if="formItems.email.showError"
+                class="error-msg"
+              >
+                {{ formItems.email.errorMsg }}
+              </p>
+            </div>
+
+            <!-- Password -->
+            <div
+              v-if="authMode === 'password'"
+              class="input-wrapper"
+              :class="{ 'has-error': formItems.password.showError }"
+            >
+              <div class="input-row">
+                <Lock
+                  class="input-icon"
+                  :size="18"
+                />
+                <input
+                  v-model="formItems.password.value"
+                  :type="showPassword ? 'text' : 'password'"
+                  :placeholder="formItems.password.placeholder"
+                  tabindex="2"
+                  autocomplete="current-password"
+                  @blur="validatePasswordPresenceOnInput"
+                  @input="validatePasswordPresenceOnInput"
+                  @keyup.enter="handleSubmit"
+                >
+                <button
+                  type="button"
+                  class="eye-btn"
+                  :aria-label="showPassword ? t('common.hidePassword') : t('common.showPassword')"
+                  :aria-pressed="showPassword"
+                  @click="showPassword = !showPassword"
+                >
+                  <EyeOff
+                    v-if="showPassword"
+                    class="eye-icon"
+                    :size="16"
+                  />
+                  <Eye
+                    v-else
+                    class="eye-icon"
+                    :size="16"
+                  />
+                </button>
+              </div>
+              <p
+                v-if="formItems.password.showError"
+                class="error-msg"
+              >
+                {{ formItems.password.errorMsg }}
+              </p>
+            </div>
+
+            <AuthTurnstileField
+              v-if="authMode === 'password'"
+              :key="authTurnstileMountGeneration"
+              ref="turnstileFieldRef"
+              :pending="isTurnstilePending"
+              :ready="isTurnstileReady"
+              :blocked="isTurnstileBlocked"
+              :verified="Boolean(turnstileToken)"
+              :site-key="turnstileSiteKey"
+              action="login"
+              :loading-message="t('login.captchaLoading')"
+              :blocked-message="t('login.captchaUnavailable')"
+              :retry-label="t('login.captchaRetry')"
+              :manual-retry-label="t('login.captchaManualRetry')"
+              :error-code-label="turnstileErrorCode ? t('login.captchaReferenceCode', { code: turnstileErrorCode }) : ''"
+              :error-message="turnstileError"
+              @retry="retryTurnstile"
+              @success="onTurnstileSuccess"
+              @expire="onTurnstileExpire"
+              @invalidate="onTurnstileInvalidate"
+              @error="onTurnstileError"
+              @load-failed="onTurnstileLoadFailed"
+            />
+
+            <div class="login-actions">
+              <div v-if="authMode === 'password'">
+                <!-- Submit Button -->
+                <ElButton
+                  type="primary"
+                  class="submit-btn"
+                  :disabled="submitLoading || !canSubmitLogin"
+                  :loading="submitLoading"
+                  @click="handleSubmit"
+                >
+                  {{ submitLoading ? t('login.btnSubmitLoading') : t('login.btnSubmit') }}
+                </ElButton>
+              </div>
+
+              <EmailCodeLoginForm
+                v-if="authMode === 'email-code'"
+                v-model:email="formItems.email.value"
+                @verified="handleEmailCodeVerified"
+              />
+
+              <!-- Forgot Password -->
+              <div
+                v-if="passwordResetAvailable"
+                class="forgot-row"
+              >
+                <a
+                  href="#"
+                  class="forgot-link"
+                  @click.prevent="goForgetPwd"
+                >{{ t('login.forgotPwd') }}</a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Divider -->
+          <div
+            v-if="googleEnabled"
+            class="divider-row"
+          >
+            <div class="divider-line" />
+            <span class="divider-text">{{ t('login.dividerOr') }}</span>
+            <div class="divider-line" />
+          </div>
+
+          <!-- Third Party -->
+          <div
+            v-if="googleEnabled"
+            class="google-signin-block"
+          >
+            <button
+              type="button"
+              class="google-btn"
+              :disabled="googleLoading"
+              @click="startGoogleLogin"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M22.56 12.25C22.56 11.47 22.49 10.73 22.36 10H12V14.26H17.92C17.66 15.63 16.89 16.8 15.72 17.58V20.34H19.28C21.36 18.42 22.56 15.6 22.56 12.25Z"
+                  fill="#4285F4"
+                />
+                <path
+                  d="M12 23C14.97 23 17.46 22.02 19.28 20.34L15.72 17.58C14.74 18.24 13.48 18.66 12 18.66C9.13999 18.66 6.70999 16.73 5.83999 14.12H2.17999V16.96C3.98999 20.55 7.7 23 12 23Z"
+                  fill="#34A853"
+                />
+                <path
+                  d="M5.84 14.12C5.62 13.46 5.49 12.75 5.49 12C5.49 11.25 5.61 10.54 5.84 9.88001V7.04001H2.18C1.43 8.53001 1 10.22 1 12C1 13.78 1.43 15.47 2.18 16.96L5.84 14.12Z"
+                  fill="#FBBC05"
+                />
+                <path
+                  d="M12 5.34001C13.62 5.34001 15.06 5.89001 16.21 6.99001L19.36 3.84001C17.46 2.07001 14.97 1 12 1C7.7 1 3.99 3.45001 2.18 7.04001L5.84 9.88001C6.71 7.27001 9.14 5.34001 12 5.34001Z"
+                  fill="#EA4335"
+                />
+              </svg>
+              <span>{{ t('login.googleBtn') }}</span>
+            </button>
+          </div>
+
+          <!-- Footer: Register + EULA -->
+          <div
+            v-if="emailSignupEnabled || showEula"
+            class="login-footer"
+          >
+            <div
+              v-if="emailSignupEnabled"
+              class="footer-row"
+            >
+              <span class="footer-text">{{ t('login.noAccount') }}</span>
+              <a
+                href="#"
+                class="footer-link sign-up-link"
+                @click.prevent="goRegister"
+              >{{ t('login.freeRegister') }}</a>
+            </div>
+            <p
+              v-if="showEula"
+              class="footer-legal"
+            >
+              {{ t('login.eulaText') }}
+              <a
+                class="footer-link"
+                href="https://oneprocloud.com/eula"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {{ $t('login.eulaNoticeLinkText') }}
+              </a>{{ t('login.eulaSuffix') }}
+            </p>
           </div>
         </div>
-        </div>
-
-        <!-- Divider -->
-        <div v-if="googleEnabled" class="divider-row">
-          <div class="divider-line"></div>
-          <span class="divider-text">{{ t('login.dividerOr') }}</span>
-          <div class="divider-line"></div>
-        </div>
-
-        <!-- Third Party -->
-        <div v-if="googleEnabled" class="google-signin-block">
-          <button
-            type="button"
-            class="google-btn"
-            :disabled="googleLoading"
-            @click="startGoogleLogin"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M22.56 12.25C22.56 11.47 22.49 10.73 22.36 10H12V14.26H17.92C17.66 15.63 16.89 16.8 15.72 17.58V20.34H19.28C21.36 18.42 22.56 15.6 22.56 12.25Z" fill="#4285F4"/>
-              <path d="M12 23C14.97 23 17.46 22.02 19.28 20.34L15.72 17.58C14.74 18.24 13.48 18.66 12 18.66C9.13999 18.66 6.70999 16.73 5.83999 14.12H2.17999V16.96C3.98999 20.55 7.7 23 12 23Z" fill="#34A853"/>
-              <path d="M5.84 14.12C5.62 13.46 5.49 12.75 5.49 12C5.49 11.25 5.61 10.54 5.84 9.88001V7.04001H2.18C1.43 8.53001 1 10.22 1 12C1 13.78 1.43 15.47 2.18 16.96L5.84 14.12Z" fill="#FBBC05"/>
-              <path d="M12 5.34001C13.62 5.34001 15.06 5.89001 16.21 6.99001L19.36 3.84001C17.46 2.07001 14.97 1 12 1C7.7 1 3.99 3.45001 2.18 7.04001L5.84 9.88001C6.71 7.27001 9.14 5.34001 12 5.34001Z" fill="#EA4335"/>
-            </svg>
-            <span>{{ t('login.googleBtn') }}</span>
-          </button>
-        </div>
-
-        <!-- Footer: Register + EULA -->
-        <div
-          v-if="emailSignupEnabled || showEula"
-          class="login-footer"
-        >
-          <div v-if="emailSignupEnabled" class="footer-row">
-            <span class="footer-text">{{ t('login.noAccount') }}</span>
-            <a href="#" class="footer-link sign-up-link" @click.prevent="goRegister">{{ t('login.freeRegister') }}</a>
-          </div>
-          <p
-            v-if="showEula"
-            class="footer-legal"
-          >
-            {{ t('login.eulaText') }}
-            <a
-              class="footer-link"
-              href="https://oneprocloud.com/eula"
-              target="_blank"
-              rel="noopener noreferrer">
-              {{ $t('login.eulaNoticeLinkText') }}
-            </a>{{ t('login.eulaSuffix') }}
-          </p>
-        </div>
-      </div>
       </Transition>
     </div>
   </div>

@@ -302,7 +302,11 @@ watch(
 </script>
 
 <template>
-  <ModulePage :title="t('ops.alertsCenter.active.title')" :menus="opsMenus" body-fill>
+  <ModulePage
+    :title="t('ops.alertsCenter.active.title')"
+    :menus="opsMenus"
+    body-fill
+  >
     <div class="hfl-ops-page hfl-ops-page--fill alert-incidents-page">
       <div class="hfl-ops-stats-grid hfl-ops-stats-grid--4">
         <OpsStatCard
@@ -357,7 +361,10 @@ watch(
                   @click="runBatchAcknowledge"
                 >
                   <span class="el-dropdown-menu__item-content">
-                    <Check :size="14" class="shrink-0" />
+                    <Check
+                      :size="14"
+                      class="shrink-0"
+                    />
                     <span>{{ t('ops.alertsCenter.common.acknowledge') }}</span>
                   </span>
                 </el-dropdown-item>
@@ -366,7 +373,10 @@ watch(
                   @click="runBatchResolve"
                 >
                   <span class="el-dropdown-menu__item-content">
-                    <X :size="14" class="shrink-0" />
+                    <X
+                      :size="14"
+                      class="shrink-0"
+                    />
                     <span>{{ t('ops.alerts.resolve') }}</span>
                   </span>
                 </el-dropdown-item>
@@ -382,7 +392,9 @@ watch(
             :placeholder="t('ops.alertsCenter.active.searchPlaceholder')"
             @clear="clearSearch"
           >
-            <template #prefix><Search class="h-4 w-4 opacity-60" /></template>
+            <template #prefix>
+              <Search class="h-4 w-4 opacity-60" />
+            </template>
           </el-input>
           <el-select
             v-model="filters.type"
@@ -390,11 +402,26 @@ watch(
             style="width: 150px"
             :placeholder="t('ops.alertsCenter.common.allTypes')"
           >
-            <el-option value="metric" :label="t('ops.alertsCenter.policyTypes.metric')" />
-            <el-option value="availability" :label="t('ops.alertsCenter.policyTypes.availability')" />
-            <el-option value="task" :label="t('ops.alertsCenter.policyTypes.task')" />
-            <el-option value="event" :label="t('ops.alertsCenter.policyTypes.event')" />
-            <el-option value="system" :label="t('ops.alertsCenter.policyTypes.system')" />
+            <el-option
+              value="metric"
+              :label="t('ops.alertsCenter.policyTypes.metric')"
+            />
+            <el-option
+              value="availability"
+              :label="t('ops.alertsCenter.policyTypes.availability')"
+            />
+            <el-option
+              value="task"
+              :label="t('ops.alertsCenter.policyTypes.task')"
+            />
+            <el-option
+              value="event"
+              :label="t('ops.alertsCenter.policyTypes.event')"
+            />
+            <el-option
+              value="system"
+              :label="t('ops.alertsCenter.policyTypes.system')"
+            />
           </el-select>
           <el-select
             v-model="filters.status"
@@ -402,9 +429,18 @@ watch(
             style="width: 130px"
             :placeholder="t('ops.alertsCenter.common.allStatus')"
           >
-            <el-option value="firing" :label="t('ops.alertsCenter.active.firing')" />
-            <el-option value="acknowledged" :label="t('ops.alertsCenter.active.acknowledged')" />
-            <el-option value="resolved" :label="t('ops.alerts.status.resolved')" />
+            <el-option
+              value="firing"
+              :label="t('ops.alertsCenter.active.firing')"
+            />
+            <el-option
+              value="acknowledged"
+              :label="t('ops.alertsCenter.active.acknowledged')"
+            />
+            <el-option
+              value="resolved"
+              :label="t('ops.alerts.status.resolved')"
+            />
           </el-select>
           <el-select
             v-model="filters.severity"
@@ -412,92 +448,143 @@ watch(
             style="width: 130px"
             :placeholder="t('ops.alertsCenter.common.allSeverity')"
           >
-            <el-option value="critical" :label="t('ops.alertsCenter.common.critical')" />
-            <el-option value="warning" :label="t('ops.alertsCenter.common.warning')" />
-            <el-option value="info" :label="t('ops.alertsCenter.common.info')" />
+            <el-option
+              value="critical"
+              :label="t('ops.alertsCenter.common.critical')"
+            />
+            <el-option
+              value="warning"
+              :label="t('ops.alertsCenter.common.warning')"
+            />
+            <el-option
+              value="info"
+              :label="t('ops.alertsCenter.common.info')"
+            />
           </el-select>
         </template>
         <template #toolbar-utility>
-          <el-button class="hfl-refresh-button" :title="t('ops.task.btnRefresh')" :aria-label="t('ops.task.btnRefresh')" :disabled="loading" @click="fetchAlerts">
-            <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+          <el-button
+            class="hfl-refresh-button"
+            :title="t('ops.task.btnRefresh')"
+            :aria-label="t('ops.task.btnRefresh')"
+            :disabled="loading"
+            @click="fetchAlerts"
+          >
+            <RefreshCw
+              :size="16"
+              :class="{ 'is-spinning': loading }"
+            />
           </el-button>
         </template>
 
         <template #table="{ tableMaxHeight }">
-        <el-table
-          ref="alertsTableRef"
-          v-table-column-resize="'ops.alertIncidents'"
-          v-loading="loading"
-          :data="alerts"
-          stripe
-          class="hfl-list-table"
-          row-key="id"
-          :max-height="tableMaxHeight"
-          @selection-change="onAlertSelectionChange"
-        >
-          <el-table-column
-            type="selection"
-            width="35"
-            fixed="left"
-          />
-          <el-table-column :label="t('ops.alertsCenter.common.title')" min-width="260" fixed="left">
-            <template #default="{ row }">
-              <div class="hfl-ops-primary-cell">
-                <div class="min-w-0">
-                  <div class="flex min-w-0 items-center gap-1">
-                    <button
-                      type="button"
-                      class="hfl-table-name-link hfl-table-name-link--single min-w-0"
-                      @click="openDetail(row)"
-                    >
-                      {{ row.title }}
-                    </button>
-                  </div>
-                  <div class="hfl-ops-cell-stack__meta line-clamp-1">
-                    {{ alertTitleMeta(row) }}
+          <el-table
+            ref="alertsTableRef"
+            v-table-column-resize="'ops.alertIncidents'"
+            v-loading="loading"
+            :data="alerts"
+            stripe
+            class="hfl-list-table"
+            row-key="id"
+            :max-height="tableMaxHeight"
+            @selection-change="onAlertSelectionChange"
+          >
+            <el-table-column
+              type="selection"
+              width="35"
+              fixed="left"
+            />
+            <el-table-column
+              :label="t('ops.alertsCenter.common.title')"
+              min-width="260"
+              fixed="left"
+            >
+              <template #default="{ row }">
+                <div class="hfl-ops-primary-cell">
+                  <div class="min-w-0">
+                    <div class="flex min-w-0 items-center gap-1">
+                      <button
+                        type="button"
+                        class="hfl-table-name-link hfl-table-name-link--single min-w-0"
+                        @click="openDetail(row)"
+                      >
+                        {{ row.title }}
+                      </button>
+                    </div>
+                    <div class="hfl-ops-cell-stack__meta line-clamp-1">
+                      {{ alertTitleMeta(row) }}
+                    </div>
                   </div>
                 </div>
-              </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.alertsCenter.common.severity')"
+              width="100"
+            >
+              <template #default="{ row }">
+                <el-tag
+                  v-bind="severityStatusTagAttrs(row.severity)"
+                  size="small"
+                >
+                  {{ severityLabel(row.severity) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.alertsCenter.common.type')"
+              width="130"
+            >
+              <template #default="{ row }">
+                <AlertPolicyTypeLabel :type="row.type" />
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.alertsCenter.common.resource')"
+              min-width="160"
+            >
+              <template #default="{ row }">
+                <span :class="hasResourceLabel(row) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ resourceLabel(row) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.alertsCenter.common.status')"
+              width="120"
+            >
+              <template #default="{ row }">
+                <el-tag
+                  :type="statusTagType(row.status)"
+                  size="small"
+                >
+                  {{ statusLabel(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.alertsCenter.active.firstTriggered')"
+              width="170"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !(row.firstTriggeredAt || row.first_triggered_at) }"
+                >
+                  {{ formatDate(row.firstTriggeredAt || row.first_triggered_at) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.alertsCenter.common.duration')"
+              width="100"
+            >
+              <template #default="{ row }">
+                <span :class="{ 'hfl-empty-mark': (row.durationSeconds ?? row.duration_seconds) == null }">{{ duration(row) }}</span>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty :description="emptyDescription" />
             </template>
-          </el-table-column>
-          <el-table-column :label="t('ops.alertsCenter.common.severity')" width="100">
-            <template #default="{ row }">
-              <el-tag v-bind="severityStatusTagAttrs(row.severity)" size="small">
-                {{ severityLabel(row.severity) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('ops.alertsCenter.common.type')" width="130">
-            <template #default="{ row }">
-              <AlertPolicyTypeLabel :type="row.type" />
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('ops.alertsCenter.common.resource')" min-width="160">
-            <template #default="{ row }">
-              <span :class="hasResourceLabel(row) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">{{ resourceLabel(row) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('ops.alertsCenter.common.status')" width="120">
-            <template #default="{ row }">
-              <el-tag :type="statusTagType(row.status)" size="small">
-                {{ statusLabel(row.status) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('ops.alertsCenter.active.firstTriggered')" width="170">
-            <template #default="{ row }">
-              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.firstTriggeredAt || row.first_triggered_at) }">
-                {{ formatDate(row.firstTriggeredAt || row.first_triggered_at) }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('ops.alertsCenter.common.duration')" width="100">
-            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': (row.durationSeconds ?? row.duration_seconds) == null }">{{ duration(row) }}</span></template>
-          </el-table-column>
-          <template #empty>
-            <el-empty :description="emptyDescription" />
-          </template>
-        </el-table>
+          </el-table>
         </template>
 
         <template #footer>
@@ -532,15 +619,23 @@ watch(
         <span class="hfl-detail-drawer__title">{{ selected?.title || t('ops.nav.alerts') }}</span>
       </template>
 
-      <div v-if="selected" class="hfl-detail-drawer__body">
+      <div
+        v-if="selected"
+        class="hfl-detail-drawer__body"
+      >
         <div class="hfl-detail-sections">
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('ops.alertsCenter.common.basicInfo') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.alertsCenter.common.basicInfo') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.status') }}</span>
                 <span class="hfl-detail-row__value">
-                  <el-tag :type="statusTagType(selected.status)" size="small">
+                  <el-tag
+                    :type="statusTagType(selected.status)"
+                    size="small"
+                  >
                     {{ statusLabel(selected.status) }}
                   </el-tag>
                 </span>
@@ -548,14 +643,20 @@ watch(
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.severity') }}</span>
                 <span class="hfl-detail-row__value">
-                  <el-tag v-bind="severityStatusTagAttrs(selected.severity)" size="small">
+                  <el-tag
+                    v-bind="severityStatusTagAttrs(selected.severity)"
+                    size="small"
+                  >
                     {{ severityLabel(selected.severity) }}
                   </el-tag>
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.type') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !selected.type }">{{ typeLabel(selected.type) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !selected.type }"
+                >{{ typeLabel(selected.type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.id') }}</span>
@@ -573,50 +674,76 @@ watch(
           </section>
 
           <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">{{ t('ops.alertsCenter.common.resource') }}</h4>
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.alertsCenter.common.resource') }}
+            </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.targetColumn') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !(selected.resourceType || selected.resource_type) }">{{ resourceTypeLabel(selected.resourceType || selected.resource_type) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !(selected.resourceType || selected.resource_type) }"
+                >{{ resourceTypeLabel(selected.resourceType || selected.resource_type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.resource') }}</span>
-                <span class="hfl-detail-row__value" :class="hasResourceLabel(selected) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="hasResourceLabel(selected) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
+                >
                   {{ resourceLabel(selected) }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.task.resourceId') }}</span>
-                <span class="hfl-detail-row__value" :class="selected.resourceId || selected.resource_id ? 'hfl-table-cell-mono' : 'hfl-empty-mark'">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="selected.resourceId || selected.resource_id ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
+                >
                   {{ selected.resourceId || selected.resource_id || t('common.empty') }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.duration') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': (selected.durationSeconds ?? selected.duration_seconds) == null }">{{ duration(selected) }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': (selected.durationSeconds ?? selected.duration_seconds) == null }"
+                >{{ duration(selected) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.active.firstTriggered') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !(selected.firstTriggeredAt || selected.first_triggered_at) }">
+                <span
+                  class="hfl-detail-row__value hfl-table-cell-time"
+                  :class="{ 'hfl-detail-row__empty': !(selected.firstTriggeredAt || selected.first_triggered_at) }"
+                >
                   {{ formatDate(selected.firstTriggeredAt || selected.first_triggered_at) }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.updatedAt') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !(selected.lastTriggeredAt || selected.last_triggered_at || selected.createdAt || selected.created_at) }">
+                <span
+                  class="hfl-detail-row__value hfl-table-cell-time"
+                  :class="{ 'hfl-detail-row__empty': !(selected.lastTriggeredAt || selected.last_triggered_at || selected.createdAt || selected.created_at) }"
+                >
                   {{ formatDate(selected.lastTriggeredAt || selected.last_triggered_at || selected.createdAt || selected.created_at) }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">Current</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': (selected.currentValue ?? selected.current_value) == null }">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': (selected.currentValue ?? selected.current_value) == null }"
+                >
                   {{ alertNumericValue(selected.currentValue ?? selected.current_value) }}
                   <template v-if="selected.unit"> {{ selected.unit }}</template>
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">Threshold</span>
-                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': (selected.thresholdValue ?? selected.threshold_value) == null }">
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': (selected.thresholdValue ?? selected.threshold_value) == null }"
+                >
                   {{ alertNumericValue(selected.thresholdValue ?? selected.threshold_value) }}
                   <template v-if="selected.unit"> {{ selected.unit }}</template>
                 </span>

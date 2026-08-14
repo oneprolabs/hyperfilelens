@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { compactSourceText } from '../../test/sourceText'
 
 const wizardSource = readFileSync(new URL('./BackupCreateWizard.vue', import.meta.url), 'utf8')
+const compactWizardSource = compactSourceText(wizardSource)
 const shellSource = readFileSync(new URL('./BackupConfigCreateWizard.vue', import.meta.url), 'utf8')
 
 describe('BackupCreateWizard restore plan layout', () => {
@@ -49,16 +51,16 @@ describe('BackupCreateWizard restore plan layout', () => {
   it('keeps long restore picker values available instead of silently clipping them', () => {
     const treeLabelRule = wizardSource.match(/\.create-tree-node-content__label \{([\s\S]*?)\n\}/)?.[1] || ''
 
-    expect(wizardSource).toContain(':title="recoverySourcePathInputValue(dirPlan.sourcePath) || undefined"')
-    expect(wizardSource).toContain('<template #label="{ label }">')
-    expect(wizardSource).toContain('class="create-recovery-target-selected-label" :title="label"')
-    expect(wizardSource).toContain(':title="dirPlan.restoreDir || undefined"')
+    expect(compactWizardSource).toContain(':title="recoverySourcePathInputValue(dirPlan.sourcePath) || undefined"')
+    expect(compactWizardSource).toContain('<template #label="{ label }">')
+    expect(compactWizardSource).toContain('class="create-recovery-target-selected-label" :title="label"')
+    expect(compactWizardSource).toContain(':title="dirPlan.restoreDir || undefined"')
     expect(treeLabelRule).toContain('overflow-wrap: anywhere;')
     expect(treeLabelRule).toContain('white-space: normal;')
     expect(treeLabelRule).not.toContain('text-overflow: ellipsis;')
     expect(wizardSource).toContain('.el-tree-node__expand-icon.is-leaf) {\n  width: 8px;')
     expect(wizardSource).toMatch(/\.source-dir-tree :deep\(\.el-tree-node\.is-current > \.el-tree-node__content\) \{[\s\S]*?var\(--el-bg-color-overlay\)/)
     expect(wizardSource).not.toContain('width: min(360px, calc(100vw - 48px)) !important;')
-    expect(wizardSource).toContain('class="create-recovery-plan-action hfl-table-no-tooltip"')
+    expect(compactWizardSource).toContain('class="create-recovery-plan-action hfl-table-no-tooltip"')
   })
 })
