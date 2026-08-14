@@ -803,6 +803,9 @@ class LensRunSubmission(OrganizationScopedModel):
     )
     idempotency_key = models.CharField(max_length=128)
     question = models.TextField(blank=True, default="")
+    # Keep this nullable so the previous blue/green API can still insert
+    # no-attachment submissions after this migration and before traffic cutover.
+    attachment_uuids = models.JSONField(default=list, blank=True, null=True)
     status = models.CharField(
         max_length=16,
         choices=Status.choices,

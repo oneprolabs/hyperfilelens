@@ -34,6 +34,7 @@ function mountList(props: Record<string, unknown>) {
   })
   return mount(CopilotMessageList, {
     props: {
+      sessionId: 1,
       messages: [],
       ...props,
     },

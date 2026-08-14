@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 defineOptions({ name: 'InsightCopilot' })
-import { apiErrorMessage } from '../../lib/api'
+import { apiErrorMessage, type ApiError } from '../../lib/api'
 import {
   beginSessionRunSubmission,
   clearSessionRunSubmission,
@@ -15,6 +15,7 @@ import {
 import { useCopilotRunStore } from '../../stores/copilotRunStore'
 import {
   createCopilotRun,
+  deleteCopilotAttachment,
   deleteCopilotSession,
   fetchCopilotReadiness,
   fetchLensHealth,
@@ -24,8 +25,12 @@ import {
   listKnowledgeSources,
   listLensGateways,
   markCopilotSessionViewed,
+  pinCopilotSession,
   renameCopilotSession,
   retryCopilotSession,
+  unpinCopilotSession,
+  uploadCopilotAttachment,
+  type LensChatAttachment,
   type LensChatMessage,
   type LensCopilotActiveRun,
   type LensCopilotReadiness,
@@ -44,7 +49,7 @@ import CopilotLifecycleState from './copilot/CopilotLifecycleState.vue'
 import CopilotMessageList from './copilot/CopilotMessageList.vue'
 import CopilotSessionSidebar, { type SessionGroupKey, type SessionRow } from './copilot/CopilotSessionSidebar.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
-import type { CopilotDisplayMessage } from './copilot/types'
+import type { CopilotComposerAttachment, CopilotDisplayMessage } from './copilot/types'
 import { appendRunOutcomeMessages } from './copilot/runOutcomes'
 import { Menu } from 'lucide-vue-next'
 import { useResponsiveLayout } from '../../composables/useResponsiveLayout'
@@ -72,9 +77,11 @@ const deleteTarget = ref<SessionRow | null>(null)
 const messagesBySession = ref<Record<number, CopilotDisplayMessage[]>>({})
 const selectedStarterBySession = ref<Record<number, string>>({})
 const input = ref('')
+const composerAttachments = ref<CopilotComposerAttachment[]>([])
 const messageListRef = ref<{ scrollToBottom: () => void } | null>(null)
 const lifecyclePollingIds = new Set<number>()
 let componentUnmounted = false
+let composerLifecycleGeneration = 0
 
 let idSeq = 0
 function uid(prefix: string) {
@@ -105,8 +112,17 @@ function groupForDate(iso: string | null | undefined): SessionGroupKey {
 function toSessionRows(rows: LensSessionLink[]): SessionRow[] {
   return rows.map((row) => ({
     ...row,
-    group: groupForDate(row.last_message_at || row.created_at),
-  }))
+    group: row.pinned_at
+      ? 'pinned'
+      : groupForDate(row.last_message_at || row.created_at),
+  })).sort((left, right) => {
+    const leftPinned = left.pinned_at ? Date.parse(left.pinned_at) : 0
+    const rightPinned = right.pinned_at ? Date.parse(right.pinned_at) : 0
+    if (leftPinned !== rightPinned) return rightPinned - leftPinned
+    const leftRecent = Date.parse(left.last_message_at || left.created_at || '') || 0
+    const rightRecent = Date.parse(right.last_message_at || right.created_at || '') || 0
+    return rightRecent - leftRecent
+  })
 }
 
 function welcomeMessage(sessionId: number, createdAt?: string | null): CopilotDisplayMessage {
@@ -145,6 +161,7 @@ function mapApiMessage(row: LensChatMessage): CopilotDisplayMessage | null {
     createdAt: row.created_at,
     runId: row.run,
     thinking: row.thinking,
+    attachments: row.attachments,
   }
 }
 
@@ -299,6 +316,15 @@ const composerDisabled = computed(() => {
 
 const bubbleTag = computed(() => activeAssistant.value?.name ?? '')
 
+const supportsImageAttachments = computed(() =>
+  Boolean(activeAssistant.value?.multimodal_model_ref),
+)
+
+const supportsDocumentAttachments = computed(() =>
+  activeAssistant.value?.supports_document_attachments === true
+  && activeAssistant.value?.selected_task !== 'general_chat',
+)
+
 const selectedStarterKey = computed(() => {
   const sessionId = activeSessionId.value
   return sessionId == null ? '' : selectedStarterBySession.value[sessionId] || ''
@@ -354,6 +380,7 @@ async function bootstrap() {
       knowledgeSources.value = []
       modelReadiness.value = null
       sessions.value = []
+      clearComposerAttachments({ deleteDocuments: true })
       activeSessionId.value = null
       return
     }
@@ -366,6 +393,7 @@ async function bootstrap() {
       knowledgeSources.value = []
       modelReadiness.value = null
       sessions.value = []
+      clearComposerAttachments({ deleteDocuments: true })
       activeSessionId.value = null
       return
     }
@@ -398,6 +426,9 @@ async function bootstrap() {
         ? sessions.value.find((row) => row.id === routeSessionId)
         : null
       const nextId = requested?.id ?? remembered?.id ?? sessions.value[0]!.id
+      if (activeSessionId.value !== nextId) {
+        clearComposerAttachments({ deleteDocuments: true })
+      }
       activeSessionId.value = nextId
       const next = sessions.value.find((row) => row.id === nextId)
       if (next?.lifecycle_status === 'provisioning') {
@@ -406,6 +437,7 @@ async function bootstrap() {
         await copilotStore.syncSession(nextId, syncHandlers, nextId, { attachStream: true })
       }
     } else {
+      clearComposerAttachments({ deleteDocuments: true })
       activeSessionId.value = null
     }
 
@@ -418,6 +450,7 @@ async function bootstrap() {
 
 async function selectSession(id: number) {
   const previousId = activeSessionId.value
+  if (previousId !== id) clearComposerAttachments({ deleteDocuments: true })
   activeSessionId.value = id
   try {
     await copilotStore.selectSession(previousId, id, syncHandlers, id)
@@ -465,6 +498,9 @@ async function retryProvision(row: SessionRow) {
   try {
     const updated = await retryCopilotSession(row.id)
     sessions.value = sessions.value.map((item) => item.id === row.id ? { ...updated, group: item.group } : item)
+    if (activeSessionId.value !== row.id) {
+      clearComposerAttachments({ deleteDocuments: true })
+    }
     activeSessionId.value = row.id
     if (updated.lifecycle_status === 'ready') {
       await copilotStore.syncSession(row.id, syncHandlers, row.id, { attachStream: true })
@@ -486,6 +522,37 @@ async function renameSession(row: SessionRow, title: string) {
     )
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('insight.copilot.renameFailed')), grouping: true })
+  }
+}
+
+async function setSessionPinned(row: SessionRow, pinned: boolean) {
+  try {
+    const updated = pinned
+      ? await pinCopilotSession(row.id)
+      : await unpinCopilotSession(row.id)
+    sessions.value = toSessionRows(
+      sessions.value.map((item) =>
+        item.id === row.id
+          ? { ...item, pinned_at: updated.pinned_at ?? null }
+          : item,
+      ),
+    )
+    ElMessage.success({
+      message: t(
+        pinned
+          ? 'insight.copilot.sessionPinned'
+          : 'insight.copilot.sessionUnpinned',
+      ),
+      grouping: true,
+    })
+  } catch (err) {
+    ElMessage.error({
+      message: apiErrorMessage(
+        err,
+        t('insight.copilot.sessionActionFailed'),
+      ),
+      grouping: true,
+    })
   }
 }
 
@@ -517,6 +584,7 @@ async function confirmDeleteSession() {
     delete starterCopy[row.id]
     selectedStarterBySession.value = starterCopy
     if (activeSessionId.value === row.id) {
+      clearComposerAttachments({ deleteDocuments: false })
       activeSessionId.value = sessions.value[0]?.id ?? null
       if (activeSessionId.value != null) {
         await copilotStore.syncSession(
@@ -555,24 +623,235 @@ function retryQuestion(text: string) {
   input.value = text
 }
 
-function onAttach() {
-  ElMessage.info({ message: t('insight.copilot.attachComingSoon'), grouping: true })
+function attachmentErrorMessage(error: unknown) {
+  const message = apiErrorMessage(error, '')
+  if (message.includes('ATTACHMENT_TOO_LARGE')) {
+    return t('insight.copilot.attachmentTooLarge')
+  }
+  if (message.includes('ATTACHMENT_DIMENSIONS_TOO_LARGE')) {
+    return t('insight.copilot.attachmentImageDimensionsTooLarge')
+  }
+  if (message.includes('ATTACHMENT_ASPECT_UNSUPPORTED')) {
+    return t('insight.copilot.attachmentImageAspectUnsupported')
+  }
+  if (
+    message.includes('ATTACHMENT_UNSUPPORTED_TYPE')
+    || message.includes('DOCUMENT_ATTACHMENTS_UNSUPPORTED')
+  ) {
+    return t('insight.copilot.attachmentUnsupported')
+  }
+  if (message.includes('ATTACHMENT_TOO_MANY')) {
+    return t('insight.copilot.attachmentTooMany')
+  }
+  if (message.includes('does not accept images')) {
+    return t('insight.copilot.attachmentModelUnsupported')
+  }
+  if (message.includes('does not accept document')) {
+    return t('insight.copilot.attachmentDocumentUnsupported')
+  }
+  return message || t('insight.copilot.attachmentUploadFailed')
 }
 
-async function submitQuestion(question: string, { clearComposer = false } = {}) {
+function isDefinitiveRunRejection(error: unknown) {
+  const status = Number((error as Partial<ApiError> | null)?.status || 0)
+  return status >= 400
+    && status < 500
+    && ![408, 409, 425, 429].includes(status)
+}
+
+function isMissingAttachmentError(error: unknown) {
+  const apiError = error as Partial<ApiError> | null
+  return [apiError?.errorCode, apiError?.code, apiErrorMessage(error, '')]
+    .some((value) => String(value || '').includes('ATTACHMENT_NOT_FOUND'))
+}
+
+function revokeComposerAttachment(item: CopilotComposerAttachment) {
+  if (item.localUrl) URL.revokeObjectURL(item.localUrl)
+}
+
+function revokeComposerAttachments(items: CopilotComposerAttachment[]) {
+  for (const item of items) revokeComposerAttachment(item)
+}
+
+function clearComposerAttachments({ deleteDocuments }: { deleteDocuments: boolean }) {
+  composerLifecycleGeneration += 1
+  const current = composerAttachments.value
+  composerAttachments.value = []
+  for (const item of current) {
+    revokeComposerAttachment(item)
+    if (
+      deleteDocuments
+      && item.status === 'ready'
+      && item.kind === 'document'
+      && activeSessionId.value != null
+    ) {
+      void deleteCopilotAttachment(
+        activeSessionId.value,
+        item.uuid,
+        item.url,
+      ).catch(() => undefined)
+    }
+  }
+}
+
+function removeComposerAttachment(item: CopilotComposerAttachment) {
+  composerAttachments.value = composerAttachments.value.filter(
+    (candidate) => candidate.key !== item.key,
+  )
+  revokeComposerAttachment(item)
+  if (
+    item.status === 'ready'
+    && item.kind === 'document'
+    && activeSessionId.value != null
+  ) {
+    void deleteCopilotAttachment(
+      activeSessionId.value,
+      item.uuid,
+      item.url,
+    ).catch(() => {
+      ElMessage.warning({
+        message: t('insight.copilot.attachmentDeleteFailed'),
+        grouping: true,
+      })
+    })
+  }
+}
+
+async function addComposerAttachments(files: File[]) {
+  const sessionId = activeSessionId.value
+  if (sessionId == null || composerDisabled.value) return
+  const available = Math.max(0, 4 - composerAttachments.value.length)
+  const selected = files.slice(0, available)
+  if (files.length > available) {
+    ElMessage.warning({
+      message: t('insight.copilot.attachmentMaxCount', { max: 4 }),
+      grouping: true,
+    })
+  }
+  const drafts = selected.map((file) => {
+    const key = uid('attachment')
+    const kind = file.type.startsWith('image/') ? 'image' : 'document'
+    const draft: CopilotComposerAttachment = {
+      key,
+      uuid: '',
+      kind,
+      mime_type: file.type,
+      byte_size: file.size,
+      original_name: file.name,
+      localUrl: kind === 'image' ? URL.createObjectURL(file) : '',
+      status: 'uploading',
+    }
+    return { file, draft }
+  })
+  composerAttachments.value = [
+    ...composerAttachments.value,
+    ...drafts.map(({ draft }) => draft),
+  ]
+  await Promise.all(drafts.map(async ({ file, draft }) => {
+    try {
+      const uploaded = await uploadCopilotAttachment(sessionId, file)
+      const current = composerAttachments.value.find((item) => item.key === draft.key)
+      if (!current || activeSessionId.value !== sessionId) {
+        revokeComposerAttachment(draft)
+        if (uploaded.kind === 'document') {
+          void deleteCopilotAttachment(
+            sessionId,
+            uploaded.uuid,
+            uploaded.url,
+          ).catch(() => undefined)
+        }
+        return
+      }
+      composerAttachments.value = composerAttachments.value.map((item) =>
+        item.key === draft.key
+          ? {
+              ...uploaded,
+              key: draft.key,
+              localUrl: draft.localUrl,
+              status: 'ready',
+            }
+          : item,
+      )
+    } catch (error) {
+      composerAttachments.value = composerAttachments.value.filter(
+        (item) => item.key !== draft.key,
+      )
+      revokeComposerAttachment(draft)
+      ElMessage.error({
+        message: attachmentErrorMessage(error),
+        grouping: true,
+      })
+    }
+  }))
+}
+
+function apiAttachment(item: CopilotComposerAttachment): LensChatAttachment {
+  return {
+    uuid: item.uuid,
+    url: item.url,
+    kind: item.kind,
+    mime_type: item.mime_type,
+    width: item.width,
+    height: item.height,
+    byte_size: item.byte_size,
+    original_name: item.original_name,
+    order: item.order,
+    expires_at: item.expires_at,
+  }
+}
+
+async function submitQuestion(
+  question: string,
+  {
+    clearComposer = false,
+    attachments = [],
+  }: {
+    clearComposer?: boolean
+    attachments?: CopilotComposerAttachment[]
+  } = {},
+) {
   const text = question.trim()
   const sessionId = activeSessionId.value
-  if (!text || sessionId == null || composerDisabled.value) return
+  const readyAttachments = attachments.filter((item) => item.status === 'ready')
+  if ((!text && !readyAttachments.length) || sessionId == null || composerDisabled.value) return
 
+  const submissionComposerGeneration = composerLifecycleGeneration
+  const optimisticMessageId = uid('m')
   beginSessionRunSubmission(sessionId)
   const list = [...(messagesBySession.value[sessionId] ?? [])]
-  list.push({ id: uid('m'), role: 'user', text, createdAt: new Date().toISOString() })
+  list.push({
+    id: optimisticMessageId,
+    role: 'user',
+    text,
+    attachments: readyAttachments.map(apiAttachment),
+    createdAt: new Date().toISOString(),
+  })
   messagesBySession.value = { ...messagesBySession.value, [sessionId]: list }
   if (clearComposer) input.value = ''
+  if (readyAttachments.length) {
+    const submittedKeys = new Set(readyAttachments.map((item) => item.key))
+    composerAttachments.value = composerAttachments.value.filter(
+      (item) => !submittedKeys.has(item.key),
+    )
+  }
   scrollToBottom()
 
+  let runAccepted = false
+  let attachmentPreviewsReleased = false
   try {
-    const run = await createCopilotRun(sessionId, text, uid(`copilot-${sessionId}`))
+    const idempotencyKey = uid(`copilot-${sessionId}`)
+    const attachmentUuids = readyAttachments.map((item) => item.uuid)
+    const run = attachmentUuids.length
+      ? await createCopilotRun(
+          sessionId,
+          text,
+          idempotencyKey,
+          attachmentUuids,
+        )
+      : await createCopilotRun(sessionId, text, idempotencyKey)
+    runAccepted = true
+    revokeComposerAttachments(readyAttachments)
+    attachmentPreviewsReleased = true
     applySessionActiveMeta(sessionId, {
       uuid: run.uuid,
       status: run.status || 'queued',
@@ -585,7 +864,47 @@ async function submitQuestion(question: string, { clearComposer = false } = {}) 
       activeSessionId.value,
     )
   } catch (err) {
-    clearSessionRunSubmission(sessionId)
+    const definitiveRejection = !runAccepted && isDefinitiveRunRejection(err)
+    const missingAttachment = isMissingAttachmentError(err)
+    const restoreRejectedRequest = definitiveRejection
+      && activeSessionId.value === sessionId
+      && !componentUnmounted
+      && composerLifecycleGeneration === submissionComposerGeneration
+    if (definitiveRejection) {
+      clearSessionRunSubmission(sessionId)
+      const currentMessages = messagesBySession.value[sessionId] ?? []
+      messagesBySession.value = {
+        ...messagesBySession.value,
+        [sessionId]: currentMessages.filter(
+          (item) => item.id !== optimisticMessageId,
+        ),
+      }
+    }
+    refreshPollerSessions()
+    if (restoreRejectedRequest && clearComposer) input.value = question
+    if (
+      restoreRejectedRequest
+      && readyAttachments.length
+      && !missingAttachment
+    ) {
+      composerAttachments.value = [
+        ...composerAttachments.value,
+        ...readyAttachments,
+      ]
+    } else if (!attachmentPreviewsReleased) {
+      revokeComposerAttachments(readyAttachments)
+      attachmentPreviewsReleased = true
+    }
+    if (definitiveRejection && !restoreRejectedRequest && !missingAttachment) {
+      for (const item of readyAttachments) {
+        if (item.kind !== 'document') continue
+        void deleteCopilotAttachment(
+          sessionId,
+          item.uuid,
+          item.url,
+        ).catch(() => undefined)
+      }
+    }
     const message = apiErrorMessage(err, t('errors.generic.requestFailed'))
     ElMessage.error({ message, grouping: true })
     await copilotStore.syncSession(sessionId, syncHandlers, activeSessionId.value).catch(() => undefined)
@@ -593,7 +912,10 @@ async function submitQuestion(question: string, { clearComposer = false } = {}) 
 }
 
 async function sendMessage() {
-  await submitQuestion(input.value, { clearComposer: true })
+  await submitQuestion(input.value, {
+    clearComposer: true,
+    attachments: [...composerAttachments.value],
+  })
 }
 
 async function stopStreaming() {
@@ -644,11 +966,13 @@ onActivated(() => {
 })
 
 onDeactivated(() => {
+  clearComposerAttachments({ deleteDocuments: true })
   copilotStore.detachSessionStream(activeSessionId.value ?? -1)
 })
 
 onUnmounted(() => {
   componentUnmounted = true
+  clearComposerAttachments({ deleteDocuments: true })
   copilotStore.teardown()
 })
 </script>
@@ -665,6 +989,7 @@ onUnmounted(() => {
       @delete="deleteSession"
       @rename="renameSession"
       @retry="retryProvision"
+      @pin="setSessionPinned"
       @new-chat="openNewChatFlow"
     />
 
@@ -686,6 +1011,7 @@ onUnmounted(() => {
         @delete="deleteSession"
         @rename="renameSession"
         @retry="retryProvision"
+        @pin="setSessionPinned"
         @new-chat="mobileSessionsOpen = false; openNewChatFlow()"
       />
     </ElDrawer>
@@ -724,6 +1050,7 @@ onUnmounted(() => {
           <CopilotMessageList
             :key="activeSessionId"
             ref="messageListRef"
+            :session-id="activeSessionId ?? 0"
             :messages="activeMessages"
             :streaming="showLiveStream"
             :streaming-content="activeStream?.partialAnswer ?? ''"
@@ -741,11 +1068,15 @@ onUnmounted(() => {
         <CopilotComposer
           v-if="activeSession?.lifecycle_status === 'ready'"
           v-model="input"
+          :attachments="composerAttachments"
           :sending="runCanStop"
           :disabled="composerDisabled"
+          :supports-images="supportsImageAttachments"
+          :supports-documents="supportsDocumentAttachments"
           @send="sendMessage"
           @stop="stopStreaming"
-          @attach="onAttach"
+          @attach="addComposerAttachments"
+          @remove-attachment="removeComposerAttachment"
         />
       </template>
 

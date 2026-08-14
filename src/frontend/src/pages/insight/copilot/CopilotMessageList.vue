@@ -7,12 +7,14 @@ import { copyTextToClipboard } from '../../../lib/clipboard'
 import { currentUser } from '../../../composables/useAuth'
 import CopilotMarkdown from '../../../components/copilot/CopilotMarkdown.vue'
 import CopilotStreamingMarkdown from '../../../components/copilot/CopilotStreamingMarkdown.vue'
+import CopilotAttachmentList from './CopilotAttachmentList.vue'
 import type { CopilotDisplayMessage } from './types'
 import type { ThinkingStep } from '../../../composables/useLensRunStream'
 import { formatThinkingStepLabel } from '../../../lib/copilotStreamLabels'
 import type { LensChatThinkingStep } from '../../../lib/lensApi'
 
 const props = defineProps<{
+  sessionId: number
   messages: CopilotDisplayMessage[]
   streamingContent?: string
   streamingThinking?: ThinkingStep[]
@@ -324,6 +326,11 @@ const showLiveRow = computed(() => props.streaming)
                 msg.starterChips ? 'message-card--welcome' : '',
               ]"
             >
+              <CopilotAttachmentList
+                v-if="msg.attachments?.length"
+                :session-id="sessionId"
+                :attachments="msg.attachments"
+              />
               <div
                 v-if="msg.starterChips || msg.isError"
                 class="message-text"
@@ -689,6 +696,10 @@ const showLiveRow = computed(() => props.streaming)
 
 .message-row-user .message-text {
   text-align: right;
+}
+
+.message-row-user :deep(.copilot-message-attachments) {
+  justify-content: flex-end;
 }
 
 .message-text--error {

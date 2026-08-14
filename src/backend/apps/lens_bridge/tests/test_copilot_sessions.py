@@ -1,14 +1,27 @@
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+from urllib.parse import parse_qs, urlsplit
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
+from rest_framework.exceptions import NotFound
 from rest_framework.test import APIClient
 
 from apps.iam.services.registration_service import provision_registered_user_tenant
-from apps.lens_bridge.api.serializers import LensSessionCreateSerializer
+from apps.lens_bridge.api.serializers import (
+    LensRunCreateSerializer,
+    LensSessionCreateSerializer,
+    LensSessionLinkSerializer,
+)
+from apps.lens_bridge.api.views import (
+    _attachment_proxy_url,
+    _require_attachment_proxy_token,
+    _source_lens_session_meta,
+)
 from apps.lens_bridge.models import (
     LensRunSubmission,
     LensSessionLink,
@@ -70,6 +83,106 @@ class LensSessionCreateSerializerTests(SimpleTestCase):
             ),
         )
 
+    def test_run_accepts_an_attachment_without_question_text(self):
+        attachment_uuid = uuid.uuid4()
+        serializer = LensRunCreateSerializer(
+            data={"question": "", "attachment_uuids": [str(attachment_uuid)]}
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data["attachment_uuids"],
+            [attachment_uuid],
+        )
+
+    def test_run_requires_text_or_an_attachment(self):
+        serializer = LensRunCreateSerializer(data={"question": ""})
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("non_field_errors", serializer.errors)
+
+    def test_run_rejects_more_than_four_attachments(self):
+        serializer = LensRunCreateSerializer(
+            data={
+                "attachment_uuids": [str(uuid.uuid4()) for _ in range(5)],
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("attachment_uuids", serializer.errors)
+
+    def test_run_rejects_duplicate_attachment_uuids(self):
+        attachment_uuid = str(uuid.uuid4())
+        serializer = LensRunCreateSerializer(
+            data={
+                "attachment_uuids": [attachment_uuid, attachment_uuid],
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("attachment_uuids", serializer.errors)
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_session_metadata_follows_sourcelens_pagination(
+        self,
+        request_json,
+    ):
+        first_uuid = str(uuid.uuid4())
+        second_uuid = str(uuid.uuid4())
+        request_json.side_effect = [
+            {
+                "results": [{"uuid": first_uuid, "pinned_at": None}],
+                "next": "http://sourcelens/api/lens/sessions/?page=2",
+            },
+            {
+                "results": [
+                    {"uuid": second_uuid, "pinned_at": "2026-08-14T08:00:00Z"}
+                ],
+                "next": None,
+            },
+        ]
+        user = Mock()
+
+        result = _source_lens_session_meta(
+            hfl_user=user,
+            session_uuids={first_uuid, second_uuid},
+        )
+
+        self.assertEqual(set(result), {first_uuid, second_uuid})
+        self.assertEqual(request_json.call_count, 2)
+        self.assertEqual(
+            request_json.call_args_list[1].kwargs["params"],
+            {"page": 2, "page_size": 500},
+        )
+
+    def test_attachment_token_cannot_be_reused_for_another_uuid(self):
+        attachment_uuid = uuid.uuid4()
+        signed_url = _attachment_proxy_url(17, str(attachment_uuid))
+        token = parse_qs(urlsplit(signed_url).query)["token"][0]
+        request = SimpleNamespace(query_params={"token": token})
+
+        with self.assertRaises(NotFound):
+            _require_attachment_proxy_token(
+                request,
+                session_id=17,
+                attachment_uuid=uuid.uuid4(),
+            )
+
+        with self.assertRaises(NotFound):
+            _require_attachment_proxy_token(
+                request,
+                session_id=18,
+                attachment_uuid=attachment_uuid,
+            )
+
+    def test_session_serializer_does_not_invent_an_unpinned_state(self):
+        self.assertNotIn("pinned_at", LensSessionLinkSerializer().fields)
+
+    def test_submission_attachment_field_accepts_mixed_version_writes(self):
+        field = LensRunSubmission._meta.get_field("attachment_uuids")
+
+        self.assertTrue(field.null)
+
 
 class CopilotSessionApiTests(TestCase):
     def setUp(self):
@@ -121,6 +234,212 @@ class CopilotSessionApiTests(TestCase):
         )
         self.assertEqual(payload["run_outcomes"], [])
         self.assertEqual(payload["response_state"]["status"], "idle")
+
+    @patch(
+        "apps.lens_bridge.api.views.copilot_service.list_copilot_assistants",
+        return_value=[],
+    )
+    @patch(
+        "apps.lens_bridge.api.views._source_lens_session_meta",
+        side_effect=sl_client.LensBridgeUnavailable(),
+    )
+    def test_list_omits_pinned_state_when_sourcelens_is_unavailable(
+        self,
+        _session_meta,
+        _assistants,
+    ):
+        response = self.client.get(
+            reverse("lens-copilot-session-list"),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json().get("data", response.json())
+        self.assertEqual(len(payload), 1)
+        self.assertNotIn("pinned_at", payload[0])
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_pin_uses_sourcelens_as_the_authoritative_state(self, request_json):
+        self._mark_session_ready()
+        pinned_at = "2026-08-14T08:00:00Z"
+        request_json.return_value = {
+            "uuid": str(self.session.sl_session_uuid),
+            "pinned_at": pinned_at,
+        }
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-pin",
+                kwargs={"pk": self.session.pk},
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json().get("data", response.json())
+        self.assertEqual(payload["pinned_at"], pinned_at)
+        request_json.assert_called_once_with(
+            "POST",
+            f"/api/lens/sessions/{self.session.sl_session_uuid}/pin/",
+            hfl_user=self.user,
+        )
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_pin_rejects_an_invalid_sourcelens_response(self, request_json):
+        self._mark_session_ready()
+        request_json.return_value = {"pinned_at": None}
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-pin",
+                kwargs={"pk": self.session.pk},
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("invalid session pin response", str(response.json()))
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_multipart")
+    def test_attachment_upload_is_forwarded_to_the_mapped_session(
+        self,
+        request_multipart,
+    ):
+        self._mark_session_ready()
+        attachment_uuid = uuid.uuid4()
+        request_multipart.return_value = {
+            "uuid": str(attachment_uuid),
+            "kind": "document",
+            "original_name": "report.pdf",
+        }
+        uploaded = SimpleUploadedFile(
+            "report.pdf",
+            b"pdf-bytes",
+            content_type="application/pdf",
+        )
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-upload-attachment",
+                kwargs={"pk": self.session.pk},
+            ),
+            {"file": uploaded},
+            format="multipart",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json().get("data", response.json())
+        self.assertEqual(payload["uuid"], str(attachment_uuid))
+        self.assertIn(
+            f"/sessions/{self.session.pk}/attachments/{attachment_uuid}/",
+            payload["url"],
+        )
+        request_multipart.assert_called_once()
+        self.assertEqual(
+            request_multipart.call_args.args[0],
+            f"/api/lens/sessions/{self.session.sl_session_uuid}/attachments/",
+        )
+        self.assertIs(request_multipart.call_args.kwargs["hfl_user"], self.user)
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_multipart")
+    def test_attachment_upload_rejects_an_invalid_sourcelens_response(
+        self,
+        request_multipart,
+    ):
+        self._mark_session_ready()
+        request_multipart.return_value = {
+            "uuid": "not-a-uuid",
+            "kind": "document",
+        }
+        uploaded = SimpleUploadedFile(
+            "report.pdf",
+            b"pdf-bytes",
+            content_type="application/pdf",
+        )
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-upload-attachment",
+                kwargs={"pk": self.session.pk},
+            ),
+            {"file": uploaded},
+            format="multipart",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("invalid attachment response", str(response.json()))
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_multipart")
+    def test_attachment_upload_requires_a_sourcelens_kind(
+        self,
+        request_multipart,
+    ):
+        self._mark_session_ready()
+        request_multipart.return_value = {"uuid": str(uuid.uuid4())}
+        uploaded = SimpleUploadedFile(
+            "report.pdf",
+            b"pdf-bytes",
+            content_type="application/pdf",
+        )
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-upload-attachment",
+                kwargs={"pk": self.session.pk},
+            ),
+            {"file": uploaded},
+            format="multipart",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("invalid attachment response", str(response.json()))
+
+    @patch("apps.lens_bridge.api.views.sl_client.stream_binary")
+    def test_attachment_content_is_streamed_through_hfl(self, stream_binary):
+        self._mark_session_ready()
+        attachment_uuid = uuid.uuid4()
+        stream_binary.return_value = sl_client.BinaryStreamResponse(
+            body=iter([b"abc", b"def"]),
+            content_type="image/png",
+            content_length="6",
+            content_disposition="",
+            cache_control="private, max-age=3600",
+        )
+
+        response = self.client.get(
+            _attachment_proxy_url(self.session.pk, str(attachment_uuid)),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"abcdef")
+        self.assertEqual(response["Content-Type"], "image/png")
+        stream_binary.assert_called_once_with(
+            f"/api/lens/attachments/{attachment_uuid}/",
+            hfl_user=self.user,
+        )
+
+    @patch("apps.lens_bridge.api.views.sl_client.stream_binary")
+    def test_attachment_content_rejects_an_unsigned_uuid(self, stream_binary):
+        self._mark_session_ready()
+        attachment_uuid = uuid.uuid4()
+
+        response = self.client.get(
+            reverse(
+                "lens-copilot-session-attachment-content",
+                kwargs={
+                    "pk": self.session.pk,
+                    "attachment_uuid": attachment_uuid,
+                },
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 404)
+        stream_binary.assert_not_called()
 
     @patch("apps.lens_bridge.api.views.sl_client.stream_sse")
     def test_run_stream_requires_the_run_bound_to_the_session(self, stream_sse):
@@ -466,9 +785,7 @@ class CopilotSessionApiTests(TestCase):
             "Keep this question visible",
         )
 
-    @patch(
-        "apps.lens_bridge.services.chat_lifecycle._queue_teardown_or_record_error"
-    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_teardown_or_record_error")
     def test_delete_returns_the_persisted_deleting_state(self, _queue_teardown):
         response = self.client.delete(
             reverse("lens-copilot-session-detail", kwargs={"pk": self.session.pk}),

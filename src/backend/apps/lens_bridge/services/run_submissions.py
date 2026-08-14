@@ -39,6 +39,10 @@ def _retry_delay(attempts: int) -> timedelta:
     return timedelta(seconds=seconds)
 
 
+def _normalized_attachment_uuids(values) -> list[str]:
+    return [str(value) for value in (values or [])]
+
+
 def _submission_for_active_run(
     link: LensSessionLink,
 ) -> LensRunSubmission | None:
@@ -68,6 +72,7 @@ def prepare_submission(
     *,
     question: str,
     idempotency_key: str,
+    attachment_uuids: list[str] | None = None,
 ) -> tuple[LensRunSubmission, dict[str, Any] | None]:
     """Persist one submission before SourceLens receives the request.
 
@@ -75,6 +80,7 @@ def prepare_submission(
     payload is non-null when the same idempotency key was already bound.
     """
 
+    normalized_attachments = _normalized_attachment_uuids(attachment_uuids)
     link = (
         LensSessionLink.objects.select_for_update()
         .select_related("organization", "hfl_user")
@@ -87,6 +93,16 @@ def prepare_submission(
         if active_submission is not None:
             active_key = active_submission.idempotency_key
         if active_key == idempotency_key:
+            if active_submission is not None and (
+                active_submission.question != question
+                or _normalized_attachment_uuids(
+                    active_submission.attachment_uuids
+                )
+                != normalized_attachments
+            ):
+                raise RunSubmissionConflictError(
+                    "The idempotency key is already associated with another request."
+                )
             if active_submission is None:
                 active_submission = LensRunSubmission.objects.create(
                     organization=link.organization,
@@ -94,6 +110,7 @@ def prepare_submission(
                     session_link=link,
                     idempotency_key=idempotency_key,
                     question=question,
+                    attachment_uuids=normalized_attachments,
                     status=LensRunSubmission.Status.BOUND,
                     sl_run_uuid=link.active_run_uuid,
                     run_status=str(active_run.get("status") or link.active_run_status),
@@ -106,9 +123,13 @@ def prepare_submission(
         idempotency_key=idempotency_key,
     ).first()
     if existing is not None:
-        if existing.question != question:
+        if (
+            existing.question != question
+            or _normalized_attachment_uuids(existing.attachment_uuids)
+            != normalized_attachments
+        ):
             raise RunSubmissionConflictError(
-                "The idempotency key is already associated with another question."
+                "The idempotency key is already associated with another request."
             )
         if existing.status == LensRunSubmission.Status.BOUND:
             return existing, _fetch_submission_run(existing)
@@ -137,6 +158,7 @@ def prepare_submission(
         session_link=link,
         idempotency_key=idempotency_key,
         question=question,
+        attachment_uuids=normalized_attachments,
         recovery_next_at=timezone.now(),
     )
     return submission, None
@@ -190,13 +212,19 @@ def execute_submission(
                 "This chat already has an active response."
             )
 
+    run_body = {
+        "question": submission.question,
+        "idempotency_key": submission.idempotency_key,
+    }
+    attachment_uuids = _normalized_attachment_uuids(
+        submission.attachment_uuids
+    )
+    if attachment_uuids:
+        run_body["attachment_uuids"] = attachment_uuids
     data = sl_client.request_json(
         "POST",
         f"/api/lens/sessions/{link.sl_session_uuid}/runs/",
-        json_body={
-            "question": submission.question,
-            "idempotency_key": submission.idempotency_key,
-        },
+        json_body=run_body,
         hfl_user=submission.hfl_user,
     )
     raw_run_uuid = data.get("uuid") if isinstance(data, dict) else None

@@ -285,6 +285,7 @@ export type LensAssistant = {
   selected_dir?: string
   agent_model_ref?: string | null
   multimodal_model_ref?: string | null
+  supports_document_attachments?: boolean
   agent_rounds?: string
   knowledge_source_id?: number | null
   knowledge_source_name?: string | null
@@ -333,6 +334,7 @@ export type LensSessionLink = {
   last_assistant_message_at: string | null
   last_viewed_at: string | null
   has_unread: boolean
+  pinned_at?: string | null
   active_run_uuid?: string | null
   active_run_status?: string | null
   created_at: string
@@ -385,6 +387,19 @@ export type LensChatThinkingStep = {
   message?: string
 }
 
+export type LensChatAttachment = {
+  uuid: string
+  url?: string
+  kind: 'image' | 'document' | string
+  mime_type?: string
+  width?: number | null
+  height?: number | null
+  byte_size?: number
+  original_name?: string
+  order?: number
+  expires_at?: string
+}
+
 export type LensChatMessage = {
   uuid?: string
   role: 'user' | 'assistant' | 'system'
@@ -396,6 +411,7 @@ export type LensChatMessage = {
     duration_seconds?: number | null
     steps?: LensChatThinkingStep[]
   }
+  attachments?: LensChatAttachment[]
 }
 
 export async function fetchLensHealth(): Promise<LensHealth> {
@@ -998,6 +1014,22 @@ export async function renameCopilotSession(
   return lensPayload<LensSessionLink>(raw)
 }
 
+export async function pinCopilotSession(sessionId: number): Promise<LensSessionLink> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/pin/`), {
+    method: 'POST',
+    headers: lensHeaders(),
+  })
+  return lensPayload<LensSessionLink>(raw)
+}
+
+export async function unpinCopilotSession(sessionId: number): Promise<LensSessionLink> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/unpin/`), {
+    method: 'POST',
+    headers: lensHeaders(),
+  })
+  return lensPayload<LensSessionLink>(raw)
+}
+
 export async function markCopilotSessionViewed(sessionId: number): Promise<LensSessionLink> {
   const raw = await api(lensUrl(`copilot/sessions/${sessionId}/viewed/`), {
     method: 'POST',
@@ -1013,10 +1045,84 @@ export async function fetchCopilotMessages(sessionId: number): Promise<LensChatM
   return lensList<LensChatMessage>(raw)
 }
 
+export async function uploadCopilotAttachment(
+  sessionId: number,
+  file: File,
+): Promise<LensChatAttachment> {
+  const body = new FormData()
+  body.append('file', file)
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/attachments/`), {
+    method: 'POST',
+    headers: lensHeaders(),
+    body,
+  })
+  return lensPayload<LensChatAttachment>(raw)
+}
+
+export async function deleteCopilotAttachment(
+  sessionId: number,
+  attachmentUuid: string,
+  attachmentUrl?: string,
+): Promise<void> {
+  await api(
+    attachmentUrl
+      || lensUrl(`copilot/sessions/${sessionId}/attachments/${attachmentUuid}/`),
+    {
+      method: 'DELETE',
+      headers: lensHeaders(),
+    },
+  )
+}
+
+function attachmentFilename(disposition: string | null): string {
+  if (!disposition) return ''
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) return decodeURIComponent(encoded)
+  return disposition.match(/filename="?([^";]+)"?/i)?.[1] || ''
+}
+
+export async function fetchCopilotAttachmentBlob(
+  sessionId: number,
+  attachmentUuid: string,
+  attachmentUrl?: string,
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; filename: string }> {
+  const path = attachmentUrl
+    || lensUrl(`copilot/sessions/${sessionId}/attachments/${attachmentUuid}/`)
+  const response = await fetch(`${API_BASE}${path}`, {
+    credentials: 'include',
+    signal,
+    headers: {
+      Accept: '*/*',
+      ...lensHeaders(),
+    },
+  })
+  if (!response.ok) {
+    let message = response.statusText || 'Unable to load attachment.'
+    try {
+      const body = await response.json()
+      message = String(
+        body?.data?.error?.message
+          || body?.error?.message
+          || body?.message
+          || message,
+      )
+    } catch {
+      // Keep the HTTP status text for a non-JSON response.
+    }
+    throw new Error(message)
+  }
+  return {
+    blob: await response.blob(),
+    filename: attachmentFilename(response.headers.get('Content-Disposition')),
+  }
+}
+
 export async function createCopilotRun(
   sessionId: number,
   question: string,
   idempotencyKey?: string,
+  attachmentUuids: string[] = [],
 ): Promise<LensRun> {
   const raw = await api(lensUrl(`copilot/sessions/${sessionId}/runs/`), {
     method: 'POST',
@@ -1024,6 +1130,7 @@ export async function createCopilotRun(
     body: JSON.stringify({
       question,
       ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
+      ...(attachmentUuids.length ? { attachment_uuids: attachmentUuids } : {}),
     }),
   })
   return lensPayload<LensRun>(raw)

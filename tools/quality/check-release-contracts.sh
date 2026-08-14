@@ -249,9 +249,9 @@ grep -F 'no_cache=1' <<<"${config}" >/dev/null
 grep -F -- '--prebuilt' "${ROOT}/release/build-sourcelens.sh" >/dev/null
 grep -F 'ln "${source_archive}" "${temporary}"' \
 	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
-grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.29.0}"' \
+grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.30.0}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
-grep -F 'SOURCELENS_GIT_REF=v0.29.0' \
+grep -F 'SOURCELENS_GIT_REF=v0.30.0' \
 	"${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
@@ -400,7 +400,7 @@ grep -F 'NPM_REGISTRY: ${NPM_REGISTRY:-}' \
 grep -F 'CODEGRAPH_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}' \
 	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 
-grep -F '# SourceLens v0.29.0 requires no HFL functional patches.' \
+grep -F '# SourceLens v0.30.0 requires no HFL functional patches.' \
 	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
 [[ -f "${ROOT}/tools/sourcelens/patches/retired/lensnode-tls-v0.4.0.patch" ]]
 if [[ -e "${ROOT}/deploy/installer/sourcelens/lensnode-tls.patch" \
@@ -863,6 +863,10 @@ grep -F 'include /etc/nginx/snippets/hfl-active-upstreams.conf;' \
 	"${ROOT}/deploy/nginx/default.conf" >/dev/null
 grep -F 'api-blue:8000' \
 	"${ROOT}/deploy/nginx/snippets/hfl-active-upstreams.conf" >/dev/null
+grep -F 'location ~ ^/api/v1/lens/copilot/sessions/[0-9]+/attachments/?$ {' \
+	"${ROOT}/deploy/nginx/snippets/hfl-tenant-locations.conf" >/dev/null
+grep -F 'client_max_body_size 26m;' \
+	"${ROOT}/deploy/nginx/snippets/hfl-tenant-locations.conf" >/dev/null
 grep -F 'cmd_manage()' "${ROOT}/deploy/installer/install.sh" >/dev/null
 if grep -F 'docker compose exec -T api python manage.py' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null; then

@@ -46,7 +46,7 @@ Options:
 
 Examples:
   ./dev/sourcelens.sh up
-  ./dev/sourcelens.sh prepare --sourcelens-ref v0.29.0
+  ./dev/sourcelens.sh prepare --sourcelens-ref v0.30.0
   ./dev/sourcelens.sh up --apt-mirror https://mirrors.tuna.tsinghua.edu.cn --pip-index-url https://pypi.tuna.tsinghua.edu.cn/simple --pip-trusted-host pypi.tuna.tsinghua.edu.cn --npm-registry https://registry.npmmirror.com
 USAGE
 }

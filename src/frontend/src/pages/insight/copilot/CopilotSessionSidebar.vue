@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, Ellipsis, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, Ellipsis, Pencil, Pin, PinOff, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { isActiveRunStatus } from '../../../composables/useLensRunStream'
 import type { LensSessionLink } from '../../../lib/lensApi'
 
-export type SessionGroupKey = 'today' | 'yesterday' | 'earlier'
+export type SessionGroupKey = 'pinned' | 'today' | 'yesterday' | 'earlier'
 export type SessionRow = LensSessionLink & { group: SessionGroupKey }
 
 const props = defineProps<{
@@ -20,6 +20,7 @@ const emit = defineEmits<{
   delete: [row: SessionRow]
   rename: [row: SessionRow, title: string]
   retry: [row: SessionRow]
+  pin: [row: SessionRow, pinned: boolean]
   newChat: []
 }>()
 
@@ -29,8 +30,9 @@ const editingTitle = ref('')
 const skipBlurCommit = ref(false)
 
 const sessionGroups = computed(() => {
-  const keys: SessionGroupKey[] = ['today', 'yesterday', 'earlier']
+  const keys: SessionGroupKey[] = ['pinned', 'today', 'yesterday', 'earlier']
   const labels: Record<SessionGroupKey, string> = {
+    pinned: t('insight.copilot.groupPinned'),
     today: t('insight.copilot.groupToday'),
     yesterday: t('insight.copilot.groupYesterday'),
     earlier: t('insight.copilot.groupEarlier'),
@@ -109,6 +111,8 @@ function onRenameKeydown(event: KeyboardEvent, row: SessionRow) {
 }
 
 function handleAction(command: string, row: SessionRow) {
+  if (command === 'pin') emit('pin', row, true)
+  if (command === 'unpin') emit('pin', row, false)
   if (command === 'rename') startRename(row)
   if (command === 'retry') emit('retry', row)
   if (command === 'delete') emit('delete', row)
@@ -158,8 +162,14 @@ function handleAction(command: string, row: SessionRow) {
                 @keydown="onRenameKeydown($event, row)"
                 @blur="commitRename(row, true)"
               >
+              <Pin
+                v-if="editingId !== row.id && row.pinned_at"
+                class="copilot-session-item__pin"
+                :size="13"
+                :aria-label="t('insight.copilot.pinned')"
+              />
               <span
-                v-else
+                v-if="editingId !== row.id"
                 class="copilot-session-item__title"
                 :title="sessionTitle(row)"
               >{{ sessionTitle(row) }}</span>
@@ -215,6 +225,14 @@ function handleAction(command: string, row: SessionRow) {
                 <template #dropdown>
                   <ElDropdownMenu>
                     <ElDropdownItem
+                      v-if="row.lifecycle_status === 'ready'"
+                      class="copilot-session-menu__pin"
+                      :command="row.pinned_at ? 'unpin' : 'pin'"
+                      :icon="row.pinned_at ? PinOff : Pin"
+                    >
+                      {{ row.pinned_at ? t('insight.copilot.unpinSession') : t('insight.copilot.pinSession') }}
+                    </ElDropdownItem>
+                    <ElDropdownItem
                       class="copilot-session-menu__rename"
                       command="rename"
                       :icon="Pencil"
@@ -269,6 +287,7 @@ function handleAction(command: string, row: SessionRow) {
 .copilot-session-item.is-editing .copilot-session-item__content { grid-column: 1 / -1; }
 .copilot-session-item__content { display: grid; min-width: 0; gap: 4px; }
 .copilot-session-item__title-row { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.copilot-session-item__pin { flex: 0 0 auto; color: var(--color-primary); }
 .copilot-session-item__title { min-width: 0; flex: 1; overflow: hidden; color: var(--color-text-title); font-size: 13px; font-weight: 600; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .copilot-session-item__meta { overflow: hidden; color: var(--color-text-tertiary); font-size: 11px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .copilot-session-item__input { width: 100%; min-width: 0; padding: 2px 6px; border: 1px solid var(--color-primary-light); border-radius: 6px; outline: none; background: var(--color-card-bg); color: var(--color-text-title); font: inherit; font-size: 13px; font-weight: 600; }
@@ -287,8 +306,9 @@ function handleAction(command: string, row: SessionRow) {
 .copilot-session-item:hover .copilot-session-item__actions,.copilot-session-item:focus-within .copilot-session-item__actions { opacity: 1; pointer-events: auto; }
 .copilot-session-item:hover .copilot-session-item__more,.copilot-session-item__more:focus-visible { opacity: 1; }
 .copilot-session-item__more:hover { background: color-mix(in srgb, var(--color-text-title) 8%, transparent); color: var(--color-text-title); }
-:global(.copilot-session-menu__rename),:global(.copilot-session-menu__retry),:global(.copilot-session-menu__delete) { min-height: 36px; padding: 0 14px; font-size: 13px; }
-:global(.copilot-session-menu__rename .el-icon),:global(.copilot-session-menu__retry .el-icon),:global(.copilot-session-menu__delete .el-icon) { width: 15px; height: 15px; margin-right: 9px; font-size: 15px; }
+:global(.copilot-session-menu__pin),:global(.copilot-session-menu__rename),:global(.copilot-session-menu__retry),:global(.copilot-session-menu__delete) { min-height: 36px; padding: 0 14px; font-size: 13px; }
+:global(.copilot-session-menu__pin .el-icon),:global(.copilot-session-menu__rename .el-icon),:global(.copilot-session-menu__retry .el-icon),:global(.copilot-session-menu__delete .el-icon) { width: 15px; height: 15px; margin-right: 9px; font-size: 15px; }
+:global(.copilot-session-menu__pin:hover),
 :global(.copilot-session-menu__rename:hover) { color: var(--color-primary) !important; }
 :global(.copilot-session-menu__delete) { color: #d92d20 !important; }
 :global(.copilot-session-menu__delete:hover) { background: #fef3f2 !important; color: #b42318 !important; }
