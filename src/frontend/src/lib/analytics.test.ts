@@ -13,6 +13,12 @@ function route(path: string, ...recordPaths: string[]): RouteLocationNormalizedL
   } as RouteLocationNormalizedLoaded
 }
 
+function dataLayerCommands(): unknown[][] {
+  return (window.dataLayer || []).map((command) => (
+    Array.from(command as ArrayLike<unknown>)
+  ))
+}
+
 async function loadAnalytics(measurementId = '') {
   vi.resetModules()
   window.__HFL_APP_CONFIG__ = { gaMeasurementId: measurementId }
@@ -62,7 +68,10 @@ describe('runtime Google Analytics', () => {
       'protection/backups/:backupId',
     ))
 
-    expect(window.dataLayer).toEqual(expect.arrayContaining([
+    expect(window.dataLayer?.every((command) => (
+      Object.prototype.toString.call(command) === '[object Arguments]'
+    ))).toBe(true)
+    expect(dataLayerCommands()).toEqual(expect.arrayContaining([
       ['config', 'G-0RX9GZJCWF', { send_page_view: false }],
       ['event', 'page_view', expect.objectContaining({
         page_location: `${window.location.origin}/protection/backups/:backupId`,
@@ -75,7 +84,7 @@ describe('runtime Google Analytics', () => {
 
     window.history.replaceState({}, '', '/register?email=person@example.com')
     analytics.trackAppEvent('sign_up', { method: 'email' })
-    expect(window.dataLayer).toContainEqual([
+    expect(dataLayerCommands()).toContainEqual([
       'event',
       'sign_up',
       expect.objectContaining({
@@ -84,6 +93,6 @@ describe('runtime Google Analytics', () => {
         page_path: '/protection/backups/:backupId',
       }),
     ])
-    expect(JSON.stringify(window.dataLayer)).not.toContain('person@example.com')
+    expect(JSON.stringify(dataLayerCommands())).not.toContain('person@example.com')
   })
 })
