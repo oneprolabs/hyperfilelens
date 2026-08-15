@@ -3,25 +3,19 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Mail, Lock, Key, Globe, Eye, EyeOff, CheckCircle2 } from 'lucide-vue-next'
+import { Mail, Lock, Key, Eye, EyeOff, CheckCircle2 } from 'lucide-vue-next'
 import { api } from '../../lib/api'
-import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
 import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import AuthBackdrop from '../../components/auth/AuthBackdrop.vue'
 import AuthBrandPanel from '../../components/auth/AuthBrandPanel.vue'
 import AuthTurnstileField from '../../components/auth/AuthTurnstileField.vue'
+import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 import { appConfig } from '../../lib/appConfig'
 import { trackAppEvent } from '../../lib/analytics'
 import { LOGIN_ROUTE_NAME } from '../../lib/loginNavigation'
 
 const { t, locale } = useI18n()
-const {
-  canSwitchLocale,
-  nextLocaleCode,
-  nextLocaleLabel,
-  toggleLocale: switchLocale,
-} = useLocaleSwitch()
 const router = useRouter()
 const route = useRoute()
 const showEula = appConfig.showEula
@@ -415,10 +409,6 @@ function goLogin() {
   router.push(email ? { path: '/login', query: { email } } : '/login')
 }
 
-function toggleLocale() {
-  switchLocale()
-}
-
 onMounted(async () => {
   const profile = await fetchDeployProfile()
   if (!profile?.email_signup_enabled) {
@@ -455,15 +445,7 @@ onUnmounted(() => {
         :class="{ 'title-en': locale === 'en' }"
       >
         <span :class="{ '!text-base': locale === 'en' }">{{ t('register.welcomeTitle') }}</span>
-        <button
-          v-if="canSwitchLocale"
-          class="lang-toggle"
-          :title="`Switch to ${nextLocaleLabel}`"
-          @click="toggleLocale"
-        >
-          <Globe :size="18" />
-          <span class="lang-label">{{ nextLocaleCode.toUpperCase() }}</span>
-        </button>
+        <LanguageSwitcher variant="auth" />
       </div>
 
       <div class="register-box-content">
@@ -764,29 +746,6 @@ onUnmounted(() => {
 }
 .register-box-title.title-en {
   font-size: 20px !important;
-}
-
-.lang-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: #fff;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: color 0.2s, background 0.2s;
-  font-size: 13px;
-  font-weight: normal;
-}
-
-.lang-toggle:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.lang-label {
-  font-size: 12px;
 }
 
 .register-box-content {
@@ -1212,8 +1171,7 @@ onUnmounted(() => {
     min-height: 44px;
   }
 
-  .eye-btn,
-  .lang-toggle {
+  .eye-btn {
     min-width: 36px;
     min-height: 36px;
   }
