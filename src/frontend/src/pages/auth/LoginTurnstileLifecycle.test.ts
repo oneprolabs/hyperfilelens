@@ -37,9 +37,9 @@ vi.mock('../../composables/useAuth', () => ({
 vi.mock('../../composables/useLocaleSwitch', () => ({
   useLocaleSwitch: () => ({
     canSwitchLocale: ref(false),
-    nextLocaleCode: ref('en'),
-    nextLocaleLabel: ref('English'),
-    toggleLocale: vi.fn(),
+    currentLocaleLabel: ref('English'),
+    localeOptions: ref([{ code: 'en', label: 'English' }]),
+    selectLocale: vi.fn(),
   }),
 }))
 

@@ -7,7 +7,6 @@ import { LANG_STORAGE_KEY } from '../../i18n'
 import { useTheme } from '../../composables/useTheme'
 import { platformOpsEntryUrl, fetchDeployProfile } from '../../composables/useDeployProfile'
 import { currentUser } from '../../composables/useAuth'
-import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
 import { useOrganizationSwitcher } from '../../composables/useOrganizationSwitcher'
 import Sidebar from '../../components/Sidebar.vue'
 import type { MenuItem } from '../../components/ModulePage.vue'
@@ -35,7 +34,6 @@ const opsFallbackMenus = useOpsMenus()
 const accountFallbackMenus = useAccountCenterMenus()
 const mobileNavigationOpen = ref(false)
 const { itemsWithActiveState: primaryNavItems } = useAppPrimaryNav()
-const { canSwitchLocale, currentLocaleLabel, nextLocaleLabel, toggleLocale } = useLocaleSwitch()
 const { showSwitcher: showOrganizationSwitcher } = useOrganizationSwitcher()
 
 const adminConsoleHref = computed(() =>
@@ -486,12 +484,9 @@ function applyThemeVars(t: string) {
     <TopNav
       :mobile-menu-open="mobileNavigationOpen"
       :admin-console-href="adminConsoleHref"
-      :can-switch-locale="canSwitchLocale"
-      :next-locale-label="nextLocaleLabel"
       :timezone-display="timezoneDisplay"
       :timezone-offset-display="timezoneOffsetDisplay"
       @toggle-mobile-menu="mobileNavigationOpen = !mobileNavigationOpen"
-      @toggle-locale="toggleLocale"
     />
     <MobileNavigationDrawer
       v-model="mobileNavigationOpen"
@@ -499,12 +494,8 @@ function applyThemeVars(t: string) {
       :primary-items="primaryNavItems"
       :module-items="fallbackMenuItems"
       :admin-console-href="adminConsoleHref"
-      :can-switch-locale="canSwitchLocale"
-      :current-locale-label="currentLocaleLabel"
-      :next-locale-label="nextLocaleLabel"
       :show-organization-switcher="showOrganizationSwitcher"
       :timezone-offset-display="timezoneOffsetDisplay"
-      @toggle-locale="toggleLocale"
     />
     <div
       v-if="supportOrgKey"

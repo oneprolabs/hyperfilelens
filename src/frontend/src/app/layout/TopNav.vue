@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Globe, Menu, Shield } from 'lucide-vue-next'
+import { Menu, Shield } from 'lucide-vue-next'
 import NavNotificationPopover from '../../components/NavNotificationPopover.vue'
 import NavUserMenu from '../../components/NavUserMenu.vue'
 import OrgSwitcher from '../../components/OrgSwitcher.vue'
@@ -9,19 +9,17 @@ import AppLogoMark from '../../components/AppLogoMark.vue'
 import { beginRouteRequestScope } from '../../lib/routeRequestAbort'
 import { beginRouteTransition } from '../../lib/routeTransition'
 import { useAppPrimaryNav } from '../../composables/useAppPrimaryNav'
+import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 
 withDefaults(
   defineProps<{
     mobileMenuOpen?: boolean
     adminConsoleHref?: string
-    canSwitchLocale?: boolean
-    nextLocaleLabel?: string
     timezoneDisplay?: string
     timezoneOffsetDisplay?: string
   }>(),
   {
     adminConsoleHref: '',
-    nextLocaleLabel: '',
     timezoneDisplay: '',
     timezoneOffsetDisplay: '',
   },
@@ -29,7 +27,6 @@ withDefaults(
 
 const emit = defineEmits<{
   'toggle-mobile-menu': []
-  'toggle-locale': []
 }>()
 
 const { t } = useI18n()
@@ -106,16 +103,9 @@ function handleNavClick(event: MouseEvent, to: string) {
         <span>{{ timezoneOffsetDisplay }}</span>
       </span>
 
-      <ElButton
-        v-if="canSwitchLocale"
-        class="icon-btn desktop-navigation-control"
-        :title="t('nav.switchLanguage', { language: nextLocaleLabel })"
-        :aria-label="t('nav.switchLanguage', { language: nextLocaleLabel })"
-        text
-        @click="emit('toggle-locale')"
-      >
-        <Globe :size="16" />
-      </ElButton>
+      <span class="desktop-navigation-control">
+        <LanguageSwitcher variant="navigation" />
+      </span>
 
       <span class="desktop-navigation-control"><OrgSwitcher /></span>
 

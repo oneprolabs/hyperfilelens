@@ -62,9 +62,9 @@ describe('useLocaleSwitch', () => {
       },
     }), { global: { plugins: [i18n] } })
 
-    localeSwitch?.toggleLocale()
+    localeSwitch?.selectLocale('zh-hans')
     await vi.waitFor(() => expect(mocks.api).toHaveBeenCalledTimes(1))
-    localeSwitch?.toggleLocale()
+    localeSwitch?.selectLocale('en')
     await Promise.resolve()
     expect(mocks.api).toHaveBeenCalledTimes(1)
 
@@ -108,9 +108,9 @@ describe('useLocaleSwitch', () => {
       },
     }), { global: { plugins: [i18n] } })
 
-    localeSwitch?.toggleLocale()
+    localeSwitch?.selectLocale('zh-hans')
     await vi.waitFor(() => expect(mocks.api).toHaveBeenCalledTimes(1))
-    localeSwitch?.toggleLocale()
+    localeSwitch?.selectLocale('en')
     currentUser.value = {
       id: 10,
       email: 'second-locale-user@example.com',
@@ -153,7 +153,7 @@ describe('useLocaleSwitch', () => {
       },
     }), { global: { plugins: [i18n] } })
 
-    localeSwitch?.toggleLocale()
+    localeSwitch?.selectLocale('pt-br')
 
     await vi.waitFor(() => expect(mocks.api).toHaveBeenCalledTimes(1))
     expect(i18n.global.locale.value).toBe('pt-br')

@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 import {
   DEFAULT_LOCALE,
   getAvailableLocaleCodes,
-  selectLocale,
+  selectLocale as applyLocale,
   setAuthenticatedLocalePreference,
 } from '../i18n'
 import { hasMultipleLocales, installedLangPacks } from '../lib/langPacks'
@@ -23,22 +23,23 @@ export function useLocaleSwitch() {
     )
   }
   const currentLocaleLabel = computed(() => localeLabel(String(locale.value)))
-  const nextLocaleCode = computed(() => {
-    const available = getAvailableLocaleCodes()
-    const currentIndex = available.indexOf(String(locale.value))
-    return available[(currentIndex + 1) % available.length] ?? DEFAULT_LOCALE
-  })
-  const nextLocaleLabel = computed(() => localeLabel(nextLocaleCode.value))
+  const localeOptions = computed(() =>
+    getAvailableLocaleCodes().map((code) => ({
+      code,
+      label: localeLabel(code),
+    })),
+  )
 
-  function toggleLocale() {
-    if (!canSwitchLocale.value) return
-    const selected = selectLocale(nextLocaleCode.value)
+  function selectLocale(code: string) {
+    if (!canSwitchLocale.value || !getAvailableLocaleCodes().includes(code)) return false
+    if (String(locale.value) === code) return false
+    const selected = applyLocale(code)
     const user = currentUser.value
-    if (!user) return
+    if (!user) return true
     const profileLanguage = selected === DEFAULT_LOCALE
       ? DEFAULT_LOCALE
       : installedLangPacks.value.find((pack) => pack.frontend_code === selected)?.backend_code
-    if (!profileLanguage) return
+    if (!profileLanguage) return true
     currentUser.value = { ...user, language: profileLanguage }
     setAuthenticatedLocalePreference(profileLanguage)
     localePreferenceWriteQueue = localePreferenceWriteQueue.catch(() => undefined).then(async () => {
@@ -59,14 +60,14 @@ export function useLocaleSwitch() {
         })
       }
     })
+    return true
   }
 
   return {
     canSwitchLocale,
     currentLocaleLabel,
-    nextLocaleCode,
-    nextLocaleLabel,
-    toggleLocale,
+    localeOptions,
+    selectLocale,
     locale,
   }
 }

@@ -14,13 +14,12 @@ const dropdownStyles = source('src/styles/nav-dropdown-panel.css')
 const locale = source('src/locales/en.ts')
 
 describe('mobile header utilities', () => {
-  it('shares deploy profile and locale state from the app shell', () => {
+  it('shares deploy profile state from the app shell and one language selector', () => {
     expect(appShell).toContain('async function refreshHeaderProfile()')
     expect(appShell).toContain(':admin-console-href="adminConsoleHref"')
-    expect(appShell).toContain(':can-switch-locale="canSwitchLocale"')
-    expect(appShell).toContain(':current-locale-label="currentLocaleLabel"')
     expect(appShell).toContain(':timezone-offset-display="timezoneOffsetDisplay"')
-    expect(appShell).toContain('@toggle-locale="toggleLocale"')
+    expect(topNav).toContain('<LanguageSwitcher variant="navigation" />')
+    expect(drawer).toContain('variant="mobile"')
     expect(topNav).not.toContain('fetchDeployProfile')
   })
 
@@ -28,17 +27,12 @@ describe('mobile header utilities', () => {
     expect(drawer).toContain('<OrgSwitcher variant="mobile" />')
     expect(drawer).toContain('target="_blank"')
     expect(drawer).toContain("$t('nav.platformOps')")
-    expect(drawer).toContain("$t('nav.switchLanguage', { language: nextLocaleLabel })")
-    expect(drawer).toContain('v-if="currentLocaleLabel || timezoneOffsetDisplay"')
-    expect(drawer).toContain("$t('nav.languageLabel')")
-    expect(drawer).toContain("$t('nav.timezoneLabel')")
-    expect(drawer).toContain('v-if="canSwitchLocale"')
+    expect(drawer).toContain('<LanguageSwitcher')
     expect(drawer).toContain("$t('nav.timezoneLabel')")
     expect(drawer).toContain('{{ timezoneOffsetDisplay }}')
     expect(userMenu).not.toContain('nav-user-timezone')
     expect(locale).toContain("timezoneLabel: 'Time Zone'")
     expect(locale).toContain("languageLabel: 'Language'")
-    expect(locale).toContain("switchLanguage: 'Switch to {language}'")
   })
 
   it('keeps mobile triggers and popovers within narrow viewports', () => {

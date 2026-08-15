@@ -3,15 +3,15 @@ import { ref, reactive, computed, nextTick, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Mail, Lock, Globe, Eye, EyeOff } from 'lucide-vue-next'
+import { Mail, Lock, Eye, EyeOff } from 'lucide-vue-next'
 import { api } from '../../lib/api'
 import { useAuth, setStoredOrgKey, fetchCurrentUser } from '../../composables/useAuth'
-import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
 import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
 import AuthBackdrop from '../../components/auth/AuthBackdrop.vue'
 import AuthBrandPanel from '../../components/auth/AuthBrandPanel.vue'
 import AuthTurnstileField from '../../components/auth/AuthTurnstileField.vue'
 import EmailCodeLoginForm from '../../components/auth/EmailCodeLoginForm.vue'
+import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 import type { EmailCodeLoginData } from '../../lib/emailCodeLoginApi'
 import ResetPasswordCard from '../../components/auth/ResetPasswordCard.vue'
 import { fetchDeployProfile, resolvePostLoginPath } from '../../composables/useDeployProfile'
@@ -28,12 +28,6 @@ const passwordResetAvailable = ref(false)
 const emailCodeLoginAvailable = ref(false)
 const showEula = appConfig.showEula
 const { t, locale } = useI18n()
-const {
-  canSwitchLocale,
-  nextLocaleCode,
-  nextLocaleLabel,
-  toggleLocale: switchLocale,
-} = useLocaleSwitch()
 const router = useRouter()
 const route = useRoute()
 const sessionNoticeDismissed = ref(false)
@@ -544,8 +538,7 @@ const canSubmitLogin = computed(() => {
   return true
 })
 
-function toggleLocale() {
-  switchLocale()
+function handleLocaleChange() {
   formItems.email.placeholder = t('login.emailPh')
   formItems.password.placeholder = t('login.passwordPh')
 }
@@ -608,15 +601,10 @@ onMounted(async () => {
         <span :class="{ '!text-base': locale === 'en' }">
           {{ cardTitle }}
         </span>
-        <button
-          v-if="canSwitchLocale"
-          class="lang-toggle"
-          :title="`Switch to ${nextLocaleLabel}`"
-          @click="toggleLocale"
-        >
-          <Globe :size="18" />
-          <span class="lang-label">{{ nextLocaleCode.toUpperCase() }}</span>
-        </button>
+        <LanguageSwitcher
+          variant="auth"
+          @change="handleLocaleChange"
+        />
       </div>
 
       <Transition
@@ -957,29 +945,6 @@ onMounted(async () => {
 }
 .login-box-title.title-en {
   font-size: 20px !important;
-}
-
-.lang-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: #fff;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: color 0.2s, background 0.2s;
-  font-size: 13px;
-  font-weight: normal;
-}
-
-.lang-toggle:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.lang-label {
-  font-size: 12px;
 }
 
 .login-box-content {
@@ -1367,8 +1332,7 @@ onMounted(async () => {
     min-height: 44px;
   }
 
-  .eye-btn,
-  .lang-toggle {
+  .eye-btn {
     min-width: 36px;
     min-height: 36px;
   }
