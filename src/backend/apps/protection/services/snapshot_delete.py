@@ -23,6 +23,10 @@ from apps.protection.services.snapshot_repository_locator import (
     group_snapshot_directories_by_repository_locator,
 )
 from apps.protection.services.snapshot_delete_execution import run_snapshot_delete
+from apps.storage.services.internal.repository_workload import (
+    RepositoryWorkload,
+    lock_repositories_for_workload,
+)
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import (
     append_task_step_event,
@@ -170,6 +174,11 @@ def create_snapshot_delete_task(
             }
         )
     with transaction.atomic():
+        lock_repositories_for_workload(
+            organization_id=source_snapshot.organization_id,
+            repository_ids=[source_snapshot.repository_id],
+            workload=RepositoryWorkload.SNAPSHOT_DELETE,
+        )
         task = create_task(
             organization_id=source_snapshot.organization_id,
             task_type=Task.Type.SNAPSHOT_DELETE,
@@ -236,6 +245,11 @@ def create_and_queue_snapshot_delete_task(
                 source_snapshot_id=locked_snapshot.id,
             )
             if task is not None and task.status in _DELETE_TERMINAL - {Task.Status.SUCCESS}:
+                lock_repositories_for_workload(
+                    organization_id=locked_snapshot.organization_id,
+                    repository_ids=[locked_snapshot.repository_id],
+                    workload=RepositoryWorkload.SNAPSHOT_DELETE,
+                )
                 task = retry_task(
                     task_uuid=task.task_uuid,
                     organization_id=task.organization_id,
@@ -792,6 +806,14 @@ def reconcile_snapshot_delete_tasks(*, now=None, limit: int = 100) -> dict[str, 
                 continue
             due_from = task.finished_at or task.updated_at
             if due_from + snapshot_delete_retry_delay(task.retry_count) > current:
+                continue
+            try:
+                lock_repositories_for_workload(
+                    organization_id=locked.organization_id,
+                    repository_ids=[locked.repository_id],
+                    workload=RepositoryWorkload.SNAPSHOT_DELETE,
+                )
+            except ValidationError:
                 continue
             task = retry_task(
                 task_uuid=task.task_uuid,

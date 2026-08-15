@@ -20,7 +20,9 @@ from apps.task.services.recovery import (
 
 
 class RepositoryAgentOperationError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, result: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.result = dict(result or {})
 
 
 class RepositoryAgentOperationTimeout(TimeoutError):
@@ -113,6 +115,7 @@ def resolve_or_dispatch_repository_agent_operation(
     repository_task: RepositoryTask,
     node: Node,
     payload: dict[str, Any],
+    persisted_payload: dict[str, Any] | None = None,
     correlation_type: str,
     timeout_seconds: int,
     allow_dispatch: bool = True,
@@ -133,13 +136,16 @@ def resolve_or_dispatch_repository_agent_operation(
             node_id=node.id,
             kind="repository.operation",
             payload=payload,
+            persisted_payload=persisted_payload,
             correlation_type=correlation_type,
             correlation_id=str(repository_task.task.task_uuid),
         )
         node_task = handle.task
 
     if repository_task.remote_task_id != node_task.id:
-        RepositoryTask.objects.filter(pk=repository_task.id).update(remote_task_id=node_task.id)
+        RepositoryTask.objects.filter(pk=repository_task.id).update(
+            remote_task_id=node_task.id
+        )
         repository_task.remote_task_id = node_task.id
 
     if recovered:
@@ -157,7 +163,9 @@ def resolve_or_dispatch_repository_agent_operation(
         )
 
     if node_task.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}:
-        deadline = node_task.created_at + timedelta(seconds=max(1, int(timeout_seconds)))
+        deadline = node_task.created_at + timedelta(
+            seconds=max(1, int(timeout_seconds))
+        )
         if deadline <= timezone.now():
             cancel_agent_task(
                 task_id=node_task.id,
@@ -183,5 +191,7 @@ def resolve_or_dispatch_repository_agent_operation(
             node_task.last_error or "Repository owner operation timed out."
         )
     raise RepositoryAgentOperationError(
-        node_task.last_error or f"Repository owner operation ended with status {node_task.status}."
+        node_task.last_error
+        or f"Repository owner operation ended with status {node_task.status}.",
+        result=node_task.result,
     )

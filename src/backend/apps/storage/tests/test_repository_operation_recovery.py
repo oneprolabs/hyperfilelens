@@ -15,6 +15,11 @@ from apps.storage.services.internal.repository_cleanup import (
     create_repository_cleanup_task,
     run_repository_cleanup_task,
 )
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    reserve_repository_location,
+)
 from apps.storage.services.internal.repository_agent_operation import (
     queue_repository_agent_result_followup,
 )
@@ -47,7 +52,8 @@ class RepositoryOperationRecoveryTests(TestCase):
             organization=self.org,
             name="recovery-proxy",
             role=NodeRole.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.50",
             metadata={
                 "inventory": {
@@ -55,6 +61,7 @@ class RepositoryOperationRecoveryTests(TestCase):
                         "repository_operation_v1",
                         "repository_cleanup_v1",
                         "repository_cleanup_v2",
+                        "repository_cleanup_ownership_v1",
                     ]
                 }
             },
@@ -73,6 +80,9 @@ class RepositoryOperationRecoveryTests(TestCase):
                 "proxy_fs_layout": "managed_subdir_v1",
             },
         )
+        reserve_repository_location(self.repository)
+        mark_repository_location_owned(self.repository)
+        mark_repository_location_ownership_verified(self.repository)
         discover_repository_execution_targets()
 
     def _maintenance_task(self) -> RepositoryTask:
@@ -102,7 +112,11 @@ class RepositoryOperationRecoveryTests(TestCase):
             health=Repository.Health.ONLINE,
             s3_platform=Repository.S3Platform.AWS,
             s3_bucket="controller-recovery-bucket",
+            config={"prefix": "controller/recovery"},
         )
+        reserve_repository_location(repository)
+        mark_repository_location_owned(repository)
+        mark_repository_location_ownership_verified(repository)
         discover_repository_execution_targets()
         return create_repository_operation_task(
             target_id=repository.execution_targets.get().id,
@@ -127,7 +141,10 @@ class RepositoryOperationRecoveryTests(TestCase):
             correlation_id=str(repository_task.task.task_uuid),
             kind="repository.operation",
             status=NodeTask.Status.SUCCESS,
-            result={"operation_type": "maintenance.quick", "maintenance": {"exit_code": 0}},
+            result={
+                "operation_type": "maintenance.quick",
+                "maintenance": {"exit_code": 0},
+            },
             watchdog_deadline_at=timezone.now(),
         )
 
@@ -378,9 +395,7 @@ class RepositoryOperationRecoveryTests(TestCase):
         self.assertEqual(stale_result.status, Task.Status.RUNNING)
         self.assertEqual(repository_task.task.status, Task.Status.RUNNING)
         self.assertNotEqual(
-            repository_task.task.steps.get(
-                step_name="run_repository_operation"
-            ).status,
+            repository_task.task.steps.get(step_name="run_repository_operation").status,
             TaskStep.Status.SUCCESS,
         )
 
@@ -413,11 +428,16 @@ class RepositoryOperationRecoveryTests(TestCase):
         self.assertEqual(replacement.status, Task.Status.PENDING)
         self.assertEqual(replacement.trigger_type, Task.TriggerType.RETRY)
         self.assertEqual(replacement.recovery_attempt, 1)
-        self.assertEqual(replacement.repository_operation.operation_type, repository_task.operation_type)
+        self.assertEqual(
+            replacement.repository_operation.operation_type,
+            repository_task.operation_type,
+        )
 
         repeated = run_repository_cleanup_task(repository_task_id=repository_task.id)
         self.assertEqual(repeated["status"], Task.Status.FAILED)
-        self.assertEqual(Task.objects.filter(replaces_task=repository_task.task).count(), 1)
+        self.assertEqual(
+            Task.objects.filter(replaces_task=repository_task.task).count(), 1
+        )
 
     @mock.patch(
         "apps.storage.services.internal.repository_agent_operation.run_agent_task_async"
@@ -459,6 +479,31 @@ class RepositoryOperationRecoveryTests(TestCase):
         self.assertEqual(repository_task.remote_task_id, node_task.id)
         self.assertEqual(repository_task.task.status, Task.Status.SUCCESS)
         run_agent_task_async.assert_not_called()
+
+    def test_failed_agent_cleanup_persists_owner_proof_for_manual_retry(self):
+        repository_task = create_repository_cleanup_task(
+            repository=self.repository,
+            dispatch=False,
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            correlation_type="repository_cleanup",
+            correlation_id=str(repository_task.task.task_uuid),
+            kind="repository.operation",
+            status=NodeTask.Status.FAILED,
+            result={"ownership_verified": True},
+            last_error="physical delete stopped after ownership verification",
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(
+            repository_task.task.request_payload["agent_cleanup_owner_verified"]
+        )
 
     def test_cleanup_stops_replacing_after_maximum_attempts(self):
         repository_task = create_repository_cleanup_task(

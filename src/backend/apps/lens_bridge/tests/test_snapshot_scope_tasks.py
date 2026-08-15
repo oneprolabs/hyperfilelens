@@ -1,13 +1,13 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 
 from apps.lens_bridge.services import snapshot_scope_tasks
 
 
-class SnapshotScopeTaskNormalizationTests(SimpleTestCase):
+class SnapshotScopeTaskNormalizationTests(TestCase):
     def test_rejects_parent_path_traversal(self):
         with self.assertRaises(ValidationError):
             snapshot_scope_tasks._clean_relative_path("reports/../secrets")
@@ -154,7 +154,9 @@ class SnapshotScopeTaskNormalizationTests(SimpleTestCase):
         "resolve_snapshot_repository_reader"
     )
     @patch("apps.lens_bridge.services.snapshot_scope_tasks._directory_for_org")
-    @patch("apps.lens_bridge.services.snapshot_scope_tasks.Repository.objects.filter")
+    @patch(
+        "apps.lens_bridge.services.snapshot_scope_tasks.lock_repositories_for_workload"
+    )
     @patch(
         "apps.lens_bridge.services.snapshot_scope_tasks.repository_uses_bound_proxy",
         return_value=True,
@@ -162,7 +164,7 @@ class SnapshotScopeTaskNormalizationTests(SimpleTestCase):
     def test_scope_resolution_uses_async_agent_dispatch(
         self,
         _uses_proxy,
-        repository_filter,
+        lock_repositories,
         directory_for_org,
         resolve_reader,
         run_async,
@@ -173,9 +175,7 @@ class SnapshotScopeTaskNormalizationTests(SimpleTestCase):
             kopia_snapshot_id="kopia-1",
             source_snapshot=SimpleNamespace(source_type="host", source_ref_id=9),
         )
-        repository_filter.return_value.exclude.return_value.first.return_value = (
-            SimpleNamespace(id=7)
-        )
+        lock_repositories.return_value = [SimpleNamespace(id=7)]
         resolve_reader.return_value = SimpleNamespace(
             node=SimpleNamespace(id=12),
             repository_payload={"type": "s3"},
@@ -203,7 +203,9 @@ class SnapshotScopeTaskNormalizationTests(SimpleTestCase):
         "resolve_snapshot_repository_reader"
     )
     @patch("apps.lens_bridge.services.snapshot_scope_tasks._directory_for_org")
-    @patch("apps.lens_bridge.services.snapshot_scope_tasks.Repository.objects.filter")
+    @patch(
+        "apps.lens_bridge.services.snapshot_scope_tasks.lock_repositories_for_workload"
+    )
     @patch(
         "apps.lens_bridge.services.snapshot_scope_tasks.repository_uses_bound_proxy",
         return_value=True,
@@ -211,7 +213,7 @@ class SnapshotScopeTaskNormalizationTests(SimpleTestCase):
     def test_root_file_scope_dispatches_trusted_snapshot_metadata(
         self,
         _uses_proxy,
-        repository_filter,
+        lock_repositories,
         directory_for_org,
         resolve_reader,
         run_async,
@@ -225,9 +227,7 @@ class SnapshotScopeTaskNormalizationTests(SimpleTestCase):
             source_snapshot=SimpleNamespace(source_type="host", source_ref_id=9),
         )
         directory_for_org.return_value = directory
-        repository_filter.return_value.exclude.return_value.first.return_value = (
-            SimpleNamespace(id=7)
-        )
+        lock_repositories.return_value = [SimpleNamespace(id=7)]
         resolve_reader.return_value = SimpleNamespace(
             node=SimpleNamespace(id=12),
             repository_payload={"type": "s3"},

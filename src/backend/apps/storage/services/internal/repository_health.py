@@ -14,19 +14,45 @@ from apps.node.services.internal.agent_log import (
 )
 from apps.node.services.interface import run_agent_task_sync
 from apps.source.constants import ResourceType
-from apps.storage.repositories.models import Repository
+from apps.storage.repositories.models import Repository, RepositoryLocationClaim
 from apps.storage.services.internal.nas_repository import (
+    NASRepositoryError,
     check_proxy_nas_repository,
     nas_agent_repository_subdir,
     nas_repository_payload,
 )
 from apps.storage.services.internal.proxy_fs_repository import (
+    ProxyFSRepositoryError,
     check_proxy_fs_repository,
 )
 from apps.storage.services.internal.repository_initializer import check_s3_repository
+from apps.storage.services.internal.repository_location import (
+    invalidate_repository_location_ownership,
+    mark_repository_location_ownership_verified,
+    repository_has_legacy_location,
+)
+from apps.storage.services.internal.repository_ownership import (
+    RepositoryOwnershipError,
+)
 
 
 logger = logging.getLogger(__name__)
+
+
+def is_repository_ownership_failure(exc: Exception) -> bool:
+    """Return whether an exception chain proves physical ownership invalid."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, RepositoryOwnershipError):
+            return True
+        if isinstance(current, (NASRepositoryError, ProxyFSRepositoryError)) and (
+            getattr(current, "error_code", "") == "REPOSITORY_OWNERSHIP_INVALID"
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def probe_repository_health(repository: Repository) -> str:
@@ -53,7 +79,11 @@ def probe_repository_health(repository: Repository) -> str:
     raise ValidationError(f"Repository type {repository.repo_type} is not supported.")
 
 
-def probe_unbound_nas_repository_health(repository: Repository) -> str:
+def probe_unbound_nas_repository_health(
+    repository: Repository,
+    *,
+    adopt_legacy_ownership: bool = True,
+) -> str:
     """Return Online when any associated execution node can access the NAS."""
     if (
         repository.repo_type != Repository.Type.NAS
@@ -62,19 +92,27 @@ def probe_unbound_nas_repository_health(repository: Repository) -> str:
     ):
         raise ValidationError("Repository is not an unbound NAS repository.")
 
-    has_associations, nodes = _unbound_nas_execution_nodes(repository)
-    if not has_associations:
+    has_associations, has_claimed_locations, nodes = _unbound_nas_execution_nodes(
+        repository
+    )
+    if not has_associations or not has_claimed_locations:
         return Repository.Health.UNVERIFIED
 
     for node in nodes:
         if node.availability != Node.Availability.ONLINE:
             continue
-        if _probe_unbound_nas_from_node(repository=repository, node=node):
+        if _probe_unbound_nas_from_node(
+            repository=repository,
+            node=node,
+            adopt_legacy_ownership=adopt_legacy_ownership,
+        ):
             return Repository.Health.ONLINE
     return Repository.Health.OFFLINE
 
 
-def _unbound_nas_execution_nodes(repository: Repository) -> tuple[bool, list[Node]]:
+def _unbound_nas_execution_nodes(
+    repository: Repository,
+) -> tuple[bool, bool, list[Node]]:
     backup_config_model = apps.get_model("protection", "BackupConfig")
     rows = list(
         backup_config_model.objects.filter(
@@ -85,7 +123,7 @@ def _unbound_nas_execution_nodes(repository: Repository) -> tuple[bool, list[Nod
         .values_list("source_type", "source_ref_id")
     )
     if not rows:
-        return False, []
+        return False, False, []
 
     agent_ids = {
         int(source_ref_id)
@@ -129,10 +167,34 @@ def _unbound_nas_execution_nodes(repository: Repository) -> tuple[bool, list[Nod
                 )
             }
         )
-    return True, [nodes[node_id] for node_id in sorted(nodes)]
+    execution_node_ids = agent_ids | proxy_ids if nas_source_ids else agent_ids
+    claimed_node_ids = {
+        int(node_id)
+        for node_id, root_path in RepositoryLocationClaim.objects.filter(
+            repository=repository,
+            scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+            state__in=[
+                RepositoryLocationClaim.State.INITIALIZING,
+                RepositoryLocationClaim.State.OWNED,
+                RepositoryLocationClaim.State.RESIDUAL,
+            ],
+            owner_node_id__in=execution_node_ids,
+        ).values_list("owner_node_id", "root_path")
+        if str(root_path) == nas_agent_repository_subdir(int(node_id))
+    }
+    return (
+        True,
+        bool(claimed_node_ids),
+        [nodes[node_id] for node_id in sorted(nodes) if node_id in claimed_node_ids],
+    )
 
 
-def _probe_unbound_nas_from_node(*, repository: Repository, node: Node) -> bool:
+def _probe_unbound_nas_from_node(
+    *,
+    repository: Repository,
+    node: Node,
+    adopt_legacy_ownership: bool = True,
+) -> bool:
     log_scope = "storage direct nas health probe"
     payload = {
         "repository": nas_repository_payload(
@@ -141,6 +203,18 @@ def _probe_unbound_nas_from_node(*, repository: Repository, node: Node) -> bool:
             node_id=node.id,
         ),
         "health_only": True,
+        "allow_ownership_adoption": (
+            adopt_legacy_ownership
+            and RepositoryLocationClaim.objects.filter(
+                repository=repository,
+                scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+                owner_node_id=node.id,
+                root_path=nas_agent_repository_subdir(node.id),
+                state=RepositoryLocationClaim.State.OWNED,
+                ownership_verified_at__isnull=True,
+                legacy_adoption_required=True,
+            ).exists()
+        ),
     }
     log_agent_dispatch(
         log_scope,
@@ -188,4 +262,27 @@ def _probe_unbound_nas_from_node(*, repository: Repository, node: Node) -> bool:
         correlation_id=str(repository.id),
         repository_id=repository.id,
     )
-    return outcome.task.status == "success"
+    if outcome.task.status != "success":
+        result = outcome.result if isinstance(outcome.result, dict) else {}
+        if result.get("error_code") == "REPOSITORY_OWNERSHIP_INVALID":
+            invalidate_repository_location_ownership(
+                repository,
+                owner_node_id=node.id,
+                repository_subdir=nas_agent_repository_subdir(node.id),
+            )
+        return False
+    if not (
+        isinstance(outcome.result, dict)
+        and outcome.result.get("ownership_verified") is True
+    ):
+        return repository_has_legacy_location(
+            repository,
+            owner_node_id=node.id,
+            repository_subdir=nas_agent_repository_subdir(node.id),
+        )
+    mark_repository_location_ownership_verified(
+        repository,
+        owner_node_id=node.id,
+        repository_subdir=nas_agent_repository_subdir(node.id),
+    )
+    return True

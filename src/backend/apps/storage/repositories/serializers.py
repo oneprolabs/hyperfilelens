@@ -5,7 +5,11 @@ from rest_framework import serializers
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.protection import conf as protection_conf
-from apps.storage.repositories.models import Repository, RepositoryTask
+from apps.storage.repositories.models import (
+    Repository,
+    RepositoryLocationClaim,
+    RepositoryTask,
+)
 from apps.task.models import Task
 from apps.storage.selectors.interface import get_effective_storage_provider
 from apps.storage.services.interface import create_repository, update_repository
@@ -23,6 +27,9 @@ from apps.storage.services.internal.repository_endpoints import (
     compact_s3_repository_endpoints,
     normalize_s3_endpoint_host,
     s3_endpoint_snapshot,
+)
+from apps.storage.services.internal.nas_repair import (
+    NAS_REPAIR_MUTABLE_CONFIG_FIELDS,
 )
 from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 
@@ -71,6 +78,7 @@ LOCKED_S3_UPDATE_FIELDS = (
     "config.prefix",
 )
 
+
 def normalize_nas_share_path(value: object) -> str:
     path = str(value or "").strip().replace("\\", "/")
     path = "/" + path.lstrip("/")
@@ -80,10 +88,7 @@ def normalize_nas_share_path(value: object) -> str:
 
 
 def mount_options_include_read_only(value: object) -> bool:
-    return any(
-        option.strip().lower() == "ro"
-        for option in str(value or "").split(",")
-    )
+    return any(option.strip().lower() == "ro" for option in str(value or "").split(","))
 
 
 def normalize_s3_object_prefix(value: object) -> str:
@@ -110,6 +115,8 @@ class RepositorySerializer(serializers.ModelSerializer):
     cross_proxy_access = serializers.SerializerMethodField()
     active_cleanup_task = serializers.SerializerMethodField()
     active_create_task = serializers.SerializerMethodField()
+    initialization_state = serializers.SerializerMethodField()
+    initialized_target_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Repository
@@ -155,17 +162,25 @@ class RepositorySerializer(serializers.ModelSerializer):
             "cross_proxy_access",
             "active_cleanup_task",
             "active_create_task",
+            "initialization_state",
+            "initialized_target_count",
         ]
         read_only_fields = fields
 
     def get_bind_node_display_name(self, obj: Repository) -> str | None:
         if not (obj.bind_node_id and obj.bind_node_type):
             return None
-        node = Node.objects.filter(id=obj.bind_node_id).values_list("name", flat=True).first()
+        node = (
+            Node.objects.filter(id=obj.bind_node_id)
+            .values_list("name", flat=True)
+            .first()
+        )
         return node
 
     def get_config(self, obj: Repository) -> dict:
-        return sanitize_repository_config(obj.config if isinstance(obj.config, dict) else {})
+        return sanitize_repository_config(
+            obj.config if isinstance(obj.config, dict) else {}
+        )
 
     def get_credential_hint(self, obj: Repository) -> dict:
         return credential_hint(obj)
@@ -173,14 +188,28 @@ class RepositorySerializer(serializers.ModelSerializer):
     def get_bind_node_ip(self, obj: Repository) -> str | None:
         if not (obj.bind_node_id and obj.bind_node_type):
             return None
-        node = Node.objects.filter(id=obj.bind_node_id).values_list("ip_address", flat=True).first()
+        node = (
+            Node.objects.filter(id=obj.bind_node_id)
+            .values_list("ip_address", flat=True)
+            .first()
+        )
         return node
 
     def get_cross_proxy_access(self, obj: Repository) -> dict:
         if not repository_uses_bound_proxy(obj):
-            return {"enabled": False, "ready": False, "host": None, "reason": "not_applicable"}
+            return {
+                "enabled": False,
+                "ready": False,
+                "host": None,
+                "reason": "not_applicable",
+            }
         if not protection_conf.PROTECTION_PROXY_REPOSITORY_SERVER_ENABLED:
-            return {"enabled": False, "ready": False, "host": None, "reason": "feature_disabled"}
+            return {
+                "enabled": False,
+                "ready": False,
+                "host": None,
+                "reason": "feature_disabled",
+            }
         node = Node.objects.filter(
             id=obj.bind_node_id,
             organization_id=obj.organization_id,
@@ -188,15 +217,51 @@ class RepositorySerializer(serializers.ModelSerializer):
             is_deleted=False,
         ).first()
         if node is None:
-            return {"enabled": True, "ready": False, "host": None, "reason": "proxy_missing"}
+            return {
+                "enabled": True,
+                "ready": False,
+                "host": None,
+                "reason": "proxy_missing",
+            }
         if node.availability != Node.Availability.ONLINE:
-            return {"enabled": True, "ready": False, "host": None, "reason": "proxy_offline"}
+            return {
+                "enabled": True,
+                "ready": False,
+                "host": None,
+                "reason": "proxy_offline",
+            }
         host, _source = explicit_repository_server_host(repository=obj, node=node)
         if not host:
-            return {"enabled": True, "ready": False, "host": None, "reason": "host_missing"}
+            return {
+                "enabled": True,
+                "ready": False,
+                "host": None,
+                "reason": "host_missing",
+            }
         return {"enabled": True, "ready": True, "host": host, "reason": "ready"}
 
     def get_active_cleanup_task(self, obj: Repository) -> dict | None:
+        prefetched = getattr(obj, "active_lifecycle_operations", None)
+        if prefetched is not None:
+            operation = next(
+                (
+                    item
+                    for item in prefetched
+                    if item.operation_type
+                    == RepositoryTask.OperationType.CLEANUP_REPOSITORY
+                ),
+                None,
+            )
+            if operation is None:
+                return None
+            task = operation.task
+            return {
+                "task_uuid": str(task.task_uuid),
+                "status": task.status,
+                "error_code": task.error_code,
+                "error_message": task.error_message,
+                "created_at": task.created_at,
+            }
         operation = (
             RepositoryTask.objects.filter(
                 repository=obj,
@@ -220,14 +285,62 @@ class RepositorySerializer(serializers.ModelSerializer):
 
     def get_active_create_task(self, obj: Repository) -> dict | None:
         from apps.storage.services.internal.repository_create import (
+            CREATE_OPERATION_TYPES,
             active_repository_create_task,
             repository_create_task_payload,
         )
 
-        operation = active_repository_create_task(obj)
+        prefetched = getattr(obj, "active_lifecycle_operations", None)
+        operation = (
+            next(
+                (
+                    item
+                    for item in prefetched
+                    if item.operation_type in CREATE_OPERATION_TYPES
+                ),
+                None,
+            )
+            if prefetched is not None
+            else active_repository_create_task(obj)
+        )
         if operation is None:
             return None
         return repository_create_task_payload(operation)
+
+    def get_initialization_state(self, obj: Repository) -> str:
+        claims = list(obj.location_claims.all())
+        states = {claim.state for claim in claims}
+        if RepositoryLocationClaim.State.RESIDUAL in states:
+            return "attention_required"
+        if obj.status == Repository.Status.REMOVED:
+            return "released"
+        if states & {
+            RepositoryLocationClaim.State.RESERVED,
+            RepositoryLocationClaim.State.INITIALIZING,
+        }:
+            return "initializing"
+        owned_claims = [
+            claim
+            for claim in claims
+            if claim.state == RepositoryLocationClaim.State.OWNED
+        ]
+        if owned_claims and any(
+            claim.ownership_verified_at is None for claim in owned_claims
+        ):
+            return "unverified"
+        if owned_claims:
+            return "ready"
+        if obj.repo_type == Repository.Type.NAS and not obj.bind_node_id:
+            return "not_initialized"
+        return "unverified"
+
+    def get_initialized_target_count(self, obj: Repository) -> int:
+        return sum(
+            1
+            for claim in obj.location_claims.all()
+            if claim.state == RepositoryLocationClaim.State.OWNED
+            and claim.ownership_verified_at is not None
+        )
 
 
 class RepositoryWriteSerializer(serializers.ModelSerializer):
@@ -270,8 +383,10 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
         if "proxy_repository_server_host" in value:
             value = dict(value)
             try:
-                value["proxy_repository_server_host"] = normalize_repository_server_host(
-                    value.get("proxy_repository_server_host")
+                value["proxy_repository_server_host"] = (
+                    normalize_repository_server_host(
+                        value.get("proxy_repository_server_host")
+                    )
                 )
             except ValueError as exc:
                 raise serializers.ValidationError(str(exc)) from exc
@@ -293,6 +408,20 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                 locked_errors["s3_bucket"] = "S3 bucket cannot be modified."
             if "s3_bucket_mode" in attrs:
                 locked_errors["s3_bucket_mode"] = "S3 bucket mode cannot be modified."
+            if (
+                "bind_node_type" in attrs
+                and attrs["bind_node_type"] != instance.bind_node_type
+            ):
+                locked_errors["bind_node_type"] = (
+                    "Repository binding can only be changed through the repair workflow."
+                )
+            if (
+                "bind_node_id" in attrs
+                and attrs["bind_node_id"] != instance.bind_node_id
+            ):
+                locked_errors["bind_node_id"] = (
+                    "Repository binding can only be changed through the repair workflow."
+                )
             if isinstance(incoming_config, dict):
                 if instance.repo_type == Repository.Type.S3:
                     for field in (
@@ -316,9 +445,7 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                             locked_errors[f"config.{field}"] = (
                                 "NAS repository location cannot be modified."
                             )
-                elif (
-                    instance.repo_type == Repository.Type.PROXY_FS
-                ):
+                elif instance.repo_type == Repository.Type.PROXY_FS:
                     for field in (
                         "proxy_node_base_dir",
                         "proxy_node_dir",
@@ -352,12 +479,20 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
         credential_payload = attrs.get("credential_payload") or {}
         s3_platform = attrs.get("s3_platform", getattr(instance, "s3_platform", None))
         s3_bucket = attrs.get("s3_bucket", getattr(instance, "s3_bucket", None))
-        nas_protocol = attrs.get("nas_protocol", getattr(instance, "nas_protocol", None))
-        bind_node_type = attrs.get("bind_node_type", getattr(instance, "bind_node_type", None))
-        bind_node_id = attrs.get("bind_node_id", getattr(instance, "bind_node_id", None))
+        nas_protocol = attrs.get(
+            "nas_protocol", getattr(instance, "nas_protocol", None)
+        )
+        bind_node_type = attrs.get(
+            "bind_node_type", getattr(instance, "bind_node_type", None)
+        )
+        bind_node_id = attrs.get(
+            "bind_node_id", getattr(instance, "bind_node_id", None)
+        )
 
         if repo_type not in {choice[0] for choice in Repository.Type.choices}:
-            raise serializers.ValidationError({"repo_type": "Unsupported repository type."})
+            raise serializers.ValidationError(
+                {"repo_type": "Unsupported repository type."}
+            )
 
         if repo_type == Repository.Type.S3:
             if instance is None and "s3_bucket_mode" not in attrs:
@@ -369,13 +504,17 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                 attrs["s3_platform"] = s3_platform
             self._validate_s3(config, credential_payload, s3_platform, s3_bucket)
         elif repo_type == Repository.Type.NAS:
-            self._validate_nas(config, credential_payload, nas_protocol, bind_node_type, bind_node_id)
+            self._validate_nas(
+                config, credential_payload, nas_protocol, bind_node_type, bind_node_id
+            )
         elif repo_type == Repository.Type.PROXY_FS:
             self._validate_proxy_fs(config, bind_node_type, bind_node_id)
 
         if repo_type != Repository.Type.S3 and "s3_bucket_mode" in attrs:
             raise serializers.ValidationError(
-                {"s3_bucket_mode": "S3 bucket mode is only accepted for S3 repositories."}
+                {
+                    "s3_bucket_mode": "S3 bucket mode is only accepted for S3 repositories."
+                }
             )
 
         attrs["config"] = config
@@ -384,7 +523,9 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
     def _validate_s3(self, config, credential_payload, s3_platform, s3_bucket) -> None:
         s3_platform = str(s3_platform or "").strip().lower()
         if not s3_platform:
-            raise serializers.ValidationError({"s3_platform": "S3 platform is required."})
+            raise serializers.ValidationError(
+                {"s3_platform": "S3 platform is required."}
+            )
         if not str(s3_bucket or "").strip():
             raise serializers.ValidationError({"s3_bucket": "S3 bucket is required."})
 
@@ -393,7 +534,9 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             provider = provider_record.get("config") if provider_record else None
             if not provider or not provider.get("enabled"):
                 raise serializers.ValidationError(
-                    {"s3_platform": "Managed S3 Provider is not enabled in the current Catalog."}
+                    {
+                        "s3_platform": "Managed S3 Provider is not enabled in the current Catalog."
+                    }
                 )
             region_id = str(config.get("region") or "").strip()
             region = next(
@@ -421,7 +564,9 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             submitted_endpoint = normalize_s3_endpoint_host(config.get("endpoint"))
             if submitted_endpoint and submitted_endpoint != snapshot["endpoint"]:
                 raise serializers.ValidationError(
-                    {"config.endpoint": "Endpoint does not match the current Provider Catalog region."}
+                    {
+                        "config.endpoint": "Endpoint does not match the current Provider Catalog region."
+                    }
                 )
             compacted = compact_s3_repository_endpoints(
                 config,
@@ -451,7 +596,9 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
 
         instance = self.instance
         if str(credential_payload.get("access_key_id") or "").strip():
-            config["access_key_id"] = str(credential_payload.get("access_key_id") or "").strip()
+            config["access_key_id"] = str(
+                credential_payload.get("access_key_id") or ""
+            ).strip()
         if instance is not None and instance.repo_type == Repository.Type.S3:
             existing_config = instance.config or {}
             # On update, callers may omit credentials to keep the existing ones.
@@ -459,14 +606,24 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                 config["access_key_id"] = existing_config.get("access_key_id", "")
 
         if not str(config.get("access_key_id") or "").strip():
-            raise serializers.ValidationError({"config.access_key_id": "Access key ID is required."})
-        has_secret = bool(str(config.get("secret_access_key") or "").strip() or str(credential_payload.get("secret_access_key") or "").strip())
+            raise serializers.ValidationError(
+                {"config.access_key_id": "Access key ID is required."}
+            )
+        has_secret = bool(
+            str(config.get("secret_access_key") or "").strip()
+            or str(credential_payload.get("secret_access_key") or "").strip()
+        )
         if instance is not None and getattr(instance, "credential_id", None):
             has_secret = True
-        if instance is not None and str((instance.config or {}).get("secret_access_key") or "").strip():
+        if (
+            instance is not None
+            and str((instance.config or {}).get("secret_access_key") or "").strip()
+        ):
             has_secret = True
         if not has_secret:
-            raise serializers.ValidationError({"config.secret_access_key": "Secret access key is required."})
+            raise serializers.ValidationError(
+                {"config.secret_access_key": "Secret access key is required."}
+            )
 
         config["prefix"] = normalize_s3_object_prefix(config.get("prefix"))
         try:
@@ -474,9 +631,9 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                 config.get("s3_url_style"), platform=s3_platform
             )
         except ValueError as exc:
-            raise serializers.ValidationError({"config.s3_url_style": str(exc)}) from exc
-        if instance is None and not config["prefix"]:
-            raise serializers.ValidationError({"config.prefix": "S3 object prefix is required."})
+            raise serializers.ValidationError(
+                {"config.s3_url_style": str(exc)}
+            ) from exc
 
     def _validate_nas(
         self,
@@ -488,16 +645,26 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
     ) -> None:
         instance = self.instance
         if nas_protocol not in {choice[0] for choice in Repository.NasProtocol.choices}:
-            raise serializers.ValidationError({"nas_protocol": "NAS protocol is required."})
+            raise serializers.ValidationError(
+                {"nas_protocol": "NAS protocol is required."}
+            )
         if not str(config.get("server_address") or "").strip():
-            raise serializers.ValidationError({"config.server_address": "Server address is required."})
+            raise serializers.ValidationError(
+                {"config.server_address": "Server address is required."}
+            )
         if not str(config.get("share_path") or "").strip():
-            raise serializers.ValidationError({"config.share_path": "Share path is required."})
+            raise serializers.ValidationError(
+                {"config.share_path": "Share path is required."}
+            )
         config["share_path"] = normalize_nas_share_path(config.get("share_path"))
         if bool(bind_node_type) != bool(bind_node_id):
-            raise serializers.ValidationError({"bind_node_id": "Bind node type and ID must be set together."})
+            raise serializers.ValidationError(
+                {"bind_node_id": "Bind node type and ID must be set together."}
+            )
         if bind_node_type and bind_node_type != Repository.BindNodeType.PROXY:
-            raise serializers.ValidationError({"bind_node_type": "Only proxy bind nodes are supported."})
+            raise serializers.ValidationError(
+                {"bind_node_type": "Only proxy bind nodes are supported."}
+            )
         if bind_node_id:
             self._validate_proxy_node_target(bind_node_id, instance=instance)
         # Already-bound NAS repositories cannot unbind the Proxy.
@@ -521,22 +688,38 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                     }
                 )
             if str(credential_payload.get("smb_username") or "").strip():
-                config["smb_username"] = str(credential_payload.get("smb_username") or "").strip()
+                config["smb_username"] = str(
+                    credential_payload.get("smb_username") or ""
+                ).strip()
             if str(credential_payload.get("smb_domain") or "").strip():
-                config["smb_domain"] = str(credential_payload.get("smb_domain") or "").strip()
+                config["smb_domain"] = str(
+                    credential_payload.get("smb_domain") or ""
+                ).strip()
             if not str(config.get("smb_username") or "").strip():
-                raise serializers.ValidationError({"config.smb_username": "SMB username is required."})
-            has_password = bool(str(config.get("smb_password") or "").strip() or str(credential_payload.get("smb_password") or "").strip())
+                raise serializers.ValidationError(
+                    {"config.smb_username": "SMB username is required."}
+                )
+            has_password = bool(
+                str(config.get("smb_password") or "").strip()
+                or str(credential_payload.get("smb_password") or "").strip()
+            )
             if instance is not None and getattr(instance, "credential_id", None):
                 has_password = True
-            if instance is not None and str((instance.config or {}).get("smb_password") or "").strip():
+            if (
+                instance is not None
+                and str((instance.config or {}).get("smb_password") or "").strip()
+            ):
                 has_password = True
             if not has_password:
-                raise serializers.ValidationError({"config.smb_password": "SMB password is required."})
+                raise serializers.ValidationError(
+                    {"config.smb_password": "SMB password is required."}
+                )
         else:
             for key in ("smb_username", "smb_password", "smb_domain"):
                 if key in config or key in credential_payload:
-                    raise serializers.ValidationError({f"config.{key}": "SMB fields are not accepted for NFS."})
+                    raise serializers.ValidationError(
+                        {f"config.{key}": "SMB fields are not accepted for NFS."}
+                    )
 
     def _validate_proxy_fs(self, config, bind_node_type, bind_node_id) -> None:
         instance = self.instance
@@ -547,9 +730,13 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                 {"bind_node_id": "Cannot unbind proxy. Replace the proxy instead."}
             )
         if not bind_node_id:
-            raise serializers.ValidationError({"bind_node_id": "Proxy filesystem must bind a proxy node."})
+            raise serializers.ValidationError(
+                {"bind_node_id": "Proxy filesystem must bind a proxy node."}
+            )
         if bind_node_type and bind_node_type != Repository.BindNodeType.PROXY:
-            raise serializers.ValidationError({"bind_node_type": "Proxy filesystem must bind a proxy node."})
+            raise serializers.ValidationError(
+                {"bind_node_type": "Proxy filesystem must bind a proxy node."}
+            )
         self._validate_proxy_node_target(bind_node_id, instance=instance)
         base_dir = str(
             config.get("proxy_node_base_dir") or config.get("proxy_node_dir") or ""
@@ -572,7 +759,9 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             is_deleted=False,
         ).first()
         if node is None:
-            raise serializers.ValidationError({"bind_node_id": "Bound proxy node not found in this organization."})
+            raise serializers.ValidationError(
+                {"bind_node_id": "Bound proxy node not found in this organization."}
+            )
 
     def create(self, validated_data):
         organization_id = self.context["organization_id"]
@@ -597,7 +786,10 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
         credential_payload = validated_data.get("credential_payload")
         incoming_config = validated_data.get("config")
         if credential_payload is None and isinstance(incoming_config, dict):
-            if any(key in incoming_config for key in ("secret_access_key", "smb_password", "kopia_password")):
+            if any(
+                key in incoming_config
+                for key in ("secret_access_key", "smb_password", "kopia_password")
+            ):
                 credential_payload = {}
         return update_repository(
             repository=instance,
@@ -628,6 +820,17 @@ class RepositoryCleanupPreflightSerializer(serializers.Serializer):
     force = serializers.BooleanField(required=False, default=False)
 
 
+class RepositoryResidualReleaseSerializer(serializers.Serializer):
+    confirmation = serializers.CharField(required=True, allow_blank=False)
+
+    def validate_confirmation(self, value):
+        if value != "RELEASE LOCATION":
+            raise serializers.ValidationError(
+                'Type "RELEASE LOCATION" exactly to confirm.'
+            )
+        return value
+
+
 class NASRepositoryRepairSerializer(serializers.Serializer):
     """Validates the payload for ``PATCH /repositories/{id}/repair/``.
 
@@ -636,7 +839,9 @@ class NASRepositoryRepairSerializer(serializers.Serializer):
     let callers mutate structural fields (type, host, share_path, ...).
     """
 
-    name = serializers.CharField(required=False, allow_blank=False, max_length=200, trim_whitespace=True)
+    name = serializers.CharField(
+        required=False, allow_blank=False, max_length=200, trim_whitespace=True
+    )
     bind_node_id = serializers.IntegerField(required=False, allow_null=True)
 
     # NAS mutable config fields. The "config" wrapper is reused so the
@@ -648,16 +853,19 @@ class NASRepositoryRepairSerializer(serializers.Serializer):
             return {}
         if not isinstance(value, dict):
             raise serializers.ValidationError("config must be an object.")
-        forbidden = sorted(FORBIDDEN_CONFIG_FIELDS & set(value))
-        if forbidden:
+        unsupported = sorted(set(value) - NAS_REPAIR_MUTABLE_CONFIG_FIELDS)
+        if unsupported:
             raise serializers.ValidationError(
-                "config contains forbidden fields: %s" % ", ".join(forbidden)
+                "These NAS repository fields cannot be modified: %s"
+                % ", ".join(unsupported)
             )
         if "proxy_repository_server_host" in value:
             value = dict(value)
             try:
-                value["proxy_repository_server_host"] = normalize_repository_server_host(
-                    value.get("proxy_repository_server_host")
+                value["proxy_repository_server_host"] = (
+                    normalize_repository_server_host(
+                        value.get("proxy_repository_server_host")
+                    )
                 )
             except ValueError as exc:
                 raise serializers.ValidationError(str(exc)) from exc

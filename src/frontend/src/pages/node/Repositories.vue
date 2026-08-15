@@ -38,6 +38,8 @@ import {
   listStorageRepositoryTasks,
   deleteStorageRepository,
   preflightStorageRepositoryCleanup,
+  releaseStorageRepositoryResidualLocation,
+  retryStorageRepositoryInitialization,
   type StorageRepositoryCleanupPreflight,
   type StorageRepositoryAssociatedSource,
 } from '../../lib/storageRepositoryApi'
@@ -60,6 +62,13 @@ export type RepoLifecycleStatus =
   | 'removed'
 
 export type RepoHealth = 'online' | 'offline' | 'unverified'
+export type RepositoryInitializationState =
+  | 'not_initialized'
+  | 'initializing'
+  | 'ready'
+  | 'attention_required'
+  | 'released'
+  | 'unverified'
 
 export type NasProtocol = 'smb' | 'nfs'
 export type BindNodeType = 'agent' | 'proxy'
@@ -72,6 +81,8 @@ export type RepositoryRow = {
   kind: RepoKind
   status: RepoLifecycleStatus
   health: RepoHealth
+  initialization_state: RepositoryInitializationState
+  initialized_target_count: number
   capacity_bytes: number
   estimated_usage_bytes: number
   physical_usage_bytes?: number | null
@@ -150,6 +161,8 @@ type ApiRepository = {
   config?: Record<string, unknown>
   health?: string
   health_failures?: number
+  initialization_state?: RepositoryInitializationState
+  initialized_target_count?: number
   credential_id?: number | null
   s3_platform?: string | null
   s3_bucket?: string | null
@@ -369,6 +382,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
   const lifecycle = normalizeLifecycleStatus(r.status)
   const health = normalizeHealth(r.health, r.status)
   const organizationId = r.organization_id ?? r.organization ?? 0
+  const initializationState = r.initialization_state || 'unverified'
+  const initializedTargetCount = Number(r.initialized_target_count || 0)
   const bucket = r.s3_bucket || configString(config, 'bucket') || r.name
   const prefix = configString(config, 'prefix')
   const mountPath = configString(config, 'mount_path') || r.mount_path || ''
@@ -424,6 +439,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       kind,
       status: lifecycle,
       health,
+      initialization_state: initializationState,
+      initialized_target_count: initializedTargetCount,
       capacity_bytes: r.capacity_bytes,
       estimated_usage_bytes: r.estimated_usage_bytes,
       physical_usage_bytes: r.physical_usage_bytes ?? null,
@@ -471,6 +488,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       kind,
       status: lifecycle,
       health,
+      initialization_state: initializationState,
+      initialized_target_count: initializedTargetCount,
       capacity_bytes: r.capacity_bytes,
       estimated_usage_bytes: r.estimated_usage_bytes,
       physical_usage_bytes: r.physical_usage_bytes ?? null,
@@ -511,6 +530,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
     kind,
     status: lifecycle,
     health,
+    initialization_state: initializationState,
+    initialized_target_count: initializedTargetCount,
     capacity_bytes: r.capacity_bytes,
     estimated_usage_bytes: r.estimated_usage_bytes,
     physical_usage_bytes: r.physical_usage_bytes ?? null,
@@ -593,6 +614,8 @@ const currentPage = ref(1)
 const selectedRows = ref<RepositoryRow[]>([])
 const repositoryTotal = ref(0)
 const deleteRepositoriesDialogOpen = ref(false)
+const releaseResidualDialogOpen = ref(false)
+const pendingResidualRepository = ref<RepositoryRow | null>(null)
 const pendingDeleteRepositories = ref<RepositoryRow[]>([])
 const repositoryCleanupBlockedDialogOpen = ref(false)
 const repositoryCleanupBlockedRows = ref<Array<{
@@ -760,8 +783,10 @@ function repoLifecycleLabel(s: RepoLifecycleStatus | string) {
   return t(REPO_STATUS_I18N[k])
 }
 
-function repoHealthLabel(h: RepoHealth | string) {
-  const k = normalizeHealth(String(h))
+function repoHealthLabel(row: RepositoryRow) {
+  if (row.initialization_state === 'not_initialized') return t('repositoriesPage.healthNotInitialized')
+  if (row.initialization_state === 'attention_required') return t('repositoriesPage.healthAttentionRequired')
+  const k = normalizeHealth(String(row.health))
   if (k === 'unverified') return t('repositoriesPage.healthUnverified')
   return k === 'online' ? t('repositoriesPage.healthOnline') : t('repositoriesPage.healthOffline')
 }
@@ -1188,13 +1213,34 @@ const searchedRows = computed(() => {
 })
 
 const totalFiltered = computed(() => repositoryTotal.value)
-const hasSelectedRows = computed(() => selectedRows.value.length > 0)
+const canDeleteSelectedRows = computed(() => (
+  selectedRows.value.length > 0
+  && selectedRows.value.every(
+    row => row.status !== 'removed' && row.status !== 'removing',
+  )
+))
 const selectedEditableRow = computed(() => {
   if (selectedRows.value.length !== 1) return null
   const row = selectedRows.value[0]!
-  return row.kind === 's3' || row.kind === 'nas' || row.kind === 'proxy_fs' ? row : null
+  if (row.status === 'removed' || row.status === 'removing') return null
+  return row.kind === 's3' || row.kind === 'nas' || row.kind === 'proxy_fs'
+    ? row
+    : null
 })
 const canEditSelectedRow = computed(() => selectedEditableRow.value !== null)
+const selectedRetryableRow = computed(() => {
+  if (selectedRows.value.length !== 1) return null
+  return selectedRows.value[0]?.status === 'create_failed'
+    ? selectedRows.value[0]!
+    : null
+})
+const selectedResidualRow = computed(() => {
+  if (selectedRows.value.length !== 1) return null
+  const row = selectedRows.value[0]!
+  return row.status === 'removed' && row.initialization_state === 'attention_required'
+    ? row
+    : null
+})
 
 const createdAtColumnMinWidth = 190
 
@@ -2221,11 +2267,72 @@ function editFirstSelected() {
 
 function onMoreCommand(cmd: string) {
   if (cmd === 'batch-delete') {
-    if (!hasSelectedRows.value) return
+    if (!canDeleteSelectedRows.value) return
     batchDeleteSelected()
   } else if (cmd === 'edit-selected') {
     if (!canEditSelectedRow.value) return
     editFirstSelected()
+  } else if (cmd === 'retry-initialization') {
+    void retrySelectedInitialization()
+  } else if (cmd === 'release-residual-location') {
+    openReleaseResidualDialog()
+  }
+}
+
+async function retrySelectedInitialization() {
+  const row = selectedRetryableRow.value
+  if (!row || busy.value) return
+  busy.value = true
+  try {
+    const result = await retryStorageRepositoryInitialization(row.id)
+    const taskUuid = String(result.task?.task_uuid || '')
+    if (taskUuid) {
+      trackRepositoryCreatePending(row.id, taskUuid, row.name)
+    }
+    tableRef.value?.clearSelection()
+    ElMessage.success({
+      message: t('repositoriesPage.retryInitializationAccepted'),
+      grouping: true,
+    })
+    await load()
+  } catch (err) {
+    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+  } finally {
+    busy.value = false
+  }
+}
+
+function openReleaseResidualDialog() {
+  const row = selectedResidualRow.value
+  if (!row || busy.value) return
+  pendingResidualRepository.value = row
+  releaseResidualDialogOpen.value = true
+}
+
+function closeReleaseResidualDialog() {
+  if (busy.value) return
+  releaseResidualDialogOpen.value = false
+  pendingResidualRepository.value = null
+}
+
+async function confirmReleaseResidualLocation() {
+  const row = pendingResidualRepository.value
+  if (!row || busy.value) return
+  busy.value = true
+  try {
+    await releaseStorageRepositoryResidualLocation(row.id)
+    releaseResidualDialogOpen.value = false
+    pendingResidualRepository.value = null
+    tableRef.value?.clearSelection()
+    ElMessage.success({
+      message: t('repositoriesPage.releaseResidualSuccess'),
+      grouping: true,
+    })
+    await load()
+  } catch (err) {
+    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+  } finally {
+    busy.value = false
   }
 }
 
@@ -2337,8 +2444,9 @@ function lifecycleTagType(s: RepoLifecycleStatus | string) {
   }
 }
 
-function healthTagType(h: RepoHealth | string) {
-  const k = normalizeHealth(String(h))
+function healthTagType(row: RepositoryRow) {
+  if (row.initialization_state === 'attention_required') return 'danger'
+  const k = normalizeHealth(String(row.health))
   if (k === 'online') return 'success'
   if (k === 'unverified') return 'warning'
   return 'danger'
@@ -2404,10 +2512,34 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
+                  command="retry-initialization"
+                  :disabled="!selectedRetryableRow"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <RefreshCw
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('repositoriesPage.retryInitialization') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  command="release-residual-location"
+                  :disabled="!selectedResidualRow"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Unlink
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('repositoriesPage.releaseResidualLocation') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
                   command="batch-delete"
                   divided
                   class="el-dropdown-menu__item--danger"
-                  :disabled="!hasSelectedRows"
+                  :disabled="!canDeleteSelectedRows"
                 >
                   <span class="el-dropdown-menu__item-content">
                     <Trash2
@@ -2778,10 +2910,10 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip">
                   <ElTag
-                    :type="healthTagType(row.health)"
+                    :type="healthTagType(row)"
                     size="small"
                   >
-                    {{ repoHealthLabel(row.health) }}
+                    {{ repoHealthLabel(row) }}
                   </ElTag>
                 </div>
               </template>
@@ -2895,10 +3027,10 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colAvailability') }}</span>
                     <span class="hfl-detail-row__value">
                       <ElTag
-                        :type="healthTagType(detailRow.health)"
+                        :type="healthTagType(detailRow)"
                         size="small"
                       >
-                        {{ repoHealthLabel(detailRow.health) }}
+                        {{ repoHealthLabel(detailRow) }}
                       </ElTag>
                     </span>
                   </div>
@@ -3138,10 +3270,10 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colAvailability') }}</span>
                     <span class="hfl-detail-row__value">
                       <ElTag
-                        :type="healthTagType(detailRow.health)"
+                        :type="healthTagType(detailRow)"
                         size="small"
                       >
-                        {{ repoHealthLabel(detailRow.health) }}
+                        {{ repoHealthLabel(detailRow) }}
                       </ElTag>
                     </span>
                   </div>
@@ -3398,10 +3530,10 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colAvailability') }}</span>
                     <span class="hfl-detail-row__value">
                       <ElTag
-                        :type="healthTagType(detailRow.health)"
+                        :type="healthTagType(detailRow)"
                         size="small"
                       >
-                        {{ repoHealthLabel(detailRow.health) }}
+                        {{ repoHealthLabel(detailRow) }}
                       </ElTag>
                     </span>
                   </div>
@@ -4080,11 +4212,16 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               :placeholder="t('repositoriesPage.phBucket')"
             />
           </ElFormItem>
-          <ElFormItem :label="t('repositoriesPage.fieldPrefix')">
-            <ElInput
-              v-model="form.prefix"
-              :placeholder="t('repositoriesPage.phPrefix')"
-            />
+          <ElFormItem
+            :label="t('repositoriesPage.fieldPrefix')"
+          >
+            <div class="repo-field-stack">
+              <ElInput
+                v-model="form.prefix"
+                :placeholder="t('repositoriesPage.phPrefix')"
+              />
+              <span class="repo-field-hint">{{ t('repositoriesPage.prefixIsolationHint') }}</span>
+            </div>
           </ElFormItem>
           <ElFormItem :label="t('repositoriesPage.fieldSourceNode')">
             <ElSelect
@@ -4194,6 +4331,22 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
       </template>
     </ElDialog>
     <DangerConfirmDialog
+      v-model="releaseResidualDialogOpen"
+      :title="t('repositoriesPage.releaseResidualTitle')"
+      :message="t('repositoriesPage.releaseResidualMessage')"
+      :warning="t('repositoriesPage.releaseResidualWarning')"
+      confirm-mode="keyword"
+      confirm-keyword="RELEASE LOCATION"
+      :confirm-keyword-hint="t('repositoriesPage.releaseResidualPrompt')"
+      confirm-keyword-placeholder="RELEASE LOCATION"
+      :cancel-text="t('repositoriesPage.btnCancel')"
+      :confirm-text="t('repositoriesPage.releaseResidualConfirm')"
+      :loading="busy"
+      level="high"
+      @confirm="confirmReleaseResidualLocation"
+      @cancel="closeReleaseResidualDialog"
+    />
+    <DangerConfirmDialog
       v-model="deleteRepositoriesDialogOpen"
       :title="deleteRepositoriesTitle"
       :message="deleteRepositoriesMessage"
@@ -4280,6 +4433,18 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
 .repo-form-inline__hint {
   font-size: 13px;
   color: var(--color-text-secondary);
+}
+
+.repo-field-stack {
+  display: grid;
+  width: 100%;
+  gap: 6px;
+}
+
+.repo-field-hint {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .repo-storage-detail .hfl-detail-section__title {

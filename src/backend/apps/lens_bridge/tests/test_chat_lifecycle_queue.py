@@ -24,6 +24,12 @@ from apps.protection.models import (
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
 )
+from apps.storage.repositories.models import Repository
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    reserve_repository_location,
+)
 from common.errors import AppError
 
 
@@ -308,9 +314,7 @@ class CopilotCapacityReservationTests(TestCase):
             origin=LensGatewayLink.Origin.USER,
         )
 
-    @patch(
-        "apps.subscription.services.quota.assert_gateway_select_within_limits"
-    )
+    @patch("apps.subscription.services.quota.assert_gateway_select_within_limits")
     def test_reservation_locks_session_with_nullable_relations(self, _assert_limits):
         claim_token = uuid.uuid4()
         session = LensSessionLink.objects.create(
@@ -318,9 +322,7 @@ class CopilotCapacityReservationTests(TestCase):
             hfl_user=self.user,
             gateway_link=self.gateway_link,
             lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
-            scope_resolution_status=(
-                LensSessionLink.ScopeResolutionStatus.RESOLVED
-            ),
+            scope_resolution_status=(LensSessionLink.ScopeResolutionStatus.RESOLVED),
             capacity_reservation_status=(
                 LensSessionLink.CapacityReservationStatus.PENDING
             ),
@@ -476,12 +478,25 @@ class CopilotChatModelBindingTests(TestCase):
             scope=LensGatewayLink.GatewayScope.USER,
             origin=LensGatewayLink.Origin.USER,
         )
+        self.repository = Repository.objects.create(
+            organization_id=self.organization.id,
+            name="chat-model-binding-repository",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.CUSTOM,
+            s3_bucket="chat-model-binding",
+            config={"prefix": "chat/model-binding"},
+        )
+        reserve_repository_location(self.repository)
+        mark_repository_location_owned(self.repository)
+        mark_repository_location_ownership_verified(self.repository)
         self.config = BackupConfig.objects.create(
             organization_id=self.organization.id,
             name="Documents",
             source_type="host",
             source_ref_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
         )
         self.snapshot = BackupSourceSnapshot.objects.create(
             organization_id=self.organization.id,
@@ -490,7 +505,7 @@ class CopilotChatModelBindingTests(TestCase):
             source_type="host",
             source_ref_id=1,
             backup_config_id=self.config.id,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -500,7 +515,7 @@ class CopilotChatModelBindingTests(TestCase):
             backup_config_id=self.config.id,
             backup_config_dir_id=1,
             source_path="/documents",
-            repository_id=1,
+            repository_id=self.repository.id,
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
 

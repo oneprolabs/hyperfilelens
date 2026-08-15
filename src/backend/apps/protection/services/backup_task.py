@@ -50,6 +50,10 @@ from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
 from apps.source.services.internal.selectable_ids import parse_selectable_id
 from apps.storage.services.internal.repository_secrets import build_repository_runtime_payload
+from apps.storage.services.internal.repository_workload import (
+    RepositoryWorkload,
+    lock_repositories_for_workload,
+)
 from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import append_task_step_event, complete_task, create_task
 
@@ -705,6 +709,11 @@ def start_backup_tasks(
                             }
 
                     if existing_result is None:
+                        lock_repositories_for_workload(
+                            organization_id=organization_id,
+                            repository_ids=[locked_config.repository_id],
+                            workload=RepositoryWorkload.BACKUP_WRITE,
+                        )
                         directory_count = locked_config.directories.count()
                         task = create_task(
                             organization_id=organization_id,
@@ -811,6 +820,22 @@ def start_backup_tasks(
                         "status": "conflict",
                         "message": "A backup task for this source and backup config is already running.",
                     }
+            except ValidationError as exc:
+                skipped_count += 1
+                results.append(
+                    {
+                        "source_type": source.source_type,
+                        "source_ref_id": source.source_ref_id,
+                        "backup_config_id": config.id,
+                        "task_id": None,
+                        "task_uuid": None,
+                        "source_snapshot_id": None,
+                        "source_snapshot_status": None,
+                        "status": "failed",
+                        "message": _validation_message(exc),
+                    }
+                )
+                continue
 
             if existing_result is not None:
                 skipped_count += 1

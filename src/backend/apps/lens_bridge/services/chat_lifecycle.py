@@ -43,6 +43,10 @@ from apps.protection.models import (
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
 )
+from apps.storage.services.internal.repository_workload import (
+    RepositoryWorkload,
+    lock_repositories_for_workload,
+)
 from apps.protection.services.source_identity import resolve_source_display_name
 
 logger = logging.getLogger(__name__)
@@ -328,6 +332,11 @@ def create_copilot_chat(
     ).first()
     if config is None:
         raise ValidationError({"backup_config_id": "Backup source not found."})
+    lock_repositories_for_workload(
+        organization_id=org.id,
+        repository_ids=[config.repository_id],
+        workload=RepositoryWorkload.RESTORE_READ,
+    )
     snapshot = BackupSourceSnapshot.objects.filter(
         id=backup_source_snapshot_id,
         organization_id=org.id,
@@ -385,9 +394,7 @@ def create_copilot_chat(
         }
         if is_root:
             normalized["file_count"] = (
-                1
-                if trusted_type == "file"
-                else max(0, int(directory.file_count or 0))
+                1 if trusted_type == "file" else max(0, int(directory.file_count or 0))
             )
             normalized["size_bytes"] = max(0, int(directory.size_bytes or 0))
         normalized_scopes.append(normalized)

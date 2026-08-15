@@ -52,6 +52,10 @@ from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.repository_access import (
     explicit_repository_server_host,
 )
+from apps.storage.services.internal.repository_workload import (
+    RepositoryWorkload,
+    lock_repositories_for_workload,
+)
 from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import (
@@ -782,6 +786,14 @@ def _create_restore_record(
         source_snapshot=source_snapshot,
         item_inputs=item_inputs,
     )
+    repository_ids = sorted(
+        {int(directory["repository_id"]) for directory in directories}
+    )
+    lock_repositories_for_workload(
+        organization_id=organization_id,
+        repository_ids=repository_ids,
+        workload=RepositoryWorkload.RESTORE_READ,
+    )
     restore_uid = f"rst-{uuid4().hex[:16]}"
     task_type = (
         Task.Type.INSIGHT_WORKSPACE_RESTORE
@@ -815,9 +827,7 @@ def _create_restore_record(
                     "resource_type": TaskResource.Type.REPOSITORY,
                     "resource_id": repository_id,
                 }
-                for repository_id in sorted(
-                    {int(directory["repository_id"]) for directory in directories}
-                )
+                for repository_id in repository_ids
             ],
         ],
         steps=["prepare_restore", "dispatch_agent", "restore", "finalize"],

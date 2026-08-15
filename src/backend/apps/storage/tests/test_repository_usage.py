@@ -6,7 +6,16 @@ from apps.iam.models import Organization
 from apps.node.models import Node
 from apps.node.agent_paths import repository_mount_point
 from apps.protection.models import BackupConfig, BackupSourceSnapshot
-from apps.storage.repositories.models import Repository, RepositoryUsageShard
+from apps.storage.repositories.models import (
+    Repository,
+    RepositoryLocationClaim,
+    RepositoryUsageShard,
+)
+from apps.storage.services.internal.nas_repository import nas_agent_repository_subdir
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    reserve_direct_nas_location,
+)
 from apps.storage.services.internal.repository_usage import (
     RepositoryUsageProbeResult,
     _parse_agent_repo_status_result,
@@ -18,6 +27,25 @@ from apps.storage.services.internal.repository_usage import (
 
 
 class RepositoryUsageTests(TestCase):
+    def _mark_direct_nas_location_owned(
+        self,
+        *,
+        repository: Repository,
+        node: Node,
+    ) -> str:
+        subdir = nas_agent_repository_subdir(node.id)
+        reserve_direct_nas_location(
+            repository=repository,
+            node_id=node.id,
+            repository_subdir=subdir,
+        )
+        mark_repository_location_owned(
+            repository,
+            owner_node_id=node.id,
+            repository_subdir=subdir,
+        )
+        return subdir
+
     def test_capacity_bytes_from_config(self):
         self.assertEqual(capacity_bytes_from_config({"quota_gb": 10}), 10 * 1024**3)
         self.assertEqual(capacity_bytes_from_config({"quota_gb": 0}), 0)
@@ -360,6 +388,8 @@ class RepositoryUsageTests(TestCase):
             source_ref_id=agent_a.id,
             repository_id=repo.id,
         )
+        self._mark_direct_nas_location_owned(repository=repo, node=agent_a)
+        self._mark_direct_nas_location_owned(repository=repo, node=agent_b)
         BackupConfig.objects.create(
             organization_id=org.id,
             name="config-b",
@@ -412,6 +442,7 @@ class RepositoryUsageTests(TestCase):
             source_ref_id=agent.id,
             repository_id=repo.id,
         )
+        self._mark_direct_nas_location_owned(repository=repo, node=agent)
         run_probe.return_value = RepositoryUsageProbeResult(
             128,
             1024,
@@ -460,6 +491,7 @@ class RepositoryUsageTests(TestCase):
             source_ref_id=agent.id,
             repository_id=repo.id,
         )
+        self._mark_direct_nas_location_owned(repository=repo, node=agent)
         RepositoryUsageShard.objects.create(
             organization_id=org.id,
             repository_id=repo.id,
@@ -486,6 +518,80 @@ class RepositoryUsageTests(TestCase):
         shard = RepositoryUsageShard.objects.get(repository_id=repo.id, node_id=agent.id)
         self.assertEqual(shard.status, RepositoryUsageShard.Status.FAILED)
         self.assertEqual(shard.estimated_usage_bytes, 512)
+
+    @mock.patch("apps.storage.services.internal.repository_usage._run_repository_usage_probe")
+    def test_unbound_nas_sync_does_not_reactivate_residual_location(
+        self,
+        run_probe,
+    ):
+        org = Organization.objects.create(
+            key="usage-residual-org",
+            name="Usage Residual Org",
+        )
+        agent = Node.objects.create(
+            organization=org,
+            name="agent-a",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.4.1",
+        )
+        repo = Repository.objects.create(
+            organization_id=org.id,
+            name="direct-nas-residual",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            estimated_usage_bytes=512,
+            capacity_bytes=4096,
+            config={"server_address": "10.0.0.10", "share_path": "/backup"},
+        )
+        config = BackupConfig.objects.create(
+            organization_id=org.id,
+            name="config-a",
+            source_type="agent",
+            source_ref_id=agent.id,
+            repository_id=repo.id,
+        )
+        subdir = self._mark_direct_nas_location_owned(
+            repository=repo,
+            node=agent,
+        )
+        claim = RepositoryLocationClaim.objects.get(
+            repository=repo,
+            owner_node_id=agent.id,
+            root_path=subdir,
+        )
+        claim.state = RepositoryLocationClaim.State.RESIDUAL
+        claim.save(update_fields=["state", "updated_at"])
+        RepositoryUsageShard.objects.create(
+            organization_id=org.id,
+            repository_id=repo.id,
+            usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
+            node_id=agent.id,
+            repository_subdir=subdir,
+            estimated_usage_bytes=512,
+            capacity_bytes=4096,
+            source_config_count=1,
+            source_config_ids=[config.id],
+            status=RepositoryUsageShard.Status.SUCCESS,
+            is_active=True,
+            last_checked_at=timezone.now(),
+            last_success_checked_at=timezone.now(),
+        )
+
+        sync_repository_usage(repo)
+
+        run_probe.assert_not_called()
+        shard = RepositoryUsageShard.objects.get(
+            repository_id=repo.id,
+            node_id=agent.id,
+        )
+        self.assertFalse(shard.is_active)
+        self.assertEqual(shard.status, RepositoryUsageShard.Status.SKIPPED)
+        self.assertEqual(shard.source_config_ids, [config.id])
+        self.assertIn("ownership requires verification", shard.last_error)
 
     def test_unbound_nas_usage_sync_preserves_health_without_associated_sources(self):
         org = Organization.objects.create(key="usage-empty-org", name="Usage Empty Org")

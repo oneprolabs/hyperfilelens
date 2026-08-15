@@ -16,7 +16,13 @@ from apps.storage.repositories.models import (
     RepositoryExecutionTarget,
     RepositoryTask,
 )
-from apps.storage.services.internal.repository_health import probe_repository_health
+from apps.storage.services.internal.repository_location import (
+    invalidate_repository_location_ownership,
+)
+from apps.storage.services.internal.repository_health import (
+    is_repository_ownership_failure,
+    probe_repository_health,
+)
 from apps.storage.services.internal.repository_usage import (
     sync_all_repositories,
     sync_organization_repositories,
@@ -39,6 +45,7 @@ from apps.storage.services.internal.repository_operations import (
     fence_controller_repository_operation,
     finalize_repository_operation,
     maintenance_settings,
+    repository_execution_target_has_owned_location,
     schedule_due_maintenance,
     set_controller_repository_operation_step,
     set_task_step,
@@ -166,18 +173,15 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
         return {"repository_id": repository_id, "status": "skipped", "locked": True}
 
     try:
-        repository = (
-            Repository.objects.filter(
-                id=repository_id,
-                status=Repository.Status.CREATED,
-                repo_type__in=[
-                    Repository.Type.S3,
-                    Repository.Type.NAS,
-                    Repository.Type.PROXY_FS,
-                ],
-            )
-            .first()
-        )
+        repository = Repository.objects.filter(
+            id=repository_id,
+            status=Repository.Status.CREATED,
+            repo_type__in=[
+                Repository.Type.S3,
+                Repository.Type.NAS,
+                Repository.Type.PROXY_FS,
+            ],
+        ).first()
         if repository is None:
             return {
                 "repository_id": repository_id,
@@ -193,6 +197,13 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                 retry_attempt,
                 type(exc).__name__,
             )
+            if is_repository_ownership_failure(exc):
+                invalidate_repository_location_ownership(repository)
+                return _record_repository_health_failure(
+                    repository=repository,
+                    retry_attempt=retry_attempt,
+                    fail_immediately=True,
+                )
             return _record_repository_health_failure(
                 repository=repository,
                 retry_attempt=retry_attempt,
@@ -223,9 +234,16 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
         cache.delete(lock_key)
 
 
-def _record_repository_health_failure(*, repository: Repository, retry_attempt: int) -> dict:
+def _record_repository_health_failure(
+    *,
+    repository: Repository,
+    retry_attempt: int,
+    fail_immediately: bool = False,
+) -> dict:
     """Persist a failed probe and retry it once before declaring the target offline."""
-    failure_count = min(int(repository.health_failures or 0) + 1, 2)
+    failure_count = (
+        2 if fail_immediately else min(int(repository.health_failures or 0) + 1, 2)
+    )
     health = Repository.Health.OFFLINE if failure_count >= 2 else repository.health
     current_scope = Repository.objects.filter(
         pk=repository.id,
@@ -261,8 +279,13 @@ def _record_repository_health_failure(*, repository: Repository, retry_attempt: 
 def schedule_repository_maintenance():
     repository_task_ids = schedule_due_maintenance()
     for repository_task_id in repository_task_ids:
-        execute_repository_operation.apply_async(kwargs={"repository_task_id": repository_task_id})
-    return {"scheduled": len(repository_task_ids), "repository_task_ids": repository_task_ids}
+        execute_repository_operation.apply_async(
+            kwargs={"repository_task_id": repository_task_id}
+        )
+    return {
+        "scheduled": len(repository_task_ids),
+        "repository_task_ids": repository_task_ids,
+    }
 
 
 @shared_task(name="apps.storage.tasks.reconcile_repository_operations")
@@ -367,7 +390,12 @@ def _execute_repository_operation(*, repository_task_id: int):
 
         return run_repository_cleanup_task(repository_task_id=repository_task.id)
     task = repository_task.task
-    if task.status in {Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED, Task.Status.TIMEOUT}:
+    if task.status in {
+        Task.Status.SUCCESS,
+        Task.Status.FAILED,
+        Task.Status.CANCELLED,
+        Task.Status.TIMEOUT,
+    }:
         return {"status": task.status, "idempotent": True}
     started_now = task.status == Task.Status.PENDING
     execution_token: UUID | None = repository_task.execution_token
@@ -398,6 +426,13 @@ def _execute_repository_operation(*, repository_task_id: int):
                     progress=10,
                 )
             )
+            if (
+                repository_task.execution_target is None
+                or not repository_execution_target_has_owned_location(
+                    repository_task.execution_target
+                )
+            ):
+                raise ValueError("Repository location ownership requires verification.")
             _raise_for_control_decision(
                 _set_repository_operation_step(
                     repository_task,
@@ -590,7 +625,9 @@ def _recover_controller_repository_operation(repository_task: RepositoryTask) ->
 
     if token is None:
         legacy_started_at = task.started_at or task.updated_at or task.created_at
-        if (now - legacy_started_at).total_seconds() <= settings.execution_timeout_seconds:
+        if (
+            now - legacy_started_at
+        ).total_seconds() <= settings.execution_timeout_seconds:
             return {"status": task.status, "idempotent": True}
 
     recovery_token = fence_controller_repository_operation(
@@ -713,8 +750,12 @@ def _execute_maintenance(
         RepositoryTask.OperationType.MAINTENANCE_QUICK,
         RepositoryTask.OperationType.MAINTENANCE_FULL,
     }:
-        raise ValueError(f"Operation {repository_task.operation_type} is not implemented")
-    full = repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_FULL
+        raise ValueError(
+            f"Operation {repository_task.operation_type} is not implemented"
+        )
+    full = (
+        repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_FULL
+    )
     settings = maintenance_settings()
     if repository_task.owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER:
         if execution_token is None:
@@ -743,6 +784,7 @@ def _execute_maintenance(
         )
 
     from apps.node.models import Node
+
     node = Node.objects.filter(
         id=repository_task.owner_node_id,
         organization_id=repository_task.repository.organization_id,
@@ -750,9 +792,15 @@ def _execute_maintenance(
     ).first()
     if node is None:
         raise ValueError("Repository owner node was not found")
-    inventory = (node.metadata or {}).get("inventory") if isinstance(node.metadata, dict) else {}
+    inventory = (
+        (node.metadata or {}).get("inventory")
+        if isinstance(node.metadata, dict)
+        else {}
+    )
     capabilities = inventory.get("capabilities") if isinstance(inventory, dict) else []
-    if "repository_operation_v1" not in (capabilities if isinstance(capabilities, list) else []):
+    if "repository_operation_v1" not in (
+        capabilities if isinstance(capabilities, list) else []
+    ):
         raise ValueError("Repository owner does not advertise repository_operation_v1")
     repository_payload = repository_payload_for_node(
         repository=repository_task.repository,
@@ -767,6 +815,11 @@ def _execute_maintenance(
             "operation_type": repository_task.operation_type,
             "owner_identity": repository_task.owner_identity,
             "repository": repository_payload,
+        },
+        persisted_payload={
+            "repository_id": repository_task.repository_id,
+            "operation_type": repository_task.operation_type,
+            "owner_node_id": node.id,
         },
         correlation_type="repository_operation",
         timeout_seconds=settings.execution_timeout_seconds,

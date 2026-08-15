@@ -9,10 +9,19 @@ from django.test import TransactionTestCase
 
 from apps.iam.models import Organization
 from apps.node.models import Node
-from apps.protection.models import BackupConfig, BackupConfigDirectory, BackupSourceSnapshot
+from apps.protection.models import (
+    BackupConfig,
+    BackupConfigDirectory,
+    BackupSourceSnapshot,
+)
 from apps.protection.services.backup_task import start_backup_tasks
 from apps.source.models import SourceBackupPipelineEntry
 from apps.storage.repositories.models import Repository
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    reserve_repository_location,
+)
 from apps.task.models import Task, TaskResource
 
 
@@ -30,7 +39,8 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
             organization=self.org,
             name="backup-concurrency-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.71",
         )
         self.repository = Repository.objects.create(
@@ -51,6 +61,9 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
                 "use_tls": False,
             },
         )
+        reserve_repository_location(self.repository)
+        mark_repository_location_owned(self.repository)
+        mark_repository_location_ownership_verified(self.repository)
         self.config = BackupConfig.objects.create(
             organization_id=self.org.id,
             name="Concurrent backup config",
@@ -89,7 +102,9 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
                         idempotency_key=idempotency_key,
                     )
                 )
-            except BaseException as exc:  # pragma: no cover - surfaced in the main test thread
+            except (
+                BaseException
+            ) as exc:  # pragma: no cover - surfaced in the main test thread
                 errors.put(exc)
             finally:
                 close_old_connections()
@@ -111,7 +126,9 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
         self.assertEqual(statuses, ["conflict", "created"])
         self.assertEqual(Task.objects.filter(task_type=Task.Type.BACKUP).count(), 1)
         self.assertEqual(
-            BackupSourceSnapshot.objects.filter(status=BackupSourceSnapshot.Status.CREATING).count(),
+            BackupSourceSnapshot.objects.filter(
+                status=BackupSourceSnapshot.Status.CREATING
+            ).count(),
             1,
         )
 
@@ -140,6 +157,28 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
         self.assertEqual(result["results"][0]["status"], "failed")
         self.assertIn(
             "active Reset or Deregistration operation",
+            result["results"][0]["message"],
+        )
+        self.assertFalse(Task.objects.filter(task_type=Task.Type.BACKUP).exists())
+
+    def test_backup_start_revalidates_repository_before_task_creation(self):
+        self.repository.status = Repository.Status.REMOVING
+        self.repository.save(update_fields=["status", "updated_at"])
+
+        with patch(
+            "apps.protection.services.backup_task.validate_backup_repository_compatible",
+            return_value=self.repository,
+        ):
+            result = start_backup_tasks(
+                organization_id=self.org.id,
+                source_ids=[f"agent:{self.agent.id}"],
+                trigger_type="manual",
+                idempotency_key="repository-became-unavailable",
+            )
+
+        self.assertEqual(result["results"][0]["status"], "failed")
+        self.assertIn(
+            "no longer available",
             result["results"][0]["message"],
         )
         self.assertFalse(Task.objects.filter(task_type=Task.Type.BACKUP).exists())

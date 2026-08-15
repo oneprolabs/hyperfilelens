@@ -39,7 +39,10 @@ class DirectNasCleanupUnregisterTests(TestCase):
             name="direct-nas-agent",
             role=Node.Role.AGENT,
             status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
-            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+            metadata={"inventory": {"capabilities": [
+                "repository_cleanup_v1",
+                "repository_cleanup_ownership_v1",
+            ]}},
         )
         self.repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -1093,6 +1096,7 @@ class DirectNasCleanupUnregisterTests(TestCase):
             "inventory": {
                 "capabilities": [
                     "repository_cleanup_v1",
+                    "repository_cleanup_ownership_v1",
                     "detached_uninstall_v2",
                 ]
             }

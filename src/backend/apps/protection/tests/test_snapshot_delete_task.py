@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
@@ -31,6 +32,11 @@ from apps.protection.services.snapshot_delete import (
 )
 from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    reserve_repository_location,
+)
 from apps.task.models import Task, TaskResource
 
 
@@ -42,13 +48,18 @@ class SnapshotDeleteTaskTests(TestCase):
             email="snapshot-delete@test.local",
             password="test-pass",
         )
-        self.org = Organization.objects.create(key="snapshot-delete-org", name="Snapshot Delete Org")
-        Membership.objects.create(user=self.user, organization=self.org, role=Membership.Role.ADMIN)
+        self.org = Organization.objects.create(
+            key="snapshot-delete-org", name="Snapshot Delete Org"
+        )
+        Membership.objects.create(
+            user=self.user, organization=self.org, role=Membership.Role.ADMIN
+        )
         self.agent = Node.objects.create(
             organization=self.org,
             name="snapshot-delete-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         self.repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -68,6 +79,9 @@ class SnapshotDeleteTaskTests(TestCase):
                 "use_tls": False,
             },
         )
+        reserve_repository_location(self.repository)
+        mark_repository_location_owned(self.repository)
+        mark_repository_location_ownership_verified(self.repository)
         self.config = BackupConfig.objects.create(
             organization_id=self.org.id,
             name="Snapshot delete config",
@@ -126,9 +140,13 @@ class SnapshotDeleteTaskTests(TestCase):
         )
 
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
-    def test_run_snapshot_delete_task_marks_logical_snapshot_deleted(self, mock_run_agent_task_sync):
+    def test_run_snapshot_delete_task_marks_logical_snapshot_deleted(
+        self, mock_run_agent_task_sync
+    ):
         task = create_snapshot_delete_task(source_snapshot=self.snapshot)
-        source_resource = task.resources.get(resource_type=TaskResource.Type.BACKUP_SOURCE)
+        source_resource = task.resources.get(
+            resource_type=TaskResource.Type.BACKUP_SOURCE
+        )
         self.assertEqual(source_resource.resource_subtype, "agent")
         self.assertEqual(source_resource.resource_id, self.agent.id)
         mock_run_agent_task_sync.return_value = SimpleNamespace(
@@ -160,18 +178,65 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertFalse(
             BackupSourceSnapshotDirectory.objects.filter(
                 source_snapshot=self.snapshot,
-            ).exclude(status=BackupSourceSnapshotDirectory.Status.DELETED).exists()
+            )
+            .exclude(status=BackupSourceSnapshotDirectory.Status.DELETED)
+            .exists()
         )
         payload = mock_run_agent_task_sync.call_args.kwargs["payload"]
         self.assertEqual(payload["kopia_snapshot_ids"], ["kopia-a", "kopia-b"])
-        events = task.events.filter(message="Deleting physical Kopia snapshot").order_by("seq")
+        events = task.events.filter(
+            message="Deleting physical Kopia snapshot"
+        ).order_by("seq")
         self.assertEqual(events.count(), 2)
-        self.assertEqual(events[0].metadata["kopia_snapshot_display"], "kopia-a (/data/a)")
-        self.assertEqual(events[1].metadata["kopia_snapshot_display"], "kopia-b (/data/b)")
+        self.assertEqual(
+            events[0].metadata["kopia_snapshot_display"], "kopia-a (/data/a)"
+        )
+        self.assertEqual(
+            events[1].metadata["kopia_snapshot_display"], "kopia-b (/data/b)"
+        )
         self.assertEqual(events[0].metadata["object_id"], "kopia-a")
         self.assertEqual(events[0].metadata["object_names"], ["/data/a"])
         self.assertEqual(events[1].metadata["object_id"], "kopia-b")
         self.assertEqual(events[1].metadata["object_names"], ["/data/b"])
+
+    def test_create_snapshot_delete_rejects_repository_being_removed(self):
+        self.repository.status = Repository.Status.REMOVING
+        self.repository.save(update_fields=["status", "updated_at"])
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Repository is no longer available for this operation.",
+        ):
+            create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        self.snapshot.refresh_from_db()
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.AVAILABLE)
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.SNAPSHOT_DELETE).exists()
+        )
+
+    def test_retry_snapshot_delete_rejects_repository_being_removed(self):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        task.status = Task.Status.FAILED
+        task.save(update_fields=["status", "updated_at"])
+        self.snapshot.status = BackupSourceSnapshot.Status.DELETE_FAILED
+        self.snapshot.save(update_fields=["status", "updated_at"])
+        self.repository.status = Repository.Status.REMOVING
+        self.repository.save(update_fields=["status", "updated_at"])
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Repository is no longer available for this operation.",
+        ):
+            create_and_queue_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        task.refresh_from_db()
+        self.snapshot.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(
+            self.snapshot.status,
+            BackupSourceSnapshot.Status.DELETE_FAILED,
+        )
 
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
     def test_snapshot_delete_groups_by_locator_and_preserves_partial_results(
@@ -280,16 +345,24 @@ class SnapshotDeleteTaskTests(TestCase):
         )
 
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
-    def test_run_snapshot_delete_task_keeps_logical_snapshot_when_partial_delete_fails(self, mock_run_agent_task_sync):
+    def test_run_snapshot_delete_task_keeps_logical_snapshot_when_partial_delete_fails(
+        self, mock_run_agent_task_sync
+    ):
         task = create_snapshot_delete_task(source_snapshot=self.snapshot)
         mock_run_agent_task_sync.return_value = SimpleNamespace(
-            task=SimpleNamespace(id="node-delete-2", status="failed", last_error="delete failed"),
+            task=SimpleNamespace(
+                id="node-delete-2", status="failed", last_error="delete failed"
+            ),
             result={
                 "deleted_count": 1,
                 "failed_count": 1,
                 "results": [
                     {"kopia_snapshot_id": "kopia-a", "status": "success"},
-                    {"kopia_snapshot_id": "kopia-b", "status": "failed", "error_message": "boom"},
+                    {
+                        "kopia_snapshot_id": "kopia-b",
+                        "status": "failed",
+                        "error_message": "boom",
+                    },
                 ],
             },
             ok=False,
@@ -305,21 +378,31 @@ class SnapshotDeleteTaskTests(TestCase):
         self.snapshot.refresh_from_db()
         task.refresh_from_db()
         self.assertEqual(task.status, Task.Status.FAILED)
-        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETE_FAILED)
         self.assertEqual(
-            BackupSourceSnapshotDirectory.objects.get(kopia_snapshot_id="kopia-a").status,
+            self.snapshot.status, BackupSourceSnapshot.Status.DELETE_FAILED
+        )
+        self.assertEqual(
+            BackupSourceSnapshotDirectory.objects.get(
+                kopia_snapshot_id="kopia-a"
+            ).status,
             BackupSourceSnapshotDirectory.Status.DELETED,
         )
         self.assertEqual(
-            BackupSourceSnapshotDirectory.objects.get(kopia_snapshot_id="kopia-b").status,
+            BackupSourceSnapshotDirectory.objects.get(
+                kopia_snapshot_id="kopia-b"
+            ).status,
             BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
 
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
-    def test_already_absent_physical_snapshots_complete_logical_delete(self, mock_run_agent_task_sync):
+    def test_already_absent_physical_snapshots_complete_logical_delete(
+        self, mock_run_agent_task_sync
+    ):
         task = create_snapshot_delete_task(source_snapshot=self.snapshot)
         mock_run_agent_task_sync.return_value = SimpleNamespace(
-            task=SimpleNamespace(id="node-delete-absent", status="failed", last_error="2 deletes failed"),
+            task=SimpleNamespace(
+                id="node-delete-absent", status="failed", last_error="2 deletes failed"
+            ),
             result={
                 "deleted_count": 0,
                 "failed_count": 2,
@@ -359,7 +442,9 @@ class SnapshotDeleteTaskTests(TestCase):
             backup_config_dir_id=self.dir_b.id,
         ).update(kopia_snapshot_id="None")
         mock_run_agent_task_sync.return_value = SimpleNamespace(
-            task=SimpleNamespace(id="node-delete-sentinel", status="success", last_error=""),
+            task=SimpleNamespace(
+                id="node-delete-sentinel", status="success", last_error=""
+            ),
             result={
                 "deleted_count": 1,
                 "failed_count": 0,
@@ -388,7 +473,10 @@ class SnapshotDeleteTaskTests(TestCase):
 
     def test_retry_delay_sequence_caps_at_two_hours(self):
         self.assertEqual(
-            [int(snapshot_delete_retry_delay(i).total_seconds() / 60) for i in range(9)],
+            [
+                int(snapshot_delete_retry_delay(i).total_seconds() / 60)
+                for i in range(9)
+            ],
             [1, 4, 16, 30, 60, 120, 120, 120, 120],
         )
 
@@ -473,9 +561,7 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(task.status, Task.Status.FAILED)
         self.assertIn("busy", task.error_message)
 
-    @patch(
-        "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots"
-    )
+    @patch("apps.protection.services.snapshot_delete_execution.delete_s3_snapshots")
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
     def test_online_s3_writer_remains_preferred_over_controller(
         self,
@@ -483,7 +569,9 @@ class SnapshotDeleteTaskTests(TestCase):
         mock_delete_s3_snapshots,
     ):
         mock_run_agent_task_sync.return_value = SimpleNamespace(
-            task=SimpleNamespace(id="node-delete-online", status="success", last_error=""),
+            task=SimpleNamespace(
+                id="node-delete-online", status="success", last_error=""
+            ),
             result={
                 "deleted_count": 2,
                 "failed_count": 0,
@@ -549,9 +637,7 @@ class SnapshotDeleteTaskTests(TestCase):
         mock_run_agent_task_sync.assert_called_once()
         mock_delete_s3_snapshots.assert_called_once()
 
-    @patch(
-        "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots"
-    )
+    @patch("apps.protection.services.snapshot_delete_execution.delete_s3_snapshots")
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
     def test_s3_failure_after_dispatch_does_not_run_twice_on_controller(
         self,
@@ -580,9 +666,7 @@ class SnapshotDeleteTaskTests(TestCase):
         mock_run_agent_task_sync.assert_called_once()
         mock_delete_s3_snapshots.assert_not_called()
 
-    @patch(
-        "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots"
-    )
+    @patch("apps.protection.services.snapshot_delete_execution.delete_s3_snapshots")
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
     def test_nas_source_s3_cleanup_prefers_backup_writer_proxy(
         self,
@@ -878,7 +962,9 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(result["recovered_running"], 1)
         self.assertEqual(task.status, Task.Status.FAILED)
         self.assertEqual(task.error_code, "SNAPSHOT_DELETE_INTERRUPTED")
-        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETE_FAILED)
+        self.assertEqual(
+            self.snapshot.status, BackupSourceSnapshot.Status.DELETE_FAILED
+        )
 
     def test_directory_result_normalizes_none_instead_of_stringifying_it(self):
         row = record_source_snapshot_directory_result(
@@ -908,7 +994,9 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertIn("DRY-RUN:", stdout.getvalue())
 
     @patch("apps.protection.services.snapshot_delete.queue_snapshot_delete_task")
-    def test_repair_command_apply_retries_unresolved_delete(self, mock_queue_snapshot_delete_task):
+    def test_repair_command_apply_retries_unresolved_delete(
+        self, mock_queue_snapshot_delete_task
+    ):
         task = create_snapshot_delete_task(source_snapshot=self.snapshot)
         stdout = StringIO()
 
@@ -929,7 +1017,9 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertIn("queued=1", stdout.getvalue())
 
     def test_repair_command_finalizes_rows_without_physical_snapshot_ids(self):
-        BackupSourceSnapshotDirectory.objects.filter(source_snapshot=self.snapshot).update(
+        BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot=self.snapshot
+        ).update(
             status=BackupSourceSnapshotDirectory.Status.CANCELLED,
             kopia_snapshot_id="None",
         )
@@ -942,20 +1032,28 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETED)
         self.assertEqual(task.status, Task.Status.SUCCESS)
         self.assertFalse(
-            BackupSourceSnapshotDirectory.objects.filter(source_snapshot=self.snapshot).exclude(
-                status=BackupSourceSnapshotDirectory.Status.DELETED
-            ).exists()
+            BackupSourceSnapshotDirectory.objects.filter(source_snapshot=self.snapshot)
+            .exclude(status=BackupSourceSnapshotDirectory.Status.DELETED)
+            .exists()
         )
 
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
-    def test_delete_failed_manual_retry_reuses_original_task(self, mock_run_agent_task_sync):
+    def test_delete_failed_manual_retry_reuses_original_task(
+        self, mock_run_agent_task_sync
+    ):
         task = create_snapshot_delete_task(source_snapshot=self.snapshot)
         mock_run_agent_task_sync.return_value = SimpleNamespace(
-            task=SimpleNamespace(id="node-delete-retry", status="failed", last_error="temporary failure"),
+            task=SimpleNamespace(
+                id="node-delete-retry", status="failed", last_error="temporary failure"
+            ),
             result={
                 "results": [
                     {"kopia_snapshot_id": "kopia-a", "status": "success"},
-                    {"kopia_snapshot_id": "kopia-b", "status": "failed", "error_message": "temporary"},
+                    {
+                        "kopia_snapshot_id": "kopia-b",
+                        "status": "failed",
+                        "error_message": "temporary",
+                    },
                 ],
             },
             ok=False,
