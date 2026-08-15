@@ -8,6 +8,7 @@ from django.test import SimpleTestCase
 
 from apps.lens_bridge.api.views import _lens_error_response
 from apps.lens_bridge.services import sl_client
+from common.http.exceptions import api_exception_handler
 
 
 class SourceLensClientReadinessTests(SimpleTestCase):
@@ -23,6 +24,20 @@ class SourceLensClientReadinessTests(SimpleTestCase):
         response = _lens_error_response(error)
 
         self.assertEqual(response.status_code, 502)
+
+    def test_source_validation_reason_survives_hfl_problem_details(self) -> None:
+        error = sl_client.LensBridgeError(
+            "ATTACHMENT_DIMENSIONS_TOO_LARGE"
+        )
+        error.status_code = 400
+
+        response = api_exception_handler(error, {})
+
+        self.assertIsNotNone(response)
+        self.assertEqual(
+            response.data["data"]["meta"]["diagnostic"],
+            "ATTACHMENT_DIMENSIONS_TOO_LARGE",
+        )
 
     def test_remote_server_error_is_retryable_and_sanitized(self) -> None:
         response = Mock(status_code=503, content=b"provider api_key=must-not-leak")
@@ -98,6 +113,48 @@ class SourceLensClientReadinessTests(SimpleTestCase):
         self.assertEqual(forwarded[0], "report.pdf")
         self.assertIs(forwarded[1], uploaded)
         self.assertEqual(forwarded[2], "application/pdf")
+
+    @patch.object(sl_client, "_auth_headers", return_value={})
+    @patch.object(sl_client, "_base_url", return_value="http://sourcelens")
+    @patch.object(sl_client.requests, "post")
+    def test_multipart_upload_preserves_source_validation_reason(
+        self,
+        post,
+        _base_url,
+        _headers,
+    ) -> None:
+        response = Mock(
+            status_code=400,
+            content=b'{"code":400}',
+            text=(
+                '{"code":400,"message":"failed",'
+                '"data":["ATTACHMENT_DIMENSIONS_TOO_LARGE"]}'
+            ),
+        )
+        response.json.return_value = {
+            "code": 400,
+            "message": "failed",
+            "data": ["ATTACHMENT_DIMENSIONS_TOO_LARGE"],
+        }
+        post.return_value = response
+        uploaded = SimpleUploadedFile(
+            "screenshot.png",
+            b"image-bytes",
+            content_type="image/png",
+        )
+
+        with self.assertRaises(sl_client.LensBridgeError) as raised:
+            sl_client.request_multipart(
+                "/api/lens/sessions/session-uuid/attachments/",
+                uploaded_file=uploaded,
+                hfl_user=Mock(pk=7),
+            )
+
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertEqual(
+            str(raised.exception),
+            "ATTACHMENT_DIMENSIONS_TOO_LARGE",
+        )
 
     @patch.object(sl_client, "_invalidate_access_token")
     @patch.object(sl_client, "_auth_headers", return_value={})
