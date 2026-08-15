@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, LogOut, User } from 'lucide-vue-next'
 import { confirmSignOut, performLogout } from '../lib/logout'
 import { useAuth } from '../composables/useAuth'
+import { fetchDeployProfile } from '../composables/useDeployProfile'
 import { useTheme } from '../composables/useTheme'
 import HflPopover from './HflPopover.vue'
 
@@ -13,6 +14,9 @@ const router = useRouter()
 const { user } = useAuth()
 const { theme } = useTheme()
 const popoverRef = ref<InstanceType<typeof HflPopover> | null>(null)
+const productProfileLoaded = ref(false)
+const productVersion = ref<string | null>(null)
+const productEdition = ref<'community' | 'enterprise'>('community')
 
 const username = computed(() => user.value?.username || '—')
 const email = computed(() => user.value?.email || '—')
@@ -31,6 +35,17 @@ const displayLabel = computed(() => username.value)
 
 const profileSub = computed(() => t('account.menuProfileSub').trim())
 const signOutSub = computed(() => t('account.menuSignOutSub').trim())
+const editionLabel = computed(() => (
+  productEdition.value === 'enterprise'
+    ? t('account.editionEnterprise')
+    : t('account.editionCommunity')
+))
+const productMeta = computed(() => {
+  if (productVersion.value) return editionLabel.value
+  return [t('account.developmentBuild'), editionLabel.value].join(
+    ` ${t('common.dotSeparator')} `,
+  )
+})
 
 const popperOptions = {
   modifiers: [
@@ -46,6 +61,20 @@ function go(path: string) {
   popoverRef.value?.hide()
   router.push(path)
 }
+
+onMounted(async () => {
+  const profile = await fetchDeployProfile()
+  // Older backends may return a profile without the product identity fields.
+  // Keep the footer hidden instead of mislabeling that instance as a dev build.
+  if (
+    !profile
+    || profile.product_version === undefined
+    || profile.edition === undefined
+  ) return
+  productVersion.value = profile.product_version?.trim() || null
+  productEdition.value = profile.edition === 'enterprise' ? 'enterprise' : 'community'
+  productProfileLoaded.value = true
+})
 
 async function confirmLogout() {
   popoverRef.value?.hide()
@@ -141,6 +170,19 @@ async function confirmLogout() {
           </span>
         </button>
       </div>
+
+      <template v-if="productProfileLoaded">
+        <div class="nav-dropdown-panel__divider" />
+        <footer
+          class="nav-user-product"
+          :aria-label="t('account.productInfoAria')"
+        >
+          <span class="nav-user-product__name">
+            HyperFileLens<span v-if="productVersion"> v{{ productVersion }}</span>
+          </span>
+          <span class="nav-user-product__meta">{{ productMeta }}</span>
+        </footer>
+      </template>
     </div>
   </HflPopover>
 </template>
@@ -184,6 +226,31 @@ async function confirmLogout() {
 
 .nav-user-trigger:hover .nav-user-trigger__caret {
   color: var(--nav-user-trigger-caret-hover-color, rgba(255, 255, 255, 0.95));
+}
+
+.nav-user-product {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px 10px;
+  color: var(--color-text-tertiary, #909399);
+  font-size: 12px;
+  line-height: 1.4;
+  user-select: text;
+}
+
+.nav-user-product__name,
+.nav-user-product__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-user-product__name {
+  color: var(--color-text-secondary, #606266);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 1023.98px) {

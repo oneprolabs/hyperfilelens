@@ -59,6 +59,20 @@ class DeployProfileViewTest(TestCase):
             platform_ops_landing_path(),
         )
 
+    @patch.dict(
+        "os.environ",
+        {
+            "HFL_PRODUCT_VERSION": "0.2.1",
+            "APP_VERSION": "0.2.1-ee",
+            "HFL_EDITION": "enterprise",
+        },
+    )
+    def test_profile_exposes_customer_product_identity(self):
+        response = self.client.get("/api/v1/meta/deploy-profile")
+
+        self.assertEqual(response.data["product_version"], "0.2.1")
+        self.assertEqual(response.data["edition"], "enterprise")
+
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
     def test_password_reset_stays_off_on_community_empty_socket(self):
         response = self.client.get("/api/v1/meta/deploy-profile")
