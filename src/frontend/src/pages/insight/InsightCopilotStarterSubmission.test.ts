@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { flushPromises, mount } from '@vue/test-utils'
+import { ElMessage } from 'element-plus'
 import { createI18n } from 'vue-i18n'
 import { defineComponent, nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -341,6 +342,45 @@ describe('InsightCopilot starter question submission', () => {
       '00000000-0000-4000-8000-000000000001',
       '/api/v1/lens/copilot/sessions/444/attachments/document/?token=signed',
     )
+  })
+
+  it('localizes a SourceLens document attachment diagnostic', async () => {
+    const errorMessage = vi.spyOn(ElMessage, 'error')
+    mocks.uploadCopilotAttachment.mockRejectedValue({
+      status: 400,
+      message: 'Validation failed.',
+      code: 'VALIDATION.FAILED',
+      errorCode: 'VALIDATION.FAILED',
+      meta: {
+        diagnostic: 'DOCUMENT_ATTACHMENTS_UNSUPPORTED_BY_LENSNODE',
+      },
+    })
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+    const wrapper = mountCopilot(i18n)
+    try {
+      await flushPromises()
+      const fileInput = wrapper.get('input[type="file"]')
+      Object.defineProperty(fileInput.element, 'files', {
+        configurable: true,
+        value: [new File(['pdf'], 'report.pdf', { type: 'application/pdf' })],
+      })
+
+      await fileInput.trigger('change')
+      await flushPromises()
+
+      expect(errorMessage).toHaveBeenCalledWith(expect.objectContaining({
+        message: en.insight.copilot.attachmentUnsupported,
+      }))
+    } finally {
+      errorMessage.mockRestore()
+      wrapper.unmount()
+    }
   })
 
   it('removes the optimistic message when rejection reconciliation also fails', async () => {

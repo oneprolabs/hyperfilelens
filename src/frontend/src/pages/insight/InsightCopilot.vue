@@ -6,6 +6,7 @@ import { ElMessage } from 'element-plus'
 
 defineOptions({ name: 'InsightCopilot' })
 import { apiErrorMessage, type ApiError } from '../../lib/api'
+import { normalizeThrownError } from '../../lib/errors'
 import {
   beginSessionRunSubmission,
   clearSessionRunSubmission,
@@ -624,7 +625,18 @@ function retryQuestion(text: string) {
 }
 
 function attachmentErrorMessage(error: unknown) {
-  const message = apiErrorMessage(error, '')
+  const fallbackMessage = apiErrorMessage(error, '')
+  const diagnostic = String(normalizeThrownError(error).meta?.diagnostic || '')
+  // HFL's problem-details handler keeps upstream validation reasons in
+  // meta.diagnostic while exposing a generic VALIDATION.FAILED title. Prefer
+  // the stable SourceLens reason here so the existing localized copy can be
+  // selected without duplicating SourceLens validation rules in HFL.
+  const message = [fallbackMessage, diagnostic].find((candidate) =>
+    candidate.includes('ATTACHMENT_')
+      || candidate.includes('DOCUMENT_ATTACHMENTS_UNSUPPORTED')
+      || candidate.includes('does not accept images')
+      || candidate.includes('does not accept document'),
+  ) || fallbackMessage
   if (message.includes('ATTACHMENT_TOO_LARGE')) {
     return t('insight.copilot.attachmentTooLarge')
   }

@@ -283,8 +283,24 @@ def _invalidate_access_token(
 def _format_sl_error(body: Any) -> str:
     """Extract a readable message from SourceLens / DRF error payloads."""
 
+    if isinstance(body, (list, tuple)):
+        parts = [_format_sl_error(item) for item in body]
+        return "; ".join(part for part in parts if part)
+
+    if body is None:
+        return ""
+
     if not isinstance(body, dict):
         return str(body)
+
+    # SourceLens wraps validation errors as {code, message, data}.  The
+    # generic message is often just "failed" while data contains the stable
+    # product-facing reason (for example ATTACHMENT_DIMENSIONS_TOO_LARGE).
+    # Prefer that reason without taking ownership of SourceLens validation.
+    if body.get("code") not in (0, "0", None) and "data" in body:
+        nested = _format_sl_error(body.get("data"))
+        if nested:
+            return nested
 
     non_field = body.get("non_field_errors")
     if isinstance(non_field, list) and non_field:
@@ -325,14 +341,7 @@ def _raise_for_response(response: requests.Response) -> Any:
     detail = response.text[:2000]
     try:
         body = response.json()
-        try:
-            unwrapped = _unwrap_sl_body(body)
-        except LensBridgeError:
-            unwrapped = body.get("data") if isinstance(body, dict) else body
-        if isinstance(unwrapped, dict):
-            detail = _format_sl_error(unwrapped)
-        elif isinstance(body, dict):
-            detail = _format_sl_error(body)
+        detail = _format_sl_error(body) or detail
     except ValueError:
         body = detail
     exc = LensBridgeError(detail=str(detail))
