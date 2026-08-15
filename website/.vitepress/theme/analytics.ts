@@ -23,6 +23,7 @@ const GA4_MEASUREMENT_ID = /^G-[A-Z0-9]+$/
 const NAVIGATION_FALLBACK_MS = 400
 let activeMeasurementId = ''
 let activePagePath = '/'
+let lastTrackedPagePath = ''
 
 function sanitizedPath(value: string): string {
   try {
@@ -56,9 +57,12 @@ function configureGoogleTag(): boolean {
   if (activeMeasurementId === measurementId) return true
 
   activeMeasurementId = measurementId
+  lastTrackedPagePath = ''
   window.dataLayer = window.dataLayer || []
-  window.gtag = function gtag(...args: unknown[]) {
-    window.dataLayer?.push(args)
+  // Google Tag distinguishes its Arguments command object from a normal Array.
+  window.gtag = function gtag() {
+    // eslint-disable-next-line prefer-rest-params
+    window.dataLayer?.push(arguments)
   }
   window.gtag('js', new Date())
   window.gtag('config', measurementId, { send_page_view: false })
@@ -74,6 +78,8 @@ function configureGoogleTag(): boolean {
 export function trackWebsitePageView(value: string): void {
   if (!activeMeasurementId || !window.gtag) return
   const path = sanitizedPath(value)
+  if (path === lastTrackedPagePath) return
+  lastTrackedPagePath = path
   activePagePath = path
   window.gtag('event', 'page_view', {
     page_location: `${window.location.origin}${path}`,
