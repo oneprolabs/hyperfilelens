@@ -28,6 +28,44 @@ read_file_default() {
 	printf '%s' "${value:-${fallback}}"
 }
 
+resolve_smoke_edition() {
+	local edition="${HFL_RELEASE_EDITION:-}" api_container runtime_env="" extensions="" line
+	if [[ -z "${edition}" ]]; then
+		api_container="$(
+			docker compose \
+				--project-directory "${ROOT}" \
+				--env-file "${ROOT}/.env" \
+				-f "${ROOT}/docker-compose.yml" \
+				ps -q api 2>/dev/null
+		)"
+		[[ -n "${api_container}" && "${api_container}" != *$'\n'* ]] || {
+			printf 'ERROR: cannot identify one running API container; set HFL_RELEASE_EDITION explicitly\n' >&2
+			return 2
+		}
+		runtime_env="$(
+			docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+				"${api_container}"
+		)" || {
+			printf 'ERROR: cannot inspect the running API container\n' >&2
+			return 1
+		}
+		while IFS= read -r line; do
+			case "${line}" in
+			HFL_EXTENSIONS=*) extensions="${line#HFL_EXTENSIONS=}" ;;
+			esac
+		done <<<"${runtime_env}"
+		edition=community
+		[[ -z "${extensions}" ]] || edition=enterprise
+	fi
+	case "${edition}" in
+	community | enterprise) printf '%s' "${edition}" ;;
+	*)
+		printf 'ERROR: unsupported HFL_RELEASE_EDITION=%s\n' "${edition}" >&2
+		return 2
+		;;
+	esac
+}
+
 version="$(read_default DEV_SMOKE_PLAYWRIGHT_VERSION 1.55.0)"
 [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
 	|| { printf 'ERROR: invalid DEV_SMOKE_PLAYWRIGHT_VERSION=%s\n' "${version}" >&2; exit 2; }
@@ -35,6 +73,7 @@ image="mcr.microsoft.com/playwright:v${version}-noble"
 offline="$(read_default DEV_OFFLINE 0)"
 timeout_seconds="$(read_default DEV_SMOKE_PULL_TIMEOUT_SECONDS 900)"
 retries="$(read_default DOCKER_PULL_RETRIES 2)"
+smoke_edition="$(resolve_smoke_edition)"
 
 if ! hfl_docker_ensure_image "${image}" "" 0 "${offline}" "linux/amd64" \
 	"${timeout_seconds}" "${retries}"; then
@@ -73,6 +112,7 @@ docker run --rm \
 	-e SOURCELENS_PASSWORD="$(read_file_default "${source_lens_env}" DJANGO_SUPERUSER_PASSWORD adminpassword)" \
 	-e SMOKE_REQUIRE_HMR="${SMOKE_REQUIRE_HMR:-1}" \
 	-e SMOKE_SKIP_SOURCELENS="${SMOKE_SKIP_SOURCELENS:-0}" \
+	-e HFL_RELEASE_EDITION="${smoke_edition}" \
 	"${image}" bash -euc '
 		cd /smoke
 		if [[ ! -f package.json ]]; then

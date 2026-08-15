@@ -404,10 +404,6 @@ Application source code is not copied into the release package. Installed
 runtime files are placed under `/opt/hyperfilelens`, with persistent state
 under `/opt/hyperfilelens/data`.
 
-Community and Enterprise CI publishing, deployment, artifact retention, and
-repository configuration are documented in
-[`docs/release-workflows.md`](docs/release-workflows.md).
-
 Install a generated package:
 
 ```bash

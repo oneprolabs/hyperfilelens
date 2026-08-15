@@ -2,6 +2,7 @@
 /** Browser smoke coverage for the three development-stack login surfaces. */
 
 import { createRequire } from 'node:module'
+import { resolveSmokeContract } from './browser-smoke-contract.mjs'
 
 const require = createRequire('/smoke/package.json')
 const { chromium } = require('playwright')
@@ -17,6 +18,7 @@ const sourceLensUser = process.env.SOURCELENS_USER || 'admin'
 const sourceLensPassword = process.env.SOURCELENS_PASSWORD || 'adminpassword'
 const requireHmr = process.env.SMOKE_REQUIRE_HMR !== '0'
 const skipSourceLens = process.env.SMOKE_SKIP_SOURCELENS === '1'
+const smokeContract = resolveSmokeContract(process.env.HFL_RELEASE_EDITION || 'community')
 
 function fail(message) {
   throw new Error(message)
@@ -161,19 +163,20 @@ async function verifyMobileTenantNavigation(page, baseUrl) {
   await drawer.waitFor({ state: 'hidden' })
 }
 
-async function verifyMobilePlatformNavigation(page, baseUrl) {
-  await page.goto(`${baseUrl}/platform-ops/monitoring/host`, { waitUntil: 'domcontentloaded' })
+async function verifyMobilePlatformNavigation(page, baseUrl, contract) {
+  await page.goto(`${baseUrl}${contract.mobilePlatformStartPath}`, { waitUntil: 'domcontentloaded' })
   const menuButton = page.locator('.platform-ops-header__menu')
   await menuButton.click()
   const drawer = page.locator('.hfl-mobile-navigation')
   await drawer.waitFor({ state: 'visible' })
-  const organizations = drawer.locator('a[href="/platform-ops/orgs"]').first()
-  await organizations.click()
-  await page.waitForURL(url => url.pathname.startsWith('/platform-ops/orgs'))
+  const target = drawer.locator(`a[href="${contract.mobilePlatformTargetPath}"]`).first()
+  await target.click()
+  await page.waitForURL(url => url.pathname.startsWith(contract.mobilePlatformTargetPath))
   await drawer.waitFor({ state: 'hidden' })
 }
 
-async function verifyResponsivePlatformPrimaryAction(page, adminBaseUrl) {
+async function verifyResponsivePlatformPrimaryAction(page, adminBaseUrl, contract) {
+  if (!contract.verifyPlatformPrimaryAction) return
   await page.goto(`${adminBaseUrl}/platform-ops/orgs`, { waitUntil: 'domcontentloaded' })
   const createUser = page.locator('.platform-account-page__lead .el-button').first()
   await createUser.waitFor({ state: 'visible', timeout: 30_000 })
@@ -221,7 +224,7 @@ async function verifyAuthenticationViewport(browser, baseUrl, viewport) {
   }
 }
 
-async function verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, adminBaseUrl) {
+async function verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, adminBaseUrl, contract) {
   const profiles = [
     { name: 'mobile-375', viewport: { width: 375, height: 812 }, mobile: true },
     { name: 'mobile-390', viewport: { width: 390, height: 844 }, mobile: true },
@@ -236,7 +239,7 @@ async function verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, ad
     '/ops/tasks',
     '/insight/copilot',
   ]
-  const platformRoutes = ['/platform-ops/monitoring/host', '/platform-ops/orgs']
+  const platformRoutes = contract.platformRoutes
 
   await verifyAuthenticationViewport(browser, tenantBaseUrl, profiles[0].viewport)
   await verifyAuthenticationViewport(browser, tenantBaseUrl, profiles[2].viewport)
@@ -261,10 +264,10 @@ async function verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, ad
       }
       if (profile.mobile) {
         await verifyMobileTenantNavigation(page, tenantBaseUrl)
-        await verifyMobilePlatformNavigation(page, adminBaseUrl)
+        await verifyMobilePlatformNavigation(page, adminBaseUrl, contract)
       }
       if (profile.name === 'mobile-375') {
-        await verifyResponsivePlatformPrimaryAction(page, adminBaseUrl)
+        await verifyResponsivePlatformPrimaryAction(page, adminBaseUrl, contract)
       }
     } finally {
       await context.close()
@@ -326,7 +329,7 @@ async function run() {
     const storageState = await hfl.storageState()
     await hfl.close()
 
-    await verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, adminBaseUrl)
+    await verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, adminBaseUrl, smokeContract)
 
     if (!skipSourceLens) {
       const sourceLens = await browser.newContext({ ignoreHTTPSErrors: true })
@@ -340,7 +343,7 @@ async function run() {
     await browser.close()
   }
   process.stdout.write(
-    `browser smoke: tenant, Platform Ops, responsive viewports${skipSourceLens ? '' : ', SourceLens'}${requireHmr ? ', and HMR' : ''} passed\n`,
+    `browser smoke: ${smokeContract.edition}, tenant, Platform Ops, responsive viewports${skipSourceLens ? '' : ', SourceLens'}${requireHmr ? ', and HMR' : ''} passed\n`,
   )
 }
 
