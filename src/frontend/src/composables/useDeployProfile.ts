@@ -1,5 +1,9 @@
 export interface DeployProfile {
   site_role: 'tenant' | 'ops'
+  /** Customer-facing Release version, without an edition-specific image suffix. */
+  product_version?: string | null
+  /** Public product edition shared by the tenant and Admin Console shells. */
+  edition?: 'community' | 'enterprise'
   email_signup_enabled: boolean
   email_code_login_available: boolean
   platform_ops_enabled: boolean

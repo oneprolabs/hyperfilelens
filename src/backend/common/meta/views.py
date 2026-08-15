@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.iam.auth.authentication import OptionalJWTAuthenticationFromCookies
+from common.deploy.product import product_edition, product_version
 from common.deploy.site import (
     admin_console_entry_visible,
     admin_console_public_url,
@@ -41,6 +42,8 @@ class DeployProfileView(APIView):
         site_role = resolve_site_role(request)
         payload = {
             "site_role": site_role,
+            "product_version": product_version(),
+            "edition": product_edition(),
             "email_signup_enabled": email_signup_enabled() if site_role == "tenant" else False,
             "platform_ops_enabled": platform_ops_enabled(),
             # Tenant-only self-serve reset (EE + SMTP); ops stays password-only.
