@@ -1,8 +1,15 @@
 import json
+import secrets
+import uuid
 
 from django.db import models
 
 from apps.storage.crypto import decrypt_text, encrypt_text
+
+
+def repository_ownership_signing_key() -> str:
+    """Generate the database-persistent key used to sign ownership markers."""
+    return secrets.token_hex(32)
 
 
 class Credential(models.Model):
@@ -40,7 +47,9 @@ class Credential(models.Model):
 
     def set_secret_payload(self, payload: dict) -> None:
         normalized = payload if isinstance(payload, dict) else {}
-        plaintext = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        plaintext = json.dumps(
+            normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
         token = encrypt_text(plaintext)
         self.secret_cipher = {
             "alg": "fernet-json-v1",
@@ -67,6 +76,7 @@ class Repository(models.Model):
         PENDING = "pending", "Pending"
         SUCCESS = "success", "Success"
         FAILED = "failed", "Failed"
+
     class Type(models.TextChoices):
         S3 = "s3", "S3"
         NAS = "nas", "NAS"
@@ -108,6 +118,7 @@ class Repository(models.Model):
         PRESERVED = "preserved", "Legacy physical repository preserved"
 
     organization_id = models.BigIntegerField(db_index=True)
+    repository_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     name = models.CharField(max_length=200)
     repo_type = models.CharField(max_length=20, choices=Type.choices)
     status = models.CharField(
@@ -136,12 +147,16 @@ class Repository(models.Model):
     last_checked_at = models.DateTimeField(blank=True, null=True, db_index=True)
     metrics_last_attempt_at = models.DateTimeField(blank=True, null=True, db_index=True)
     usage_probe_status = models.CharField(
-        max_length=20, choices=MetricProbeStatus.choices, default=MetricProbeStatus.PENDING
+        max_length=20,
+        choices=MetricProbeStatus.choices,
+        default=MetricProbeStatus.PENDING,
     )
     usage_last_success_at = models.DateTimeField(blank=True, null=True)
     usage_last_error = models.CharField(max_length=1000, blank=True, default="")
     capacity_probe_status = models.CharField(
-        max_length=20, choices=MetricProbeStatus.choices, default=MetricProbeStatus.PENDING
+        max_length=20,
+        choices=MetricProbeStatus.choices,
+        default=MetricProbeStatus.PENDING,
     )
     capacity_last_success_at = models.DateTimeField(blank=True, null=True)
     capacity_last_error = models.CharField(max_length=1000, blank=True, default="")
@@ -271,6 +286,103 @@ class RepositoryUsageShard(models.Model):
         ]
 
 
+class RepositoryLocationNamespace(models.Model):
+    """A normalized physical storage namespace shared by location claims."""
+
+    class Kind(models.TextChoices):
+        S3 = "s3", "S3 bucket"
+        NAS = "nas", "NAS share"
+        PROXY_FS = "proxy_fs", "Proxy filesystem"
+
+    namespace_key = models.CharField(max_length=64, unique=True)
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    display_hint = models.CharField(max_length=700, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "storage_repository_location_namespace"
+        ordering = ["kind", "namespace_key"]
+
+
+class RepositoryDeploymentIdentity(models.Model):
+    """Database-persistent identity shared by blue/green controllers."""
+
+    deployment_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    ownership_signing_key = models.CharField(
+        max_length=64,
+        default=repository_ownership_signing_key,
+        editable=False,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "storage_repository_deployment_identity"
+
+
+class RepositoryLocationClaim(models.Model):
+    """Persistent ownership boundary for one physical repository root."""
+
+    class Scope(models.TextChoices):
+        REPOSITORY = "repository", "Repository"
+        DIRECT_NAS_AGENT = "direct_nas_agent", "Direct NAS Agent"
+
+    class State(models.TextChoices):
+        RESERVED = "reserved", "Reserved"
+        INITIALIZING = "initializing", "Initialization dispatched"
+        OWNED = "owned", "Owned"
+        RESIDUAL = "residual", "Residual data retained"
+        RELEASED = "released", "Released"
+
+    organization_id = models.BigIntegerField(db_index=True)
+    repository = models.ForeignKey(
+        Repository,
+        on_delete=models.CASCADE,
+        related_name="location_claims",
+    )
+    namespace = models.ForeignKey(
+        RepositoryLocationNamespace,
+        on_delete=models.PROTECT,
+        related_name="claims",
+    )
+    scope = models.CharField(
+        max_length=40,
+        choices=Scope.choices,
+        default=Scope.REPOSITORY,
+    )
+    root_path = models.CharField(max_length=1000)
+    owner_node_id = models.BigIntegerField(blank=True, null=True, db_index=True)
+    state = models.CharField(
+        max_length=20,
+        choices=State.choices,
+        default=State.RESERVED,
+        db_index=True,
+    )
+    initialized_at = models.DateTimeField(blank=True, null=True)
+    last_verified_at = models.DateTimeField(blank=True, null=True)
+    namespace_resolved_at = models.DateTimeField(blank=True, null=True)
+    ownership_verified_at = models.DateTimeField(blank=True, null=True)
+    legacy_adoption_required = models.BooleanField(default=False)
+    released_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "storage_repository_location_claim"
+        ordering = ["namespace_id", "root_path", "id"]
+        indexes = [
+            models.Index(
+                fields=["repository", "scope", "state"],
+                name="stor_rlc_repo_scope_state_idx",
+            ),
+            models.Index(
+                fields=["namespace", "state"],
+                name="stor_rlc_namespace_state_idx",
+            ),
+        ]
+
+
 class RepositoryExecutionTarget(models.Model):
     """Physical repository boundary used for ownership and exclusive operations."""
 
@@ -354,8 +466,12 @@ class RepositoryTask(models.Model):
     )
     force = models.BooleanField(default=False)
     requested_by_id = models.BigIntegerField(blank=True, null=True)
-    operation_type = models.CharField(max_length=64, choices=OperationType.choices, db_index=True)
-    owner_type = models.CharField(max_length=20, choices=RepositoryExecutionTarget.OwnerType.choices)
+    operation_type = models.CharField(
+        max_length=64, choices=OperationType.choices, db_index=True
+    )
+    owner_type = models.CharField(
+        max_length=20, choices=RepositoryExecutionTarget.OwnerType.choices
+    )
     owner_node_id = models.BigIntegerField(blank=True, null=True, db_index=True)
     owner_identity = models.CharField(max_length=255)
     due_at = models.DateTimeField(blank=True, null=True, db_index=True)

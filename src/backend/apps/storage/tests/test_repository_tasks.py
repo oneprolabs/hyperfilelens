@@ -21,13 +21,24 @@ from apps.storage.services.internal.repository_operations import (
     schedule_due_maintenance,
     start_controller_repository_operation,
 )
+from apps.storage.services.internal.nas_repository import nas_agent_repository_subdir
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    mark_repository_location_residual,
+    reserve_direct_nas_location,
+    reserve_repository_location,
+)
+from apps.storage.tasks import execute_repository_operation
 from apps.task.models import Task
 from apps.task.services.interface import start_task
 
 
 class RepositoryTaskTests(TestCase):
     def setUp(self):
-        self.org = Organization.objects.create(key="repository-task-org", name="Repository Task Org")
+        self.org = Organization.objects.create(
+            key="repository-task-org", name="Repository Task Org"
+        )
         self.repository = Repository.objects.create(
             organization_id=self.org.id,
             name="maintenance-s3",
@@ -36,7 +47,35 @@ class RepositoryTaskTests(TestCase):
             health=Repository.Health.ONLINE,
             s3_platform=Repository.S3Platform.AWS,
             s3_bucket="maintenance-bucket",
+            config={"prefix": "maintenance/repository"},
         )
+        reserve_repository_location(self.repository)
+        mark_repository_location_owned(self.repository)
+        mark_repository_location_ownership_verified(self.repository)
+
+    def _mark_direct_nas_location_owned(
+        self,
+        *,
+        repository: Repository,
+        node_id: int,
+    ) -> str:
+        subdir = nas_agent_repository_subdir(node_id)
+        reserve_direct_nas_location(
+            repository=repository,
+            node_id=node_id,
+            repository_subdir=subdir,
+        )
+        mark_repository_location_owned(
+            repository,
+            owner_node_id=node_id,
+            repository_subdir=subdir,
+        )
+        mark_repository_location_ownership_verified(
+            repository,
+            owner_node_id=node_id,
+            repository_subdir=subdir,
+        )
+        return subdir
 
     def test_discovers_controller_target_with_stable_owner(self):
         count = discover_repository_execution_targets(
@@ -46,7 +85,9 @@ class RepositoryTaskTests(TestCase):
         self.assertEqual(count, 1)
         target = RepositoryExecutionTarget.objects.get(repository=self.repository)
         self.assertEqual(target.target_key, f"repository:{self.repository.id}")
-        self.assertEqual(target.owner_type, RepositoryExecutionTarget.OwnerType.CONTROLLER)
+        self.assertEqual(
+            target.owner_type, RepositoryExecutionTarget.OwnerType.CONTROLLER
+        )
         self.assertEqual(target.owner_identity, "hfl-maintenance@controller")
         self.assertIsNotNone(target.maintenance_state.next_quick_due_at)
 
@@ -70,12 +111,28 @@ class RepositoryTaskTests(TestCase):
         self.assertEqual(first.task.resources.get().resource_id, self.repository.id)
         self.assertTrue(first.task.resources.get().is_primary)
 
+    def test_task_creation_rejects_repository_removal_race(self):
+        discover_repository_execution_targets()
+        target = RepositoryExecutionTarget.objects.get(repository=self.repository)
+        self.repository.status = Repository.Status.REMOVING
+        self.repository.save(update_fields=["status", "updated_at"])
+
+        task = create_repository_operation_task(
+            target_id=target.id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
+
+        self.assertIsNone(task)
+        target.refresh_from_db()
+        self.assertFalse(target.is_active)
+
     def test_proxy_nas_maintenance_keeps_repository_name(self):
         proxy = Node.objects.create(
             organization=self.org,
             name="storage-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -86,7 +143,11 @@ class RepositoryTaskTests(TestCase):
             nas_protocol=Repository.NasProtocol.NFS,
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
+            config={"server_address": "10.0.0.8", "share_path": "/backup"},
         )
+        reserve_repository_location(repository)
+        mark_repository_location_owned(repository)
+        mark_repository_location_ownership_verified(repository)
         discover_repository_execution_targets()
 
         task = create_repository_operation_task(
@@ -110,22 +171,29 @@ class RepositoryTaskTests(TestCase):
                 organization=self.org,
                 name=name,
                 role=Node.Role.AGENT,
-                status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+                status=Node.Status.ACTIVE,
+                availability=Node.Availability.ONLINE,
             )
             for name in ("Finance-Server", "HR-Server")
         ]
         for node in nodes:
+            subdir = self._mark_direct_nas_location_owned(
+                repository=repository,
+                node_id=node.id,
+            )
             RepositoryUsageShard.objects.create(
                 organization_id=self.org.id,
                 repository_id=repository.id,
                 node_id=node.id,
-                repository_subdir=f"hp-repos/agent-{node.id}",
+                repository_subdir=subdir,
                 status=RepositoryUsageShard.Status.SUCCESS,
             )
         discover_repository_execution_targets()
         targets = {
             target.owner_node_id: target
-            for target in RepositoryExecutionTarget.objects.filter(repository=repository)
+            for target in RepositoryExecutionTarget.objects.filter(
+                repository=repository
+            )
         }
 
         quick = create_repository_operation_task(
@@ -154,16 +222,21 @@ class RepositoryTaskTests(TestCase):
                 organization=self.org,
                 name="Finance-Server",
                 role=Node.Role.AGENT,
-                status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+                status=Node.Status.ACTIVE,
+                availability=Node.Availability.ONLINE,
             )
             for _ in range(2)
         ]
         for node in nodes:
+            subdir = self._mark_direct_nas_location_owned(
+                repository=repository,
+                node_id=node.id,
+            )
             RepositoryUsageShard.objects.create(
                 organization_id=self.org.id,
                 repository_id=repository.id,
                 node_id=node.id,
-                repository_subdir=f"hp-repos/agent-{node.id}",
+                repository_subdir=subdir,
                 status=RepositoryUsageShard.Status.SUCCESS,
             )
         discover_repository_execution_targets()
@@ -195,14 +268,19 @@ class RepositoryTaskTests(TestCase):
             organization=self.org,
             name="Archived-Server",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         for node_id in (node.id, 999999):
+            subdir = self._mark_direct_nas_location_owned(
+                repository=repository,
+                node_id=node_id,
+            )
             RepositoryUsageShard.objects.create(
                 organization_id=self.org.id,
                 repository_id=repository.id,
                 node_id=node_id,
-                repository_subdir=f"hp-repos/agent-{node_id}",
+                repository_subdir=subdir,
                 status=RepositoryUsageShard.Status.SUCCESS,
             )
         discover_repository_execution_targets()
@@ -225,8 +303,154 @@ class RepositoryTaskTests(TestCase):
             operation_type=RepositoryTask.OperationType.MAINTENANCE_FULL,
         )
 
-        self.assertEqual(archived.task.display_name, "Quick maintenance · Archived-Server")
-        self.assertEqual(missing.task.display_name, "Full maintenance · Backup Source #999999")
+        self.assertEqual(
+            archived.task.display_name, "Quick maintenance · Archived-Server"
+        )
+        self.assertEqual(
+            missing.task.display_name, "Full maintenance · Backup Source #999999"
+        )
+
+    def test_direct_nas_discovery_deactivates_residual_target(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="residual-direct-nas",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            nas_protocol=Repository.NasProtocol.NFS,
+            config={"server_address": "10.0.0.10", "share_path": "/backup"},
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="Residual-Server",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        subdir = self._mark_direct_nas_location_owned(
+            repository=repository,
+            node_id=node.id,
+        )
+        RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=repository.id,
+            node_id=node.id,
+            repository_subdir=subdir,
+            status=RepositoryUsageShard.Status.SUCCESS,
+        )
+        discover_repository_execution_targets()
+        target = repository.execution_targets.get()
+        mark_repository_location_residual(
+            repository,
+            owner_node_id=node.id,
+            repository_subdir=subdir,
+        )
+
+        discover_repository_execution_targets()
+
+        target.refresh_from_db()
+        self.assertFalse(target.is_active)
+
+    def test_direct_nas_task_creation_rejects_stale_residual_target(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="stale-direct-nas",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            nas_protocol=Repository.NasProtocol.NFS,
+            config={"server_address": "10.0.0.11", "share_path": "/backup"},
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="Stale-Server",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        subdir = self._mark_direct_nas_location_owned(
+            repository=repository,
+            node_id=node.id,
+        )
+        RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=repository.id,
+            node_id=node.id,
+            repository_subdir=subdir,
+            status=RepositoryUsageShard.Status.SUCCESS,
+        )
+        discover_repository_execution_targets()
+        target = repository.execution_targets.get()
+        mark_repository_location_residual(
+            repository,
+            owner_node_id=node.id,
+            repository_subdir=subdir,
+        )
+
+        task = create_repository_operation_task(
+            target_id=target.id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
+
+        self.assertIsNone(task)
+        target.refresh_from_db()
+        self.assertFalse(target.is_active)
+
+    @patch("apps.storage.tasks._execute_maintenance")
+    def test_direct_nas_execution_rechecks_location_ownership(
+        self,
+        execute_maintenance,
+    ):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="queued-direct-nas",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            nas_protocol=Repository.NasProtocol.NFS,
+            config={"server_address": "10.0.0.12", "share_path": "/backup"},
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="Queued-Server",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        subdir = self._mark_direct_nas_location_owned(
+            repository=repository,
+            node_id=node.id,
+        )
+        RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=repository.id,
+            node_id=node.id,
+            repository_subdir=subdir,
+            status=RepositoryUsageShard.Status.SUCCESS,
+        )
+        discover_repository_execution_targets()
+        repository_task = create_repository_operation_task(
+            target_id=repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
+        mark_repository_location_residual(
+            repository,
+            owner_node_id=node.id,
+            repository_subdir=subdir,
+        )
+
+        result = execute_repository_operation.run(
+            repository_task_id=repository_task.id,
+        )
+
+        execute_maintenance.assert_not_called()
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(repository_task.task.status, Task.Status.FAILED)
+        self.assertIn(
+            "ownership requires verification",
+            repository_task.task.error_message,
+        )
 
     def test_finalize_repository_operation_locks_nullable_target_separately(self):
         discover_repository_execution_targets()
@@ -243,7 +467,9 @@ class RepositoryTaskTests(TestCase):
         task = finalize_repository_operation(
             repository_task_id=repository_task.id,
             succeeded=True,
-            result_payload={"operation_type": RepositoryTask.OperationType.MAINTENANCE_QUICK},
+            result_payload={
+                "operation_type": RepositoryTask.OperationType.MAINTENANCE_QUICK
+            },
         )
 
         target.refresh_from_db()
@@ -270,7 +496,10 @@ class RepositoryTaskTests(TestCase):
 
         self.assertEqual(len(scheduled), 1)
         repository_task = RepositoryTask.objects.get(pk=scheduled[0])
-        self.assertEqual(repository_task.operation_type, RepositoryTask.OperationType.MAINTENANCE_QUICK)
+        self.assertEqual(
+            repository_task.operation_type,
+            RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
         self.assertEqual(repository_task.task.trigger_type, Task.TriggerType.SYSTEM)
 
     @patch.dict(
@@ -288,7 +517,10 @@ class RepositoryTaskTests(TestCase):
 
         self.assertEqual(len(scheduled), 1)
         repository_task = RepositoryTask.objects.get(pk=scheduled[0])
-        self.assertEqual(repository_task.operation_type, RepositoryTask.OperationType.MAINTENANCE_FULL)
+        self.assertEqual(
+            repository_task.operation_type,
+            RepositoryTask.OperationType.MAINTENANCE_FULL,
+        )
 
 
 class RepositoryTasksApiTests(TestCase):
@@ -299,8 +531,12 @@ class RepositoryTasksApiTests(TestCase):
             email="repository-tasks@test.local",
             password="test-pass",
         )
-        self.org = Organization.objects.create(key="repository-tasks-api", name="Repository Tasks API")
-        Membership.objects.create(user=user, organization=self.org, role=Membership.Role.ADMIN)
+        self.org = Organization.objects.create(
+            key="repository-tasks-api", name="Repository Tasks API"
+        )
+        Membership.objects.create(
+            user=user, organization=self.org, role=Membership.Role.ADMIN
+        )
         self.client.force_authenticate(user=user)
         self.repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -310,7 +546,11 @@ class RepositoryTasksApiTests(TestCase):
             health=Repository.Health.ONLINE,
             s3_platform=Repository.S3Platform.AWS,
             s3_bucket="task-list-bucket",
+            config={"prefix": "task/list"},
         )
+        reserve_repository_location(self.repository)
+        mark_repository_location_owned(self.repository)
+        mark_repository_location_ownership_verified(self.repository)
         discover_repository_execution_targets()
         self.repository_task = create_repository_operation_task(
             target_id=self.repository.execution_targets.get().id,
@@ -329,7 +569,9 @@ class RepositoryTasksApiTests(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["task_uuid"], str(self.repository_task.task.task_uuid))
         self.assertEqual(rows[0]["operation_type"], "maintenance.full")
-        self.assertEqual(rows[0]["repository_owner"]["identity"], "hfl-maintenance@controller")
+        self.assertEqual(
+            rows[0]["repository_owner"]["identity"], "hfl-maintenance@controller"
+        )
 
     def test_task_search_field_filters_name_and_uuid(self):
         base_url = f"/api/v1/storage/repositories/{self.repository.id}/tasks/"
@@ -340,18 +582,26 @@ class RepositoryTasksApiTests(TestCase):
         )
         uuid_response = self.client.get(
             base_url,
-            {"search": str(self.repository_task.task.task_uuid), "search_field": "uuid"},
+            {
+                "search": str(self.repository_task.task.task_uuid),
+                "search_field": "uuid",
+            },
             HTTP_X_ORG_KEY=self.org.key,
         )
         uuid_as_name_response = self.client.get(
             base_url,
-            {"search": str(self.repository_task.task.task_uuid), "search_field": "name"},
+            {
+                "search": str(self.repository_task.task.task_uuid),
+                "search_field": "name",
+            },
             HTTP_X_ORG_KEY=self.org.key,
         )
 
         self.assertEqual(name_response.status_code, 200, name_response.content)
         self.assertEqual(uuid_response.status_code, 200, uuid_response.content)
-        self.assertEqual(uuid_as_name_response.status_code, 200, uuid_as_name_response.content)
+        self.assertEqual(
+            uuid_as_name_response.status_code, 200, uuid_as_name_response.content
+        )
         self.assertEqual(len(name_response.data["data"]["list"]), 1)
         self.assertEqual(len(uuid_response.data["data"]["list"]), 1)
         self.assertEqual(len(uuid_as_name_response.data["data"]["list"]), 0)
@@ -397,7 +647,9 @@ class RepositoryTasksApiTests(TestCase):
         state = self.repository_task.execution_target.maintenance_state
         state.consecutive_failures = 3
         state.next_retry_at = timezone.now()
-        state.save(update_fields=["consecutive_failures", "next_retry_at", "updated_at"])
+        state.save(
+            update_fields=["consecutive_failures", "next_retry_at", "updated_at"]
+        )
         before_cancel = timezone.now()
 
         response = self.client.post(
@@ -420,9 +672,7 @@ class RepositoryTasksApiTests(TestCase):
         self.assertGreater(state.next_full_due_at, before_cancel)
         self.assertGreater(state.next_quick_due_at, before_cancel)
         self.assertTrue(response.data["repository_cancellation"]["supported"])
-        self.assertIsNotNone(
-            response.data["repository_cancellation"]["requested_at"]
-        )
+        self.assertIsNotNone(response.data["repository_cancellation"]["requested_at"])
 
         repeated = self.client.post(
             f"/api/v1/storage/repository-tasks/{self.repository_task.task.task_uuid}/cancel/",
@@ -486,7 +736,9 @@ class RepositoryTasksApiTests(TestCase):
         )
 
         self.repository_task.owner_type = RepositoryExecutionTarget.OwnerType.CONTROLLER
-        self.repository_task.operation_type = RepositoryTask.OperationType.CLEANUP_REPOSITORY
+        self.repository_task.operation_type = (
+            RepositoryTask.OperationType.CLEANUP_REPOSITORY
+        )
         self.repository_task.save(
             update_fields=["owner_type", "operation_type", "updated_at"]
         )

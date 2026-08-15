@@ -126,6 +126,12 @@ def run_maintenance(
     timeout_seconds: int | None = None,
     control: KopiaControlCallback | None = None,
 ) -> KopiaResult:
+    if repository.repo_type == Repository.Type.S3:
+        from apps.storage.services.internal.repository_ownership import (
+            verify_s3_repository_ownership,
+        )
+
+        verify_s3_repository_ownership(repository, adopt_legacy=False)
     config_file = _maintenance_config_file(repository)
     _connect_maintenance_repository(
         repository,
@@ -182,6 +188,13 @@ def delete_s3_snapshots(
     if repository.repo_type != Repository.Type.S3:
         raise KopiaCliError("Control-plane snapshot delete only supports S3 repositories")
 
+    # The database Claim is only a coordination record. Re-read the physical
+    # marker immediately before this Controller-side data operation.
+    from apps.storage.services.internal.repository_ownership import (
+        verify_s3_repository_ownership,
+    )
+
+    verify_s3_repository_ownership(repository, adopt_legacy=False)
     config_file = _snapshot_delete_config_file(repository)
     secrets_payload = resolve_repository_secrets(repository)
     secret_values = secret_values_for_scrub(

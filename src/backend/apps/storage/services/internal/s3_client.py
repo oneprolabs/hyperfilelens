@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,6 +17,7 @@ from apps.storage.services.internal.s3_url_style import boto3_s3_addressing_styl
 
 
 DEFAULT_S3_ENDPOINT = "https://s3.amazonaws.com"
+S3_OWNERSHIP_MARKER_PATH = ".hyperfilelens/repository-owner-v1.json"
 BUCKET_REGION_LOOKUP_WORKERS = 10
 BUCKET_REGION_LOOKUP_TIMEOUT_SECONDS = 5
 
@@ -239,11 +241,18 @@ def ensure_s3_bucket(
             create_args["CreateBucketConfiguration"] = create_bucket_configuration
         client.create_bucket(**create_args)
     except ClientError as exc:
-        if _client_error_code(exc) in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
+        if _client_error_code(exc) in {
+            "BucketAlreadyOwnedByYou",
+            "BucketAlreadyExists",
+        }:
             return
-        raise S3ClientError(_error_message(f"Unable to create S3 bucket {bucket}", exc)) from exc
+        raise S3ClientError(
+            _error_message(f"Unable to create S3 bucket {bucket}", exc)
+        ) from exc
     except BotoCoreError as exc:
-        raise S3ClientError(_error_message(f"Unable to create S3 bucket {bucket}", exc)) from exc
+        raise S3ClientError(
+            _error_message(f"Unable to create S3 bucket {bucket}", exc)
+        ) from exc
 
 
 def create_s3_bucket(
@@ -284,9 +293,13 @@ def create_s3_bucket(
             raise S3ClientError(
                 f"Unable to create S3 bucket {bucket}: bucket already exists."
             ) from exc
-        raise S3ClientError(_error_message(f"Unable to create S3 bucket {bucket}", exc)) from exc
+        raise S3ClientError(
+            _error_message(f"Unable to create S3 bucket {bucket}", exc)
+        ) from exc
     except BotoCoreError as exc:
-        raise S3ClientError(_error_message(f"Unable to create S3 bucket {bucket}", exc)) from exc
+        raise S3ClientError(
+            _error_message(f"Unable to create S3 bucket {bucket}", exc)
+        ) from exc
 
 
 def check_s3_bucket_readable(
@@ -317,6 +330,215 @@ def check_s3_bucket_readable(
     except (BotoCoreError, ClientError) as exc:
         raise S3ClientError(
             _error_message(f"Unable to access bucket {bucket}", exc)
+        ) from exc
+
+
+def identify_s3_namespace(
+    *,
+    endpoint: str | None,
+    region: str | None,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = 15,
+) -> str | None:
+    """Return the provider account/owner identity when S3 exposes it."""
+    client = _client(
+        endpoint=endpoint,
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        s3_url_style=s3_url_style,
+        use_tls=use_tls,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        response = client.list_buckets()
+    except (BotoCoreError, ClientError, TypeError):
+        # Bucket-scoped credentials commonly deny ListBuckets. Callers must
+        # then use the conservative endpoint namespace and storage marker.
+        return None
+    owner = response.get("Owner") if isinstance(response, dict) else None
+    if not isinstance(owner, dict):
+        return None
+    return str(owner.get("ID") or owner.get("Id") or "").strip() or None
+
+
+def read_s3_object(
+    *,
+    endpoint: str | None,
+    region: str | None,
+    bucket: str,
+    key: str,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = 15,
+) -> bytes | None:
+    client = _client(
+        endpoint=endpoint,
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        s3_url_style=s3_url_style,
+        use_tls=use_tls,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        response = client.get_object(Bucket=bucket, Key=key)
+        body = response.get("Body")
+        if body is None:
+            return b""
+        try:
+            return body.read()
+        finally:
+            close = getattr(body, "close", None)
+            if callable(close):
+                close()
+    except ClientError as exc:
+        if _client_error_code(exc) in {"NoSuchKey", "NotFound", "404"}:
+            return None
+        raise S3ClientError(
+            _error_message("Unable to read repository ownership marker", exc)
+        ) from exc
+    except BotoCoreError as exc:
+        raise S3ClientError(
+            _error_message("Unable to read repository ownership marker", exc)
+        ) from exc
+
+
+def put_s3_object_if_absent(
+    *,
+    endpoint: str | None,
+    region: str | None,
+    bucket: str,
+    key: str,
+    body: bytes,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = 15,
+) -> bool:
+    """Atomically create an ownership marker; return False if it exists."""
+    client = _client(
+        endpoint=endpoint,
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        s3_url_style=s3_url_style,
+        use_tls=use_tls,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=body,
+            ContentLength=len(body),
+            ContentType="application/json",
+            IfNoneMatch="*",
+        )
+        return True
+    except ClientError as exc:
+        if _client_error_code(exc) in {
+            "ConditionalRequestConflict",
+            "PreconditionFailed",
+            "412",
+        }:
+            return False
+        raise S3ClientError(
+            _error_message("Unable to claim repository ownership", exc)
+        ) from exc
+    except (BotoCoreError, ParamValidationError) as exc:
+        raise S3ClientError(
+            "The object store cannot atomically create the repository ownership marker."
+        ) from exc
+
+
+def list_s3_object_keys(
+    *,
+    endpoint: str | None,
+    region: str | None,
+    bucket: str,
+    prefix: str,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = 30,
+):
+    """Yield every object key below a Prefix for create-time safety checks."""
+    client = _client(
+        endpoint=endpoint,
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        s3_url_style=s3_url_style,
+        use_tls=use_tls,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for item in page.get("Contents", []):
+                key = str(item.get("Key") or "")
+                if key:
+                    yield key
+    except (BotoCoreError, ClientError) as exc:
+        raise S3ClientError(
+            _error_message("Unable to inspect repository object prefix", exc)
+        ) from exc
+
+
+def s3_prefix_has_any_state(
+    *,
+    endpoint: str | None,
+    region: str | None,
+    bucket: str,
+    prefix: str,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = 30,
+) -> bool:
+    """Return whether a Prefix contains objects, versions, or uploads."""
+    client = _client(
+        endpoint=endpoint,
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        s3_url_style=s3_url_style,
+        use_tls=use_tls,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        objects = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+        if objects.get("Contents"):
+            return True
+        # A version-listing failure is intentionally propagated. Without a
+        # successful version probe we cannot prove that historical objects or
+        # delete markers are absent, so claiming the Prefix would risk
+        # reusing a repository location that still contains hidden data.
+        versions = client.list_object_versions(
+            Bucket=bucket,
+            Prefix=prefix,
+            MaxKeys=1,
+        )
+        if versions.get("Versions") or versions.get("DeleteMarkers"):
+            return True
+        uploads = client.list_multipart_uploads(
+            Bucket=bucket,
+            Prefix=prefix,
+            MaxUploads=1,
+        )
+        return bool(uploads.get("Uploads"))
+    except (BotoCoreError, ClientError) as exc:
+        raise S3ClientError(
+            _error_message("Unable to inspect repository object prefix", exc)
         ) from exc
 
 
@@ -355,15 +577,23 @@ def verify_s3_bucket_rw(
         try:
             client.head_bucket(Bucket=bucket)
         except (BotoCoreError, ClientError) as exc:
-            raise S3ClientError(_error_message(f"Unable to access bucket {bucket}", exc)) from exc
+            raise S3ClientError(
+                _error_message(f"Unable to access bucket {bucket}", exc)
+            ) from exc
         try:
-            client.put_object(Bucket=bucket, Key=probe_key, Body=body, ContentLength=len(body))
+            client.put_object(
+                Bucket=bucket, Key=probe_key, Body=body, ContentLength=len(body)
+            )
         except (BotoCoreError, ClientError) as exc:
-            raise S3ClientError(_error_message(f"Unable to write to bucket {bucket}", exc)) from exc
+            raise S3ClientError(
+                _error_message(f"Unable to write to bucket {bucket}", exc)
+            ) from exc
         try:
             client.delete_object(Bucket=bucket, Key=probe_key)
         except (BotoCoreError, ClientError) as exc:
-            raise S3ClientError(_error_message(f"Unable to clean up probe object in {bucket}", exc)) from exc
+            raise S3ClientError(
+                _error_message(f"Unable to clean up probe object in {bucket}", exc)
+            ) from exc
     except S3ClientError:
         # best-effort cleanup; ignore failures
         try:
@@ -382,16 +612,26 @@ def delete_s3_prefix(
     prefix: str,
     access_key_id: str,
     secret_access_key: str,
+    ownership_marker_key: str,
+    ownership_marker: dict[str, object],
     s3_url_style: str | None = None,
     use_tls: bool = True,
     timeout_seconds: float = 30,
 ) -> dict[str, int | str]:
-    """Delete one managed repository prefix without deleting its bucket."""
+    """Delete one owned repository Prefix while retaining its marker last."""
 
-    normalized_prefix = str(prefix or "").strip().replace("\\", "/").strip("/")
-    if not normalized_prefix:
-        raise S3ClientError("Repository object prefix is required for cleanup.")
-    normalized_prefix += "/"
+    root_prefix = str(prefix or "").strip().replace("\\", "/").strip("/")
+    normalized_prefix = f"{root_prefix}/" if root_prefix else ""
+    normalized_marker_key = str(ownership_marker_key or "").strip().strip("/")
+    expected_marker_key = (
+        f"{normalized_prefix}{S3_OWNERSHIP_MARKER_PATH}"
+        if normalized_prefix
+        else S3_OWNERSHIP_MARKER_PATH
+    )
+    if normalized_marker_key != expected_marker_key:
+        raise S3ClientError(
+            "Repository ownership marker is outside the cleanup Prefix."
+        )
     client = _client(
         endpoint=endpoint,
         region=region,
@@ -405,52 +645,132 @@ def delete_s3_prefix(
     deleted_versions = 0
     deleted_markers = 0
     aborted_uploads = 0
+    seen_uploads: set[tuple[str, str]] = set()
+    seen_version_batches: set[tuple[tuple[str, str], ...]] = set()
+    seen_object_batches: set[tuple[str, ...]] = set()
     try:
-        upload_paginator = client.get_paginator("list_multipart_uploads")
-        for page in upload_paginator.paginate(Bucket=bucket, Prefix=normalized_prefix):
-            for upload in page.get("Uploads", []):
+        _require_s3_cleanup_marker(
+            client=client,
+            bucket=bucket,
+            key=normalized_marker_key,
+            expected=ownership_marker,
+        )
+        while True:
+            upload_paginator = client.get_paginator("list_multipart_uploads")
+            page = next(
+                iter(
+                    upload_paginator.paginate(
+                        Bucket=bucket,
+                        Prefix=normalized_prefix,
+                    )
+                ),
+                {},
+            )
+            uploads = page.get("Uploads", [])
+            if not uploads:
+                break
+            aborted_this_page = 0
+            for upload in uploads:
                 key = str(upload.get("Key") or "")
                 upload_id = str(upload.get("UploadId") or "")
                 if not key or not upload_id:
                     continue
-                client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+                identity = (key, upload_id)
+                if identity in seen_uploads:
+                    continue
+                client.abort_multipart_upload(
+                    Bucket=bucket, Key=key, UploadId=upload_id
+                )
+                seen_uploads.add(identity)
                 aborted_uploads += 1
+                aborted_this_page += 1
+            if not aborted_this_page:
+                raise S3ClientError(
+                    "Unable to make progress aborting repository multipart uploads."
+                )
 
-        try:
-            version_paginator = client.get_paginator("list_object_versions")
-            for page in version_paginator.paginate(Bucket=bucket, Prefix=normalized_prefix):
-                version_entries = [
-                    {"Key": item["Key"], "VersionId": item["VersionId"]}
-                    for item in page.get("Versions", [])
-                    if item.get("Key") and item.get("VersionId")
-                ]
-                marker_entries = [
-                    {"Key": item["Key"], "VersionId": item["VersionId"]}
-                    for item in page.get("DeleteMarkers", [])
-                    if item.get("Key") and item.get("VersionId")
-                ]
-                for batch in _chunks(version_entries + marker_entries, 1000):
-                    _delete_s3_entries(client=client, bucket=bucket, entries=batch)
-                deleted_versions += len(version_entries)
-                deleted_markers += len(marker_entries)
-        except ClientError as exc:
-            if not _is_unsupported_s3_header_error(exc):
-                raise
+        while True:
+            version_entries, marker_entries = _next_s3_non_owner_version_batch(
+                client=client,
+                bucket=bucket,
+                prefix=normalized_prefix,
+                marker_key=normalized_marker_key,
+            )
+            if not version_entries and not marker_entries:
+                break
+            fingerprint = tuple(
+                sorted(
+                    (str(entry["Key"]), str(entry["VersionId"]))
+                    for entry in version_entries + marker_entries
+                )
+            )
+            if fingerprint in seen_version_batches:
+                raise S3ClientError(
+                    "Unable to make progress deleting repository object versions."
+                )
+            seen_version_batches.add(fingerprint)
+            for batch in _chunks(version_entries + marker_entries, 1000):
+                _delete_s3_entries(client=client, bucket=bucket, entries=batch)
+            deleted_versions += len(version_entries)
+            deleted_markers += len(marker_entries)
 
-        object_paginator = client.get_paginator("list_objects_v2")
-        for page in object_paginator.paginate(Bucket=bucket, Prefix=normalized_prefix):
-            entries = [
-                {"Key": item["Key"]}
-                for item in page.get("Contents", [])
-                if item.get("Key")
-            ]
+        while True:
+            entries = _next_s3_non_owner_object_batch(
+                client=client,
+                bucket=bucket,
+                prefix=normalized_prefix,
+                marker_key=normalized_marker_key,
+            )
+            if not entries:
+                break
+            fingerprint = tuple(sorted(str(entry["Key"]) for entry in entries))
+            if fingerprint in seen_object_batches:
+                raise S3ClientError(
+                    "Unable to make progress deleting repository objects."
+                )
+            seen_object_batches.add(fingerprint)
             for batch in _chunks(entries, 1000):
                 _delete_s3_entries(client=client, bucket=bucket, entries=batch)
             deleted_objects += len(entries)
 
-        _verify_s3_prefix_empty(client=client, bucket=bucket, prefix=normalized_prefix)
+        _verify_s3_prefix_contains_only_marker(
+            client=client,
+            bucket=bucket,
+            prefix=normalized_prefix,
+            marker_key=normalized_marker_key,
+        )
+        marker_entries = _s3_marker_version_entries(
+            client=client,
+            bucket=bucket,
+            key=normalized_marker_key,
+        )
+        if marker_entries is None:
+            _delete_s3_entries(
+                client=client,
+                bucket=bucket,
+                entries=[{"Key": normalized_marker_key}],
+            )
+            deleted_objects += 1
+        else:
+            for batch in _chunks(marker_entries, 1000):
+                _delete_s3_entries(client=client, bucket=bucket, entries=batch)
+            deleted_versions += sum(
+                1 for entry in marker_entries if entry.get("_kind") == "version"
+            )
+            deleted_markers += sum(
+                1 for entry in marker_entries if entry.get("_kind") == "marker"
+            )
+        _verify_s3_prefix_empty(
+            client=client,
+            bucket=bucket,
+            prefix=normalized_prefix,
+        )
     except (BotoCoreError, ClientError) as exc:
-        raise S3ClientError(_error_message(f"Unable to delete repository prefix {normalized_prefix}", exc)) from exc
+        raise S3ClientError(
+            _error_message(
+                f"Unable to delete repository prefix {normalized_prefix}", exc
+            )
+        ) from exc
     return {
         "bucket": bucket,
         "prefix": normalized_prefix,
@@ -540,7 +860,50 @@ def _chunks(items: list[dict], size: int):
         yield items[offset : offset + size]
 
 
+def _next_s3_non_owner_version_batch(
+    *, client, bucket: str, prefix: str, marker_key: str
+) -> tuple[list[dict], list[dict]]:
+    paginator = client.get_paginator("list_object_versions")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        versions = [
+            {"Key": item["Key"], "VersionId": item["VersionId"]}
+            for item in page.get("Versions", [])
+            if item.get("Key")
+            and item.get("VersionId")
+            and item.get("Key") != marker_key
+        ]
+        markers = [
+            {"Key": item["Key"], "VersionId": item["VersionId"]}
+            for item in page.get("DeleteMarkers", [])
+            if item.get("Key")
+            and item.get("VersionId")
+            and item.get("Key") != marker_key
+        ]
+        if versions or markers:
+            return versions, markers
+    return [], []
+
+
+def _next_s3_non_owner_object_batch(
+    *, client, bucket: str, prefix: str, marker_key: str
+) -> list[dict]:
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        entries = [
+            {"Key": item["Key"]}
+            for item in page.get("Contents", [])
+            if item.get("Key") and item.get("Key") != marker_key
+        ]
+        if entries:
+            return entries
+    return []
+
+
 def _delete_s3_entries(*, client, bucket: str, entries: list[dict]) -> None:
+    entries = [
+        {key: value for key, value in entry.items() if not key.startswith("_")}
+        for entry in entries
+    ]
     try:
         response = client.delete_objects(
             Bucket=bucket,
@@ -556,8 +919,103 @@ def _delete_s3_entries(*, client, bucket: str, entries: list[dict]) -> None:
     if errors:
         first = errors[0] if isinstance(errors[0], dict) else {}
         code = str(first.get("Code") or "DeleteFailed")
-        message = str(first.get("Message") or "S3 rejected one or more object deletions.")
+        message = str(
+            first.get("Message") or "S3 rejected one or more object deletions."
+        )
         raise S3ClientError(f"Unable to delete repository objects: {code}: {message}")
+
+
+def _require_s3_cleanup_marker(
+    *, client, bucket: str, key: str, expected: dict[str, object]
+) -> None:
+    try:
+        response = client.get_object(Bucket=bucket, Key=key)
+    except ClientError as exc:
+        raise S3ClientError(
+            "Repository ownership marker is missing or unreadable; physical data was retained."
+        ) from exc
+    body = response.get("Body") if isinstance(response, dict) else None
+    if body is None:
+        raise S3ClientError("Repository ownership marker is unreadable.")
+    try:
+        payload = json.loads(body.read().decode("utf-8"))
+    except (AttributeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise S3ClientError("Repository ownership marker is invalid.") from exc
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            close()
+    if not isinstance(payload, dict) or any(
+        payload.get(key_name) != expected.get(key_name)
+        for key_name in (
+            "deployment_uuid",
+            "repository_uuid",
+            "location_digest",
+            "format_version",
+            "signature",
+        )
+    ):
+        raise S3ClientError(
+            "Repository ownership belongs to another repository; physical data was retained."
+        )
+
+
+def _s3_marker_version_entries(*, client, bucket: str, key: str) -> list[dict] | None:
+    paginator = client.get_paginator("list_object_versions")
+    entries: list[dict] = []
+    for page in paginator.paginate(Bucket=bucket, Prefix=key):
+        entries.extend(
+            {
+                "Key": item["Key"],
+                "VersionId": item["VersionId"],
+                "_kind": "version",
+            }
+            for item in page.get("Versions", [])
+            if item.get("Key") == key and item.get("VersionId")
+        )
+        entries.extend(
+            {
+                "Key": item["Key"],
+                "VersionId": item["VersionId"],
+                "_kind": "marker",
+            }
+            for item in page.get("DeleteMarkers", [])
+            if item.get("Key") == key and item.get("VersionId")
+        )
+    return entries or None
+
+
+def _verify_s3_prefix_contains_only_marker(
+    *, client, bucket: str, prefix: str, marker_key: str
+) -> None:
+    paginator = client.get_paginator("list_object_versions")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        entries = [
+            *page.get("Versions", []),
+            *page.get("DeleteMarkers", []),
+        ]
+        if any(item.get("Key") != marker_key for item in entries):
+            raise S3ClientError(
+                "Repository Prefix still contains object versions before marker cleanup."
+            )
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        if any(
+            item.get("Key") and item.get("Key") != marker_key
+            for item in page.get("Contents", [])
+        ):
+            raise S3ClientError(
+                "Repository Prefix still contains objects before marker cleanup."
+            )
+    uploads = client.list_multipart_uploads(
+        Bucket=bucket,
+        Prefix=prefix,
+        MaxUploads=1,
+    )
+    if uploads.get("Uploads"):
+        raise S3ClientError(
+            "Repository Prefix still contains multipart uploads before marker cleanup."
+        )
 
 
 def _is_unsupported_s3_header_error(exc: ClientError) -> bool:
@@ -568,23 +1026,28 @@ def _is_unsupported_s3_header_error(exc: ClientError) -> bool:
 
 
 def _should_fallback_from_batch_delete(exc: ClientError) -> bool:
-    return _is_unsupported_s3_header_error(exc) or _client_error_code(exc) == "MissingContentMD5"
+    return (
+        _is_unsupported_s3_header_error(exc)
+        or _client_error_code(exc) == "MissingContentMD5"
+    )
 
 
 def _verify_s3_prefix_empty(*, client, bucket: str, prefix: str) -> None:
-    try:
-        versions = client.list_object_versions(Bucket=bucket, Prefix=prefix, MaxKeys=1)
-        if versions.get("Versions") or versions.get("DeleteMarkers"):
-            raise S3ClientError("Repository object prefix still contains object versions after cleanup.")
-    except ClientError as exc:
-        if not _is_unsupported_s3_header_error(exc):
-            raise
+    versions = client.list_object_versions(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+    if versions.get("Versions") or versions.get("DeleteMarkers"):
+        raise S3ClientError(
+            "Repository object prefix still contains object versions after cleanup."
+        )
     objects = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
     if objects.get("Contents"):
-        raise S3ClientError("Repository object prefix still contains objects after cleanup.")
+        raise S3ClientError(
+            "Repository object prefix still contains objects after cleanup."
+        )
     uploads = client.list_multipart_uploads(Bucket=bucket, Prefix=prefix, MaxUploads=1)
     if uploads.get("Uploads"):
-        raise S3ClientError("Repository object prefix still contains multipart uploads after cleanup.")
+        raise S3ClientError(
+            "Repository object prefix still contains multipart uploads after cleanup."
+        )
 
 
 def _register_list_buckets_region_parser(client) -> None:
@@ -881,9 +1344,7 @@ def _canonical_bucket_region(platform: str, value: object) -> str:
         if region_label.endswith("-internal"):
             region_label = region_label.removesuffix("-internal")
         return (
-            region_label
-            if region_label.startswith("oss-")
-            else f"oss-{region_label}"
+            region_label if region_label.startswith("oss-") else f"oss-{region_label}"
         )
     if normalized_platform == "huaweicloud":
         host = urlparse(raw if "://" in raw else f"https://{raw}").hostname or raw
@@ -912,9 +1373,7 @@ def _bucket_region_error_details(exc: Exception) -> tuple[str, str, str]:
             if isinstance(metadata.get("HTTPHeaders"), dict)
             else {}
         )
-        normalized_headers = {
-            str(key).lower(): value for key, value in headers.items()
-        }
+        normalized_headers = {str(key).lower(): value for key, value in headers.items()}
         request_id = str(
             metadata.get("RequestId")
             or normalized_headers.get("x-amz-request-id")

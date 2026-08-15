@@ -3,23 +3,44 @@ from unittest import mock
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
+from apps.protection.models import BackupSourceSnapshot
 from apps.restore.models import RestoreRecord, RestoreRecordItem
 from apps.storage.repositories.models import (
     Repository,
+    RepositoryExecutionTarget,
+    RepositoryLocationClaim,
     RepositoryTask,
     RepositoryUsageShard,
 )
 from apps.storage.services.internal.repository_cleanup import (
+    _create_replacement_cleanup_task,
+    _ensure_cleanup_targets,
     _execute_physical_cleanup,
     create_direct_nas_target_cleanup_task,
     create_repository_cleanup_task,
     direct_nas_cleanup_target_ids,
     repository_cleanup_preflight,
     run_repository_cleanup_task,
+)
+from apps.storage.services.internal.repository_agent_operation import (
+    RepositoryAgentOperationError,
+    RepositoryAgentOperationResult,
+)
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_initializing,
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    release_repository_location,
+    reserve_direct_nas_location,
+    reserve_repository_location,
+)
+from apps.storage.services.internal.repository_ownership import (
+    RepositoryOwnershipMarkerMissingError,
 )
 from apps.task.models import Task, TaskResource
 from apps.task.services.interface import create_task
@@ -32,8 +53,13 @@ class RepositoryCleanupTests(TestCase):
             name="Repository Cleanup Org",
         )
 
-    def _s3_repository(self, name: str = "cleanup-s3") -> Repository:
-        return Repository.objects.create(
+    def _s3_repository(
+        self,
+        name: str = "cleanup-s3",
+        *,
+        prefix: str = "managed/repository/",
+    ) -> Repository:
+        repository = Repository.objects.create(
             organization_id=self.org.id,
             name=name,
             repo_type=Repository.Type.S3,
@@ -41,7 +67,272 @@ class RepositoryCleanupTests(TestCase):
             health=Repository.Health.ONLINE,
             s3_platform=Repository.S3Platform.AWS,
             s3_bucket="cleanup-bucket",
-            config={"prefix": "managed/repository/", "access_key_id": "test-key"},
+            config={
+                "endpoint": "s3.amazonaws.com",
+                "prefix": prefix,
+                "access_key_id": "test-key",
+            },
+        )
+        reserve_repository_location(repository)
+        mark_repository_location_owned(repository)
+        mark_repository_location_ownership_verified(repository)
+        return repository
+
+    def _mark_owned_location(
+        self,
+        repository: Repository,
+        *,
+        node_id: int | None = None,
+        repository_subdir: str = "",
+    ) -> None:
+        if (
+            repository.repo_type == Repository.Type.NAS
+            and repository.bind_node_id is None
+        ):
+            reserve_direct_nas_location(
+                repository=repository,
+                node_id=int(node_id or 0),
+                repository_subdir=repository_subdir,
+            )
+            mark_repository_location_owned(repository, owner_node_id=node_id)
+            mark_repository_location_ownership_verified(
+                repository,
+                owner_node_id=node_id,
+                repository_subdir=repository_subdir,
+            )
+            return
+        reserve_repository_location(repository)
+        mark_repository_location_owned(repository)
+        mark_repository_location_ownership_verified(repository)
+
+    def test_initialization_in_progress_is_never_treated_as_unused_storage(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="unknown-initialization-result",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATE_FAILED,
+            health=Repository.Health.OFFLINE,
+            s3_platform=Repository.S3Platform.AWS,
+            s3_bucket="cleanup-bucket",
+            config={"prefix": "unknown/result/", "access_key_id": "test-key"},
+        )
+        reserve_repository_location(repository)
+        mark_repository_location_initializing(repository)
+
+        strict = repository_cleanup_preflight(repository=repository, force=False)
+        forced = repository_cleanup_preflight(repository=repository, force=True)
+
+        self.assertFalse(strict["allowed"])
+        self.assertEqual(
+            strict["blockers"][0]["code"],
+            "repository_initialization_in_progress",
+        )
+        self.assertFalse(forced["allowed"])
+        self.assertEqual(
+            forced["blockers"][0]["code"],
+            "repository_initialization_in_progress",
+        )
+
+    def test_active_agent_initialization_blocks_force_cleanup(self):
+        repository = self._s3_repository("active-agent-initialization")
+        node = Node.objects.create(
+            organization=self.org,
+            name="initializing-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=node,
+            kind="repo.initialize",
+            payload={"repository": {"id": repository.id}},
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        forced = repository_cleanup_preflight(repository=repository, force=True)
+
+        self.assertFalse(forced["allowed"])
+        blocker = next(
+            item
+            for item in forced["blockers"]
+            if item["code"] == "active_repository_node_task"
+        )
+        self.assertEqual(blocker["node_task_id"], str(node_task.id))
+
+    def test_active_agent_operation_with_persisted_repository_id_blocks_cleanup(self):
+        repository = self._s3_repository("active-persisted-agent-operation")
+        node = Node.objects.create(
+            organization=self.org,
+            name="persisted-operation-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=node,
+            kind="repository.operation",
+            # This is the durable form written by run_agent_task_async when a
+            # delivery payload is protected for redelivery.
+            payload={"repository_id": repository.id},
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        forced = repository_cleanup_preflight(repository=repository, force=True)
+
+        self.assertFalse(forced["allowed"])
+        blocker = next(
+            item
+            for item in forced["blockers"]
+            if item["code"] == "active_repository_node_task"
+        )
+        self.assertEqual(blocker["node_task_id"], str(node_task.id))
+
+    def test_reused_direct_nas_shard_reactivates_cleanup_target(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="reused-direct-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "10.0.0.8", "share_path": "/backup"},
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="reused-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        subdir = f"hp-repos/agent-{node.id}"
+        RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=repository.id,
+            node_id=node.id,
+            repository_subdir=subdir,
+            status=RepositoryUsageShard.Status.SUCCESS,
+            is_active=True,
+        )
+        target = RepositoryExecutionTarget.objects.create(
+            organization_id=self.org.id,
+            repository=repository,
+            target_key=(f"repository:{repository.id}:node:{node.id}:subdir:{subdir}"),
+            owner_type=RepositoryExecutionTarget.OwnerType.NODE,
+            owner_node_id=node.id,
+            owner_identity=f"hfl-cleanup@node-{node.id}",
+            repository_subdir=subdir,
+            is_active=False,
+        )
+
+        targets = _ensure_cleanup_targets(repository)
+
+        target.refresh_from_db()
+        self.assertTrue(target.is_active)
+        self.assertEqual([item.id for item in targets], [target.id])
+
+    def test_inactive_direct_nas_shard_does_not_create_active_cleanup_target(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="inactive-direct-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "10.0.0.9", "share_path": "/backup"},
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="inactive-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=repository.id,
+            node_id=node.id,
+            repository_subdir=f"hp-repos/agent-{node.id}",
+            status=RepositoryUsageShard.Status.SUCCESS,
+            is_active=False,
+        )
+
+        targets = _ensure_cleanup_targets(repository)
+
+        self.assertEqual(len(targets), 1)
+        self.assertFalse(targets[0].is_active)
+
+    def test_inactive_direct_nas_owned_location_is_retained_until_confirmed(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="inactive-owned-direct-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "10.0.0.10", "share_path": "/backup"},
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="inactive-owned-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+        subdir = f"hp-repos/agent-{node.id}"
+        RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=repository.id,
+            node_id=node.id,
+            repository_subdir=subdir,
+            status=RepositoryUsageShard.Status.SUCCESS,
+            is_active=False,
+        )
+        self._mark_owned_location(
+            repository,
+            node_id=node.id,
+            repository_subdir=subdir,
+        )
+
+        strict_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        strict_result = run_repository_cleanup_task(repository_task_id=strict_task.id)
+
+        repository.refresh_from_db()
+        strict_task.task.refresh_from_db()
+        claim = RepositoryLocationClaim.objects.get(repository=repository)
+        self.assertEqual(strict_result["status"], "failed")
+        self.assertEqual(strict_task.task.status, Task.Status.FAILED)
+        self.assertEqual(repository.status, Repository.Status.REMOVE_FAILED)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.OWNED)
+
+        force_task = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        force_result = run_repository_cleanup_task(repository_task_id=force_task.id)
+
+        repository.refresh_from_db()
+        claim.refresh_from_db()
+        self.assertEqual(force_result["status"], "success")
+        self.assertFalse(force_result["cleanup_complete"])
+        self.assertEqual(repository.status, Repository.Status.REMOVED)
+        self.assertEqual(
+            repository.cleanup_result,
+            Repository.CleanupResult.FORCE_SKIPPED,
+        )
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+        self.assertIn(
+            f"repository_location_claim:{claim.id}",
+            force_result["retained_resources"],
         )
 
     def test_legacy_local_disk_preflight_warns_that_physical_data_is_preserved(self):
@@ -105,28 +396,44 @@ class RepositoryCleanupTests(TestCase):
 
     @mock.patch(
         "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
-        return_value={
-            "mount_status": "not_mounted",
-            "physical_cleanup": "skipped_unmounted",
-            "cleanup_complete": False,
-            "local_state_cleanup": "completed",
-            "cleanup_failures": [
-                {
-                    "code": "NAS_NOT_MOUNTED",
-                    "detail": "Remote repository cleanup was skipped because the NAS was not mounted.",
-                }
-            ],
-            "retained_resources": ["nas_repository:17"],
-        },
+        return_value=RepositoryAgentOperationResult(
+            waiting=False,
+            node_task_id=None,
+            result={
+                "mount_status": "not_mounted",
+                "physical_cleanup": "skipped_unmounted",
+                "cleanup_complete": False,
+                "local_state_cleanup": "completed",
+                "cleanup_failures": [
+                    {
+                        "code": "NAS_NOT_MOUNTED",
+                        "detail": (
+                            "Remote repository cleanup was skipped because the "
+                            "NAS was not mounted."
+                        ),
+                    }
+                ],
+                "retained_resources": ["nas_repository:17"],
+            },
+        ),
     )
-    def test_unmounted_nas_cleanup_succeeds_with_retained_resource_warning(self, _execute_cleanup):
+    def test_unmounted_nas_cleanup_succeeds_with_retained_resource_warning(
+        self, _execute_cleanup
+    ):
         proxy = Node.objects.create(
             organization=self.org,
             name="unmounted-nas-proxy",
             role=Node.Role.PROXY,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
-            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+            metadata={
+                "inventory": {
+                    "capabilities": [
+                        "repository_cleanup_v1",
+                        "repository_cleanup_ownership_v1",
+                    ]
+                }
+            },
         )
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -139,13 +446,18 @@ class RepositoryCleanupTests(TestCase):
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
         )
-        repository_task = create_repository_cleanup_task(repository=repository, dispatch=False)
+        self._mark_owned_location(repository)
+        repository_task = create_repository_cleanup_task(
+            repository=repository, dispatch=False
+        )
 
         result = run_repository_cleanup_task(repository_task_id=repository_task.id)
 
         repository.refresh_from_db()
         repository_task.task.refresh_from_db()
-        warning_step = repository_task.task.steps.get(step_name="delete_physical_repository")
+        warning_step = repository_task.task.steps.get(
+            step_name="delete_physical_repository"
+        )
         warning_event = repository_task.task.events.filter(level="WARN").get()
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["outcome"], "cleanup_success_with_retained_resources")
@@ -153,7 +465,96 @@ class RepositoryCleanupTests(TestCase):
         self.assertEqual(warning_step.status, warning_step.Status.WARNING)
         self.assertEqual(warning_event.metadata["mount_status"], "not_mounted")
         self.assertEqual(repository.status, Repository.Status.REMOVED)
-        self.assertEqual(repository.cleanup_result, Repository.CleanupResult.FORCE_SKIPPED)
+        self.assertEqual(
+            repository.cleanup_result, Repository.CleanupResult.FORCE_SKIPPED
+        )
+        self.assertTrue(
+            repository.location_claims.filter(
+                state=RepositoryLocationClaim.State.RESIDUAL,
+            ).exists()
+        )
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup."
+        "resolve_or_dispatch_repository_agent_operation"
+    )
+    def test_force_bound_nas_retains_historical_direct_nas_locations(
+        self,
+        dispatch,
+    ):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="mixed-history-nas-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={
+                "inventory": {
+                    "capabilities": [
+                        "repository_cleanup_v1",
+                        "repository_cleanup_ownership_v1",
+                    ]
+                }
+            },
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="mixed-history-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "192.0.2.2", "share_path": "/backup"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        self._mark_owned_location(repository)
+        bound_claim = repository.location_claims.get(
+            scope=RepositoryLocationClaim.Scope.REPOSITORY,
+        )
+        historical_claim = RepositoryLocationClaim.objects.create(
+            organization_id=self.org.id,
+            repository=repository,
+            namespace=bound_claim.namespace,
+            scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+            root_path="hp-repos/agent-99",
+            owner_node_id=99,
+            state=RepositoryLocationClaim.State.RESIDUAL,
+        )
+        strict_preflight = repository_cleanup_preflight(repository=repository)
+        self.assertFalse(strict_preflight["allowed"])
+        self.assertIn(
+            "historical_direct_nas_locations",
+            {item["code"] for item in strict_preflight["blockers"]},
+        )
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        dispatch.assert_not_called()
+        repository.refresh_from_db()
+        bound_claim.refresh_from_db()
+        historical_claim.refresh_from_db()
+        self.assertEqual(result["status"], "success")
+        self.assertFalse(result["cleanup_complete"])
+        self.assertIn(
+            f"repository_location_claim:{historical_claim.id}",
+            result["retained_resources"],
+        )
+        self.assertEqual(repository.status, Repository.Status.REMOVED)
+        self.assertEqual(
+            repository.cleanup_result,
+            Repository.CleanupResult.FORCE_SKIPPED,
+        )
+        self.assertEqual(bound_claim.state, RepositoryLocationClaim.State.RESIDUAL)
+        self.assertEqual(
+            historical_claim.state,
+            RepositoryLocationClaim.State.RESIDUAL,
+        )
 
     @mock.patch(
         "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
@@ -165,7 +566,14 @@ class RepositoryCleanupTests(TestCase):
             role=Node.Role.PROXY,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
-            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+            metadata={
+                "inventory": {
+                    "capabilities": [
+                        "repository_cleanup_v1",
+                        "repository_cleanup_ownership_v1",
+                    ]
+                }
+            },
         )
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -178,7 +586,10 @@ class RepositoryCleanupTests(TestCase):
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
         )
-        repository_task = create_repository_cleanup_task(repository=repository, dispatch=False)
+        repository_task = create_repository_cleanup_task(
+            repository=repository, dispatch=False
+        )
+        self._mark_owned_location(repository)
 
         _execute_physical_cleanup(repository_task)
 
@@ -190,14 +601,95 @@ class RepositoryCleanupTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
     )
-    def test_legacy_local_disk_on_v1_agent_is_preserved_without_dispatch(self, dispatch):
+    def test_manual_agent_cleanup_retry_inherits_owner_verification(self, dispatch):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="partial-cleanup-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={
+                "inventory": {
+                    "capabilities": [
+                        "repository_cleanup_v1",
+                        "repository_cleanup_v2",
+                        "repository_cleanup_ownership_v1",
+                    ]
+                }
+            },
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="partial-agent-cleanup",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={
+                "proxy_node_base_dir": "/data",
+                "proxy_node_dir": "/data/hfl-repo-partial",
+                "proxy_fs_layout": "managed_subdir_v1",
+            },
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        self._mark_owned_location(repository)
+        original = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        dispatch.side_effect = RepositoryAgentOperationError(
+            "partial physical delete",
+            result={"ownership_verified": True},
+        )
+
+        failed = run_repository_cleanup_task(repository_task_id=original.id)
+
+        original.task.refresh_from_db()
+        repository.refresh_from_db()
+        self.assertEqual(failed["status"], "failed")
+        self.assertTrue(original.task.request_payload["agent_cleanup_owner_verified"])
+        self.assertEqual(repository.status, Repository.Status.REMOVE_FAILED)
+
+        retry = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        self.assertTrue(retry.task.request_payload["agent_cleanup_owner_verified"])
+        dispatch.reset_mock()
+        dispatch.side_effect = None
+        dispatch.return_value = RepositoryAgentOperationResult(
+            waiting=True,
+            node_task_id=None,
+            result={},
+        )
+
+        _execute_physical_cleanup(retry)
+
+        self.assertIs(
+            dispatch.call_args.kwargs["payload"]["ownership_verified"],
+            True,
+        )
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
+    )
+    def test_legacy_local_disk_on_v1_agent_is_preserved_without_dispatch(
+        self, dispatch
+    ):
         proxy = Node.objects.create(
             organization=self.org,
             name="legacy-v1-proxy",
             role=Node.Role.PROXY,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
-            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+            metadata={
+                "inventory": {
+                    "capabilities": [
+                        "repository_cleanup_v1",
+                        "repository_cleanup_ownership_v1",
+                    ]
+                }
+            },
         )
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -213,6 +705,7 @@ class RepositoryCleanupTests(TestCase):
             repository=repository,
             dispatch=False,
         )
+        self._mark_owned_location(repository)
 
         result = _execute_physical_cleanup(repository_task)
 
@@ -226,7 +719,14 @@ class RepositoryCleanupTests(TestCase):
             role=Node.Role.PROXY,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
-            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+            metadata={
+                "inventory": {
+                    "capabilities": [
+                        "repository_cleanup_v1",
+                        "repository_cleanup_ownership_v1",
+                    ]
+                }
+            },
         )
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -244,6 +744,7 @@ class RepositoryCleanupTests(TestCase):
         )
         repository.config["proxy_node_dir"] = f"/data/hfl-repo-{repository.id}"
         repository.save(update_fields=["config", "updated_at"])
+        self._mark_owned_location(repository)
         repository_task = create_repository_cleanup_task(
             repository=repository,
             dispatch=False,
@@ -276,13 +777,18 @@ class RepositoryCleanupTests(TestCase):
         self.assertNotIn("access_key_id", cleanup_plan["repository"])
 
         result = run_repository_cleanup_task(repository_task_id=repository_task.id)
-        duplicate_result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+        duplicate_result = run_repository_cleanup_task(
+            repository_task_id=repository_task.id
+        )
 
         repository.refresh_from_db()
         repository_task.task.refresh_from_db()
         self.assertEqual(result["status"], "success", result)
         self.assertEqual(duplicate_result["physical_cleanup"], "deleted")
-        self.assertEqual(repository_task.operation_type, RepositoryTask.OperationType.CLEANUP_REPOSITORY)
+        self.assertEqual(
+            repository_task.operation_type,
+            RepositoryTask.OperationType.CLEANUP_REPOSITORY,
+        )
         self.assertEqual(repository.status, Repository.Status.REMOVED)
         self.assertEqual(repository.cleanup_result, Repository.CleanupResult.DELETED)
         self.assertIsNotNone(repository.removed_at)
@@ -297,8 +803,16 @@ class RepositoryCleanupTests(TestCase):
         execute_cleanup.assert_called_once()
 
     @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership"
+    )
+    @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
+    @mock.patch(
         "apps.storage.services.internal.repository_cleanup.delete_s3_bucket_if_empty",
-        return_value={"bucket": "cleanup-bucket", "status": "failed", "reason": "denied"},
+        return_value={
+            "bucket": "cleanup-bucket",
+            "status": "failed",
+            "reason": "denied",
+        },
     )
     @mock.patch(
         "apps.storage.services.internal.repository_cleanup.delete_s3_prefix",
@@ -308,30 +822,52 @@ class RepositoryCleanupTests(TestCase):
         self,
         _delete_prefix,
         delete_bucket,
+        _check_repository,
+        _verify_owner,
     ):
         repository = self._s3_repository("owned-s3")
         repository.s3_bucket_mode = Repository.S3BucketMode.NEW
         repository.save(update_fields=["s3_bucket_mode"])
-        repository_task = create_repository_cleanup_task(repository=repository, dispatch=False)
+        repository_task = create_repository_cleanup_task(
+            repository=repository, dispatch=False
+        )
 
         result = run_repository_cleanup_task(repository_task_id=repository_task.id)
 
         repository_task.task.refresh_from_db()
         self.assertEqual(result["status"], "success")
+        self.assertTrue(
+            repository_task.task.request_payload["s3_cleanup_owner_verified"]
+        )
         self.assertEqual(
             repository_task.task.result_payload["bucket_cleanup"]["status"],
             "failed",
         )
+        _check_repository.assert_not_called()
         delete_bucket.assert_called_once()
 
-    @mock.patch("apps.storage.services.internal.repository_cleanup.delete_s3_bucket_if_empty")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership"
+    )
+    @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_bucket_if_empty"
+    )
     @mock.patch(
         "apps.storage.services.internal.repository_cleanup.delete_s3_prefix",
         return_value={"bucket": "cleanup-bucket", "prefix": "managed/repository/"},
     )
-    def test_existing_bucket_is_never_deleted(self, _delete_prefix, delete_bucket):
+    def test_existing_bucket_is_never_deleted(
+        self,
+        _delete_prefix,
+        delete_bucket,
+        _check_repository,
+        _verify_owner,
+    ):
         repository = self._s3_repository("existing-s3")
-        repository_task = create_repository_cleanup_task(repository=repository, dispatch=False)
+        repository_task = create_repository_cleanup_task(
+            repository=repository, dispatch=False
+        )
 
         result = run_repository_cleanup_task(repository_task_id=repository_task.id)
 
@@ -339,7 +875,437 @@ class RepositoryCleanupTests(TestCase):
             result["bucket_cleanup"]["status"],
             "skipped_existing_bucket",
         )
+        _check_repository.assert_not_called()
         delete_bucket.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_prefix",
+        return_value={"bucket": "cleanup-bucket", "prefix": "managed/repository/"},
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership",
+        side_effect=[
+            RepositoryOwnershipMarkerMissingError("marker missing"),
+            None,
+        ],
+    )
+    @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
+    def test_legacy_s3_cleanup_adopts_only_after_kopia_access_is_proven(
+        self,
+        check_repository,
+        verify_owner,
+        delete_prefix,
+    ):
+        repository = self._s3_repository("legacy-s3")
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["status"], "success", result)
+        check_repository.assert_called_once_with(repository)
+        self.assertEqual(verify_owner.call_count, 2)
+        delete_prefix.assert_called_once()
+
+    @mock.patch("apps.storage.services.internal.repository_cleanup.delete_s3_prefix")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership"
+    )
+    @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
+        return_value=RepositoryAgentOperationResult(
+            waiting=False,
+            node_task_id=None,
+            result={
+                "physical_cleanup": "deleted",
+                "scope": "s3_prefix",
+                "cleanup_complete": True,
+            },
+        ),
+    )
+    def test_s3_cleanup_prefers_one_capable_agent(
+        self,
+        dispatch_agent,
+        _check_repository,
+        verify_owner,
+        controller_delete,
+    ):
+        repository = self._s3_repository("agent-s3")
+        agent = Node.objects.create(
+            organization=self.org,
+            name="s3-cleanup-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["repository_cleanup_s3_v1"]}},
+        )
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["executor"], "agent")
+        self.assertEqual(
+            repository_task.task.request_payload["s3_cleanup_agent_node_id"],
+            agent.id,
+        )
+        self.assertEqual(verify_owner.call_count, 1)
+        controller_delete.assert_not_called()
+        call = dispatch_agent.call_args.kwargs
+        self.assertEqual(call["node"].id, agent.id)
+        self.assertEqual(call["payload"]["repository"]["prefix"], "managed/repository/")
+        self.assertNotIn("secret_access_key", call["persisted_payload"])
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership",
+        side_effect=AssertionError("must not re-authorize a completed Agent cleanup"),
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
+    )
+    def test_s3_cleanup_resumes_after_agent_deleted_marker_before_controller_commit(
+        self,
+        dispatch_agent,
+        verify_owner,
+    ):
+        repository = self._s3_repository("agent-restart-window")
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="completed-s3-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=node,
+            correlation_type="repository_cleanup",
+            correlation_id=str(repository_task.task.task_uuid),
+            kind="repository.operation",
+            status=NodeTask.Status.SUCCESS,
+            payload={
+                "repository_id": repository.id,
+                "operation_type": repository_task.operation_type,
+            },
+            result={
+                "ownership_verified": True,
+                "cleanup_complete": True,
+                "physical_cleanup": "deleted",
+                "scope": "s3_prefix",
+            },
+            watchdog_deadline_at=timezone.now(),
+        )
+        repository_task.remote_task_id = node_task.id
+        repository_task.save(update_fields=["remote_task_id", "updated_at"])
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["executor"], "agent")
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.REMOVED)
+        dispatch_agent.assert_not_called()
+        verify_owner.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership",
+        side_effect=ValidationError("marker missing"),
+    )
+    def test_s3_cleanup_recovery_rejects_result_for_another_repository(
+        self,
+        verify_owner,
+    ):
+        repository = self._s3_repository("agent-recovery-repository-mismatch")
+        other_repository = self._s3_repository(
+            "agent-recovery-other-repository",
+            prefix="managed/other-repository/",
+        )
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="mismatched-s3-agent-result",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=node,
+            correlation_type="repository_cleanup",
+            correlation_id=str(repository_task.task.task_uuid),
+            kind="repository.operation",
+            status=NodeTask.Status.SUCCESS,
+            payload={
+                "repository_id": other_repository.id,
+                "operation_type": repository_task.operation_type,
+            },
+            result={
+                "ownership_verified": True,
+                "cleanup_complete": True,
+                "physical_cleanup": "deleted",
+                "scope": "s3_prefix",
+            },
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["status"], "failed")
+        repository_task.refresh_from_db()
+        self.assertIsNone(repository_task.remote_task_id)
+        verify_owner.assert_called_once()
+        self.assertNotEqual(repository_task.remote_task_id, node_task.id)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_bucket_if_empty"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_prefix",
+        return_value={"bucket": "cleanup-bucket", "prefix": "managed/repository/"},
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership"
+    )
+    @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
+        side_effect=RepositoryAgentOperationError(
+            "Agent cannot reach object storage.",
+            result={"failure_class": "storage", "cleanup_complete": False},
+        ),
+    )
+    def test_s3_agent_storage_failure_reverifies_before_controller_fallback(
+        self,
+        _dispatch_agent,
+        _check_repository,
+        verify_owner,
+        controller_delete,
+        delete_bucket,
+    ):
+        repository = self._s3_repository("agent-fallback-s3")
+        Node.objects.create(
+            organization=self.org,
+            name="s3-fallback-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"capabilities": ["repository_cleanup_s3_v1"]},
+        )
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["executor"], "controller")
+        self.assertTrue(
+            repository_task.task.request_payload["s3_cleanup_agent_attempted"]
+        )
+        self.assertEqual(verify_owner.call_count, 2)
+        controller_delete.assert_called_once()
+        delete_bucket.assert_not_called()
+
+    @mock.patch("apps.storage.services.internal.repository_cleanup.delete_s3_prefix")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership"
+    )
+    @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
+        side_effect=RepositoryAgentOperationError(
+            "Repository ownership marker changed.",
+            result={"failure_class": "ownership", "cleanup_complete": False},
+        ),
+    )
+    def test_s3_agent_ownership_failure_never_falls_back_to_controller(
+        self,
+        _dispatch_agent,
+        _check_repository,
+        _verify_owner,
+        controller_delete,
+    ):
+        repository = self._s3_repository("agent-owner-mismatch-s3")
+        Node.objects.create(
+            organization=self.org,
+            name="s3-owner-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"capabilities": ["repository_cleanup_s3_v1"]},
+        )
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        with self.assertRaises(ValidationError):
+            _execute_physical_cleanup(repository_task)
+
+        controller_delete.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership"
+    )
+    @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_bucket_if_empty"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_prefix",
+        return_value={"bucket": "cleanup-bucket", "prefix": "managed/repository/"},
+    )
+    def test_resumed_s3_delete_is_idempotent_after_owner_verification(
+        self,
+        delete_prefix,
+        delete_bucket,
+        check_repository,
+        _verify_owner,
+    ):
+        repository = self._s3_repository("resumed-s3")
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        task = repository_task.task
+        task.status = Task.Status.RUNNING
+        task.current_step = "delete_physical_repository"
+        task.progress = 40
+        task.request_payload = {
+            **(task.request_payload or {}),
+            "s3_cleanup_owner_verified": True,
+        }
+        task.save(
+            update_fields=[
+                "status",
+                "current_step",
+                "progress",
+                "request_payload",
+                "updated_at",
+            ]
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["status"], "success")
+        check_repository.assert_not_called()
+        delete_prefix.assert_called_once()
+        delete_bucket.assert_not_called()
+
+    def test_s3_recovery_replacement_inherits_owner_verification(self):
+        repository = self._s3_repository("replacement-s3")
+        original = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        original.task.status = Task.Status.FAILED
+        original.task.request_payload = {
+            **(original.task.request_payload or {}),
+            "s3_cleanup_owner_verified": True,
+        }
+        original.task.save(update_fields=["status", "request_payload", "updated_at"])
+
+        replacement = _create_replacement_cleanup_task(repository_task_id=original.id)
+
+        self.assertIsNotNone(replacement)
+        self.assertTrue(replacement.task.request_payload["s3_cleanup_owner_verified"])
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership"
+    )
+    @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_bucket_if_empty"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_prefix",
+        return_value={"bucket": "cleanup-bucket", "prefix": "managed/repository/"},
+    )
+    def test_manual_s3_cleanup_retry_inherits_owner_verification(
+        self,
+        delete_prefix,
+        delete_bucket,
+        check_repository,
+        _verify_owner,
+    ):
+        repository = self._s3_repository("manual-retry-s3")
+        original = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        original.task.status = Task.Status.FAILED
+        original.task.request_payload = {
+            **(original.task.request_payload or {}),
+            "s3_cleanup_owner_verified": True,
+        }
+        original.task.save(update_fields=["status", "request_payload", "updated_at"])
+        repository.status = Repository.Status.REMOVE_FAILED
+        repository.save(update_fields=["status", "updated_at"])
+
+        retry = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        result = run_repository_cleanup_task(repository_task_id=retry.id)
+
+        self.assertEqual(result["status"], "success")
+        self.assertTrue(retry.task.request_payload["s3_cleanup_owner_verified"])
+        check_repository.assert_not_called()
+        delete_prefix.assert_called_once()
+        delete_bucket.assert_not_called()
+
+    def test_cleanup_retry_does_not_inherit_proof_after_claim_is_recreated(self):
+        repository = self._s3_repository("new-claim-generation-s3")
+        original = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        original.task.status = Task.Status.FAILED
+        original.task.request_payload = {
+            **(original.task.request_payload or {}),
+            "s3_cleanup_owner_verified": True,
+        }
+        original.task.save(update_fields=["status", "request_payload", "updated_at"])
+        previous_claim_ids = original.task.request_payload["cleanup_plan"][
+            "location_claim_ids"
+        ]
+
+        release_repository_location(repository)
+        replacement_claim = reserve_repository_location(repository)
+        mark_repository_location_owned(repository)
+        repository.status = Repository.Status.REMOVE_FAILED
+        repository.save(update_fields=["status", "updated_at"])
+
+        retry = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        self.assertNotEqual(
+            retry.task.request_payload["cleanup_plan"]["location_claim_ids"],
+            previous_claim_ids,
+        )
+        self.assertEqual(
+            retry.task.request_payload["cleanup_plan"]["location_claim_ids"],
+            [replacement_claim.id],
+        )
+        self.assertNotIn("s3_cleanup_owner_verified", retry.task.request_payload)
 
     @mock.patch(
         "apps.storage.services.internal.repository_cleanup._tombstone_repository",
@@ -355,7 +1321,9 @@ class RepositoryCleanupTests(TestCase):
         tombstone_repository,
     ):
         repository = self._s3_repository("metadata-finalize-s3")
-        repository_task = create_repository_cleanup_task(repository=repository, dispatch=False)
+        repository_task = create_repository_cleanup_task(
+            repository=repository, dispatch=False
+        )
 
         result = run_repository_cleanup_task(repository_task_id=repository_task.id)
 
@@ -388,7 +1356,9 @@ class RepositoryCleanupTests(TestCase):
         self.assertTrue(forced_task.force)
         self.assertEqual(forced_task.task.status, Task.Status.SUCCESS)
         self.assertEqual(repository.status, Repository.Status.REMOVED)
-        self.assertEqual(repository.cleanup_result, Repository.CleanupResult.FORCE_SKIPPED)
+        self.assertEqual(
+            repository.cleanup_result, Repository.CleanupResult.FORCE_SKIPPED
+        )
         self.assertFalse(forced_task.task.result_payload["cleanup_complete"])
         self.assertEqual(
             forced_task.task.result_payload["outcome"],
@@ -443,13 +1413,19 @@ class RepositoryCleanupTests(TestCase):
         "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
         side_effect=RuntimeError("owner offline"),
     )
-    def test_remove_failed_repository_delete_creates_an_independent_task(self, execute_cleanup):
+    def test_remove_failed_repository_delete_creates_an_independent_task(
+        self, execute_cleanup
+    ):
         repository = self._s3_repository("delete-again-s3")
-        failed_task = create_repository_cleanup_task(repository=repository, dispatch=False)
+        failed_task = create_repository_cleanup_task(
+            repository=repository, dispatch=False
+        )
         run_repository_cleanup_task(repository_task_id=failed_task.id)
         repository.refresh_from_db()
 
-        next_task = create_repository_cleanup_task(repository=repository, dispatch=False)
+        next_task = create_repository_cleanup_task(
+            repository=repository, dispatch=False
+        )
 
         self.assertNotEqual(next_task.id, failed_task.id)
         self.assertFalse(next_task.force)
@@ -462,7 +1438,9 @@ class RepositoryCleanupTests(TestCase):
         "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
         return_value={"physical_cleanup": "deleted"},
     )
-    def test_direct_nas_target_tasks_are_independent_from_logical_cleanup(self, execute_cleanup):
+    def test_direct_nas_target_tasks_are_independent_from_logical_cleanup(
+        self, execute_cleanup
+    ):
         repository = Repository.objects.create(
             organization_id=self.org.id,
             name="direct-nas",
@@ -480,8 +1458,16 @@ class RepositoryCleanupTests(TestCase):
                 organization=self.org,
                 name=f"agent-{index}",
                 role=Node.Role.AGENT,
-                status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
-                metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+                status=Node.Status.ACTIVE,
+                availability=Node.Availability.ONLINE,
+                metadata={
+                    "inventory": {
+                        "capabilities": [
+                            "repository_cleanup_v1",
+                            "repository_cleanup_ownership_v1",
+                        ]
+                    }
+                },
             )
             nodes.append(node)
             config_id = index + 100
@@ -570,9 +1556,15 @@ class RepositoryCleanupTests(TestCase):
             {source_unregister.id},
         )
 
-        logical_task = create_repository_cleanup_task(repository=repository, dispatch=False)
-        self.assertEqual(logical_task.operation_type, RepositoryTask.OperationType.CLEANUP_REPOSITORY)
-        self.assertEqual(logical_task.task.display_name, "Delete Repository · direct-nas")
+        logical_task = create_repository_cleanup_task(
+            repository=repository, dispatch=False
+        )
+        self.assertEqual(
+            logical_task.operation_type, RepositoryTask.OperationType.CLEANUP_REPOSITORY
+        )
+        self.assertEqual(
+            logical_task.task.display_name, "Delete Repository · direct-nas"
+        )
         self.assertIsNone(logical_task.execution_target_id)
         self.assertIsNone(logical_task.triggered_by_task_id)
         run_repository_cleanup_task(repository_task_id=logical_task.id)
@@ -594,8 +1586,16 @@ class RepositoryCleanupTests(TestCase):
             organization=self.org,
             name="historical-owner",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
-            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={
+                "inventory": {
+                    "capabilities": [
+                        "repository_cleanup_v1",
+                        "repository_cleanup_ownership_v1",
+                    ]
+                }
+            },
         )
         shard = RepositoryUsageShard.objects.create(
             organization_id=self.org.id,
@@ -604,6 +1604,11 @@ class RepositoryCleanupTests(TestCase):
             repository_subdir=f"hp-repos/agent-{node.id}",
             status=RepositoryUsageShard.Status.SUCCESS,
         )
+        self._mark_owned_location(
+            repository,
+            node_id=node.id,
+            repository_subdir=shard.repository_subdir,
+        )
         parent = create_repository_cleanup_task(
             repository=repository,
             dispatch=False,
@@ -611,7 +1616,11 @@ class RepositoryCleanupTests(TestCase):
 
         with mock.patch(
             "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
-            return_value={"physical_cleanup": "deleted"},
+            return_value=RepositoryAgentOperationResult(
+                waiting=False,
+                node_task_id=None,
+                result={"physical_cleanup": "deleted"},
+            ),
         ):
             result = run_repository_cleanup_task(repository_task_id=parent.id)
 
@@ -642,8 +1651,16 @@ class RepositoryCleanupTests(TestCase):
             organization=self.org,
             name="force-historical-owner",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
-            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={
+                "inventory": {
+                    "capabilities": [
+                        "repository_cleanup_v1",
+                        "repository_cleanup_ownership_v1",
+                    ]
+                }
+            },
         )
         RepositoryUsageShard.objects.create(
             organization_id=self.org.id,
@@ -704,8 +1721,92 @@ class RepositoryCleanupTests(TestCase):
         preflight = repository_cleanup_preflight(repository=repository)
 
         self.assertFalse(preflight["allowed"])
-        blocker = next(item for item in preflight["blockers"] if item["code"] == "active_task")
+        blocker = next(
+            item for item in preflight["blockers"] if item["code"] == "active_task"
+        )
         self.assertEqual(blocker["task_uuid"], str(task.task_uuid))
+
+    def test_preflight_finds_active_backup_from_snapshot_association(self):
+        repository = self._s3_repository("active-backup-s3")
+        task = create_task(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Active backup without repository resource",
+        )
+        BackupSourceSnapshot.objects.create(
+            organization_id=self.org.id,
+            snapshot_uid="active-backup-snapshot",
+            idempotency_key="active-backup-snapshot",
+            source_type="agent",
+            source_ref_id=101,
+            backup_config_id=201,
+            repository_id=repository.id,
+            task_id=task.id,
+            task_uuid=task.task_uuid,
+        )
+
+        preflight = repository_cleanup_preflight(
+            repository=repository,
+            allow_associations=True,
+        )
+
+        self.assertFalse(preflight["allowed"])
+        self.assertTrue(
+            any(
+                blocker.get("task_uuid") == str(task.task_uuid)
+                for blocker in preflight["blockers"]
+            )
+        )
+
+    def test_preflight_finds_active_restore_from_record_item_association(self):
+        repository = self._s3_repository("active-restore-s3")
+        task = create_task(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Active restore without repository resource",
+        )
+        record = RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=102,
+            restore_uid="active-restore-record",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=task.id,
+            task_uuid=task.task_uuid,
+            source_type=RestoreRecord.EndpointType.AGENT,
+            source_ref_id=101,
+            source_snapshot_id=201,
+            target_type=RestoreRecord.EndpointType.AGENT,
+            target_ref_id=102,
+            target_path="/restore",
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
+        )
+        RestoreRecordItem.objects.create(
+            organization_id=self.org.id,
+            restore_record=record,
+            source_snapshot_directory_id=301,
+            backup_config_dir_id=401,
+            repository_id=repository.id,
+            kopia_snapshot_id="active-restore-snapshot",
+            source_path="/source",
+            target_path="/restore/source",
+            conflict_mode=RestoreRecordItem.ConflictMode.OVERWRITE,
+        )
+
+        preflight = repository_cleanup_preflight(
+            repository=repository,
+            allow_associations=True,
+        )
+
+        self.assertFalse(preflight["allowed"])
+        self.assertTrue(
+            any(
+                blocker.get("task_uuid") == str(task.task_uuid)
+                for blocker in preflight["blockers"]
+            )
+        )
 
     def test_historical_restore_record_is_a_warning_not_a_blocker(self):
         repository = self._s3_repository("restore-bound-s3")
@@ -895,4 +1996,6 @@ class RepositoryCleanupApiTests(TestCase):
         repository.refresh_from_db()
         self.assertEqual(repository.status, Repository.Status.REMOVING)
         self.assertIsNone(repository_task.execution_target_id)
-        self.assertEqual(response.data["task_uuid"], str(repository_task.task.task_uuid))
+        self.assertEqual(
+            response.data["task_uuid"], str(repository_task.task.task_uuid)
+        )

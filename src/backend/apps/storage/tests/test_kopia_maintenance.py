@@ -118,12 +118,16 @@ class KopiaRepositoryCreateCommandTests(SimpleTestCase):
 
 
 class KopiaSnapshotDeleteCommandTests(SimpleTestCase):
+    @patch(
+        "apps.storage.services.internal.repository_ownership.verify_s3_repository_ownership"
+    )
     @patch("apps.storage.services.internal.kopia_cli._connect_maintenance_repository")
     @patch("apps.storage.services.internal.kopia_cli._run_repository_command")
     def test_controller_fallback_deletes_only_requested_s3_snapshots(
         self,
         run_command,
         connect_repository,
+        verify_ownership,
     ):
         repository = Repository(
             id=7,
@@ -151,6 +155,7 @@ class KopiaSnapshotDeleteCommandTests(SimpleTestCase):
             )
 
         connect_repository.assert_called_once()
+        verify_ownership.assert_called_once_with(repository, adopt_legacy=False)
         self.assertEqual(result["deleted_count"], 1)
         self.assertEqual(result["failed_count"], 1)
         self.assertEqual(result["execution_mode"], "controller_fallback")
@@ -186,8 +191,13 @@ class KopiaSnapshotDeleteCommandTests(SimpleTestCase):
 
 
 class KopiaMaintenanceCommandTests(SimpleTestCase):
+    @patch(
+        "apps.storage.services.internal.repository_ownership.verify_s3_repository_ownership"
+    )
     @patch("apps.storage.services.internal.kopia_cli._run_repository_command")
-    def test_uses_dedicated_config_and_set_client_identity(self, run_command):
+    def test_uses_dedicated_config_and_set_client_identity(
+        self, run_command, verify_ownership
+    ):
         run_command.return_value = CompletedProcess([], 0, stdout="", stderr="")
         repository = Repository(
             id=52,
@@ -203,6 +213,8 @@ class KopiaMaintenanceCommandTests(SimpleTestCase):
             owner_identity="hfl-maintenance@controller",
             timeout_seconds=300,
         )
+
+        verify_ownership.assert_called_once_with(repository, adopt_legacy=False)
 
         commands = [call.args[1] for call in run_command.call_args_list]
         self.assertEqual(commands[0][:3], ["repository", "connect", "s3"])
@@ -232,9 +244,14 @@ class KopiaMaintenanceCommandTests(SimpleTestCase):
         self.assertEqual(len(set(config_files)), 1)
         self.assertEqual(config_files[0].name, "maintenance.repository.config")
 
+    @patch(
+        "apps.storage.services.internal.repository_ownership.verify_s3_repository_ownership"
+    )
     @patch("apps.storage.services.internal.kopia_cli.time.sleep")
     @patch("apps.storage.services.internal.kopia_cli._run_repository_command")
-    def test_retries_failed_repository_connection(self, run_command, sleep):
+    def test_retries_failed_repository_connection(
+        self, run_command, sleep, verify_ownership
+    ):
         failed = CompletedProcess([], 1, stdout="", stderr="Connection closed by foreign host. Retry again.")
         succeeded = CompletedProcess([], 0, stdout="", stderr="")
         run_command.side_effect = [failed, failed, succeeded, succeeded, succeeded, succeeded]
@@ -252,6 +269,8 @@ class KopiaMaintenanceCommandTests(SimpleTestCase):
             owner_identity="hfl-maintenance@controller",
             timeout_seconds=300,
         )
+
+        verify_ownership.assert_called_once_with(repository, adopt_legacy=False)
 
         commands = [call.args[1] for call in run_command.call_args_list]
         self.assertEqual(commands[0][:3], ["repository", "connect", "s3"])

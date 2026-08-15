@@ -16,6 +16,7 @@ from django.utils import timezone
 from apps.storage.repositories.models import (
     Repository,
     RepositoryExecutionTarget,
+    RepositoryLocationClaim,
     RepositoryMaintenanceState,
     RepositoryTask,
     RepositoryUsageShard,
@@ -118,6 +119,33 @@ def _owner_identity(node_id: int | None) -> str:
     return f"hfl-maintenance@node-{node_id}" if node_id else "hfl-maintenance@controller"
 
 
+def repository_execution_target_has_owned_location(
+    target: RepositoryExecutionTarget,
+) -> bool:
+    """Return whether a maintenance target has sufficient ownership proof."""
+    repository = target.repository
+    query = RepositoryLocationClaim.objects.filter(
+        repository=repository,
+        state=RepositoryLocationClaim.State.OWNED,
+        ownership_verified_at__isnull=False,
+    )
+    if repository.repo_type == Repository.Type.NAS and repository.bind_node_id is None:
+        if (
+            target.owner_type != RepositoryExecutionTarget.OwnerType.NODE
+            or target.owner_node_id is None
+            or not target.repository_subdir
+        ):
+            return False
+        query = query.filter(
+            scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+            owner_node_id=target.owner_node_id,
+            root_path=target.repository_subdir,
+        )
+    else:
+        query = query.filter(scope=RepositoryLocationClaim.Scope.REPOSITORY)
+    return query.exists()
+
+
 def discover_repository_execution_targets(*, now: datetime | None = None) -> int:
     current = now or timezone.now()
     seen: set[str] = set()
@@ -130,6 +158,14 @@ def discover_repository_execution_targets(*, now: datetime | None = None) -> int
         elif repository.repo_type in {Repository.Type.NAS, Repository.Type.PROXY_FS} and repository.bind_node_id:
             definitions.append((f"repository:{repository.id}", RepositoryExecutionTarget.OwnerType.NODE, int(repository.bind_node_id), ""))
         elif repository.repo_type == Repository.Type.NAS:
+            owned_keys = set(
+                RepositoryLocationClaim.objects.filter(
+                    repository=repository,
+                    scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+                    state=RepositoryLocationClaim.State.OWNED,
+                    owner_node_id__isnull=False,
+                ).values_list("owner_node_id", "root_path")
+            )
             shards = RepositoryUsageShard.objects.filter(
                 organization_id=repository.organization_id,
                 repository_id=repository.id,
@@ -137,6 +173,8 @@ def discover_repository_execution_targets(*, now: datetime | None = None) -> int
                 is_active=True,
             )
             for shard in shards:
+                if (shard.node_id, shard.repository_subdir) not in owned_keys:
+                    continue
                 key = f"repository:{repository.id}:node:{shard.node_id}:subdir:{shard.repository_subdir}"
                 definitions.append((key, RepositoryExecutionTarget.OwnerType.NODE, int(shard.node_id), shard.repository_subdir))
         for key, owner_type, node_id, subdir in definitions:
@@ -198,8 +236,28 @@ def create_repository_operation_task(
 ) -> RepositoryTask | None:
     if operation_type not in {value for value, _ in RepositoryTask.OperationType.choices}:
         raise ValidationError({"operation_type": "Unsupported repository operation."})
-    target = RepositoryExecutionTarget.objects.select_for_update().select_related("repository").get(pk=target_id)
+    target_ref = RepositoryExecutionTarget.objects.only("repository_id").get(pk=target_id)
+    # Cleanup acceptance locks the Repository before inspecting/creating target
+    # work. Use the same order here so maintenance cannot slip in between the
+    # cleanup preflight and REMOVING transition, and so both paths avoid a
+    # Repository/Target lock-order deadlock.
+    repository = Repository.objects.select_for_update().get(
+        pk=target_ref.repository_id
+    )
+    target = (
+        RepositoryExecutionTarget.objects.select_for_update()
+        .select_related("repository")
+        .get(pk=target_id)
+    )
     if not target.is_active or target.active_task_id:
+        return None
+    if repository.status != Repository.Status.CREATED:
+        target.is_active = False
+        target.save(update_fields=["is_active", "updated_at"])
+        return None
+    if not repository_execution_target_has_owned_location(target):
+        target.is_active = False
+        target.save(update_fields=["is_active", "updated_at"])
         return None
     operation_label = dict(RepositoryTask.OperationType.choices)[operation_type]
     task = create_task(
@@ -249,7 +307,10 @@ def schedule_due_maintenance(*, now: datetime | None = None) -> list[int]:
     current = now or timezone.now()
     discover_repository_execution_targets(now=current)
     scheduled: list[int] = []
-    targets = RepositoryExecutionTarget.objects.select_for_update().filter(is_active=True)
+    # Each accepted operation takes its Repository and Target locks in
+    # create_repository_operation_task(). Do not pre-lock every Target here;
+    # doing so would reverse the cleanup path's lock order.
+    targets = RepositoryExecutionTarget.objects.filter(is_active=True)
     for target in targets.order_by("target_key"):
         state = target.maintenance_state
         if target.active_task_id or (state.next_retry_at and state.next_retry_at > current):
@@ -549,6 +610,7 @@ __all__ = [
     "finalize_repository_operation",
     "maintenance_settings",
     "repository_operation_cancellation_supported",
+    "repository_execution_target_has_owned_location",
     "request_repository_operation_cancel",
     "schedule_due_maintenance",
     "set_controller_repository_operation_step",

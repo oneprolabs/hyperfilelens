@@ -8,9 +8,14 @@ from django.core.exceptions import ValidationError
 from apps.node import agent_paths
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
-from apps.node.services.internal.agent_log import log_agent_dispatch, log_agent_exception, log_agent_outcome
+from apps.node.services.internal.agent_log import (
+    log_agent_dispatch,
+    log_agent_exception,
+    log_agent_outcome,
+)
 from apps.node.services.interface import run_agent_task_sync
 from apps.storage.repositories.models import Repository
+from apps.storage.repositories.models import RepositoryLocationClaim
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_MESSAGE,
     RepositoryAlreadyExistsError,
@@ -23,7 +28,9 @@ logger = logging.getLogger(__name__)
 
 
 NAS_REPOSITORY_ROOT = "hp-repos"
-NAS_PROXY_REPOSITORY_SUBDIR_TEMPLATE = f"{NAS_REPOSITORY_ROOT}/storage-{{repository_id}}"
+NAS_PROXY_REPOSITORY_SUBDIR_TEMPLATE = (
+    f"{NAS_REPOSITORY_ROOT}/storage-{{repository_id}}"
+)
 NAS_AGENT_REPOSITORY_SUBDIR_TEMPLATE = f"{NAS_REPOSITORY_ROOT}/agent-{{node_id}}"
 
 
@@ -52,14 +59,26 @@ def nas_repository_payload(
     node_id: int | None = None,
     secrets_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from apps.storage.services.internal.repository_ownership import (
+        ownership_payload_for_node,
+    )
+
     config = repository.config if isinstance(repository.config, dict) else {}
-    secrets_payload = secrets_payload if isinstance(secrets_payload, dict) else resolve_repository_secrets(repository)
+    secrets_payload = (
+        secrets_payload
+        if isinstance(secrets_payload, dict)
+        else resolve_repository_secrets(repository)
+    )
     protocol = str(repository.nas_protocol or "").strip().lower()
     payload: dict[str, Any] = {
         "id": repository.id,
         "type": Repository.Type.NAS,
         "subdir": subdir,
         "kopia_password": str(secrets_payload.get("kopia_password") or "").strip(),
+        "ownership": ownership_payload_for_node(
+            repository,
+            repository_subdir=subdir,
+        ),
         "nas": {
             "resource_id": repository.id,
             "protocol": protocol,
@@ -117,7 +136,10 @@ def sync_proxy_mount_path_from_repo_status(repository: Repository, result: Any) 
 
 
 def validate_proxy_for_repository(repository: Repository) -> Node:
-    if repository.bind_node_type != Repository.BindNodeType.PROXY or not repository.bind_node_id:
+    if (
+        repository.bind_node_type != Repository.BindNodeType.PROXY
+        or not repository.bind_node_id
+    ):
         raise ValidationError("NAS repository is not bound to a proxy node.")
     node = Node.objects.filter(
         id=repository.bind_node_id,
@@ -144,12 +166,14 @@ def check_proxy_nas_repository(
     repository: Repository,
     *,
     health_only: bool = False,
+    adopt_legacy_ownership: bool = True,
 ):
     return _run_proxy_nas_repository_task(
         repository,
         kind="repo.status",
         log_scope="storage nas repo check",
         health_only=health_only,
+        adopt_legacy_ownership=adopt_legacy_ownership,
     )
 
 
@@ -159,6 +183,7 @@ def _run_proxy_nas_repository_task(
     kind: str,
     log_scope: str,
     health_only: bool = False,
+    adopt_legacy_ownership: bool = True,
 ):
     node = validate_proxy_for_repository(repository)
     payload = {
@@ -170,6 +195,16 @@ def _run_proxy_nas_repository_task(
     }
     if health_only:
         payload["health_only"] = True
+    payload["allow_ownership_adoption"] = (
+        adopt_legacy_ownership
+        and RepositoryLocationClaim.objects.filter(
+            repository=repository,
+            scope=RepositoryLocationClaim.Scope.REPOSITORY,
+            state=RepositoryLocationClaim.State.OWNED,
+            ownership_verified_at__isnull=True,
+            legacy_adoption_required=True,
+        ).exists()
+    )
     log_agent_dispatch(
         log_scope,
         node_id=node.id,
@@ -222,8 +257,42 @@ def _run_proxy_nas_repository_task(
             message or "NAS repository initialization failed.",
             error_code=error_code or "REPOSITORY_CREATE_FAILED",
         )
+    if not (
+        isinstance(outcome.result, dict)
+        and outcome.result.get("ownership_verified") is True
+    ):
+        from apps.storage.services.internal.repository_location import (
+            repository_has_legacy_location,
+        )
+
+        if health_only and repository_has_legacy_location(
+            repository,
+            owner_node_id=node.id,
+            repository_subdir=nas_proxy_repository_subdir(repository),
+        ):
+            logger.info(
+                "%s legacy compatibility repository_id=%s node_id=%s org_id=%s",
+                log_scope,
+                repository.id,
+                node.id,
+                repository.organization_id,
+            )
+            return outcome
+        raise NASRepositoryError(
+            "Agent did not verify repository ownership. Upgrade the Agent and retry.",
+            error_code="REPOSITORY_OWNERSHIP_INVALID",
+        )
     if not health_only:
         sync_proxy_mount_path_from_repo_status(repository, outcome.result)
+    from apps.storage.services.internal.repository_location import (
+        mark_repository_location_ownership_verified,
+    )
+
+    mark_repository_location_ownership_verified(
+        repository,
+        owner_node_id=node.id,
+        repository_subdir=nas_proxy_repository_subdir(repository),
+    )
     logger.info(
         "%s ok repository_id=%s node_id=%s org_id=%s",
         log_scope,

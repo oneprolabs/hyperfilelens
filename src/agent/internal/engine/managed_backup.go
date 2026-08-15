@@ -61,6 +61,7 @@ type repositorySpec struct {
 	SecretAccessKey string
 	S3URLStyle      string
 	S3URLStyleFlag  bool
+	S3Platform      string
 	KopiaPassword   string
 	UseTLS          bool
 	ConfigFile      string
@@ -71,6 +72,16 @@ type repositorySpec struct {
 	ServerPassword  string
 	ServerCert      string
 	SessionID       string
+	Ownership       *repositoryOwnership
+}
+
+type repositoryOwnership struct {
+	DeploymentUUID string `json:"deployment_uuid"`
+	RepositoryUUID string `json:"repository_uuid"`
+	LocationDigest string `json:"location_digest"`
+	FormatVersion  int    `json:"format_version"`
+	Signature      string `json:"signature"`
+	MarkerPath     string `json:"marker_path"`
 }
 
 var (
@@ -94,6 +105,7 @@ func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
 		AccessKeyID:     strings.TrimSpace(stringValue(data["access_key_id"])),
 		SecretAccessKey: strings.TrimSpace(stringValue(data["secret_access_key"])),
 		S3URLStyle:      strings.ToLower(strings.TrimSpace(stringValue(data["s3_url_style"]))),
+		S3Platform:      strings.ToLower(strings.TrimSpace(stringValue(data["platform"]))),
 		KopiaPassword:   strings.TrimSpace(stringValue(data["kopia_password"])),
 		ConfigFile:      strings.TrimSpace(stringValue(data["config_file"])),
 		Subdir:          strings.TrimSpace(stringValue(data["subdir"])),
@@ -117,6 +129,19 @@ func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
 	}
 	if id, ok := int64Value(data["id"]); ok {
 		spec.ID = id
+	}
+	if ownershipRaw, ok := data["ownership"].(map[string]any); ok && len(ownershipRaw) > 0 {
+		spec.Ownership = &repositoryOwnership{
+			DeploymentUUID: strings.TrimSpace(stringValue(ownershipRaw["deployment_uuid"])),
+			RepositoryUUID: strings.TrimSpace(stringValue(ownershipRaw["repository_uuid"])),
+			LocationDigest: strings.TrimSpace(stringValue(ownershipRaw["location_digest"])),
+			FormatVersion:  intValue(ownershipRaw["format_version"]),
+			Signature:      strings.TrimSpace(stringValue(ownershipRaw["signature"])),
+			MarkerPath:     strings.TrimSpace(stringValue(ownershipRaw["marker_path"])),
+		}
+		if err := validateRepositoryOwnership(*spec.Ownership); err != nil {
+			return repositorySpec{}, false, err
+		}
 	}
 	if spec.Type == "" {
 		return repositorySpec{}, false, fmt.Errorf("repository.type is required")
@@ -557,6 +582,13 @@ func (e *Engine) prepareManagedRepositoryLocked(
 			}, spec, repositoryAlreadyExistsMessage
 		}
 	}
+	if mode == repositoryPrepareInitialize && spec.Type != "s3" && spec.Ownership != nil {
+		if ownershipErr := claimFilesystemRepositoryOwnership(spec); ownershipErr != nil {
+			return "", nil, map[string]any{
+				"error_code": repositoryAlreadyExistsCode,
+			}, spec, ownershipErr.Error()
+		}
+	}
 
 	_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
 		"repository_prepare",
@@ -568,6 +600,28 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		"config_file":        configFile,
 		"repository_create":  nil,
 		"repository_connect": nil,
+	}
+	if spec.Type == "s3" && mode != repositoryPrepareInitialize {
+		client, ownershipErr := newS3CleanupClient(spec)
+		if ownershipErr == nil {
+			ownershipErr = verifyS3RepositoryOwnership(ctx, client, spec)
+		}
+		if ownershipErr != nil {
+			result["error_code"] = "REPOSITORY_OWNERSHIP_INVALID"
+			return "", nil, result, spec, ownershipErr.Error()
+		}
+		result["ownership_verified"] = true
+	}
+	allowOwnershipAdoption := false
+	if value, present := p.Extra["allow_ownership_adoption"]; present {
+		if parsed, valid := payloadBoolValue(value); valid {
+			allowOwnershipAdoption = parsed
+		}
+	}
+	if spec.Type != "s3" && spec.Ownership != nil {
+		if ownershipErr := checkFilesystemRepositoryOwnershipIfPresent(spec); ownershipErr != nil {
+			return "", nil, result, spec, ownershipErr.Error()
+		}
 	}
 	if spec.Type == "kopia_server" && mode == repositoryPrepareInitialize {
 		return "", nil, result, spec, "kopia_server repositories cannot be initialized"
@@ -615,6 +669,12 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	} else {
 		if _, statErr := os.Stat(configFile); statErr == nil {
 			if _, statusErr := runStatus("status_first"); statusErr == nil {
+				if spec.Type != "s3" && spec.Ownership != nil {
+					if ownershipErr := verifyFilesystemRepositoryOwnership(spec, allowOwnershipAdoption); ownershipErr != nil {
+						return "", nil, result, spec, ownershipErr.Error()
+					}
+					result["ownership_verified"] = true
+				}
 				slog.Info("managed_repository", "event", "status_first_ok", "task_id", taskID, "repo_type", spec.Type)
 				_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
 					"repository_ready",
@@ -661,6 +721,12 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		}
 	}
 	slog.Info("managed_repository", "event", "status_ok", "task_id", taskID, "repo_type", spec.Type)
+	if spec.Type != "s3" && spec.Ownership != nil {
+		if ownershipErr := verifyFilesystemRepositoryOwnership(spec, allowOwnershipAdoption); ownershipErr != nil {
+			return "", nil, result, spec, ownershipErr.Error()
+		}
+		result["ownership_verified"] = true
+	}
 	if spec.Type == "s3" {
 		if err := writeS3ConnectionFingerprint(configFile, spec); err != nil {
 			return "", nil, result, spec, err.Error()
@@ -707,6 +773,7 @@ func (e *Engine) runManagedRepositoryStatus(
 		if spec.Type != "" {
 			result["repository_type"] = spec.Type
 		}
+		setRepositoryOwnershipErrorCode(result, errMsg)
 		return "failed", result, errMsg
 	}
 	if result == nil {
@@ -739,6 +806,7 @@ func (e *Engine) runManagedRepositoryInitialize(
 		if spec.Type != "" {
 			result["repository_type"] = spec.Type
 		}
+		setRepositoryOwnershipErrorCode(result, errMsg)
 		return "failed", result, errMsg
 	}
 	if result == nil {
@@ -754,6 +822,15 @@ func (e *Engine) runManagedRepositoryInitialize(
 		}
 	}
 	return "success", result, ""
+}
+
+func setRepositoryOwnershipErrorCode(result map[string]any, message string) {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if strings.Contains(normalized, "repository ownership") ||
+		strings.Contains(normalized, "physical repository ownership") ||
+		strings.Contains(normalized, "managed repository") {
+		result["error_code"] = "REPOSITORY_OWNERSHIP_INVALID"
+	}
 }
 
 func (e *Engine) runManagedRepositoryMaintenance(

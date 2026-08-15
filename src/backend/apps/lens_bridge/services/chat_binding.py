@@ -21,7 +21,15 @@ from apps.lens_bridge.services import (
     provisioning,
     sl_client,
 )
-from apps.protection.models import BackupConfig, BackupSourceSnapshot, BackupSourceSnapshotDirectory
+from apps.protection.models import (
+    BackupConfig,
+    BackupSourceSnapshot,
+    BackupSourceSnapshotDirectory,
+)
+from apps.storage.services.internal.repository_workload import (
+    RepositoryWorkload,
+    lock_repositories_for_workload,
+)
 
 
 def _validate_snapshot(
@@ -37,6 +45,11 @@ def _validate_snapshot(
     ).first()
     if config is None:
         raise ValidationError({"backup_config_id": "Backup source not found."})
+    lock_repositories_for_workload(
+        organization_id=org.id,
+        repository_ids=[config.repository_id],
+        workload=RepositoryWorkload.RESTORE_READ,
+    )
 
     snapshot = BackupSourceSnapshot.objects.filter(
         organization_id=org.id,
@@ -49,7 +62,9 @@ def _validate_snapshot(
         BackupSourceSnapshot.Status.AVAILABLE,
         BackupSourceSnapshot.Status.PARTIAL,
     ):
-        raise ValidationError({"backup_source_snapshot_id": "Snapshot is not available."})
+        raise ValidationError(
+            {"backup_source_snapshot_id": "Snapshot is not available."}
+        )
 
     source_path = ""
     if backup_snapshot_directory_id:
@@ -59,7 +74,9 @@ def _validate_snapshot(
             source_snapshot_id=snapshot.id,
         ).first()
         if directory is None:
-            raise ValidationError({"backup_snapshot_directory_id": "Snapshot directory not found."})
+            raise ValidationError(
+                {"backup_snapshot_directory_id": "Snapshot directory not found."}
+            )
         source_path = str(directory.path or "").strip()
     if not source_path:
         raise ValidationError({"source_path": "Snapshot directory path is required."})
@@ -143,7 +160,9 @@ def ensure_chat_binding(
     )
 
 
-def get_active_chat_binding(org: Organization, *, user: AbstractBaseUser) -> LensChatBinding | None:
+def get_active_chat_binding(
+    org: Organization, *, user: AbstractBaseUser
+) -> LensChatBinding | None:
     return (
         LensChatBinding.objects.filter(
             organization=org,
@@ -221,7 +240,9 @@ def serialize_chat_binding(binding: LensChatBinding) -> dict[str, Any]:
         "gateway_scope": binding.gateway_link.scope if binding.gateway_link_id else "",
         "knowledge_source_id": ks.id if ks else None,
         "knowledge_source_status": ks.status if ks else None,
-        "sl_assistant_uuid": str(binding.sl_assistant_uuid) if binding.sl_assistant_uuid else None,
+        "sl_assistant_uuid": str(binding.sl_assistant_uuid)
+        if binding.sl_assistant_uuid
+        else None,
         "is_active": binding.is_active,
         "ready_for_chat": bool(binding.gateway_link_id and binding.source_path),
     }

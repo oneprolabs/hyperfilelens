@@ -22,13 +22,19 @@ import logging
 from typing import Any
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.interface import run_agent_task_sync
 from apps.protection.models import BackupConfig
-from apps.storage.repositories.models import Credential, Repository, RepositoryTask
+from apps.storage.repositories.models import (
+    Credential,
+    Repository,
+    RepositoryLocationClaim,
+    RepositoryTask,
+)
 from apps.storage.services.internal.nas_repository import (
     NASRepositoryError,
     check_proxy_nas_repository,
@@ -39,6 +45,12 @@ from apps.storage.services.internal.nas_repository import (
 )
 from apps.storage.services.internal.repository_create import (
     enqueue_repository_create_task,
+)
+from apps.storage.services.internal.repository_location import (
+    ACTIVE_CLAIM_STATES,
+    RepositoryLocationConflict,
+    mark_repository_location_ownership_verified,
+    reserve_repository_location,
 )
 from apps.storage.services.internal.repository_usage import (
     apply_capacity_from_config,
@@ -57,6 +69,19 @@ logger = logging.getLogger(__name__)
 # Sentinel used to detect "bind_node_id not provided" (different from None
 # which means "explicitly unbind").
 _UNSET = object()
+
+NAS_REPAIR_MUTABLE_CONFIG_FIELDS = frozenset(
+    {
+        "mount_options",
+        "quota_gb",
+        "quota_alert_enabled",
+        "quota_alert_threshold",
+        "smb_username",
+        "smb_password",
+        "smb_domain",
+        "proxy_repository_server_host",
+    }
+)
 
 _ACTIVE_BACKUP_STATUSES = (Task.Status.PENDING, Task.Status.RUNNING)
 
@@ -85,7 +110,9 @@ def _sanitize(message: str, config: dict | None) -> str:
     return sanitized
 
 
-def lookup_active_backup_task(*, organization_id: int, repository_id: int) -> Task | None:
+def lookup_active_backup_task(
+    *, organization_id: int, repository_id: int
+) -> Task | None:
     """Return a running/pending backup ``Task`` for any backup config that
     targets this repository, or ``None`` if no such task exists.
     """
@@ -152,17 +179,35 @@ def _check_associated_backups_idle(*, organization_id: int, repository_id: int) 
     )
 
 
-def _check_unbound_nas_can_bind_proxy(*, organization_id: int, repository_id: int) -> None:
-    if not BackupConfig.objects.filter(
+def _check_unbound_nas_can_bind_proxy(
+    *, organization_id: int, repository_id: int
+) -> None:
+    if BackupConfig.objects.filter(
         organization_id=organization_id,
         repository_id=repository_id,
     ).exists():
-        return
-    raise DRFValidationError({
-        "bind_node_id": (
-            "Cannot bind a proxy node after this NAS repository has associated backup sources."
+        raise DRFValidationError(
+            {
+                "bind_node_id": (
+                    "Cannot bind a proxy node after this NAS repository has "
+                    "associated backup sources."
+                )
+            }
         )
-    })
+    if RepositoryLocationClaim.objects.filter(
+        organization_id=organization_id,
+        repository_id=repository_id,
+        scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+        state__in=ACTIVE_CLAIM_STATES,
+    ).exists():
+        raise DRFValidationError(
+            {
+                "bind_node_id": (
+                    "Cannot bind a proxy node while this Direct NAS repository "
+                    "still has physical Agent targets. Clean up those targets first."
+                )
+            }
+        )
 
 
 def _unmount_on_old_proxy(
@@ -211,7 +256,14 @@ def _remount_on_new_proxy(
             repository=repository,
             subdir=nas_proxy_repository_subdir(repository),
             node_id=new_node.id,
-        )
+        ),
+        "allow_ownership_adoption": RepositoryLocationClaim.objects.filter(
+            repository=repository,
+            scope=RepositoryLocationClaim.Scope.REPOSITORY,
+            state=RepositoryLocationClaim.State.OWNED,
+            ownership_verified_at__isnull=True,
+            legacy_adoption_required=True,
+        ).exists(),
     }
     logger.info(
         "NAS repository remount on new proxy repository_id=%s node_id=%s",
@@ -237,10 +289,25 @@ def _remount_on_new_proxy(
                 outcome.result.get("error") or outcome.result.get("stderr") or ""
             ).strip()
         raise NASRepositoryError(message or "NAS repository mount failed on new proxy.")
+    if not (
+        isinstance(outcome.result, dict)
+        and outcome.result.get("ownership_verified") is True
+    ):
+        raise NASRepositoryError(
+            "Proxy did not verify repository ownership. Upgrade the Proxy and retry.",
+            error_code="REPOSITORY_OWNERSHIP_INVALID",
+        )
+    mark_repository_location_ownership_verified(
+        repository,
+        owner_node_id=new_node.id,
+        repository_subdir=nas_proxy_repository_subdir(repository),
+    )
     sync_proxy_mount_path_from_repo_status(repository, outcome.result)
 
 
-def _apply_config_updates(repository: Repository, config_updates: dict[str, Any]) -> None:
+def _apply_config_updates(
+    repository: Repository, config_updates: dict[str, Any]
+) -> None:
     """Merge the partial config updates into the repository's config dict.
 
     Special handling:
@@ -262,10 +329,19 @@ def _apply_config_updates(repository: Repository, config_updates: dict[str, Any]
     apply_capacity_from_config(repository)
 
 
-def _rotate_smb_password_if_needed(repository: Repository, config_updates: dict[str, Any]) -> None:
-    if "smb_password" not in config_updates:
+def _rotate_smb_credential_if_needed(
+    repository: Repository,
+    config_updates: dict[str, Any],
+) -> None:
+    credential_fields = {"smb_username", "smb_password", "smb_domain"} & set(
+        config_updates
+    )
+    if not credential_fields:
         return
-    if config_updates.get("smb_password") is None or str(config_updates.get("smb_password") or "").strip() == "":
+    if (
+        credential_fields == {"smb_password"}
+        and not str(config_updates.get("smb_password") or "").strip()
+    ):
         return
     credential = None
     existing = {}
@@ -282,7 +358,9 @@ def _rotate_smb_password_if_needed(repository: Repository, config_updates: dict[
         repository_type=repository.repo_type,
         nas_protocol=repository.nas_protocol,
         config=repository.config,
-        credential_payload={"smb_password": config_updates["smb_password"]},
+        credential_payload={
+            "smb_password": config_updates.get("smb_password"),
+        },
         existing_secrets=existing,
     )
     metadata = build_credential_metadata(
@@ -299,20 +377,66 @@ def _rotate_smb_password_if_needed(repository: Repository, config_updates: dict[
         credential.set_secret_payload(secret_payload)
         credential.save()
         repository.credential_id = credential.id
-        repository.save(update_fields=["credential_id", "updated_at"])
+        repository.config = sanitize_repository_config(repository.config)
+        repository.save(update_fields=["config", "credential_id", "updated_at"])
         return
     credential.credential_type = Credential.Type.SMB
     credential.metadata = metadata
     credential.set_secret_payload(secret_payload)
-    credential.save(update_fields=["credential_type", "metadata", "secret_cipher", "updated_at"])
+    credential.save(
+        update_fields=["credential_type", "metadata", "secret_cipher", "updated_at"]
+    )
 
 
-def _set_proxy_mount_path(repository: Repository, *, node_id: int, overwrite: bool = False) -> None:
+def _set_proxy_mount_path(
+    repository: Repository, *, node_id: int, overwrite: bool = False
+) -> None:
     config = dict(repository.config or {})
     if not overwrite and str(config.get("proxy_mount_path") or "").strip():
         return
     config["proxy_mount_path"] = nas_mount_point(repository, node_id=node_id)
     repository.config = config
+
+
+def _lock_repository_for_repair(repository: Repository) -> Repository:
+    """Lock the same repository state that was validated by the API request."""
+    locked = Repository.objects.select_for_update().get(
+        pk=repository.id,
+        organization_id=repository.organization_id,
+    )
+    expected = (
+        repository.status,
+        repository.bind_node_type,
+        repository.bind_node_id,
+    )
+    current = (
+        locked.status,
+        locked.bind_node_type,
+        locked.bind_node_id,
+    )
+    if current != expected:
+        raise DRFValidationError(
+            {
+                "detail": (
+                    "Repository state changed while the repair was being accepted. "
+                    "Refresh and retry."
+                )
+            }
+        )
+    return locked
+
+
+def _apply_mutable_updates(
+    repository: Repository,
+    *,
+    name: str | None,
+    config_updates: dict[str, Any],
+) -> None:
+    if name is not None and str(name).strip():
+        repository.name = str(name).strip()
+    if config_updates:
+        _apply_config_updates(repository, config_updates)
+        _rotate_smb_credential_if_needed(repository, config_updates)
 
 
 def repair_nas_repository(
@@ -337,10 +461,41 @@ def repair_nas_repository(
         raise DRFValidationError(
             {"detail": "Repository create or remount is still in progress."}
         )
+    if repository.status in {
+        Repository.Status.REMOVING,
+        Repository.Status.REMOVED,
+    }:
+        raise DRFValidationError(
+            {"detail": "Repository cannot be repaired during or after removal."}
+        )
+    config_updates = dict(config_updates or {})
+    unsupported_fields = sorted(set(config_updates) - NAS_REPAIR_MUTABLE_CONFIG_FIELDS)
+    if unsupported_fields:
+        raise DRFValidationError(
+            {
+                "config": (
+                    "These NAS repository fields cannot be modified: "
+                    + ", ".join(unsupported_fields)
+                )
+            }
+        )
+    if repository.nas_protocol != Repository.NasProtocol.SMB:
+        smb_fields = sorted(
+            {"smb_username", "smb_password", "smb_domain"} & set(config_updates)
+        )
+        if smb_fields:
+            raise DRFValidationError(
+                {
+                    "config": (
+                        "SMB fields are not accepted for NFS: " + ", ".join(smb_fields)
+                    )
+                }
+            )
 
     organization_id = repository.organization_id
     currently_bound = bool(
-        repository.bind_node_type == Repository.BindNodeType.PROXY and repository.bind_node_id
+        repository.bind_node_type == Repository.BindNodeType.PROXY
+        and repository.bind_node_id
     )
     initial_bind_node_id = repository.bind_node_id
     initial_proxy_mount_path = str(
@@ -351,9 +506,8 @@ def repair_nas_repository(
         new_bind_node_id = bind_node_id
     else:
         new_bind_node_id = initial_bind_node_id
-    bind_node_changed = (
-        bind_node_provided
-        and (new_bind_node_id or None) != (initial_bind_node_id or None)
+    bind_node_changed = bind_node_provided and (new_bind_node_id or None) != (
+        initial_bind_node_id or None
     )
     if (
         bind_node_provided
@@ -370,17 +524,16 @@ def repair_nas_repository(
             repository_id=repository.id,
         )
 
-    # Apply display-name change first so it shows up even on validation errors.
-    if name is not None and str(name).strip():
-        repository.name = str(name).strip()
-
-    if config_updates:
-        _rotate_smb_password_if_needed(repository, config_updates)
-        _apply_config_updates(repository, config_updates)
-
     # No binding intent and not currently bound: pure config save.
     if not currently_bound and not bind_node_changed:
-        repository.save()
+        with transaction.atomic():
+            repository = _lock_repository_for_repair(repository)
+            _apply_mutable_updates(
+                repository,
+                name=name,
+                config_updates=config_updates,
+            )
+            repository.save()
         _enqueue_usage_refresh(repository, trigger="storage.repository.repair_nas")
         return repository
 
@@ -391,26 +544,54 @@ def repair_nas_repository(
         new_node = _validate_proxy_node(
             organization_id=organization_id, node_id=int(new_bind_node_id)
         )
-        repository.bind_node_type = Repository.BindNodeType.PROXY
-        repository.bind_node_id = new_node.id
-        repository.status = Repository.Status.CREATING
-        _set_proxy_mount_path(repository, node_id=new_node.id)
-        repository.save(
-            update_fields=[
-                "name", "config", "bind_node_type", "bind_node_id", "status", "updated_at",
-            ]
-        )
-        enqueue_repository_create_task(
-            repository=repository,
-            operation_type=RepositoryTask.OperationType.REPAIR_BIND,
-        )
+        try:
+            with transaction.atomic():
+                repository = _lock_repository_for_repair(repository)
+                _check_unbound_nas_can_bind_proxy(
+                    organization_id=organization_id,
+                    repository_id=repository.id,
+                )
+                _apply_mutable_updates(
+                    repository,
+                    name=name,
+                    config_updates=config_updates,
+                )
+                repository.bind_node_type = Repository.BindNodeType.PROXY
+                repository.bind_node_id = new_node.id
+                repository.status = Repository.Status.CREATING
+                _set_proxy_mount_path(repository, node_id=new_node.id)
+                repository.save(
+                    update_fields=[
+                        "name",
+                        "config",
+                        "bind_node_type",
+                        "bind_node_id",
+                        "status",
+                        "updated_at",
+                    ]
+                )
+                reserve_repository_location(repository)
+                enqueue_repository_create_task(
+                    repository=repository,
+                    operation_type=RepositoryTask.OperationType.REPAIR_BIND,
+                )
+        except RepositoryLocationConflict as exc:
+            repository.refresh_from_db()
+            raise DRFValidationError({"bind_node_id": str(exc.messages[0])}) from exc
         return repository
 
     # Currently bound. Either replacing the proxy or staying on the same one.
     if not bind_node_changed:
-        if currently_bound and repository.bind_node_id:
-            _set_proxy_mount_path(repository, node_id=int(repository.bind_node_id))
-        repository.save()
+        with transaction.atomic():
+            repository = _lock_repository_for_repair(repository)
+            _apply_mutable_updates(
+                repository,
+                name=name,
+                config_updates=config_updates,
+            )
+            if repository.bind_node_id:
+                _set_proxy_mount_path(repository, node_id=int(repository.bind_node_id))
+            repository.save()
         # Best-effort health refresh via repo.status on the existing proxy.
         try:
             check_proxy_nas_repository(repository)
@@ -427,7 +608,9 @@ def repair_nas_repository(
     # Bind change on an already-bound repository.
     if not new_bind_node_id:
         raise DRFValidationError(
-            {"bind_node_id": "Select a different proxy node to replace the current one."}
+            {
+                "bind_node_id": "Select a different proxy node to replace the current one."
+            }
         )
     # Busy check: any backup config tied to this repository must not have a
     # running/pending backup task.
@@ -439,27 +622,46 @@ def repair_nas_repository(
         organization_id=organization_id, node_id=int(new_bind_node_id)
     )
 
-    repository.bind_node_type = Repository.BindNodeType.PROXY
-    repository.bind_node_id = new_node.id
-    repository.status = Repository.Status.CREATING
-    _set_proxy_mount_path(repository, node_id=new_node.id, overwrite=True)
-    repository.save(
-        update_fields=[
-            "name", "config", "bind_node_type", "bind_node_id", "status", "updated_at",
-        ]
-    )
-    logger.info(
-        "NAS repository proxy swap remount accepted repository_id=%s old_node_id=%s new_node_id=%s",
-        repository.id,
-        initial_bind_node_id,
-        new_node.id,
-    )
-    enqueue_repository_create_task(
-        repository=repository,
-        operation_type=RepositoryTask.OperationType.REPAIR_REMOUNT,
-        remount_previous_node_id=(
-            int(initial_bind_node_id) if initial_bind_node_id else None
-        ),
-        remount_previous_mount_path=initial_proxy_mount_path or None,
-    )
+    try:
+        with transaction.atomic():
+            repository = _lock_repository_for_repair(repository)
+            _apply_mutable_updates(
+                repository,
+                name=name,
+                config_updates=config_updates,
+            )
+            old_node_id = int(initial_bind_node_id or 0) or None
+            repository.bind_node_type = Repository.BindNodeType.PROXY
+            repository.bind_node_id = new_node.id
+            repository.status = Repository.Status.CREATING
+            _set_proxy_mount_path(repository, node_id=new_node.id, overwrite=True)
+            repository.save(
+                update_fields=[
+                    "name",
+                    "config",
+                    "bind_node_type",
+                    "bind_node_id",
+                    "status",
+                    "updated_at",
+                ]
+            )
+            new_claim = reserve_repository_location(repository)
+            logger.info(
+                "NAS repository proxy swap remount accepted "
+                "repository_id=%s old_node_id=%s new_node_id=%s "
+                "new_claim_id=%s",
+                repository.id,
+                old_node_id,
+                new_node.id,
+                new_claim.id if new_claim else None,
+            )
+            enqueue_repository_create_task(
+                repository=repository,
+                operation_type=RepositoryTask.OperationType.REPAIR_REMOUNT,
+                remount_previous_node_id=old_node_id,
+                remount_previous_mount_path=initial_proxy_mount_path or None,
+                remount_new_claim_id=new_claim.id if new_claim else None,
+            )
+    except RepositoryLocationConflict as exc:
+        raise DRFValidationError({"bind_node_id": str(exc.messages[0])}) from exc
     return repository

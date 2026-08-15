@@ -33,6 +33,11 @@ from apps.restore.services.task_events import (
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    reserve_repository_location,
+)
 from apps.task.models import Task, TaskEvent, TaskResource
 
 
@@ -76,12 +81,16 @@ class RestoreApiTests(TestCase):
             s3_bucket="restore-bucket",
             config={
                 "endpoint": "s3.example.internal:9000",
+                "prefix": "restore/repository",
                 "access_key_id": "ak",
                 "secret_access_key": "sk",
                 "kopia_password": "123456",
                 "use_tls": False,
             },
         )
+        reserve_repository_location(self.repository)
+        mark_repository_location_owned(self.repository)
+        mark_repository_location_ownership_verified(self.repository)
         self.config = BackupConfig.objects.create(
             organization_id=self.org.id,
             name="Restore config",
@@ -1999,6 +2008,7 @@ class RestoreApiTests(TestCase):
         self.assertEqual(completed_event.metadata["object_name"], "/data")
         self.assertEqual(completed_event.metadata["source_path"], "/data")
         self.assertEqual(completed_event.metadata["target_path"], item.target_path)
+
         self.assertEqual(completed_event.metadata["node_task_id"], str(node_task.id))
         dispatch_event = TaskEvent.objects.get(
             task=task,
@@ -2025,6 +2035,26 @@ class RestoreApiTests(TestCase):
             ).count(),
             1,
         )
+
+    def test_create_manual_restore_rejects_repository_being_removed(self):
+        self.repository.status = Repository.Status.REMOVING
+        self.repository.save(update_fields=["status", "updated_at"])
+
+        response = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertContains(
+            response,
+            "Repository is no longer available for this operation.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+        self.assertFalse(RestoreRecord.objects.exists())
+        self.assertFalse(Task.objects.filter(task_type=Task.Type.RESTORE).exists())
 
     def test_restore_record_list_and_detail_include_task_summary(self):
         create = self.client.post(

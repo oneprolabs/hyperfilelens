@@ -99,7 +99,7 @@ class StorageRepositoryProxyBindingTests(TestCase):
         self.assertEqual(repo.config["proxy_node_dir"], "/data/repo")
 
     @mock.patch("apps.storage.services.interface.enqueue_repository_usage_refresh")
-    def test_proxy_fs_can_replace_proxy(self, enqueue_usage):
+    def test_proxy_fs_cannot_replace_proxy_outside_repair(self, enqueue_usage):
         repo = Repository.objects.create(
             organization_id=self.org.id,
             name="disk-1",
@@ -116,15 +116,10 @@ class StorageRepositoryProxyBindingTests(TestCase):
             format="json",
             **self._headers(),
         )
-        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         repo.refresh_from_db()
-        self.assertEqual(repo.bind_node_id, self.proxy_b.id)
-        enqueue_usage.assert_called_once_with(
-            organization_id=self.org.id,
-            repository_ids=[repo.id],
-            force=True,
-            trigger="storage.repository.update",
-        )
+        self.assertEqual(repo.bind_node_id, self.proxy_a.id)
+        enqueue_usage.assert_not_called()
 
     @mock.patch("apps.storage.services.interface.sync_repository_usage")
     @mock.patch("apps.storage.services.interface.enqueue_repository_usage_refresh")
@@ -231,7 +226,7 @@ class StorageRepositoryProxyBindingTests(TestCase):
         real_mount = "/mnt/hfl/storage-repositories/repo-34-node-45"
         run_agent_task_sync.return_value = mock.Mock(
             task=mock.Mock(status="success", last_error=""),
-            result={"mount_point": real_mount},
+            result={"mount_point": real_mount, "ownership_verified": True},
             ok=True,
         )
         repo = Repository.objects.create(

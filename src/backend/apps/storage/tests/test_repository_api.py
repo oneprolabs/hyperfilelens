@@ -3,18 +3,22 @@ import copy
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.utils import timezone
 from types import SimpleNamespace
 from unittest import mock
 from rest_framework import status
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.node.agent_paths import repository_mount_point
 from apps.protection.models import BackupConfig
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
-from apps.storage.services.internal.repository_initializer import RepositoryInitializationError
+from apps.storage.services.internal.repository_initializer import (
+    RepositoryInitializationError,
+)
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_CODE,
     RepositoryAlreadyExistsError,
@@ -31,6 +35,7 @@ from apps.storage.repositories.models import (
     Credential,
     Repository,
     RepositoryExecutionTarget,
+    RepositoryLocationClaim,
     RepositoryTask,
     RepositoryUsageShard,
 )
@@ -41,6 +46,13 @@ from apps.storage.services.internal.repository_operations import (
     create_repository_operation_task,
     discover_repository_execution_targets,
 )
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    mark_repository_location_residual,
+    reserve_repository_location,
+)
+from apps.storage.services.interface import update_repository
 from apps.task.models import Task
 
 
@@ -53,7 +65,9 @@ class StorageRepositoryApiTests(TestCase):
             email="storage-api@test.local",
             password="test-pass",
         )
-        self.org = Organization.objects.create(key="storage-test-org", name="Storage Test Org")
+        self.org = Organization.objects.create(
+            key="storage-test-org", name="Storage Test Org"
+        )
         Membership.objects.create(
             user=self.user,
             organization=self.org,
@@ -128,9 +142,7 @@ class StorageRepositoryApiTests(TestCase):
         }
 
     def _post_repository(self, payload):
-        with mock.patch(
-            "apps.storage.tasks.execute_repository_operation.apply_async"
-        ):
+        with mock.patch("apps.storage.tasks.execute_repository_operation.apply_async"):
             with self.captureOnCommitCallbacks(execute=True):
                 return self.client.post(
                     "/api/v1/storage/repositories/",
@@ -172,7 +184,7 @@ class StorageRepositoryApiTests(TestCase):
             {item["field"] for item in response.data["data"]["errors"]},
         )
 
-    def test_create_s3_repository_requires_object_prefix(self):
+    def test_create_s3_repository_allows_bucket_root(self):
         payload = self._s3_payload()
         payload["config"]["prefix"] = "   "
 
@@ -183,15 +195,25 @@ class StorageRepositoryApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn(
-            {
-                "field": "config.prefix",
-                "code": "VALIDATION.FIELD_INVALID",
-                "message": "S3 object prefix is required.",
-            },
-            response.data["data"]["errors"],
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.data)
+        repository = Repository.objects.get(id=response.data["id"])
+        self.assertEqual(repository.config["prefix"], "")
+        self.assertEqual(repository.location_claims.get().root_path, "/")
+
+    def test_create_s3_repository_rejects_overlapping_prefix(self):
+        first = self._post_repository(self._s3_payload())
+        self.assertEqual(first.status_code, status.HTTP_202_ACCEPTED, first.content)
+
+        nested_payload = self._s3_payload()
+        nested_payload["name"] = "nested-s3"
+        nested_payload["config"]["prefix"] = "kopia/child"
+        nested = self._post_repository(nested_payload)
+
+        self.assertEqual(
+            nested.status_code, status.HTTP_400_BAD_REQUEST, nested.content
         )
+        self.assertIn("overlaps repository", str(nested.data))
+        self.assertFalse(Repository.objects.filter(name="nested-s3").exists())
 
     def test_create_managed_s3_repository_rejects_unknown_catalog_region(self):
         payload = self._s3_payload()
@@ -238,8 +260,12 @@ class StorageRepositoryApiTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
     )
-    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
-    def test_create_custom_s3_repository_is_not_catalog_managed(self, _initialize, _enqueue):
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
+    def test_create_custom_s3_repository_is_not_catalog_managed(
+        self, _initialize, _enqueue
+    ):
         payload = self._s3_payload()
         payload["s3_platform"] = Repository.S3Platform.CUSTOM
         payload["config"]["region"] = "private-region"
@@ -247,12 +273,12 @@ class StorageRepositoryApiTests(TestCase):
 
         response = self._post_repository(payload)
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         self.assertEqual(response.data["status"], Repository.Status.CREATING)
         self.assertEqual(response.data["s3_platform"], Repository.S3Platform.CUSTOM)
-        self.assertEqual(
-            response.data["config"]["endpoint"], "s3.internal.example.com"
-        )
+        self.assertEqual(response.data["config"]["endpoint"], "s3.internal.example.com")
         self.assertNotIn("endpoint_type", response.data["config"])
         self.assertNotIn("external_endpoint", response.data["config"])
         self.assertNotIn("internal_endpoint", response.data["config"])
@@ -285,8 +311,12 @@ class StorageRepositoryApiTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
     )
-    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
-    def test_create_s3_repository_with_dynamic_catalog_provider(self, _initialize, _enqueue):
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
+    def test_create_s3_repository_with_dynamic_catalog_provider(
+        self, _initialize, _enqueue
+    ):
         provider = copy.deepcopy(load_default_catalog()["providers"][0])
         provider.update({"id": "tencent", "display_name": "Tencent Cloud COS"})
         region = provider["regions"][0]
@@ -316,7 +346,9 @@ class StorageRepositoryApiTests(TestCase):
 
         response = self._post_repository(payload)
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         self.assertEqual(response.data["status"], Repository.Status.CREATING)
         self.assertEqual(response.data["s3_platform"], "tencent")
         self.assertNotIn("endpoint_type", response.data["config"])
@@ -334,11 +366,16 @@ class StorageRepositoryApiTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
     )
-    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
-    def test_create_s3_repository_persists_encrypted_credential(self, initialize, enqueue_usage):
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
+    def test_create_s3_repository_persists_encrypted_credential(
+        self, initialize, enqueue_usage
+    ):
         create = self._post_repository(self._s3_payload())
         self.assertEqual(create.status_code, status.HTTP_202_ACCEPTED, create.content)
         self.assertEqual(create.data["status"], Repository.Status.CREATING)
+        self.assertEqual(create.data["initialization_state"], "initializing")
         repo_id = create.data["id"]
         self.assertEqual(create.data["repo_type"], Repository.Type.S3)
         self.assertNotIn("credential_payload", create.data)
@@ -363,6 +400,8 @@ class StorageRepositoryApiTests(TestCase):
         repo.refresh_from_db()
         self.assertEqual(repo.status, Repository.Status.CREATED)
         self.assertEqual(repo.health, Repository.Health.ONLINE)
+        claim = RepositoryLocationClaim.objects.get(repository=repo)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.OWNED)
         initialize.assert_called_once()
         enqueue_usage.assert_called_once()
 
@@ -378,7 +417,9 @@ class StorageRepositoryApiTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
     )
-    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
     def test_create_s3_applies_region_connection_settings(self, _initialize, _enqueue):
         expected = {
             Repository.S3Platform.AWS: (
@@ -415,7 +456,9 @@ class StorageRepositoryApiTests(TestCase):
 
             response = self._post_repository(payload)
 
-            self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+            self.assertEqual(
+                response.status_code, status.HTTP_202_ACCEPTED, response.content
+            )
             self.assertEqual(response.data["config"]["s3_url_style"], url_style)
             repo = Repository.objects.get(name=f"provider-{platform}")
             result = self._run_create_task(repo)
@@ -424,7 +467,9 @@ class StorageRepositoryApiTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
     )
-    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
     def test_repository_creation_always_snapshots_and_uses_external_endpoint(
         self, initialize, _enqueue
     ):
@@ -439,7 +484,9 @@ class StorageRepositoryApiTests(TestCase):
 
         response = self._post_repository(payload)
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         config = response.data["config"]
         self.assertNotIn("endpoint_type", config)
         self.assertEqual(config["endpoint"], "oss-cn-hangzhou.aliyuncs.com")
@@ -465,13 +512,19 @@ class StorageRepositoryApiTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
     )
-    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
-    def test_equal_catalog_endpoints_force_external_selection(self, _initialize, _enqueue):
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
+    def test_equal_catalog_endpoints_force_external_selection(
+        self, _initialize, _enqueue
+    ):
         payload = self._s3_payload()
 
         response = self._post_repository(payload)
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         config = response.data["config"]
         self.assertEqual(config["endpoint"], "s3.amazonaws.com")
         self.assertNotIn("endpoint_type", config)
@@ -483,10 +536,16 @@ class StorageRepositoryApiTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
     )
-    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
-    def test_create_s3_generates_kopia_password_in_credential(self, initialize, _enqueue):
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
+    def test_create_s3_generates_kopia_password_in_credential(
+        self, initialize, _enqueue
+    ):
         response = self._post_repository(self._s3_payload())
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         repo = Repository.objects.get(name="primary-s3")
         self.assertNotIn("kopia_password", repo.config)
         credential = Credential.objects.get(id=repo.credential_id)
@@ -511,13 +570,351 @@ class StorageRepositoryApiTests(TestCase):
             format="json",
             **self._headers(),
         )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
         self.assertEqual(response.data["status"], Repository.Status.CREATED)
         self.assertEqual(response.data["health"], Repository.Health.UNVERIFIED)
+        self.assertEqual(response.data["initialization_state"], "not_initialized")
+        self.assertEqual(response.data["initialized_target_count"], 0)
         repo = Repository.objects.get(name="direct-nas")
         self.assertNotIn("kopia_password", repo.config)
-        self.assertTrue(Credential.objects.get(id=repo.credential_id).get_secret_payload()["kopia_password"])
+        self.assertTrue(
+            Credential.objects.get(id=repo.credential_id).get_secret_payload()[
+                "kopia_password"
+            ]
+        )
         enqueue_usage.assert_called_once()
+
+    def test_owned_location_is_ready_only_after_ownership_verification(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="legacy-s3-awaiting-verification",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            s3_platform=Repository.S3Platform.CUSTOM,
+            s3_bucket="legacy-bucket",
+            config={
+                "endpoint": "s3.example.test",
+                "prefix": "hfl/",
+                "access_key_id": "legacy-account",
+            },
+        )
+        reserve_repository_location(repository)
+        mark_repository_location_owned(repository)
+
+        unverified = self.client.get(
+            f"/api/v1/storage/repositories/{repository.id}/",
+            **self._headers(),
+        )
+
+        self.assertEqual(unverified.status_code, status.HTTP_200_OK)
+        self.assertEqual(unverified.data["initialization_state"], "unverified")
+        self.assertEqual(unverified.data["initialized_target_count"], 0)
+
+        mark_repository_location_ownership_verified(repository)
+        verified = self.client.get(
+            f"/api/v1/storage/repositories/{repository.id}/",
+            **self._headers(),
+        )
+
+        self.assertEqual(verified.status_code, status.HTTP_200_OK)
+        self.assertEqual(verified.data["initialization_state"], "ready")
+        self.assertEqual(verified.data["initialized_target_count"], 1)
+
+    def test_removed_repository_with_retained_location_requires_attention(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="force-cleaned-with-residue",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.REMOVED,
+            health=Repository.Health.OFFLINE,
+            s3_platform=Repository.S3Platform.CUSTOM,
+            s3_bucket="retained-bucket",
+            config={
+                "endpoint": "s3.example.test",
+                "prefix": "hfl/",
+                "access_key_id": "retained-account",
+            },
+        )
+        reserve_repository_location(repository)
+        mark_repository_location_residual(repository)
+
+        response = self.client.get(
+            f"/api/v1/storage/repositories/{repository.id}/",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(response.data["initialization_state"], "attention_required")
+
+        listing = self.client.get(
+            "/api/v1/storage/repositories/",
+            {"repo_type": "s3"},
+            **self._headers(),
+        )
+        self.assertEqual(listing.status_code, status.HTTP_200_OK, listing.content)
+        self.assertIn(
+            repository.id,
+            [row["id"] for row in listing.data["data"]["list"]],
+        )
+
+        invalid_release = self.client.post(
+            f"/api/v1/storage/repositories/{repository.id}/release-residual-location/",
+            {"confirmation": "RELEASE"},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(invalid_release.status_code, status.HTTP_400_BAD_REQUEST)
+
+        released = self.client.post(
+            f"/api/v1/storage/repositories/{repository.id}/release-residual-location/",
+            {"confirmation": "RELEASE LOCATION"},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(released.status_code, status.HTTP_200_OK, released.content)
+        self.assertEqual(released.data["initialization_state"], "released")
+        claim = RepositoryLocationClaim.objects.get(repository=repository)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RELEASED)
+
+        listing = self.client.get(
+            "/api/v1/storage/repositories/",
+            {"repo_type": "s3"},
+            **self._headers(),
+        )
+        self.assertNotIn(
+            repository.id,
+            [row["id"] for row in listing.data["data"]["list"]],
+        )
+
+    def test_residual_location_release_rejects_active_repository_operation(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="removed-with-active-operation",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.REMOVED,
+            health=Repository.Health.OFFLINE,
+            s3_platform=Repository.S3Platform.CUSTOM,
+            s3_bucket="retained-bucket",
+            config={
+                "endpoint": "s3.example.test",
+                "prefix": "hfl/",
+                "access_key_id": "retained-account",
+            },
+        )
+        claim = reserve_repository_location(repository)
+        mark_repository_location_residual(repository)
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.REPOSITORY_OPERATION,
+            display_name="Active repository operation",
+            status=Task.Status.PENDING,
+        )
+        RepositoryTask.objects.create(
+            task=task,
+            repository=repository,
+            operation_type=RepositoryTask.OperationType.CLEANUP_REPOSITORY,
+            owner_type=RepositoryExecutionTarget.OwnerType.CONTROLLER,
+            owner_identity="controller",
+        )
+
+        response = self.client.post(
+            f"/api/v1/storage/repositories/{repository.id}/release-residual-location/",
+            {"confirmation": "RELEASE LOCATION"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        claim.refresh_from_db()
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+
+    def test_residual_location_release_rejects_active_agent_operation(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="removed-with-active-agent-operation",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.REMOVED,
+            health=Repository.Health.OFFLINE,
+            s3_platform=Repository.S3Platform.CUSTOM,
+            s3_bucket="retained-agent-bucket",
+            config={
+                "endpoint": "s3.example.test",
+                "prefix": "agent-hfl/",
+                "access_key_id": "retained-agent-account",
+            },
+        )
+        claim = reserve_repository_location(repository)
+        mark_repository_location_residual(repository)
+        node = Node.objects.create(
+            organization=self.org,
+            name="active-initialization-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=node,
+            kind="repo.initialize",
+            payload={"repository": {"id": repository.id}},
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        response = self.client.post(
+            f"/api/v1/storage/repositories/{repository.id}/release-residual-location/",
+            {"confirmation": "RELEASE LOCATION"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        claim.refresh_from_db()
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+
+    def test_residual_location_release_rejects_persisted_agent_operation(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="removed-with-persisted-agent-operation",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.REMOVED,
+            health=Repository.Health.OFFLINE,
+            s3_platform=Repository.S3Platform.CUSTOM,
+            s3_bucket="retained-persisted-agent-bucket",
+            config={
+                "endpoint": "s3.example.test",
+                "prefix": "persisted-agent-hfl/",
+                "access_key_id": "persisted-agent-account",
+            },
+        )
+        claim = reserve_repository_location(repository)
+        mark_repository_location_residual(repository)
+        node = Node.objects.create(
+            organization=self.org,
+            name="persisted-active-operation-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=node,
+            kind="repository.operation",
+            payload={"repository_id": repository.id},
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        response = self.client.post(
+            f"/api/v1/storage/repositories/{repository.id}/release-residual-location/",
+            {"confirmation": "RELEASE LOCATION"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        claim.refresh_from_db()
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+
+    @mock.patch(
+        "apps.storage.services.interface.enqueue_repository_create_task",
+        side_effect=ValidationError("queue acceptance failed"),
+    )
+    def test_create_acceptance_rolls_back_repository_claim_and_credential(
+        self,
+        _enqueue,
+    ):
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            self._s3_payload(),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(Repository.objects.filter(name="primary-s3").exists())
+        self.assertFalse(RepositoryLocationClaim.objects.exists())
+        self.assertFalse(Credential.objects.exists())
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
+    def test_failed_repository_initialization_retries_on_same_identity(
+        self,
+        initialize,
+        _enqueue_usage,
+    ):
+        initialize.side_effect = [
+            RepositoryInitializationError("temporary endpoint failure"),
+            None,
+        ]
+        create = self._post_repository(self._s3_payload())
+        self.assertEqual(create.status_code, status.HTTP_202_ACCEPTED, create.content)
+        repository = Repository.objects.get(pk=create.data["id"])
+        first_task = RepositoryTask.objects.get(repository=repository)
+        first_result = self._run_create_task(repository)
+        self.assertEqual(first_result["status"], "failed")
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.CREATE_FAILED)
+        self.assertEqual(
+            repository.location_claims.get().state,
+            RepositoryLocationClaim.State.RESIDUAL,
+        )
+
+        with mock.patch("apps.storage.tasks.execute_repository_operation.apply_async"):
+            with self.captureOnCommitCallbacks(execute=True):
+                retry = self.client.post(
+                    f"/api/v1/storage/repositories/{repository.id}/retry-initialization/",
+                    {},
+                    format="json",
+                    **self._headers(),
+                )
+        self.assertEqual(retry.status_code, status.HTTP_202_ACCEPTED, retry.content)
+        self.assertEqual(retry.data["repository"]["id"], repository.id)
+        second_task = (
+            RepositoryTask.objects.filter(repository=repository)
+            .exclude(pk=first_task.id)
+            .get()
+        )
+        duplicate_retry = self.client.post(
+            f"/api/v1/storage/repositories/{repository.id}/retry-initialization/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(
+            duplicate_retry.status_code,
+            status.HTTP_202_ACCEPTED,
+            duplicate_retry.content,
+        )
+        self.assertEqual(
+            duplicate_retry.data["task"]["task_uuid"],
+            str(second_task.task.task_uuid),
+        )
+        self.assertEqual(
+            RepositoryTask.objects.filter(repository=repository).count(),
+            2,
+        )
+        from apps.storage.services.internal.repository_create import (
+            run_repository_create_task,
+        )
+
+        second_result = run_repository_create_task(repository_task_id=second_task.id)
+        self.assertEqual(second_result["status"], "success")
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.CREATED)
+        self.assertEqual(
+            repository.location_claims.get().state,
+            RepositoryLocationClaim.State.OWNED,
+        )
 
     def test_create_smb_nas_rejects_read_only_mount_option(self):
         response = self.client.post(
@@ -575,6 +972,143 @@ class StorageRepositoryApiTests(TestCase):
         repository.refresh_from_db()
         self.assertEqual(repository.config["region"], "us-east-1")
 
+    def test_s3_repository_cannot_change_access_key_identity(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="immutable-s3-account",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.AWS,
+            s3_bucket="immutable-bucket",
+            config={
+                "region": "us-east-1",
+                "endpoint": "s3.amazonaws.com",
+                "prefix": "hfl/repository/",
+                "access_key_id": "AKIA_ORIGINAL",
+                "s3_url_style": "virtual_hosted",
+            },
+        )
+
+        response = self.client.patch(
+            f"/api/v1/storage/repositories/{repository.id}/",
+            {
+                "credential_payload": {
+                    "access_key_id": "AKIA_DIFFERENT_ACCOUNT",
+                    "secret_access_key": "replacement-secret",
+                }
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        repository.refresh_from_db()
+        self.assertEqual(repository.config["access_key_id"], "AKIA_ORIGINAL")
+
+    def test_repository_binding_can_only_change_through_repair_workflow(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="immutable-proxy-binding",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=11,
+            config={
+                "proxy_node_base_dir": "/data/repositories",
+                "proxy_node_dir": "/data/repositories/hfl-repo-1",
+                "proxy_fs_layout": "managed_subdir_v1",
+            },
+        )
+
+        response = self.client.patch(
+            f"/api/v1/storage/repositories/{repository.id}/",
+            {"bind_node_id": 12},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        repository.refresh_from_db()
+        self.assertEqual(repository.bind_node_id, 11)
+
+    def test_repository_cannot_be_updated_during_or_after_removal(self):
+        for index, repository_status in enumerate(
+            (Repository.Status.REMOVING, Repository.Status.REMOVED),
+            start=1,
+        ):
+            credential = Credential.objects.create(
+                organization_id=self.org.id,
+                credential_type=Credential.Type.S3,
+            )
+            credential.set_secret_payload(
+                {
+                    "secret_access_key": "test-secret",
+                    "kopia_password": "test-kopia-password",
+                }
+            )
+            credential.save(update_fields=["secret_cipher", "updated_at"])
+            repository = Repository.objects.create(
+                organization_id=self.org.id,
+                name=f"immutable-removal-{index}",
+                repo_type=Repository.Type.S3,
+                status=repository_status,
+                health=Repository.Health.OFFLINE,
+                credential_id=credential.id,
+                s3_platform=Repository.S3Platform.CUSTOM,
+                s3_bucket=f"immutable-removal-bucket-{index}",
+                config={
+                    "endpoint": "s3.example.test",
+                    "prefix": f"immutable/removal/{index}/",
+                    "access_key_id": f"removal-account-{index}",
+                    "s3_url_style": "virtual_hosted",
+                },
+            )
+            if repository_status == Repository.Status.REMOVED:
+                reserve_repository_location(repository)
+                mark_repository_location_residual(repository)
+
+            response = self.client.patch(
+                f"/api/v1/storage/repositories/{repository.id}/",
+                {"name": "must-not-change"},
+                format="json",
+                **self._headers(),
+            )
+
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn("during or after removal", str(response.data))
+            repository.refresh_from_db()
+            self.assertEqual(repository.name, f"immutable-removal-{index}")
+
+    def test_repository_update_rechecks_status_after_lock(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="stale-update",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            nas_protocol=Repository.NasProtocol.NFS,
+            config={
+                "server_address": "nas.example.test",
+                "share_path": "/backup",
+            },
+        )
+        stale_repository = Repository.objects.get(pk=repository.id)
+        Repository.objects.filter(pk=repository.id).update(
+            status=Repository.Status.REMOVING
+        )
+
+        with self.assertRaises(DRFValidationError):
+            update_repository(
+                repository=stale_repository,
+                name="must-not-change",
+            )
+
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.REMOVING)
+        self.assertEqual(repository.name, "stale-update")
+
     @mock.patch("apps.storage.services.interface.enqueue_repository_usage_refresh")
     def test_s3_quota_update_does_not_revalidate_saved_region_against_catalog(
         self, enqueue_usage
@@ -615,7 +1149,9 @@ class StorageRepositoryApiTests(TestCase):
         repository.refresh_from_db()
         self.assertEqual(repository.name, "legacy-managed-s3-renamed")
         self.assertEqual(repository.config["quota_gb"], 10)
-        self.assertEqual(repository.config["region"], "legacy-region-no-longer-in-catalog")
+        self.assertEqual(
+            repository.config["region"], "legacy-region-no-longer-in-catalog"
+        )
         self.assertEqual(repository.config["endpoint"], "obs.legacy.example.com")
         enqueue_usage.assert_called_once()
 
@@ -624,7 +1160,8 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="source-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.8.10",
             metadata={"inventory": {"hostname": "source-host", "os": "linux"}},
         )
@@ -673,7 +1210,10 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(row["registered_at"], agent.created_at.isoformat())
         self.assertEqual(row["nas_location"], "nfs://192.168.8.82/nfsshare")
         self.assertEqual(row["repository_subdir"], f"hp-repos/agent-{agent.id}")
-        self.assertEqual(row["repository_mount_point"], f"/mnt/hfl/storage-repositories/repo-{repo.id}-node-{agent.id}")
+        self.assertEqual(
+            row["repository_mount_point"],
+            f"/mnt/hfl/storage-repositories/repo-{repo.id}-node-{agent.id}",
+        )
         self.assertEqual(row["health"], Repository.Health.ONLINE)
 
     def test_associated_sources_lists_direct_nas_source_health(self):
@@ -681,7 +1221,8 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="nas-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.8.12",
         )
         source = SourceResource.objects.create(
@@ -728,11 +1269,16 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
         row = response.data["results"][0]
         self.assertEqual(row["repository_subdir"], f"hp-repos/agent-{proxy.id}")
-        self.assertEqual(row["repository_mount_point"], f"/mnt/hfl/storage-repositories/repo-{repo.id}-node-{proxy.id}")
+        self.assertEqual(
+            row["repository_mount_point"],
+            f"/mnt/hfl/storage-repositories/repo-{repo.id}-node-{proxy.id}",
+        )
         self.assertEqual(row["availability"], source.availability)
         self.assertEqual(row["health"], Repository.Health.ONLINE)
 
-    def test_associated_sources_exposes_nas_registration_and_missing_source_fallback(self):
+    def test_associated_sources_exposes_nas_registration_and_missing_source_fallback(
+        self,
+    ):
         repo = Repository.objects.create(
             organization_id=self.org.id,
             name="associated-source-metadata",
@@ -770,14 +1316,17 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(rows["agent"]["source_ref_id"], 999999)
         self.assertIsNone(rows["agent"]["registered_at"])
         self.assertEqual(rows["nas"]["source_ref_id"], nas_source.id)
-        self.assertEqual(rows["nas"]["registered_at"], nas_source.created_at.isoformat())
+        self.assertEqual(
+            rows["nas"]["registered_at"], nas_source.created_at.isoformat()
+        )
 
     def test_associated_sources_is_paginated_and_supports_non_nas_repositories(self):
         agent_a = Node.objects.create(
             organization=self.org,
             name="source-agent-a",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.8.11",
             metadata={"inventory": {"hostname": "source-a", "os": "linux"}},
         )
@@ -785,7 +1334,8 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="source-agent-b",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
             ip_address="10.0.8.12",
             metadata={"inventory": {"hostname": "source-b", "os": "linux"}},
         )
@@ -793,7 +1343,8 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="source-agent-c",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.8.13",
             metadata={"inventory": {"hostname": "source-c", "os": "linux"}},
         )
@@ -859,10 +1410,14 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(len(page_one.data["results"]), 1)
         self.assertEqual(len(page_two.data["results"]), 1)
         self.assertEqual(page_one.data["results"][0]["source_name"], "source-agent-a")
-        self.assertEqual(page_one.data["results"][0]["availability"], Node.Availability.ONLINE)
+        self.assertEqual(
+            page_one.data["results"][0]["availability"], Node.Availability.ONLINE
+        )
         self.assertEqual(page_one.data["results"][0]["repository_mount_point"], "")
         self.assertEqual(page_two.data["results"][0]["source_name"], "source-agent-b")
-        self.assertEqual(page_two.data["results"][0]["availability"], Node.Availability.OFFLINE)
+        self.assertEqual(
+            page_two.data["results"][0]["availability"], Node.Availability.OFFLINE
+        )
         self.assertEqual(local_disk.status_code, status.HTTP_200_OK, local_disk.content)
         self.assertEqual(local_disk.data["count"], 1)
         self.assertEqual(local_disk.data["results"][0]["repository_mount_point"], "")
@@ -871,18 +1426,23 @@ class StorageRepositoryApiTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_create.initialize_proxy_nas_repository"
     )
-    def test_create_nas_with_proxy_initializes_repository(self, initialize_nas, apply_async):
+    def test_create_nas_with_proxy_initializes_repository(
+        self, initialize_nas, apply_async
+    ):
         proxy = Node.objects.create(
             organization=self.org,
             name="proxy-node",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.99",
         )
 
         def _mark_real_mount(repository):
             config = dict(repository.config or {})
-            config["proxy_mount_path"] = f"/mnt/hfl/storage-repositories/repo-{repository.id}-node-{proxy.id}"
+            config["proxy_mount_path"] = (
+                f"/mnt/hfl/storage-repositories/repo-{repository.id}-node-{proxy.id}"
+            )
             repository.config = config
             repository.save(update_fields=["config", "updated_at"])
 
@@ -907,11 +1467,15 @@ class StorageRepositoryApiTests(TestCase):
                 format="json",
                 **self._headers(),
             )
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         self.assertEqual(response.data["status"], Repository.Status.CREATING)
         self.assertIsNotNone(response.data.get("active_create_task"))
         self.assertEqual(response.data["cross_proxy_access"]["reason"], "ready")
-        self.assertEqual(response.data["cross_proxy_access"]["host"], "repo-proxy.example.internal")
+        self.assertEqual(
+            response.data["cross_proxy_access"]["host"], "repo-proxy.example.internal"
+        )
         repo = Repository.objects.get(name="proxy-nas")
         self.assertEqual(repo.status, Repository.Status.CREATING)
         self.assertEqual(repo.config["share_path"], "/backup")
@@ -933,7 +1497,8 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="proxy-invalid-server-host",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         response = self.client.post(
             "/api/v1/storage/repositories/",
@@ -951,7 +1516,9 @@ class StorageRepositoryApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_400_BAD_REQUEST, response.content
+        )
 
     @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
     def test_create_proxy_fs_uses_managed_child_directory(self, apply_async):
@@ -977,7 +1544,9 @@ class StorageRepositoryApiTests(TestCase):
                 **self._headers(),
             )
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         repository = Repository.objects.get(name="managed-local-disk")
         self.assertEqual(repository.config["proxy_node_base_dir"], "/data/backups")
         self.assertEqual(
@@ -1009,14 +1578,20 @@ class StorageRepositoryApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_400_BAD_REQUEST, response.content
+        )
         self.assertFalse(Repository.objects.filter(name="root-local-disk").exists())
 
-    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
     def test_create_s3_repository_keeps_row_when_initializer_fails(self, initialize):
         initialize.side_effect = RepositoryInitializationError("S3 init failed")
         response = self._post_repository(self._s3_payload())
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         self.assertEqual(response.data["status"], Repository.Status.CREATING)
         repo = Repository.objects.get(name="primary-s3")
         result = self._run_create_task(repo)
@@ -1024,32 +1599,49 @@ class StorageRepositoryApiTests(TestCase):
         repo.refresh_from_db()
         self.assertEqual(repo.status, Repository.Status.CREATE_FAILED)
         self.assertEqual(repo.health, Repository.Health.OFFLINE)
+        claim = RepositoryLocationClaim.objects.get(repository=repo)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
         self.assertTrue(Repository.objects.filter(name="primary-s3").exists())
 
-    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
     def test_create_s3_rejects_existing_repository_and_cleans_up(self, initialize):
-        initialize.side_effect = RepositoryAlreadyExistsError("repository already exists")
+        initialize.side_effect = RepositoryAlreadyExistsError(
+            "repository already exists"
+        )
 
         response = self._post_repository(self._s3_payload())
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         repo = Repository.objects.get(name="primary-s3")
         result = self._run_create_task(repo)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error_code"], REPOSITORY_ALREADY_EXISTS_CODE)
         self.assertFalse(Repository.objects.filter(name="primary-s3").exists())
-        self.assertEqual(Credential.objects.filter(organization_id=self.org.id).count(), 0)
+        self.assertEqual(
+            Credential.objects.filter(organization_id=self.org.id).count(), 0
+        )
 
-    @mock.patch("apps.storage.services.internal.repository_create.initialize_proxy_fs_repository")
-    def test_create_proxy_fs_rejects_existing_repository_and_cleans_up(self, initialize):
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_proxy_fs_repository"
+    )
+    def test_create_proxy_fs_rejects_existing_repository_and_cleans_up(
+        self, initialize
+    ):
         proxy = Node.objects.create(
             organization=self.org,
             name="proxy-fs-node",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.100",
         )
-        initialize.side_effect = RepositoryAlreadyExistsError("repository already exists")
+        initialize.side_effect = RepositoryAlreadyExistsError(
+            "repository already exists"
+        )
 
         response = self._post_repository(
             {
@@ -1061,23 +1653,30 @@ class StorageRepositoryApiTests(TestCase):
             }
         )
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         repo = Repository.objects.get(name="local-disk")
         result = self._run_create_task(repo)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error_code"], REPOSITORY_ALREADY_EXISTS_CODE)
         self.assertFalse(Repository.objects.filter(name="local-disk").exists())
-        self.assertEqual(Credential.objects.filter(organization_id=self.org.id).count(), 0)
+        self.assertEqual(
+            Credential.objects.filter(organization_id=self.org.id).count(), 0
+        )
 
     @mock.patch(
         "apps.storage.services.internal.proxy_fs_repository.run_agent_task_sync"
     )
-    def test_create_proxy_fs_detects_nested_existing_data_error(self, run_agent_task_sync):
+    def test_create_proxy_fs_detects_nested_existing_data_error(
+        self, run_agent_task_sync
+    ):
         proxy = Node.objects.create(
             organization=self.org,
             name="proxy-fs-nested-conflict",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.101",
         )
         run_agent_task_sync.return_value = SimpleNamespace(
@@ -1108,7 +1707,9 @@ class StorageRepositoryApiTests(TestCase):
             }
         )
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         repo = Repository.objects.get(name="local-disk-nested-conflict")
         result = self._run_create_task(repo)
         self.assertEqual(result["status"], "failed")
@@ -1116,7 +1717,9 @@ class StorageRepositoryApiTests(TestCase):
         self.assertFalse(
             Repository.objects.filter(name="local-disk-nested-conflict").exists()
         )
-        self.assertEqual(Credential.objects.filter(organization_id=self.org.id).count(), 0)
+        self.assertEqual(
+            Credential.objects.filter(organization_id=self.org.id).count(), 0
+        )
 
     @mock.patch(
         "apps.storage.services.internal.proxy_fs_repository.run_agent_task_sync"
@@ -1126,7 +1729,8 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="proxy-fs-nested-failure",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.102",
         )
         run_agent_task_sync.return_value = SimpleNamespace(
@@ -1150,7 +1754,9 @@ class StorageRepositoryApiTests(TestCase):
             }
         )
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         repo = Repository.objects.get(name="local-disk-nested-failure")
         result = self._run_create_task(repo)
         self.assertEqual(result["status"], "failed")
@@ -1161,7 +1767,9 @@ class StorageRepositoryApiTests(TestCase):
         repository_task = RepositoryTask.objects.get(repository=repository)
         self.assertIn("permission denied", repository_task.task.error_message)
 
-    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
     def test_create_failed_repositories_are_listed_by_default(self, initialize):
         initialize.side_effect = RepositoryInitializationError("S3 init failed")
         create = self._post_repository(self._s3_payload())
@@ -1200,7 +1808,9 @@ class StorageRepositoryApiTests(TestCase):
             format="json",
             **self._headers(),
         )
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         self.assertEqual(response.data["queued"], True)
         self.assertEqual(response.data["task_id"], "usage-refresh-task")
         apply_async.assert_called_once()
@@ -1227,7 +1837,9 @@ class StorageRepositoryApiTests(TestCase):
             format="json",
             **self._headers(),
         )
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         self.assertEqual(response.data["queued"], True)
         kwargs = apply_async.call_args.kwargs["kwargs"]
         self.assertEqual(kwargs["organization_id"], self.org.id)
@@ -1236,7 +1848,12 @@ class StorageRepositoryApiTests(TestCase):
 
     @mock.patch("apps.storage.repositories.views.validate_s3_connection")
     def test_validate_s3_connection_returns_buckets(self, validate_s3_connection):
-        validate_s3_connection.return_value = ["bucket-a", "bucket-b", "bucket-c", "bucket-d"]
+        validate_s3_connection.return_value = [
+            "bucket-a",
+            "bucket-b",
+            "bucket-c",
+            "bucket-d",
+        ]
         payload = {
             "endpoint": "https://s3.amazonaws.com",
             "region": "us-east-1",
@@ -1309,7 +1926,9 @@ class StorageRepositoryApiTests(TestCase):
         )
 
     @mock.patch("apps.storage.repositories.views.validate_s3_connection")
-    def test_validate_s3_failure_returns_stable_safe_error(self, validate_s3_connection):
+    def test_validate_s3_failure_returns_stable_safe_error(
+        self, validate_s3_connection
+    ):
         validate_s3_connection.side_effect = RepositoryInitializationError(
             "InvalidAccessKeyId: secret-token-value"
         )
@@ -1405,20 +2024,24 @@ class StorageRepositoryApiTests(TestCase):
             },
         )
 
-        self.assertEqual(nas_proxy_repository_subdir(repo), f"hp-repos/storage-{repo.id}")
+        self.assertEqual(
+            nas_proxy_repository_subdir(repo), f"hp-repos/storage-{repo.id}"
+        )
 
     def test_proxy_bound_nas_repository_payload_requires_bound_proxy(self):
         proxy = Node.objects.create(
             organization=self.org,
             name="repo-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         agent = Node.objects.create(
             organization=self.org,
             name="source-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         repo = Repository.objects.create(
             organization_id=self.org.id,
@@ -1462,7 +2085,9 @@ class StorageRepositoryApiTests(TestCase):
             username="storage-other@test.local",
             password="test-pass",
         )
-        other_org = Organization.objects.create(key="storage-other-org", name="Storage Other Org")
+        other_org = Organization.objects.create(
+            key="storage-other-org", name="Storage Other Org"
+        )
         Membership.objects.create(
             user=other_user,
             organization=other_org,
@@ -1515,7 +2140,9 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         self.assertTrue(Repository.objects.filter(id=repo.id).exists())
 
-    def test_delete_repository_preserves_completed_maintenance_tasks_and_creates_cleanup(self):
+    def test_delete_repository_preserves_completed_maintenance_tasks_and_creates_cleanup(
+        self,
+    ):
         repo = Repository.objects.create(
             organization_id=self.org.id,
             name="repo-with-completed-maintenance",
@@ -1524,7 +2151,11 @@ class StorageRepositoryApiTests(TestCase):
             health=Repository.Health.ONLINE,
             s3_platform=Repository.S3Platform.AWS,
             s3_bucket="completed-maintenance-bucket",
+            config={"prefix": "hfl", "access_key_id": "completed-maintenance"},
         )
+        reserve_repository_location(repo)
+        mark_repository_location_owned(repo)
+        mark_repository_location_ownership_verified(repo)
         discover_repository_execution_targets()
         target = RepositoryExecutionTarget.objects.get(repository=repo)
         repository_task = create_repository_operation_task(
@@ -1540,7 +2171,9 @@ class StorageRepositoryApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
         repo.refresh_from_db()
         self.assertEqual(repo.status, Repository.Status.REMOVING)
         self.assertTrue(RepositoryExecutionTarget.objects.filter(id=target.id).exists())
@@ -1563,7 +2196,11 @@ class StorageRepositoryApiTests(TestCase):
             health=Repository.Health.ONLINE,
             s3_platform=Repository.S3Platform.AWS,
             s3_bucket="active-maintenance-bucket",
+            config={"prefix": "hfl", "access_key_id": "active-maintenance"},
         )
+        reserve_repository_location(repo)
+        mark_repository_location_owned(repo)
+        mark_repository_location_ownership_verified(repo)
         discover_repository_execution_targets()
         target = RepositoryExecutionTarget.objects.get(repository=repo)
         create_repository_operation_task(
@@ -1576,5 +2213,7 @@ class StorageRepositoryApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_409_CONFLICT, response.content
+        )
         self.assertTrue(Repository.objects.filter(id=repo.id).exists())

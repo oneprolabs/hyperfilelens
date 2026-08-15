@@ -24,16 +24,20 @@ from apps.storage.repositories.models import (
     Credential,
     Repository,
     RepositoryExecutionTarget,
+    RepositoryLocationClaim,
     RepositoryTask,
 )
 from apps.storage.services.internal.nas_repository import (
     NASRepositoryError,
+    check_proxy_nas_repository,
     initialize_proxy_nas_repository,
     nas_mount_point,
+    nas_proxy_repository_subdir,
     validate_proxy_for_repository,
 )
 from apps.storage.services.internal.proxy_fs_repository import (
     ProxyFSRepositoryError,
+    check_proxy_fs_repository,
     initialize_proxy_fs_repository,
     validate_proxy_for_proxy_fs,
 )
@@ -41,9 +45,21 @@ from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_CODE,
     RepositoryAlreadyExistsError,
 )
+from apps.storage.services.internal.repository_execution_lock import (
+    repository_execution_lock,
+)
 from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
+    check_s3_repository,
     initialize_s3_repository,
+)
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_initializing,
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    mark_repository_location_residual,
+    release_repository_location,
+    reserve_repository_location,
 )
 from apps.storage.services.internal.repository_secrets import (
     scrub_secrets,
@@ -88,6 +104,16 @@ _CREATE_RUN_LOCK_TIMEOUT_SECONDS = 300
 _INITIALIZE_COMPLETE_PROGRESS = 85
 
 
+def _repository_claim_locator(repository: Repository) -> dict[str, Any]:
+    """Return the exact Claim coordinates for a bound NAS repository."""
+    if repository.repo_type != Repository.Type.NAS or not repository.bind_node_id:
+        return {}
+    return {
+        "owner_node_id": int(repository.bind_node_id),
+        "repository_subdir": nas_proxy_repository_subdir(repository),
+    }
+
+
 def repository_create_task_payload(repository_task: RepositoryTask) -> dict[str, Any]:
     task = repository_task.task
     return {
@@ -130,9 +156,12 @@ def enqueue_repository_create_task(
     dispatch: bool = True,
     remount_previous_node_id: int | None = None,
     remount_previous_mount_path: str | None = None,
+    remount_new_claim_id: int | None = None,
 ) -> RepositoryTask:
     if operation_type not in CREATE_OPERATION_TYPES:
-        raise ValidationError({"operation_type": "Unsupported repository create operation."})
+        raise ValidationError(
+            {"operation_type": "Unsupported repository create operation."}
+        )
     if (
         operation_type == RepositoryTask.OperationType.REPAIR_REMOUNT
         and remount_previous_node_id is None
@@ -170,7 +199,9 @@ def enqueue_repository_create_task(
                     }
                 )
 
-        owner_type, owner_node_id, owner_identity, target = _resolve_create_owner(locked)
+        owner_type, owner_node_id, owner_identity, target = _resolve_create_owner(
+            locked
+        )
         if locked.status != Repository.Status.CREATING:
             locked.status = Repository.Status.CREATING
             locked.save(update_fields=["status", "updated_at"])
@@ -193,6 +224,8 @@ def enqueue_repository_create_task(
             request_payload["previous_proxy_mount_path"] = str(
                 remount_previous_mount_path or ""
             ).strip()
+        if remount_new_claim_id is not None:
+            request_payload["remount_new_claim_id"] = int(remount_new_claim_id)
 
         task = create_task(
             organization_id=locked.organization_id,
@@ -227,9 +260,11 @@ def enqueue_repository_create_task(
         )
         if target is not None:
             if target.active_task_id:
-                active_status = Task.objects.filter(pk=target.active_task_id).values_list(
-                    "status", flat=True
-                ).first()
+                active_status = (
+                    Task.objects.filter(pk=target.active_task_id)
+                    .values_list("status", flat=True)
+                    .first()
+                )
                 if active_status in {
                     Task.Status.SUCCESS,
                     Task.Status.FAILED,
@@ -254,6 +289,59 @@ def enqueue_repository_create_task(
         return repository_task
 
 
+def retry_repository_create(
+    *,
+    repository: Repository,
+    requested_by=None,
+) -> RepositoryTask:
+    """Retry initialization on the existing failed Repository identity."""
+    if repository.status != Repository.Status.CREATE_FAILED:
+        active = active_repository_create_task(repository)
+        if active is not None:
+            return active
+        raise ValidationError(
+            {"detail": "Only a failed repository initialization can be retried."}
+        )
+    if repository.repo_type == Repository.Type.NAS and not repository.bind_node_id:
+        raise ValidationError(
+            {
+                "detail": (
+                    "Direct NAS repositories initialize when a backup source first "
+                    "uses them."
+                )
+            }
+        )
+    if not repository.credential_id:
+        raise ValidationError(
+            {"detail": "Repository credentials are unavailable for retry."}
+        )
+    if repository.repo_type in {Repository.Type.NAS, Repository.Type.PROXY_FS}:
+        preflight_bound_proxy(repository=repository)
+
+    with transaction.atomic():
+        locked = Repository.objects.select_for_update().get(
+            pk=repository.id,
+            organization_id=repository.organization_id,
+        )
+        if locked.status != Repository.Status.CREATE_FAILED:
+            active = active_repository_create_task(locked)
+            if active is not None:
+                return active
+            raise ValidationError(
+                {"detail": "Repository initialization is no longer retryable."}
+            )
+        from apps.storage.services.internal.repository_location import (
+            reserve_repository_location,
+        )
+
+        reserve_repository_location(locked)
+        return enqueue_repository_create_task(
+            repository=locked,
+            operation_type=RepositoryTask.OperationType.CREATE_REPOSITORY,
+            requested_by=requested_by,
+        )
+
+
 def run_repository_create_task(*, repository_task_id: int) -> dict[str, Any]:
     lock_key = f"storage:repository-create:run:{int(repository_task_id)}"
     owner_token = str(uuid4())
@@ -264,7 +352,19 @@ def run_repository_create_task(*, repository_task_id: int) -> dict[str, Any]:
             "idempotent": True,
         }
     try:
-        return _run_repository_create_task_locked(repository_task_id=repository_task_id)
+        with repository_execution_lock(
+            operation="repository-create",
+            operation_id=repository_task_id,
+        ) as acquired:
+            if not acquired:
+                return {
+                    "status": "locked",
+                    "repository_task_id": repository_task_id,
+                    "idempotent": True,
+                }
+            return _run_repository_create_task_locked(
+                repository_task_id=repository_task_id
+            )
     finally:
         if cache.get(lock_key) == owner_token:
             cache.delete(lock_key)
@@ -298,9 +398,8 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
     ):
         # Worker died after repository finalize but before task completion.
         return _complete_create_success(repository_task)
-    if (
-        task.status == Task.Status.RUNNING
-        and _remount_failure_rollback_applied(repository_task, repository)
+    if task.status == Task.Status.RUNNING and _remount_failure_rollback_applied(
+        repository_task, repository
     ):
         # Failure rollback persisted, but the task never reached a terminal status.
         return _complete_create_failure_already_applied(
@@ -315,19 +414,67 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
     physical_initialize_done = initialize_done
     try:
         if not initialize_done:
-            _set_create_step(task, "prepare_repository_create", TaskStep.Status.SUCCESS, 10)
-            _set_create_step(task, "verify_repository_owner", TaskStep.Status.RUNNING, 20)
-            if repository_task.operation_type != RepositoryTask.OperationType.REPAIR_REMOUNT:
-                if repository.repo_type in {Repository.Type.NAS, Repository.Type.PROXY_FS}:
+            _set_create_step(
+                task, "prepare_repository_create", TaskStep.Status.SUCCESS, 10
+            )
+            _set_create_step(
+                task, "verify_repository_owner", TaskStep.Status.RUNNING, 20
+            )
+            if (
+                repository_task.operation_type
+                != RepositoryTask.OperationType.REPAIR_REMOUNT
+            ):
+                if repository.repo_type in {
+                    Repository.Type.NAS,
+                    Repository.Type.PROXY_FS,
+                }:
                     preflight_bound_proxy(repository=repository)
-            _set_create_step(task, "verify_repository_owner", TaskStep.Status.SUCCESS, 35)
+            _set_create_step(
+                task, "verify_repository_owner", TaskStep.Status.SUCCESS, 35
+            )
             _set_create_step(task, "initialize_repository", TaskStep.Status.RUNNING, 45)
+            if repository_task.operation_type in {
+                RepositoryTask.OperationType.CREATE_REPOSITORY,
+                RepositoryTask.OperationType.REPAIR_BIND,
+            }:
+                mark_repository_location_initializing(
+                    repository,
+                    **_repository_claim_locator(repository),
+                )
+            elif (
+                repository_task.operation_type
+                == RepositoryTask.OperationType.REPAIR_REMOUNT
+            ):
+                _prepare_remount_location(repository_task, repository)
 
-            if repository_task.operation_type == RepositoryTask.OperationType.REPAIR_REMOUNT:
+            initialization_outcome = None
+            if (
+                repository_task.operation_type
+                == RepositoryTask.OperationType.REPAIR_REMOUNT
+            ):
                 _run_repair_remount(repository_task)
             else:
-                _run_initialize(repository)
+                initialization_outcome = _run_initialize(repository)
             physical_initialize_done = True
+            if (
+                repository_task.operation_type
+                == RepositoryTask.OperationType.REPAIR_REMOUNT
+            ):
+                mark_repository_location_owned(
+                    repository,
+                    owner_node_id=int(repository.bind_node_id or 0) or None,
+                    repository_subdir=nas_proxy_repository_subdir(repository),
+                )
+            else:
+                mark_repository_location_owned(
+                    repository,
+                    **_repository_claim_locator(repository),
+                )
+            if _outcome_ownership_verified(initialization_outcome):
+                mark_repository_location_ownership_verified(
+                    repository,
+                    **_repository_claim_locator(repository),
+                )
 
             _set_create_step(
                 task,
@@ -336,26 +483,72 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
                 _INITIALIZE_COMPLETE_PROGRESS,
             )
 
-        _set_create_step(task, "finalize_repository_create", TaskStep.Status.RUNNING, 90)
+        _set_create_step(
+            task, "finalize_repository_create", TaskStep.Status.RUNNING, 90
+        )
         return _complete_create_success(repository_task)
     except RepositoryAlreadyExistsError as exc:
         message = _safe_error_message(repository, str(exc))
-        # CREATE re-entry after a successful physical init must finalize, not
-        # delete. REPAIR_BIND conflicts still mean "target already occupied" and
-        # must restore the unbound NAS row instead of marking it online.
+        # Existing physical state may belong to an interrupted attempt or an
+        # unrelated repository. Only a resumed task or an explicit retry with
+        # a prior Claim may verify access and continue; a first attempt must
+        # never adopt pre-existing storage.
         if (
-            not started_now
-            and repository.status == Repository.Status.CREATING
+            repository.status == Repository.Status.CREATING
             and repository_task.operation_type
-            == RepositoryTask.OperationType.CREATE_REPOSITORY
-        ):
-            logger.warning(
-                "repository create resume treating already-exists as success "
-                "repository_id=%s repository_task_id=%s",
-                repository.id,
-                repository_task.id,
+            in {
+                RepositoryTask.OperationType.CREATE_REPOSITORY,
+                RepositoryTask.OperationType.REPAIR_BIND,
+            }
+            and _may_recover_existing_location(
+                repository,
+                resumed=not started_now,
+                **_repository_claim_locator(repository),
             )
-            return _complete_create_success(repository_task)
+        ):
+            try:
+                verification_outcome = _verify_existing_repository_access(repository)
+            except Exception as verify_exc:
+                logger.warning(
+                    "repository create rejected unverified existing location "
+                    "repository_id=%s repository_task_id=%s error=%s",
+                    repository.id,
+                    repository_task.id,
+                    _safe_error_message(repository, _exception_message(verify_exc)),
+                )
+                mark_repository_location_residual(
+                    repository,
+                    **_repository_claim_locator(repository),
+                )
+                _fail_create_keep_row(
+                    repository_task,
+                    error_code=REPOSITORY_ALREADY_EXISTS_CODE,
+                    message=message,
+                    physical_initialize_done=False,
+                )
+                return {
+                    "status": "failed",
+                    "repository_task_id": repository_task.id,
+                    "error_code": REPOSITORY_ALREADY_EXISTS_CODE,
+                    "error": message,
+                }
+            else:
+                logger.warning(
+                    "repository create verified existing repository access "
+                    "repository_id=%s repository_task_id=%s",
+                    repository.id,
+                    repository_task.id,
+                )
+                mark_repository_location_owned(
+                    repository,
+                    **_repository_claim_locator(repository),
+                )
+                if _outcome_ownership_verified(verification_outcome):
+                    mark_repository_location_ownership_verified(
+                        repository,
+                        **_repository_claim_locator(repository),
+                    )
+                return _complete_create_success(repository_task)
         if repository_task.operation_type == RepositoryTask.OperationType.REPAIR_BIND:
             _fail_repair_bind_already_exists(repository_task, message=message)
         else:
@@ -367,6 +560,21 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
             "error": message,
         }
     except Exception as exc:
+        if repository_task.operation_type in {
+            RepositoryTask.OperationType.CREATE_REPOSITORY,
+            RepositoryTask.OperationType.REPAIR_BIND,
+        }:
+            claim_locator = _repository_claim_locator(repository)
+            if physical_initialize_done:
+                mark_repository_location_owned(
+                    repository,
+                    **claim_locator,
+                )
+            else:
+                mark_repository_location_residual(
+                    repository,
+                    **claim_locator,
+                )
         message = _safe_error_message(repository, _exception_message(exc))
         error_code = _create_error_code(exc)
         if isinstance(exc, RepositoryInitializationError):
@@ -392,7 +600,10 @@ def _initialize_step_complete(task: Task) -> bool:
     progress = int(task.progress or 0)
     if current_step == "finalize_repository_create":
         return True
-    if current_step == "initialize_repository" and progress >= _INITIALIZE_COMPLETE_PROGRESS:
+    if (
+        current_step == "initialize_repository"
+        and progress >= _INITIALIZE_COMPLETE_PROGRESS
+    ):
         return True
     return False
 
@@ -409,7 +620,9 @@ def _complete_create_success(repository_task: RepositoryTask) -> dict[str, Any]:
         repository.save(
             update_fields=["status", "health", "last_checked_at", "updated_at"]
         )
-        _set_create_step(task, "finalize_repository_create", TaskStep.Status.SUCCESS, 100)
+        _set_create_step(
+            task, "finalize_repository_create", TaskStep.Status.SUCCESS, 100
+        )
         complete_task(
             task_uuid=task.task_uuid,
             organization_id=task.organization_id,
@@ -450,7 +663,9 @@ def _resolve_create_owner(
 
     node_id = int(repository.bind_node_id or 0) or None
     if not node_id:
-        raise ValidationError({"detail": "Bound proxy node is required for repository create."})
+        raise ValidationError(
+            {"detail": "Bound proxy node is required for repository create."}
+        )
 
     target_key = f"repository:{repository.id}"
     target, _created = RepositoryExecutionTarget.objects.update_or_create(
@@ -473,17 +688,61 @@ def _resolve_create_owner(
     )
 
 
-def _run_initialize(repository: Repository) -> None:
+def _run_initialize(repository: Repository):
     if repository.repo_type == Repository.Type.NAS:
-        initialize_proxy_nas_repository(repository)
-        return
+        return initialize_proxy_nas_repository(repository)
     if repository.repo_type == Repository.Type.PROXY_FS:
-        initialize_proxy_fs_repository(repository)
-        return
+        return initialize_proxy_fs_repository(repository)
     if repository.repo_type == Repository.Type.S3:
         initialize_s3_repository(repository)
         return
-    raise ValidationError(f"Unsupported repository type for create: {repository.repo_type}")
+    raise ValidationError(
+        f"Unsupported repository type for create: {repository.repo_type}"
+    )
+
+
+def _outcome_ownership_verified(outcome: object) -> bool:
+    result = getattr(outcome, "result", None)
+    return isinstance(result, dict) and result.get("ownership_verified") is True
+
+
+def _verify_existing_repository_access(repository: Repository):
+    """Prove this repository row can open the existing Kopia repository."""
+    if repository.repo_type == Repository.Type.S3:
+        check_s3_repository(repository)
+        return
+    if repository.repo_type == Repository.Type.NAS:
+        return check_proxy_nas_repository(repository, health_only=True)
+    if repository.repo_type == Repository.Type.PROXY_FS:
+        return check_proxy_fs_repository(repository, health_only=True)
+    raise ValidationError(
+        f"Unsupported repository type for verification: {repository.repo_type}"
+    )
+
+
+def _may_recover_existing_location(
+    repository: Repository,
+    *,
+    resumed: bool,
+    owner_node_id: int | None = None,
+    repository_subdir: str | None = None,
+) -> bool:
+    """Allow access verification only for a recoverable prior attempt."""
+    recoverable_states = [
+        RepositoryLocationClaim.State.OWNED,
+        RepositoryLocationClaim.State.RESIDUAL,
+    ]
+    if resumed:
+        recoverable_states.append(RepositoryLocationClaim.State.INITIALIZING)
+    claims = repository.location_claims.filter(
+        scope=RepositoryLocationClaim.Scope.REPOSITORY,
+        state__in=recoverable_states,
+    )
+    if owner_node_id is not None:
+        claims = claims.filter(owner_node_id=owner_node_id)
+    if repository_subdir is not None:
+        claims = claims.filter(root_path=str(repository_subdir).strip("/"))
+    return claims.exists()
 
 
 def _run_repair_remount(repository_task: RepositoryTask) -> None:
@@ -523,9 +782,71 @@ def _run_repair_remount(repository_task: RepositoryTask) -> None:
             repository=repository,
             old_node_id=int(previous_node_id),
         )
+    _finalize_remount_location(repository_task, repository)
 
 
-def _fail_repair_bind_already_exists(repository_task: RepositoryTask, *, message: str) -> None:
+def _prepare_remount_location(
+    repository_task: RepositoryTask,
+    repository: Repository,
+) -> None:
+    """Ensure only the intended new Proxy Claim enters initialization."""
+    payload = repository_task.task.request_payload or {}
+    intended_node_id = int(payload.get("bind_node_id") or 0)
+    if not intended_node_id:
+        raise ValidationError("Remount target proxy is unavailable.")
+    claim_id = int(payload.get("remount_new_claim_id") or 0)
+    claim = None
+    if claim_id:
+        claim = repository.location_claims.filter(
+            id=claim_id,
+            owner_node_id=intended_node_id,
+            root_path=nas_proxy_repository_subdir(repository),
+            state__in=[
+                RepositoryLocationClaim.State.RESERVED,
+                RepositoryLocationClaim.State.INITIALIZING,
+                RepositoryLocationClaim.State.RESIDUAL,
+                RepositoryLocationClaim.State.OWNED,
+            ],
+        ).first()
+    if claim is None:
+        # Compatibility for a remount accepted by an older Controller before
+        # the Claim handoff fields were introduced.
+        claim = reserve_repository_location(repository)
+    if claim is None or int(claim.owner_node_id or 0) != intended_node_id:
+        raise ValidationError("Remount target location could not be reserved.")
+    mark_repository_location_initializing(
+        repository,
+        owner_node_id=intended_node_id,
+        repository_subdir=nas_proxy_repository_subdir(repository),
+        include_residual=True,
+    )
+
+
+def _finalize_remount_location(
+    repository_task: RepositoryTask,
+    repository: Repository,
+) -> None:
+    """Commit the new Proxy Claim and release only the previous Proxy Claim."""
+    payload = repository_task.task.request_payload or {}
+    intended_node_id = int(payload.get("bind_node_id") or 0)
+    previous_node_id = int(payload.get("previous_bind_node_id") or 0)
+    repository_subdir = nas_proxy_repository_subdir(repository)
+    mark_repository_location_owned(
+        repository,
+        owner_node_id=intended_node_id or None,
+        repository_subdir=repository_subdir,
+    )
+    if previous_node_id and previous_node_id != intended_node_id:
+        release_repository_location(
+            repository,
+            owner_node_id=previous_node_id,
+            repository_subdir=repository_subdir,
+        )
+
+
+def _fail_repair_bind_already_exists(
+    repository_task: RepositoryTask, *, message: str
+) -> None:
     """Keep the unbound NAS row when bind discovers an existing Kopia repository."""
     task = repository_task.task
     with transaction.atomic():
@@ -541,6 +862,10 @@ def _fail_repair_bind_already_exists(repository_task: RepositoryTask, *, message
             max(1, int(task.progress or 0)),
         )
         if repository is not None:
+            mark_repository_location_residual(
+                repository,
+                **_repository_claim_locator(repository),
+            )
             _restore_unbound_nas(repository)
         complete_task(
             task_uuid=task.task_uuid,
@@ -553,35 +878,51 @@ def _fail_repair_bind_already_exists(repository_task: RepositoryTask, *, message
     _clear_target_active_task(repository_task)
 
 
-def _fail_create_already_exists(repository_task: RepositoryTask, *, message: str) -> None:
+def _fail_create_already_exists(
+    repository_task: RepositoryTask, *, message: str
+) -> None:
     task = repository_task.task
-    repository = repository_task.repository
-    credential_id = repository.credential_id
-    _set_create_step(
-        task,
-        str(task.current_step or "initialize_repository"),
-        TaskStep.Status.FAILED,
-        max(1, int(task.progress or 0)),
-    )
-    # Finalize the platform task, then detach PROTECT'd execution-target links
-    # before deleting the repository row.
-    _clear_target_active_task(repository_task)
-    complete_task(
-        task_uuid=task.task_uuid,
-        organization_id=task.organization_id,
-        status=Task.Status.FAILED,
-        progress=max(1, int(task.progress or 0)),
-        error_code=REPOSITORY_ALREADY_EXISTS_CODE,
-        error_message=message[:2000],
-    )
-    repository_id = int(repository.id)
-    RepositoryTask.objects.filter(repository_id=repository_id).update(
-        execution_target=None
-    )
-    RepositoryExecutionTarget.objects.filter(repository_id=repository_id).delete()
-    Repository.objects.filter(pk=repository_id).delete()
-    if credential_id:
-        Credential.objects.filter(id=credential_id).delete()
+    with transaction.atomic():
+        repository = Repository.objects.select_for_update().get(
+            pk=repository_task.repository_id
+        )
+        credential_id = repository.credential_id
+        organization_id = repository.organization_id
+        _set_create_step(
+            task,
+            str(task.current_step or "initialize_repository"),
+            TaskStep.Status.FAILED,
+            max(1, int(task.progress or 0)),
+        )
+        # Finalize the platform task, then detach PROTECT'd execution-target
+        # links before deleting the failed repository row.
+        _clear_target_active_task(repository_task)
+        complete_task(
+            task_uuid=task.task_uuid,
+            organization_id=task.organization_id,
+            status=Task.Status.FAILED,
+            progress=max(1, int(task.progress or 0)),
+            error_code=REPOSITORY_ALREADY_EXISTS_CODE,
+            error_message=message[:2000],
+        )
+        repository_id = int(repository.id)
+        release_repository_location(repository)
+        RepositoryTask.objects.filter(repository_id=repository_id).update(
+            execution_target=None
+        )
+        RepositoryExecutionTarget.objects.filter(repository_id=repository_id).delete()
+        Repository.objects.filter(pk=repository_id).delete()
+        if (
+            credential_id
+            and not Repository.objects.filter(
+                organization_id=organization_id,
+                credential_id=credential_id,
+            ).exists()
+        ):
+            Credential.objects.filter(
+                organization_id=organization_id,
+                id=credential_id,
+            ).delete()
 
 
 def _fail_create_keep_row(
@@ -667,10 +1008,9 @@ def _remount_failure_rollback_applied(
     intended_new_node_id = payload.get("bind_node_id")
     if not previous_node_id or not intended_new_node_id:
         return False
-    return (
-        int(repository.bind_node_id or 0) == int(previous_node_id)
-        and int(intended_new_node_id) != int(previous_node_id)
-    )
+    return int(repository.bind_node_id or 0) == int(previous_node_id) and int(
+        intended_new_node_id
+    ) != int(previous_node_id)
 
 
 def _complete_create_failure_already_applied(
@@ -731,6 +1071,7 @@ def _restore_previous_proxy_binding(
 ) -> None:
     payload = repository_task.task.request_payload or {}
     previous_node_id = payload.get("previous_bind_node_id")
+    intended_new_node_id = int(payload.get("bind_node_id") or 0)
     previous_mount = str(payload.get("previous_proxy_mount_path") or "").strip()
     config = dict(repository.config or {})
     if previous_node_id:
@@ -768,6 +1109,12 @@ def _restore_previous_proxy_binding(
             "updated_at",
         ]
     )
+    if intended_new_node_id:
+        mark_repository_location_residual(
+            repository,
+            owner_node_id=intended_new_node_id,
+            repository_subdir=nas_proxy_repository_subdir(repository),
+        )
 
 
 def _clear_target_active_task(repository_task: RepositoryTask) -> None:
@@ -789,7 +1136,9 @@ def _set_create_step(task: Task, step_name: str, status: str, progress: int) -> 
 def _dispatch_create_task(repository_task_id: int) -> None:
     from apps.storage.tasks import execute_repository_operation
 
-    execute_repository_operation.apply_async(kwargs={"repository_task_id": repository_task_id})
+    execute_repository_operation.apply_async(
+        kwargs={"repository_task_id": repository_task_id}
+    )
 
 
 def _exception_message(exc: Exception) -> str:
@@ -852,5 +1201,6 @@ __all__ = [
     "enqueue_repository_create_task",
     "preflight_bound_proxy",
     "repository_create_task_payload",
+    "retry_repository_create",
     "run_repository_create_task",
 ]

@@ -4,9 +4,10 @@ Storage read facade — other apps should import this module only.
 
 from __future__ import annotations
 
-from django.db.models import Q, QuerySet
+from django.db.models import Prefetch, Q, QuerySet
 
-from apps.storage.repositories.models import Credential, Repository
+from apps.storage.repositories.models import Credential, Repository, RepositoryTask
+from apps.task.models import Task
 from apps.storage.provider_catalog.catalog import (
     effective_catalog as _effective_provider_catalog,
     effective_provider as _effective_provider,
@@ -55,14 +56,35 @@ def list_repositories(
     if search:
         term = search.strip()
         if term:
-            field_q = _repository_field_search_q(search_field or "", term) if search_field else None
-            qs = qs.filter(field_q or (
-                Q(name__icontains=term)
-                | Q(s3_bucket__icontains=term)
-                | Q(nas_protocol__icontains=term)
-                | Q(bind_node_type__icontains=term)
-            ))
-    return qs.order_by("name", "id")
+            field_q = (
+                _repository_field_search_q(search_field or "", term)
+                if search_field
+                else None
+            )
+            qs = qs.filter(
+                field_q
+                or (
+                    Q(name__icontains=term)
+                    | Q(s3_bucket__icontains=term)
+                    | Q(nas_protocol__icontains=term)
+                    | Q(bind_node_type__icontains=term)
+                )
+            )
+    active_lifecycle_operations = (
+        RepositoryTask.objects.filter(
+            task__status__in=(Task.Status.PENDING, Task.Status.RUNNING),
+        )
+        .select_related("task")
+        .order_by("-created_at", "-id")
+    )
+    return qs.prefetch_related(
+        "location_claims",
+        Prefetch(
+            "repository_tasks",
+            queryset=active_lifecycle_operations,
+            to_attr="active_lifecycle_operations",
+        ),
+    ).order_by("name", "id")
 
 
 def _repository_field_search_q(field: str, term: str) -> Q | None:

@@ -24,15 +24,19 @@ func (e *Engine) runManagedRepositoryCleanup(
 	if !ok {
 		return "failed", nil, "repository payload is required"
 	}
-	if spec.Type == "s3" {
-		return "failed", nil, "s3 repository cleanup must run on the controller"
-	}
 	if err := ctx.Err(); err != nil {
 		return "failed", nil, "canceled"
 	}
 	operationType := strings.ToLower(strings.TrimSpace(payloadStringValue(p.Extra["operation_type"])))
 	if operationType != "cleanup.target" && operationType != "cleanup.repository" {
 		return "failed", nil, fmt.Sprintf("unsupported repository cleanup operation %q", operationType)
+	}
+	if spec.Type == "s3" {
+		if spec.Ownership == nil {
+			return "failed", nil, "repository ownership payload is required"
+		}
+		deleteBucket, _ := payloadBoolValue(p.Extra["delete_bucket_if_empty"])
+		return e.runS3RepositoryCleanup(ctx, rep, taskID, spec, deleteBucket)
 	}
 
 	result := map[string]any{
@@ -98,7 +102,66 @@ func (e *Engine) runManagedRepositoryCleanup(
 		result["scope"] = "legacy_local_disk"
 		result["retained_resources"] = []string{"legacy_local_disk_directory"}
 	} else {
-		_, existed, err := deleteManagedRepositoryPath(ctx, repositoryPath, allowedRoot)
+		if _, statErr := os.Lstat(repositoryPath); statErr == nil {
+			ownershipVerified, _ := payloadBoolValue(p.Extra["ownership_verified"])
+			if !ownershipVerified && spec.Ownership != nil {
+				// The physical marker is the destructive-operation authority.
+				// A damaged Kopia repository remains safely cleanable when its
+				// signed owner matches the requested Repository identity.
+				ownershipVerified = verifyFilesystemRepositoryOwnership(spec, false) == nil
+			}
+			if !ownershipVerified {
+				// Marker-less legacy repositories still require a successful Kopia
+				// connection before any adoption/cleanup path can continue.
+				_, _, _, _, verifyMessage := e.prepareManagedRepository(
+					ctx,
+					rep,
+					taskID,
+					p,
+					repositoryPrepareConnect,
+				)
+				if verifyMessage != "" {
+					result["ownership_verified"] = false
+					return "failed", result, "physical repository ownership could not be verified: " + redactRepositoryCleanupPaths(
+						verifyMessage,
+						repositoryPath,
+						allowedRoot,
+					)
+				}
+			}
+			if spec.Ownership != nil {
+				if err := verifyFilesystemRepositoryOwnership(spec, false); err != nil {
+					result["ownership_verified"] = false
+					return "failed", result, redactRepositoryCleanupPaths(
+						"physical repository ownership could not be verified: "+err.Error(),
+						repositoryPath,
+						allowedRoot,
+					)
+				}
+				markerPath := filepath.Join(repositoryPath, repositoryOwnershipMarkerPath)
+				if err := rejectDescendantRepositoryOwners(repositoryPath, markerPath); err != nil {
+					return "failed", result, redactRepositoryCleanupPaths(
+						err.Error(),
+						repositoryPath,
+						allowedRoot,
+					)
+				}
+			}
+			result["ownership_verified"] = true
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return "failed", result, redactRepositoryCleanupPaths(statErr.Error(), repositoryPath, allowedRoot)
+		}
+		var existed bool
+		if spec.Ownership != nil {
+			_, existed, err = deleteOwnedManagedRepositoryPathForOwner(
+				ctx,
+				repositoryPath,
+				allowedRoot,
+				*spec.Ownership,
+			)
+		} else {
+			_, existed, err = deleteManagedRepositoryPath(ctx, repositoryPath, allowedRoot)
+		}
 		if err != nil {
 			return "failed", result, redactRepositoryCleanupPaths(err.Error(), repositoryPath, allowedRoot)
 		}
@@ -223,6 +286,209 @@ func deleteManagedRepositoryPath(ctx context.Context, path string, allowedRoot s
 		return cleaned, true, err
 	}
 	return cleaned, true, nil
+}
+
+func deleteOwnedManagedRepositoryPath(
+	ctx context.Context,
+	path string,
+	allowedRoot string,
+) (string, bool, error) {
+	return deleteOwnedManagedRepositoryPathWithRemover(
+		ctx,
+		path,
+		allowedRoot,
+		os.RemoveAll,
+	)
+}
+
+func deleteOwnedManagedRepositoryPathForOwner(
+	ctx context.Context,
+	path string,
+	allowedRoot string,
+	expected repositoryOwnership,
+) (string, bool, error) {
+	return deleteOwnedManagedRepositoryPathWithRemoverAndOwner(
+		ctx,
+		path,
+		allowedRoot,
+		os.RemoveAll,
+		&expected,
+	)
+}
+
+func deleteOwnedManagedRepositoryPathWithRemover(
+	ctx context.Context,
+	path string,
+	allowedRoot string,
+	removeAll func(string) error,
+) (string, bool, error) {
+	return deleteOwnedManagedRepositoryPathWithRemoverAndOwner(
+		ctx,
+		path,
+		allowedRoot,
+		removeAll,
+		nil,
+	)
+}
+
+func deleteOwnedManagedRepositoryPathWithRemoverAndOwner(
+	ctx context.Context,
+	path string,
+	allowedRoot string,
+	removeAll func(string) error,
+	expected *repositoryOwnership,
+) (string, bool, error) {
+	cleaned, err := validateRepositoryCleanupPath(path, allowedRoot)
+	if err != nil {
+		return "", false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return cleaned, false, err
+	}
+	info, err := os.Lstat(cleaned)
+	if errors.Is(err, os.ErrNotExist) {
+		return cleaned, false, nil
+	}
+	if err != nil {
+		return cleaned, false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return cleaned, true, fmt.Errorf("owned repository cleanup path must be a directory")
+	}
+
+	metadataPath := filepath.Join(cleaned, filepath.Dir(repositoryOwnershipMarkerPath))
+	markerPath := filepath.Join(cleaned, repositoryOwnershipMarkerPath)
+	if err := requireRegularRepositoryOwnershipMarker(metadataPath, markerPath); err != nil {
+		return cleaned, true, err
+	}
+	if expected != nil {
+		marker, markerErr := readRepositoryOwnershipMarker(markerPath)
+		if markerErr != nil {
+			return cleaned, true, markerErr
+		}
+		if marker == nil {
+			return cleaned, true, fmt.Errorf("repository ownership marker is missing")
+		}
+		if ownerErr := requireMatchingRepositoryOwner(*marker, *expected); ownerErr != nil {
+			return cleaned, true, ownerErr
+		}
+	}
+
+	entries, err := os.ReadDir(cleaned)
+	if err != nil {
+		return cleaned, true, err
+	}
+	for _, entry := range entries {
+		if entry.Name() == filepath.Base(metadataPath) {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return cleaned, true, err
+		}
+		if err := removeAll(filepath.Join(cleaned, entry.Name())); err != nil {
+			return cleaned, true, err
+		}
+	}
+
+	metadataEntries, err := os.ReadDir(metadataPath)
+	if err != nil {
+		return cleaned, true, err
+	}
+	for _, entry := range metadataEntries {
+		if entry.Name() == filepath.Base(markerPath) {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return cleaned, true, err
+		}
+		if err := removeAll(filepath.Join(metadataPath, entry.Name())); err != nil {
+			return cleaned, true, err
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return cleaned, true, err
+	}
+	if err := requireOnlyRepositoryOwnershipMarker(cleaned, metadataPath, markerPath); err != nil {
+		return cleaned, true, err
+	}
+	if expected != nil {
+		marker, markerErr := readRepositoryOwnershipMarker(markerPath)
+		if markerErr != nil {
+			return cleaned, true, markerErr
+		}
+		if marker == nil {
+			return cleaned, true, fmt.Errorf("repository ownership marker changed during cleanup")
+		}
+		if ownerErr := requireMatchingRepositoryOwner(*marker, *expected); ownerErr != nil {
+			return cleaned, true, ownerErr
+		}
+	}
+	if err := removeAll(markerPath); err != nil {
+		return cleaned, true, err
+	}
+	if err := os.Remove(metadataPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return cleaned, true, err
+	}
+	if err := os.Remove(cleaned); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return cleaned, true, err
+	}
+	if _, err := os.Lstat(cleaned); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			return cleaned, true, fmt.Errorf("repository cleanup path still exists")
+		}
+		return cleaned, true, err
+	}
+	return cleaned, true, nil
+}
+
+func requireRegularRepositoryOwnershipMarker(metadataPath string, markerPath string) error {
+	metadataInfo, err := os.Lstat(metadataPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("repository ownership marker is missing")
+		}
+		return err
+	}
+	if metadataInfo.Mode()&os.ModeSymlink != 0 || !metadataInfo.IsDir() {
+		return fmt.Errorf("repository ownership metadata path must be a directory")
+	}
+	markerInfo, err := os.Lstat(markerPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("repository ownership marker is missing")
+		}
+		return err
+	}
+	if markerInfo.Mode()&os.ModeSymlink != 0 || !markerInfo.Mode().IsRegular() {
+		return fmt.Errorf("repository ownership marker must be a regular file")
+	}
+	return nil
+}
+
+func requireOnlyRepositoryOwnershipMarker(
+	repositoryPath string,
+	metadataPath string,
+	markerPath string,
+) error {
+	if err := requireRegularRepositoryOwnershipMarker(metadataPath, markerPath); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(repositoryPath)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(metadataPath) {
+		return fmt.Errorf("repository data appeared during cleanup")
+	}
+	metadataEntries, err := os.ReadDir(metadataPath)
+	if err != nil {
+		return err
+	}
+	if len(metadataEntries) != 1 || metadataEntries[0].Name() != filepath.Base(markerPath) {
+		return fmt.Errorf("repository metadata appeared during cleanup")
+	}
+	return nil
 }
 
 func validateRepositoryCleanupPath(path string, allowedRoot string) (string, error) {

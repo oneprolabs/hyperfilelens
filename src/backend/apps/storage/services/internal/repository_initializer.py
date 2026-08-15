@@ -15,6 +15,11 @@ from apps.storage.services.internal.kopia_cli import (
 from apps.storage.services.internal.repository_errors import (
     RepositoryAlreadyExistsError,
 )
+from apps.storage.services.internal.repository_ownership import (
+    RepositoryOwnershipError,
+    claim_s3_repository_ownership,
+    verify_s3_repository_ownership,
+)
 from apps.storage.services.internal.s3_client import (
     S3ClientError,
     check_s3_bucket_readable,
@@ -143,12 +148,20 @@ def initialize_s3_repository(repository: Repository) -> None:
             config["s3_url_style"] = resolved_url_style
             repository.config = config
             repository.save(update_fields=["config", "updated_at"])
+        # The lifecycle path persists the Repository before initialization, so
+        # the ownership Claim is mandatory there. Keep this low-level helper
+        # compatible with older/unit callers that pass an unsaved model (there
+        # is no database Claim to coordinate for such an object); those calls
+        # cannot be used by the Controller lifecycle and therefore must not
+        # weaken persisted-repository cleanup authorization.
+        if repository.pk is not None:
+            claim_s3_repository_ownership(repository)
         create_s3_repository(repository)
     except S3UrlStyleProbeError as exc:
         raise RepositoryInitializationError(_sanitize(str(exc), repository)) from exc
     except KopiaRepositoryAlreadyExistsError as exc:
         raise RepositoryAlreadyExistsError(_sanitize(str(exc), repository)) from exc
-    except (S3ClientError, KopiaCliError) as exc:
+    except (S3ClientError, KopiaCliError, RepositoryOwnershipError) as exc:
         raise RepositoryInitializationError(_sanitize(str(exc), repository)) from exc
 
 
@@ -221,7 +234,12 @@ def verify_s3_bucket_access(
         })) from exc
 
 
-def check_s3_repository(repository: Repository) -> None:
+def check_s3_repository(
+    repository: Repository,
+    *,
+    refresh_namespace: bool = False,
+    adopt_legacy_ownership: bool = True,
+) -> None:
     config = repository.config or {}
     secrets_payload = resolve_repository_secrets(repository)
     try:
@@ -238,7 +256,12 @@ def check_s3_repository(repository: Repository) -> None:
         )
         connect_s3_repository(repository)
         kopia_status(repository)
-    except (S3ClientError, KopiaCliError) as exc:
+        verify_s3_repository_ownership(
+            repository,
+            adopt_legacy=adopt_legacy_ownership,
+            refresh_namespace=refresh_namespace,
+        )
+    except (S3ClientError, KopiaCliError, RepositoryOwnershipError) as exc:
         raise RepositoryInitializationError(_sanitize(str(exc), repository)) from exc
 
 

@@ -13,7 +13,11 @@ from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.storage.repositories.models import Repository, RepositoryUsageShard
+from apps.storage.repositories.models import (
+    Repository,
+    RepositoryLocationClaim,
+    RepositoryUsageShard,
+)
 from apps.storage.services.internal.kopia_cli import (
     KopiaCliError,
     connect_s3_repository,
@@ -575,11 +579,12 @@ def _upsert_direct_nas_agent_shard(
     probe: RepositoryUsageProbeResult | None = None,
     status: str | None = None,
     last_error: str = "",
+    is_active: bool = True,
 ) -> RepositoryUsageShard:
     defaults: dict[str, Any] = {
         "source_config_count": len(source_config_ids),
         "source_config_ids": source_config_ids,
-        "is_active": True,
+        "is_active": is_active,
         "last_checked_at": checked_at,
     }
     if probe is not None and probe.error == "":
@@ -630,9 +635,19 @@ def _sync_direct_nas_agent_usage_shards(repository: Repository) -> tuple[int | N
 
     checked_at = timezone.now()
     groups = _direct_nas_agent_config_groups(repository)
+    owned_keys = {
+        (int(node_id), str(root_path))
+        for node_id, root_path in RepositoryLocationClaim.objects.filter(
+            repository=repository,
+            scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+            state=RepositoryLocationClaim.State.OWNED,
+            owner_node_id__isnull=False,
+        ).values_list("owner_node_id", "root_path")
+    }
     active_keys: set[tuple[int, str]] = {
         (node_id, nas_agent_repository_subdir(node_id))
         for node_id in groups
+        if (node_id, nas_agent_repository_subdir(node_id)) in owned_keys
     }
     _mark_direct_nas_inactive_shards(
         repository=repository,
@@ -654,6 +669,18 @@ def _sync_direct_nas_agent_usage_shards(repository: Repository) -> tuple[int | N
     }
     for node_id, source_config_ids in groups.items():
         subdir = nas_agent_repository_subdir(node_id)
+        if (node_id, subdir) not in owned_keys:
+            _upsert_direct_nas_agent_shard(
+                repository=repository,
+                node_id=node_id,
+                repository_subdir=subdir,
+                source_config_ids=source_config_ids,
+                checked_at=checked_at,
+                status=RepositoryUsageShard.Status.SKIPPED,
+                last_error="Repository location ownership requires verification.",
+                is_active=False,
+            )
+            continue
         node = nodes_by_id.get(node_id)
         if node is None:
             _upsert_direct_nas_agent_shard(

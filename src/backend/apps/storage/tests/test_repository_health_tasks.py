@@ -7,6 +7,7 @@ from unittest import mock
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from apps.iam.models import Organization
 from apps.node.models import Node
@@ -15,15 +16,30 @@ from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
 from apps.storage.conf import repository_health_interval_seconds
 from apps.storage.periodic_tasks import register_periodic_tasks
-from apps.storage.repositories.models import Repository
+from apps.storage.repositories.models import Repository, RepositoryLocationClaim
 from apps.storage.services.interface import check_repository
+from apps.storage.services.internal.repository_initializer import (
+    RepositoryInitializationError,
+)
 from apps.storage.services.internal.nas_repository import (
+    NASRepositoryError,
     check_proxy_nas_repository,
     nas_agent_repository_subdir,
+    nas_proxy_repository_subdir,
 )
 from apps.storage.services.internal.repository_health import (
     probe_repository_health,
     probe_unbound_nas_repository_health,
+)
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    mark_repository_location_residual,
+    reserve_direct_nas_location,
+    reserve_repository_location,
+)
+from apps.storage.services.internal.repository_ownership import (
+    RepositoryOwnershipError,
 )
 from apps.storage.tasks import (
     check_storage_repository_health,
@@ -211,7 +227,9 @@ class RepositoryHealthTaskTests(TestCase):
         "apps.storage.tasks.probe_repository_health",
         side_effect=RuntimeError("network down"),
     )
-    def test_retry_failure_marks_repository_offline(self, _probe, _cache_add, _cache_delete):
+    def test_retry_failure_marks_repository_offline(
+        self, _probe, _cache_add, _cache_delete
+    ):
         repository = self._repository(
             "s3",
             Repository.Type.S3,
@@ -308,33 +326,58 @@ class UnboundNASRepositoryHealthTests(TestCase):
             organization=self.organization,
             name=name,
             role=role,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE if online else Node.Availability.OFFLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE
+            if online
+            else Node.Availability.OFFLINE,
             ip_address="10.0.1.1",
         )
 
     def _agent_config(self, node: Node, *, name: str):
-        return BackupConfig.objects.create(
+        config = BackupConfig.objects.create(
             organization_id=self.organization.id,
             name=name,
             source_type="agent",
             source_ref_id=node.id,
             repository_id=self.repository.id,
         )
+        self._mark_location_owned(node.id)
+        return config
 
     def _nas_config(self, source: SourceResource, *, name: str):
-        return BackupConfig.objects.create(
+        config = BackupConfig.objects.create(
             organization_id=self.organization.id,
             name=name,
             source_type="nas",
             source_ref_id=source.id,
             repository_id=self.repository.id,
         )
+        self._mark_location_owned(source.bound_node_id)
+        return config
+
+    def _mark_location_owned(self, node_id: int) -> None:
+        subdir = nas_agent_repository_subdir(node_id)
+        reserve_direct_nas_location(
+            repository=self.repository,
+            node_id=node_id,
+            repository_subdir=subdir,
+        )
+        mark_repository_location_owned(
+            self.repository,
+            owner_node_id=node_id,
+            repository_subdir=subdir,
+        )
+        mark_repository_location_ownership_verified(
+            self.repository,
+            owner_node_id=node_id,
+            repository_subdir=subdir,
+        )
 
     @staticmethod
     def _agent_outcome(status: str):
         return mock.Mock(
             task=mock.Mock(id="node-task", status=status, last_error=""),
-            result={},
+            result={"ownership_verified": status == "success"},
             timed_out=False,
             ok=status == "success",
         )
@@ -364,6 +407,102 @@ class UnboundNASRepositoryHealthTests(TestCase):
             call["payload"]["repository"]["subdir"],
             nas_agent_repository_subdir(agent.id),
         )
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_legacy_unverified_agent_path_is_adopted_by_health_probe(
+        self,
+        run_agent,
+    ):
+        agent = self._node("legacy-agent")
+        BackupConfig.objects.create(
+            organization_id=self.organization.id,
+            name="legacy-agent-config",
+            source_type="agent",
+            source_ref_id=agent.id,
+            repository_id=self.repository.id,
+        )
+        subdir = nas_agent_repository_subdir(agent.id)
+        claim = reserve_direct_nas_location(
+            repository=self.repository,
+            node_id=agent.id,
+            repository_subdir=subdir,
+        )
+        mark_repository_location_owned(
+            self.repository,
+            owner_node_id=agent.id,
+            repository_subdir=subdir,
+        )
+        claim.legacy_adoption_required = True
+        claim.save(update_fields=["legacy_adoption_required", "updated_at"])
+        run_agent.return_value = self._agent_outcome("success")
+
+        health = probe_unbound_nas_repository_health(self.repository)
+
+        self.assertEqual(health, Repository.Health.ONLINE)
+        claim.refresh_from_db()
+        self.assertIsNotNone(claim.ownership_verified_at)
+        self.assertTrue(
+            run_agent.call_args.kwargs["payload"]["allow_ownership_adoption"]
+        )
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_direct_nas_health_requires_explicit_ownership_proof(self, run_agent):
+        agent = self._node("old-agent")
+        BackupConfig.objects.create(
+            organization_id=self.organization.id,
+            name="old-agent-config",
+            source_type="agent",
+            source_ref_id=agent.id,
+            repository_id=self.repository.id,
+        )
+        subdir = nas_agent_repository_subdir(agent.id)
+        claim = reserve_direct_nas_location(
+            repository=self.repository,
+            node_id=agent.id,
+            repository_subdir=subdir,
+        )
+        mark_repository_location_owned(
+            self.repository,
+            owner_node_id=agent.id,
+            repository_subdir=subdir,
+        )
+        run_agent.return_value = mock.Mock(
+            task=mock.Mock(id="node-task", status="success", last_error=""),
+            result={},
+            timed_out=False,
+            ok=True,
+        )
+
+        health = probe_unbound_nas_repository_health(self.repository)
+
+        self.assertEqual(health, Repository.Health.OFFLINE)
+        claim.refresh_from_db()
+        self.assertIsNone(claim.ownership_verified_at)
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_legacy_direct_nas_health_stays_online_with_old_agent(self, run_agent):
+        agent = self._node("legacy-compatible-agent")
+        self._agent_config(agent, name="legacy-compatible-config")
+        claim = RepositoryLocationClaim.objects.get(
+            repository=self.repository,
+            owner_node_id=agent.id,
+            scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+        )
+        claim.legacy_adoption_required = True
+        claim.ownership_verified_at = None
+        claim.save(update_fields=["legacy_adoption_required", "ownership_verified_at"])
+        run_agent.return_value = mock.Mock(
+            task=mock.Mock(id="old-agent-task", status="success", last_error=""),
+            result={},
+            timed_out=False,
+            ok=True,
+        )
+
+        health = probe_unbound_nas_repository_health(self.repository)
+
+        self.assertEqual(health, Repository.Health.ONLINE)
+        claim.refresh_from_db()
+        self.assertIsNone(claim.ownership_verified_at)
 
     @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
     def test_all_execution_paths_failed_marks_repository_offline(self, run_agent):
@@ -452,6 +591,29 @@ class UnboundNASRepositoryHealthTests(TestCase):
         self.assertEqual(health, Repository.Health.OFFLINE)
         run_agent.assert_not_called()
 
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_residual_location_is_rechecked_without_ownership_adoption(self, run_agent):
+        agent = self._node("agent-a")
+        self._agent_config(agent, name="agent-config")
+        mark_repository_location_residual(
+            self.repository,
+            owner_node_id=agent.id,
+            repository_subdir=nas_agent_repository_subdir(agent.id),
+        )
+        RepositoryLocationClaim.objects.filter(
+            repository=self.repository,
+            owner_node_id=agent.id,
+            scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+        ).update(ownership_verified_at=None)
+
+        health = probe_unbound_nas_repository_health(self.repository)
+
+        self.assertEqual(health, Repository.Health.OFFLINE)
+        run_agent.assert_called_once()
+        self.assertFalse(
+            run_agent.call_args.kwargs["payload"]["allow_ownership_adoption"]
+        )
+
 
 class RepositoryHealthProbeTests(TestCase):
     def setUp(self):
@@ -478,13 +640,19 @@ class RepositoryHealthProbeTests(TestCase):
         self.assertEqual(health, Repository.Health.ONLINE)
         check_proxy_nas.assert_called_once_with(repository, health_only=True)
 
+    @mock.patch(
+        "apps.storage.services.internal.repository_location.mark_repository_location_ownership_verified"
+    )
     @mock.patch("apps.storage.services.internal.nas_repository.run_agent_task_sync")
-    def test_bound_nas_health_probe_does_not_sync_mount_path(self, run_agent):
+    def test_bound_nas_health_probe_does_not_sync_mount_path(
+        self, run_agent, mark_ownership_verified
+    ):
         proxy = Node.objects.create(
             organization=self.organization,
             name="proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         repository = Repository.objects.create(
             organization_id=self.organization.id,
@@ -504,7 +672,10 @@ class RepositoryHealthProbeTests(TestCase):
         original_config = dict(repository.config)
         run_agent.return_value = mock.Mock(
             task=mock.Mock(id="node-task", status="success", last_error=""),
-            result={"mount_point": "/new/mount/path"},
+            result={
+                "mount_point": "/new/mount/path",
+                "ownership_verified": True,
+            },
             timed_out=False,
             ok=True,
         )
@@ -515,6 +686,44 @@ class RepositoryHealthProbeTests(TestCase):
         self.assertEqual(repository.config, original_config)
         self.assertEqual(repository.updated_at, original_updated_at)
         self.assertTrue(run_agent.call_args.kwargs["payload"]["health_only"])
+        mark_ownership_verified.assert_called_once_with(
+            repository,
+            owner_node_id=proxy.id,
+            repository_subdir=nas_proxy_repository_subdir(repository),
+        )
+
+    @mock.patch("apps.storage.services.internal.nas_repository.run_agent_task_sync")
+    def test_bound_nas_health_requires_explicit_ownership_proof(self, run_agent):
+        proxy = Node.objects.create(
+            organization=self.organization,
+            name="old-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        repository = Repository.objects.create(
+            organization_id=self.organization.id,
+            name="bound-nas-without-proof",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+            config={
+                "server_address": "10.0.0.10",
+                "share_path": "/backup",
+                "kopia_password": "repo-pass",
+            },
+        )
+        run_agent.return_value = mock.Mock(
+            task=mock.Mock(id="node-task", status="success", last_error=""),
+            result={},
+            timed_out=False,
+            ok=True,
+        )
+
+        with self.assertRaises(NASRepositoryError):
+            check_proxy_nas_repository(repository, health_only=True)
 
     @mock.patch("apps.storage.services.interface.sync_repository_usage")
     @mock.patch(
@@ -544,3 +753,40 @@ class RepositoryHealthProbeTests(TestCase):
         self.assertIsNotNone(repository.last_checked_at)
         direct_probe.assert_called_once_with(repository)
         sync_usage.assert_called_once()
+
+    @mock.patch("apps.storage.services.interface.check_s3_repository")
+    def test_manual_s3_check_invalidates_claim_on_ownership_failure(
+        self,
+        check_s3_repository,
+    ):
+        repository = Repository.objects.create(
+            organization_id=self.organization.id,
+            name="s3-missing-owner-marker",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.CUSTOM,
+            s3_bucket="bucket",
+            config={
+                "endpoint": "s3.example.test",
+                "prefix": "hfl/",
+                "access_key_id": "account",
+            },
+        )
+        claim = reserve_repository_location(repository)
+        mark_repository_location_owned(repository)
+        mark_repository_location_ownership_verified(repository)
+        ownership_error = RepositoryOwnershipError("ownership marker is missing")
+        initialization_error = RepositoryInitializationError(
+            "ownership marker is missing"
+        )
+        initialization_error.__cause__ = ownership_error
+        check_s3_repository.side_effect = initialization_error
+
+        with self.assertRaises(DRFValidationError):
+            check_repository(repository=repository)
+
+        repository.refresh_from_db()
+        claim.refresh_from_db()
+        self.assertEqual(repository.health, Repository.Health.OFFLINE)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)

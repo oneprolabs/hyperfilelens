@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +69,189 @@ func TestDeleteManagedRepositoryPathHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestDeleteOwnedManagedRepositoryPathDeletesOwnershipMarkerLast(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "hfl-repo-1")
+	markerPath := filepath.Join(target, repositoryOwnershipMarkerPath)
+	dataPath := filepath.Join(target, "kopia", "content")
+	siblingPath := filepath.Join(root, "hfl-repo-2")
+	for _, path := range []string{filepath.Dir(markerPath), dataPath, siblingPath} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(markerPath, []byte("owner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	removed := make([]string, 0, 2)
+	removeAll := func(path string) error {
+		removed = append(removed, path)
+		return os.RemoveAll(path)
+	}
+	_, existed, err := deleteOwnedManagedRepositoryPathWithRemover(
+		context.Background(), target, root, removeAll,
+	)
+	if err != nil || !existed {
+		t.Fatalf("owned cleanup existed=%v err=%v", existed, err)
+	}
+	if len(removed) < 2 || removed[len(removed)-1] != markerPath {
+		t.Fatalf("ownership marker was not deleted last: %v", removed)
+	}
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("owned repository still exists: %v", err)
+	}
+	if _, err := os.Stat(siblingPath); err != nil {
+		t.Fatalf("sibling repository was removed: %v", err)
+	}
+}
+
+func TestDeleteOwnedManagedRepositoryPathRetainsMarkerOnFailure(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "hfl-repo-1")
+	markerPath := filepath.Join(target, repositoryOwnershipMarkerPath)
+	dataPath := filepath.Join(target, "kopia")
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dataPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, []byte("owner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	removeAll := func(path string) error {
+		if path == dataPath {
+			return errors.New("injected cleanup failure")
+		}
+		return os.RemoveAll(path)
+	}
+	if _, _, err := deleteOwnedManagedRepositoryPathWithRemover(
+		context.Background(), target, root, removeAll,
+	); err == nil {
+		t.Fatal("expected owned cleanup failure")
+	}
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("ownership marker was removed after cleanup failure: %v", err)
+	}
+}
+
+func TestDeleteOwnedManagedRepositoryPathRechecksExpectedOwner(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "hfl-repo-1")
+	markerPath := filepath.Join(target, repositoryOwnershipMarkerPath)
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := repositoryOwnershipMarkerFromSpec(repositoryOwnership{
+		DeploymentUUID: "deployment",
+		RepositoryUUID: "repository",
+		LocationDigest: "digest",
+		FormatVersion:  1,
+		Signature:      "signature",
+	})
+	encoded, err := json.Marshal(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := deleteOwnedManagedRepositoryPathForOwner(
+		context.Background(),
+		target,
+		root,
+		repositoryOwnership{
+			DeploymentUUID: "deployment",
+			RepositoryUUID: "different-repository",
+			LocationDigest: "digest",
+			FormatVersion:  1,
+			Signature:      "signature",
+		},
+	); err == nil {
+		t.Fatal("expected mismatched owner to prevent cleanup")
+	}
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("ownership marker was removed after owner mismatch: %v", err)
+	}
+}
+
+func TestDeleteOwnedManagedRepositoryPathRejectsSymlinkedMetadata(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "hfl-repo-1")
+	outside := t.TempDir()
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(outside, filepath.Base(repositoryOwnershipMarkerPath)),
+		[]byte("owner"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(target, filepath.Dir(repositoryOwnershipMarkerPath))); err != nil {
+		t.Skipf("symlink is unavailable: %v", err)
+	}
+
+	if _, _, err := deleteOwnedManagedRepositoryPath(
+		context.Background(), target, root,
+	); err == nil {
+		t.Fatal("expected symlinked ownership metadata to be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(outside, filepath.Base(repositoryOwnershipMarkerPath))); err != nil {
+		t.Fatalf("external ownership marker was touched: %v", err)
+	}
+}
+
+func TestReadRepositoryOwnershipMarkerRejectsSymlinkedMetadata(t *testing.T) {
+	repositoryPath := t.TempDir()
+	outside := t.TempDir()
+	outsideMarker := filepath.Join(
+		outside,
+		filepath.Base(repositoryOwnershipMarkerPath),
+	)
+	if err := os.WriteFile(outsideMarker, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(
+		outside,
+		filepath.Join(repositoryPath, filepath.Dir(repositoryOwnershipMarkerPath)),
+	); err != nil {
+		t.Skipf("symlink is unavailable: %v", err)
+	}
+
+	if _, err := readRepositoryOwnershipMarker(
+		filepath.Join(repositoryPath, repositoryOwnershipMarkerPath),
+	); err == nil {
+		t.Fatal("expected symlinked ownership metadata to be rejected")
+	}
+}
+
+func TestDeleteOwnedManagedRepositoryPathIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "hfl-repo-1")
+	markerPath := filepath.Join(target, repositoryOwnershipMarkerPath)
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, []byte("owner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, existed, err := deleteOwnedManagedRepositoryPath(
+		context.Background(), target, root,
+	); err != nil || !existed {
+		t.Fatalf("first owned cleanup existed=%v err=%v", existed, err)
+	}
+	if _, existed, err := deleteOwnedManagedRepositoryPath(
+		context.Background(), target, root,
+	); err != nil || existed {
+		t.Fatalf("second owned cleanup existed=%v err=%v", existed, err)
+	}
+}
+
 func TestRemoveRepositoryLocalStateReturnsCountWithoutPaths(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "repository.config")
 	maintenanceFile := strings.TrimSuffix(configFile, filepath.Ext(configFile)) + ".maintenance.config"
@@ -106,7 +291,17 @@ func TestRepositoryCleanupConfigPathsIncludesLegacyNASConfig(t *testing.T) {
 
 func TestManagedRepositoryCleanupRemovesOnlyOwnedCache(t *testing.T) {
 	dataDir := t.TempDir()
-	engine := New(staticConfigProvider{cfg: &model.AgentConfig{DataDir: dataDir}})
+	kopiaPath := filepath.Join(dataDir, "bin", "kopia")
+	if err := os.MkdirAll(filepath.Dir(kopiaPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kopiaPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir:   dataDir,
+		KopiaPath: kopiaPath,
+	}})
 	physicalRoot, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -161,6 +356,83 @@ func TestManagedRepositoryCleanupRemovesOnlyOwnedCache(t *testing.T) {
 	secondCache := managedRepositoryCacheDir(engine.current(), engine.repositoryConfigPath(secondSpec))
 	if _, err := os.Stat(secondCache); err != nil {
 		t.Fatalf("other repository cache was removed: %v", err)
+	}
+}
+
+func TestManagedRepositoryCleanupPreservesDataWhenOwnershipCheckFails(t *testing.T) {
+	dataDir := t.TempDir()
+	kopiaPath := filepath.Join(dataDir, "bin", "kopia")
+	if err := os.MkdirAll(filepath.Dir(kopiaPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kopiaPath, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir:   dataDir,
+		KopiaPath: kopiaPath,
+	}})
+	physicalRoot := t.TempDir()
+	repositoryPath := filepath.Join(physicalRoot, "hfl-repo-73")
+	if err := os.MkdirAll(repositoryPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := ParsePayload(map[string]any{
+		"operation_type": "cleanup.repository",
+		"repository": map[string]any{
+			"id": 73, "type": "proxy_fs", "path": repositoryPath,
+			"base_path": physicalRoot, "layout": "managed_subdir_v1",
+		},
+	})
+	status, result, _ := engine.runManagedRepositoryCleanup(
+		context.Background(), ReporterSink{}, "cleanup-73", payload,
+	)
+
+	if status != "failed" || result["ownership_verified"] != false {
+		t.Fatalf("cleanup status=%q result=%#v", status, result)
+	}
+	if _, err := os.Stat(repositoryPath); err != nil {
+		t.Fatalf("unverified repository was removed: %v", err)
+	}
+}
+
+func TestManagedRepositoryCleanupAcceptsDurableOwnershipProofOnRetry(t *testing.T) {
+	dataDir := t.TempDir()
+	kopiaPath := filepath.Join(dataDir, "bin", "kopia")
+	if err := os.MkdirAll(filepath.Dir(kopiaPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kopiaPath, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir:   dataDir,
+		KopiaPath: kopiaPath,
+	}})
+	physicalRoot := t.TempDir()
+	repositoryPath := filepath.Join(physicalRoot, "hfl-repo-74")
+	if err := os.MkdirAll(repositoryPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := ParsePayload(map[string]any{
+		"operation_type":     "cleanup.repository",
+		"ownership_verified": true,
+		"repository": map[string]any{
+			"id": 74, "type": "proxy_fs", "path": repositoryPath,
+			"base_path": physicalRoot, "layout": "managed_subdir_v1",
+		},
+	})
+	status, result, message := engine.runManagedRepositoryCleanup(
+		context.Background(), ReporterSink{}, "cleanup-74", payload,
+	)
+
+	if status != "success" || message != "" || result["ownership_verified"] != true {
+		t.Fatalf("cleanup status=%q message=%q result=%#v", status, message, result)
+	}
+	if _, err := os.Stat(repositoryPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("verified retry repository still exists: %v", err)
 	}
 }
 

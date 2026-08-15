@@ -22,14 +22,27 @@ from apps.protection.models import (
     BackupSourceSnapshot,
     FileFilterRule,
 )
-from apps.protection.services.repository_compatibility import validate_backup_repository_compatible
+from apps.protection.services.repository_compatibility import (
+    validate_backup_repository_compatible,
+)
 from apps.restore.services.interface import create_restore_plan
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
-from apps.source.services.internal.nas_display import nfs_export_path, nas_protocol, smb_share
-from apps.source.services.internal.nas_path_normalize import normalize_nfs_export_path, normalize_smb_share
+from apps.source.services.internal.nas_display import (
+    nfs_export_path,
+    nas_protocol,
+    smb_share,
+)
+from apps.source.services.internal.nas_path_normalize import (
+    normalize_nfs_export_path,
+    normalize_smb_share,
+)
 from apps.source.services.internal.nas_share_path import normalize_user_share_path
-from apps.storage.repositories.models import Repository, RepositoryUsageShard
+from apps.storage.repositories.models import (
+    Repository,
+    RepositoryLocationClaim,
+    RepositoryUsageShard,
+)
 from apps.storage.services.internal.nas_repository import (
     mount_point_from_repo_status_result,
     nas_agent_repository_subdir,
@@ -40,6 +53,19 @@ from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_CODE,
     REPOSITORY_ALREADY_EXISTS_MESSAGE,
     agent_result_has_repository_conflict,
+)
+from apps.storage.services.internal.repository_location import (
+    RepositoryLocationConflict,
+    mark_repository_location_initialization_failed,
+    mark_repository_location_initializing,
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    mark_repository_location_residual,
+    reserve_direct_nas_location,
+)
+from apps.storage.services.internal.repository_workload import (
+    RepositoryWorkload,
+    lock_repositories_for_workload,
 )
 from apps.storage.services.internal.repository_endpoints import (
     S3_ENDPOINT_EXTERNAL,
@@ -89,9 +115,11 @@ def create_backup_config(
     if not directories_data:
         raise ValidationError({"directories": "At least one directory is required."})
     if recovery_plan_enabled and not recovery_plans_data:
-        raise ValidationError({
-            "recovery_plans": "At least one recovery plan is required when recovery_plan_enabled is true."
-        })
+        raise ValidationError(
+            {
+                "recovery_plans": "At least one recovery plan is required when recovery_plan_enabled is true."
+            }
+        )
     _validate_no_repository_self_backup(
         organization_id=organization_id,
         source_type=payload["source_type"],
@@ -108,13 +136,6 @@ def create_backup_config(
         payload["name"],
         len(directories_data),
     )
-    _initialize_direct_nas_repository(
-        organization_id=organization_id,
-        source_type=payload["source_type"],
-        source_ref_id=payload["source_ref_id"],
-        repository_id=payload["repository_id"],
-    )
-
     from apps.iam.models import Organization
     from apps.subscription.services.interface import enforce_license_quota
 
@@ -123,20 +144,37 @@ def create_backup_config(
         enforce_license_quota(org, "max_protected_sources", additional=1)
         enforce_license_quota(org, "max_storage_gb", additional=0)
 
+    _initialize_direct_nas_repository(
+        organization_id=organization_id,
+        source_type=payload["source_type"],
+        source_ref_id=payload["source_ref_id"],
+        repository_id=payload["repository_id"],
+    )
+
     with transaction.atomic():
+        _lock_repository_for_backup_config(
+            organization_id=organization_id,
+            repository_id=payload["repository_id"],
+        )
         config = BackupConfig.objects.create(organization_id=organization_id, **payload)
 
         dirs = []
         for idx, d in enumerate(directories_data):
-            dirs.append(BackupConfigDirectory(
-                organization_id=organization_id,
-                backup_config=config,
-                path=d["path"],
-                path_type=d.get("path_type", BackupConfigDirectory.PathType.UNKNOWN),
-                display_name=d.get("display_name", ""),
-                estimated_size_bytes=max(0, int(d.get("estimated_size_bytes", 0) or 0)),
-                sort_order=idx,
-            ))
+            dirs.append(
+                BackupConfigDirectory(
+                    organization_id=organization_id,
+                    backup_config=config,
+                    path=d["path"],
+                    path_type=d.get(
+                        "path_type", BackupConfigDirectory.PathType.UNKNOWN
+                    ),
+                    display_name=d.get("display_name", ""),
+                    estimated_size_bytes=max(
+                        0, int(d.get("estimated_size_bytes", 0) or 0)
+                    ),
+                    sort_order=idx,
+                )
+            )
         created_dirs = BackupConfigDirectory.objects.bulk_create(dirs)
 
         if recovery_plan_enabled and recovery_plans_data:
@@ -144,12 +182,15 @@ def create_backup_config(
                 dir_id = rp.get("backup_config_dir_id")
                 if dir_id is None:
                     matched = [
-                        d for d in created_dirs
+                        d
+                        for d in created_dirs
                         if _same_or_ancestor_path(d.path, rp["source_path"])
                     ]
                     dir_id = matched[0].id if matched else None
                 if dir_id is None and rp.get("scope") != "snapshot":
-                    raise ValidationError({"recovery_plans": "Recovery plan directory not found."})
+                    raise ValidationError(
+                        {"recovery_plans": "Recovery plan directory not found."}
+                    )
                 create_restore_plan(
                     organization_id=organization_id,
                     data={
@@ -160,7 +201,8 @@ def create_backup_config(
                         "source_ref_id": payload["source_ref_id"],
                         "source_path": rp["source_path"],
                         "target_type": rp.get("target_type") or "agent",
-                        "target_ref_id": rp.get("target_ref_id") or rp.get("restore_host_id"),
+                        "target_ref_id": rp.get("target_ref_id")
+                        or rp.get("restore_host_id"),
                         "restore_dir": rp["restore_dir"],
                         "conflict_mode": rp["conflict_mode"],
                         "enabled": True,
@@ -200,8 +242,10 @@ def _config_payload(
     organization_id: int | None = None,
     current: BackupConfig | None = None,
 ) -> dict[str, Any]:
-    effective_org_id = organization_id if organization_id is not None else (
-        current.organization_id if current is not None else None
+    effective_org_id = (
+        organization_id
+        if organization_id is not None
+        else (current.organization_id if current is not None else None)
     )
     merged: dict[str, Any] = {}
     if current is not None:
@@ -225,7 +269,9 @@ def _config_payload(
 
     source_type = str(merged.get("source_type") or "").strip().lower()
     if source_type not in SOURCE_TYPES:
-        raise ValidationError({"source_type": f"Must be one of: {', '.join(sorted(SOURCE_TYPES))}."})
+        raise ValidationError(
+            {"source_type": f"Must be one of: {', '.join(sorted(SOURCE_TYPES))}."}
+        )
 
     source_ref_id = _int(merged, "source_ref_id")
     if source_ref_id <= 0:
@@ -268,7 +314,9 @@ def _config_payload(
                 rule_id=file_filter_rule_id,
             )
 
-    raw_compression = merged.get("compression_level", BackupConfig.CompressionLevel.BALANCED)
+    raw_compression = merged.get(
+        "compression_level", BackupConfig.CompressionLevel.BALANCED
+    )
     if not isinstance(raw_compression, str) or not raw_compression.strip():
         raise ValidationError(
             {"compression_level": "Must be one of: balanced, high, none."}
@@ -326,7 +374,9 @@ def _config_payload(
     return result
 
 
-def _validate_source_exists(*, organization_id: int, source_type: str, source_ref_id: int) -> None:
+def _validate_source_exists(
+    *, organization_id: int, source_type: str, source_ref_id: int
+) -> None:
     if source_type == "agent":
         exists = Node.objects.filter(
             organization_id=organization_id,
@@ -360,6 +410,24 @@ def _validate_repository_exists(
     )
 
 
+def _lock_repository_for_backup_config(
+    *,
+    organization_id: int,
+    repository_id: int,
+) -> Repository:
+    """Lock and revalidate a repository immediately before config persistence."""
+    try:
+        return lock_repositories_for_workload(
+            organization_id=organization_id,
+            repository_ids=[repository_id],
+            workload=RepositoryWorkload.BACKUP_WRITE,
+        )[0]
+    except ValidationError as exc:
+        raise ValidationError(
+            {"repository_id": "Repository is no longer available for backup."}
+        ) from exc
+
+
 def _validated_repository_endpoint_type(
     *,
     repository: Repository,
@@ -371,7 +439,9 @@ def _validated_repository_endpoint_type(
     if repository.repo_type != Repository.Type.S3:
         if explicit and requested_type not in ("", S3_ENDPOINT_EXTERNAL):
             raise ValidationError(
-                {"repository_endpoint_type": "Only object storage supports Endpoint selection."}
+                {
+                    "repository_endpoint_type": "Only object storage supports Endpoint selection."
+                }
             )
         return S3_ENDPOINT_EXTERNAL
 
@@ -410,7 +480,9 @@ def _validated_repository_endpoint_type(
     return requested_type
 
 
-def _normalized_nas_endpoint(*, protocol: str, server: object, share_path: object) -> tuple[str, str, str]:
+def _normalized_nas_endpoint(
+    *, protocol: str, server: object, share_path: object
+) -> tuple[str, str, str]:
     normalized_protocol = str(protocol or "").strip().lower()
     normalized_server = str(server or "").strip().rstrip(".").lower()
     if normalized_protocol == Repository.NasProtocol.SMB:
@@ -436,11 +508,15 @@ def _validate_no_repository_self_backup(
         resource_type=ResourceType.NAS,
         is_deleted=False,
     ).first()
-    repository = Repository.objects.filter(
-        organization_id=organization_id,
-        id=repository_id,
-        repo_type=Repository.Type.NAS,
-    ).exclude(status=Repository.Status.REMOVED).first()
+    repository = (
+        Repository.objects.filter(
+            organization_id=organization_id,
+            id=repository_id,
+            repo_type=Repository.Type.NAS,
+        )
+        .exclude(status=Repository.Status.REMOVED)
+        .first()
+    )
     if source is None or repository is None:
         return
 
@@ -478,13 +554,17 @@ def _validate_no_repository_self_backup(
     )
     for item in directories:
         path = str(item.get("path") or "")
-        if _same_or_ancestor_path(path, protected_path) or _same_or_ancestor_path(protected_path, path):
-            raise ValidationError({
-                "directories": (
-                    f'Source path "{path}" overlaps target repository data at "{protected_path}". '
-                    "Select a directory outside the target repository."
-                )
-            })
+        if _same_or_ancestor_path(path, protected_path) or _same_or_ancestor_path(
+            protected_path, path
+        ):
+            raise ValidationError(
+                {
+                    "directories": (
+                        f'Source path "{path}" overlaps target repository data at "{protected_path}". '
+                        "Select a directory outside the target repository."
+                    )
+                }
+            )
 
 
 def _validate_unique_source_config(
@@ -502,7 +582,9 @@ def _validate_unique_source_config(
     if current_config_id is not None:
         queryset = queryset.exclude(id=current_config_id)
     if queryset.exists():
-        raise ValidationError({"source_ref_id": "Backup source already has a backup configuration."})
+        raise ValidationError(
+            {"source_ref_id": "Backup source already has a backup configuration."}
+        )
 
 
 def _direct_nas_execution_node(
@@ -520,20 +602,32 @@ def _direct_nas_execution_node(
             is_deleted=False,
         ).first()
         if node is None or not node_is_available_for_work(node):
-            raise ValidationError({"source_ref_id": "Agent source is unavailable or busy."})
+            raise ValidationError(
+                {"source_ref_id": "Agent source is unavailable or busy."}
+            )
         return node
     if source_type == "nas":
-        source = SourceResource.objects.filter(
-            organization_id=organization_id,
-            id=source_ref_id,
-            resource_type=ResourceType.NAS,
-            is_deleted=False,
-        ).select_related("bound_node").first()
+        source = (
+            SourceResource.objects.filter(
+                organization_id=organization_id,
+                id=source_ref_id,
+                resource_type=ResourceType.NAS,
+                is_deleted=False,
+            )
+            .select_related("bound_node")
+            .first()
+        )
         node = source.bound_node if source is not None else None
         if node is None or node.role != NodeRole.PROXY:
-            raise ValidationError({"source_ref_id": "NAS source is not bound to a proxy node."})
+            raise ValidationError(
+                {"source_ref_id": "NAS source is not bound to a proxy node."}
+            )
         if source.availability != "online" or not node_is_available_for_work(node):
-            raise ValidationError({"source_ref_id": "NAS source or bound proxy node is unavailable or busy."})
+            raise ValidationError(
+                {
+                    "source_ref_id": "NAS source or bound proxy node is unavailable or busy."
+                }
+            )
         return node
     raise ValidationError({"source_type": "Unsupported backup source type."})
 
@@ -546,16 +640,22 @@ def _initialize_direct_nas_repository(
     repository_id: int,
     verify_existing: bool = True,
 ) -> None:
-    repository = Repository.objects.filter(
-        organization_id=organization_id,
-        id=repository_id,
-        repo_type=Repository.Type.NAS,
-        bind_node_id__isnull=True,
-    ).filter(
-        Q(bind_node_type__isnull=True) | Q(bind_node_type="")
-    ).exclude(status=Repository.Status.REMOVED).first()
+    repository = (
+        Repository.objects.filter(
+            organization_id=organization_id,
+            id=repository_id,
+            repo_type=Repository.Type.NAS,
+            bind_node_id__isnull=True,
+        )
+        .filter(Q(bind_node_type__isnull=True) | Q(bind_node_type=""))
+        .first()
+    )
     if repository is None:
         return
+    if repository.status != Repository.Status.CREATED:
+        raise ValidationError(
+            {"repository_id": "Repository is no longer available for backup."}
+        )
     node = _direct_nas_execution_node(
         organization_id=organization_id,
         source_type=source_type,
@@ -573,10 +673,73 @@ def _initialize_direct_nas_repository(
         usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
         node_id=node.id,
         repository_subdir=repository_subdir,
+        is_active=True,
         last_success_checked_at__isnull=False,
     ).exists()
-    if previously_initialized and not verify_existing:
-        return
+    location_requires_verification = False
+    may_recover_existing_location = False
+    allow_ownership_adoption = False
+    try:
+        with transaction.atomic():
+            repository = (
+                Repository.objects.select_for_update()
+                .filter(
+                    organization_id=organization_id,
+                    id=repository.id,
+                    repo_type=Repository.Type.NAS,
+                    bind_node_id__isnull=True,
+                )
+                .filter(Q(bind_node_type__isnull=True) | Q(bind_node_type=""))
+                .first()
+            )
+            if repository is None or repository.status != Repository.Status.CREATED:
+                raise ValidationError(
+                    {"repository_id": ("Repository is no longer available for backup.")}
+                )
+            claim = reserve_direct_nas_location(
+                repository=repository,
+                node_id=node.id,
+                repository_subdir=repository_subdir,
+            )
+            may_recover_existing_location = claim.state in {
+                RepositoryLocationClaim.State.INITIALIZING,
+                RepositoryLocationClaim.State.OWNED,
+                RepositoryLocationClaim.State.RESIDUAL,
+            }
+            # Legacy adoption is reserved for locations that were already
+            # authoritative before the ownership-marker rollout. A newly
+            # reserved/failed location must present this Repository's marker;
+            # retrying may never adopt unknown pre-existing Kopia data.
+            allow_ownership_adoption = (
+                claim.state == RepositoryLocationClaim.State.OWNED
+                and claim.ownership_verified_at is None
+                and claim.legacy_adoption_required
+            )
+            if (
+                previously_initialized
+                and claim.state == RepositoryLocationClaim.State.OWNED
+                and claim.ownership_verified_at is not None
+                and not verify_existing
+            ):
+                return
+            location_requires_verification = (
+                claim.state != RepositoryLocationClaim.State.OWNED
+            )
+            mark_repository_location_initializing(
+                repository,
+                owner_node_id=node.id,
+                repository_subdir=repository_subdir,
+                include_residual=True,
+            )
+    except RepositoryLocationConflict as exc:
+        raise AppError(
+            code=REPOSITORY_ALREADY_EXISTS_CODE,
+            status=409,
+            retryable=False,
+            title="Repository location is already in use",
+            diagnostic=str(exc.messages[0]),
+            meta={"repository_type": repository.repo_type},
+        ) from exc
     task_kind = "repo.status" if previously_initialized else "repo.initialize"
     correlation_id = f"{source_type}:{source_ref_id}:{repository_id}"
     log_agent_dispatch(
@@ -587,15 +750,27 @@ def _initialize_direct_nas_repository(
         correlation_id=correlation_id,
         repository_id=repository_id,
     )
-    outcome = run_agent_task_sync(
-        organization_id=organization_id,
-        node_id=node.id,
-        kind=task_kind,
-        payload={"repository": payload},
-        correlation_type="protection.backup_config",
-        correlation_id=correlation_id,
-        wait_timeout_seconds=180,
-    )
+    try:
+        outcome = run_agent_task_sync(
+            organization_id=organization_id,
+            node_id=node.id,
+            kind=task_kind,
+            payload={
+                "repository": payload,
+                "allow_ownership_adoption": allow_ownership_adoption,
+            },
+            correlation_type="protection.backup_config",
+            correlation_id=correlation_id,
+            wait_timeout_seconds=180,
+        )
+    except Exception:
+        if not previously_initialized or location_requires_verification:
+            mark_repository_location_initialization_failed(
+                repository,
+                owner_node_id=node.id,
+                repository_subdir=repository_subdir,
+            )
+        raise
     log_agent_outcome(
         "backup_config nas repo init",
         outcome=outcome,
@@ -607,46 +782,182 @@ def _initialize_direct_nas_repository(
     )
     if outcome.task.status != "success":
         if agent_result_has_repository_conflict(outcome.result):
-            raise AppError(
-                code=REPOSITORY_ALREADY_EXISTS_CODE,
-                status=409,
-                retryable=False,
-                title="Repository already exists",
-                diagnostic=REPOSITORY_ALREADY_EXISTS_MESSAGE,
-                meta={"repository_type": repository.repo_type},
+            if not previously_initialized and may_recover_existing_location:
+                verification_kind = "repo.status"
+                log_agent_dispatch(
+                    "backup_config nas repo ownership verify",
+                    node_id=node.id,
+                    kind=verification_kind,
+                    correlation_type="protection.backup_config",
+                    correlation_id=correlation_id,
+                    repository_id=repository_id,
+                )
+                try:
+                    verification = run_agent_task_sync(
+                        organization_id=organization_id,
+                        node_id=node.id,
+                        kind=verification_kind,
+                        payload={
+                            "repository": payload,
+                            "allow_ownership_adoption": allow_ownership_adoption,
+                        },
+                        correlation_type="protection.backup_config",
+                        correlation_id=correlation_id,
+                        wait_timeout_seconds=180,
+                    )
+                except Exception as exc:
+                    mark_repository_location_initialization_failed(
+                        repository,
+                        owner_node_id=node.id,
+                        repository_subdir=repository_subdir,
+                    )
+                    raise AppError(
+                        code=REPOSITORY_ALREADY_EXISTS_CODE,
+                        status=409,
+                        retryable=False,
+                        title="Repository already exists",
+                        diagnostic=(
+                            "An existing repository was found, but ownership could not "
+                            "be verified. The location was retained for review."
+                        ),
+                        meta={"repository_type": repository.repo_type},
+                    ) from exc
+                log_agent_outcome(
+                    "backup_config nas repo ownership verify",
+                    outcome=verification,
+                    node_id=node.id,
+                    kind=verification_kind,
+                    correlation_type="protection.backup_config",
+                    correlation_id=correlation_id,
+                    repository_id=repository_id,
+                )
+                if verification.task.status == "success":
+                    outcome = verification
+                else:
+                    mark_repository_location_initialization_failed(
+                        repository,
+                        owner_node_id=node.id,
+                        repository_subdir=repository_subdir,
+                    )
+            elif not previously_initialized:
+                # A first attempt cannot prove that pre-existing physical data
+                # belongs to this repository. Retain the location for review;
+                # a later explicit retry may verify the interrupted attempt.
+                mark_repository_location_initialization_failed(
+                    repository,
+                    owner_node_id=node.id,
+                    repository_subdir=repository_subdir,
+                )
+            if outcome.task.status != "success":
+                raise AppError(
+                    code=REPOSITORY_ALREADY_EXISTS_CODE,
+                    status=409,
+                    retryable=False,
+                    title="Repository already exists",
+                    diagnostic=REPOSITORY_ALREADY_EXISTS_MESSAGE,
+                    meta={"repository_type": repository.repo_type},
+                )
+        if outcome.task.status != "success":
+            if not previously_initialized or location_requires_verification:
+                mark_repository_location_initialization_failed(
+                    repository,
+                    owner_node_id=node.id,
+                    repository_subdir=repository_subdir,
+                )
+            message = str(getattr(outcome.task, "last_error", "") or "").strip()
+            if not message and isinstance(outcome.result, dict):
+                message = str(
+                    outcome.result.get("error") or outcome.result.get("stderr") or ""
+                ).strip()
+            raise ValidationError(
+                {
+                    "repository_id": _sanitize_repository_error(
+                        message or "NAS repository initialization failed.",
+                        repository.config,
+                    )
+                }
             )
-        message = str(getattr(outcome.task, "last_error", "") or "").strip()
-        if not message and isinstance(outcome.result, dict):
-            message = str(outcome.result.get("error") or outcome.result.get("stderr") or "").strip()
-        raise ValidationError({
-            "repository_id": _sanitize_repository_error(
-                message or "NAS repository initialization failed.",
-                repository.config,
-            )
-        })
-    checked_at = timezone.now()
-    shard_defaults = {
-        "is_active": True,
-        "status": RepositoryUsageShard.Status.SUCCESS,
-        "last_error": "",
-        "last_checked_at": checked_at,
-        "last_success_checked_at": checked_at,
-    }
-    mount_point = mount_point_from_repo_status_result(outcome.result)
-    if mount_point:
-        shard_defaults["mount_point"] = mount_point
-    RepositoryUsageShard.objects.update_or_create(
-        organization_id=organization_id,
-        repository_id=repository.id,
-        usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
-        node_id=node.id,
-        repository_subdir=repository_subdir,
-        defaults=shard_defaults,
+    ownership_verified = (
+        isinstance(outcome.result, dict)
+        and outcome.result.get("ownership_verified") is True
     )
-    if repository.health != Repository.Health.ONLINE:
-        repository.health = Repository.Health.ONLINE
-        repository.last_checked_at = checked_at
-        repository.save(update_fields=["health", "last_checked_at", "updated_at"])
+    if not ownership_verified:
+        mark_repository_location_initialization_failed(
+            repository,
+            owner_node_id=node.id,
+            repository_subdir=repository_subdir,
+        )
+        raise ValidationError(
+            {
+                "repository_id": (
+                    "Agent did not verify repository ownership. Upgrade the Agent "
+                    "and retry before using this Direct NAS repository."
+                )
+            }
+        )
+    repository_unavailable = False
+    with transaction.atomic():
+        locked_repository = (
+            Repository.objects.select_for_update()
+            .filter(
+                organization_id=organization_id,
+                id=repository.id,
+            )
+            .first()
+        )
+        if (
+            locked_repository is None
+            or locked_repository.status != Repository.Status.CREATED
+        ):
+            if locked_repository is not None:
+                mark_repository_location_residual(
+                    locked_repository,
+                    owner_node_id=node.id,
+                    repository_subdir=repository_subdir,
+                )
+            repository_unavailable = True
+        else:
+            checked_at = timezone.now()
+            mark_repository_location_owned(
+                locked_repository,
+                owner_node_id=node.id,
+                repository_subdir=repository_subdir,
+            )
+            if ownership_verified:
+                mark_repository_location_ownership_verified(
+                    locked_repository,
+                    owner_node_id=node.id,
+                    repository_subdir=repository_subdir,
+                )
+            shard_defaults = {
+                "is_active": True,
+                "status": RepositoryUsageShard.Status.SUCCESS,
+                "last_error": "",
+                "last_checked_at": checked_at,
+                "last_success_checked_at": checked_at,
+            }
+            mount_point = mount_point_from_repo_status_result(outcome.result)
+            if mount_point:
+                shard_defaults["mount_point"] = mount_point
+            RepositoryUsageShard.objects.update_or_create(
+                organization_id=organization_id,
+                repository_id=locked_repository.id,
+                usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
+                node_id=node.id,
+                repository_subdir=repository_subdir,
+                defaults=shard_defaults,
+            )
+            if locked_repository.health != Repository.Health.ONLINE:
+                locked_repository.health = Repository.Health.ONLINE
+                locked_repository.last_checked_at = checked_at
+                locked_repository.save(
+                    update_fields=["health", "last_checked_at", "updated_at"]
+                )
+
+    if repository_unavailable:
+        raise ValidationError(
+            {"repository_id": "Repository is no longer available for backup."}
+        )
 
 
 def ensure_direct_nas_repository_for_backup(
@@ -699,7 +1010,9 @@ def _enqueue_direct_nas_usage_refresh(
     if not direct_nas_ids:
         return
     try:
-        from apps.storage.services.internal.repository_usage import enqueue_repository_usage_refresh
+        from apps.storage.services.internal.repository_usage import (
+            enqueue_repository_usage_refresh,
+        )
 
         enqueue_repository_usage_refresh(
             organization_id=organization_id,
@@ -731,16 +1044,22 @@ def _sanitize_repository_error(message: str, config: dict | None) -> str:
 
 
 def _validate_backup_policy_exists(*, organization_id: int, policy_id: int) -> None:
-    if not BackupPolicy.objects.filter(organization_id=organization_id, id=policy_id).exists():
+    if not BackupPolicy.objects.filter(
+        organization_id=organization_id, id=policy_id
+    ).exists():
         raise ValidationError({"backup_policy_id": "Backup policy not found."})
 
 
 def _validate_file_filter_rule_exists(*, organization_id: int, rule_id: int) -> None:
-    if not FileFilterRule.objects.filter(organization_id=organization_id, id=rule_id).exists():
+    if not FileFilterRule.objects.filter(
+        organization_id=organization_id, id=rule_id
+    ).exists():
         raise ValidationError({"file_filter_rule_id": "File filter rule not found."})
 
 
-def _validate_restore_host_exists(*, organization_id: int | None, restore_host_id: int | None) -> None:
+def _validate_restore_host_exists(
+    *, organization_id: int | None, restore_host_id: int | None
+) -> None:
     if organization_id is None or restore_host_id is None:
         return
     exists = Node.objects.filter(
@@ -789,15 +1108,12 @@ def _normalize_nas_directory_paths(
     source_ref_id: int,
     directories: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    resource = (
-        SourceResource.objects.filter(
-            organization_id=organization_id,
-            id=source_ref_id,
-            resource_type=ResourceType.NAS,
-            is_deleted=False,
-        )
-        .first()
-    )
+    resource = SourceResource.objects.filter(
+        organization_id=organization_id,
+        id=source_ref_id,
+        resource_type=ResourceType.NAS,
+        is_deleted=False,
+    ).first()
     if resource is None:
         return directories
     mount_root = _clean_dir_path(resource.effective_mount_point())
@@ -824,28 +1140,38 @@ def _validate_directories(directories: Any) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for item in directories:
         if not isinstance(item, dict):
-            raise ValidationError({"directories": "Each source path must be an object."})
+            raise ValidationError(
+                {"directories": "Each source path must be an object."}
+            )
         raw_path = str(item.get("path") or "").strip()
         if not raw_path:
             raise ValidationError({"directories": "Source path is required."})
         path = _clean_dir_path(raw_path)
         if not _is_absolute_source_path(path):
-            raise ValidationError({"directories": f"Source path must be absolute: {path}."})
+            raise ValidationError(
+                {"directories": f"Source path must be absolute: {path}."}
+            )
         path_type = str(item.get("path_type") or "unknown").strip().lower()
         if path_type not in PATH_TYPES:
             path_type = "unknown"
         if path in seen_paths:
             raise ValidationError({"directories": f"Duplicate source path: {path}."})
         for existing in seen_paths:
-            if _same_or_ancestor_path(existing, path) or _same_or_ancestor_path(path, existing):
-                raise ValidationError({"directories": f"Parent/child source path conflict: {path}."})
+            if _same_or_ancestor_path(existing, path) or _same_or_ancestor_path(
+                path, existing
+            ):
+                raise ValidationError(
+                    {"directories": f"Parent/child source path conflict: {path}."}
+                )
         seen_paths.add(path)
-        result.append({
-            "path": path,
-            "path_type": path_type,
-            "display_name": str(item.get("display_name") or "").strip(),
-            "estimated_size_bytes": _int(item, "estimated_size_bytes"),
-        })
+        result.append(
+            {
+                "path": path,
+                "path_type": path_type,
+                "display_name": str(item.get("display_name") or "").strip(),
+                "estimated_size_bytes": _int(item, "estimated_size_bytes"),
+            }
+        )
     return result
 
 
@@ -866,7 +1192,9 @@ def _validate_recovery_plans(
     result: list[dict[str, Any]] = []
     for item in recovery_plans:
         if not isinstance(item, dict):
-            raise ValidationError({"recovery_plans": "Each recovery plan must be an object."})
+            raise ValidationError(
+                {"recovery_plans": "Each recovery plan must be an object."}
+            )
         scope = str(item.get("scope") or "paths").strip().lower()
         if scope not in {"snapshot", "paths"}:
             raise ValidationError({"scope": "Must be one of: paths, snapshot."})
@@ -877,7 +1205,11 @@ def _validate_recovery_plans(
         restore_dir = _clean_dir_path(raw_restore_dir)
         conflict_mode = str(item.get("conflict_mode") or "").strip().lower()
         if conflict_mode not in CONFLICT_MODES:
-            raise ValidationError({"conflict_mode": f"Must be one of: {', '.join(sorted(CONFLICT_MODES))}."})
+            raise ValidationError(
+                {
+                    "conflict_mode": f"Must be one of: {', '.join(sorted(CONFLICT_MODES))}."
+                }
+            )
         target_type = str(item.get("target_type") or "agent").strip().lower()
         target_ref_id = _optional_int(item, "target_ref_id")
         restore_host_id = _optional_int(item, "restore_host_id")
@@ -890,26 +1222,49 @@ def _validate_recovery_plans(
             target_type=target_type,
             target_ref_id=target_ref_id,
         )
-        source_paths = [""] if scope == "snapshot" else [_clean_dir_path(raw_source_path)] if raw_source_path else configured_paths
+        source_paths = (
+            [""]
+            if scope == "snapshot"
+            else [_clean_dir_path(raw_source_path)]
+            if raw_source_path
+            else configured_paths
+        )
         if not source_paths:
             raise ValidationError({"source_path": "Source path is required."})
         for source_path in source_paths:
             if scope != "snapshot" and not _is_absolute_source_path(source_path):
-                raise ValidationError({"source_path": "Recovery source path must be absolute."})
-            if scope != "snapshot" and configured_paths and not any(_same_or_ancestor_path(path, source_path) for path in configured_paths):
-                raise ValidationError({"source_path": f"Recovery source path is outside configured directories: {source_path}."})
-            result.append({
-                "scope": scope,
-                "source_type": source_type,
-                "source_ref_id": source_ref_id,
-                "source_path": source_path,
-                "backup_config_dir_id": None if scope == "snapshot" else _optional_int(item, "backup_config_dir_id"),
-                "target_type": target_type,
-                "target_ref_id": target_ref_id,
-                "restore_host_id": restore_host_id,
-                "restore_dir": restore_dir,
-                "conflict_mode": conflict_mode,
-            })
+                raise ValidationError(
+                    {"source_path": "Recovery source path must be absolute."}
+                )
+            if (
+                scope != "snapshot"
+                and configured_paths
+                and not any(
+                    _same_or_ancestor_path(path, source_path)
+                    for path in configured_paths
+                )
+            ):
+                raise ValidationError(
+                    {
+                        "source_path": f"Recovery source path is outside configured directories: {source_path}."
+                    }
+                )
+            result.append(
+                {
+                    "scope": scope,
+                    "source_type": source_type,
+                    "source_ref_id": source_ref_id,
+                    "source_path": source_path,
+                    "backup_config_dir_id": None
+                    if scope == "snapshot"
+                    else _optional_int(item, "backup_config_dir_id"),
+                    "target_type": target_type,
+                    "target_ref_id": target_ref_id,
+                    "restore_host_id": restore_host_id,
+                    "restore_dir": restore_dir,
+                    "conflict_mode": conflict_mode,
+                }
+            )
     return result
 
 
@@ -954,9 +1309,11 @@ def _optional_int(data: dict[str, Any], key: str) -> int | None:
 
 
 def delete_backup_config(*, config: BackupConfig) -> dict[str, Any]:
-    raise ValidationError({
-        "detail": "Backup config deletion is not supported. Clean up the source endpoint instead."
-    })
+    raise ValidationError(
+        {
+            "detail": "Backup config deletion is not supported. Clean up the source endpoint instead."
+        }
+    )
 
 
 def purge_backup_config_data_for_source(
@@ -977,7 +1334,11 @@ def purge_backup_config_data_for_source(
     )
     config_ids = [row[0] for row in configs]
     if not config_ids:
-        return {"backup_configs_removed": 0, "snapshots_removed": 0, "restore_plans_removed": 0}
+        return {
+            "backup_configs_removed": 0,
+            "snapshots_removed": 0,
+            "restore_plans_removed": 0,
+        }
     repository_ids = sorted({int(row[1]) for row in configs})
 
     snapshots_removed = BackupSourceSnapshot.objects.filter(
@@ -1026,11 +1387,17 @@ def _sync_backup_config_directories(
                 backup_config=config,
                 path=path,
             )
-        previous_path_type = str(directory.path_type or "").strip().lower() if directory.pk else ""
-        incoming_path_type = str(
-            directory_data.get("path_type", BackupConfigDirectory.PathType.UNKNOWN)
-            or BackupConfigDirectory.PathType.UNKNOWN
-        ).strip().lower()
+        previous_path_type = (
+            str(directory.path_type or "").strip().lower() if directory.pk else ""
+        )
+        incoming_path_type = (
+            str(
+                directory_data.get("path_type", BackupConfigDirectory.PathType.UNKNOWN)
+                or BackupConfigDirectory.PathType.UNKNOWN
+            )
+            .strip()
+            .lower()
+        )
         # Clients often omit path_type; validator then sends "unknown". Keep the
         # stored concrete type so we do not falsely invalidate du caches.
         if (
@@ -1040,7 +1407,9 @@ def _sync_backup_config_directories(
         ):
             directory.path_type = previous_path_type
         else:
-            directory.path_type = incoming_path_type or BackupConfigDirectory.PathType.UNKNOWN
+            directory.path_type = (
+                incoming_path_type or BackupConfigDirectory.PathType.UNKNOWN
+            )
         directory.display_name = directory_data.get("display_name", "")
         # Preserve cached du estimates when the client omits/zeros the field on
         # unchanged paths. New paths, explicit directory<->file changes, and
@@ -1057,7 +1426,11 @@ def _sync_backup_config_directories(
         )
         if incoming_estimate is not None and int(incoming_estimate or 0) > 0:
             directory.estimated_size_bytes = int(incoming_estimate)
-            if is_new or path_type_changed or previous_estimate != int(incoming_estimate):
+            if (
+                is_new
+                or path_type_changed
+                or previous_estimate != int(incoming_estimate)
+            ):
                 directory.size_estimated_at = None
         elif directory.pk is None:
             directory.estimated_size_bytes = max(0, int(incoming_estimate or 0))
@@ -1091,24 +1464,28 @@ def _sync_backup_config_directories(
         if plan.scope == RestorePlan.Scope.SNAPSHOT:
             continue
         if not _is_absolute_source_path(plan.source_path):
-            raise ValidationError({
-                "directories": (
-                    "Existing recovery plan source path must be absolute: "
-                    f"{plan.source_path}."
-                )
-            })
+            raise ValidationError(
+                {
+                    "directories": (
+                        "Existing recovery plan source path must be absolute: "
+                        f"{plan.source_path}."
+                    )
+                }
+            )
         matched = [
             directory
             for directory in created_or_updated
             if _same_or_ancestor_path(directory.path, plan.source_path)
         ]
         if not matched:
-            raise ValidationError({
-                "directories": (
-                    "Existing recovery plan source path is outside configured directories: "
-                    f"{plan.source_path}."
-                )
-            })
+            raise ValidationError(
+                {
+                    "directories": (
+                        "Existing recovery plan source path is outside configured directories: "
+                        f"{plan.source_path}."
+                    )
+                }
+            )
         matched.sort(key=lambda directory: len(directory.path), reverse=True)
         directory = matched[0]
         if plan.backup_config_dir_id != directory.id:
@@ -1156,9 +1533,7 @@ def update_backup_config(
 
     with transaction.atomic():
         config = BackupConfig.objects.select_for_update().get(pk=config.pk)
-        requested_repository_id = int(
-            data.get("repository_id") or config.repository_id
-        )
+        requested_repository_id = int(data.get("repository_id") or config.repository_id)
         if requested_repository_id != config.repository_id:
             raise ValidationError(
                 {"repository_id": "Backup repository cannot be modified."}
@@ -1217,10 +1592,9 @@ def update_backup_config(
                 config=config,
                 directories_data=directories_data,
             )
-        source_changed = (
-            str(payload["source_type"]) != str(previous_source_type)
-            or int(payload["source_ref_id"]) != int(previous_source_ref_id)
-        )
+        source_changed = str(payload["source_type"]) != str(
+            previous_source_type
+        ) or int(payload["source_ref_id"]) != int(previous_source_ref_id)
         if source_changed:
             from apps.protection.services.directory_size_estimate import (
                 invalidate_backup_config_directory_estimates,

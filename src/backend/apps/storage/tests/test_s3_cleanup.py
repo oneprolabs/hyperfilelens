@@ -1,3 +1,5 @@
+import io
+import json
 from unittest import mock
 
 from botocore.exceptions import ClientError
@@ -7,6 +9,7 @@ from apps.storage.services.internal.s3_client import (
     S3ClientError,
     delete_s3_bucket_if_empty,
     delete_s3_prefix,
+    s3_prefix_has_any_state,
 )
 
 
@@ -19,20 +22,72 @@ class _Paginator:
 
 
 class S3PrefixCleanupTests(SimpleTestCase):
-    def _client(self):
+    ownership_marker = {
+        "deployment_uuid": "deployment",
+        "repository_uuid": "repository",
+        "location_digest": "digest",
+        "format_version": 1,
+        "signature": "signature",
+    }
+
+    def _delete(self, **kwargs):
+        ownership_marker_key = kwargs.pop(
+            "ownership_marker_key",
+            "repo/.hyperfilelens/repository-owner-v1.json",
+        )
+        return delete_s3_prefix(
+            ownership_marker_key=ownership_marker_key,
+            ownership_marker=self.ownership_marker,
+            **kwargs,
+        )
+
+    def _client(self, *, key_prefix: str = "repo/"):
         client = mock.Mock()
-        client.get_paginator.side_effect = lambda name: {
-            "list_multipart_uploads": _Paginator([{
-                "Uploads": [{"Key": "repo/upload", "UploadId": "u-1"}],
-            }]),
-            "list_object_versions": _Paginator([{
-                "Versions": [{"Key": "repo/a", "VersionId": "v-1"}],
-                "DeleteMarkers": [{"Key": "repo/b", "VersionId": "m-1"}],
-            }]),
-            "list_objects_v2": _Paginator([{
-                "Contents": [{"Key": "repo/c"}],
-            }]),
-        }[name]
+        marker_key = f"{key_prefix}.hyperfilelens/repository-owner-v1.json"
+        calls = {
+            "list_multipart_uploads": 0,
+            "list_object_versions": 0,
+            "list_objects_v2": 0,
+        }
+
+        def paginator(name):
+            if name == "list_multipart_uploads":
+                calls[name] += 1
+                if calls[name] == 1:
+                    return _Paginator(
+                        [
+                            {
+                                "Uploads": [
+                                    {"Key": f"{key_prefix}upload", "UploadId": "u-1"}
+                                ]
+                            }
+                        ]
+                    )
+                return _Paginator([{"Uploads": []}])
+            calls[name] += 1
+            if name == "list_object_versions":
+                if calls[name] == 1:
+                    return _Paginator(
+                        [
+                            {
+                                "Versions": [
+                                    {"Key": f"{key_prefix}a", "VersionId": "v-1"}
+                                ],
+                                "DeleteMarkers": [
+                                    {"Key": f"{key_prefix}b", "VersionId": "m-1"}
+                                ],
+                            }
+                        ]
+                    )
+                return _Paginator([{"Versions": [], "DeleteMarkers": []}])
+            if calls[name] == 1:
+                return _Paginator([{"Contents": [{"Key": f"{key_prefix}c"}]}])
+            return _Paginator([{"Contents": [{"Key": marker_key}]}])
+
+        client.get_paginator.side_effect = paginator
+        client.get_object.return_value = {
+            "Body": io.BytesIO(json.dumps(self.ownership_marker).encode("utf-8"))
+        }
         client.delete_objects.return_value = {}
         client.list_object_versions.return_value = {}
         client.list_objects_v2.return_value = {}
@@ -40,11 +95,13 @@ class S3PrefixCleanupTests(SimpleTestCase):
         return client
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
-    def test_deletes_versions_markers_objects_and_uploads_under_normalized_prefix(self, build_client):
+    def test_deletes_versions_markers_objects_and_uploads_under_normalized_prefix(
+        self, build_client
+    ):
         client = self._client()
         build_client.return_value = client
 
-        result = delete_s3_prefix(
+        result = self._delete(
             endpoint="https://s3.example.test",
             region="us-east-1",
             bucket="bucket",
@@ -56,23 +113,67 @@ class S3PrefixCleanupTests(SimpleTestCase):
         self.assertEqual(result["prefix"], "repo/")
         self.assertEqual(result["deleted_versions"], 1)
         self.assertEqual(result["deleted_markers"], 1)
-        self.assertEqual(result["deleted_objects"], 1)
+        self.assertEqual(result["deleted_objects"], 2)
         self.assertEqual(result["aborted_uploads"], 1)
         client.abort_multipart_upload.assert_called_once_with(
             Bucket="bucket", Key="repo/upload", UploadId="u-1"
         )
-        self.assertFalse(hasattr(client, "delete_bucket") and client.delete_bucket.called)
+        final_delete = client.delete_objects.call_args_list[-1].kwargs["Delete"][
+            "Objects"
+        ]
+        self.assertEqual(
+            final_delete,
+            [{"Key": "repo/.hyperfilelens/repository-owner-v1.json"}],
+        )
+        self.assertFalse(
+            hasattr(client, "delete_bucket") and client.delete_bucket.called
+        )
 
-    def test_rejects_empty_prefix(self):
-        with self.assertRaises(S3ClientError):
-            delete_s3_prefix(
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_rejects_changed_owner_before_any_delete(self, build_client):
+        client = self._client()
+        client.get_object.return_value = {
+            "Body": io.BytesIO(
+                json.dumps(
+                    {**self.ownership_marker, "repository_uuid": "other"}
+                ).encode("utf-8")
+            )
+        }
+        build_client.return_value = client
+
+        with self.assertRaisesRegex(S3ClientError, "another repository"):
+            self._delete(
                 endpoint="https://s3.example.test",
                 region="us-east-1",
                 bucket="bucket",
-                prefix="/",
+                prefix="repo/",
                 access_key_id="key",
                 secret_access_key="secret",
             )
+
+        client.abort_multipart_upload.assert_not_called()
+        client.delete_objects.assert_not_called()
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_bucket_root_cleanup_uses_empty_listing_prefix_and_root_marker(
+        self, build_client
+    ):
+        marker_key = ".hyperfilelens/repository-owner-v1.json"
+        client = self._client(key_prefix="")
+        build_client.return_value = client
+
+        result = self._delete(
+            endpoint="https://s3.example.test",
+            region="us-east-1",
+            bucket="bucket",
+            prefix="/",
+            access_key_id="key",
+            secret_access_key="secret",
+            ownership_marker_key=marker_key,
+        )
+
+        self.assertEqual(result["prefix"], "")
+        client.get_object.assert_called_once_with(Bucket="bucket", Key=marker_key)
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
     def test_surfaces_partial_delete_errors(self, build_client):
@@ -83,7 +184,7 @@ class S3PrefixCleanupTests(SimpleTestCase):
         build_client.return_value = client
 
         with self.assertRaisesRegex(S3ClientError, "AccessDenied"):
-            delete_s3_prefix(
+            self._delete(
                 endpoint="https://s3.example.test",
                 region="us-east-1",
                 bucket="bucket",
@@ -93,10 +194,65 @@ class S3PrefixCleanupTests(SimpleTestCase):
             )
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
-    def test_falls_back_to_individual_delete_when_batch_delete_is_incompatible(self, build_client):
+    def test_retains_marker_when_object_listing_makes_no_progress(self, build_client):
+        client = mock.Mock()
+
+        def paginator(name):
+            if name == "list_multipart_uploads":
+                return _Paginator([{"Uploads": []}])
+            if name == "list_object_versions":
+                return _Paginator([{"Versions": [], "DeleteMarkers": []}])
+            return _Paginator(
+                [
+                    {
+                        "Contents": [
+                            {"Key": "repo/data"},
+                            {"Key": ("repo/.hyperfilelens/repository-owner-v1.json")},
+                        ]
+                    }
+                ]
+            )
+
+        client.get_paginator.side_effect = paginator
+        client.get_object.return_value = {
+            "Body": io.BytesIO(json.dumps(self.ownership_marker).encode("utf-8"))
+        }
+        client.delete_objects.return_value = {}
+        build_client.return_value = client
+
+        with self.assertRaisesRegex(S3ClientError, "make progress"):
+            self._delete(
+                endpoint="https://s3.example.test",
+                region="us-east-1",
+                bucket="bucket",
+                prefix="repo/",
+                access_key_id="key",
+                secret_access_key="secret",
+            )
+
+        deleted_keys = [
+            item["Key"]
+            for call in client.delete_objects.call_args_list
+            for item in call.kwargs["Delete"]["Objects"]
+        ]
+        self.assertNotIn(
+            "repo/.hyperfilelens/repository-owner-v1.json",
+            deleted_keys,
+        )
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_falls_back_to_individual_delete_when_batch_delete_is_incompatible(
+        self, build_client
+    ):
         errors = (
-            ("NotImplemented", "A header you provided implies functionality that is not implemented"),
-            ("MissingContentMD5", "Missing required header for this request: Content-Md5."),
+            (
+                "NotImplemented",
+                "A header you provided implies functionality that is not implemented",
+            ),
+            (
+                "MissingContentMD5",
+                "Missing required header for this request: Content-Md5.",
+            ),
         )
         for code, message in errors:
             with self.subTest(code=code):
@@ -110,7 +266,7 @@ class S3PrefixCleanupTests(SimpleTestCase):
                 )
                 build_client.return_value = client
 
-                delete_s3_prefix(
+                self._delete(
                     endpoint="https://s3.example.test",
                     region="us-east-1",
                     bucket="bucket",
@@ -119,17 +275,21 @@ class S3PrefixCleanupTests(SimpleTestCase):
                     secret_access_key="secret",
                 )
 
-                self.assertEqual(client.delete_objects.call_count, 2)
+                self.assertEqual(client.delete_objects.call_count, 3)
                 client.delete_object.assert_has_calls(
                     [
                         mock.call(Bucket="bucket", Key="repo/a", VersionId="v-1"),
                         mock.call(Bucket="bucket", Key="repo/b", VersionId="m-1"),
                         mock.call(Bucket="bucket", Key="repo/c"),
+                        mock.call(
+                            Bucket="bucket",
+                            Key="repo/.hyperfilelens/repository-owner-v1.json",
+                        ),
                     ]
                 )
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
-    def test_skips_version_cleanup_when_version_api_is_unsupported(self, build_client):
+    def test_fails_closed_when_version_api_is_unsupported(self, build_client):
         client = self._client()
         unsupported_versions = ClientError(
             {
@@ -143,31 +303,44 @@ class S3PrefixCleanupTests(SimpleTestCase):
         )
         version_paginator = mock.Mock()
         version_paginator.paginate.side_effect = unsupported_versions
-        client.get_paginator.side_effect = lambda name: (
-            version_paginator
-            if name == "list_object_versions"
-            else _Paginator([{"Uploads": []}])
-            if name == "list_multipart_uploads"
-            else _Paginator([{"Contents": [{"Key": "repo/object"}]}])
-        )
+        object_calls = 0
+
+        def paginator(name):
+            nonlocal object_calls
+            if name == "list_object_versions":
+                return version_paginator
+            if name == "list_multipart_uploads":
+                return _Paginator([{"Uploads": []}])
+            object_calls += 1
+            if object_calls == 1:
+                return _Paginator([{"Contents": [{"Key": "repo/object"}]}])
+            return _Paginator(
+                [
+                    {
+                        "Contents": [
+                            {"Key": ("repo/.hyperfilelens/repository-owner-v1.json")}
+                        ]
+                    }
+                ]
+            )
+
+        client.get_paginator.side_effect = paginator
         client.list_object_versions.side_effect = unsupported_versions
         client.list_objects_v2.return_value = {}
         client.list_multipart_uploads.return_value = {}
         client.delete_objects.return_value = {}
         build_client.return_value = client
 
-        result = delete_s3_prefix(
-            endpoint="https://s3.example.test",
-            region="us-east-1",
-            bucket="bucket",
-            prefix="repo/",
-            access_key_id="key",
-            secret_access_key="secret",
-        )
-
-        self.assertEqual(result["deleted_objects"], 1)
-        self.assertEqual(result["deleted_versions"], 0)
-        self.assertEqual(result["deleted_markers"], 0)
+        with self.assertRaises(S3ClientError):
+            self._delete(
+                endpoint="https://s3.example.test",
+                region="us-east-1",
+                bucket="bucket",
+                prefix="repo/",
+                access_key_id="key",
+                secret_access_key="secret",
+            )
+        client.delete_objects.assert_not_called()
 
 
 class S3BucketCleanupTests(SimpleTestCase):
@@ -244,3 +417,68 @@ class S3BucketCleanupTests(SimpleTestCase):
 
         self.assertEqual(result["status"], "failed")
         self.assertIn("AccessDenied", result["reason"])
+
+
+class S3PrefixStateTests(SimpleTestCase):
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_detects_hidden_versions_delete_markers_and_uploads(self, build_client):
+        for response_field, response_value in (
+            ("Versions", [{"Key": "repo/old", "VersionId": "v-1"}]),
+            ("DeleteMarkers", [{"Key": "repo/old", "VersionId": "m-1"}]),
+        ):
+            with self.subTest(response_field=response_field):
+                client = mock.Mock()
+                client.list_objects_v2.return_value = {}
+                client.list_object_versions.return_value = {
+                    response_field: response_value
+                }
+                build_client.return_value = client
+
+                self.assertTrue(self._has_state())
+
+                client.list_multipart_uploads.assert_not_called()
+
+        client = mock.Mock()
+        client.list_objects_v2.return_value = {}
+        client.list_object_versions.return_value = {}
+        client.list_multipart_uploads.return_value = {
+            "Uploads": [{"Key": "repo/incomplete", "UploadId": "u-1"}]
+        }
+        build_client.return_value = client
+
+        self.assertTrue(self._has_state())
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_fails_closed_when_empty_prefix_version_api_is_unsupported(
+        self, build_client
+    ):
+        client = mock.Mock()
+        client.list_objects_v2.return_value = {}
+        client.list_object_versions.side_effect = ClientError(
+            {
+                "Error": {
+                    "Code": "NotImplemented",
+                    "Message": (
+                        "A header you provided implies functionality that is not "
+                        "implemented"
+                    ),
+                },
+                "ResponseMetadata": {"HTTPStatusCode": 501},
+            },
+            "ListObjectVersions",
+        )
+        client.list_multipart_uploads.return_value = {}
+        build_client.return_value = client
+
+        with self.assertRaises(S3ClientError):
+            self._has_state()
+
+    def _has_state(self):
+        return s3_prefix_has_any_state(
+            endpoint="https://s3.example.test",
+            region="us-east-1",
+            bucket="bucket",
+            prefix="repo/",
+            access_key_id="key",
+            secret_access_key="secret",
+        )

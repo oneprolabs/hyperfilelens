@@ -7,6 +7,7 @@ import posixpath
 import math
 from typing import Any
 
+from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
 from apps.iam.models import Organization
@@ -21,9 +22,12 @@ from apps.protection.services.backup_task import _resolve_execution_target
 from apps.protection.services.snapshot_repository_locator import (
     resolve_snapshot_repository_reader,
 )
-from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.repository_access import (
     repository_uses_bound_proxy,
+)
+from apps.storage.services.internal.repository_workload import (
+    RepositoryWorkload,
+    lock_repositories_for_workload,
 )
 
 BROWSE_CORRELATION_TYPE = "lens_bridge.snapshot_browse"
@@ -74,6 +78,7 @@ def _directory_for_org(
     return directory
 
 
+@transaction.atomic
 def dispatch_snapshot_operation(
     *,
     organization_id: int,
@@ -91,16 +96,17 @@ def dispatch_snapshot_operation(
         organization_id=organization_id,
         directory_id=directory_id,
     )
-    repository = (
-        Repository.objects.filter(
+    try:
+        repository = lock_repositories_for_workload(
             organization_id=organization_id,
-            id=directory.repository_id,
-        )
-        .exclude(status=Repository.Status.REMOVED)
-        .first()
-    )
-    if repository is None:
-        raise ValidationError({"directory_id": "Snapshot repository is not available."})
+            repository_ids=[directory.repository_id],
+            workload=RepositoryWorkload.RESTORE_READ,
+        )[0]
+    except ValidationError as exc:
+        raise ValidationError(
+            {"directory_id": "Snapshot repository is not available."}
+        ) from exc
+
     fallback_target = None
     if not repository_uses_bound_proxy(repository):
         fallback_target = _resolve_execution_target(
@@ -291,11 +297,7 @@ def resolved_scope_summary(task: NodeTask) -> dict[str, int | str]:
         size_bytes = _exact_result_int(result["size_bytes"])
     except (KeyError, TypeError, ValueError, OverflowError) as exc:
         raise RuntimeError("Agent returned an invalid Insight scope summary.") from exc
-    if (
-        file_count < 0
-        or size_bytes < 0
-        or (path_type == "file" and file_count != 1)
-    ):
+    if file_count < 0 or size_bytes < 0 or (path_type == "file" and file_count != 1):
         raise RuntimeError("Agent returned an invalid Insight scope summary.")
     return {
         "path_type": path_type,

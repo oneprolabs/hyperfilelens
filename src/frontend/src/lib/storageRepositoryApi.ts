@@ -14,6 +14,13 @@ export type StorageRepositoryStatus =
   | 'remove_failed'
   | 'removed'
 export type StorageRepositoryHealth = 'online' | 'offline' | 'unverified'
+export type StorageRepositoryInitializationState =
+  | 'not_initialized'
+  | 'initializing'
+  | 'ready'
+  | 'attention_required'
+  | 'released'
+  | 'unverified'
 export type StorageRepositoryNasProtocol = 'smb' | 'nfs'
 export type StorageRepositoryBindNodeType = 'proxy'
 export type StorageRepositoryS3Platform = string
@@ -39,6 +46,8 @@ export type StorageRepository = {
   status: StorageRepositoryStatus | string
   health: StorageRepositoryHealth | string
   health_failures?: number
+  initialization_state?: StorageRepositoryInitializationState | string
+  initialized_target_count?: number
   config?: Record<string, unknown>
   credential_id?: number | null
   s3_platform?: StorageRepositoryS3Platform | string | null
@@ -416,6 +425,31 @@ export async function repairStorageRepository(
     await api<unknown>(`${repositoryBase}/${id}/repair/`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
+      headers: orgHeaders(),
+    }),
+  )
+}
+
+export type StorageRepositoryRetryInitializationResult = {
+  repository: StorageRepository
+  task: TaskRow
+}
+
+export async function retryStorageRepositoryInitialization(id: number) {
+  return unwrapApiPayload<StorageRepositoryRetryInitializationResult>(
+    await api<unknown>(`${repositoryBase}/${id}/retry-initialization/`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+      headers: orgHeaders(),
+    }),
+  )
+}
+
+export async function releaseStorageRepositoryResidualLocation(id: number) {
+  return unwrapApiPayload<StorageRepository>(
+    await api<unknown>(`${repositoryBase}/${id}/release-residual-location/`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmation: 'RELEASE LOCATION' }),
       headers: orgHeaders(),
     }),
   )
