@@ -215,6 +215,18 @@ PY
 [[ "${artifact_channel}" == "release" || "${artifact_channel}" == "main" ]] \
 	|| { printf 'ERROR: unsupported artifact channel\n' >&2; exit 1; }
 
+release_edition="$(python3 - "${pkg_root}/MANIFEST.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(str(manifest.get("edition") or ""))
+PY
+)"
+[[ "${release_edition}" == "community" || "${release_edition}" == "enterprise" ]] \
+	|| { printf 'ERROR: release manifest has an unsupported edition\n' >&2; exit 1; }
+
 while IFS= read -r image_archive; do
 	gzip -t "${image_archive}"
 done < <(find "${pkg_root}/images" -maxdepth 1 -type f -name '*.tar.gz' | sort)
@@ -304,6 +316,7 @@ export HFL_TENANT_PORT=11443
 export HFL_ADMIN_PORT=11444
 export SOURCELENS_CONSOLE_PORT=11445
 export SMOKE_HOST="${smoke_host}"
+export HFL_RELEASE_EDITION="${release_edition}"
 export SEED_ADMIN_EMAIL
 export SEED_ADMIN_PASSWORD
 SEED_ADMIN_EMAIL="$(sudo sed -n 's/^SEED_ADMIN_EMAIL=//p' /opt/hyperfilelens/.env | head -1)"
@@ -316,6 +329,7 @@ sudo env \
 	HFL_ADMIN_PORT="${HFL_ADMIN_PORT}" \
 	SOURCELENS_CONSOLE_PORT="${SOURCELENS_CONSOLE_PORT}" \
 	SMOKE_HOST="${SMOKE_HOST}" \
+	HFL_RELEASE_EDITION="${HFL_RELEASE_EDITION}" \
 	SEED_ADMIN_EMAIL="${SEED_ADMIN_EMAIL}" \
 	SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD}" \
 	SMOKE_REQUIRE_HMR="${SMOKE_REQUIRE_HMR}" \

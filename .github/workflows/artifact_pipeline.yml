@@ -425,6 +425,7 @@ jobs:
           set -euo pipefail
           python3 tools/quality/check-english-source.py
           python3 -m unittest tools/quality/test_check_english_source.py
+          node tools/quality/test-browser-smoke-contract.mjs
           python3 -m unittest tools/quality/test_agent_certification_gate.py
           uv run --isolated --no-project --python 3.8 python tools/quality/check-python38-runtime.py
           ./tools/quality/check-release-contracts.sh

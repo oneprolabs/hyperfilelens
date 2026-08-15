@@ -774,6 +774,15 @@ grep -F "'.dashboard-page, .main-content, .platform-ops-main, .login-form-box, .
 	"${ROOT}/tools/dev/browser-smoke.mjs" >/dev/null
 grep -F 'verifyResponsivePlatformPrimaryAction' \
 	"${ROOT}/tools/dev/browser-smoke.mjs" >/dev/null
+grep -F 'resolveSmokeContract' "${ROOT}/tools/dev/browser-smoke.mjs" >/dev/null
+grep -F 'HFL_RELEASE_EDITION' "${ROOT}/tools/dev/browser-smoke.sh" >/dev/null
+grep -F 'docker inspect --format' "${ROOT}/tools/dev/browser-smoke.sh" >/dev/null
+grep -F 'HFL_EXTENSIONS=' "${ROOT}/tools/dev/browser-smoke.sh" >/dev/null
+grep -F 'HFL_RELEASE_EDITION="${smoke_edition}"' \
+	"${ROOT}/tools/dev/browser-smoke.sh" >/dev/null
+grep -F 'release_edition' "${ROOT}/release/ci/verify-release.sh" >/dev/null
+grep -F 'test-browser-smoke-contract.mjs' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 grep -F 'python3 -m unittest tools/quality/test_agent_certification_gate.py' "${workflow}" >/dev/null
 grep -F 'release/ci/certify-agent-candidate.py' "${workflow}" >/dev/null
 grep -F '"KOPIA_USE_KEYRING": "false"' "${agent_certification}" >/dev/null
