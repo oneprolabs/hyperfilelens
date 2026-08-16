@@ -2712,8 +2712,42 @@ create_managed_backup() {
 
 preflight_redis_recovery() {
 	local rdb="${ROOT}/data/redis/dump.rdb" cid output creation_bytes safe_bytes
-	local warn_bytes=$((768 * 1024 * 1024)) limit_bytes=$((1024 * 1024 * 1024))
+	local configured_limit limit_bytes limit_mib warn_bytes
 	[[ -s "${rdb}" ]] || { skip "Redis has no persisted RDB to validate"; return 0; }
+	configured_limit="$(grep -E '^HFL_REDIS_MEMORY_LIMIT=' "${ROOT}/.env" 2>/dev/null \
+		| head -1 | cut -d= -f2- | tr -d ' "' || true)"
+	configured_limit="${configured_limit:-2g}"
+	limit_bytes="$(python3 - "${configured_limit}" <<'PY'
+import re
+import sys
+
+raw = sys.argv[1].strip().lower()
+match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)\s*([kmgt]i?b?|bytes?)", raw)
+if not match:
+    raise SystemExit(1)
+units = {
+    "k": 1024, "kb": 1024, "kib": 1024,
+    "m": 1024**2, "mb": 1024**2, "mib": 1024**2,
+    "g": 1024**3, "gb": 1024**3, "gib": 1024**3,
+    "t": 1024**4, "tb": 1024**4, "tib": 1024**4,
+    "byte": 1, "bytes": 1,
+}
+print(int(float(match.group(1)) * units[match.group(2)]))
+PY
+	)" || {
+		die "HFL_REDIS_MEMORY_LIMIT=${configured_limit} is invalid; use a size such as 2g or 3072m"
+		return 1
+	}
+	if [[ ! "${limit_bytes}" =~ ^[0-9]+$ ]]; then
+		die "HFL_REDIS_MEMORY_LIMIT=${configured_limit} did not resolve to a byte limit"
+		return 1
+	fi
+	limit_mib=$((limit_bytes / 1024 / 1024))
+	if ((limit_mib < 256)); then
+		die "HFL_REDIS_MEMORY_LIMIT=${configured_limit} is below the supported 256 MiB minimum"
+		return 1
+	fi
+	warn_bytes=$((limit_bytes * 3 / 4))
 	if ! cid="$(compose_in_root ps -q redis 2>/dev/null | head -1)" || [[ -z "${cid}" ]]; then
 		warn "Redis is not running; persisted RDB recovery memory could not be measured"
 		return 0
@@ -2748,11 +2782,11 @@ for line in sys.stdin:
 	fi
 	safe_bytes=$((creation_bytes * 2))
 	if ((safe_bytes > limit_bytes)); then
-		die "Redis RDB needs approximately $((safe_bytes / 1024 / 1024)) MiB to recover, exceeding the fixed 1 GiB container limit; current services were not stopped"
+		die "Redis RDB needs approximately $((safe_bytes / 1024 / 1024)) MiB to recover, exceeding the configured ${limit_mib} MiB container limit; increase HFL_REDIS_MEMORY_LIMIT after confirming host capacity; current services were not stopped"
 	elif ((safe_bytes >= warn_bytes)); then
-		warn "Redis RDB recovery may need approximately $((safe_bytes / 1024 / 1024)) MiB of the 1 GiB limit"
+		warn "Redis RDB recovery may need approximately $((safe_bytes / 1024 / 1024)) MiB of the configured ${limit_mib} MiB limit"
 	else
-		ok "Redis RDB recovery estimate is $((safe_bytes / 1024 / 1024)) MiB within the 1 GiB limit"
+		ok "Redis RDB recovery estimate is $((safe_bytes / 1024 / 1024)) MiB within the configured ${limit_mib} MiB limit"
 	fi
 }
 
