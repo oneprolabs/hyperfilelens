@@ -4,8 +4,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from celery import Celery, states
+from celery.beat import ScheduleEntry
 from django.test import SimpleTestCase
-from django_celery_beat.schedulers import DatabaseScheduler
+from django_celery_beat.models import IntervalSchedule, PeriodicTask
+from django_celery_beat.schedulers import DatabaseScheduler, ModelEntry
 
 from common.scheduling.periodic_wakeup import (
     PERIODIC_WAKEUP_COALESCE_HEADER,
@@ -201,11 +203,22 @@ class CoalescingSchedulerTests(SimpleTestCase):
         scheduler._do_sync = Mock()
         return scheduler
 
+    @staticmethod
+    def _entry(*, options: dict) -> ScheduleEntry:
+        return ScheduleEntry(
+            name="reconcile",
+            task="tests.periodic",
+            schedule=1,
+            args=(),
+            kwargs={},
+            options=options,
+            app=Celery("periodic-scheduler-test"),
+        )
+
     @patch("common.scheduling.scheduler.claim_periodic_wakeup", return_value=False)
     def test_duplicate_is_advanced_without_publish(self, _claim) -> None:
         scheduler = self._scheduler()
-        entry = SimpleNamespace(
-            name="reconcile",
+        entry = self._entry(
             options={"headers": {PERIODIC_WAKEUP_COALESCE_HEADER: True}},
         )
 
@@ -223,8 +236,7 @@ class CoalescingSchedulerTests(SimpleTestCase):
     @patch("common.scheduling.scheduler.promote_periodic_wakeup")
     def test_claim_token_is_carried_in_message_headers(self, promote, _claim) -> None:
         scheduler = self._scheduler()
-        entry = SimpleNamespace(
-            name="reconcile",
+        entry = self._entry(
             options={
                 "headers": {
                     "x": "y",
@@ -259,6 +271,50 @@ class CoalescingSchedulerTests(SimpleTestCase):
         )
         promote.assert_called_once_with("reconcile", _TEST_TOKEN)
 
+    @patch(
+        "common.scheduling.scheduler.claim_periodic_wakeup",
+        return_value=_TEST_TOKEN,
+    )
+    @patch("common.scheduling.scheduler.promote_periodic_wakeup")
+    def test_real_model_entry_is_published_without_copying(
+        self,
+        promote,
+        _claim,
+    ) -> None:
+        scheduler = self._scheduler()
+        model = PeriodicTask(
+            name="reconcile",
+            task="tests.periodic",
+            interval=IntervalSchedule(
+                every=1,
+                period=IntervalSchedule.SECONDS,
+            ),
+            args="[]",
+            kwargs="{}",
+            headers=(
+                '{"hfl_periodic_wakeup_coalesce": true, "source": "database"}'
+            ),
+        )
+        entry = ModelEntry(model, app=Celery("periodic-model-entry-test"))
+
+        with patch.object(
+            DatabaseScheduler,
+            "apply_async",
+            return_value="sent",
+        ) as publish:
+            result = scheduler.apply_async(entry, advance=False)
+
+        self.assertEqual(result, "sent")
+        claimed_entry = publish.call_args.args[0]
+        self.assertIsInstance(claimed_entry, ScheduleEntry)
+        self.assertNotIsInstance(claimed_entry, ModelEntry)
+        self.assertEqual(
+            claimed_entry.options["headers"]["source"],
+            "database",
+        )
+        self.assertNotIn(PERIODIC_WAKEUP_TOKEN_HEADER, entry.options)
+        promote.assert_called_once_with("reconcile", _TEST_TOKEN)
+
     @patch("common.scheduling.scheduler.release_periodic_wakeup")
     @patch("common.scheduling.scheduler.promote_periodic_wakeup")
     @patch(
@@ -267,8 +323,7 @@ class CoalescingSchedulerTests(SimpleTestCase):
     )
     def test_publish_failure_releases_claim(self, _claim, promote, release) -> None:
         scheduler = self._scheduler()
-        entry = SimpleNamespace(
-            name="reconcile",
+        entry = self._entry(
             options={"headers": {PERIODIC_WAKEUP_COALESCE_HEADER: True}},
         )
 
@@ -285,10 +340,33 @@ class CoalescingSchedulerTests(SimpleTestCase):
         release.assert_called_once_with("reconcile", _TEST_TOKEN)
         promote.assert_not_called()
 
+    @patch("common.scheduling.scheduler.release_periodic_wakeup")
+    @patch(
+        "common.scheduling.scheduler.claim_periodic_wakeup",
+        return_value=_TEST_TOKEN,
+    )
+    def test_entry_preparation_failure_releases_claim(self, _claim, release) -> None:
+        scheduler = self._scheduler()
+        entry = self._entry(
+            options={"headers": {PERIODIC_WAKEUP_COALESCE_HEADER: True}},
+        )
+
+        with (
+            patch.object(
+                scheduler,
+                "_publishing_entry",
+                side_effect=RuntimeError("entry preparation failed"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "entry preparation failed"),
+        ):
+            scheduler.apply_async(entry)
+
+        release.assert_called_once_with("reconcile", _TEST_TOKEN)
+
     @patch("common.scheduling.scheduler.claim_periodic_wakeup")
     def test_unmanaged_schedule_uses_standard_delivery(self, claim) -> None:
         scheduler = self._scheduler()
-        entry = SimpleNamespace(name="operator-task", options={"headers": {}})
+        entry = self._entry(options={"headers": {}})
 
         with patch.object(
             DatabaseScheduler,
