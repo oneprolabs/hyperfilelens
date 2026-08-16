@@ -1282,7 +1282,10 @@ grep -F 'create_managed_backup' "${installer}" >/dev/null
 grep -F 'backup-manifest.json' "${installer}" >/dev/null
 grep -F 'sorted(groups, reverse=True)[3:]' "${installer}" >/dev/null
 grep -F 'preflight_redis_recovery' "${installer}" >/dev/null
-grep -F 'fixed 1 GiB container limit' "${installer}" >/dev/null
+grep -F 'HFL_REDIS_MEMORY_LIMIT=${configured_limit} is invalid' "${installer}" >/dev/null
+grep -F 'exceeding the configured ${limit_mib} MiB container limit' "${installer}" >/dev/null
+grep -F 'HFL_REDIS_MEMORY_LIMIT=2g' "${ROOT}/.env.example" >/dev/null
+grep -F 'mem_limit: ${HFL_REDIS_MEMORY_LIMIT:-2g}' "${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'recover_upgrade_services' "${installer}" >/dev/null
 grep -F 'prune_old_managed_image_refs' "${installer}" >/dev/null
 grep -F 'docker image rm "${ref}"' "${installer}" >/dev/null
@@ -1502,7 +1505,7 @@ grep -E '^[[:space:]]*11444[[:space:]]+ops;' \
 grep -F 'proxy_set_header X-HFL-Site-Role $hfl_site;' \
 	"${ROOT}/deploy/nginx/snippets/hfl-backend-proxy-headers.inc" >/dev/null
 for resource in \
-	'mem_limit: 128m' 'mem_limit: 256m' 'mem_limit: 512m' 'mem_limit: 1g' \
+	'mem_limit: 128m' 'mem_limit: 256m' 'mem_limit: 512m' \
 	'cpus: 0.125' 'cpus: 0.25' 'cpus: 0.50' 'cpus: 1.00'; do
 	grep -F "${resource}" "${ROOT}/deploy/docker-compose.yml" \
 		"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null

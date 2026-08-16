@@ -27,12 +27,24 @@ compose_in_root() {
 	esac
 }
 
-source <(sed -n '/^preflight_redis_recovery()/,/^}/p' "${installer}")
+source <(
+	sed -n '/^preflight_redis_recovery()/,/^managed_image_ref_is_in_use()/p' "${installer}" \
+		| sed '$d'
+)
 
 preflight_redis_recovery
-RDB_MEMORY=600
+RDB_MEMORY=1100
 if (preflight_redis_recovery); then
 	printf 'ERROR: oversized Redis RDB recovery estimate was accepted\n' >&2
+	exit 1
+fi
+
+printf 'HFL_REDIS_MEMORY_LIMIT=3g\n' >"${ROOT}/.env"
+preflight_redis_recovery
+
+printf 'HFL_REDIS_MEMORY_LIMIT=2048\n' >"${ROOT}/.env"
+if (preflight_redis_recovery); then
+	printf 'ERROR: unitless Redis memory limit was accepted\n' >&2
 	exit 1
 fi
 
