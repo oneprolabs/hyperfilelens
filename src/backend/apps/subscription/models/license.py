@@ -59,15 +59,29 @@ class License(models.Model):
     max_public_gateways = models.IntegerField(
         default=DEFAULT_LIMITS["max_public_gateways"]
     )
-    # Instance pool for org Public Gateway capacity allocations (GiB).
+    # Instance-wide hard limit for actual Public Gateway capacity use (GiB).
     max_public_gateway_capacity_gb = models.IntegerField(
         default=DEFAULT_LIMITS["max_public_gateway_capacity_gb"]
     )
-    # Lifetime AI token budget (LensUsageLedger.total_tokens). Field name is legacy.
+    # Instance workload pools. Keep these separate from storage capacity so a
+    # license can express both resource-count and managed-data boundaries.
+    max_source_nas = models.IntegerField(default=DEFAULT_LIMITS["max_source_nas"])
+    max_object_storage = models.IntegerField(
+        default=DEFAULT_LIMITS["max_object_storage"]
+    )
+    max_target_nas = models.IntegerField(default=DEFAULT_LIMITS["max_target_nas"])
+    max_standalone_disk = models.IntegerField(
+        default=DEFAULT_LIMITS["max_standalone_disk"]
+    )
+    max_protected_sources = models.IntegerField(
+        default=DEFAULT_LIMITS["max_protected_sources"]
+    )
     # Lifetime AI token budget (LensUsageLedger.total_tokens), not request count.
     ai_insights_quota = models.IntegerField(default=50_000_000)
     max_tasks = models.IntegerField(default=50)
     max_alert_policies = models.IntegerField(default=50)
+    # Opaque Enterprise feature keys. ``*`` grants every feature.
+    features = models.JSONField(default=list, blank=True)
 
     issued_at = models.DateTimeField()
     expires_at = models.DateTimeField(null=True, blank=True)
@@ -117,6 +131,11 @@ class License(models.Model):
             "max_gateways": self.max_gateways,
             "max_public_gateways": self.max_public_gateways,
             "max_public_gateway_capacity_gb": self.max_public_gateway_capacity_gb,
+            "max_source_nas": self.max_source_nas,
+            "max_object_storage": self.max_object_storage,
+            "max_target_nas": self.max_target_nas,
+            "max_standalone_disk": self.max_standalone_disk,
+            "max_protected_sources": self.max_protected_sources,
             "ai_insights_quota": self.ai_insights_quota,
             "ai_tokens": self.ai_insights_quota,
             "max_tasks": self.max_tasks,
@@ -138,9 +157,15 @@ class License(models.Model):
             max_gateways=self.max_gateways,
             max_public_gateways=self.max_public_gateways,
             max_public_gateway_capacity_gb=self.max_public_gateway_capacity_gb,
+            max_source_nas=self.max_source_nas,
+            max_object_storage=self.max_object_storage,
+            max_target_nas=self.max_target_nas,
+            max_standalone_disk=self.max_standalone_disk,
+            max_protected_sources=self.max_protected_sources,
             ai_insights_quota=self.ai_insights_quota,
             max_tasks=self.max_tasks,
             max_alert_policies=self.max_alert_policies,
+            features=list(self.features or []),
             issued_at=self.issued_at,
             expires_at=self.expires_at,
             activated_at=self.activated_at,
@@ -186,9 +211,21 @@ class LicenseHistory(models.Model):
     max_public_gateway_capacity_gb = models.IntegerField(
         default=DEFAULT_LIMITS["max_public_gateway_capacity_gb"]
     )
+    max_source_nas = models.IntegerField(default=DEFAULT_LIMITS["max_source_nas"])
+    max_object_storage = models.IntegerField(
+        default=DEFAULT_LIMITS["max_object_storage"]
+    )
+    max_target_nas = models.IntegerField(default=DEFAULT_LIMITS["max_target_nas"])
+    max_standalone_disk = models.IntegerField(
+        default=DEFAULT_LIMITS["max_standalone_disk"]
+    )
+    max_protected_sources = models.IntegerField(
+        default=DEFAULT_LIMITS["max_protected_sources"]
+    )
     ai_insights_quota = models.IntegerField()
     max_tasks = models.IntegerField()
     max_alert_policies = models.IntegerField()
+    features = models.JSONField(default=list, blank=True)
     issued_at = models.DateTimeField()
     expires_at = models.DateTimeField(null=True, blank=True)
     activated_at = models.DateTimeField()

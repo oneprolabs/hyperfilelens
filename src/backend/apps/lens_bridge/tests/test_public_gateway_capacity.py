@@ -63,6 +63,17 @@ class PublicGatewayCapacityServiceTests(TestCase):
         with self.assertRaises(ValueError):
             set_public_gateway_capacity_gb(gateway_link=self.link_a, capacity_gb=-2)
 
+        for invalid in (True, False, 1.5, "1.5", 2**63):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises((TypeError, ValueError, OverflowError)):
+                    set_public_gateway_capacity_gb(
+                        gateway_link=self.link_a,
+                        capacity_gb=invalid,
+                    )
+
+        self.link_a.refresh_from_db()
+        self.assertEqual(self.link_a.capacity_gb, -1)
+
     def test_zero_capacity_is_hard_empty_not_unlimited(self):
         set_public_gateway_capacity_gb(gateway_link=self.link_a, capacity_gb=0)
         self.link_a.refresh_from_db()

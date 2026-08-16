@@ -31,29 +31,40 @@ def count_customer_organizations() -> int:
 
 
 def resolve_max_organizations() -> int:
-    """License.max_organizations when active; else DEFAULT_LIMITS."""
-    try:
-        from apps.subscription.services.internal.license_ops import get_instance_active_license
+    """Resolve the active instance entitlement for customer organizations."""
+    from common.extension_spi import get_quota_provider
 
-        lic = get_instance_active_license()
-        if lic is not None:
-            return int(getattr(lic, "max_organizations", DEFAULT_LIMITS["max_organizations"]))
-    except Exception:
-        pass
+    provider = get_quota_provider()
+    resolver = getattr(provider, "get_instance_limit", None)
+    if callable(resolver):
+        return int(resolver("max_organizations"))
+    from apps.subscription.services.internal.license_ops import get_instance_active_license
+
+    lic = get_instance_active_license()
+    if lic is not None:
+        return int(getattr(lic, "max_organizations", DEFAULT_LIMITS["max_organizations"]))
     return int(DEFAULT_LIMITS["max_organizations"])
 
 
 def assert_organization_count_available(*, additional: int = 1) -> None:
     """Reject when adding ``additional`` customer orgs would exceed the instance cap."""
     from apps.subscription.services.quota import hard_quota_enforcement_active
+    from common.extension_spi import get_quota_provider
 
     if not hard_quota_enforcement_active():
+        return
+    requested = int(additional)
+    if requested < 0:
+        raise ValueError("Organization quota consumption cannot be negative")
+    provider = get_quota_provider()
+    if provider is not None:
+        provider.check_quota(None, "max_organizations", requested)
         return
     cap = resolve_max_organizations()
     if cap == UNLIMITED or cap < 0:
         return
     used = count_customer_organizations()
-    if used + int(additional) > cap:
+    if used + requested > cap:
         raise AppError(
             code="SUBSCRIPTION.QUOTA_EXCEEDED",
             status=403,
@@ -63,7 +74,7 @@ def assert_organization_count_available(*, additional: int = 1) -> None:
                 "quota_type": "max_organizations",
                 "limit": cap,
                 "used": used,
-                "requested": int(additional),
+                "requested": requested,
                 "scope": "instance",
             },
         )

@@ -102,6 +102,80 @@ def _advance_pipeline(
         raise ValidationError({"source_ref_id": "Backup source not found."})
 
 
+def _persist_backup_config_rows(
+    *,
+    organization_id: int,
+    payload: dict[str, Any],
+    directories_data: list[dict[str, Any]],
+    recovery_plan_enabled: bool,
+    recovery_plans_data: list[dict[str, Any]] | None,
+) -> int:
+    """Persist one configuration after quota and repository admission succeed."""
+    config = BackupConfig.objects.create(organization_id=organization_id, **payload)
+
+    dirs = [
+        BackupConfigDirectory(
+            organization_id=organization_id,
+            backup_config=config,
+            path=directory["path"],
+            path_type=directory.get(
+                "path_type", BackupConfigDirectory.PathType.UNKNOWN
+            ),
+            display_name=directory.get("display_name", ""),
+            estimated_size_bytes=max(
+                0, int(directory.get("estimated_size_bytes", 0) or 0)
+            ),
+            sort_order=index,
+        )
+        for index, directory in enumerate(directories_data)
+    ]
+    created_dirs = BackupConfigDirectory.objects.bulk_create(dirs)
+
+    if recovery_plan_enabled and recovery_plans_data:
+        for index, recovery_plan in enumerate(recovery_plans_data):
+            directory_id = recovery_plan.get("backup_config_dir_id")
+            if directory_id is None:
+                matched = [
+                    directory
+                    for directory in created_dirs
+                    if _same_or_ancestor_path(
+                        directory.path,
+                        recovery_plan["source_path"],
+                    )
+                ]
+                directory_id = matched[0].id if matched else None
+            if directory_id is None and recovery_plan.get("scope") != "snapshot":
+                raise ValidationError(
+                    {"recovery_plans": "Recovery plan directory not found."}
+                )
+            create_restore_plan(
+                organization_id=organization_id,
+                data={
+                    "backup_config_id": config.id,
+                    "backup_config_dir_id": directory_id,
+                    "scope": recovery_plan.get("scope", "paths"),
+                    "source_type": payload["source_type"],
+                    "source_ref_id": payload["source_ref_id"],
+                    "source_path": recovery_plan["source_path"],
+                    "target_type": recovery_plan.get("target_type") or "agent",
+                    "target_ref_id": recovery_plan.get("target_ref_id")
+                    or recovery_plan.get("restore_host_id"),
+                    "restore_dir": recovery_plan["restore_dir"],
+                    "conflict_mode": recovery_plan["conflict_mode"],
+                    "enabled": True,
+                    "sort_order": index,
+                },
+            )
+
+    config.refresh_from_db()
+    _advance_pipeline(
+        organization_id=organization_id,
+        source_type=payload["source_type"],
+        source_ref_id=payload["source_ref_id"],
+    )
+    return int(config.id)
+
+
 def create_backup_config(
     *,
     organization_id: int,
@@ -140,85 +214,62 @@ def create_backup_config(
     from apps.subscription.services.interface import enforce_license_quota
 
     org = Organization.objects.filter(id=organization_id).first()
-    if org is not None:
-        enforce_license_quota(org, "max_protected_sources", additional=1)
-        enforce_license_quota(org, "max_storage_gb", additional=0)
 
-    _initialize_direct_nas_repository(
-        organization_id=organization_id,
-        source_type=payload["source_type"],
-        source_ref_id=payload["source_ref_id"],
-        repository_id=payload["repository_id"],
-    )
-
+    initialization_error: Exception | None = None
+    persistence_error: Exception | None = None
     with transaction.atomic():
         _lock_repository_for_backup_config(
             organization_id=organization_id,
             repository_id=payload["repository_id"],
         )
-        config = BackupConfig.objects.create(organization_id=organization_id, **payload)
-
-        dirs = []
-        for idx, d in enumerate(directories_data):
-            dirs.append(
-                BackupConfigDirectory(
-                    organization_id=organization_id,
-                    backup_config=config,
-                    path=d["path"],
-                    path_type=d.get(
-                        "path_type", BackupConfigDirectory.PathType.UNKNOWN
-                    ),
-                    display_name=d.get("display_name", ""),
-                    estimated_size_bytes=max(
-                        0, int(d.get("estimated_size_bytes", 0) or 0)
-                    ),
-                    sort_order=idx,
-                )
+        # Keep admission and the consuming write in one transaction so instance
+        # and organization quota locks remain held until commit.
+        if org is not None:
+            enforce_license_quota(org, "max_protected_sources", additional=1)
+            enforce_license_quota(org, "max_storage_gb", additional=0)
+        # Quota rejection must not initialize a remote Direct NAS repository or
+        # persist its ownership/location records.
+        try:
+            residual_claim = _initialize_direct_nas_repository(
+                organization_id=organization_id,
+                source_type=payload["source_type"],
+                source_ref_id=payload["source_ref_id"],
+                repository_id=payload["repository_id"],
             )
-        created_dirs = BackupConfigDirectory.objects.bulk_create(dirs)
-
-        if recovery_plan_enabled and recovery_plans_data:
-            for idx, rp in enumerate(recovery_plans_data):
-                dir_id = rp.get("backup_config_dir_id")
-                if dir_id is None:
-                    matched = [
-                        d
-                        for d in created_dirs
-                        if _same_or_ancestor_path(d.path, rp["source_path"])
-                    ]
-                    dir_id = matched[0].id if matched else None
-                if dir_id is None and rp.get("scope") != "snapshot":
-                    raise ValidationError(
-                        {"recovery_plans": "Recovery plan directory not found."}
+        except Exception as exc:
+            # Direct NAS initialization changes remote storage before it can
+            # fail. Commit the residual ownership record, then re-raise after
+            # leaving this transaction so operators can safely recover it.
+            initialization_error = exc
+        if initialization_error is None:
+            try:
+                # Roll back partial config rows independently from the Direct
+                # NAS ownership facts written by the initialization above.
+                with transaction.atomic():
+                    config_id = _persist_backup_config_rows(
+                        organization_id=organization_id,
+                        payload=payload,
+                        directories_data=directories_data,
+                        recovery_plan_enabled=recovery_plan_enabled,
+                        recovery_plans_data=recovery_plans_data,
                     )
-                create_restore_plan(
-                    organization_id=organization_id,
-                    data={
-                        "backup_config_id": config.id,
-                        "backup_config_dir_id": dir_id,
-                        "scope": rp.get("scope", "paths"),
-                        "source_type": payload["source_type"],
-                        "source_ref_id": payload["source_ref_id"],
-                        "source_path": rp["source_path"],
-                        "target_type": rp.get("target_type") or "agent",
-                        "target_ref_id": rp.get("target_ref_id")
-                        or rp.get("restore_host_id"),
-                        "restore_dir": rp["restore_dir"],
-                        "conflict_mode": rp["conflict_mode"],
-                        "enabled": True,
-                        "sort_order": idx,
-                    },
-                )
+            except Exception as exc:
+                persistence_error = exc
+                if residual_claim is not None:
+                    repository, owner_node_id, repository_subdir = residual_claim
+                    mark_repository_location_residual(
+                        repository,
+                        owner_node_id=owner_node_id,
+                        repository_subdir=repository_subdir,
+                    )
 
-        config.refresh_from_db()
-        config_id = config.id
-        source_type = payload["source_type"]
-        source_ref_id = payload["source_ref_id"]
-        _advance_pipeline(
-            organization_id=organization_id,
-            source_type=source_type,
-            source_ref_id=source_ref_id,
-        )
+    if initialization_error is not None:
+        raise initialization_error
+    if persistence_error is not None:
+        raise persistence_error
+
+    source_type = payload["source_type"]
+    source_ref_id = payload["source_ref_id"]
 
     logger.info(
         "backup config create ok config_id=%s org_id=%s source_type=%s source_ref_id=%s repository_id=%s",
@@ -639,7 +690,14 @@ def _initialize_direct_nas_repository(
     source_ref_id: int,
     repository_id: int,
     verify_existing: bool = True,
-) -> None:
+) -> tuple[Repository, int, str] | None:
+    """Initialize Direct NAS and identify claims to retain on caller rollback.
+
+    A returned claim was newly initialized or recovered from a non-authoritative
+    state during this call. If later local persistence fails, the caller must
+    retain that claim as residual because the remote storage side effect cannot
+    be rolled back with the database savepoint.
+    """
     repository = (
         Repository.objects.filter(
             organization_id=organization_id,
@@ -651,7 +709,7 @@ def _initialize_direct_nas_repository(
         .first()
     )
     if repository is None:
-        return
+        return None
     if repository.status != Repository.Status.CREATED:
         raise ValidationError(
             {"repository_id": "Repository is no longer available for backup."}
@@ -721,7 +779,7 @@ def _initialize_direct_nas_repository(
                 and claim.ownership_verified_at is not None
                 and not verify_existing
             ):
-                return
+                return None
             location_requires_verification = (
                 claim.state != RepositoryLocationClaim.State.OWNED
             )
@@ -958,6 +1016,9 @@ def _initialize_direct_nas_repository(
         raise ValidationError(
             {"repository_id": "Repository is no longer available for backup."}
         )
+    if not previously_initialized or location_requires_verification:
+        return repository, int(node.id), repository_subdir
+    return None
 
 
 def ensure_direct_nas_repository_for_backup(

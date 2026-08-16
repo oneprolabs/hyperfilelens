@@ -69,8 +69,9 @@ USAGE_KEY_BY_QUOTA: dict[str, str | None] = {
     "gateway_select_max_bytes": None,
 }
 
-# Unsigned default instance grant (pubkey/privkey injection not wired yet).
-# Sized as a generous private-deployment pool so Ops can allocate before signing.
+# Default values for persisted license fields and policy-only quota knobs.
+# When no signed license has ever been installed, Enterprise resolves a separate
+# built-in unlimited entitlement instead of treating these values as runtime caps.
 DEFAULT_LIMITS = {
     "max_organizations": 50,
     "max_users": 500,
@@ -79,7 +80,7 @@ DEFAULT_LIMITS = {
     "max_gateways": 50,
     # Platform Public Gateway count (instance license; not org-split).
     "max_public_gateways": 20,
-    # Instance pool for org Public Gateway capacity allocations (GiB).
+    # Instance-wide hard limit for actual Public Gateway capacity use (GiB).
     "max_public_gateway_capacity_gb": 5000,
     # License.ai_insights_quota stores the instance AI token budget (total_tokens).
     "ai_insights_quota": 50_000_000,

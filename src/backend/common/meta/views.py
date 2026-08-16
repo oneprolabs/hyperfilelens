@@ -80,6 +80,13 @@ class DeployProfileView(APIView):
 
             payload["platform_role"] = get_platform_role(request.user)
             payload["platform_permissions"] = list_platform_permissions(request.user)
+            from common.extension_spi import get_quota_provider
+
+            quota_provider = get_quota_provider()
+            feature_lister = getattr(quota_provider, "list_enabled_features", None)
+            payload["enterprise_features"] = (
+                list(feature_lister()) if callable(feature_lister) else []
+            )
             # Staff deep-link / ops post-login use role-aware landing.
             payload["admin_console_landing_path"] = platform_ops_landing_path_for_user(
                 request.user,
@@ -99,6 +106,7 @@ class DeployProfileView(APIView):
             payload["is_staff"] = False
             payload["platform_role"] = None
             payload["platform_permissions"] = []
+            payload["enterprise_features"] = []
             payload["support_org_key"] = None
 
         return Response(payload)

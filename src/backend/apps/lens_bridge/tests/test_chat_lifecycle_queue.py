@@ -11,7 +11,11 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.iam.models import Organization
-from apps.lens_bridge.models import LensGatewayLink, LensSessionLink
+from apps.lens_bridge.models import (
+    LensGatewayLink,
+    LensKnowledgeSource,
+    LensSessionLink,
+)
 from apps.lens_bridge.services.sync_queue import (
     queue_copilot_chat_provision,
     queue_copilot_chat_teardown,
@@ -225,6 +229,40 @@ class CopilotRetryTests(TestCase):
             lifecycle_status=lifecycle_status,
         )
 
+    def create_public_gateway_session(self) -> LensSessionLink:
+        """Create a failed tenant chat reserved on a platform Gateway."""
+        from apps.lens_bridge.services import platform_lens
+
+        platform_org = platform_lens.get_or_create_platform_org()
+        gateway = Node.objects.create(
+            organization=platform_org,
+            name="public-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=platform_org,
+            gateway=gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+        )
+        return LensSessionLink.objects.create(
+            organization=self.organization,
+            hfl_user=self.user,
+            title="Retry Public Chat",
+            lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
+            gateway_link=gateway_link,
+            source_scopes_json=[
+                {
+                    "source_path": "/docs/a.txt",
+                    "path_type": "file",
+                    "size_bytes": 1024,
+                    "backup_snapshot_directory_id": 1,
+                }
+            ],
+        )
+
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
     def test_failed_session_is_queued_once(self, queue_provision):
         session = self.create_session(LensSessionLink.LifecycleStatus.FAILED)
@@ -289,6 +327,169 @@ class CopilotRetryTests(TestCase):
 
         with self.assertRaisesRegex(ValidationError, "Session is not retryable"):
             chat_lifecycle.retry_copilot_chat_provision(session)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.public_gateway_capacity.session_scope_occupancy",
+        return_value=(1024, False),
+    )
+    @patch(
+        "apps.lens_bridge.services.public_gateway_capacity.assert_public_gateway_capacity"
+    )
+    @patch(
+        "apps.lens_bridge.services.public_gateway_capacity.lock_public_gateway_capacity"
+    )
+    def test_failed_public_gateway_retry_rechecks_capacity(
+        self,
+        lock_capacity,
+        assert_capacity,
+        _session_occupancy,
+        queue_provision,
+    ):
+        session = self.create_public_gateway_session()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            updated = chat_lifecycle.retry_copilot_chat_provision(session)
+
+        self.assertEqual(
+            updated.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING
+        )
+        lock_capacity.assert_called_once()
+        assert_capacity.assert_called_once_with(
+            gateway_link=lock_capacity.return_value,
+            additional_bytes=1024,
+            unknown_size=False,
+        )
+        queue_provision.assert_called_once_with(session.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.public_gateway_capacity.assert_public_gateway_capacity"
+    )
+    def test_failed_public_gateway_retry_stays_failed_when_capacity_is_full(
+        self,
+        assert_capacity,
+        queue_provision,
+    ):
+        from common.errors import AppError
+
+        assert_capacity.side_effect = AppError(
+            code="SUBSCRIPTION.QUOTA_EXCEEDED",
+            status=403,
+            title="full",
+            diagnostic="full",
+        )
+        session = self.create_public_gateway_session()
+
+        with self.assertRaises(AppError):
+            chat_lifecycle.retry_copilot_chat_provision(session)
+
+        session.refresh_from_db()
+        self.assertEqual(
+            session.lifecycle_status, LensSessionLink.LifecycleStatus.FAILED
+        )
+        queue_provision.assert_not_called()
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.public_gateway_capacity."
+        "assert_public_gateway_capacity"
+    )
+    @patch(
+        "apps.lens_bridge.services.public_gateway_capacity."
+        "lock_public_gateway_capacity"
+    )
+    def test_stale_provisioning_reservation_retry_does_not_consume_capacity_twice(
+        self,
+        lock_capacity,
+        assert_capacity,
+        queue_provision,
+    ):
+        session = self.create_public_gateway_session()
+        session.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
+        session.capacity_reservation_status = (
+            LensSessionLink.CapacityReservationStatus.RESERVED
+        )
+        session.capacity_reserved_bytes = 1024
+        session.provision_claimed_at = None
+        session.save(
+            update_fields=[
+                "lifecycle_status",
+                "capacity_reservation_status",
+                "capacity_reserved_bytes",
+                "provision_claimed_at",
+                "updated_at",
+            ]
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            updated = chat_lifecycle.retry_copilot_chat_provision(session)
+
+        self.assertEqual(
+            updated.lifecycle_status,
+            LensSessionLink.LifecycleStatus.PROVISIONING,
+        )
+        self.assertEqual(
+            updated.capacity_reservation_status,
+            LensSessionLink.CapacityReservationStatus.PENDING,
+        )
+        lock_capacity.assert_not_called()
+        assert_capacity.assert_not_called()
+        queue_provision.assert_called_once_with(session.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.public_gateway_capacity."
+        "assert_public_gateway_capacity"
+    )
+    @patch(
+        "apps.lens_bridge.services.public_gateway_capacity."
+        "lock_public_gateway_capacity"
+    )
+    def test_failed_existing_workspace_retry_does_not_consume_capacity_twice(
+        self,
+        lock_capacity,
+        assert_capacity,
+        queue_provision,
+    ):
+        session = self.create_public_gateway_session()
+        knowledge_source = LensKnowledgeSource.objects.create(
+            organization=self.organization,
+            name="Existing retry workspace",
+            gateway=session.gateway_link.gateway,
+            gateway_link=session.gateway_link,
+            source_path="/docs/a.txt",
+            source_scopes_json=session.source_scopes_json,
+            created_by=self.user,
+        )
+        session.knowledge_source = knowledge_source
+        session.capacity_reservation_status = (
+            LensSessionLink.CapacityReservationStatus.RESERVED
+        )
+        session.capacity_reserved_bytes = 1024
+        session.save(
+            update_fields=[
+                "knowledge_source",
+                "capacity_reservation_status",
+                "capacity_reserved_bytes",
+                "updated_at",
+            ]
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            updated = chat_lifecycle.retry_copilot_chat_provision(session)
+
+        self.assertEqual(
+            updated.lifecycle_status,
+            LensSessionLink.LifecycleStatus.PROVISIONING,
+        )
+        self.assertEqual(
+            updated.capacity_reservation_status,
+            LensSessionLink.CapacityReservationStatus.RESERVED,
+        )
+        lock_capacity.assert_not_called()
+        assert_capacity.assert_not_called()
+        queue_provision.assert_called_once_with(session.id)
 
 
 class CopilotCapacityReservationTests(TestCase):
@@ -401,18 +602,12 @@ class CopilotCapacityReservationConcurrencyTests(TransactionTestCase):
             )
             session_claims.append((session.id, str(claim_token)))
 
-        gateway_lock_barrier = threading.Barrier(2)
-        from apps.lens_bridge.services import public_gateway_capacity
-
-        original_gateway_lock = public_gateway_capacity.lock_public_gateway_capacity
-
-        def synchronized_gateway_lock(*, gateway_link):
-            gateway_lock_barrier.wait(timeout=5)
-            return original_gateway_lock(gateway_link=gateway_link)
+        start_barrier = threading.Barrier(2)
 
         def reserve(session_id, claim_token):
             close_old_connections()
             try:
+                start_barrier.wait(timeout=10)
                 try:
                     chat_lifecycle._reserve_chat_capacity(
                         link=LensSessionLink(pk=session_id),
@@ -424,18 +619,13 @@ class CopilotCapacityReservationConcurrencyTests(TransactionTestCase):
             finally:
                 close_old_connections()
 
-        with patch.object(
-            public_gateway_capacity,
-            "lock_public_gateway_capacity",
-            side_effect=synchronized_gateway_lock,
-        ):
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                results = list(
-                    executor.map(
-                        lambda args: reserve(*args),
-                        session_claims,
-                    )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    lambda args: reserve(*args),
+                    session_claims,
                 )
+            )
 
         self.assertCountEqual(
             results,

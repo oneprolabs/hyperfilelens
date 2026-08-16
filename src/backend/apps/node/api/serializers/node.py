@@ -121,6 +121,25 @@ class NodeSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         instance = self.instance
+        immutable_errors = {}
+        requested_organization = attrs.get("organization")
+        if (
+            instance is not None
+            and requested_organization is not None
+            and requested_organization.pk != instance.organization_id
+        ):
+            immutable_errors["organization"] = (
+                "Node organization is fixed during enrollment."
+            )
+        requested_role = attrs.get("role")
+        if (
+            instance is not None
+            and requested_role is not None
+            and requested_role != instance.role
+        ):
+            immutable_errors["role"] = "Node role is fixed during enrollment."
+        if immutable_errors:
+            raise serializers.ValidationError(immutable_errors)
         role = attrs.get("role", getattr(instance, "role", None))
         if "repository_server_address" in attrs and role != Node.Role.PROXY:
             raise serializers.ValidationError(

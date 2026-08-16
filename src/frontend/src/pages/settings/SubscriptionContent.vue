@@ -8,8 +8,10 @@ import { copyTextToClipboard } from '../../lib/clipboard'
 import {
   activateLicense,
   fetchCurrentLicense,
+  fetchEffectiveQuotaUsage,
   fetchLicenseHistory,
   fetchMachineCode,
+  type EffectiveQuotaUsage,
   type LicenseHistoryRow,
   type LicenseRecord,
   type LicenseUsage,
@@ -32,13 +34,17 @@ const instanceShared = ref(false)
 const enforcementEnabled = ref(false)
 const usage = ref<LicenseUsage>({})
 const limits = ref<Record<string, number>>({ ...FALLBACK_LIMITS })
+const effectiveQuotaByKey = ref<Record<string, EffectiveQuotaUsage>>({})
 const machineCode = ref('')
+const canManageInstanceLicense = ref(false)
 const licenseHistory = ref<LicenseHistoryRow[]>([])
 const activationCode = ref('')
 const activating = ref(false)
 
 const hasActiveLicense = computed(() => Boolean(currentLicense.value?.is_valid))
-const canActivateHere = computed(() => !instanceShared.value)
+const canActivateHere = computed(
+  () => canManageInstanceLicense.value && !instanceShared.value,
+)
 const pageSubtitle = computed(() =>
   enforcementEnabled.value
     ? t('settings.subscription.subtitleEnforced')
@@ -46,22 +52,33 @@ const pageSubtitle = computed(() =>
 )
 
 const limitItems = computed(() =>
-  quotaDefsForSubscription().map((def) => ({
-    key: def.key,
-    label: t(def.labelKey),
-    usageKey: def.usageKey,
-    limitKey: def.limitKey,
-    suffix: def.suffix,
-  })),
+  quotaDefsForSubscription().map((def) => {
+    const effective = effectiveQuotaByKey.value[def.limitKey]
+    const used = effective?.used ?? getUsage(def.usageKey)
+    const limit = effective?.limit ?? getLimit(def.limitKey)
+    return {
+      key: def.key,
+      label: t(def.labelKey),
+      suffix: def.suffix,
+      used,
+      limit,
+      limitSource: effective?.limit_source,
+      usagePercent: effective?.usage_percent,
+      usageStatus: effective?.usage_status,
+    }
+  }),
 )
 
 const editionLabel = computed(() => {
-  if (hasActiveLicense.value) return t('settings.subscription.editionEnterprise')
+  if (hasActiveLicense.value || enforcementEnabled.value) {
+    return t('settings.subscription.editionEnterprise')
+  }
   return t('settings.subscription.editionNone')
 })
 
 const licenseStatusLabel = computed(() => {
   if (currentLicense.value?.status === 'expired') return t('settings.subscription.statusExpired')
+  if (!currentLicense.value?.is_valid) return t('settings.subscription.statusStopped')
   return t('settings.subscription.statusActive')
 })
 
@@ -117,6 +134,18 @@ function progressStatus(current: number, max: number): '' | 'success' | 'warning
   return 'success'
 }
 
+function effectiveProgressStatus(item: (typeof limitItems.value)[number]) {
+  if (item.usageStatus === 'exhausted' || item.usageStatus === 'exceeded') return 'exception'
+  if (item.usageStatus === 'warning' || item.usageStatus === 'unknown') return 'warning'
+  return progressStatus(item.used, item.limit)
+}
+
+function effectiveProgressPercent(item: (typeof limitItems.value)[number]) {
+  if (item.usageStatus === 'unknown') return 0
+  if (item.usagePercent == null) return usagePercent(item.used, item.limit)
+  return Math.min(100, Math.max(0, Math.round(item.usagePercent)))
+}
+
 function changeTypeLabel(type?: string | null) {
   const normalizedType = type?.trim()
   if (!normalizedType) return '—'
@@ -152,8 +181,20 @@ async function loadAll() {
     machineCode.value = current.machine_code || ''
     limits.value = { ...FALLBACK_LIMITS, ...(current.limits || {}) }
     instanceShared.value = Boolean(current.instance_shared)
+    canManageInstanceLicense.value = Boolean(current.can_manage_instance_license)
     enforcementEnabled.value = Boolean(current.enforcement_enabled)
-    if (current.is_valid && current.license) {
+    effectiveQuotaByKey.value = {}
+    if (current.enforcement_enabled) {
+      try {
+        const effective = await fetchEffectiveQuotaUsage()
+        effectiveQuotaByKey.value = Object.fromEntries(
+          (effective.quota_usage || []).map((row) => [row.key, row]),
+        )
+      } catch {
+        // Keep the compatible limits/usage from the current-license payload.
+      }
+    }
+    if (current.license) {
       currentLicense.value = current.license
       if (current.license.machine_code && !current.instance_shared) {
         machineCode.value = current.license.machine_code
@@ -174,7 +215,7 @@ async function loadAll() {
       currentLicense.value = null
     }
     licenseHistory.value = history
-    if (!machineCode.value) {
+    if (canManageInstanceLicense.value && !machineCode.value) {
       const mc = await fetchMachineCode()
       machineCode.value = mc.machine_code
     }
@@ -183,9 +224,11 @@ async function loadAll() {
     ElMessage.error({ message: msg || t('settings.subscription.activateFailed'), grouping: true })
     currentLicense.value = null
     instanceShared.value = false
+    canManageInstanceLicense.value = false
     enforcementEnabled.value = false
     licenseHistory.value = []
     limits.value = { ...FALLBACK_LIMITS }
+    effectiveQuotaByKey.value = {}
   } finally {
     loading.value = false
   }
@@ -292,18 +335,25 @@ onMounted(loadAll)
           :key="item.key"
           class="subscription-quota-item"
         >
-          <span class="subscription-quota-item__label">{{ item.label }}</span>
+          <span class="subscription-quota-item__label">
+            {{ item.label }}
+            <small v-if="item.limitSource" class="subscription-quota-item__scope">
+              {{ item.limitSource === 'override'
+                ? t('settings.subscription.manualOverride')
+                : t('settings.subscription.planLimit') }}
+            </small>
+          </span>
           <span class="subscription-quota-item__numbers">
-            {{ getUsage(item.usageKey) }}
+            {{ item.used }}
             <template v-if="item.suffix"> {{ item.suffix }}</template>
-            / {{ formatLimit(getLimit(item.limitKey)) }}
-            <template v-if="item.suffix && getLimit(item.limitKey) >= 0"> {{ item.suffix }}</template>
+            / {{ formatLimit(item.limit) }}
+            <template v-if="item.suffix && item.limit >= 0"> {{ item.suffix }}</template>
           </span>
           <ElProgress
             class="subscription-quota-item__progress"
-            :percentage="usagePercent(getUsage(item.usageKey), getLimit(item.limitKey))"
-            :status="progressStatus(getUsage(item.usageKey), getLimit(item.limitKey))"
-            :show-text="getLimit(item.limitKey) >= 0"
+            :percentage="effectiveProgressPercent(item)"
+            :status="effectiveProgressStatus(item)"
+            :show-text="item.limit >= 0 && item.usageStatus !== 'unknown'"
           />
         </div>
       </div>
@@ -568,6 +618,14 @@ onMounted(loadAll)
   grid-row: 1;
   font-size: 12px;
   color: var(--color-text-secondary, #606266);
+}
+
+.subscription-quota-item__scope {
+  margin-left: 4px;
+  color: var(--color-text-tertiary, #909399);
+  font-size: 10px;
+  font-weight: 400;
+  white-space: nowrap;
 }
 
 .subscription-quota-item__numbers {

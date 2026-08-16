@@ -36,11 +36,20 @@ from apps.protection.services.backup_task import (
     reconcile_interrupted_backup_tasks,
     run_backup_task,
 )
-from apps.protection.services.progress.orchestrated_progress import BACKUP_TRANSFER_END, BACKUP_TRANSFER_START
+from apps.protection.services.progress.orchestrated_progress import (
+    BACKUP_TRANSFER_END,
+    BACKUP_TRANSFER_START,
+)
 from apps.source.models import SourceBackupPipelineEntry
 from apps.storage.repositories.models import Repository
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    reserve_repository_location,
+)
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import create_task
+from common.errors import AppError
 
 
 class ProtectionBackupTaskApiTests(TestCase):
@@ -52,7 +61,9 @@ class ProtectionBackupTaskApiTests(TestCase):
             email="backup-task-api@test.local",
             password="test-pass",
         )
-        self.org = Organization.objects.create(key="backup-task-test-org", name="Backup Task Test Org")
+        self.org = Organization.objects.create(
+            key="backup-task-test-org", name="Backup Task Test Org"
+        )
         Membership.objects.create(
             user=self.user,
             organization=self.org,
@@ -62,7 +73,8 @@ class ProtectionBackupTaskApiTests(TestCase):
             organization=self.org,
             name="agent-backup-task-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.61",
         )
         self.repository = Repository.objects.create(
@@ -83,6 +95,9 @@ class ProtectionBackupTaskApiTests(TestCase):
                 "use_tls": False,
             },
         )
+        reserve_repository_location(self.repository)
+        mark_repository_location_owned(self.repository)
+        mark_repository_location_ownership_verified(self.repository)
         self.config = BackupConfig.objects.create(
             organization_id=self.org.id,
             name="Agent backup config",
@@ -283,7 +298,9 @@ class ProtectionBackupTaskApiTests(TestCase):
                 **self._headers(),
             )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
         self.assertEqual(response.data["created_count"], 1)
         result = response.data["results"][0]
         self.assertEqual(result["status"], "created")
@@ -297,7 +314,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(snapshot.trigger_type, BackupSourceSnapshot.TriggerType.MANUAL)
         self.assertEqual(snapshot.task_id, task.id)
         self.assertEqual(snapshot.backup_config_id, self.config.id)
-        source_resource = TaskResource.objects.get(task=task, resource_type=TaskResource.Type.BACKUP_SOURCE)
+        source_resource = TaskResource.objects.get(
+            task=task, resource_type=TaskResource.Type.BACKUP_SOURCE
+        )
         self.assertEqual(source_resource.resource_subtype, "agent")
         self.assertEqual(source_resource.resource_id, self.agent.id)
         mock_queue.assert_called_once()
@@ -307,6 +326,38 @@ class ProtectionBackupTaskApiTests(TestCase):
             task_uuid=str(task.task_uuid),
         )
         self.assertTrue(task.request_payload["directory_size_refresh_required"])
+
+    @patch(
+        "apps.subscription.services.interface.enforce_license_quota",
+        side_effect=AppError(
+            code="SUBSCRIPTION.QUOTA_EXCEEDED",
+            status=403,
+            title="Instance storage quota is full",
+            diagnostic="Instance storage quota is full",
+            meta={"quota_type": "max_storage_gb", "scope": "instance"},
+        ),
+    )
+    def test_start_backup_task_api_stops_new_write_when_storage_is_exhausted(
+        self,
+        quota_check,
+    ):
+        response = self.client.post(
+            "/api/v1/protection/backup-tasks/",
+            {
+                "source_ids": [f"agent:{self.agent.id}"],
+                "trigger_type": "manual",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(Task.objects.filter(task_type=Task.Type.BACKUP).exists())
+        quota_check.assert_called_once_with(
+            self.org,
+            "max_storage_gb",
+            additional=0,
+        )
 
     @patch("apps.protection.services.directory_size_estimate.run_agent_task_sync")
     @patch("apps.protection.services.backup_task._queue_backup_execution")
@@ -331,14 +382,18 @@ class ProtectionBackupTaskApiTests(TestCase):
                 **self._headers(),
             )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
         self.assertEqual(response.data["created_count"], 1)
         mock_queue.assert_called_once()
         mock_size_refresh.assert_called_once()
         mock_path_size.assert_not_called()
 
     @patch("apps.protection.services.backup_task._queue_backup_execution")
-    def test_start_backup_task_api_accepts_backup_config_ids_without_source_ids(self, mock_queue):
+    def test_start_backup_task_api_accepts_backup_config_ids_without_source_ids(
+        self, mock_queue
+    ):
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.post(
                 "/api/v1/protection/backup-tasks/",
@@ -350,7 +405,9 @@ class ProtectionBackupTaskApiTests(TestCase):
                 **self._headers(),
             )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
         self.assertEqual(response.data["created_count"], 1)
         result = response.data["results"][0]
         self.assertEqual(result["status"], "created")
@@ -364,23 +421,31 @@ class ProtectionBackupTaskApiTests(TestCase):
             idempotency_key="test-cancel-backup-failed-snapshot",
         )
 
-        result = cancel_backup(organization_id=self.org.id, task_uuid=str(task.task_uuid))
+        result = cancel_backup(
+            organization_id=self.org.id, task_uuid=str(task.task_uuid)
+        )
 
         task.refresh_from_db()
         snapshot.refresh_from_db()
         directory = BackupSourceSnapshotDirectory.objects.get(source_snapshot=snapshot)
         self.assertEqual(result["status"], Task.Status.CANCELLED)
-        self.assertEqual(result["source_snapshot_status"], BackupSourceSnapshot.Status.FAILED)
+        self.assertEqual(
+            result["source_snapshot_status"], BackupSourceSnapshot.Status.FAILED
+        )
         self.assertEqual(task.status, Task.Status.CANCELLED)
         self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.FAILED)
         self.assertEqual(snapshot.successful_directory_count, 0)
         self.assertEqual(snapshot.failed_directory_count, 1)
         self.assertEqual(snapshot.error_code, "TASK_CANCELLED")
-        self.assertEqual(directory.status, BackupSourceSnapshotDirectory.Status.CANCELLED)
+        self.assertEqual(
+            directory.status, BackupSourceSnapshotDirectory.Status.CANCELLED
+        )
         self.assertEqual(directory.error_code, "TASK_CANCELLED")
         self.assertEqual(directory.error_message, "Task cancelled by user")
 
-    def test_cancel_backup_finalizes_creating_snapshot_as_partial_when_some_directories_succeeded(self):
+    def test_cancel_backup_finalizes_creating_snapshot_as_partial_when_some_directories_succeeded(
+        self,
+    ):
         extra_directory = BackupConfigDirectory.objects.create(
             organization_id=self.org.id,
             backup_config=self.config,
@@ -393,7 +458,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
         snapshot.directory_count = 2
         snapshot.save(update_fields=["directory_count", "updated_at"])
-        success_directory = BackupConfigDirectory.objects.get(backup_config=self.config, path="/data/projects")
+        success_directory = BackupConfigDirectory.objects.get(
+            backup_config=self.config, path="/data/projects"
+        )
         BackupSourceSnapshotDirectory.objects.create(
             source_snapshot=snapshot,
             organization_id=self.org.id,
@@ -410,7 +477,9 @@ class ProtectionBackupTaskApiTests(TestCase):
             dir_count=3,
         )
 
-        result = cancel_backup(organization_id=self.org.id, task_uuid=str(task.task_uuid))
+        result = cancel_backup(
+            organization_id=self.org.id, task_uuid=str(task.task_uuid)
+        )
 
         task.refresh_from_db()
         snapshot.refresh_from_db()
@@ -422,22 +491,31 @@ class ProtectionBackupTaskApiTests(TestCase):
             source_snapshot=snapshot,
             backup_config_dir_id=extra_directory.id,
         )
-        self.assertEqual(result["source_snapshot_status"], BackupSourceSnapshot.Status.PARTIAL)
+        self.assertEqual(
+            result["source_snapshot_status"], BackupSourceSnapshot.Status.PARTIAL
+        )
         self.assertEqual(task.status, Task.Status.CANCELLED)
         self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.PARTIAL)
         self.assertEqual(snapshot.successful_directory_count, 1)
         self.assertEqual(snapshot.failed_directory_count, 1)
-        self.assertEqual(success_row.status, BackupSourceSnapshotDirectory.Status.AVAILABLE)
-        self.assertEqual(cancelled_row.status, BackupSourceSnapshotDirectory.Status.CANCELLED)
+        self.assertEqual(
+            success_row.status, BackupSourceSnapshotDirectory.Status.AVAILABLE
+        )
+        self.assertEqual(
+            cancelled_row.status, BackupSourceSnapshotDirectory.Status.CANCELLED
+        )
         self.assertEqual(cancelled_row.error_code, "TASK_CANCELLED")
 
     @patch("apps.protection.services.backup_task._queue_backup_execution")
-    def test_start_backup_task_allows_agent_source_with_proxy_fs_repository(self, mock_queue):
+    def test_start_backup_task_allows_agent_source_with_proxy_fs_repository(
+        self, mock_queue
+    ):
         proxy = Node.objects.create(
             organization=self.org,
             name="proxy-backup-task-incompatible",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.63",
         )
         proxy_repo = Repository.objects.create(
@@ -450,6 +528,9 @@ class ProtectionBackupTaskApiTests(TestCase):
             bind_node_id=proxy.id,
             config={"proxy_node_dir": "/repo"},
         )
+        reserve_repository_location(proxy_repo)
+        mark_repository_location_owned(proxy_repo)
+        mark_repository_location_ownership_verified(proxy_repo)
         self.config.repository_id = proxy_repo.id
         self.config.save(update_fields=["repository_id", "updated_at"])
 
@@ -464,7 +545,9 @@ class ProtectionBackupTaskApiTests(TestCase):
                 **self._headers(),
             )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
         self.assertEqual(response.data["created_count"], 1)
         result = response.data["results"][0]
         self.assertEqual(result["status"], "created")
@@ -472,7 +555,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(task.request_payload["repository_id"], proxy_repo.id)
 
     @patch("apps.protection.services.backup_task._queue_backup_execution")
-    def test_start_backup_task_api_normalizes_legacy_api_trigger_to_manual(self, mock_queue):
+    def test_start_backup_task_api_normalizes_legacy_api_trigger_to_manual(
+        self, mock_queue
+    ):
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.post(
                 "/api/v1/protection/backup-tasks/",
@@ -484,7 +569,9 @@ class ProtectionBackupTaskApiTests(TestCase):
                 **self._headers(),
             )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
         result = response.data["results"][0]
         task = Task.objects.get(id=result["task_id"])
         snapshot = BackupSourceSnapshot.objects.get(id=result["source_snapshot_id"])
@@ -493,12 +580,15 @@ class ProtectionBackupTaskApiTests(TestCase):
         mock_queue.assert_called_once()
 
     @patch("apps.protection.services.backup_task._queue_backup_execution")
-    def test_start_backup_task_allows_agent_source_with_proxy_bound_nas_repository(self, mock_queue):
+    def test_start_backup_task_allows_agent_source_with_proxy_bound_nas_repository(
+        self, mock_queue
+    ):
         proxy = Node.objects.create(
             organization=self.org,
             name="proxy-backup-task-nas",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.64",
         )
         proxy_repo = Repository.objects.create(
@@ -516,6 +606,9 @@ class ProtectionBackupTaskApiTests(TestCase):
                 "smb_username": "backup_user",
             },
         )
+        reserve_repository_location(proxy_repo)
+        mark_repository_location_owned(proxy_repo)
+        mark_repository_location_ownership_verified(proxy_repo)
         self.config.repository_id = proxy_repo.id
         self.config.save(update_fields=["repository_id", "updated_at"])
 
@@ -530,7 +623,9 @@ class ProtectionBackupTaskApiTests(TestCase):
                 **self._headers(),
             )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
         self.assertEqual(response.data["created_count"], 1)
         result = response.data["results"][0]
         self.assertEqual(result["status"], "created")
@@ -560,13 +655,23 @@ class ProtectionBackupTaskApiTests(TestCase):
                 format="json",
                 **self._headers(),
             )
-        with self.captureOnCommitCallbacks(execute=True):
-            second = self.client.post(
-                "/api/v1/protection/backup-tasks/",
-                payload,
-                format="json",
-                **self._headers(),
-            )
+        with patch(
+            "apps.subscription.services.interface.enforce_license_quota",
+            side_effect=AppError(
+                code="SUBSCRIPTION.QUOTA_EXCEEDED",
+                status=403,
+                title="Instance storage quota is full",
+                diagnostic="Instance storage quota is full",
+                meta={"quota_type": "max_storage_gb", "scope": "instance"},
+            ),
+        ) as quota_check:
+            with self.captureOnCommitCallbacks(execute=True):
+                second = self.client.post(
+                    "/api/v1/protection/backup-tasks/",
+                    payload,
+                    format="json",
+                    **self._headers(),
+                )
 
         self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.content)
         self.assertEqual(second.status_code, status.HTTP_201_CREATED, second.content)
@@ -576,6 +681,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(second.data["results"][0]["status"], "skipped")
         self.assertEqual(Task.objects.count(), 1)
         self.assertEqual(BackupSourceSnapshot.objects.count(), 1)
+        quota_check.assert_not_called()
         mock_queue.assert_called_once()
         mock_size_refresh.assert_called_once()
 
@@ -603,14 +709,23 @@ class ProtectionBackupTaskApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
         self.assertEqual(response.data["created_count"], 0)
         self.assertEqual(response.data["results"][0]["status"], "conflict")
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
-    def test_run_backup_task_records_directory_snapshot_and_completes_task(self, mock_run_agent_task_async, mock_sync_repository_usage):
-        mock_sync_repository_usage.return_value = {"queued": True, "task_id": "usage-refresh"}
+    def test_run_backup_task_records_directory_snapshot_and_completes_task(
+        self, mock_run_agent_task_async, mock_sync_repository_usage
+    ):
+        mock_sync_repository_usage.return_value = {
+            "queued": True,
+            "task_id": "usage-refresh",
+        }
         task = create_task(
             organization_id=self.org.id,
             task_type=Task.Type.BACKUP,
@@ -655,7 +770,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(task.status, Task.Status.SUCCESS)
         self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.AVAILABLE)
         self.assertEqual(directory.kopia_snapshot_id, "kopia-snap-1")
-        self.assertEqual(directory.status, BackupSourceSnapshotDirectory.Status.AVAILABLE)
+        self.assertEqual(
+            directory.status, BackupSourceSnapshotDirectory.Status.AVAILABLE
+        )
         self.assertEqual(directory.size_bytes, 2048)
         self.assertEqual(directory.file_count, 32)
         self.assertEqual(directory.dir_count, 4)
@@ -666,7 +783,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(result["total_size_bytes"], 2048)
         self.assertEqual(result["file_count"], 32)
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_backup_uses_configured_internal_endpoint_while_default_is_external(
         self,
@@ -708,9 +827,13 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
         self.assertEqual(default_runtime["endpoint"], external)
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
-    def test_run_backup_task_passes_frozen_runtime_policy(self, mock_run_agent_task_async, mock_sync_repository_usage):
+    def test_run_backup_task_passes_frozen_runtime_policy(
+        self, mock_run_agent_task_async, mock_sync_repository_usage
+    ):
         mock_sync_repository_usage.return_value = {"queued": True}
         policy = BackupPolicy.objects.create(
             organization_id=self.org.id,
@@ -782,7 +905,9 @@ class ProtectionBackupTaskApiTests(TestCase):
             {"source_type": "agent", "source_ref_id": self.agent.id},
             **self._headers(),
         )
-        self.assertEqual(list_response.status_code, status.HTTP_200_OK, list_response.content)
+        self.assertEqual(
+            list_response.status_code, status.HTTP_200_OK, list_response.content
+        )
         self.assertEqual(list_response.data["results"][0]["total_size_bytes"], 2048)
         self.assertEqual(list_response.data["results"][0]["file_count"], 32)
         self.assertEqual(list_response.data["results"][0]["dir_count"], 4)
@@ -796,11 +921,15 @@ class ProtectionBackupTaskApiTests(TestCase):
             {"source_type": "agent", "source_ref_id": self.agent.id},
             **self._headers(),
         )
-        self.assertEqual(fallback_response.status_code, status.HTTP_200_OK, fallback_response.content)
+        self.assertEqual(
+            fallback_response.status_code, status.HTTP_200_OK, fallback_response.content
+        )
         self.assertEqual(fallback_response.data["results"][0]["total_size_bytes"], 2048)
         self.assertEqual(fallback_response.data["results"][0]["file_count"], 32)
         self.assertEqual(fallback_response.data["results"][0]["dir_count"], 4)
-        self.assertEqual(result["source_snapshot_status"], BackupSourceSnapshot.Status.AVAILABLE)
+        self.assertEqual(
+            result["source_snapshot_status"], BackupSourceSnapshot.Status.AVAILABLE
+        )
         dispatch_event = TaskEvent.objects.get(
             task=task,
             step__step_name="kopia_snapshot",
@@ -817,17 +946,24 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
         self.assertEqual(snapshot_event.metadata["object_id"], "kopia-policy-1")
         self.assertEqual(snapshot_event.metadata["object_name"], "/data/projects")
-        logical_event = TaskEvent.objects.get(task=task, message="Logical snapshot created")
+        logical_event = TaskEvent.objects.get(
+            task=task, message="Logical snapshot created"
+        )
         self.assertEqual(logical_event.metadata["object_name"], snapshot.snapshot_uid)
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_recovers_existing_successful_node_task(
         self,
         mock_run_agent_task_async,
         mock_sync_repository_usage,
     ):
-        mock_sync_repository_usage.return_value = {"queued": True, "task_id": "usage-refresh"}
+        mock_sync_repository_usage.return_value = {
+            "queued": True,
+            "task_id": "usage-refresh",
+        }
         task, snapshot = self._create_backup_task_and_snapshot(
             idempotency_key="test-run-backup-task-recover-node-success",
         )
@@ -851,7 +987,9 @@ class ProtectionBackupTaskApiTests(TestCase):
 
         snapshot.refresh_from_db()
         row = BackupSourceSnapshotDirectory.objects.get(source_snapshot=snapshot)
-        self.assertEqual(result["source_snapshot_status"], BackupSourceSnapshot.Status.AVAILABLE)
+        self.assertEqual(
+            result["source_snapshot_status"], BackupSourceSnapshot.Status.AVAILABLE
+        )
         self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.AVAILABLE)
         self.assertEqual(row.status, BackupSourceSnapshotDirectory.Status.AVAILABLE)
         self.assertEqual(row.kopia_snapshot_id, "kopia-recovered")
@@ -866,14 +1004,19 @@ class ProtectionBackupTaskApiTests(TestCase):
             ).exists()
         )
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_resumes_existing_running_node_task(
         self,
         mock_run_agent_task_async,
         mock_sync_repository_usage,
     ):
-        mock_sync_repository_usage.return_value = {"queued": True, "task_id": "usage-refresh"}
+        mock_sync_repository_usage.return_value = {
+            "queued": True,
+            "task_id": "usage-refresh",
+        }
         task, snapshot = self._create_backup_task_and_snapshot(
             idempotency_key="test-run-backup-task-resume-node-running",
         )
@@ -908,7 +1051,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
         return_value=Node.Availability.ONLINE,
     )
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_skips_existing_terminal_directory_result(
         self,
@@ -916,7 +1061,10 @@ class ProtectionBackupTaskApiTests(TestCase):
         mock_sync_repository_usage,
         _mock_node_online,
     ):
-        mock_sync_repository_usage.return_value = {"queued": True, "task_id": "usage-refresh"}
+        mock_sync_repository_usage.return_value = {
+            "queued": True,
+            "task_id": "usage-refresh",
+        }
         task, snapshot = self._create_backup_task_and_snapshot(
             idempotency_key="test-run-backup-task-skip-terminal-directory",
         )
@@ -1114,9 +1262,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(mock_run_agent_task_async.call_count, 1)
 
     @patch("apps.protection.services.backup_orchestrator._requeue_same_backup_task")
-    def test_stale_pending_queue_requeues_original_identity_once(
-        self, mock_requeue
-    ):
+    def test_stale_pending_queue_requeues_original_identity_once(self, mock_requeue):
         task, snapshot = self._create_backup_task_and_snapshot(
             idempotency_key="test-pending-queue-requeue",
         )
@@ -1129,7 +1275,9 @@ class ProtectionBackupTaskApiTests(TestCase):
             "apps.node.services.internal.redis_store.ws_recovery_hold_active",
             return_value=False,
         ):
-            action = _reconcile_pending_backup_queue(task=task, source_snapshot=snapshot)
+            action = _reconcile_pending_backup_queue(
+                task=task, source_snapshot=snapshot
+            )
 
         self.assertEqual(action, "requeued")
         mock_requeue.assert_called_once()
@@ -1138,9 +1286,13 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(requeued_task.task_uuid, task.task_uuid)
         self.assertEqual(requeued_snapshot.id, snapshot.id)
         task.refresh_from_db()
-        self.assertEqual(task.result_payload["backup_queue_recovery"]["attempt_count"], 1)
+        self.assertEqual(
+            task.result_payload["backup_queue_recovery"]["attempt_count"], 1
+        )
 
-    @patch("apps.protection.services.backup_orchestrator._stop_repository_server_for_task")
+    @patch(
+        "apps.protection.services.backup_orchestrator._stop_repository_server_for_task"
+    )
     def test_pending_queue_timeout_fully_seals_snapshot(self, mock_stop):
         task, snapshot = self._create_backup_task_and_snapshot(
             idempotency_key="test-pending-queue-timeout",
@@ -1173,7 +1325,9 @@ class ProtectionBackupTaskApiTests(TestCase):
             "apps.node.services.internal.redis_store.ws_recovery_hold_active",
             return_value=False,
         ):
-            action = _reconcile_pending_backup_queue(task=task, source_snapshot=snapshot)
+            action = _reconcile_pending_backup_queue(
+                task=task, source_snapshot=snapshot
+            )
 
         self.assertEqual(action, "timed_out")
         task.refresh_from_db()
@@ -1231,7 +1385,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(directory.kopia_snapshot_id, "restart-recovered-snapshot")
         self.assertEqual(len(attempts), 2)
         self.assertNotEqual(attempts[0].id, attempts[1].id)
-        self.assertTrue(all(row.correlation_id == str(task.task_uuid) for row in attempts))
+        self.assertTrue(
+            all(row.correlation_id == str(task.task_uuid) for row in attempts)
+        )
 
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
@@ -1263,8 +1419,12 @@ class ProtectionBackupTaskApiTests(TestCase):
             [
                 self._async_outcome(kopia_snapshot_id=""),
                 self._async_outcome(kopia_snapshot_id=""),
-                self._async_outcome(status=NodeTask.Status.RUNNING, kopia_snapshot_id=""),
-                self._async_outcome(status=NodeTask.Status.RUNNING, kopia_snapshot_id=""),
+                self._async_outcome(
+                    status=NodeTask.Status.RUNNING, kopia_snapshot_id=""
+                ),
+                self._async_outcome(
+                    status=NodeTask.Status.RUNNING, kopia_snapshot_id=""
+                ),
             ]
         )
 
@@ -1306,7 +1466,9 @@ class ProtectionBackupTaskApiTests(TestCase):
             {BackupSourceSnapshotDirectory.Status.RUNNING},
         )
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
         return_value=Node.Availability.ONLINE,
@@ -1370,10 +1532,14 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(final["status"], Task.Status.FAILED)
         self.assertEqual(row.status, BackupSourceSnapshotDirectory.Status.FAILED)
         self.assertEqual(row.error_code, "POLICY_APPLY_FAILED")
-        self.assertEqual([attempt.payload["policy_attempt"] for attempt in attempts], [1, 2])
+        self.assertEqual(
+            [attempt.payload["policy_attempt"] for attempt in attempts], [1, 2]
+        )
         self.assertEqual(mock_run_agent_task_async.call_count, 2)
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
         return_value=Node.Availability.ONLINE,
@@ -1430,9 +1596,9 @@ class ProtectionBackupTaskApiTests(TestCase):
 
         snapshot.refresh_from_db()
         rows = list(
-            BackupSourceSnapshotDirectory.objects.filter(source_snapshot=snapshot).order_by(
-                "backup_config_dir_id"
-            )
+            BackupSourceSnapshotDirectory.objects.filter(
+                source_snapshot=snapshot
+            ).order_by("backup_config_dir_id")
         )
         self.assertEqual(result["status"], Task.Status.FAILED)
         self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.PARTIAL)
@@ -1448,7 +1614,9 @@ class ProtectionBackupTaskApiTests(TestCase):
             ],
         )
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
         return_value=Node.Availability.ONLINE,
@@ -1490,7 +1658,9 @@ class ProtectionBackupTaskApiTests(TestCase):
                     },
                     last_error="kopia policy not found",
                 ),
-                self._async_outcome(status=NodeTask.Status.RUNNING, kopia_snapshot_id=""),
+                self._async_outcome(
+                    status=NodeTask.Status.RUNNING, kopia_snapshot_id=""
+                ),
                 self._async_outcome(kopia_snapshot_id="repaired-snapshot"),
             ]
         )
@@ -1515,7 +1685,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         snapshot.refresh_from_db()
         repaired = BackupSourceSnapshotDirectory.objects.get(
             source_snapshot=snapshot,
-            backup_config_dir_id=self.config.directories.order_by("sort_order").first().id,
+            backup_config_dir_id=self.config.directories.order_by("sort_order")
+            .first()
+            .id,
         )
         self.assertEqual(final["status"], Task.Status.SUCCESS)
         self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.AVAILABLE)
@@ -1641,7 +1813,8 @@ class ProtectionBackupTaskApiTests(TestCase):
             organization=self.org,
             name="proxy-backup-task-1",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.62",
         )
         repository = Repository.objects.create(
@@ -1676,7 +1849,8 @@ class ProtectionBackupTaskApiTests(TestCase):
             organization=self.org,
             name="proxy-backup-task-inventory-host",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="192.168.65.1",
             metadata={"inventory": {"ip_addresses": ["10.0.0.65"]}},
         )
@@ -1701,19 +1875,25 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(host, "10.0.0.65")
         self.assertEqual(source, "node.metadata.inventory.ip_addresses")
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_allows_agent_source_with_proxy_bound_nas_repository(
         self,
         mock_run_agent_task_async,
         mock_sync_repository_usage,
     ):
-        mock_sync_repository_usage.return_value = {"queued": True, "task_id": "usage-refresh"}
+        mock_sync_repository_usage.return_value = {
+            "queued": True,
+            "task_id": "usage-refresh",
+        }
         proxy = Node.objects.create(
             organization=self.org,
             name="proxy-backup-task-nas-runtime",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="192.168.65.1",
         )
         repository = Repository.objects.create(
@@ -1768,8 +1948,12 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
         mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
             [
-                self._async_outcome(status=NodeTask.Status.RUNNING, kopia_snapshot_id=""),
-                self._async_outcome(status=NodeTask.Status.RUNNING, kopia_snapshot_id=""),
+                self._async_outcome(
+                    status=NodeTask.Status.RUNNING, kopia_snapshot_id=""
+                ),
+                self._async_outcome(
+                    status=NodeTask.Status.RUNNING, kopia_snapshot_id=""
+                ),
                 self._async_outcome(kopia_snapshot_id="proxy-nas-snap-1"),
                 self._async_outcome(kopia_snapshot_id=""),
             ]
@@ -1792,9 +1976,14 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(start_calls[0]["node_id"], proxy.id)
         start_payload = start_calls[0]["payload"]
         self.assertEqual(start_payload["public_host"], "10.0.0.65")
-        self.assertEqual(start_payload["public_host_source"], "repository.config.proxy_repository_server_host")
+        self.assertEqual(
+            start_payload["public_host_source"],
+            "repository.config.proxy_repository_server_host",
+        )
         self.assertEqual(start_payload["repository"]["type"], Repository.Type.NAS)
-        self.assertEqual(start_payload["repository"]["subdir"], f"hp-repos/storage-{repository.id}")
+        self.assertEqual(
+            start_payload["repository"]["subdir"], f"hp-repos/storage-{repository.id}"
+        )
         backup_calls = [
             call.kwargs
             for call in mock_run_agent_task_async.call_args_list
@@ -1828,7 +2017,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         ]
         self.assertEqual(len(probe_calls), 1)
         self.assertEqual(probe_calls[0]["node_id"], self.agent.id)
-        self.assertEqual(probe_calls[0]["payload"]["repository"]["type"], "kopia_server")
+        self.assertEqual(
+            probe_calls[0]["payload"]["repository"]["type"], "kopia_server"
+        )
 
         probe_task = NodeTask.objects.get(kind="repo.status")
         probe_task.status = NodeTask.Status.SUCCESS
@@ -1869,7 +2060,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         repository_payload = backup_calls[0]["payload"]["repository"]
         self.assertEqual(repository_payload["type"], "kopia_server")
         self.assertEqual(repository_payload["url"], "https://10.0.0.65:51515")
-        self.assertEqual(repository_payload["username"], f"hfl-backup-{task.id}@hfl-proxy-{proxy.id}")
+        self.assertEqual(
+            repository_payload["username"], f"hfl-backup-{task.id}@hfl-proxy-{proxy.id}"
+        )
         self.assertEqual(repository_payload["password"], "server-pass")
         self.assertEqual(repository_payload["server_cert_fingerprint"], "ABC123")
         stop_calls = [
@@ -1880,19 +2073,25 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(len(stop_calls), 1)
         self.assertEqual(stop_calls[0]["node_id"], proxy.id)
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_fails_fast_when_proxy_repository_probe_fails(
         self,
         mock_run_agent_task_async,
         mock_sync_repository_usage,
     ):
-        mock_sync_repository_usage.return_value = {"queued": True, "task_id": "usage-refresh"}
+        mock_sync_repository_usage.return_value = {
+            "queued": True,
+            "task_id": "usage-refresh",
+        }
         proxy = Node.objects.create(
             organization=self.org,
             name="proxy-backup-task-nas-probe-fail",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="192.168.65.1",
         )
         repository = Repository.objects.create(
@@ -1947,8 +2146,12 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
         mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
             [
-                self._async_outcome(status=NodeTask.Status.RUNNING, kopia_snapshot_id=""),
-                self._async_outcome(status=NodeTask.Status.RUNNING, kopia_snapshot_id=""),
+                self._async_outcome(
+                    status=NodeTask.Status.RUNNING, kopia_snapshot_id=""
+                ),
+                self._async_outcome(
+                    status=NodeTask.Status.RUNNING, kopia_snapshot_id=""
+                ),
                 self._async_outcome(kopia_snapshot_id=""),
             ]
         )
@@ -2015,14 +2218,19 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(len(stop_calls), 1)
         self.assertEqual(stop_calls[0]["node_id"], proxy.id)
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_times_out_directory_and_finalizes_task(
         self,
         mock_run_agent_task_async,
         mock_sync_repository_usage,
     ):
-        mock_sync_repository_usage.return_value = {"queued": True, "task_id": "usage-refresh"}
+        mock_sync_repository_usage.return_value = {
+            "queued": True,
+            "task_id": "usage-refresh",
+        }
         task = create_task(
             organization_id=self.org.id,
             task_type=Task.Type.BACKUP,
@@ -2075,7 +2283,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.FAILED)
         self.assertEqual(directory.status, BackupSourceSnapshotDirectory.Status.FAILED)
         self.assertEqual(directory.error_code, "WATCHDOG_STALL")
-        self.assertEqual(result["source_snapshot_status"], BackupSourceSnapshot.Status.FAILED)
+        self.assertEqual(
+            result["source_snapshot_status"], BackupSourceSnapshot.Status.FAILED
+        )
         kopia_step = TaskStep.objects.get(task=task, step_name="kopia_snapshot")
         self.assertEqual(kopia_step.status, TaskStep.Status.FAILED)
         self.assertEqual(float(kopia_step.progress), 0)
@@ -2091,14 +2301,19 @@ class ProtectionBackupTaskApiTests(TestCase):
             ).exists()
         )
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_agent_failure_finalizes_task(
         self,
         mock_run_agent_task_async,
         mock_sync_repository_usage,
     ):
-        mock_sync_repository_usage.return_value = {"queued": True, "task_id": "usage-refresh"}
+        mock_sync_repository_usage.return_value = {
+            "queued": True,
+            "task_id": "usage-refresh",
+        }
         task = create_task(
             organization_id=self.org.id,
             task_type=Task.Type.BACKUP,
@@ -2152,7 +2367,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(directory.status, BackupSourceSnapshotDirectory.Status.FAILED)
         self.assertEqual(directory.error_code, "AGENT_BACKUP_FAILED")
         self.assertIn("kopia repository connect failed", directory.error_message)
-        self.assertEqual(result["source_snapshot_status"], BackupSourceSnapshot.Status.FAILED)
+        self.assertEqual(
+            result["source_snapshot_status"], BackupSourceSnapshot.Status.FAILED
+        )
         self.assertTrue(
             TaskEvent.objects.filter(
                 task=task,
@@ -2163,14 +2380,19 @@ class ProtectionBackupTaskApiTests(TestCase):
             ).exists()
         )
 
-    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_partial_directory_failure_uses_success_weight(
         self,
         mock_run_agent_task_async,
         mock_sync_repository_usage,
     ):
-        mock_sync_repository_usage.return_value = {"queued": True, "task_id": "usage-refresh"}
+        mock_sync_repository_usage.return_value = {
+            "queued": True,
+            "task_id": "usage-refresh",
+        }
         BackupConfigDirectory.objects.create(
             organization_id=self.org.id,
             backup_config=self.config,
@@ -2238,7 +2460,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         task.refresh_from_db()
         snapshot.refresh_from_db()
         self.assertEqual(task.status, Task.Status.FAILED)
-        expected_task_progress = BACKUP_TRANSFER_START + ((BACKUP_TRANSFER_END - BACKUP_TRANSFER_START) / 3)
+        expected_task_progress = BACKUP_TRANSFER_START + (
+            (BACKUP_TRANSFER_END - BACKUP_TRANSFER_START) / 3
+        )
         self.assertAlmostEqual(float(task.progress), expected_task_progress, places=1)
         self.assertEqual(snapshot.successful_directory_count, 1)
         self.assertEqual(snapshot.failed_directory_count, 2)
@@ -2254,11 +2478,17 @@ class ProtectionBackupTaskApiTests(TestCase):
 
 class ProtectionBackupProgressTests(TestCase):
     def test_kopia_percent_from_agent_progress(self):
-        from apps.protection.services.backup_task import _kopia_percent_from_agent_progress
+        from apps.protection.services.backup_task import (
+            _kopia_percent_from_agent_progress,
+        )
 
-        self.assertEqual(_kopia_percent_from_agent_progress({"kopia_percent": 42}), 42.0)
+        self.assertEqual(
+            _kopia_percent_from_agent_progress({"kopia_percent": 42}), 42.0
+        )
         self.assertEqual(_kopia_percent_from_agent_progress({"percent": "55.5"}), 55.5)
-        self.assertEqual(_kopia_percent_from_agent_progress({"phase": "repository_ready"}), 8.0)
+        self.assertEqual(
+            _kopia_percent_from_agent_progress({"phase": "repository_ready"}), 8.0
+        )
         self.assertEqual(_kopia_percent_from_agent_progress({"phase": "running"}), 12.0)
 
     def test_backup_progress_for_directory_maps_into_task_range(self):
@@ -2280,13 +2510,17 @@ class ProtectionBackupProgressTests(TestCase):
         self.assertEqual(task_progress_last, 96.99)
 
     def test_kopia_percent_from_repository_prepare_phase(self):
-        from apps.protection.services.backup_task import _kopia_percent_from_agent_progress
+        from apps.protection.services.backup_task import (
+            _kopia_percent_from_agent_progress,
+        )
 
         self.assertEqual(
             _kopia_percent_from_agent_progress({"phase": "repository_prepare"}),
             3.0,
         )
         self.assertEqual(
-            _kopia_percent_from_agent_progress({"kopia_phase": "uploading", "kopia_percent": 72}),
+            _kopia_percent_from_agent_progress(
+                {"kopia_phase": "uploading", "kopia_percent": 72}
+            ),
             72.0,
         )

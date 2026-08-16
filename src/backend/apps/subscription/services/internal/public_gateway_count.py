@@ -12,15 +12,18 @@ _PUBLIC_GATEWAY_COUNT_FULL = (
 
 
 def resolve_max_public_gateways() -> int:
-    """License.max_public_gateways when active; else DEFAULT_LIMITS (unsigned default grant)."""
-    try:
-        from apps.subscription.services.internal.license_ops import get_instance_active_license
+    """Resolve the active instance entitlement for Public Gateways."""
+    from common.extension_spi import get_quota_provider
 
-        lic = get_instance_active_license()
-        if lic is not None:
-            return int(getattr(lic, "max_public_gateways", DEFAULT_LIMITS["max_public_gateways"]))
-    except Exception:  # pragma: no cover
-        pass
+    provider = get_quota_provider()
+    resolver = getattr(provider, "get_instance_limit", None)
+    if callable(resolver):
+        return int(resolver("max_public_gateways"))
+    from apps.subscription.services.internal.license_ops import get_instance_active_license
+
+    lic = get_instance_active_license()
+    if lic is not None:
+        return int(getattr(lic, "max_public_gateways", DEFAULT_LIMITS["max_public_gateways"]))
     return int(DEFAULT_LIMITS["max_public_gateways"])
 
 
@@ -33,14 +36,22 @@ def count_public_gateways() -> int:
 def assert_public_gateway_count_available(*, additional: int = 1) -> None:
     """Reject when adding ``additional`` Public Gateways would exceed the instance cap."""
     from apps.subscription.services.quota import hard_quota_enforcement_active
+    from common.extension_spi import get_quota_provider
 
     if not hard_quota_enforcement_active():
+        return
+    requested = int(additional)
+    if requested < 0:
+        raise ValueError("Public Gateway quota consumption cannot be negative")
+    provider = get_quota_provider()
+    if provider is not None:
+        provider.check_quota(None, "max_public_gateways", requested)
         return
     cap = resolve_max_public_gateways()
     if cap == UNLIMITED or cap < 0:
         return
     used = count_public_gateways()
-    if used + int(additional) > cap:
+    if used + requested > cap:
         raise AppError(
             code="SUBSCRIPTION.QUOTA_EXCEEDED",
             status=403,
@@ -50,7 +61,7 @@ def assert_public_gateway_count_available(*, additional: int = 1) -> None:
                 "quota_type": "max_public_gateways",
                 "limit": cap,
                 "used": used,
-                "requested": int(additional),
+                "requested": requested,
                 "scope": "instance",
             },
         )

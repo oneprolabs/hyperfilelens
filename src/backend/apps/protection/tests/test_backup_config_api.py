@@ -277,6 +277,50 @@ class ProtectionBackupConfigApiTests(TestCase):
         mock_policy_delay.assert_called_once_with(config_id=create.data["id"])
         mock_estimate_delay.assert_called_once_with(config_id=create.data["id"])
 
+    def test_create_backup_config_checks_quota_in_creation_transaction(self):
+        repository_locked = False
+        original_lock = backup_config_service._lock_repository_for_backup_config
+
+        def lock_repository(**kwargs):
+            nonlocal repository_locked
+            result = original_lock(**kwargs)
+            repository_locked = True
+            return result
+
+        def enforce_quota(_organization, resource_type, *, additional=1):
+            self.assertTrue(repository_locked)
+            quota_checks.append((resource_type, additional))
+
+        quota_checks = []
+        with (
+            mock.patch.object(
+                backup_config_service,
+                "_lock_repository_for_backup_config",
+                side_effect=lock_repository,
+            ),
+            mock.patch(
+                "apps.subscription.services.interface.enforce_license_quota",
+                side_effect=enforce_quota,
+            ),
+        ):
+            response = self.client.post(
+                "/api/v1/protection/backup-configs/",
+                self._payload(name="Quota transaction config"),
+                format="json",
+                **self._headers(),
+            )
+
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
+        self.assertEqual(
+            quota_checks,
+            [
+                ("max_protected_sources", 1),
+                ("max_storage_gb", 0),
+            ],
+        )
+
     def test_create_backup_config_advances_source_pipeline_to_step3(self):
         source_key = f"agent:{self.agent.id}"
         step2 = self.client.post(
@@ -648,6 +692,40 @@ class ProtectionBackupConfigApiTests(TestCase):
             trigger="protection.backup_config.create",
         )
 
+    @mock.patch(
+        "apps.protection.services.backup_config._advance_pipeline",
+        side_effect=ValidationError("pipeline unavailable"),
+    )
+    @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
+    def test_direct_nas_persistence_failure_retains_residual_claim(
+        self,
+        run_agent_task_sync,
+        _advance_pipeline,
+    ):
+        run_agent_task_sync.return_value = self._successful_agent_task()
+        nas_repo = self._direct_nas_repository(name="persistence-failed-direct-nas")
+        payload = self._payload(name="Persistence failed Direct NAS config")
+        payload["repository_id"] = nas_repo.id
+
+        response = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(
+            BackupConfig.objects.filter(
+                name="Persistence failed Direct NAS config"
+            ).exists()
+        )
+        claim = RepositoryLocationClaim.objects.get(
+            repository=nas_repo,
+            owner_node_id=self.agent.id,
+        )
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+
     @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
     def test_direct_nas_initialize_retains_residual_if_repository_is_removing(
         self,
@@ -1005,9 +1083,7 @@ class ProtectionBackupConfigApiTests(TestCase):
 
         self.assertEqual(run_agent_task_sync.call_args.kwargs["kind"], "repo.status")
         self.assertFalse(
-            run_agent_task_sync.call_args.kwargs["payload"][
-                "allow_ownership_adoption"
-            ]
+            run_agent_task_sync.call_args.kwargs["payload"]["allow_ownership_adoption"]
         )
         claim = (
             RepositoryLocationClaim.objects.filter(
@@ -1054,9 +1130,7 @@ class ProtectionBackupConfigApiTests(TestCase):
 
         self.assertEqual(run_agent_task_sync.call_args.kwargs["kind"], "repo.status")
         self.assertFalse(
-            run_agent_task_sync.call_args.kwargs["payload"][
-                "allow_ownership_adoption"
-            ]
+            run_agent_task_sync.call_args.kwargs["payload"]["allow_ownership_adoption"]
         )
 
     @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")

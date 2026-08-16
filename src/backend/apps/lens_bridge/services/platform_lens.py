@@ -20,13 +20,17 @@ NO_PUBLIC_DATA_GATEWAY_AVAILABLE = (
 
 
 def get_or_create_platform_org() -> Organization:
-    org, _created = Organization.objects.get_or_create(
+    org, created = Organization.objects.get_or_create(
         key=PLATFORM_ORG_KEY,
         defaults={
             "name": PLATFORM_ORG_NAME,
             "is_active": True,
         },
     )
+    if created:
+        from apps.subscription.services.interface import initialize_organization_quota
+
+        initialize_organization_quota(org)
     return org
 
 

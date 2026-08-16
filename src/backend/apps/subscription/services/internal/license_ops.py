@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone as django_timezone
 
 from apps.iam.models import Organization
 from apps.subscription.constants import DEFAULT_LIMITS, UNLIMITED
@@ -16,9 +18,32 @@ from apps.subscription.services.internal.machine_code import generate_machine_co
 from apps.subscription.services.internal.usage import collect_usage_stats
 
 
+_MAX_LICENSE_LIMIT = 2**31 - 1
+
+
+def _normalize_license_limit(*, field: str, value) -> int:
+    """Accept only values representable by the persisted license fields."""
+    if isinstance(value, bool):
+        raise ValueError(f"License limit {field} must be an integer")
+    try:
+        numeric = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(f"License limit {field} must be an integer") from exc
+    if not numeric.is_finite() or numeric != numeric.to_integral_value():
+        raise ValueError(f"License limit {field} must be an integer")
+    limit = int(numeric)
+    if limit < UNLIMITED:
+        raise ValueError(f"License limit {field} cannot be less than {UNLIMITED}")
+    if limit > _MAX_LICENSE_LIMIT:
+        raise ValueError(f"License limit {field} exceeds the supported range")
+    return limit
+
+
 def _map_limits(raw: dict) -> dict:
     """Map xxz limit keys to organization license fields."""
-    return {
+    if not isinstance(raw, dict):
+        raise ValueError("License limits must be an object")
+    mapped = {
         "max_organizations": raw.get(
             "max_organizations", raw.get("max_tenants", DEFAULT_LIMITS["max_organizations"])
         ),
@@ -33,13 +58,37 @@ def _map_limits(raw: dict) -> dict:
             "max_public_gateway_capacity_gb",
             DEFAULT_LIMITS["max_public_gateway_capacity_gb"],
         ),
-        "ai_insights_quota": raw.get("ai_insights_quota", DEFAULT_LIMITS["ai_insights_quota"]),
+        "max_source_nas": raw.get("max_source_nas", DEFAULT_LIMITS["max_source_nas"]),
+        "max_object_storage": raw.get(
+            "max_object_storage", DEFAULT_LIMITS["max_object_storage"]
+        ),
+        "max_target_nas": raw.get("max_target_nas", DEFAULT_LIMITS["max_target_nas"]),
+        "max_standalone_disk": raw.get(
+            "max_standalone_disk", DEFAULT_LIMITS["max_standalone_disk"]
+        ),
+        "max_protected_sources": raw.get(
+            "max_protected_sources", DEFAULT_LIMITS["max_protected_sources"]
+        ),
+        "ai_insights_quota": raw.get(
+            "ai_tokens",
+            raw.get(
+                "ai_requests",
+                raw.get(
+                    "ai_insights_quota",
+                    DEFAULT_LIMITS["ai_insights_quota"],
+                ),
+            ),
+        ),
         # Legacy License column only — Tasks are not enforced as a quota meter.
-        "max_tasks": int(raw.get("max_tasks", raw.get("max_backup_tasks", 0)) or 0),
+        "max_tasks": raw.get("max_tasks", raw.get("max_backup_tasks", 0)),
         "max_alert_policies": raw.get(
             "max_alert_policies",
             raw.get("max_policies", DEFAULT_LIMITS["max_alert_policies"]),
         ),
+    }
+    return {
+        field: _normalize_license_limit(field=field, value=value)
+        for field, value in mapped.items()
     }
 
 
@@ -48,6 +97,16 @@ def _dev_unlimited_limits() -> dict:
     # Keep License.max_tasks writable for DEV codes; still not a quota meter.
     limits["max_tasks"] = UNLIMITED
     return limits
+
+
+def _normalize_features(raw) -> list[str]:
+    if raw is None:
+        # Legacy activation payloads predate feature entitlements and granted
+        # the complete Enterprise product. Preserve that meaning on renewal.
+        return ["*"]
+    if not isinstance(raw, (list, tuple, set)):
+        raise ValueError("License features must be a list")
+    return sorted({str(item).strip() for item in raw if str(item).strip()})
 
 
 def get_or_create_machine_code(*, organization: Organization, user, force: bool = False) -> str:
@@ -111,7 +170,11 @@ def get_active_license(*, organization: Organization) -> License | None:
         return None
     if lic.is_valid:
         return lic
-    if lic.expires_at and lic.expires_at < timezone.now() and lic.status == License.Status.ACTIVE:
+    if (
+        lic.expires_at
+        and lic.expires_at < django_timezone.now()
+        and lic.status == License.Status.ACTIVE
+    ):
         lic.status = License.Status.EXPIRED
         lic.save(update_fields=["status", "updated_at"])
     return lic if lic.is_valid else None
@@ -119,27 +182,45 @@ def get_active_license(*, organization: Organization) -> License | None:
 
 def get_instance_active_license() -> License | None:
     """Active deployment grant, regardless of the caller's current organization."""
+    record = get_instance_license_record()
+    if record is None:
+        return None
+    return get_active_license(organization=record.organization)
+
+
+def get_instance_license_record() -> License | None:
+    """Deployment license row regardless of status or expiry."""
     host = resolve_instance_license_organization()
     if host is None:
         return None
-    return get_active_license(organization=host)
+    return License.objects.filter(organization=host).select_related("organization").first()
 
 
-def build_current_payload(*, organization: Organization, user) -> dict:
-    machine_code = get_or_create_machine_code(organization=organization, user=user)
+def build_current_payload(
+    *,
+    organization: Organization,
+    user,
+    include_machine_code: bool = True,
+) -> dict:
+    machine_code = (
+        get_or_create_machine_code(organization=organization, user=user)
+        if include_machine_code
+        else None
+    )
     license_obj = get_active_license(organization=organization)
     usage = collect_usage_stats(organization_id=organization.id)
     from common.extension_spi import get_quota_provider
 
-    # EE QuotaProvider always hard-enforces EffectiveQuota (unsigned default pool
-    # or signed license). Community (no provider) stays informational.
+    # EE QuotaProvider enforces the built-in or licensed instance entitlement
+    # plus the organization plan/override ceiling. Community stays informational.
     instance_lic = get_instance_active_license()
+    instance_record = get_instance_license_record()
     provider = get_quota_provider()
     enforcement_enabled = provider is not None
 
     def _limits_for(org: Organization, fallback_lic: License | None) -> dict:
-        # When a provider is registered, UI must match EffectiveQuota (shared
-        # instance pool caps when no org Quota row; hard ceiling when persisted).
+        # When a provider is registered, UI must match the organization plan
+        # with any per-meter override.
         if provider is not None:
             return dict(provider.get_limits(org) or {})
         if fallback_lic is not None:
@@ -150,6 +231,7 @@ def build_current_payload(*, organization: Organization, user) -> dict:
         return {
             "is_valid": license_obj.is_valid,
             "license": license_obj,
+            "entitlement_source": "license",
             "limits": _limits_for(organization, license_obj),
             "days_until_expiry": license_obj.days_until_expiry,
             "usage": usage,
@@ -166,6 +248,7 @@ def build_current_payload(*, organization: Organization, user) -> dict:
             "is_valid": instance_lic.is_valid,
             "message": "Using instance license",
             "license": instance_lic,
+            "entitlement_source": "license",
             "instance_shared": True,
             "limits": _limits_for(organization, instance_lic),
             "days_until_expiry": instance_lic.days_until_expiry,
@@ -173,6 +256,33 @@ def build_current_payload(*, organization: Organization, user) -> dict:
             "machine_code": machine_code,
             "organization_name": organization.name,
             "enforcement_enabled": enforcement_enabled,
+        }
+
+    if provider is not None and instance_record is None:
+        return {
+            "is_valid": True,
+            "message": "Using built-in Enterprise entitlement",
+            "license": None,
+            "entitlement_source": "builtin_unlimited",
+            "machine_code": machine_code,
+            "usage": usage,
+            "limits": _limits_for(organization, None),
+            "organization_name": organization.name,
+            "enforcement_enabled": True,
+        }
+
+    if provider is not None and instance_record is not None:
+        return {
+            "is_valid": False,
+            "message": "Instance license is inactive",
+            "license": instance_record,
+            "entitlement_source": "license_inactive",
+            "machine_code": machine_code,
+            "usage": usage,
+            "limits": _limits_for(organization, None),
+            "organization_name": organization.name,
+            "enforcement_enabled": True,
+            "instance_shared": instance_record.organization_id != organization.id,
         }
 
     return {
@@ -186,20 +296,76 @@ def build_current_payload(*, organization: Organization, user) -> dict:
     }
 
 
-def _determine_change_type(existing: License, new_limits: dict, new_expires_at) -> tuple[str, str]:
-    if new_expires_at and existing.expires_at and new_expires_at > existing.expires_at:
-        return License.ChangeType.RENEWAL, "License renewed"
+def _feature_change_direction(
+    *,
+    existing_features: list[str] | None,
+    new_features: list[str] | None,
+) -> tuple[int, int]:
+    """Return upgrade/downgrade counts for an Enterprise feature change."""
+    current = {str(item).strip() for item in (existing_features or []) if str(item).strip()}
+    incoming = {str(item).strip() for item in (new_features or []) if str(item).strip()}
+    if current == incoming:
+        return 0, 0
+    if "*" in current:
+        return (0, 0) if "*" in incoming else (0, 1)
+    if "*" in incoming:
+        return 1, 0
+    if current < incoming:
+        return 1, 0
+    if incoming < current:
+        return 0, 1
+    return 1, 1
+
+
+def _expiry_change_direction(existing_expires_at, new_expires_at) -> tuple[int, int, bool]:
+    """Return upgrade/downgrade counts and whether validity was extended."""
+    if existing_expires_at == new_expires_at:
+        return 0, 0, False
+    if existing_expires_at is None:
+        return 0, 1, False
+    if new_expires_at is None:
+        return 1, 0, True
+    if new_expires_at < existing_expires_at:
+        return 0, 1, False
+    return 0, 0, True
+
+
+def _determine_change_type(
+    existing: License,
+    new_limits: dict,
+    new_expires_at,
+    new_features: list[str] | None = None,
+) -> tuple[str, str]:
     upgrades = downgrades = 0
     for field, new_val in new_limits.items():
         old_val = getattr(existing, field, 0)
-        if new_val > old_val:
+        old_rank = float("inf") if int(old_val) < 0 else int(old_val)
+        new_rank = float("inf") if int(new_val) < 0 else int(new_val)
+        if new_rank > old_rank:
             upgrades += 1
-        elif new_val < old_val:
+        elif new_rank < old_rank:
             downgrades += 1
+    feature_upgrades, feature_downgrades = _feature_change_direction(
+        existing_features=list(existing.features or []),
+        new_features=(
+            list(existing.features or []) if new_features is None else new_features
+        ),
+    )
+    upgrades += feature_upgrades
+    downgrades += feature_downgrades
+    expiry_upgrades, expiry_downgrades, validity_extended = (
+        _expiry_change_direction(existing.expires_at, new_expires_at)
+    )
+    upgrades += expiry_upgrades
+    downgrades += expiry_downgrades
     if upgrades and not downgrades:
-        return License.ChangeType.UPGRADE, "Limits upgraded"
+        return License.ChangeType.UPGRADE, "Entitlements upgraded"
     if downgrades and not upgrades:
-        return License.ChangeType.DOWNGRADE, "Limits downgraded"
+        return License.ChangeType.DOWNGRADE, "Entitlements downgraded"
+    if upgrades or downgrades:
+        return License.ChangeType.RENEWAL, "Entitlements updated"
+    if validity_extended:
+        return License.ChangeType.RENEWAL, "License renewed"
     return License.ChangeType.RENEWAL, "License updated"
 
 
@@ -271,6 +437,7 @@ def activate_license(
             "license_key": f"DEV-{secrets.token_hex(8).upper()}",
             "machine_code": machine_code,
             "limits": _dev_unlimited_limits(),
+            "features": ["*"],
             "issued_at": datetime.now(timezone.utc).isoformat(),
             "expires_at": None,
         }
@@ -286,7 +453,9 @@ def activate_license(
     if other:
         raise ValueError("Activation code already used by another organization")
 
-    limits = _map_limits(data.get("limits") or {})
+    raw_limits = data.get("limits")
+    limits = _map_limits({} if raw_limits is None else raw_limits)
+    features = _normalize_features(data.get("features"))
     issued_at = datetime.fromisoformat(data["issued_at"].replace("Z", "+00:00"))
     expires_at = None
     if data.get("expires_at"):
@@ -294,7 +463,12 @@ def activate_license(
 
     existing = License.objects.filter(organization=organization).first()
     if existing:
-        change_type, reason = _determine_change_type(existing, limits, expires_at)
+        change_type, reason = _determine_change_type(
+            existing,
+            limits,
+            expires_at,
+            features,
+        )
         existing.archive_to_history(change_type=change_type, reason=reason, changed_by=user)
         existing.license_key = license_key
         existing.machine_code = machine_code
@@ -304,6 +478,8 @@ def activate_license(
         existing.change_type = change_type
         existing.change_reason = reason
         existing.status = License.Status.ACTIVE
+        existing.features = features
+        existing.signature = data.get("signature", "")
         for field, val in limits.items():
             setattr(existing, field, val)
         existing.save()
@@ -318,6 +494,7 @@ def activate_license(
         expires_at=expires_at,
         activated_by=user if user and user.is_authenticated else None,
         signature=data.get("signature", ""),
+        features=features,
         **limits,
     )
     lic.archive_to_history(change_type=License.ChangeType.INITIAL, reason="Initial activation", changed_by=user)

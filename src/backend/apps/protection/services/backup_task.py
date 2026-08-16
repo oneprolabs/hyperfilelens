@@ -40,7 +40,9 @@ from apps.protection.services.progress.orchestrated_progress import (
     BACKUP_TRANSFER_START,
     orchestrated_backup_from_agent_progress,
 )
-from apps.protection.services.repository_compatibility import validate_backup_repository_compatible
+from apps.protection.services.repository_compatibility import (
+    validate_backup_repository_compatible,
+)
 from apps.protection.services.source_execution import (
     ExecutionTarget,
     resolve_source_execution_target,
@@ -49,13 +51,19 @@ from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
 from apps.source.services.internal.selectable_ids import parse_selectable_id
-from apps.storage.services.internal.repository_secrets import build_repository_runtime_payload
+from apps.storage.services.internal.repository_secrets import (
+    build_repository_runtime_payload,
+)
 from apps.storage.services.internal.repository_workload import (
     RepositoryWorkload,
     lock_repositories_for_workload,
 )
 from apps.task.models import Task, TaskResource, TaskStep
-from apps.task.services.interface import append_task_step_event, complete_task, create_task
+from apps.task.services.interface import (
+    append_task_step_event,
+    complete_task,
+    create_task,
+)
 
 _ACTIVE_TASK_STATUSES = {Task.Status.PENDING, Task.Status.RUNNING}
 _TASK_TRIGGER_MAP = {
@@ -148,7 +156,9 @@ def _backup_progress_for_directory(
     return step_progress, task_progress
 
 
-def _backup_success_progress(successful_directory_count: int, total_dirs: int) -> tuple[float, float]:
+def _backup_success_progress(
+    successful_directory_count: int, total_dirs: int
+) -> tuple[float, float]:
     total = max(total_dirs, 1)
     successful = max(0, min(successful_directory_count, total))
     success_ratio = successful / total
@@ -166,7 +176,9 @@ def _apply_backup_agent_progress(
     last_applied_percent: dict[str, float],
 ) -> None:
     _ = directory_index, total_dirs, last_applied_percent
-    task_progress = orchestrated_backup_from_agent_progress(task=task, progress=progress)
+    task_progress = orchestrated_backup_from_agent_progress(
+        task=task, progress=progress
+    )
     if task_progress is None:
         return
     kopia_percent = _kopia_percent_from_agent_progress(progress)
@@ -232,7 +244,11 @@ def _finalize_remaining_steps(task: Task, *, failed_step: str | None = None) -> 
     for step in task.steps.all():
         if step.step_name == failed_step:
             continue
-        if step.status in {TaskStep.Status.SUCCESS, TaskStep.Status.FAILED, TaskStep.Status.SKIPPED}:
+        if step.status in {
+            TaskStep.Status.SUCCESS,
+            TaskStep.Status.FAILED,
+            TaskStep.Status.SKIPPED,
+        }:
             continue
         step.status = TaskStep.Status.SKIPPED
         step.progress = _task_progress(0)
@@ -266,7 +282,9 @@ def _is_subpath(root: str, path: str) -> bool:
     return path_cmp == root_cmp or path_cmp.startswith(root_cmp + "/")
 
 
-def _source_display_name(*, organization_id: int, source_type: str, source_ref_id: int) -> str:
+def _source_display_name(
+    *, organization_id: int, source_type: str, source_ref_id: int
+) -> str:
     if source_type == "agent":
         node = Node.objects.filter(
             organization_id=organization_id,
@@ -297,17 +315,25 @@ def _normalize_sources(
         try:
             source_ref_id = int(item.get("source_ref_id") or 0)
         except (TypeError, ValueError) as exc:
-            raise ValidationError({"sources": "source_ref_id must be a positive integer."}) from exc
+            raise ValidationError(
+                {"sources": "source_ref_id must be a positive integer."}
+            ) from exc
         if source_ref_id <= 0:
-            raise ValidationError({"sources": "source_ref_id must be a positive integer."})
+            raise ValidationError(
+                {"sources": "source_ref_id must be a positive integer."}
+            )
         key = (source_type, source_ref_id)
-        deduped[key] = RequestedBackupSource(source_type=source_type, source_ref_id=source_ref_id)
+        deduped[key] = RequestedBackupSource(
+            source_type=source_type, source_ref_id=source_ref_id
+        )
     for source_id in source_ids or []:
         parsed = parse_selectable_id(str(source_id))
         if parsed is None or parsed[0] not in {"agent", "nas"}:
             raise ValidationError({"source_ids": f"Invalid source id: {source_id}"})
         key = (parsed[0], parsed[1])
-        deduped[key] = RequestedBackupSource(source_type=parsed[0], source_ref_id=parsed[1])
+        deduped[key] = RequestedBackupSource(
+            source_type=parsed[0], source_ref_id=parsed[1]
+        )
     if not deduped:
         raise ValidationError({"sources": "At least one backup source is required."})
     return list(deduped.values())
@@ -334,7 +360,9 @@ def _backup_config_sources(
     return list(deduped.values())
 
 
-def _validate_selected_sources(*, organization_id: int, sources: list[RequestedBackupSource]) -> None:
+def _validate_selected_sources(
+    *, organization_id: int, sources: list[RequestedBackupSource]
+) -> None:
     for source in sources:
         if source.source_type == "agent":
             exists = Node.objects.filter(
@@ -351,7 +379,11 @@ def _validate_selected_sources(*, organization_id: int, sources: list[RequestedB
                 is_deleted=False,
             ).exists()
         if not exists:
-            raise ValidationError({"sources": f"Backup source not found: {source.source_type}:{source.source_ref_id}"})
+            raise ValidationError(
+                {
+                    "sources": f"Backup source not found: {source.source_type}:{source.source_ref_id}"
+                }
+            )
 
 
 def _load_backup_configs(
@@ -360,23 +392,30 @@ def _load_backup_configs(
     sources: list[RequestedBackupSource],
     backup_config_ids: list[int] | None = None,
 ) -> dict[tuple[str, int], list[BackupConfig]]:
-    queryset = BackupConfig.objects.filter(organization_id=organization_id).prefetch_related("directories")
+    queryset = BackupConfig.objects.filter(
+        organization_id=organization_id
+    ).prefetch_related("directories")
     if backup_config_ids:
         queryset = queryset.filter(id__in=backup_config_ids)
     configs = list(queryset.order_by("id"))
-    config_map = {
-        (config.source_type, config.source_ref_id): []
-        for config in configs
-    }
+    config_map = {(config.source_type, config.source_ref_id): [] for config in configs}
     for config in configs:
-        config_map.setdefault((config.source_type, config.source_ref_id), []).append(config)
+        config_map.setdefault((config.source_type, config.source_ref_id), []).append(
+            config
+        )
 
     if backup_config_ids:
         found_ids = {config.id for config in configs}
         missing_ids = sorted({int(value) for value in backup_config_ids} - found_ids)
         if missing_ids:
-            raise ValidationError({"backup_config_ids": f"Backup configs not found: {', '.join(str(v) for v in missing_ids)}"})
-        selected_sources = {(source.source_type, source.source_ref_id) for source in sources}
+            raise ValidationError(
+                {
+                    "backup_config_ids": f"Backup configs not found: {', '.join(str(v) for v in missing_ids)}"
+                }
+            )
+        selected_sources = {
+            (source.source_type, source.source_ref_id) for source in sources
+        }
         invalid = [
             config.id
             for config in configs
@@ -384,7 +423,9 @@ def _load_backup_configs(
         ]
         if invalid:
             raise ValidationError(
-                {"backup_config_ids": f"Backup configs do not belong to the selected sources: {', '.join(str(v) for v in invalid)}"}
+                {
+                    "backup_config_ids": f"Backup configs do not belong to the selected sources: {', '.join(str(v) for v in invalid)}"
+                }
             )
     return config_map
 
@@ -423,13 +464,37 @@ def _existing_snapshot_by_idempotency(
     ).first()
 
 
+def _existing_snapshot_result(
+    *,
+    organization_id: int,
+    snapshot: BackupSourceSnapshot,
+) -> dict[str, Any]:
+    """Build the stable API result for an already accepted backup request."""
+    task = Task.objects.filter(
+        organization_id=organization_id,
+        id=snapshot.task_id,
+    ).first()
+    return {
+        "task_id": task.id if task is not None else snapshot.task_id,
+        "task_uuid": (
+            str(task.task_uuid) if task is not None else str(snapshot.task_uuid)
+        ),
+        "source_snapshot_id": snapshot.id,
+        "source_snapshot_status": snapshot.status,
+        "status": "skipped",
+        "message": "A backup task already exists for this idempotency key.",
+    }
+
+
 def _backup_execution_lock_key(*, organization_id: int, task_uuid: str) -> str:
     return f"protection:backup:run:{organization_id}:{task_uuid}"
 
 
 def _acquire_backup_execution_lock(*, organization_id: int, task_uuid: str) -> bool:
     # Short lock — orchestrator ticks are idempotent; prevents duplicate concurrent advances.
-    ttl = max(120, int(protection_conf.PROTECTION_BACKUP_RECONCILE_INTERVAL_SECONDS) * 4)
+    ttl = max(
+        120, int(protection_conf.PROTECTION_BACKUP_RECONCILE_INTERVAL_SECONDS) * 4
+    )
     return bool(
         cache.add(
             _backup_execution_lock_key(
@@ -457,10 +522,14 @@ def _queue_backup_execution(
     task_uuid: str,
     source_snapshot_id: int,
 ) -> None:
-    execution_backend = str(
-        getattr(settings, "PROTECTION_BACKUP_EXECUTION_BACKEND", "celery")
-        or "celery"
-    ).strip().lower()
+    execution_backend = (
+        str(
+            getattr(settings, "PROTECTION_BACKUP_EXECUTION_BACKEND", "celery")
+            or "celery"
+        )
+        .strip()
+        .lower()
+    )
     if execution_backend != "celery":
         thread = threading.Thread(
             target=_run_backup_task_in_thread,
@@ -546,20 +615,36 @@ def start_backup_tasks(
     trigger_type: str = BackupSourceSnapshot.TriggerType.MANUAL,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
-    requested_sources = _normalize_sources(sources=sources, source_ids=source_ids) if sources or source_ids else []
+    from apps.iam.models import Organization
+    from apps.subscription.services.interface import enforce_license_quota
+
+    # Manual, API and scheduled backups all enter here. Resolve the organization
+    # once, but defer quota admission until the idempotency and active-task
+    # checks prove that this request will create a new storage write.
+    organization = Organization.objects.get(pk=organization_id)
+
+    requested_sources = (
+        _normalize_sources(sources=sources, source_ids=source_ids)
+        if sources or source_ids
+        else []
+    )
     if not requested_sources:
         requested_sources = _backup_config_sources(
             organization_id=organization_id,
             backup_config_ids=backup_config_ids,
         )
-    _validate_selected_sources(organization_id=organization_id, sources=requested_sources)
+    _validate_selected_sources(
+        organization_id=organization_id, sources=requested_sources
+    )
     config_map = _load_backup_configs(
         organization_id=organization_id,
         sources=requested_sources,
         backup_config_ids=backup_config_ids,
     )
 
-    batch_key = str(idempotency_key or timezone.now().strftime("%Y%m%d%H%M%S%f")).strip()
+    batch_key = str(
+        idempotency_key or timezone.now().strftime("%Y%m%d%H%M%S%f")
+    ).strip()
     results: list[dict[str, Any]] = []
     created_count = 0
     skipped_count = 0
@@ -589,6 +674,31 @@ def start_backup_tasks(
             source_ref_id=source.source_ref_id,
         )
         for config in configs:
+            item_idempotency_key = (
+                f"{batch_key}:{source.source_type}:{source.source_ref_id}:{config.id}"
+            )
+            # A replay reads an already accepted operation. Resolve it before
+            # repository admission or remote Direct NAS initialization.
+            existing_snapshot = _existing_snapshot_by_idempotency(
+                organization_id=organization_id,
+                idempotency_key=item_idempotency_key,
+            )
+            if existing_snapshot is not None:
+                skipped_count += 1
+                results.append(
+                    {
+                        "source_type": source.source_type,
+                        "source_ref_id": source.source_ref_id,
+                        "backup_config_id": config.id,
+                        **_existing_snapshot_result(
+                            organization_id=organization_id,
+                            snapshot=existing_snapshot,
+                        ),
+                    }
+                )
+                continue
+
+            quota_admitted = False
             try:
                 with transaction.atomic():
                     from apps.source.services.internal.source_operation_fence import (
@@ -619,12 +729,22 @@ def start_backup_tasks(
                         ensure_direct_nas_repository_for_backup,
                     )
 
-                    ensure_direct_nas_repository_for_backup(
-                        organization_id=organization_id,
-                        source_type=source.source_type,
-                        source_ref_id=source.source_ref_id,
-                        repository_id=repository.id,
-                    )
+                    # Direct NAS initialization changes remote storage. Admit
+                    # the write first and retain the quota lock until durable
+                    # ownership facts commit.
+                    with transaction.atomic():
+                        enforce_license_quota(
+                            organization,
+                            "max_storage_gb",
+                            additional=0,
+                        )
+                        ensure_direct_nas_repository_for_backup(
+                            organization_id=organization_id,
+                            source_type=source.source_type,
+                            source_ref_id=source.source_ref_id,
+                            repository_id=repository.id,
+                        )
+                    quota_admitted = True
                 # Directory size is refreshed asynchronously for every new
                 # backup because configured path contents can change without a
                 # config edit. Never block the Backup Now request on path.size.
@@ -645,7 +765,6 @@ def start_backup_tasks(
                 )
                 continue
 
-            item_idempotency_key = f"{batch_key}:{source.source_type}:{source.source_ref_id}:{config.id}"
             task_display_name = f"Backup {source_name}"
             task_trigger_type = _TASK_TRIGGER_MAP.get(
                 str(trigger_type).strip().lower(),
@@ -679,18 +798,10 @@ def start_backup_tasks(
                         idempotency_key=item_idempotency_key,
                     )
                     if existing_snapshot is not None:
-                        existing_task = Task.objects.filter(
+                        existing_result = _existing_snapshot_result(
                             organization_id=organization_id,
-                            id=existing_snapshot.task_id,
-                        ).first()
-                        existing_result = {
-                            "task_id": existing_task.id if existing_task is not None else existing_snapshot.task_id,
-                            "task_uuid": str(existing_task.task_uuid) if existing_task is not None else str(existing_snapshot.task_uuid),
-                            "source_snapshot_id": existing_snapshot.id,
-                            "source_snapshot_status": existing_snapshot.status,
-                            "status": "skipped",
-                            "message": "A backup task already exists for this idempotency key.",
-                        }
+                            snapshot=existing_snapshot,
+                        )
                     else:
                         active_task = find_active_backup_task(
                             organization_id=organization_id,
@@ -709,6 +820,16 @@ def start_backup_tasks(
                             }
 
                     if existing_result is None:
+                        # Keep quota admission in the same transaction as the
+                        # consuming task/snapshot write. Replays and active-task
+                        # conflicts return their existing result without being
+                        # mistaken for new consumption after a quota downgrade.
+                        if not quota_admitted:
+                            enforce_license_quota(
+                                organization,
+                                "max_storage_gb",
+                                additional=0,
+                            )
                         lock_repositories_for_workload(
                             organization_id=organization_id,
                             repository_ids=[locked_config.repository_id],
@@ -765,14 +886,19 @@ def start_backup_tasks(
                         )
 
                         transaction.on_commit(
-                            lambda config_id=locked_config.id, task_uuid=str(task.task_uuid): refresh_backup_config_directory_estimates_task.delay(
+                            lambda config_id=locked_config.id,
+                            task_uuid=str(
+                                task.task_uuid
+                            ): refresh_backup_config_directory_estimates_task.delay(
                                 config_id=config_id,
                                 force_refresh=True,
                                 task_uuid=task_uuid,
                             )
                         )
                         transaction.on_commit(
-                            lambda org_id=organization_id, task_uuid=str(task.task_uuid), snapshot_id=snapshot.id: _queue_backup_execution(
+                            lambda org_id=organization_id,
+                            task_uuid=str(task.task_uuid),
+                            snapshot_id=snapshot.id: _queue_backup_execution(
                                 organization_id=org_id,
                                 task_uuid=task_uuid,
                                 source_snapshot_id=snapshot_id,
@@ -789,8 +915,12 @@ def start_backup_tasks(
                         id=existing_snapshot.task_id,
                     ).first()
                     existing_result = {
-                        "task_id": existing_task.id if existing_task is not None else existing_snapshot.task_id,
-                        "task_uuid": str(existing_task.task_uuid) if existing_task is not None else str(existing_snapshot.task_uuid),
+                        "task_id": existing_task.id
+                        if existing_task is not None
+                        else existing_snapshot.task_id,
+                        "task_uuid": str(existing_task.task_uuid)
+                        if existing_task is not None
+                        else str(existing_snapshot.task_uuid),
                         "source_snapshot_id": existing_snapshot.id,
                         "source_snapshot_status": existing_snapshot.status,
                         "status": "skipped",
@@ -813,8 +943,12 @@ def start_backup_tasks(
                     if active_snapshot is None:
                         raise
                     existing_result = {
-                        "task_id": active_task.id if active_task is not None else active_snapshot.task_id,
-                        "task_uuid": str(active_task.task_uuid) if active_task is not None else str(active_snapshot.task_uuid),
+                        "task_id": active_task.id
+                        if active_task is not None
+                        else active_snapshot.task_id,
+                        "task_uuid": str(active_task.task_uuid)
+                        if active_task is not None
+                        else str(active_snapshot.task_uuid),
                         "source_snapshot_id": active_snapshot.id,
                         "source_snapshot_status": active_snapshot.status,
                         "status": "conflict",
@@ -850,7 +984,9 @@ def start_backup_tasks(
                 continue
 
             if task is None or snapshot is None:
-                raise RuntimeError("Backup task creation did not produce a task and snapshot.")
+                raise RuntimeError(
+                    "Backup task creation did not produce a task and snapshot."
+                )
 
             created_count += 1
             results.append(
@@ -901,7 +1037,9 @@ def _run_backup_task_locked(
     )
 
 
-def _resolve_execution_target(*, source_snapshot: BackupSourceSnapshot) -> ExecutionTarget:
+def _resolve_execution_target(
+    *, source_snapshot: BackupSourceSnapshot
+) -> ExecutionTarget:
     return resolve_source_execution_target(
         organization_id=source_snapshot.organization_id,
         source_type=source_snapshot.source_type,
@@ -1000,7 +1138,15 @@ _SNAPSHOT_DIR_COUNT_KEYS = (
     "num_directories",
     "numDirectories",
 )
-_SNAPSHOT_STATS_KEYS = ("stats", "summary", "summ", "snapshot", "rootEntry", "root_entry", "root")
+_SNAPSHOT_STATS_KEYS = (
+    "stats",
+    "summary",
+    "summ",
+    "snapshot",
+    "rootEntry",
+    "root_entry",
+    "root",
+)
 
 
 def _nested_dict_result(data: dict[str, Any], *keys: str) -> dict[str, Any]:
@@ -1024,7 +1170,9 @@ def _int_result_deep(data: dict[str, Any], *keys: str) -> int:
     return 0
 
 
-def _extract_snapshot_metrics(result: dict[str, Any]) -> tuple[str, int, int, int, dict[str, Any]]:
+def _extract_snapshot_metrics(
+    result: dict[str, Any],
+) -> tuple[str, int, int, int, dict[str, Any]]:
     snapshot_id = str(
         result.get("kopia_snapshot_id")
         or result.get("snapshot_id")
@@ -1045,7 +1193,9 @@ def _extract_snapshot_metrics(result: dict[str, Any]) -> tuple[str, int, int, in
     return snapshot_id, size_bytes, file_count, dir_count, stats
 
 
-def extract_kopia_failure_message(result: dict[str, Any] | None, *, last_error: str = "") -> str:
+def extract_kopia_failure_message(
+    result: dict[str, Any] | None, *, last_error: str = ""
+) -> str:
     """Pull human-readable Kopia/agent failure text from a NodeTask result payload."""
     if not isinstance(result, dict):
         return str(last_error or "").strip()
@@ -1055,7 +1205,12 @@ def extract_kopia_failure_message(result: dict[str, Any] | None, *, last_error: 
         text = str(result.get(key) or "").strip()
         if text:
             chunks.append(text)
-    for nested_key in ("snapshot_create", "repository_create", "repository_connect", "repository_status"):
+    for nested_key in (
+        "snapshot_create",
+        "repository_create",
+        "repository_connect",
+        "repository_status",
+    ):
         nested = result.get(nested_key)
         if not isinstance(nested, dict):
             continue
@@ -1084,7 +1239,8 @@ def extract_kopia_failure_message(result: dict[str, Any] | None, *, last_error: 
             or "unable to get policy tree" in lower
             or "policy not found" in lower
             or "unable to open" in lower
-            or "found " in lower and "fatal error" in lower
+            or "found " in lower
+            and "fatal error" in lower
         ):
             interesting.append(stripped)
 
@@ -1106,7 +1262,10 @@ def extract_kopia_failure_message(result: dict[str, Any] | None, *, last_error: 
         if not stripped:
             continue
         lower = stripped.lower()
-        if any(token in lower for token in ("hashing", "hashed", "uploaded", "estimating", "snapshotting")):
+        if any(
+            token in lower
+            for token in ("hashing", "hashed", "uploaded", "estimating", "snapshotting")
+        ):
             continue
         if stripped:
             return stripped[:2000]
@@ -1146,7 +1305,10 @@ def _is_generic_exit_message(message: str) -> bool:
 
 def _directory_error(outcome, *, timed_out: bool = False) -> tuple[str, str]:
     if timed_out:
-        return "AGENT_TIMEOUT", "Agent task timed out while creating the Kopia snapshot."
+        return (
+            "AGENT_TIMEOUT",
+            "Agent task timed out while creating the Kopia snapshot.",
+        )
     result = outcome.result if isinstance(outcome.result, dict) else {}
     last_error = str(outcome.task.last_error or "").strip()
     message = extract_kopia_failure_message(result, last_error=last_error)

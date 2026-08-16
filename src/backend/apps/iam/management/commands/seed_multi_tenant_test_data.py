@@ -22,6 +22,10 @@ class Command(BaseCommand):
             key="beta-co",
             defaults={"name": "Beta Co", "is_active": True},
         )
+        from apps.subscription.services.interface import initialize_organization_quota
+
+        initialize_organization_quota(org_acme)
+        initialize_organization_quota(org_beta)
         self.stdout.write(self.style.SUCCESS(f"Organizations: {org_acme.key}, {org_beta.key}"))
 
         def create_user(email: str, password: str):

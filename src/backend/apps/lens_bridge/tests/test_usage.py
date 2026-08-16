@@ -146,6 +146,141 @@ class UsageCaptureTests(TestCase):
         self.assertEqual(row.model_calls, 2)
         self.assertEqual(row.estimated_cost, Decimal("0.004"))
 
+    def test_stale_capture_cannot_reduce_lifetime_token_usage(self):
+        run_uuid = uuid.uuid4()
+        usage.register_usage_run(
+            self.session,
+            run_uuid=run_uuid,
+            question="Summarize finance files",
+            status="running",
+        )
+        usage.capture_run_usage(
+            self.session,
+            {
+                "uuid": str(run_uuid),
+                "status": "done",
+                "steps": [
+                    {
+                        "detail": {
+                            "usage": {
+                                "prompt_tokens": 100,
+                                "completion_tokens": 20,
+                                "total_tokens": 120,
+                            }
+                        }
+                    }
+                ],
+            },
+        )
+
+        row = usage.capture_run_usage(
+            self.session,
+            {
+                "uuid": str(run_uuid),
+                "status": "running",
+                "steps": [
+                    {
+                        "detail": {
+                            "usage": {
+                                "prompt_tokens": 10,
+                                "completion_tokens": 2,
+                                "total_tokens": 12,
+                            }
+                        }
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(row.run_status, "done")
+        self.assertEqual(row.prompt_tokens, 100)
+        self.assertEqual(row.completion_tokens, 20)
+        self.assertEqual(row.total_tokens, 120)
+
+    def test_idempotent_registration_preserves_captured_usage(self):
+        run_uuid = uuid.uuid4()
+        usage.register_usage_run(
+            self.session,
+            run_uuid=run_uuid,
+            question="Summarize finance files",
+            status="running",
+        )
+        usage.capture_run_usage(
+            self.session,
+            {
+                "uuid": str(run_uuid),
+                "status": "done",
+                "steps": [
+                    {
+                        "detail": {
+                            "usage": {
+                                "prompt_tokens": 100,
+                                "completion_tokens": 20,
+                                "total_tokens": 120,
+                            }
+                        }
+                    }
+                ],
+            },
+        )
+
+        row = usage.register_usage_run(
+            self.session,
+            run_uuid=run_uuid,
+            question="Summarize finance files",
+            status="queued",
+        )
+
+        self.assertEqual(row.run_status, "done")
+        self.assertEqual(row.prompt_tokens, 100)
+        self.assertEqual(row.completion_tokens, 20)
+        self.assertEqual(row.total_tokens, 120)
+
+    def test_larger_correction_replaces_token_components_as_one_measurement(self):
+        run_uuid = uuid.uuid4()
+        usage.register_usage_run(
+            self.session,
+            run_uuid=run_uuid,
+            question="Summarize finance files",
+            status="running",
+        )
+        first = {
+            "uuid": str(run_uuid),
+            "status": "done",
+            "steps": [
+                {
+                    "detail": {
+                        "usage": {
+                            "prompt_tokens": 100,
+                            "completion_tokens": 20,
+                            "total_tokens": 120,
+                        }
+                    }
+                }
+            ],
+        }
+        usage.capture_run_usage(self.session, first)
+
+        corrected = {
+            **first,
+            "steps": [
+                {
+                    "detail": {
+                        "usage": {
+                            "prompt_tokens": 80,
+                            "completion_tokens": 70,
+                            "total_tokens": 150,
+                        }
+                    }
+                }
+            ],
+        }
+        row = usage.capture_run_usage(self.session, corrected)
+
+        self.assertEqual(row.prompt_tokens, 80)
+        self.assertEqual(row.completion_tokens, 70)
+        self.assertEqual(row.total_tokens, 150)
+
 
 class UsageApiIsolationTests(TestCase):
     def setUp(self):

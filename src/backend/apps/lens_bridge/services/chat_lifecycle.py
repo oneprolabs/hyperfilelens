@@ -2289,9 +2289,78 @@ def _transition_failed_provision_to_teardown(
     return True
 
 
+def _assert_retry_public_gateway_capacity(*, session: LensSessionLink) -> None:
+    """Recheck Public Gateway admission before a failed Chat is requeued."""
+    from apps.lens_bridge.models import LensGatewayLink
+
+    if (
+        session.gateway_link_id is None
+        or session.gateway_link.scope != LensGatewayLink.GatewayScope.PLATFORM
+    ):
+        return
+
+    # A stale provisioning attempt with a durable reservation, or a failed
+    # attempt that already owns a Knowledge Source, is resuming an existing
+    # allocation. Rechecking it as an addition would count the same workspace
+    # in both current usage and requested usage.
+    if (
+        session.capacity_reservation_status
+        == LensSessionLink.CapacityReservationStatus.RESERVED
+        and (
+            session.lifecycle_status
+            == LensSessionLink.LifecycleStatus.PROVISIONING
+            or session.knowledge_source_id is not None
+        )
+    ):
+        return
+
+    from common.errors import AppError
+    from common.extension_spi import get_quota_provider
+    from apps.lens_bridge.services.public_gateway_capacity import (
+        assert_public_gateway_capacity,
+        lock_public_gateway_capacity,
+        session_scope_occupancy,
+    )
+    from apps.subscription.services.interface import enforce_license_quota
+
+    requested_bytes, unknown_size = session_scope_occupancy(session=session)
+    Organization.objects.select_for_update().get(pk=session.organization_id)
+    gateway = lock_public_gateway_capacity(gateway_link=session.gateway_link)
+    assert_public_gateway_capacity(
+        gateway_link=gateway,
+        additional_bytes=requested_bytes,
+        unknown_size=unknown_size,
+    )
+
+    provider = get_quota_provider()
+    if provider is None:
+        return
+    limits = provider.get_limits(session.organization) or {}
+    if "max_public_gateway_capacity_gb" not in limits:
+        raise AppError(
+            code="SUBSCRIPTION.QUOTA_EXCEEDED",
+            status=403,
+            title="Organization public gateway capacity is unavailable.",
+            diagnostic="max_public_gateway_capacity_gb missing from quota limits",
+            meta={
+                "quota_type": "max_public_gateway_capacity_gb",
+                "scope": "organization",
+            },
+        )
+    enforce_license_quota(
+        session.organization,
+        "max_public_gateway_capacity_gb",
+        additional=float(requested_bytes) / float(1024**3),
+    )
+
+
 @transaction.atomic
 def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
-    locked = LensSessionLink.objects.select_for_update().get(pk=link.pk)
+    locked = (
+        LensSessionLink.objects.select_for_update(of=("self",))
+        .select_related("gateway_link", "organization")
+        .get(pk=link.pk)
+    )
     if locked.lifecycle_status == LensSessionLink.LifecycleStatus.READY:
         return locked
     if locked.lifecycle_status == LensSessionLink.LifecycleStatus.PROVISIONING:
@@ -2304,6 +2373,8 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             return locked
     elif locked.lifecycle_status != LensSessionLink.LifecycleStatus.FAILED:
         raise ValidationError({"lifecycle_status": "Session is not retryable."})
+
+    _assert_retry_public_gateway_capacity(session=locked)
 
     locked.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
     locked.provision_phase = LensSessionLink.ProvisionPhase.QUEUED

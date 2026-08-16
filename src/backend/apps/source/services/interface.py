@@ -210,6 +210,14 @@ def update_source_resource(
     user,
     **fields,
 ) -> SourceResource:
+    # Callers commonly pass an instance loaded before this transaction began.
+    # Re-read it under a row lock so concurrent type transitions consume quota
+    # only when the persisted resource actually enters a metered category.
+    resource = (
+        SourceResource.objects.select_for_update()
+        .select_related("organization")
+        .get(pk=resource.pk)
+    )
     if set(fields.keys()) <= {"bound_node", "bound_node_id"}:
         node_id = fields.get("bound_node_id") or fields.get("bound_node")
         if node_id is not None and int(node_id) == resource.bound_node_id:
@@ -228,7 +236,20 @@ def update_source_resource(
     if "description" in fields:
         resource.description = fields["description"] or ""
     if "resource_type" in fields and fields["resource_type"]:
-        resource.resource_type = fields["resource_type"]
+        next_resource_type = fields["resource_type"]
+        nas_resource_types = (ResourceType.NAS, ResourceType.NFS, ResourceType.CIFS)
+        if (
+            resource.resource_type not in nas_resource_types
+            and next_resource_type in nas_resource_types
+        ):
+            from apps.subscription.services.interface import enforce_license_quota
+
+            enforce_license_quota(
+                resource.organization,
+                "max_source_nas",
+                additional=1,
+            )
+        resource.resource_type = next_resource_type
     if "config" in fields:
         resource.config = scrub_source_secrets(
             {**(resource.config or {}), **(fields["config"] or {})}

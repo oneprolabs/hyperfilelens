@@ -29,9 +29,15 @@ class LicenseSerializer(serializers.ModelSerializer):
             "max_gateways",
             "max_public_gateways",
             "max_public_gateway_capacity_gb",
+            "max_source_nas",
+            "max_object_storage",
+            "max_target_nas",
+            "max_standalone_disk",
+            "max_protected_sources",
             "ai_insights_quota",
             "max_tasks",
             "max_alert_policies",
+            "features",
             "issued_at",
             "expires_at",
             "activated_at",
@@ -64,9 +70,15 @@ class LicenseHistorySerializer(serializers.ModelSerializer):
             "max_gateways",
             "max_public_gateways",
             "max_public_gateway_capacity_gb",
+            "max_source_nas",
+            "max_object_storage",
+            "max_target_nas",
+            "max_standalone_disk",
+            "max_protected_sources",
             "ai_insights_quota",
             "max_tasks",
             "max_alert_policies",
+            "features",
             "issued_at",
             "expires_at",
             "activated_at",
@@ -90,6 +102,11 @@ class LicenseHistorySerializer(serializers.ModelSerializer):
             "max_gateways": obj.max_gateways,
             "max_public_gateways": obj.max_public_gateways,
             "max_public_gateway_capacity_gb": obj.max_public_gateway_capacity_gb,
+            "max_source_nas": obj.max_source_nas,
+            "max_object_storage": obj.max_object_storage,
+            "max_target_nas": obj.max_target_nas,
+            "max_standalone_disk": obj.max_standalone_disk,
+            "max_protected_sources": obj.max_protected_sources,
             "ai_insights_quota": obj.ai_insights_quota,
             "ai_tokens": obj.ai_insights_quota,
             "max_tasks": obj.max_tasks,
@@ -108,3 +125,8 @@ class MachineCodeSerializer(serializers.ModelSerializer):
 
 class ActivateLicenseSerializer(serializers.Serializer):
     activation_code = serializers.CharField(max_length=4096)
+
+
+class ValidateQuotaQuerySerializer(serializers.Serializer):
+    quota_type = serializers.CharField(max_length=120)
+    amount = serializers.IntegerField(default=1, min_value=0)

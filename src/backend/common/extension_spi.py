@@ -71,11 +71,15 @@ class QuotaProvider(Protocol):
     def check_quota(
         self, organization: Any, resource_type: str, additional: int = 1
     ) -> Any:
-        """Deny path for new consumption when over quota (may raise AppError)."""
+        """Deny new consumption; positive checks run inside the consuming transaction."""
         ...
 
     def get_limits(self, organization: Any) -> dict[str, int]:
         """Authoritative org limits map for UI / gateway select caps."""
+        ...
+
+    def get_instance_limit(self, quota_key: str) -> int:
+        """Return the active instance entitlement for one quota meter."""
         ...
 
     def validate_quota(
@@ -85,7 +89,23 @@ class QuotaProvider(Protocol):
         ...
 
     def on_license_activated(self, organization: Any, license_obj: Any) -> None:
-        """After activate: ensure policy knobs; keep resource meters shared; validate pool."""
+        """Preserve organization policy while switching instance entitlement."""
+        ...
+
+    def on_organization_created(self, organization: Any) -> None:
+        """Initialize extension-owned policy for a newly created organization."""
+        ...
+
+    def feature_enabled(self, feature_key: str) -> bool:
+        """Return whether the instance entitlement grants an Enterprise feature."""
+        ...
+
+    def list_enabled_features(self) -> Sequence[str]:
+        """Stable feature keys for deploy-profile UI gating."""
+        ...
+
+    def record_usage_event(self, organization: Any, **event: Any) -> Any:
+        """Persist an idempotent enterprise usage measurement when supported."""
         ...
 
 
