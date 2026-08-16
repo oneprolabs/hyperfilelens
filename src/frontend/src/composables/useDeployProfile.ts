@@ -21,6 +21,8 @@ export interface DeployProfile {
   platform_role?: string | null
   /** Granted platform action keys for nav / UI gating. */
   platform_permissions?: string[]
+  /** Enterprise features granted by the current instance entitlement. */
+  enterprise_features?: string[]
   support_org_key?: string | null
 }
 

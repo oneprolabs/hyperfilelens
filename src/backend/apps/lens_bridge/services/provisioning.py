@@ -923,23 +923,46 @@ def _resolve_gateway_link_identity(
             from apps.subscription.services.internal.public_gateway_count import (
                 assert_public_gateway_count_available,
             )
+            from common.errors import AppError
 
-            assert_public_gateway_count_available(additional=1)
-        link, created = LensGatewayLink.objects.get_or_create(
-            organization=org,
-            gateway=gateway,
-            defaults={
-                "workspace_root": f"/workspace/org-{org.id}/data",
-                "owner_user": None if is_platform else owner_user,
-                "scope": desired_scope,
-                "origin": desired_origin,
-                # Infra capacity is set by Platform Ops; unlimited until configured.
-                "capacity_gb": -1,
-            },
-        )
+            try:
+                assert_public_gateway_count_available(additional=1)
+            except AppError:
+                # A concurrent retry for this same Gateway may have created the
+                # link while this transaction waited for the instance pool lock.
+                # That is not additional consumption, so continue with the
+                # committed identity and let the immutable-scope checks below
+                # validate it. A genuinely different Gateway remains rejected.
+                existing = (
+                    LensGatewayLink.objects.select_for_update()
+                    .filter(organization=org, gateway=gateway)
+                    .first()
+                )
+                if existing is None:
+                    raise
+        if existing is not None:
+            link = existing
+            created = False
+        else:
+            link, created = LensGatewayLink.objects.get_or_create(
+                organization=org,
+                gateway=gateway,
+                defaults={
+                    "workspace_root": f"/workspace/org-{org.id}/data",
+                    "owner_user": None if is_platform else owner_user,
+                    "scope": desired_scope,
+                    "origin": desired_origin,
+                    # Infra capacity is set by Platform Ops; unlimited until configured.
+                    "capacity_gb": -1,
+                },
+            )
         if created:
             return link
-        existing = LensGatewayLink.objects.select_for_update().get(pk=link.pk)
+        existing = (
+            link
+            if existing is not None
+            else LensGatewayLink.objects.select_for_update().get(pk=link.pk)
+        )
 
     link = existing
     requested_owner_id = getattr(owner_user, "id", None)

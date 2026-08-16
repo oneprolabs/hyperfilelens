@@ -82,6 +82,30 @@ def enforce_license_quota(organization, resource_type: str, additional: int | fl
     return None
 
 
+def record_usage_event(organization, **event):
+    """Publish a business measurement to the optional enterprise usage ledger."""
+    provider = get_quota_provider()
+    recorder = getattr(provider, "record_usage_event", None)
+    if not callable(recorder):
+        return None
+    return recorder(organization, **event)
+
+
+def initialize_organization_quota(organization) -> None:
+    """Let the active extension assign its default policy to a new organization."""
+    provider = get_quota_provider()
+    initializer = getattr(provider, "on_organization_created", None)
+    if callable(initializer):
+        initializer(organization)
+
+
+def enterprise_feature_enabled(feature_key: str) -> bool:
+    """Read an Enterprise feature grant without introducing a Host dependency."""
+    provider = get_quota_provider()
+    resolver = getattr(provider, "feature_enabled", None)
+    return bool(resolver(feature_key)) if callable(resolver) else False
+
+
 def enforce_node_role_quota(*, organization, role: str):
     resource = _NODE_ROLE_TO_RESOURCE.get(str(role or "").strip().lower())
     if not resource:

@@ -44,8 +44,8 @@ def _exact_stored_int(value: Any) -> int:
     return parsed
 
 
-def _normalize_capacity_gb(capacity_gb: int) -> int:
-    value = int(capacity_gb)
+def _normalize_capacity_gb(capacity_gb: Any) -> int:
+    value = _exact_stored_int(capacity_gb)
     if value < -1:
         raise ValueError("capacity_gb must be -1 (unlimited) or >= 0")
     return value
@@ -59,7 +59,7 @@ def get_public_gateway_capacity_gb(*, gateway_link) -> int:
     return int(raw)
 
 
-def set_public_gateway_capacity_gb(*, gateway_link, capacity_gb: int, user=None) -> int:
+def set_public_gateway_capacity_gb(*, gateway_link, capacity_gb: Any, user=None) -> int:
     del user  # reserved for audit callers
     value = _normalize_capacity_gb(capacity_gb)
     if get_public_gateway_capacity_gb(gateway_link=gateway_link) == value:
@@ -311,40 +311,65 @@ def org_public_gateway_used_bytes(*, organization_id: int) -> tuple[int, bool]:
 
     Sums managed-restore bindings + provisioning reservations for this org.
     """
-    from apps.lens_bridge.models import LensSessionLink
-    from apps.lens_bridge.services import platform_lens
-
     org_id = int(organization_id)
     if org_id <= 0:
         return 0, False
+
+    return bulk_org_public_gateway_used_bytes([org_id]).get(org_id, (0, False))
+
+
+def bulk_org_public_gateway_used_bytes(
+    organization_ids: list[int] | tuple[int, ...] | None = None,
+) -> dict[int, tuple[int, bool]]:
+    """Return Public Gateway occupancy for organizations in one scan."""
+    from apps.lens_bridge.models import LensSessionLink
+    from apps.lens_bridge.services import platform_lens
+
+    requested_ids = (
+        sorted({int(value) for value in organization_ids if int(value) > 0})
+        if organization_ids is not None
+        else None
+    )
+    if requested_ids == []:
+        return {}
 
     platform_ids = list(
         platform_lens.platform_gateway_links().values_list("id", flat=True)
     )
     if not platform_ids:
-        return 0, False
+        return {
+            organization_id: (0, False)
+            for organization_id in (requested_ids or [])
+        }
 
-    total = 0
-    any_unknown = False
+    totals: dict[int, int] = {
+        organization_id: 0 for organization_id in (requested_ids or [])
+    }
+    unknowns: dict[int, bool] = {
+        organization_id: False for organization_id in (requested_ids or [])
+    }
 
     bindings = _metered_managed_restore_bindings(
         gateway_link_ids=platform_ids,
-        organization_id=org_id,
     )
+    if requested_ids is not None:
+        bindings = bindings.filter(organization_id__in=requested_ids)
     for binding in bindings:
         ks = binding.knowledge_source
         if ks is None or str(getattr(ks, "lifecycle_status", "")).lower() == "deleted":
             continue
+        organization_id = int(binding.organization_id)
         nbytes, unknown = _occupancy_from_scope_dicts(
-            organization_id=org_id,
+            organization_id=organization_id,
             scopes=list(ks.source_scopes_json or []),
             re_resolve=True,
         )
-        total += nbytes
-        any_unknown = bool(any_unknown or unknown)
+        totals[organization_id] = totals.get(organization_id, 0) + nbytes
+        unknowns[organization_id] = bool(
+            unknowns.get(organization_id, False) or unknown
+        )
 
     provisioning = LensSessionLink.objects.filter(
-        organization_id=org_id,
         gateway_link_id__in=platform_ids,
         lifecycle_status__in=(
             LensSessionLink.LifecycleStatus.PROVISIONING,
@@ -353,13 +378,30 @@ def org_public_gateway_used_bytes(*, organization_id: int) -> tuple[int, bool]:
         capacity_reservation_status=(
             LensSessionLink.CapacityReservationStatus.RESERVED
         ),
-    ).only("id", "capacity_reserved_bytes", "gateway_link_id")
+    )
+    if requested_ids is not None:
+        provisioning = provisioning.filter(organization_id__in=requested_ids)
+    provisioning = provisioning.only(
+        "id",
+        "organization_id",
+        "capacity_reserved_bytes",
+        "gateway_link_id",
+    )
     for session in provisioning:
+        organization_id = int(session.organization_id)
         nbytes, unknown = session_scope_occupancy(session=session)
-        total += nbytes
-        any_unknown = bool(any_unknown or unknown)
+        totals[organization_id] = totals.get(organization_id, 0) + nbytes
+        unknowns[organization_id] = bool(
+            unknowns.get(organization_id, False) or unknown
+        )
 
-    return int(total), bool(any_unknown)
+    return {
+        organization_id: (
+            int(totals.get(organization_id, 0)),
+            bool(unknowns.get(organization_id, False)),
+        )
+        for organization_id in totals
+    }
 
 
 def org_public_gateway_capacity_used_gb(*, organization_id: int) -> float:
@@ -472,6 +514,7 @@ def list_public_gateway_capacity_payloads() -> list[dict]:
 __all__ = [
     "KEY_PUBLIC_GATEWAY_CAPACITY_GB",
     "assert_public_gateway_capacity",
+    "bulk_org_public_gateway_used_bytes",
     "bulk_public_gateway_used_bytes",
     "get_public_gateway_capacity_gb",
     "list_public_gateway_capacity_payloads",

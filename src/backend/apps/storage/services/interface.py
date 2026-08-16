@@ -244,19 +244,15 @@ def create_repository(
     capacity_bytes = capacity_bytes_from_config(config_dict)
 
     from apps.subscription.services.interface import enforce_repository_type_quota
+    from apps.iam.models import Organization
 
-    org = None
-    try:
-        from apps.iam.models import Organization
-
-        org = Organization.objects.filter(id=organization_id).first()
-    except Exception:
-        org = None
-    if org is not None:
-        enforce_repository_type_quota(organization=org, repo_type=repo_type)
-
+    org = Organization.objects.filter(id=organization_id).first()
     try:
         with transaction.atomic():
+            if org is not None:
+                # Keep the quota check in the same transaction as creation so
+                # concurrent repository requests observe one serialized fact.
+                enforce_repository_type_quota(organization=org, repo_type=repo_type)
             credential = create_credential_payload(
                 organization_id=organization_id,
                 credential_type=credential_type,

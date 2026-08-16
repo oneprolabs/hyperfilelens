@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.response import Response
 
 from apps.audit.services.interface import write_audit_log
@@ -77,6 +78,14 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         node_permissions.IsAuthenticated,
         node_permissions.IsOrgWriter,
     ]
+
+    def create(self, request, *args, **kwargs):
+        """Nodes are created only by the enrollment/heartbeat protocol."""
+        del request, args, kwargs
+        raise MethodNotAllowed(
+            "POST",
+            detail="Nodes must be created through the enrollment workflow.",
+        )
 
     def get_permissions(self):
         if self.action in ("list", "retrieve"):

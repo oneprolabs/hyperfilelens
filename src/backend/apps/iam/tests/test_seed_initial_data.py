@@ -1,4 +1,5 @@
 from io import StringIO
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.management import call_command
@@ -9,6 +10,26 @@ from apps.iam.profile_models import Profile
 
 
 class SeedInitialDataCommandTests(TestCase):
+    @patch("apps.subscription.services.interface.enforce_license_quota")
+    @patch(
+        "apps.subscription.services.internal.organization_count.assert_organization_count_available"
+    )
+    def test_fresh_install_counts_initial_org_and_owner_against_instance_pool(
+        self,
+        organization_check,
+        user_check,
+    ):
+        call_command(
+            "seed_initial_data",
+            admin_email="quota-admin@hyperfilelens.com",
+            admin_password="Admin@123",
+            org_name="Quota Bootstrap",
+        )
+
+        org = Membership.objects.select_related("organization").get().organization
+        organization_check.assert_called_once_with(additional=1)
+        user_check.assert_called_once_with(org, "max_users", additional=1)
+
     def test_fresh_install_creates_single_org_and_membership(self):
         out = StringIO()
         call_command(

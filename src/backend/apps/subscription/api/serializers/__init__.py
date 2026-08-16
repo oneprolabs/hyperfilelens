@@ -9,6 +9,7 @@ from apps.subscription.api.serializers.license import (
     LicenseHistorySerializer,
     LicenseSerializer,
     MachineCodeSerializer,
+    ValidateQuotaQuerySerializer,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "LicenseHistorySerializer",
     "MachineCodeSerializer",
     "ActivateLicenseSerializer",
+    "ValidateQuotaQuerySerializer",
 ]

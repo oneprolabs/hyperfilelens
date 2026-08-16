@@ -11,7 +11,7 @@ Inactive creates still seed the plugin role so later activate keeps authority.
 from __future__ import annotations
 
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils.translation import gettext_lazy as _
 from rest_framework.exceptions import ValidationError
 
@@ -68,7 +68,9 @@ def authoritative_role(membership: Membership) -> str:
 _authoritative_role = authoritative_role
 
 
-def active_owner_count(organization: Organization, *, exclude_pk: int | None = None) -> int:
+def active_owner_count(
+    organization: Organization, *, exclude_pk: int | None = None
+) -> int:
     exclude_user_id: int | None = None
     if exclude_pk is not None:
         m = Membership.objects.filter(pk=exclude_pk).first()
@@ -135,18 +137,42 @@ def create_org_membership(
         from apps.subscription.services.interface import enforce_license_quota
 
         enforce_license_quota(organization, "max_users", additional=1)
+        # The quota lock may have waited for another request that added this
+        # same user. Recheck the committed affiliation before attempting the
+        # unique (user, organization) insert.
+        if Membership.objects.filter(user=user, organization=organization).exists():
+            raise MembershipPolicyError(
+                {"user": [_("User is already a member of this organization.")]}
+            )
     # Always forward role= so inactive rows still seed ee_member_role for later activate.
-    membership = Membership.objects.create(
-        user=user,
-        organization=organization,
-        is_active=is_active,
-        role=role,
-    )
+    try:
+        # Keep the insert in a savepoint so an inactive duplicate race can be
+        # translated without leaving the outer service transaction unusable.
+        with transaction.atomic():
+            membership = Membership.objects.create(
+                user=user,
+                organization=organization,
+                is_active=is_active,
+                role=role,
+            )
+    except IntegrityError as exc:
+        if Membership.objects.filter(user=user, organization=organization).exists():
+            raise MembershipPolicyError(
+                {"user": [_("User is already a member of this organization.")]}
+            ) from exc
+        raise
     return membership
 
 
 @transaction.atomic
 def update_org_membership(membership: Membership, **fields) -> Membership:
+    # Re-read under a row lock so concurrent retries evaluate the committed
+    # affiliation state instead of both consuming quota from stale instances.
+    membership = (
+        Membership.objects.select_for_update()
+        .select_related("organization")
+        .get(pk=membership.pk)
+    )
     new_role = fields.get("role")
     if new_role is not None:
         assert_role_assignable(new_role)
@@ -171,11 +197,7 @@ def update_org_membership(membership: Membership, **fields) -> Membership:
             organization_id=membership.organization_id,
             role=new_role,
         )
-    elif (
-        not was_active
-        and membership.is_active
-        and get_authz_provider() is not None
-    ):
+    elif not was_active and membership.is_active and get_authz_provider() is not None:
         # Reactivate without role: require a stored EE row (seeded at create/deactivate).
         provider = get_authz_provider()
         peek = getattr(provider, "peek_stored_role", None)

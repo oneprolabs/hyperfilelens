@@ -1,5 +1,6 @@
 import uuid
 
+from django.db import transaction
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -55,18 +56,19 @@ class AlertPolicyViewSet(viewsets.ModelViewSet):
         org = require_org(self.request)
         from apps.subscription.services.interface import enforce_license_quota
 
-        enforce_license_quota(org, "max_alert_policies", additional=1)
-        policy = serializer.save(organization=org)
-        write_audit_log(
-            organization=org,
-            user=self.request.user,
-            action="alert.policy.create",
-            target_type="alert_policy",
-            target_id=str(policy.id),
-            ip_address=self.request.META.get("REMOTE_ADDR"),
-            user_agent=str(self.request.META.get("HTTP_USER_AGENT", "") or ""),
-            metadata={"name": policy.name, "type": policy.type},
-        )
+        with transaction.atomic():
+            enforce_license_quota(org, "max_alert_policies", additional=1)
+            policy = serializer.save(organization=org)
+            write_audit_log(
+                organization=org,
+                user=self.request.user,
+                action="alert.policy.create",
+                target_type="alert_policy",
+                target_id=str(policy.id),
+                ip_address=self.request.META.get("REMOTE_ADDR"),
+                user_agent=str(self.request.META.get("HTTP_USER_AGENT", "") or ""),
+                metadata={"name": policy.name, "type": policy.type},
+            )
 
     def perform_update(self, serializer):
         policy = serializer.save()
@@ -137,12 +139,27 @@ class AlertPolicyViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def duplicate(self, request, pk=None):
         policy = self.get_object()
-        policy.pk = None
-        policy.id = uuid.uuid4()
-        policy.name = f"{policy.name} Copy"
-        if request.user.is_authenticated:
-            policy.created_by = request.user.id
-        policy.save()
+        org = policy.organization
+        from apps.subscription.services.interface import enforce_license_quota
+
+        with transaction.atomic():
+            enforce_license_quota(org, "max_alert_policies", additional=1)
+            policy.pk = None
+            policy.id = uuid.uuid4()
+            policy.name = f"{policy.name} Copy"
+            if request.user.is_authenticated:
+                policy.created_by = request.user.id
+            policy.save()
+            write_audit_log(
+                organization=org,
+                user=request.user,
+                action="alert.policy.create",
+                target_type="alert_policy",
+                target_id=str(policy.id),
+                ip_address=request.META.get("REMOTE_ADDR"),
+                user_agent=str(request.META.get("HTTP_USER_AGENT", "") or ""),
+                metadata={"name": policy.name, "source": "duplicate"},
+            )
         return Response(self.get_serializer(policy).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["get"])

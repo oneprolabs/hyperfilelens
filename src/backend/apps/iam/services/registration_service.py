@@ -60,11 +60,33 @@ def provision_registered_user_tenant(user: User) -> tuple[Organization, Membersh
     )
 
     assert_organization_count_available(additional=1)
+    # The instance organization lock may have waited for another registration
+    # of this same user. Re-read after acquiring it so an idempotent retry does
+    # not create a second tenant from the stale pre-lock membership snapshot.
+    existing = (
+        Membership.objects.filter(user=user, is_active=True)
+        .select_related("organization")
+        .order_by("id")
+        .first()
+    )
+    if existing is not None:
+        return existing.organization, existing
     org = Organization.objects.create(
         key=unique_org_key_for_email(email or user.username),
         name=(email or local or user.username or "org")[:200],
         is_active=True,
     )
+    from apps.subscription.services.interface import (
+        enforce_license_quota,
+        initialize_organization_quota,
+    )
+
+    initialize_organization_quota(org)
+
+    # The automatically created Owner consumes the shared instance user pool.
+    # Keep this check inside the organization transaction so a denial rolls
+    # back both the new organization and its membership.
+    enforce_license_quota(org, "max_users", additional=1)
     # role= is popped by MembershipQuerySet and synced to EE MemberRole when present.
     membership = Membership.objects.create(
         user=user,

@@ -46,6 +46,34 @@ export type LicenseHistoryRow = {
 
 export type LicenseUsage = Record<string, number>
 
+export type EffectiveQuotaUsage = {
+  key: string
+  limit: number
+  unit: string
+  used: number
+  plan_key: string
+  plan_limit: number
+  override_limit: number | null
+  limit_source: 'plan' | 'override'
+  overridden: boolean
+  remaining: number | null
+  usage_percent: number | null
+  usage_status:
+    | 'ok'
+    | 'warning'
+    | 'exhausted'
+    | 'exceeded'
+    | 'unlimited'
+    | 'unknown'
+    | 'not_applicable'
+}
+
+export type EffectiveQuotaPayload = {
+  organization_id: number
+  organization_key: string
+  quota_usage: EffectiveQuotaUsage[]
+}
+
 const base = '/api/v1/subscription/licenses'
 
 function orgHeaders(): Record<string, string> {
@@ -63,7 +91,9 @@ export async function fetchCurrentLicense() {
     organization_name?: string
     days_until_expiry?: number
     enforcement_enabled?: boolean
+    entitlement_source?: 'builtin_unlimited' | 'license' | 'license_inactive'
     instance_shared?: boolean
+    can_manage_instance_license?: boolean
   }>(await api<unknown>(`${base}/current/`, { headers: orgHeaders() }))
 }
 
@@ -92,4 +122,12 @@ export async function fetchLicenseHistory() {
     await api<unknown>(`${base}/history/`, { headers: orgHeaders() }),
   )
   return data.results ?? asList<LicenseHistoryRow>(data)
+}
+
+export async function fetchEffectiveQuotaUsage() {
+  return unwrapApiPayload<EffectiveQuotaPayload>(
+    await api<unknown>('/api/v1/subscription/quotas/effective/', {
+      headers: orgHeaders(),
+    }),
+  )
 }

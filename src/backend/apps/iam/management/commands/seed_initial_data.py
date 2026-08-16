@@ -76,6 +76,9 @@ class Command(BaseCommand):
             )
             if membership is None:
                 org = Organization.objects.order_by("id").first()
+                from apps.subscription.services.interface import enforce_license_quota
+
+                enforce_license_quota(org, "max_users", additional=1)
                 Membership.objects.create(
                     user=user,
                     organization=org,
@@ -97,11 +100,23 @@ class Command(BaseCommand):
             )
             return
 
+        from apps.subscription.services.internal.organization_count import (
+            assert_organization_count_available,
+        )
+
+        assert_organization_count_available(additional=1)
         org = Organization.objects.create(
             key=unique_org_key_for_email(admin_email),
             name=org_name,
             is_active=True,
         )
+        from apps.subscription.services.interface import (
+            enforce_license_quota,
+            initialize_organization_quota,
+        )
+
+        initialize_organization_quota(org)
+        enforce_license_quota(org, "max_users", additional=1)
         Membership.objects.create(
             user=user,
             organization=org,

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+import hashlib
+import json
 import logging
 from typing import Any
 import uuid
@@ -112,22 +114,89 @@ def register_usage_run(
     sl_user = _sl_user_link(link.hfl_user)
     if sl_user is None:
         return None
-    context = _session_context(link)
     registered_at = timezone.now()
-    row, _ = LensUsageLedger.objects.update_or_create(
-        sl_run_uuid=run_uuid,
-        defaults={
-            "organization": link.organization,
-            "hfl_user": link.hfl_user,
-            "sl_user_id": sl_user.sl_user_id,
-            "question": question.strip(),
-            "run_status": status or "queued",
-            "occurred_at": registered_at,
-            "reconciliation_next_at": registered_at,
-            **context,
-        },
+    context = _session_context(link)
+    defaults = {
+        "organization": link.organization,
+        "hfl_user": link.hfl_user,
+        "sl_user_id": sl_user.sl_user_id,
+        "question": question.strip(),
+        "run_status": status or "queued",
+        "occurred_at": registered_at,
+        "reconciliation_next_at": registered_at,
+        **context,
+    }
+    with transaction.atomic():
+        row, created = LensUsageLedger.objects.get_or_create(
+            sl_run_uuid=run_uuid,
+            defaults=defaults,
+        )
+        if created:
+            return row
+        row = LensUsageLedger.objects.select_for_update().get(pk=row.pk)
+        if row.organization_id != link.organization_id:
+            raise ValueError("SourceLens run UUID belongs to another organization")
+        row.hfl_user = link.hfl_user
+        row.sl_user_id = sl_user.sl_user_id
+        if not row.question and question.strip():
+            row.question = question.strip()
+        row.run_status = _stable_run_status(row.run_status, status)
+        for field, value in context.items():
+            if value not in (None, "", [], {}):
+                setattr(row, field, value)
+        if (
+            row.run_status not in TERMINAL_RUN_STATUSES
+            and row.reconciliation_next_at is None
+        ):
+            row.reconciliation_next_at = timezone.now()
+        row.save()
+        return row
+
+
+def _stable_run_status(current: str, incoming: str) -> str:
+    current_status = str(current or "").strip().lower()
+    incoming_status = str(incoming or "").strip().lower()
+    if (
+        current_status in TERMINAL_RUN_STATUSES
+        and incoming_status not in TERMINAL_RUN_STATUSES
+    ):
+        return current_status
+    return incoming_status or current_status
+
+
+def _publish_ai_token_usage(row: LensUsageLedger) -> None:
+    status = str(row.run_status or "").strip().lower()
+    if status not in TERMINAL_RUN_STATUSES:
+        return
+    occurred_at = row.finished_at or row.occurred_at
+    measurement = {
+        "status": status,
+        "prompt_tokens": int(row.prompt_tokens or 0),
+        "completion_tokens": int(row.completion_tokens or 0),
+        "cached_tokens": int(row.cached_tokens or 0),
+        "reasoning_tokens": int(row.reasoning_tokens or 0),
+        "total_tokens": int(row.total_tokens or 0),
+        "model_calls": int(row.model_calls or 0),
+        "occurred_at": occurred_at.isoformat(),
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(measurement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:24]
+
+    from apps.subscription.services.interface import record_usage_event
+
+    record_usage_event(
+        row.organization,
+        idempotency_key=f"lens-run:{row.sl_run_uuid}:ai-tokens:{fingerprint}",
+        meter_key="ai_tokens",
+        quantity=measurement["total_tokens"],
+        unit="token",
+        source_type="lens_run",
+        source_id=str(row.sl_run_uuid),
+        occurred_at=occurred_at,
+        event_kind="snapshot",
+        attributes=measurement,
     )
-    return row
 
 
 def _run_call_details(
@@ -219,6 +288,7 @@ def _run_call_details(
     return calls, totals
 
 
+@transaction.atomic
 def capture_ledger_usage(
     row: LensUsageLedger,
     run: dict[str, Any],
@@ -227,27 +297,41 @@ def capture_ledger_usage(
 ) -> LensUsageLedger:
     """Persist the latest SourceLens state in the authoritative HFL ledger."""
 
+    row = LensUsageLedger.objects.select_for_update().get(pk=row.pk)
     calls, totals = _run_call_details(run)
-    row.run_status = str(run.get("status") or row.run_status or "")
+    row.run_status = _stable_run_status(row.run_status, str(run.get("status") or ""))
     if not row.question:
         row.question = str(run.get("question") or "")
     if totals["available"]:
-        row.prompt_tokens = totals["prompt_tokens"]
-        row.completion_tokens = totals["completion_tokens"]
-        row.cached_tokens = totals["cached_tokens"]
-        row.reasoning_tokens = totals["reasoning_tokens"]
-        row.total_tokens = totals["total_tokens"]
-        row.model_calls = totals["model_calls"]
-        row.estimated_cost = totals["estimated_cost"]
-        row.call_details_json = calls
+        incoming_total = int(totals["total_tokens"] or 0)
+        prefer_incoming_details = incoming_total > int(row.total_tokens or 0) or (
+            incoming_total == int(row.total_tokens or 0)
+            and len(calls) >= int(row.model_calls or 0)
+        )
+        if prefer_incoming_details:
+            # Treat one SourceLens response as an internally consistent
+            # measurement. Taking a maximum per component can make token
+            # subtotals exceed ``total_tokens`` after a corrected response.
+            row.prompt_tokens = int(totals["prompt_tokens"] or 0)
+            row.completion_tokens = int(totals["completion_tokens"] or 0)
+            row.cached_tokens = int(totals["cached_tokens"] or 0)
+            row.reasoning_tokens = int(totals["reasoning_tokens"] or 0)
+            row.total_tokens = incoming_total
+            row.model_calls = int(totals["model_calls"] or 0)
+            row.estimated_cost = totals["estimated_cost"]
+            row.call_details_json = calls
     if "error" in run:
         row.run_error = str(run.get("error") or "")
     started_at = _datetime(run.get("started_at"))
     if started_at is not None:
-        row.started_at = started_at
+        row.started_at = min(
+            value for value in (row.started_at, started_at) if value is not None
+        )
     finished_at = _datetime(run.get("finished_at"))
     if finished_at is not None:
-        row.finished_at = finished_at
+        row.finished_at = max(
+            value for value in (row.finished_at, finished_at) if value is not None
+        )
     row.occurred_at = row.started_at or row.occurred_at or timezone.now()
     row.source_synced_at = synced_at or timezone.now()
     row.reconciliation_attempts = 0
@@ -284,6 +368,7 @@ def capture_ledger_usage(
             "updated_at",
         ]
     )
+    _publish_ai_token_usage(row)
     return row
 
 
