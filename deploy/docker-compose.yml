@@ -243,7 +243,7 @@ services:
       options:
         max-size: "10m"
         max-file: "10"
-    mem_limit: ${HFL_REDIS_MEMORY_LIMIT:-2g}
+    mem_limit: ${HFL_REDIS_MEMORY_LIMIT:-1g}
     cpus: 1.00
 
   nginx:

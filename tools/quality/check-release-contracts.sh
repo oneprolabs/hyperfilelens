@@ -1284,8 +1284,8 @@ grep -F 'sorted(groups, reverse=True)[3:]' "${installer}" >/dev/null
 grep -F 'preflight_redis_recovery' "${installer}" >/dev/null
 grep -F 'HFL_REDIS_MEMORY_LIMIT=${configured_limit} is invalid' "${installer}" >/dev/null
 grep -F 'exceeding the configured ${limit_mib} MiB container limit' "${installer}" >/dev/null
-grep -F 'HFL_REDIS_MEMORY_LIMIT=2g' "${ROOT}/.env.example" >/dev/null
-grep -F 'mem_limit: ${HFL_REDIS_MEMORY_LIMIT:-2g}' "${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F 'HFL_REDIS_MEMORY_LIMIT=1g' "${ROOT}/.env.example" >/dev/null
+grep -F 'mem_limit: ${HFL_REDIS_MEMORY_LIMIT:-1g}' "${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'recover_upgrade_services' "${installer}" >/dev/null
 grep -F 'prune_old_managed_image_refs' "${installer}" >/dev/null
 grep -F 'docker image rm "${ref}"' "${installer}" >/dev/null

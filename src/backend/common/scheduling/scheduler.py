@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from copy import copy
-
+from celery.beat import ScheduleEntry
 from django_celery_beat.schedulers import DatabaseScheduler
 
 from common.scheduling.periodic_wakeup import (
@@ -33,6 +32,21 @@ class CoalescingDatabaseScheduler(DatabaseScheduler):
         if self.should_sync():
             self._do_sync()
 
+    @staticmethod
+    def _publishing_entry(entry, *, options: dict) -> ScheduleEntry:
+        """Build a detached Celery entry without copying a Django ModelEntry."""
+        return ScheduleEntry(
+            name=entry.name,
+            task=entry.task,
+            last_run_at=entry.last_run_at,
+            total_run_count=entry.total_run_count,
+            schedule=entry.schedule,
+            args=entry.args,
+            kwargs=entry.kwargs,
+            options=options,
+            app=entry.app,
+        )
+
     def apply_async(self, entry, producer=None, advance=True, **kwargs):
         if not self._coalescing_enabled(entry):
             return super().apply_async(
@@ -53,21 +67,21 @@ class CoalescingDatabaseScheduler(DatabaseScheduler):
                 **kwargs,
             )
 
-        claimed_entry = copy(entry)
-        claimed_entry.options = dict(entry.options)
-        stamped_headers = list(claimed_entry.options.get("stamped_headers") or [])
-        for header in (
-            PERIODIC_WAKEUP_NAME_HEADER,
-            PERIODIC_WAKEUP_TOKEN_HEADER,
-        ):
-            if header not in stamped_headers:
-                stamped_headers.append(header)
-        claimed_entry.options["stamped_headers"] = stamped_headers
-        claimed_entry.options[PERIODIC_WAKEUP_NAME_HEADER] = entry.name
-        claimed_entry.options[PERIODIC_WAKEUP_TOKEN_HEADER] = claim
-        if advance:
-            self.reserve(entry)
         try:
+            options = dict(entry.options)
+            stamped_headers = list(options.get("stamped_headers") or [])
+            for header in (
+                PERIODIC_WAKEUP_NAME_HEADER,
+                PERIODIC_WAKEUP_TOKEN_HEADER,
+            ):
+                if header not in stamped_headers:
+                    stamped_headers.append(header)
+            options["stamped_headers"] = stamped_headers
+            options[PERIODIC_WAKEUP_NAME_HEADER] = entry.name
+            options[PERIODIC_WAKEUP_TOKEN_HEADER] = claim
+            claimed_entry = self._publishing_entry(entry, options=options)
+            if advance:
+                self.reserve(entry)
             result = super().apply_async(
                 claimed_entry,
                 producer=producer,

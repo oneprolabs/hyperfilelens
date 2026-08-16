@@ -2716,7 +2716,7 @@ preflight_redis_recovery() {
 	[[ -s "${rdb}" ]] || { skip "Redis has no persisted RDB to validate"; return 0; }
 	configured_limit="$(grep -E '^HFL_REDIS_MEMORY_LIMIT=' "${ROOT}/.env" 2>/dev/null \
 		| head -1 | cut -d= -f2- | tr -d ' "' || true)"
-	configured_limit="${configured_limit:-2g}"
+	configured_limit="${configured_limit:-1g}"
 	limit_bytes="$(python3 - "${configured_limit}" <<'PY'
 import re
 import sys
@@ -2735,7 +2735,7 @@ units = {
 print(int(float(match.group(1)) * units[match.group(2)]))
 PY
 	)" || {
-		die "HFL_REDIS_MEMORY_LIMIT=${configured_limit} is invalid; use a size such as 2g or 3072m"
+		die "HFL_REDIS_MEMORY_LIMIT=${configured_limit} is invalid; use a size such as 1g or 3072m"
 		return 1
 	}
 	if [[ ! "${limit_bytes}" =~ ^[0-9]+$ ]]; then
