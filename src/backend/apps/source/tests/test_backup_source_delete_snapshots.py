@@ -41,6 +41,11 @@ from apps.source.services.internal.backup_source_delete import (
     run_source_unregister_task,
 )
 from apps.storage.repositories.models import Repository
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    reserve_repository_location,
+)
 from apps.task.models import Task
 
 
@@ -105,6 +110,9 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
                 "use_tls": False,
             },
         )
+        reserve_repository_location(self.repository)
+        mark_repository_location_owned(self.repository)
+        mark_repository_location_ownership_verified(self.repository)
         self.config = BackupConfig.objects.create(
             organization_id=self.org.id,
             name="NAS delete snap config",

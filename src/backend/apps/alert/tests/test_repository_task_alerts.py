@@ -9,6 +9,11 @@ from apps.storage.services.internal.repository_operations import (
     create_repository_operation_task,
     discover_repository_execution_targets,
 )
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    reserve_repository_location,
+)
 from apps.task.models import Task
 
 
@@ -23,6 +28,9 @@ class RepositoryTaskAlertTests(TestCase):
             health=Repository.Health.ONLINE,
             s3_bucket="alert-bucket",
         )
+        reserve_repository_location(repository)
+        mark_repository_location_owned(repository)
+        mark_repository_location_ownership_verified(repository)
         discover_repository_execution_targets()
         repository_task = create_repository_operation_task(
             target_id=RepositoryExecutionTarget.objects.get(repository=repository).id,
