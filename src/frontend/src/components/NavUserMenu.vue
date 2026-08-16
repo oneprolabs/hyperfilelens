@@ -190,7 +190,11 @@ async function confirmLogout() {
 <style scoped>
 .nav-user-trigger {
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
   align-items: center;
+  box-sizing: border-box;
   gap: 6px;
   min-height: 32px;
   padding: 0 10px;
@@ -210,7 +214,9 @@ async function confirmLogout() {
 }
 
 .nav-user-trigger__label {
+  min-width: 0;
   max-width: 140px;
+  flex: 1 1 auto;
   overflow: hidden;
   font-size: 14px;
   font-weight: 500;

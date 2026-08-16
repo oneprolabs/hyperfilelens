@@ -151,6 +151,8 @@ function handleNavClick(event: MouseEvent, to: string) {
   z-index: 40;
   display: flex;
   align-items: center;
+  width: 100%;
+  min-width: 0;
   box-sizing: border-box;
   padding: var(--app-safe-top) max(16px, var(--app-safe-right)) 0 max(12px, var(--app-safe-left));
   box-shadow: var(--tnav-shadow, 0 12px 26px rgba(9, 8, 15, 0.22));
@@ -214,6 +216,8 @@ function handleNavClick(event: MouseEvent, to: string) {
 
 .nav-menu {
   display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
   align-items: center;
   height: 52px;
 }
@@ -278,6 +282,7 @@ function handleNavClick(event: MouseEvent, to: string) {
 
 .right-menu {
   min-width: 0;
+  flex: 0 1 auto;
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -327,13 +332,7 @@ function handleNavClick(event: MouseEvent, to: string) {
   position: relative;
 }
 
-@media (min-width: 1024px) and (max-width: 1279.98px) {
-  .nav-item__icon {
-    display: none;
-  }
-}
-
-@media (min-width: 1024px) and (max-width: 1151.98px) {
+@media (min-width: 1024px) and (max-width: 1439.98px) {
   .top-nav {
     padding-right: max(8px, var(--app-safe-right));
     padding-left: max(8px, var(--app-safe-left));
@@ -346,6 +345,10 @@ function handleNavClick(event: MouseEvent, to: string) {
 
   .nav-menu {
     min-width: 0;
+  }
+
+  .nav-item__icon {
+    display: none;
   }
 
   .nav-item {
@@ -393,9 +396,7 @@ function handleNavClick(event: MouseEvent, to: string) {
     outline: 2px solid var(--color-primary, #6D5EF6);
     outline-offset: 2px;
   }
-}
 
-@media (min-width: 1024px) and (max-width: 1439.98px) {
   .timezone-display__label {
     display: none;
   }

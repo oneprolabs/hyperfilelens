@@ -39,7 +39,7 @@ describe('primary navigation icons', () => {
 
   it('compacts icons and timezone text at constrained desktop widths', () => {
     expect(topNavSource).toMatch(
-      /@media \(min-width: 1024px\) and \(max-width: 1279\.98px\)[\s\S]*?\.nav-item__icon\s*{[\s\S]*?display:\s*none/,
+      /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.nav-item__icon\s*{[\s\S]*?display:\s*none/,
     )
     expect(topNavSource).toMatch(
       /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.timezone-display__label\s*{[\s\S]*?display:\s*none/,
@@ -50,12 +50,24 @@ describe('primary navigation icons', () => {
     )
   })
 
-  it('uses a compact desktop layout before switching to the mobile drawer', () => {
+  it('keeps the desktop header flex chain shrinkable at laptop widths', () => {
     expect(topNavSource).toMatch(
-      /@media \(min-width: 1024px\) and \(max-width: 1151\.98px\)[\s\S]*?\.nav-item\s*{[\s\S]*?min-width:\s*0[\s\S]*?padding-right:\s*8px/,
+      /\.top-nav\s*{[\s\S]*?width:\s*100%[\s\S]*?min-width:\s*0/,
     )
     expect(topNavSource).toMatch(
-      /@media \(min-width: 1024px\) and \(max-width: 1151\.98px\)[\s\S]*?\.top-nav \.platform-ops-entry\s*{[\s\S]*?border:\s*0[\s\S]*?background:\s*transparent/,
+      /\.nav-menu\s*{[\s\S]*?min-width:\s*0[\s\S]*?flex:\s*0 1 auto/,
+    )
+    expect(topNavSource).toMatch(
+      /\.right-menu\s*{[\s\S]*?min-width:\s*0[\s\S]*?flex:\s*0 1 auto/,
+    )
+  })
+
+  it('uses a compact desktop layout before switching to the mobile drawer', () => {
+    expect(topNavSource).toMatch(
+      /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.nav-item\s*{[\s\S]*?min-width:\s*0[\s\S]*?padding-right:\s*8px/,
+    )
+    expect(topNavSource).toMatch(
+      /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.top-nav \.platform-ops-entry\s*{[\s\S]*?border:\s*0[\s\S]*?background:\s*transparent/,
     )
     expect(topNavSource).toMatch(
       /\.top-nav \.platform-ops-entry svg\s*{[\s\S]*?width:\s*18px[\s\S]*?height:\s*18px/,
