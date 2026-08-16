@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../locales/en'
 import NavUserMenu from './NavUserMenu.vue'
+import navUserMenuSource from './NavUserMenu.vue?raw'
 
 const mocks = vi.hoisted(() => ({
   fetchDeployProfile: vi.fn(),
@@ -114,5 +115,16 @@ describe('NavUserMenu product identity', () => {
     await flushPromises()
 
     expect(wrapper.find('.nav-user-product').exists()).toBe(false)
+  })
+})
+
+describe('NavUserMenu responsive trigger', () => {
+  it('allows the trigger and label to shrink without clipping the page', () => {
+    expect(navUserMenuSource).toMatch(
+      /\.nav-user-trigger\s*{[\s\S]*?min-width:\s*0[\s\S]*?max-width:\s*100%[\s\S]*?flex:\s*0 1 auto/,
+    )
+    expect(navUserMenuSource).toMatch(
+      /\.nav-user-trigger__label\s*{[\s\S]*?min-width:\s*0[\s\S]*?max-width:\s*140px[\s\S]*?flex:\s*1 1 auto/,
+    )
   })
 })
