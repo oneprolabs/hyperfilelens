@@ -337,7 +337,10 @@ onMounted(loadAll)
         >
           <span class="subscription-quota-item__label">
             {{ item.label }}
-            <small v-if="item.limitSource" class="subscription-quota-item__scope">
+            <small
+              v-if="item.limitSource"
+              class="subscription-quota-item__scope"
+            >
               {{ item.limitSource === 'override'
                 ? t('settings.subscription.manualOverride')
                 : t('settings.subscription.planLimit') }}
