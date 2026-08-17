@@ -479,7 +479,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       </HflPopover>
                       <ElButton
                         type="danger"
-                        size="small"
+                        class="new-chat-scope-row__remove"
                         :disabled="backupScopeEntries.length <= 1"
                         aria-label="Remove scope"
                         @click="removeBackupScopeEntry(scopeEntry.id)"
@@ -593,7 +593,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                           />
                         </ElButton>
                         <ElButton
-                          class="fullscreen-form-icon-btn new-chat-gateway-select-row__deploy"
+                          class="new-chat-gateway-select-row__deploy"
                           :title="t('insight.copilot.gatewayPrivateInstallAction')"
                           :aria-label="t('insight.copilot.gatewayPrivateInstallAction')"
                           @click="openGatewayDeploy"
@@ -731,10 +731,11 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-source-subsection__head { margin-bottom: 12px; }
 .new-chat-source-subsection__head h3 { margin: 0; }
 .new-chat-scope-stack { overflow: visible; border: 1px solid #e5e6eb; border-radius: 8px; background: #fff; }
-.new-chat-scope-stack__header, .new-chat-scope-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 38px; gap: 8px; align-items: center; padding: 8px 10px; }
+.new-chat-scope-stack__header, .new-chat-scope-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 48px; gap: 8px; align-items: center; padding: 8px 16px 8px 10px; }
 .new-chat-scope-stack__header { color: #86909c; font-size: 12px; font-weight: 700; background: #f7f8fa; border-radius: 8px 8px 0 0; }
 .new-chat-scope-row { border-top: 1px solid #f2f3f5; }
 .new-chat-scope-row__index { color: #86909c; font-size: 12px; font-weight: 700; text-align: center; }
+.new-chat-scope-row__remove { width: 34px; height: 34px; padding: 0; justify-self: center; }
 .new-chat-scope-tree { min-width: 100%; }
 .new-chat-scope-stack__add { display: flex; justify-content: center; padding: 8px 48px 10px; border-top: 1px solid #f2f3f5; }
 .new-chat-scope-stack__add button { display: inline-flex; width: 70%; min-height: 32px; align-items: center; justify-content: center; gap: 8px; margin: 0; padding: 0 12px; border: 1px dashed rgba(148, 163, 184, .8); border-radius: 8px; background: rgba(248, 250, 252, .72); color: #165dff; font-size: 13px; font-weight: 600; cursor: pointer; transition: border-color .16s ease, background .16s ease; }
@@ -759,8 +760,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-gateway-select-row { display: flex; align-items: center; gap: 8px; width: 100%; }
 .new-chat-gateway-select { flex: 1 1 auto; min-width: 0; }
 .new-chat-gateway-select-row__refresh { flex: 0 0 34px; }
-.new-chat-gateway-select-row__deploy { flex: 0 0 34px; }
-:deep(.new-chat-gateway-select-row__deploy.el-button) { width: 34px; height: 34px; min-width: 34px; padding: 0; }
+.new-chat-gateway-select-row__deploy { flex: 0 0 34px; width: 34px; height: 34px; min-width: 34px; padding: 0; }
 .new-chat-gateway-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
 .new-chat-gateway-option__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .new-chat-gateway-option__status { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; color: #00b42a; font-size: 12px; font-weight: 600; }
