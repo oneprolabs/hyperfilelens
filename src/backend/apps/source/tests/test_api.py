@@ -31,6 +31,8 @@ from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import complete_task
 from apps.source.services.internal.backup_source_delete import (
+    _create_source_unregister_task,
+    _set_unregister_step,
     reconcile_stuck_source_unregister_tasks,
     run_source_unregister_task,
 )
@@ -3198,6 +3200,47 @@ class BackupSourceBulkDeleteTests(TestCase):
                 ref_id=resource.id,
             ).exists()
         )
+
+    def test_source_unregister_endpoint_cleanup_precedes_reset_in_new_tasks(self):
+        task = _create_source_unregister_task(
+            org=self.org,
+            selectable_id=f"agent:{self.agent.id}",
+            force=True,
+        )
+
+        self.assertEqual(
+            list(task.steps.order_by("step_index").values_list("step_name", flat=True)),
+            [
+                "prepare_source_unregister",
+                "cleanup_direct_nas_repositories",
+                "cleanup_source_endpoint",
+                "reset_backup_config",
+                "finalize_source_unregister",
+            ],
+        )
+
+        _set_unregister_step(
+            task=task,
+            step_name="reset_backup_config",
+            status=TaskStep.Status.PENDING,
+            progress=35,
+            message="Backup configuration reset deferred until endpoint cleanup completes",
+        )
+        _set_unregister_step(
+            task=task,
+            step_name="cleanup_source_endpoint",
+            status=TaskStep.Status.RUNNING,
+            progress=70,
+            message="Cleaning up source endpoints",
+        )
+
+        task.refresh_from_db()
+        endpoint_step = task.steps.get(step_name="cleanup_source_endpoint")
+        reset_step = task.steps.get(step_name="reset_backup_config")
+        self.assertLess(endpoint_step.step_index, reset_step.step_index)
+        self.assertEqual(endpoint_step.status, TaskStep.Status.RUNNING)
+        self.assertEqual(reset_step.status, TaskStep.Status.PENDING)
+        self.assertEqual(task.current_step, "cleanup_source_endpoint")
 
 
 class SourceUnregisterCeleryTests(TestCase):

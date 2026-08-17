@@ -81,8 +81,8 @@ _ACTIVE_TASK_STATUSES = {
 _SOURCE_UNREGISTER_STEPS = [
     "prepare_source_unregister",
     "cleanup_direct_nas_repositories",
-    "reset_backup_config",
     "cleanup_source_endpoint",
+    "reset_backup_config",
     "finalize_source_unregister",
 ]
 
@@ -2118,14 +2118,6 @@ def _complete_source_unregister_transaction(
     }
     _set_unregister_step(
         task=locked_task,
-        step_name="reset_backup_config",
-        status=TaskStep.Status.SUCCESS,
-        progress=60,
-        message="Backup configuration data reset",
-        metadata={"cleanup": cleanup},
-    )
-    _set_unregister_step(
-        task=locked_task,
         step_name="cleanup_source_endpoint",
         status=(
             TaskStep.Status.WARNING
@@ -2145,6 +2137,14 @@ def _complete_source_unregister_transaction(
             "cleanup_complete": bool(response.get("cleanup_complete", True)),
             "retained_resources": response.get("retained_resources") or [],
         },
+    )
+    _set_unregister_step(
+        task=locked_task,
+        step_name="reset_backup_config",
+        status=TaskStep.Status.SUCCESS,
+        progress=95,
+        message="Backup configuration data reset",
+        metadata={"cleanup": cleanup},
     )
     _set_unregister_step(
         task=locked_task,
@@ -2396,9 +2396,9 @@ def _execute_source_unregister_work(
         _set_unregister_step(
             task=unregister_task,
             step_name="reset_backup_config",
-            status=TaskStep.Status.RUNNING,
+            status=TaskStep.Status.PENDING,
             progress=35,
-            message="Resetting backup configuration data",
+            message="Backup configuration reset deferred until endpoint cleanup completes",
         )
         # Remote NAS work must run after the preparation transaction commits
         # and outside the database cleanup transaction below.  Agent task
@@ -2516,7 +2516,7 @@ def _execute_source_unregister_work(
         step_name="reset_backup_config",
         status=TaskStep.Status.PENDING,
         progress=35,
-        message="Backup configuration data retained until endpoint cleanup completes",
+        message="Backup configuration reset deferred until endpoint cleanup completes",
         metadata={"cleanup": aggregate_cleanup},
     )
     _set_unregister_step(
