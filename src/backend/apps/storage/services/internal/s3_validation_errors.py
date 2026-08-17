@@ -21,6 +21,7 @@ class S3ValidationFailure:
     code: str
     message: str
     retryable: bool = False
+    diagnostic: str = ""
 
 
 _CREDENTIAL_CODES = {
@@ -43,12 +44,19 @@ _PERMISSION_CODES = {
 _BUCKET_MISSING_CODES = {"NoSuchBucket", "NotFound", "XNoSuchBucket"}
 _CONFIGURATION_CODES = {
     "AuthorizationHeaderMalformed",
+    "IncompleteBody",
     "InvalidArgument",
+    "InvalidBucketName",
     "InvalidEndpoint",
+    "InvalidLocationConstraint",
     "InvalidRegion",
     "InvalidRequest",
+    "MalformedXML",
+    "NotImplemented",
     "PermanentRedirect",
+    "XMinioInvalidRequest",
 }
+_CLOCK_SKEW_CODES = {"RequestTimeTooSkewed", "RequestExpired"}
 
 
 def classify_s3_validation_error(
@@ -101,6 +109,12 @@ def classify_s3_validation_error(
             "The object storage endpoint could not be reached. Check the endpoint and network connectivity, then try again.",
             retryable=True,
         )
+    if error_code in _CLOCK_SKEW_CODES:
+        return S3ValidationFailure(
+            "STORAGE.S3_CLOCK_SKEW",
+            "The object storage request was rejected because the server clock is out of sync. Check the server time and NTP synchronization, then try again.",
+            retryable=True,
+        )
     if error_code in _CONFIGURATION_CODES or any(
         isinstance(item, (ParamValidationError, TypeError, ValueError)) for item in chain
     ):
@@ -111,6 +125,7 @@ def classify_s3_validation_error(
     return S3ValidationFailure(
         "STORAGE.S3_VALIDATION_FAILED",
         "Object storage validation failed. Check the connection settings and IAM permissions, then try again.",
+        diagnostic=f"provider_error_code={error_code}" if error_code else "",
     )
 
 
@@ -121,6 +136,7 @@ def s3_validation_app_error(exc: Exception, *, operation: str) -> AppError:
         status=400,
         retryable=failure.retryable,
         title=failure.message,
+        diagnostic=failure.diagnostic,
     )
 
 

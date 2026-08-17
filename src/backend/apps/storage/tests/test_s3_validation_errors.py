@@ -60,6 +60,40 @@ class S3ValidationErrorTests(SimpleTestCase):
         self.assertNotIn("s3.example.test", network.message)
         self.assertNotIn("certificate failed", tls.message)
 
+    def test_legacy_gateway_codes_are_configuration_errors(self):
+        for code in ("InvalidLocationConstraint", "NotImplemented", "XMinioInvalidRequest", "InvalidBucketName"):
+            failure = classify_s3_validation_error(
+                _wrapped_client_error(code),
+                operation="bucket_access",
+            )
+            self.assertEqual(failure.code, "STORAGE.S3_CONFIGURATION_INVALID", code)
+            self.assertNotIn("provider detail", failure.message, code)
+
+    def test_clock_skew_is_distinct_and_retryable(self):
+        failure = classify_s3_validation_error(
+            _wrapped_client_error("RequestTimeTooSkewed"),
+            operation="bucket_access",
+        )
+
+        self.assertEqual(failure.code, "STORAGE.S3_CLOCK_SKEW")
+        self.assertTrue(failure.retryable)
+        self.assertIn("clock", failure.message.lower())
+
+    def test_unknown_failure_exposes_only_the_safe_provider_error_code(self):
+        failure = classify_s3_validation_error(
+            _wrapped_client_error("SomeWeirdProviderCode", "secret-token-value"),
+            operation="bucket_access",
+        )
+        app_error = s3_validation_app_error(
+            _wrapped_client_error("SomeWeirdProviderCode", "secret-token-value"),
+            operation="bucket_access",
+        )
+
+        self.assertEqual(failure.code, "STORAGE.S3_VALIDATION_FAILED")
+        self.assertEqual(failure.diagnostic, "provider_error_code=SomeWeirdProviderCode")
+        self.assertEqual(app_error.diagnostic, failure.diagnostic)
+        self.assertNotIn("secret-token-value", app_error.diagnostic)
+
     def test_unknown_failure_uses_safe_generic_message(self):
         failure = classify_s3_validation_error(
             S3ClientError("access-key=AKIA_SECRET secret=super-secret upstream payload"),
@@ -69,3 +103,4 @@ class S3ValidationErrorTests(SimpleTestCase):
         self.assertEqual(failure.code, "STORAGE.S3_VALIDATION_FAILED")
         self.assertNotIn("AKIA_SECRET", failure.message)
         self.assertNotIn("super-secret", failure.message)
+        self.assertEqual(failure.diagnostic, "")
