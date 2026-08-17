@@ -2,9 +2,11 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import close_old_connections
 from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.utils import timezone
@@ -20,7 +22,7 @@ from apps.lens_bridge.services.sync_queue import (
     queue_copilot_chat_provision,
     queue_copilot_chat_teardown,
 )
-from apps.lens_bridge.services import chat_lifecycle
+from apps.lens_bridge.services import chat_binding, chat_lifecycle
 from apps.lens_bridge.tasks import chat_lifecycle as chat_lifecycle_tasks
 from apps.node.models import Node
 from apps.protection.models import (
@@ -115,6 +117,34 @@ class CopilotLifecycleQueueTests(SimpleTestCase):
     def test_teardown_queue_failure_does_not_use_daemon_thread(self, _delay):
         with self.assertRaisesRegex(RuntimeError, "Unable to queue chat teardown"):
             queue_copilot_chat_teardown(session_link_id=42)
+
+
+class ChatBindingValidationTests(SimpleTestCase):
+    @patch(
+        "apps.lens_bridge.services.chat_binding.lock_repositories_for_workload",
+        side_effect=DjangoValidationError(
+            {"repository_id": "Repository is not available for read operations."}
+        ),
+    )
+    @patch("apps.lens_bridge.services.chat_binding.BackupConfig.objects.filter")
+    def test_repository_domain_error_is_exposed_as_api_validation(
+        self,
+        filter_configs,
+        _lock_repositories,
+    ):
+        filter_configs.return_value.first.return_value = SimpleNamespace(
+            repository_id=7
+        )
+
+        with self.assertRaises(ValidationError) as raised:
+            chat_binding._validate_snapshot(
+                SimpleNamespace(id=5),
+                backup_config_id=3,
+                backup_source_snapshot_id=11,
+                backup_snapshot_directory_id=None,
+            )
+
+        self.assertIn("repository_id", raised.exception.detail)
 
 
 class CopilotDefaultTitleTests(SimpleTestCase):
@@ -745,6 +775,18 @@ class CopilotChatModelBindingTests(TestCase):
         with self.assertRaises(ValidationError):
             self._create_chat()
 
+        self.assertFalse(
+            LensSessionLink.objects.filter(organization=self.organization).exists()
+        )
+
+    def test_offline_repository_is_reported_as_an_api_validation_error(self):
+        self.repository.health = Repository.Health.OFFLINE
+        self.repository.save(update_fields=["health", "updated_at"])
+
+        with self.assertRaises(ValidationError) as raised:
+            self._create_chat()
+
+        self.assertIn("repository_id", raised.exception.detail)
         self.assertFalse(
             LensSessionLink.objects.filter(organization=self.organization).exists()
         )

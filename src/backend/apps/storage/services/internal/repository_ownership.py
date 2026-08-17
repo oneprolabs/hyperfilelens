@@ -145,6 +145,7 @@ def claim_s3_repository_ownership(repository: Repository) -> None:
     marker_bytes = _encode_marker(expected)
     if not put_s3_object_if_absent(
         **s3_args,
+        platform=repository.s3_platform,
         key=marker_key,
         body=marker_bytes,
     ):
@@ -215,17 +216,21 @@ def verify_s3_repository_ownership(
             expected=expected,
             s3_args=s3_args,
         )
-        if not put_s3_object_if_absent(
+        marker_created = put_s3_object_if_absent(
             **s3_args,
+            platform=repository.s3_platform,
             key=marker_key,
             body=_encode_marker(expected),
-        ):
-            marker = read_s3_object(**s3_args, key=marker_key)
-            if marker is None:
-                raise RepositoryOwnershipError(
-                    "Repository ownership changed during legacy adoption."
-                )
-            _require_matching_marker(marker, expected=expected)
+        )
+        marker = read_s3_object(**s3_args, key=marker_key)
+        if marker is None:
+            message = (
+                "Repository ownership marker was not durable after legacy adoption."
+                if marker_created
+                else "Repository ownership changed during legacy adoption."
+            )
+            raise RepositoryOwnershipError(message)
+        _require_matching_marker(marker, expected=expected)
     else:
         _require_matching_marker(marker, expected=expected)
     if adopt_legacy:

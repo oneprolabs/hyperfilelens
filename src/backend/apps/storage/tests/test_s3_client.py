@@ -13,6 +13,7 @@ from apps.storage.services.internal.s3_client import (
     ensure_s3_bucket,
     list_s3_buckets,
     list_s3_buckets_by_region,
+    put_s3_object_if_absent,
 )
 from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
@@ -794,3 +795,102 @@ class CheckS3BucketReadableTests(TestCase):
         client.create_bucket.assert_not_called()
         client.put_object.assert_not_called()
         client.delete_object.assert_not_called()
+
+
+class S3OwnershipMarkerAtomicCreateTests(TestCase):
+    def _put(self, **overrides):
+        args = {
+            "platform": Repository.S3Platform.AWS,
+            "endpoint": "https://s3.us-east-1.amazonaws.com",
+            "region": "us-east-1",
+            "bucket": "backup-bucket",
+            "key": "hfl/.hyperfilelens/repository-owner-v1.json",
+            "body": b"{}",
+            "access_key_id": "AK",
+            "secret_access_key": "SK",
+        }
+        args.update(overrides)
+        return put_s3_object_if_absent(**args)
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_standard_s3_uses_if_none_match(self, client_factory):
+        client = mock.Mock()
+        client_factory.return_value = client
+
+        self.assertTrue(self._put())
+
+        client.put_object.assert_called_once_with(
+            Bucket="backup-bucket",
+            Key="hfl/.hyperfilelens/repository-owner-v1.json",
+            Body=b"{}",
+            ContentLength=2,
+            ContentType="application/json",
+            IfNoneMatch="*",
+        )
+        client.meta.events.register_first.assert_not_called()
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_aliyun_uses_signed_forbid_overwrite_header(self, client_factory):
+        client = mock.Mock()
+        client_factory.return_value = client
+
+        self.assertTrue(
+            self._put(
+                platform=Repository.S3Platform.ALIYUN,
+                endpoint="https://oss-cn-beijing.aliyuncs.com",
+                region="oss-cn-beijing",
+            )
+        )
+
+        client.put_object.assert_called_once_with(
+            Bucket="backup-bucket",
+            Key="hfl/.hyperfilelens/repository-owner-v1.json",
+            Body=b"{}",
+            ContentLength=2,
+            ContentType="application/json",
+        )
+        registration = client.meta.events.register_first.call_args
+        self.assertEqual(registration.args[0], "before-sign.s3.PutObject")
+        request = SimpleNamespace(headers={})
+        registration.args[1](request=request)
+        self.assertEqual(request.headers["x-oss-forbid-overwrite"], "true")
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_legacy_custom_aliyun_endpoint_uses_aliyun_semantics(
+        self, client_factory
+    ):
+        client = mock.Mock()
+        client_factory.return_value = client
+
+        self.assertTrue(
+            self._put(
+                platform=Repository.S3Platform.CUSTOM,
+                endpoint="oss-cn-beijing.aliyuncs.com",
+                region="oss-cn-beijing",
+            )
+        )
+
+        self.assertNotIn("IfNoneMatch", client.put_object.call_args.kwargs)
+        client.meta.events.register_first.assert_called_once()
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_aliyun_existing_marker_returns_false(self, client_factory):
+        client = mock.Mock()
+        client.put_object.side_effect = ClientError(
+            {
+                "Error": {
+                    "Code": "FileAlreadyExists",
+                    "Message": "The object already exists.",
+                },
+                "ResponseMetadata": {"HTTPStatusCode": 409},
+            },
+            "PutObject",
+        )
+        client_factory.return_value = client
+
+        self.assertFalse(
+            self._put(
+                platform=Repository.S3Platform.ALIYUN,
+                endpoint="https://oss-cn-beijing.aliyuncs.com",
+            )
+        )

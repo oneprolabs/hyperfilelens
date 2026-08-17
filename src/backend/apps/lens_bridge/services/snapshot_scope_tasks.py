@@ -7,6 +7,7 @@ import posixpath
 import math
 from typing import Any
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
@@ -102,7 +103,7 @@ def dispatch_snapshot_operation(
             repository_ids=[directory.repository_id],
             workload=RepositoryWorkload.RESTORE_READ,
         )[0]
-    except ValidationError as exc:
+    except (DjangoValidationError, ValidationError) as exc:
         raise ValidationError(
             {"directory_id": "Snapshot repository is not available."}
         ) from exc
