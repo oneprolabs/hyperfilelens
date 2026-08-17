@@ -939,6 +939,63 @@ func TestSnapshotScopeRecursiveLinesProduceTrustedTotals(t *testing.T) {
 	}
 }
 
+func TestSnapshotScopeRecursiveTotalsSkipSpecialFiles(t *testing.T) {
+	// Some snapshots contain symlinks, sockets, pipes or devices. These should
+	// not cause the whole scope resolve to fail; they should simply be skipped.
+	stdout := `drwx------            1 2026-08-12 11:15:59 CST object-dir sub/
+Lrwxrwxrwx           12 2026-08-12 11:15:59 CST object-link sub/link
+srwxrwxrwx            0 2026-08-12 11:15:59 CST object-sock sub/sock
+-rw-------            7 2026-08-12 11:15:59 CST object-file sub/file.txt`
+
+	var files int64
+	var directories int64
+	var sizeBytes int64
+	var invalid bool
+	for _, line := range strings.Split(stdout, "\n") {
+		mode, size, _, _, ok := parseInsightSnapshotLongLine(line)
+		if !ok {
+			if strings.TrimSpace(line) != "" {
+				invalid = true
+			}
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(mode), "d") {
+			if size < 0 {
+				invalid = true
+				continue
+			}
+			directories++
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(mode), "-") {
+			// Skip special file types without failing.
+			continue
+		}
+		if size < 0 {
+			invalid = true
+			continue
+		}
+		files++
+		if size > 0 && sizeBytes <= math.MaxInt64-size {
+			sizeBytes += size
+		} else if size > 0 {
+			invalid = true
+		}
+	}
+
+	if invalid {
+		t.Fatal("expected special file types to be skipped, not marked invalid")
+	}
+	if files != 1 || directories != 1 || sizeBytes != 7 {
+		t.Fatalf(
+			"unexpected totals after skipping special files: files=%d directories=%d size=%d",
+			files,
+			directories,
+			sizeBytes,
+		)
+	}
+}
+
 func TestInsightSnapshotResultContainsOnlyBusinessIdentity(t *testing.T) {
 	result := newInsightSnapshotResult(" snapshot-1 ", " /reports/quarterly/ ")
 

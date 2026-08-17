@@ -1801,7 +1801,14 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 				directoryCount++
 				return
 			}
-			if !strings.HasPrefix(strings.ToLower(mode), "-") || size < 0 {
+			if !strings.HasPrefix(strings.ToLower(mode), "-") {
+				// Symlinks, sockets, pipes, devices and other special file
+				// types are present in the snapshot but cannot be used as
+				// chat source entries. Skip them instead of failing the whole
+				// scope resolve.
+				return
+			}
+			if size < 0 {
 				invalidTotals = true
 				return
 			}
@@ -2846,7 +2853,10 @@ func looksLikeMode(value string) bool {
 		return false
 	}
 	first := value[0]
-	return first == 'd' || first == '-' || first == 'l'
+	return first == 'd' || first == '-' || first == 'l' || first == 'L' ||
+		first == 's' || first == 'S' || first == 'p' || first == 'P' ||
+		first == 'b' || first == 'c' || first == 'C' || first == 'D' ||
+		first == 'w'
 }
 
 func mapSnapshotBrowseType(isDir bool) string {
