@@ -27,7 +27,7 @@ const emailSignupEnabled = ref(false)
 const passwordResetAvailable = ref(false)
 const emailCodeLoginAvailable = ref(false)
 const showEula = appConfig.showEula
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const sessionNoticeDismissed = ref(false)
@@ -594,11 +594,8 @@ onMounted(async () => {
 
     <!-- Login Form Box -->
     <div class="login-form-box">
-      <div
-        class="login-box-title"
-        :class="{ 'title-en': locale === 'en' }"
-      >
-        <span :class="{ '!text-base': locale === 'en' }">
+      <div class="login-box-title">
+        <span class="login-box-title__copy">
           {{ cardTitle }}
         </span>
         <LanguageSwitcher
@@ -937,14 +934,19 @@ onMounted(async () => {
 }
 
 .login-box-title {
-  display: flex;
-  justify-content: space-between;
-  font-size: 22px !important;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
   font-weight: 600;
   color: #FFF;
 }
-.login-box-title.title-en {
-  font-size: 20px !important;
+
+.login-box-title__copy {
+  min-width: 0;
+  font-size: 18px;
+  line-height: 1.35;
+  overflow-wrap: normal;
 }
 
 .login-box-content {
@@ -1319,6 +1321,10 @@ onMounted(async () => {
 
   .login-form-box {
     padding: 24px 16px;
+  }
+
+  .login-box-title__copy {
+    font-size: 20px;
   }
 
   .login-box-content {

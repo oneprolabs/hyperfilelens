@@ -103,10 +103,6 @@ function handleNavClick(event: MouseEvent, to: string) {
         <span>{{ timezoneOffsetDisplay }}</span>
       </span>
 
-      <span class="desktop-navigation-control">
-        <LanguageSwitcher variant="navigation" />
-      </span>
-
       <span class="desktop-navigation-control"><OrgSwitcher /></span>
 
       <a
@@ -128,6 +124,10 @@ function handleNavClick(event: MouseEvent, to: string) {
       <div class="icon-btn alerts-btn">
         <NavNotificationPopover />
       </div>
+
+      <span class="desktop-navigation-control">
+        <LanguageSwitcher variant="navigation" />
+      </span>
 
       <NavUserMenu />
     </div>
