@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 
@@ -147,6 +148,31 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
 
         self.assertIsNone(task)
         get_task.assert_called_once_with(org=organization, task_id="task-1")
+
+    @patch("apps.lens_bridge.services.snapshot_scope_tasks._directory_for_org")
+    @patch(
+        "apps.lens_bridge.services.snapshot_scope_tasks.lock_repositories_for_workload",
+        side_effect=DjangoValidationError(
+            {"repository_id": "Repository is not available for read operations."}
+        ),
+    )
+    def test_repository_domain_error_is_exposed_as_snapshot_validation(
+        self,
+        _lock_repositories,
+        directory_for_org,
+    ):
+        directory_for_org.return_value = SimpleNamespace(repository_id=7)
+
+        with self.assertRaises(ValidationError) as raised:
+            snapshot_scope_tasks.dispatch_snapshot_browse(
+                organization_id=5,
+                directory_id=31,
+                path="reports",
+                limit=100,
+                correlation_id="user:9:browse",
+            )
+
+        self.assertIn("directory_id", raised.exception.detail)
 
     @patch("apps.lens_bridge.services.snapshot_scope_tasks.run_agent_task_async")
     @patch(

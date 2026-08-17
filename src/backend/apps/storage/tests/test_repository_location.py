@@ -492,6 +492,10 @@ class RepositoryLocationClaimTests(TestCase):
             put_marker.call_args.kwargs["key"],
             ".hyperfilelens/repository-owner-v1.json",
         )
+        self.assertEqual(
+            put_marker.call_args.kwargs["platform"],
+            Repository.S3Platform.HUAWEICLOUD,
+        )
 
     @mock.patch(
         "apps.storage.services.internal.repository_ownership._reject_foreign_ancestor_markers",
@@ -549,3 +553,67 @@ class RepositoryLocationClaimTests(TestCase):
                 verify_s3_repository_ownership(repository, adopt_legacy=True)
 
         put_marker.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership.mark_repository_location_ownership_verified"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership._require_matching_marker"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership._reject_foreign_descendant_markers"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership._reject_foreign_ancestor_markers"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership.put_s3_object_if_absent",
+        return_value=True,
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership.read_s3_object",
+        side_effect=[None, b"persisted-marker"],
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership.ownership_payload",
+        return_value={"repository_uuid": "expected"},
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership._ensure_s3_namespace_resolved"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership._s3_args",
+        return_value={},
+    )
+    def test_legacy_aliyun_adoption_reads_back_marker_before_verification(
+        self,
+        _s3_args,
+        _resolve_namespace,
+        _ownership_payload,
+        read_marker,
+        put_marker,
+        _reject_ancestor,
+        _reject_descendant,
+        require_marker,
+        mark_verified,
+    ):
+        repository = self._s3_repository(name="Legacy Aliyun", prefix="hfl/")
+        repository.s3_platform = Repository.S3Platform.CUSTOM
+        repository.config = {
+            **repository.config,
+            "endpoint": "oss-cn-beijing.aliyuncs.com",
+        }
+        repository.save(update_fields=["s3_platform", "config", "updated_at"])
+
+        verify_s3_repository_ownership(repository, adopt_legacy=True)
+
+        self.assertEqual(read_marker.call_count, 2)
+        self.assertEqual(
+            put_marker.call_args.kwargs["platform"],
+            Repository.S3Platform.CUSTOM,
+        )
+        require_marker.assert_called_once_with(
+            b"persisted-marker",
+            expected={"repository_uuid": "expected"},
+        )
+        mark_verified.assert_called_once_with(repository)

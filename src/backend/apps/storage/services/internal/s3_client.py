@@ -35,6 +35,11 @@ class BucketSummary:
 _PROVIDER_BUCKET_CAPABILITIES = {
     "aws": {"regional_list_buckets": True},
 }
+_ATOMIC_CREATE_IF_NONE_MATCH = "if_none_match"
+_ATOMIC_CREATE_ALIYUN_FORBID_OVERWRITE = "aliyun_forbid_overwrite"
+_PROVIDER_ATOMIC_CREATE_STRATEGIES = {
+    "aliyun": _ATOMIC_CREATE_ALIYUN_FORBID_OVERWRITE,
+}
 _BUCKET_REGION_FIELDS = (
     "BucketRegion",
     "LocationConstraint",
@@ -411,6 +416,7 @@ def read_s3_object(
 
 def put_s3_object_if_absent(
     *,
+    platform: str | None = None,
     endpoint: str | None,
     region: str | None,
     bucket: str,
@@ -432,22 +438,37 @@ def put_s3_object_if_absent(
         use_tls=use_tls,
         timeout_seconds=timeout_seconds,
     )
-    try:
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=body,
-            ContentLength=len(body),
-            ContentType="application/json",
-            IfNoneMatch="*",
+    put_args = {
+        "Bucket": bucket,
+        "Key": key,
+        "Body": body,
+        "ContentLength": len(body),
+        "ContentType": "application/json",
+    }
+    atomic_create_strategy = _s3_atomic_create_strategy(
+        platform=platform,
+        endpoint=endpoint,
+    )
+    if atomic_create_strategy == _ATOMIC_CREATE_ALIYUN_FORBID_OVERWRITE:
+        client.meta.events.register_first(
+            "before-sign.s3.PutObject",
+            _add_aliyun_forbid_overwrite_header,
+            unique_id="hfl-aliyun-forbid-overwrite",
         )
+    else:
+        put_args["IfNoneMatch"] = "*"
+    try:
+        client.put_object(**put_args)
         return True
     except ClientError as exc:
-        if _client_error_code(exc) in {
+        conflict_codes = {
             "ConditionalRequestConflict",
             "PreconditionFailed",
             "412",
-        }:
+        }
+        if atomic_create_strategy == _ATOMIC_CREATE_ALIYUN_FORBID_OVERWRITE:
+            conflict_codes.add("FileAlreadyExists")
+        if _client_error_code(exc) in conflict_codes:
             return False
         raise S3ClientError(
             _error_message("Unable to claim repository ownership", exc)
@@ -456,6 +477,32 @@ def put_s3_object_if_absent(
         raise S3ClientError(
             "The object store cannot atomically create the repository ownership marker."
         ) from exc
+
+
+def _s3_atomic_create_strategy(*, platform: str | None, endpoint: str | None) -> str:
+    """Select the Provider-specific atomic object creation contract.
+
+    Older installations stored Aliyun OSS as ``custom``. Endpoint inference is
+    deliberately limited to the official Aliyun domain so arbitrary custom S3
+    gateways continue using the standard conditional PutObject contract.
+    """
+    normalized_platform = str(platform or "").strip().lower()
+    if normalized_platform in {"", "custom"}:
+        hostname = urlparse(endpoint_for_requests(endpoint)).hostname or ""
+        normalized_hostname = hostname.rstrip(".").lower()
+        if normalized_hostname == "aliyuncs.com" or normalized_hostname.endswith(
+            ".aliyuncs.com"
+        ):
+            return _ATOMIC_CREATE_ALIYUN_FORBID_OVERWRITE
+    return _PROVIDER_ATOMIC_CREATE_STRATEGIES.get(
+        normalized_platform,
+        _ATOMIC_CREATE_IF_NONE_MATCH,
+    )
+
+
+def _add_aliyun_forbid_overwrite_header(*, request, **_kwargs) -> None:
+    """Apply Aliyun OSS's atomic create-only header before request signing."""
+    request.headers["x-oss-forbid-overwrite"] = "true"
 
 
 def list_s3_object_keys(

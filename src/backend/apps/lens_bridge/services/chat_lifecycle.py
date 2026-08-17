@@ -11,6 +11,7 @@ from datetime import timedelta
 from typing import Any
 
 from django.contrib.auth.models import AbstractBaseUser
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework import status as http_status
@@ -332,11 +333,14 @@ def create_copilot_chat(
     ).first()
     if config is None:
         raise ValidationError({"backup_config_id": "Backup source not found."})
-    lock_repositories_for_workload(
-        organization_id=org.id,
-        repository_ids=[config.repository_id],
-        workload=RepositoryWorkload.RESTORE_READ,
-    )
+    try:
+        lock_repositories_for_workload(
+            organization_id=org.id,
+            repository_ids=[config.repository_id],
+            workload=RepositoryWorkload.RESTORE_READ,
+        )
+    except DjangoValidationError as exc:
+        raise ValidationError(exc.message_dict) from exc
     snapshot = BackupSourceSnapshot.objects.filter(
         id=backup_source_snapshot_id,
         organization_id=org.id,

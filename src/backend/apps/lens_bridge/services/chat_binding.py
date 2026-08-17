@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from django.contrib.auth.models import AbstractBaseUser
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
@@ -45,11 +46,14 @@ def _validate_snapshot(
     ).first()
     if config is None:
         raise ValidationError({"backup_config_id": "Backup source not found."})
-    lock_repositories_for_workload(
-        organization_id=org.id,
-        repository_ids=[config.repository_id],
-        workload=RepositoryWorkload.RESTORE_READ,
-    )
+    try:
+        lock_repositories_for_workload(
+            organization_id=org.id,
+            repository_ids=[config.repository_id],
+            workload=RepositoryWorkload.RESTORE_READ,
+        )
+    except DjangoValidationError as exc:
+        raise ValidationError(exc.message_dict) from exc
 
     snapshot = BackupSourceSnapshot.objects.filter(
         organization_id=org.id,
