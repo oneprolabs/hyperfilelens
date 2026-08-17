@@ -80,8 +80,9 @@ describe('NavUserMenu product identity', () => {
     const wrapper = mountMenu()
     await flushPromises()
 
-    expect(wrapper.get('.nav-user-product__name').text()).toBe('HyperFileLens v0.2.1')
-    expect(wrapper.get('.nav-user-product__meta').text()).toBe('Enterprise')
+    expect(wrapper.get('.nav-user-product__name').text()).toBe(
+      'HyperFileLens v0.2.1 · Enterprise',
+    )
   })
 
   it('uses a localized development label when the valid profile has no version', async () => {
@@ -93,9 +94,8 @@ describe('NavUserMenu product identity', () => {
     const wrapper = mountMenu()
     await flushPromises()
 
-    expect(wrapper.get('.nav-user-product__name').text()).toBe('HyperFileLens')
-    expect(wrapper.get('.nav-user-product__meta').text()).toBe(
-      'Development build · Community',
+    expect(wrapper.get('.nav-user-product__name').text()).toBe(
+      'HyperFileLens · Development build · Community',
     )
   })
 

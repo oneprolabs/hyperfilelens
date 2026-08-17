@@ -40,9 +40,14 @@ const editionLabel = computed(() => (
     ? t('account.editionEnterprise')
     : t('account.editionCommunity')
 ))
-const productMeta = computed(() => {
-  if (productVersion.value) return editionLabel.value
-  return [t('account.developmentBuild'), editionLabel.value].join(
+const productIdentity = computed(() => {
+  const productName = productVersion.value
+    ? `HyperFileLens v${productVersion.value}`
+    : 'HyperFileLens'
+  const details = productVersion.value
+    ? [editionLabel.value]
+    : [t('account.developmentBuild'), editionLabel.value]
+  return [productName, ...details].join(
     ` ${t('common.dotSeparator')} `,
   )
 })
@@ -177,10 +182,7 @@ async function confirmLogout() {
           class="nav-user-product"
           :aria-label="t('account.productInfoAria')"
         >
-          <span class="nav-user-product__name">
-            HyperFileLens<span v-if="productVersion"> v{{ productVersion }}</span>
-          </span>
-          <span class="nav-user-product__meta">{{ productMeta }}</span>
+          <span class="nav-user-product__name">{{ productIdentity }}</span>
         </footer>
       </template>
     </div>
@@ -235,10 +237,7 @@ async function confirmLogout() {
 }
 
 .nav-user-product {
-  display: flex;
   min-width: 0;
-  flex-direction: column;
-  gap: 2px;
   padding: 9px 12px 10px;
   color: var(--color-text-tertiary, #909399);
   font-size: 12px;
@@ -246,16 +245,11 @@ async function confirmLogout() {
   user-select: text;
 }
 
-.nav-user-product__name,
-.nav-user-product__meta {
+.nav-user-product__name {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.nav-user-product__name {
-  color: var(--color-text-secondary, #606266);
-  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
