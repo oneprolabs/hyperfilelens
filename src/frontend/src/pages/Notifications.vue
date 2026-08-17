@@ -89,18 +89,6 @@ watch(
 
 <template>
   <div class="notifications-page">
-    <header class="notifications-page__header">
-      <p>{{ t('notificationsPage.subtitle') }}</p>
-      <el-button
-        :disabled="!unreadCount"
-        :loading="markingAll"
-        @click="markAllRead"
-      >
-        <CheckCheck :size="16" />
-        {{ t('nav.notificationPopover.markAllRead') }}
-      </el-button>
-    </header>
-
     <div
       v-if="loadError"
       class="notifications-page__error"
@@ -110,6 +98,16 @@ watch(
     </div>
 
     <HflTablePanel fill>
+      <template #toolbar>
+        <el-button
+          :disabled="!unreadCount"
+          :loading="markingAll"
+          @click="markAllRead"
+        >
+          <CheckCheck :size="16" />
+          {{ t('nav.notificationPopover.markAllRead') }}
+        </el-button>
+      </template>
       <template #toolbar-utility>
         <el-button
           class="hfl-refresh-button"
@@ -200,6 +198,7 @@ watch(
           v-model:page-size="pagination.pageSize"
           layout="total, sizes, prev, pager, next"
           :total="pagination.count"
+          class="hfl-list-footer__pagination"
         />
       </template>
     </HflTablePanel>
@@ -216,27 +215,12 @@ watch(
   gap: 16px;
 }
 
-.notifications-page__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.notifications-page__header p {
-  margin: 0;
-}
-
 .notifications-page__error {
   padding: 10px 12px;
   border-radius: 6px;
   color: var(--el-color-danger);
   font-size: 13px;
   background: var(--el-color-danger-light-9);
-}
-
-.notifications-page__header p {
-  color: var(--el-text-color-secondary);
 }
 
 .notifications-page__state {
@@ -265,12 +249,5 @@ watch(
   color: var(--el-text-color-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-@media (max-width: 767.98px) {
-  .notifications-page__header {
-    align-items: stretch;
-    flex-direction: column;
-  }
 }
 </style>
