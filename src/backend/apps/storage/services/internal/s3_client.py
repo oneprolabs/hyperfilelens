@@ -290,8 +290,23 @@ def create_s3_bucket(
             create_args["CreateBucketConfiguration"] = create_bucket_configuration
         client.create_bucket(**create_args)
     except ClientError as exc:
+        if _client_error_code(exc) == "BucketAlreadyOwnedByYou":
+            # The bucket belongs to the current credentials; it may have been
+            # left behind by a previously failed creation attempt. Allow
+            # re-initialization only when the bucket holds no data, otherwise
+            # reject so an existing location is never silently reused.
+            try:
+                holds_state = _prefix_holds_any_state(client, bucket=bucket)
+            except (BotoCoreError, ClientError) as probe_exc:
+                raise S3ClientError(
+                    _error_message(f"Unable to inspect existing S3 bucket {bucket}", probe_exc)
+                ) from probe_exc
+            if holds_state:
+                raise S3ClientError(
+                    f"Unable to create S3 bucket {bucket}: bucket already exists."
+                ) from exc
+            return None
         if _client_error_code(exc) in {
-            "BucketAlreadyOwnedByYou",
             "BucketAlreadyExists",
             "OperationAborted",
         }:
@@ -636,6 +651,38 @@ def list_s3_object_keys(
         ) from exc
 
 
+def _prefix_holds_any_state(client, *, bucket: str, prefix: str = "") -> bool:
+    """Return whether a Prefix holds objects, versions, or uploads.
+
+    Legacy S3-compatible gateways (e.g. early MinIO releases) do not
+    implement ListObjectVersions and report NotImplemented. The objects
+    listing already proved the Prefix holds no current objects, so their
+    response is treated as "no historical versions" rather than failing the
+    whole probe.
+    """
+    objects = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+    if objects.get("Contents"):
+        return True
+    try:
+        versions = client.list_object_versions(
+            Bucket=bucket,
+            Prefix=prefix,
+            MaxKeys=1,
+        )
+    except ClientError as exc:
+        if not _is_unsupported_s3_header_error(exc):
+            raise
+        versions = {}
+    if versions.get("Versions") or versions.get("DeleteMarkers"):
+        return True
+    uploads = client.list_multipart_uploads(
+        Bucket=bucket,
+        Prefix=prefix,
+        MaxUploads=1,
+    )
+    return bool(uploads.get("Uploads"))
+
+
 def s3_prefix_has_any_state(
     *,
     endpoint: str | None,
@@ -659,32 +706,7 @@ def s3_prefix_has_any_state(
         timeout_seconds=timeout_seconds,
     )
     try:
-        objects = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
-        if objects.get("Contents"):
-            return True
-        try:
-            versions = client.list_object_versions(
-                Bucket=bucket,
-                Prefix=prefix,
-                MaxKeys=1,
-            )
-        except ClientError as exc:
-            # Older S3-compatible servers (e.g. early MinIO releases) do not
-            # implement ListObjectVersions and report NotImplemented. The
-            # objects listing above already proved that the Prefix holds no
-            # current objects, so treat historical versions as absent rather
-            # than failing the whole probe.
-            if not _is_unsupported_s3_header_error(exc):
-                raise
-            versions = {}
-        if versions.get("Versions") or versions.get("DeleteMarkers"):
-            return True
-        uploads = client.list_multipart_uploads(
-            Bucket=bucket,
-            Prefix=prefix,
-            MaxUploads=1,
-        )
-        return bool(uploads.get("Uploads"))
+        return _prefix_holds_any_state(client, bucket=bucket, prefix=prefix)
     except (BotoCoreError, ClientError) as exc:
         raise S3ClientError(
             _error_message("Unable to inspect repository object prefix", exc)
