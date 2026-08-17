@@ -158,18 +158,21 @@ def initialize_s3_repository(repository: Repository) -> None:
         # weaken persisted-repository cleanup authorization.
         # Kopia refuses to create a repository inside a Prefix that already
         # contains any object - including the ownership marker written by the
-        # Claim above (it reports "found existing data in storage location").
-        # Hide the marker while Kopia initializes the empty Prefix, then
-        # restore it so the ownership proof survives. Unsaved models (older
-        # unit callers) have no Claim and therefore no marker to hide.
+        # Claim (it reports "found existing data in storage location").
+        # Claim first so the marker is validated (a residual marker left by a
+        # failed attempt is matched and kept; a fresh Prefix is atomically
+        # claimed). Only then hide the marker while Kopia initializes the empty
+        # Prefix, and restore it afterwards so the ownership proof survives.
+        # Unsaved models (older unit callers) have no Claim and therefore no
+        # marker to hide.
+        if repository.pk is not None:
+            claim_s3_repository_ownership(repository)
         marker_context = (
             s3_ownership_marker_hidden(repository)
             if repository.pk is not None
             else nullcontext()
         )
         with marker_context:
-            if repository.pk is not None:
-                claim_s3_repository_ownership(repository)
             create_s3_repository(repository)
     except S3UrlStyleProbeError as exc:
         raise RepositoryInitializationError(_sanitize(str(exc), repository)) from exc

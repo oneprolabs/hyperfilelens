@@ -653,7 +653,7 @@ class RepositoryLocationClaimTests(TestCase):
         delete_marker.assert_not_called()
         put_marker.assert_not_called()
 
-    def test_initialize_s3_hides_ownership_marker_during_kopia_create(self):
+    def test_initialize_s3_claims_marker_before_hiding_it_for_kopia_create(self):
         repository = self._s3_repository(name="Initialized", prefix="hfl/")
         marker = (
             b'{"deployment_uuid":"d","repository_uuid":"r",'
@@ -666,9 +666,6 @@ class RepositoryLocationClaimTests(TestCase):
             call_sequence.append("create")
 
         with (
-            mock.patch(
-                "apps.storage.services.internal.repository_initializer.claim_s3_repository_ownership"
-            ),
             mock.patch(
                 "apps.storage.services.internal.repository_initializer.create_s3_repository",
                 side_effect=fake_create,
@@ -688,6 +685,13 @@ class RepositoryLocationClaimTests(TestCase):
             mock.patch(
                 "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
             ),
+            # Run the real claim: a residual marker is validated and kept, then
+            # hidden for the physical create and restored afterwards. A claim
+            # that runs while the marker is already hidden would rewrite the
+            # marker and make Kopia reject the create again.
+            mock.patch(
+                "apps.storage.services.internal.repository_ownership._ensure_s3_namespace_resolved"
+            ),
             mock.patch(
                 "apps.storage.services.internal.repository_ownership._s3_args",
                 return_value={},
@@ -701,6 +705,19 @@ class RepositoryLocationClaimTests(TestCase):
                 return_value=marker,
             ),
             mock.patch(
+                "apps.storage.services.internal.repository_ownership._require_matching_marker",
+                side_effect=lambda *_args, **_kwargs: call_sequence.append("claimed"),
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_ownership._reject_foreign_ancestor_markers"
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_ownership._reject_foreign_descendant_markers"
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_ownership.mark_repository_location_ownership_verified"
+            ),
+            mock.patch(
                 "apps.storage.services.internal.repository_ownership.delete_s3_object",
                 side_effect=lambda **_kwargs: call_sequence.append("deleted"),
             ),
@@ -711,7 +728,9 @@ class RepositoryLocationClaimTests(TestCase):
         ):
             initialize_s3_repository(repository)
 
-        self.assertEqual(call_sequence, ["deleted", "create", "restored"])
+        self.assertEqual(
+            call_sequence, ["claimed", "deleted", "create", "restored"]
+        )
 
     @mock.patch(
         "apps.storage.services.internal.repository_ownership.mark_repository_location_ownership_verified"
