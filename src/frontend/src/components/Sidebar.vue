@@ -92,8 +92,34 @@ function isActive(to?: string) {
   if (targetPath === '/platform-ops') {
     return route.path === '/platform-ops' || route.path === '/platform-ops/'
   }
-  return route.path === targetPath || route.path.startsWith(`${targetPath}/`)
+  if (route.path === targetPath) return true
+  if (route.path.startsWith(`${targetPath}/`)) {
+    // Don't highlight if a more specific menu item is a better match
+    for (const otherPath of allMenuPaths.value) {
+      if (
+        otherPath !== targetPath &&
+        otherPath.startsWith(`${targetPath}/`) &&
+        (route.path === otherPath || route.path.startsWith(`${otherPath}/`))
+      ) {
+        return false
+      }
+    }
+    return true
+  }
+  return false
 }
+
+const allMenuPaths = computed(() => {
+  const paths = new Set<string>()
+  function collect(items: MenuItem[]) {
+    for (const item of items) {
+      if (item.to) paths.add(item.to.split('?')[0])
+      if (item.children) collect(item.children)
+    }
+  }
+  collect(props.menus)
+  return paths
+})
 
 function navigateImmediately(to?: string) {
   if (!to || to === route.fullPath) return
