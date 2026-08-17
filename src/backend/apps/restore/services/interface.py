@@ -1339,7 +1339,7 @@ def _finalize_restore_item_targets(
             target_path = item["dispatch_target_path"]
             if len(group) > 1:
                 target_path = _join_target_path(
-                    posixpath.dirname(natural_target),
+                    _path_parent(natural_target),
                     _safe_restore_name(
                         item["effective_source_path"],
                         source_path_type=item.get("source_path_type"),
@@ -2433,11 +2433,22 @@ def _is_windows_path(path: str) -> bool:
     return "\\" in path or (len(path) >= 2 and path[1] == ":")
 
 
+def _path_parent(path: str) -> str:
+    if _is_windows_path(str(path)):
+        return ntpath.dirname(path)
+    return posixpath.dirname(path)
+
+
 def _path_basename(path: str) -> str:
-    return posixpath.basename(_normalize_path(path).rstrip("/")) or "snapshot"
+    raw = str(path or "").strip().rstrip("/\\")
+    if _is_windows_path(raw):
+        return ntpath.basename(ntpath.normpath(raw)) or "snapshot"
+    return posixpath.basename(_normalize_path(raw)) or "snapshot"
 
 
 def _join_target_path(parent: str, leaf: str) -> str:
+    if _is_windows_path(str(parent)) or _is_windows_path(str(leaf)):
+        return ntpath.normpath(ntpath.join(str(parent or ""), str(leaf or "")))
     return _normalize_path(posixpath.join(_normalize_path(parent), leaf))
 
 
@@ -2477,8 +2488,12 @@ def _numbered_restore_target_path(
     source_path_type: str | None = None,
     selected_paths: tuple[str, ...] = (),
 ) -> str:
-    parent = posixpath.dirname(target_path)
-    leaf = posixpath.basename(target_path)
+    parent = _path_parent(target_path)
+    leaf = (
+        ntpath.basename(target_path)
+        if _is_windows_path(target_path)
+        else posixpath.basename(target_path)
+    )
     ext = _restore_file_extension(
         source_path=source_path,
         source_path_type=source_path_type,
