@@ -1693,6 +1693,32 @@ class RestoreApiTests(TestCase):
 
         self.assertEqual(name, "t--from-root_d_logs.log")
 
+    def test_finalize_restore_item_targets_joins_windows_restore_target(self):
+        items = restore_service._finalize_restore_item_targets(
+            [
+                {
+                    "source_snapshot_directory_id": 1,
+                    "selected_paths": [],
+                    "target_source_path": r"C:\备份测试",
+                    "source_path_type": BackupSourceSnapshotDirectory.PathType.DIRECTORY,
+                    "restore_dir": r"C:\恢复目录",
+                    "conflict_mode": "overwrite",
+                }
+            ]
+        )
+
+        self.assertEqual(items[0]["target_path"], r"C:\恢复目录\备份测试")
+
+    def test_numbered_restore_target_path_keeps_windows_semantics(self):
+        numbered = restore_service._numbered_restore_target_path(
+            r"C:\恢复目录\test.txt",
+            counter=2,
+            source_path=r"C:\data\test.txt",
+            source_path_type=BackupSourceSnapshotDirectory.PathType.FILE,
+        )
+
+        self.assertEqual(numbered, r"C:\恢复目录\test-2.txt")
+
     def test_run_restore_plans_for_source_keeps_distinct_selected_file_names_unsuffixed(
         self,
     ):
