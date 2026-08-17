@@ -15,7 +15,7 @@ import { appConfig } from '../../lib/appConfig'
 import { trackAppEvent } from '../../lib/analytics'
 import { LOGIN_ROUTE_NAME } from '../../lib/loginNavigation'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const showEula = appConfig.showEula
@@ -440,11 +440,8 @@ onUnmounted(() => {
     </div>
 
     <div class="register-form-box">
-      <div
-        class="register-box-title"
-        :class="{ 'title-en': locale === 'en' }"
-      >
-        <span :class="{ '!text-base': locale === 'en' }">{{ t('register.welcomeTitle') }}</span>
+      <div class="register-box-title">
+        <span class="register-box-title__copy">{{ t('register.welcomeTitle') }}</span>
         <LanguageSwitcher variant="auth" />
       </div>
 
@@ -737,15 +734,20 @@ onUnmounted(() => {
 }
 
 .register-box-title {
-  display: flex;
-  justify-content: space-between;
-  font-size: 22px !important;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
   font-weight: 600;
   color: #FFF;
   margin-top: 4px;
 }
-.register-box-title.title-en {
-  font-size: 20px !important;
+
+.register-box-title__copy {
+  min-width: 0;
+  font-size: 18px;
+  line-height: 1.35;
+  overflow-wrap: normal;
 }
 
 .register-box-content {
@@ -1148,6 +1150,10 @@ onUnmounted(() => {
 
   .register-form-box {
     padding: 24px 16px;
+  }
+
+  .register-box-title__copy {
+    font-size: 20px;
   }
 
   .register-box-content {

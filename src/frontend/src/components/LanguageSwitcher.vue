@@ -135,7 +135,7 @@ function handleVisibleChange(visible: boolean) {
 <style scoped>
 .language-switcher {
   display: inline-flex;
-  min-width: 0;
+  flex: 0 0 auto;
 }
 
 .language-switcher__trigger,
@@ -155,6 +155,7 @@ function handleVisibleChange(visible: boolean) {
 }
 
 .language-switcher__trigger {
+  flex: 0 0 auto;
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
@@ -180,10 +181,9 @@ function handleVisibleChange(visible: boolean) {
 }
 
 .language-switcher__current {
-  overflow: hidden;
   font-size: 13px;
   font-weight: 500;
-  text-overflow: ellipsis;
+  line-height: 1.4;
 }
 
 .language-switcher__chevron {
@@ -202,6 +202,20 @@ function handleVisibleChange(visible: boolean) {
 
 .language-switcher--navigation {
   color: var(--nav-text-secondary, rgba(255, 255, 255, 0.78));
+}
+
+.language-switcher--navigation .language-switcher__trigger,
+.language-switcher--navigation.language-switcher--static {
+  min-height: 32px;
+  padding: 5px 9px;
+  background: var(--tz-bg, rgba(255, 255, 255, 0.045));
+  border-color: var(--tz-border, rgba(255, 255, 255, 0.1));
+}
+
+.language-switcher--navigation .language-switcher__trigger:hover,
+.language-switcher--navigation .language-switcher__trigger:focus-visible {
+  background: var(--icon-btn-hover-bg, rgba(255, 255, 255, 0.08));
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .language-switcher--mobile {
@@ -246,10 +260,6 @@ function handleVisibleChange(visible: boolean) {
 @media (max-width: 540px) {
   .language-switcher--auth .language-switcher__trigger {
     padding-inline: 7px;
-  }
-
-  .language-switcher--auth .language-switcher__current {
-    max-width: 92px;
   }
 }
 </style>
