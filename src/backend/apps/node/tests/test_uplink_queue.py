@@ -122,19 +122,8 @@ class _StreamRedis:
     def eval(self, script, numkeys, *args):
         keys = args[:numkeys]
         argv = args[numkeys:]
-        if "cjson.decode" in script:
-            key = str(keys[0])
-            marker_token = str(argv[0])
-            raw = self.values.get(key)
-            if not raw:
-                return 0
-            payload = json.loads(raw)
-            if str(payload.get("marker_token") or "") != marker_token:
-                return 0
-            del self.values[key]
-            return 1
-        if "xack" in script:
-            source_stream, dead_letter_stream = keys
+        if "xadd" in script and "xack" in script:
+            source_stream, dead_letter_stream, marker_key = keys
             group, entry_id = argv[:2]
             dead_letter_id = self.xadd(
                 dead_letter_stream,
@@ -149,7 +138,35 @@ class _StreamRedis:
             )
             self.xack(source_stream, group, entry_id)
             self.xdel(source_stream, entry_id)
+            marker_token = str(argv[8])
+            raw = self.values.get(str(marker_key))
+            if marker_token and raw:
+                marker = json.loads(raw)
+                if str(marker.get("marker_token") or "") == marker_token:
+                    del self.values[str(marker_key)]
             return dead_letter_id
+        if "xack" in script:
+            source_stream, marker_key = keys
+            group, entry_id, marker_token = argv
+            raw = self.values.get(str(marker_key))
+            if marker_token and raw:
+                marker = json.loads(raw)
+                if str(marker.get("marker_token") or "") == str(marker_token):
+                    del self.values[str(marker_key)]
+            self.xack(source_stream, group, entry_id)
+            self.xdel(source_stream, entry_id)
+            return [1, 1, 1]
+        if "cjson.decode" in script:
+            key = str(keys[0])
+            marker_token = str(argv[0])
+            raw = self.values.get(key)
+            if not raw:
+                return 0
+            payload = json.loads(raw)
+            if str(payload.get("marker_token") or "") != marker_token:
+                return 0
+            del self.values[key]
+            return 1
         if numkeys == 3:
             live_stream, dead_letter_stream, marker_key = keys
             payload, marker_payload, _ttl, dead_letter_id = argv
@@ -200,7 +217,8 @@ class UplinkQueueTests(TestCase):
             organization=self.org,
             name="agent-uplink",
             role=NodeRole.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
             last_seen_at=timezone.now(),
         )
         self.redis = _StreamRedis()
@@ -327,7 +345,10 @@ class UplinkQueueTests(TestCase):
         self.assertIn("1-0", self.redis.acked)
         self.assertIn("1-0", self.redis.deleted)
         self.assertTrue(
-            any(name == NODE_UPLINK_DEAD_LETTER_STREAM for name, _id in self.redis.added_to)
+            any(
+                name == NODE_UPLINK_DEAD_LETTER_STREAM
+                for name, _id in self.redis.added_to
+            )
         )
         self.assertNotIn(task_uplink_activity_key("task-dlq"), self.redis.values)
 
@@ -337,7 +358,9 @@ class UplinkQueueTests(TestCase):
             if name == NODE_UPLINK_DEAD_LETTER_STREAM
         )
         dead_letter_fields = next(
-            fields for entry_id, fields in self.redis.stream if entry_id == dead_letter_id
+            fields
+            for entry_id, fields in self.redis.stream
+            if entry_id == dead_letter_id
         )
         replayed_id = replay_dead_letter_entry(
             self.redis,

@@ -127,7 +127,12 @@ def run_agent_task_async(
     )
     logger.info(
         "agent task async dispatch %s",
-        task_log_context(node_id=node.id, kind=kind, correlation_type=correlation_type, correlation_id=correlation_id),
+        task_log_context(
+            node_id=node.id,
+            kind=kind,
+            correlation_type=correlation_type,
+            correlation_id=correlation_id,
+        ),
     )
     task_payload = payload
     if persisted_payload is not None:
@@ -165,6 +170,25 @@ def wait_for_agent_task(
         else node_conf.TASK_SYNC_WAIT_SECONDS
     )
     timeout = max(1, timeout)
+    waiter_ttl = timeout + node_conf.TASK_STREAM_TTL_GRACE_SECONDS
+    with redis_store.task_stream_waiter(
+        task_id=str(task_id),
+        ttl_seconds=waiter_ttl,
+    ):
+        return _wait_for_agent_task(
+            task_id=task_id,
+            timeout=timeout,
+            on_stream_message=on_stream_message,
+        )
+
+
+def _wait_for_agent_task(
+    *,
+    task_id: uuid.UUID | str,
+    timeout: int,
+    on_stream_message: Callable[[dict[str, Any]], None] | None,
+) -> AgentTaskSyncResult:
+    """Wait with PostgreSQL as authority after a caller registers its lease."""
     deadline = time.monotonic() + timeout
     last_stream_message: dict[str, Any] | None = None
 
@@ -183,7 +207,9 @@ def wait_for_agent_task(
         if remaining <= 0:
             logger.warning(
                 "agent task sync wait timed out %s task_status=%s wait_seconds=%s",
-                task_log_context(node_id=task.node_id, task_id=str(task_id), kind=task.kind),
+                task_log_context(
+                    node_id=task.node_id, task_id=str(task_id), kind=task.kind
+                ),
                 task.status,
                 timeout,
             )
@@ -194,6 +220,7 @@ def wait_for_agent_task(
             )
 
         wait_seconds = max(1, min(_TASK_SYNC_DB_POLL_SECONDS, int(remaining + 0.999)))
+        wait_started = time.monotonic()
         stream_message = redis_store.bpop_task_stream(
             task_id=str(task_id),
             timeout_seconds=wait_seconds,
@@ -208,15 +235,30 @@ def wait_for_agent_task(
                     stream_message=last_stream_message,
                     timed_out=False,
                 )
+            # A healthy BLPOP already waited. If Redis failed immediately,
+            # preserve the normal database polling cadence instead of spinning.
+            elapsed = time.monotonic() - wait_started
+            if elapsed < wait_seconds:
+                time.sleep(wait_seconds - elapsed)
             continue
         last_stream_message = stream_message
         if on_stream_message is not None:
             try:
                 on_stream_message(stream_message)
             except Exception:
-                logger.exception("agent task stream callback failed task_id=%s", task_id)
+                logger.exception(
+                    "agent task stream callback failed task_id=%s", task_id
+                )
         stream_status = str(stream_message.get("status") or "").strip().lower()
-        if stream_status in {"success", "succeeded", "ok", "failed", "canceled", "cancelled", "timeout"}:
+        if stream_status in {
+            "success",
+            "succeeded",
+            "ok",
+            "failed",
+            "canceled",
+            "cancelled",
+            "timeout",
+        }:
             task = NodeTask.objects.filter(pk=task_id).first()
             if task is None:
                 raise AgentTaskNotFoundError(f"task {task_id} not found")
@@ -256,8 +298,15 @@ def run_agent_task_sync(
     )
     logger.info(
         "agent task sync dispatch %s wait_seconds=%s",
-        task_log_context(node_id=node.id, kind=kind, correlation_type=correlation_type, correlation_id=correlation_id),
-        wait_timeout_seconds if wait_timeout_seconds is not None else node_conf.TASK_SYNC_WAIT_SECONDS,
+        task_log_context(
+            node_id=node.id,
+            kind=kind,
+            correlation_type=correlation_type,
+            correlation_id=correlation_id,
+        ),
+        wait_timeout_seconds
+        if wait_timeout_seconds is not None
+        else node_conf.TASK_SYNC_WAIT_SECONDS,
     )
     with transaction.atomic():
         task = create_agent_task(
@@ -272,15 +321,25 @@ def run_agent_task_sync(
         )
         task_id = task.id
 
-    task = deliver_agent_task(
-        task=task,
-        delivery_payload=payload if persisted_payload is not None else None,
+    timeout = max(
+        1,
+        int(wait_timeout_seconds)
+        if wait_timeout_seconds is not None
+        else node_conf.TASK_SYNC_WAIT_SECONDS,
     )
-    outcome = wait_for_agent_task(
-        task_id=task_id,
-        timeout_seconds=wait_timeout_seconds,
-        on_stream_message=on_stream_message,
-    )
+    with redis_store.task_stream_waiter(
+        task_id=str(task_id),
+        ttl_seconds=timeout + node_conf.TASK_STREAM_TTL_GRACE_SECONDS,
+    ):
+        task = deliver_agent_task(
+            task=task,
+            delivery_payload=payload if persisted_payload is not None else None,
+        )
+        outcome = _wait_for_agent_task(
+            task_id=task_id,
+            timeout=timeout,
+            on_stream_message=on_stream_message,
+        )
     ctx = task_log_context(node_id=node.id, task_id=str(task_id), kind=kind)
     if outcome.timed_out:
         logger.warning(
@@ -290,7 +349,9 @@ def run_agent_task_sync(
             (outcome.task.last_error or "")[:500],
         )
     elif outcome.ok:
-        logger.info("agent task sync finished (ok) %s task_status=%s", ctx, outcome.task.status)
+        logger.info(
+            "agent task sync finished (ok) %s task_status=%s", ctx, outcome.task.status
+        )
     else:
         logger.warning(
             "agent task sync finished (failed) %s task_status=%s last_error=%s",
