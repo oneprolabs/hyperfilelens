@@ -1527,10 +1527,24 @@ function openSourceTaskAdvancedFilterDrawer() {
 }
 
 function applySourceTaskAdvancedFilters() {
-  taskFilterDateRange.value = taskAdvancedFilterDraft.dateRange
+  taskFilterDateRange.value = normalizeSourceTaskDateRange(taskAdvancedFilterDraft.dateRange)
   if (taskFilterDateRange.value) taskFilterTimeMode.value = 'range'
   else if (taskFilterTimeMode.value === 'range') taskFilterTimeMode.value = lastSourceTaskQuickTimeMode.value
   taskAdvancedFilterOpen.value = false
+}
+
+function normalizeSourceTaskDateRange(range: [Date, Date] | null) {
+  if (!range) return null
+  const [start, selectedEnd] = range
+  const end = new Date(selectedEnd)
+  const now = new Date()
+  if (end.getFullYear() === now.getFullYear()
+    && end.getMonth() === now.getMonth()
+    && end.getDate() === now.getDate()
+    && end.getHours() === 23 && end.getMinutes() === 59 && end.getSeconds() === 59) {
+    return [start, now] as [Date, Date]
+  }
+  return [start, end] as [Date, Date]
 }
 
 function onSourceTaskAdvancedFilterClosed() {
@@ -1550,7 +1564,7 @@ function sourceTaskCreatedRangeParams() {
   if (taskFilterTimeMode.value === 'range' && taskFilterDateRange.value) {
     return {
       created_after: isoDateParam(taskFilterDateRange.value[0]),
-      created_before: isoDateParam(taskFilterDateRange.value[1]),
+      created_before: (() => { const end = new Date(taskFilterDateRange.value[1]); end.setMilliseconds(999); return isoDateParam(end) })(),
     }
   }
   return { created_after: undefined, created_before: undefined }
@@ -4328,6 +4342,9 @@ function onClosed() {
         <ElDatePicker
           v-model="taskAdvancedFilterDraft.dateRange"
           type="datetimerange"
+          format="YYYY-MM-DD HH:mm:ss"
+          value-format="YYYY-MM-DDTHH:mm:ss"
+          :default-time="[new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)]"
           :shortcuts="sourceTaskDateRangeShortcuts"
           :start-placeholder="t('ops.task.startTime')"
           :end-placeholder="t('ops.task.endTime')"

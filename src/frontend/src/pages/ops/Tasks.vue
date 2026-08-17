@@ -210,7 +210,7 @@ function pad2(n: number) {
 
 function formatLocalInputDateTime(date?: Date | null) {
   if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return ''
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
 }
 
 function parseLocalInputDateTime(value: string) {
@@ -345,8 +345,11 @@ function formatTime(iso?: string | null) {
   return formatLocalDateTime(iso, t('ops.task.emptyMark'))
 }
 
-function isoDateParam(date?: Date | null) {
-  return date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : undefined
+function isoDateParam(date?: Date | null, inclusiveEnd = false) {
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return undefined
+  const normalized = new Date(date)
+  if (inclusiveEnd) normalized.setMilliseconds(999)
+  return normalized.toISOString()
 }
 
 function taskTimeRangeParams() {
@@ -358,7 +361,7 @@ function taskTimeRangeParams() {
   if (filters.time_mode === '30d') after = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
   if (filters.time_mode === 'range' && filters.created_range) {
     after = isoDateParam(filters.created_range[0])
-    before = isoDateParam(filters.created_range[1])
+    before = isoDateParam(filters.created_range[1], true)
   }
   if (filters.time_field === 'finished') {
     return { created_after: undefined, created_before: undefined, finished_after: after, finished_before: before }
