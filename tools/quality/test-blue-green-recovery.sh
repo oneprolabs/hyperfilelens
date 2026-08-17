@@ -21,6 +21,7 @@ reload_stable_nginx() { calls+=("reload"); }
 write_active_color() { calls+=("active:$*"); }
 wait_for_public_endpoints() { calls+=("public-health"); }
 wait_for_color_health() { calls+=("color-health:$*"); }
+wait_for_services_health() { calls+=("service-health:$*"); }
 ensure_blue_green_state() { calls+=("ensure-state"); }
 read_active_color() { printf 'blue'; }
 sourcelens_installed() { [[ "${sourcelens_present}" == "1" ]]; }
@@ -55,7 +56,9 @@ start_hfl_stack
 [[ " ${calls[*]} " != *" run --rm --no-deps --pull never migration "* ]]
 [[ " ${calls[*]} " == *" color:blue up -d --no-build --pull never api-blue web-blue "* ]]
 [[ " ${calls[*]} " == *" color-health:blue "* ]]
-[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never nginx reload "* ]]
+[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never nginx "* ]]
+[[ " ${calls[*]} " == *" service-health:600 nginx "* ]]
+[[ " ${calls[*]} " != *" reload "* ]]
 
 calls=()
 UPGRADE_HFL_WAS_RUNNING=1

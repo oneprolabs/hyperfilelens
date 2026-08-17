@@ -945,6 +945,7 @@ fi
 grep -F 'compose_color "${recovery_color}" start' <<<"${recovery_body}" >/dev/null
 grep -F 'compose_in_root start worker scheduler' <<<"${recovery_body}" >/dev/null
 grep -F './tools/quality/test-blue-green-recovery.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-nginx-startup-readiness.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-sourcelens-runtime-sync.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-sourcelens-runtime-fingerprint.sh' "${workflow}" >/dev/null
 

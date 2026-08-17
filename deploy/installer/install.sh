@@ -1036,28 +1036,76 @@ wait_for_color_health() {
 	wait_for_services_health "${timeout_seconds}" "api-${color}" "web-${color}"
 }
 
+stable_nginx_running_generation() {
+	local cid
+	cid="$(compose_in_root ps -q nginx 2>/dev/null | sed -n '1p')" || return 1
+	[[ -n "${cid}" ]] || return 0
+	docker inspect --format \
+		'{{if .State.Running}}{{.Id}}|{{.State.StartedAt}}{{end}}' \
+		"${cid}" 2>/dev/null
+}
+
+stable_nginx_master_ready() {
+	compose_in_root exec -T nginx sh -c '
+		pid="$(cat /run/nginx.pid 2>/dev/null || true)"
+		case "${pid}" in
+		"" | *[!0-9]*) exit 1 ;;
+		esac
+		[ "${pid}" -gt 0 ] && kill -0 "${pid}"
+	' >/dev/null 2>&1
+}
+
+wait_for_stable_nginx_master() {
+	local timeout_seconds="${HFL_NGINX_RELOAD_TIMEOUT_SECONDS:-30}" deadline
+	if [[ ! "${timeout_seconds}" =~ ^[0-9]+$ ]] || ((timeout_seconds < 1)); then
+		timeout_seconds=30
+	fi
+	deadline=$((SECONDS + timeout_seconds))
+	while ((SECONDS < deadline)); do
+		stable_nginx_master_ready && return 0
+		sleep 1
+	done
+	warn "stable Nginx master did not become ready within ${timeout_seconds}s"
+	return 1
+}
+
 reload_stable_nginx() {
-	compose_in_root exec -T nginx nginx -t
-	compose_in_root exec -T nginx nginx -s reload
+	wait_for_stable_nginx_master || return 1
+	compose_in_root exec -T nginx nginx -t || return 1
+	compose_in_root exec -T nginx nginx -s reload || return 1
 }
 
 start_hfl_stack() {
-	local color
-	ensure_blue_green_state
-	color="$(read_active_color)"
-	compose_in_root up -d --no-build --pull never --no-recreate postgres redis
+	local color nginx_generation_before nginx_generation_after
+	ensure_blue_green_state || return 1
+	color="$(read_active_color)" || return 1
+	if ! nginx_generation_before="$(stable_nginx_running_generation)"; then
+		warn "could not inspect the stable Nginx instance before service convergence"
+		return 1
+	fi
+	compose_in_root up -d --no-build --pull never --no-recreate postgres redis || return 1
 	# Compose v2.27 supports `up --pull` but not `run --pull`. The migration
 	# service inherits `pull_policy: never` from the release Compose model, so
 	# this remains offline without relying on a version-sensitive CLI flag.
-	compose_in_root --profile tools run --rm --no-deps migration
-	compose_in_root up -d --no-build --pull never worker scheduler
-	compose_color "${color}" up -d --no-build --pull never "api-${color}" "web-${color}"
+	compose_in_root --profile tools run --rm --no-deps migration || return 1
+	compose_in_root up -d --no-build --pull never worker scheduler || return 1
+	compose_color "${color}" up -d --no-build --pull never "api-${color}" "web-${color}" || return 1
 	wait_for_color_health "${color}" || return 1
-	compose_in_root up -d --no-build --pull never nginx
-	# Compose may recreate an active-color container with a new address while the
-	# stable gateway itself stays running. Reload so Nginx resolves the current
-	# service addresses instead of retaining a stale upstream from its last start.
-	reload_stable_nginx || return 1
+	compose_in_root up -d --no-build --pull never nginx || return 1
+	if ! nginx_generation_after="$(stable_nginx_running_generation)"; then
+		warn "could not inspect the stable Nginx instance after service convergence"
+		return 1
+	fi
+	if [[ -n "${nginx_generation_before}" \
+		&& "${nginx_generation_before}" == "${nginx_generation_after}" ]]; then
+		# The stable gateway stayed continuously online while an active-color
+		# container may have acquired a new address. Reload only this case so
+		# Nginx resolves the current upstream without racing a new master process.
+		reload_stable_nginx || return 1
+	else
+		log "Stable Nginx started with the current configuration; reload is not required"
+	fi
+	wait_for_services_health "${HFL_HEALTH_TIMEOUT_SECONDS:-600}" nginx || return 1
 }
 
 drain_api_color() {
