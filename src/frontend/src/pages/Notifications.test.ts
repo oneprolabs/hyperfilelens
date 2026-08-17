@@ -28,6 +28,7 @@ vi.mock('../lib/notificationApi', () => ({
 const HflTablePanelStub = defineComponent({
   template: `
     <div>
+      <slot name="toolbar" />
       <slot name="toolbar-utility" />
       <slot name="table" :table-max-height="500" />
       <slot name="footer" />
