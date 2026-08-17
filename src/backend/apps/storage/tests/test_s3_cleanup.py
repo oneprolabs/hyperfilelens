@@ -449,9 +449,13 @@ class S3PrefixStateTests(SimpleTestCase):
         self.assertTrue(self._has_state())
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
-    def test_fails_closed_when_empty_prefix_version_api_is_unsupported(
+    def test_treats_versions_as_absent_when_version_api_is_unsupported(
         self, build_client
     ):
+        # Older S3-compatible servers (e.g. early MinIO releases) do not
+        # implement ListObjectVersions. Because the objects listing already
+        # proved the Prefix holds no current objects, versions are treated as
+        # absent instead of failing the whole probe.
         client = mock.Mock()
         client.list_objects_v2.return_value = {}
         client.list_object_versions.side_effect = ClientError(
@@ -470,8 +474,14 @@ class S3PrefixStateTests(SimpleTestCase):
         client.list_multipart_uploads.return_value = {}
         build_client.return_value = client
 
-        with self.assertRaises(S3ClientError):
-            self._has_state()
+        self.assertIs(self._has_state(), False)
+        client.list_multipart_uploads.assert_called_once()
+
+        # A multipart upload still makes the Prefix count as occupied.
+        client.list_multipart_uploads.return_value = {
+            "Uploads": [{"Key": "repo/incomplete", "UploadId": "u-1"}]
+        }
+        self.assertIs(self._has_state(), True)
 
     def _has_state(self):
         return s3_prefix_has_any_state(

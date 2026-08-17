@@ -662,15 +662,21 @@ def s3_prefix_has_any_state(
         objects = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
         if objects.get("Contents"):
             return True
-        # A version-listing failure is intentionally propagated. Without a
-        # successful version probe we cannot prove that historical objects or
-        # delete markers are absent, so claiming the Prefix would risk
-        # reusing a repository location that still contains hidden data.
-        versions = client.list_object_versions(
-            Bucket=bucket,
-            Prefix=prefix,
-            MaxKeys=1,
-        )
+        try:
+            versions = client.list_object_versions(
+                Bucket=bucket,
+                Prefix=prefix,
+                MaxKeys=1,
+            )
+        except ClientError as exc:
+            # Older S3-compatible servers (e.g. early MinIO releases) do not
+            # implement ListObjectVersions and report NotImplemented. The
+            # objects listing above already proved that the Prefix holds no
+            # current objects, so treat historical versions as absent rather
+            # than failing the whole probe.
+            if not _is_unsupported_s3_header_error(exc):
+                raise
+            versions = {}
         if versions.get("Versions") or versions.get("DeleteMarkers"):
             return True
         uploads = client.list_multipart_uploads(
