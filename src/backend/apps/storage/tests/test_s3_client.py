@@ -622,7 +622,7 @@ class CreateS3BucketTests(TestCase):
         client.list_buckets.assert_not_called()
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
-    def test_rejects_an_existing_bucket_name(self, client_factory):
+    def test_rejects_an_existing_bucket_name_that_holds_data(self, client_factory):
         client = mock.Mock()
         client.create_bucket.side_effect = ClientError(
             {
@@ -631,6 +631,7 @@ class CreateS3BucketTests(TestCase):
             },
             "CreateBucket",
         )
+        client.list_objects_v2.return_value = {"Contents": [{"Key": "existing"}]}
         client_factory.return_value = client
 
         with self.assertRaisesRegex(S3ClientError, "already exists"):
@@ -641,6 +642,33 @@ class CreateS3BucketTests(TestCase):
                 access_key_id="AK",
                 secret_access_key="SK",
             )
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_allows_reinitialization_when_existing_bucket_is_empty(self, client_factory):
+        client = mock.Mock()
+        client.create_bucket.side_effect = ClientError(
+            {
+                "Error": {"Code": "BucketAlreadyOwnedByYou", "Message": "owned"},
+                "ResponseMetadata": {"HTTPStatusCode": 409},
+            },
+            "CreateBucket",
+        )
+        client.list_objects_v2.return_value = {}
+        client.list_object_versions.return_value = {}
+        client.list_multipart_uploads.return_value = {}
+        client_factory.return_value = client
+
+        create_s3_bucket(
+            endpoint="https://s3.example.com",
+            region="us-east-1",
+            bucket="leftover-bucket",
+            access_key_id="AK",
+            secret_access_key="SK",
+        )
+
+        client.list_objects_v2.assert_called_once_with(
+            Bucket="leftover-bucket", Prefix="", MaxKeys=1
+        )
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
     def test_legacy_gateway_retries_without_location_constraint(self, client_factory):
