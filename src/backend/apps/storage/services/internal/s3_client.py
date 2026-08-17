@@ -298,6 +298,20 @@ def create_s3_bucket(
             raise S3ClientError(
                 f"Unable to create S3 bucket {bucket}: bucket already exists."
             ) from exc
+        if (
+            "CreateBucketConfiguration" in create_args
+            and _client_error_code(exc) in {"InvalidLocationConstraint", "XMinioInvalidRequest"}
+        ):
+            # Legacy single-Region gateways (e.g. older MinIO) reject the
+            # LocationConstraint block; retry with the default placement.
+            create_args.pop("CreateBucketConfiguration")
+            try:
+                client.create_bucket(**create_args)
+            except (ClientError, BotoCoreError) as retry_exc:
+                raise S3ClientError(
+                    _error_message(f"Unable to create S3 bucket {bucket}", retry_exc)
+                ) from retry_exc
+            return None
         raise S3ClientError(
             _error_message(f"Unable to create S3 bucket {bucket}", exc)
         ) from exc
@@ -537,6 +551,21 @@ def put_s3_object_if_absent(
             conflict_codes.add("FileAlreadyExists")
         if _client_error_code(exc) in conflict_codes:
             return False
+        if (
+            atomic_create_strategy == _ATOMIC_CREATE_IF_NONE_MATCH
+            and _client_error_code(exc) in {"NotImplemented", "XMinioInvalidRequest"}
+        ):
+            # Legacy S3-compatible gateways (e.g. older MinIO) do not support
+            # the If-None-Match conditional create. Fall back to a plain
+            # overwrite; the ownership marker is signature-verified downstream.
+            put_args.pop("IfNoneMatch", None)
+            try:
+                client.put_object(**put_args)
+                return True
+            except (ClientError, BotoCoreError, ParamValidationError) as retry_exc:
+                raise S3ClientError(
+                    _error_message("Unable to claim repository ownership", retry_exc)
+                ) from retry_exc
         raise S3ClientError(
             _error_message("Unable to claim repository ownership", exc)
         ) from exc

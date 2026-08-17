@@ -642,6 +642,45 @@ class CreateS3BucketTests(TestCase):
                 secret_access_key="SK",
             )
 
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_legacy_gateway_retries_without_location_constraint(self, client_factory):
+        client = mock.Mock()
+        client.create_bucket.side_effect = [
+            ClientError(
+                {
+                    "Error": {
+                        "Code": "InvalidLocationConstraint",
+                        "Message": "region not supported",
+                    },
+                    "ResponseMetadata": {"HTTPStatusCode": 400},
+                },
+                "CreateBucket",
+            ),
+            None,
+        ]
+        client_factory.return_value = client
+
+        create_s3_bucket(
+            endpoint="https://minio.example.com",
+            region="cn-north-1",
+            bucket="new-bucket",
+            access_key_id="AK",
+            secret_access_key="SK",
+        )
+
+        self.assertEqual(client.create_bucket.call_count, 2)
+        self.assertEqual(
+            client.create_bucket.call_args_list[0],
+            mock.call(
+                Bucket="new-bucket",
+                CreateBucketConfiguration={"LocationConstraint": "cn-north-1"},
+            ),
+        )
+        self.assertEqual(
+            client.create_bucket.call_args_list[1],
+            mock.call(Bucket="new-bucket"),
+        )
+
 
 class InitializeS3RepositoryBucketModeTests(TestCase):
     def _repository(self, mode):
@@ -894,3 +933,29 @@ class S3OwnershipMarkerAtomicCreateTests(TestCase):
                 endpoint="https://oss-cn-beijing.aliyuncs.com",
             )
         )
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_legacy_gateway_falls_back_to_plain_overwrite(self, client_factory):
+        client = mock.Mock()
+        client.put_object.side_effect = [
+            ClientError(
+                {
+                    "Error": {
+                        "Code": "NotImplemented",
+                        "Message": "conditional write unsupported",
+                    },
+                    "ResponseMetadata": {"HTTPStatusCode": 501},
+                },
+                "PutObject",
+            ),
+            None,
+        ]
+        client_factory.return_value = client
+
+        self.assertTrue(self._put())
+
+        self.assertEqual(client.put_object.call_count, 2)
+        first_call = client.put_object.call_args_list[0]
+        second_call = client.put_object.call_args_list[1]
+        self.assertIn("IfNoneMatch", first_call.kwargs)
+        self.assertNotIn("IfNoneMatch", second_call.kwargs)
