@@ -157,9 +157,43 @@ def payload_to_parsed(data: dict[str, Any]) -> tuple[int, ParsedUplink] | None:
     )
 
 
-def _acknowledge_entry(r, *, entry_id: str) -> None:
-    r.xack(NODE_UPLINK_STREAM, UPLINK_INGEST_GROUP, entry_id)
-    r.xdel(NODE_UPLINK_STREAM, entry_id)
+def _acknowledge_entry(
+    r,
+    *,
+    entry_id: str,
+    task_id: str = "",
+    marker_token: str = "",
+) -> None:
+    """Atomically clear this entry's marker and acknowledge its projection."""
+    marker_key = (
+        redis_store.task_uplink_activity_key(task_id)
+        if task_id and marker_token
+        else "task_uplink_activity:unused"
+    )
+    r.eval(
+        """
+        local acknowledged = redis.call('xack', KEYS[1], ARGV[1], ARGV[2])
+        local deleted = redis.call('xdel', KEYS[1], ARGV[2])
+        local marker_deleted = 0
+        if ARGV[3] ~= '' then
+            local raw = redis.call('get', KEYS[2])
+            if raw then
+                local decoded, payload = pcall(cjson.decode, raw)
+                if decoded and type(payload) == 'table'
+                    and tostring(payload['marker_token'] or '') == ARGV[3] then
+                    marker_deleted = redis.call('del', KEYS[2])
+                end
+            end
+        end
+        return {acknowledged, deleted, marker_deleted}
+        """,
+        2,
+        NODE_UPLINK_STREAM,
+        marker_key,
+        UPLINK_INGEST_GROUP,
+        str(entry_id),
+        str(marker_token),
+    )
 
 
 def stream_entry_age_seconds(entry_id: str, *, now: float | None = None) -> float:
@@ -196,6 +230,8 @@ def _quarantine_failed_entry(
     entry_id: str,
     raw_payload: str,
     error: Exception,
+    task_id: str = "",
+    marker_token: str = "",
 ) -> tuple[bool, int, float]:
     """Move a persistently failing entry to DLQ without discarding its payload."""
     deliveries = _pending_delivery_count(r, entry_id=entry_id)
@@ -206,6 +242,11 @@ def _quarantine_failed_entry(
     ):
         return False, deliveries, age_seconds
     try:
+        marker_key = (
+            redis_store.task_uplink_activity_key(task_id)
+            if task_id and marker_token
+            else "task_uplink_activity:unused"
+        )
         r.eval(
             """
             local dead_letter_id = redis.call(
@@ -219,11 +260,22 @@ def _quarantine_failed_entry(
             )
             redis.call('xack', KEYS[1], ARGV[1], ARGV[2])
             redis.call('xdel', KEYS[1], ARGV[2])
+            if ARGV[9] ~= '' then
+                local raw = redis.call('get', KEYS[3])
+                if raw then
+                    local decoded, payload = pcall(cjson.decode, raw)
+                    if decoded and type(payload) == 'table'
+                        and tostring(payload['marker_token'] or '') == ARGV[9] then
+                        redis.call('del', KEYS[3])
+                    end
+                end
+            end
             return dead_letter_id
             """,
-            2,
+            3,
             NODE_UPLINK_STREAM,
             NODE_UPLINK_DEAD_LETTER_STREAM,
+            marker_key,
             UPLINK_INGEST_GROUP,
             str(entry_id),
             str(entry_id),
@@ -232,6 +284,7 @@ def _quarantine_failed_entry(
             str(int(age_seconds)),
             type(error).__name__,
             str(time.time()),
+            str(marker_token),
         )
     except RedisError:
         logger.exception("uplink DLQ transaction failed entry_id=%s", entry_id)
@@ -391,13 +444,10 @@ def drain_uplink_stream(*, count: int | None = None) -> int:
                 entry_id=entry_id,
                 raw_payload=str(raw),
                 error=exc,
+                task_id=str(message.task_id or ""),
+                marker_token=marker_token,
             )
             if quarantined:
-                if message.task_id and marker_token:
-                    redis_store.clear_task_uplink_activity(
-                        task_id=message.task_id,
-                        marker_token=marker_token,
-                    )
                 logger.error(
                     "uplink quarantined after projection failures "
                     "entry_id=%s node_id=%s msg_type=%s deliveries=%s age_seconds=%s",
@@ -416,11 +466,11 @@ def drain_uplink_stream(*, count: int | None = None) -> int:
                     deliveries,
                 )
             continue
-        if message.task_id and marker_token:
-            redis_store.clear_task_uplink_activity(
-                task_id=message.task_id,
-                marker_token=marker_token,
-            )
-        _acknowledge_entry(r, entry_id=entry_id)
+        _acknowledge_entry(
+            r,
+            entry_id=entry_id,
+            task_id=str(message.task_id or ""),
+            marker_token=marker_token,
+        )
         processed += 1
     return processed

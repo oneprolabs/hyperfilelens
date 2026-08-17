@@ -272,6 +272,10 @@ def task_stream_key(task_id: str) -> str:
     return f"task_stream:{task_id}"
 
 
+def task_stream_waiters_key(task_id: str) -> str:
+    return f"task_stream_waiters:{task_id}"
+
+
 def task_info_key(task_id: str) -> str:
     return f"task_info:{task_id}"
 
@@ -518,9 +522,7 @@ def get_task_uplink_activity(*, task_id: str) -> dict[str, Any] | None:
     return get_task_uplink_activities(task_ids=[task_id]).get(str(task_id))
 
 
-def get_task_uplink_activities(
-    *, task_ids: list[str]
-) -> dict[str, dict[str, Any]]:
+def get_task_uplink_activities(*, task_ids: list[str]) -> dict[str, dict[str, Any]]:
     """Batch-read queued Agent task activity without holding database locks."""
     normalized_ids = [str(task_id) for task_id in task_ids if task_id]
     if not normalized_ids:
@@ -549,21 +551,123 @@ def get_task_uplink_activities(
     return activities
 
 
+def register_task_stream_waiter(*, task_id: str, ttl_seconds: int) -> str | None:
+    """Register one token-owned waiter without shortening a peer lease."""
+    r = get_redis()
+    if r is None:
+        return None
+    ttl = max(1, int(ttl_seconds))
+    waiter_token = uuid.uuid4().hex
+    try:
+        r.eval(
+            """
+            redis.call('hset', KEYS[1], ARGV[1], '1')
+            local current_ttl = redis.call('ttl', KEYS[1])
+            if current_ttl < tonumber(ARGV[2]) then
+                redis.call('expire', KEYS[1], ARGV[2])
+            end
+            return redis.call('hlen', KEYS[1])
+            """,
+            1,
+            task_stream_waiters_key(task_id),
+            waiter_token,
+            ttl,
+        )
+    except redis.RedisError as exc:
+        logger.warning(
+            "task stream waiter registration failed task=%s: %s", task_id, exc
+        )
+        return None
+    return waiter_token
+
+
+def unregister_task_stream_waiter(*, task_id: str, waiter_token: str) -> None:
+    """Release only this token and remove notifications after the last waiter exits."""
+    r = get_redis()
+    if r is None:
+        return
+    try:
+        r.eval(
+            """
+            redis.call('hdel', KEYS[1], ARGV[1])
+            local count = redis.call('hlen', KEYS[1])
+            if count == 0 then
+                redis.call('del', KEYS[1])
+                redis.call('del', KEYS[2])
+                return 0
+            end
+            return count
+            """,
+            2,
+            task_stream_waiters_key(task_id),
+            task_stream_key(task_id),
+            str(waiter_token),
+        )
+    except redis.RedisError as exc:
+        logger.warning("task stream waiter release failed task=%s: %s", task_id, exc)
+
+
+@contextmanager
+def task_stream_waiter(*, task_id: str, ttl_seconds: int) -> Iterator[bool]:
+    """Keep a bounded notification channel alive for one synchronous waiter."""
+    waiter_token = register_task_stream_waiter(
+        task_id=task_id,
+        ttl_seconds=ttl_seconds,
+    )
+    try:
+        yield waiter_token is not None
+    finally:
+        if waiter_token is not None:
+            unregister_task_stream_waiter(
+                task_id=task_id,
+                waiter_token=waiter_token,
+            )
+
+
 def push_task_stream(*, task_id: str, message: dict[str, Any]) -> None:
     r = get_redis()
     if r is None:
         return
-    r.lpush(task_stream_key(task_id), json.dumps(message, ensure_ascii=False))
+    try:
+        r.eval(
+            """
+            if redis.call('exists', KEYS[1]) == 0 then return 0 end
+            redis.call('lpush', KEYS[2], ARGV[1])
+            redis.call('ltrim', KEYS[2], 0, tonumber(ARGV[2]) - 1)
+            local waiter_ttl = redis.call('ttl', KEYS[1])
+            local notification_ttl = math.max(waiter_ttl, tonumber(ARGV[3]))
+            redis.call('expire', KEYS[2], notification_ttl)
+            return 1
+            """,
+            2,
+            task_stream_waiters_key(task_id),
+            task_stream_key(task_id),
+            json.dumps(message, ensure_ascii=False),
+            node_conf.TASK_STREAM_MAX_MESSAGES,
+            node_conf.TASK_STREAM_TTL_GRACE_SECONDS,
+        )
+    except redis.RedisError as exc:
+        # PostgreSQL remains authoritative; losing a wake-up only adds one poll interval.
+        logger.warning("task stream notification failed task=%s: %s", task_id, exc)
 
 
-def bpop_task_stream(*, task_id: str, timeout_seconds: int = 15) -> dict[str, Any] | None:
+def bpop_task_stream(
+    *, task_id: str, timeout_seconds: int = 15
+) -> dict[str, Any] | None:
     r = get_redis()
     if r is None:
         return None
     try:
         item = r.blpop(task_stream_key(task_id), timeout=max(1, int(timeout_seconds)))
     except RedisTimeoutError as exc:
-        logger.warning("node redis task stream wait timed out for task %s: %s", task_id, exc)
+        logger.warning(
+            "node redis task stream wait timed out for task %s: %s", task_id, exc
+        )
+        return None
+    except redis.RedisError as exc:
+        logger.warning(
+            "node redis task stream unavailable for task %s: %s", task_id, exc
+        )
         return None
     if not item:
         return None
@@ -574,7 +678,9 @@ def bpop_task_stream(*, task_id: str, timeout_seconds: int = 15) -> dict[str, An
         return {"raw": raw}
 
 
-def set_task_info(*, task_id: str, data: dict[str, Any], ttl_seconds: int = 3600) -> None:
+def set_task_info(
+    *, task_id: str, data: dict[str, Any], ttl_seconds: int = 3600
+) -> None:
     r = get_redis()
     if r is None:
         return
