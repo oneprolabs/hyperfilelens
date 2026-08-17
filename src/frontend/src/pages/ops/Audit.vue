@@ -192,7 +192,7 @@ function pad2(n: number) {
 
 function formatLocalInputDateTime(date?: Date | null) {
   if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return ''
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
 }
 
 function parseLocalInputDateTime(value: string) {
@@ -202,9 +202,11 @@ function parseLocalInputDateTime(value: string) {
   return Number.isFinite(date.getTime()) ? date : null
 }
 
-function isoDateTimeParam(value: string) {
+function isoDateTimeParam(value: string, inclusiveEnd = false) {
   const date = parseLocalInputDateTime(value)
-  return date ? date.toISOString() : value
+  if (!date) return value
+  if (inclusiveEnd) date.setMilliseconds(999)
+  return date.toISOString()
 }
 
 const auditAdvancedRangeLabel = computed(() => {
@@ -254,7 +256,7 @@ function buildParams(): Record<string, string | number> {
   if (filters.time_range && filters.time_range !== 'custom') p.time_range = filters.time_range
   if (filters.time_range === 'custom') {
     if (filters.start_date) p.start_date = isoDateTimeParam(filters.start_date)
-    if (filters.end_date) p.end_date = isoDateTimeParam(filters.end_date)
+    if (filters.end_date) p.end_date = isoDateTimeParam(filters.end_date, true)
   }
   if (activeCorrelation.value) {
     p.correlation_id = activeCorrelation.value

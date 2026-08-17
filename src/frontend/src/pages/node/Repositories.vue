@@ -1378,7 +1378,11 @@ function repositoryTaskCreatedRangeParams() {
   if (repositoryTaskTimeMode.value === 'range' && repositoryTaskDateRange.value) {
     return {
       created_after: repositoryTaskDateRange.value[0].toISOString(),
-      created_before: repositoryTaskDateRange.value[1].toISOString(),
+      created_before: (() => {
+        const end = new Date(repositoryTaskDateRange.value[1])
+        end.setMilliseconds(999)
+        return end.toISOString()
+      })(),
     }
   }
   return { created_after: undefined, created_before: undefined }
@@ -1404,11 +1408,25 @@ function resetRepositoryTaskAdvancedFilterDraft() {
 }
 
 function applyRepositoryTaskAdvancedFilters() {
-  repositoryTaskDateRange.value = repositoryTaskAdvancedFilterDraft.dateRange
+  repositoryTaskDateRange.value = normalizeRepositoryTaskDateRange(repositoryTaskAdvancedFilterDraft.dateRange)
   if (repositoryTaskDateRange.value) repositoryTaskTimeMode.value = 'range'
   else if (repositoryTaskTimeMode.value === 'range') repositoryTaskTimeMode.value = lastRepositoryTaskQuickTimeMode.value
   repositoryTaskAdvancedFilterOpen.value = false
   applyRepositoryTaskFilters()
+}
+
+function normalizeRepositoryTaskDateRange(range: [Date, Date] | null) {
+  if (!range) return null
+  const [start, selectedEnd] = range
+  const end = new Date(selectedEnd)
+  const now = new Date()
+  if (end.getFullYear() === now.getFullYear()
+    && end.getMonth() === now.getMonth()
+    && end.getDate() === now.getDate()
+    && end.getHours() === 23 && end.getMinutes() === 59 && end.getSeconds() === 59) {
+    return [start, now] as [Date, Date]
+  }
+  return [start, end] as [Date, Date]
 }
 
 function onRepositoryTaskAdvancedFilterClosed() {
@@ -4091,6 +4109,9 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
           <ElDatePicker
             v-model="repositoryTaskAdvancedFilterDraft.dateRange"
             type="datetimerange"
+            format="YYYY-MM-DD HH:mm:ss"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            :default-time="[new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)]"
             :shortcuts="repositoryTaskDateRangeShortcuts"
             :start-placeholder="t('ops.task.startTime')"
             :end-placeholder="t('ops.task.endTime')"

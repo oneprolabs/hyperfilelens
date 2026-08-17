@@ -455,8 +455,8 @@ function toggleScheduleMonthDay(day: number) {
               v-model="policyForm.scheduleStartsAt"
               type="datetime"
               class="schedule-context-control"
-              format="YYYY-MM-DD HH:mm"
-              value-format="YYYY-MM-DDTHH:mm"
+              format="YYYY-MM-DD HH:mm:ss"
+              value-format="YYYY-MM-DDTHH:mm:ss"
               :placeholder="t('protection.policiesPage.scheduleStartsAtPlaceholder')"
             />
           </ElFormItem>

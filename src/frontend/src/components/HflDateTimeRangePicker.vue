@@ -79,12 +79,12 @@ function pad2(n: number) {
 }
 
 function formatLocalDateTime(date: Date) {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
 }
 
 function rangeFromProps(): RangeValue {
   if (!props.start || !props.end) return ''
-  return [props.start.slice(0, 16), props.end.slice(0, 16)]
+  return [props.start.slice(0, 19), props.end.slice(0, 19)]
 }
 
 function displayRangeFromProps(): RangeValue {
@@ -114,7 +114,7 @@ function normalizeRange(value: unknown): RangeValue {
   if (start instanceof Date && end instanceof Date) {
     return [formatLocalDateTime(start), formatLocalDateTime(end)]
   }
-  return [String(start).slice(0, 16), String(end).slice(0, 16)]
+  return [String(start).slice(0, 19), String(end).slice(0, 19)]
 }
 
 function onUpdate(value: unknown) {
@@ -122,7 +122,10 @@ function onUpdate(value: unknown) {
 }
 
 function onChange(value: unknown) {
-  const range = normalizeRange(value)
+  let range = normalizeRange(value)
+  if (range && isTodayEndOfDay(range[1])) {
+    range = [range[0], formatLocalDateTime(new Date())]
+  }
   pickerValue.value = range
   if (suppressNextChange.value) {
     suppressNextChange.value = false
@@ -140,6 +143,18 @@ function onChange(value: unknown) {
     return
   }
   emit('apply', range[0], range[1])
+}
+
+function isTodayEndOfDay(value: string) {
+  const date = new Date(value)
+  const now = new Date()
+  return Number.isFinite(date.getTime())
+    && date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate()
+    && date.getHours() === 23
+    && date.getMinutes() === 59
+    && date.getSeconds() === 59
 }
 
 function onClear() {
@@ -168,8 +183,9 @@ watch(
       class="hfl-date-time-range-picker__trigger"
       type="datetimerange"
       unlink-panels
-      format="YYYY-MM-DD HH:mm"
-      value-format="YYYY-MM-DDTHH:mm"
+      format="YYYY-MM-DD HH:mm:ss"
+      value-format="YYYY-MM-DDTHH:mm:ss"
+      :default-time="[new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)]"
       :name="rangeInputNames"
       :aria-label="label"
       :shortcuts="shortcuts"
