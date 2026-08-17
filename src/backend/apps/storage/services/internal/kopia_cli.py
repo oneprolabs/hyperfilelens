@@ -581,5 +581,10 @@ def _repository_already_exists(result: subprocess.CompletedProcess[str]) -> bool
     output = f"{result.stdout}\n{result.stderr}".lower()
     return any(
         token in output
-        for token in ("already exists", "already initialized", "repository exists")
+        for token in (
+            "already exists",
+            "already initialized",
+            "repository exists",
+            "found existing data in storage location",
+        )
     )

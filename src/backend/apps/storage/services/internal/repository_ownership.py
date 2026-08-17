@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from django.core.exceptions import ValidationError
@@ -24,8 +25,10 @@ from apps.storage.services.internal.repository_secrets import (
     resolve_repository_secrets,
 )
 from apps.storage.services.internal.s3_client import (
+    delete_s3_object,
     identify_s3_namespace,
     list_s3_object_keys,
+    put_s3_object,
     put_s3_object_if_absent,
     read_s3_object,
     s3_prefix_has_any_state,
@@ -466,6 +469,30 @@ def _require_matching_marker(
                 "Repository ownership belongs to another repository."
             )
     return marker
+
+
+@contextmanager
+def s3_ownership_marker_hidden(repository: Repository):
+    """Hide the ownership marker while Kopia initializes an empty Prefix.
+
+    ``claim_s3_repository_ownership`` atomically writes an ownership marker
+    before the physical repository is created. Kopia, however, refuses
+    ``repository create`` when the target Prefix already contains *any*
+    object - including our own marker - and reports "found existing data in
+    storage location". Temporarily remove the marker for the duration of the
+    physical create and restore it afterwards so the ownership proof survives.
+    """
+    s3_args = _s3_args(repository)
+    marker_key = _marker_key(repository)
+    marker = read_s3_object(**s3_args, key=marker_key)
+    if marker is None:
+        yield
+        return
+    delete_s3_object(**s3_args, key=marker_key)
+    try:
+        yield
+    finally:
+        put_s3_object(**s3_args, key=marker_key, body=marker)
 
 
 def _sign_marker(payload: dict[str, object]) -> str:
