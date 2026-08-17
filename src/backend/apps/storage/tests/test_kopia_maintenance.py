@@ -116,6 +116,27 @@ class KopiaRepositoryCreateCommandTests(SimpleTestCase):
             ["repository", "create", "s3"],
         )
 
+    @patch("apps.storage.services.internal.kopia_cli._run_repository_command")
+    def test_prefix_with_ownership_marker_is_rejected_as_existing(self, run_command):
+        run_command.return_value = CompletedProcess(
+            [],
+            1,
+            stdout="",
+            stderr="unable to get repository storage: found existing data in storage location",
+        )
+        repository = Repository(
+            id=53,
+            name="S3 repository",
+            repo_type=Repository.Type.S3,
+            s3_bucket="bucket",
+            config={"endpoint": "s3.example.test", "prefix": "hfl/"},
+        )
+
+        with self.assertRaises(KopiaRepositoryAlreadyExistsError):
+            create_s3_repository(repository)
+
+        self.assertEqual(run_command.call_count, 1)
+
 
 class KopiaSnapshotDeleteCommandTests(SimpleTestCase):
     @patch(

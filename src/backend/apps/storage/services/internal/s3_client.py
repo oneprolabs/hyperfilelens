@@ -414,6 +414,73 @@ def read_s3_object(
         ) from exc
 
 
+def delete_s3_object(
+    *,
+    endpoint: str | None,
+    region: str | None,
+    bucket: str,
+    key: str,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = 15,
+) -> None:
+    """Remove a single owned object (used to hide the ownership marker)."""
+    client = _client(
+        endpoint=endpoint,
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        s3_url_style=s3_url_style,
+        use_tls=use_tls,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        client.delete_object(Bucket=bucket, Key=key)
+    except (BotoCoreError, ClientError) as exc:
+        raise S3ClientError(
+            _error_message("Unable to hide repository ownership marker", exc)
+        ) from exc
+
+
+def put_s3_object(
+    *,
+    endpoint: str | None,
+    region: str | None,
+    bucket: str,
+    key: str,
+    body: bytes,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = 15,
+) -> None:
+    """Overwrite an existing object (used to restore the ownership marker)."""
+    client = _client(
+        endpoint=endpoint,
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        s3_url_style=s3_url_style,
+        use_tls=use_tls,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=body,
+            ContentLength=len(body),
+            ContentType="application/json",
+        )
+    except (BotoCoreError, ClientError, ParamValidationError) as exc:
+        raise S3ClientError(
+            _error_message("Unable to restore repository ownership marker", exc)
+        ) from exc
+
+
 def put_s3_object_if_absent(
     *,
     platform: str | None = None,

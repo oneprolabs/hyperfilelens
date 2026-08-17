@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from ipaddress import ip_address
 from time import sleep
 from urllib.parse import urlparse
@@ -18,6 +19,7 @@ from apps.storage.services.internal.repository_errors import (
 from apps.storage.services.internal.repository_ownership import (
     RepositoryOwnershipError,
     claim_s3_repository_ownership,
+    s3_ownership_marker_hidden,
     verify_s3_repository_ownership,
 )
 from apps.storage.services.internal.s3_client import (
@@ -154,9 +156,24 @@ def initialize_s3_repository(repository: Repository) -> None:
         # is no database Claim to coordinate for such an object); those calls
         # cannot be used by the Controller lifecycle and therefore must not
         # weaken persisted-repository cleanup authorization.
+        # Kopia refuses to create a repository inside a Prefix that already
+        # contains any object - including the ownership marker written by the
+        # Claim (it reports "found existing data in storage location").
+        # Claim first so the marker is validated (a residual marker left by a
+        # failed attempt is matched and kept; a fresh Prefix is atomically
+        # claimed). Only then hide the marker while Kopia initializes the empty
+        # Prefix, and restore it afterwards so the ownership proof survives.
+        # Unsaved models (older unit callers) have no Claim and therefore no
+        # marker to hide.
         if repository.pk is not None:
             claim_s3_repository_ownership(repository)
-        create_s3_repository(repository)
+        marker_context = (
+            s3_ownership_marker_hidden(repository)
+            if repository.pk is not None
+            else nullcontext()
+        )
+        with marker_context:
+            create_s3_repository(repository)
     except S3UrlStyleProbeError as exc:
         raise RepositoryInitializationError(_sanitize(str(exc), repository)) from exc
     except KopiaRepositoryAlreadyExistsError as exc:
