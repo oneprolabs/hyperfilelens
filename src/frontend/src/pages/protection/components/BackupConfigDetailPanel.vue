@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useProtectionDemoStore } from '../../../composables/useProtectionDemoStore'
+import { useDrawerTableMaxHeight } from '../../../composables/useDrawerTableMaxHeight'
 import {
   getBackupConfig,
   type BackupConfigDetail,
@@ -16,6 +17,7 @@ const { t } = useI18n()
 const store = useProtectionDemoStore()
 const realConfig = ref<BackupConfigDetail | null>(null)
 const loading = ref(false)
+const { tableMaxHeight, containerRef: tableRef } = useDrawerTableMaxHeight()
 
 const backup = computed(() => store.getBackup(props.backupId))
 const policy = computed(() =>
@@ -102,8 +104,10 @@ watch(
         {{ t('protection.backupDetail.panelDirList') }}
       </div>
       <el-table
+        ref="tableRef"
         v-table-overflow-title
         :data="realConfig.directories"
+        :max-height="tableMaxHeight"
         stripe
         size="small"
         class="hfl-list-table"

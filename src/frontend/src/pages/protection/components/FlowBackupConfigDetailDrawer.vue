@@ -36,7 +36,7 @@ const backupTitle = computed(() => {
     destroy-on-close
     append-to-body
     :z-index="3100"
-    class="dp-flow-backup-config-detail-drawer"
+    class="hfl-detail-drawer dp-flow-backup-config-detail-drawer"
     :show-close="true"
   >
     <template
@@ -45,10 +45,12 @@ const backupTitle = computed(() => {
     >
       <span class="truncate text-base font-semibold text-slate-900">{{ backupTitle }}</span>
     </template>
-    <BackupConfigDetailPanel
-      v-if="backupId && drawerOpen"
-      :backup-id="backupId"
-    />
+    <div class="hfl-detail-drawer__body">
+      <BackupConfigDetailPanel
+        v-if="backupId && drawerOpen"
+        :backup-id="backupId"
+      />
+    </div>
   </el-drawer>
 </template>
 

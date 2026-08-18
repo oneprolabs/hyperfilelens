@@ -30,6 +30,7 @@ import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import { remainingLimitExceedsAvailableStorage, repositoryCapacityParts, repositoryStorageParts } from '../../lib/repositoryCapacityDisplay'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
+import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import {
   createStorageRepository,
@@ -727,6 +728,8 @@ const form = ref({
 })
 
 const { t } = useI18n()
+const { tableMaxHeight: associatedSourcesTableMaxHeight, containerRef: associatedSourcesTableRef } = useDrawerTableMaxHeight()
+const { tableMaxHeight: repositoryTasksTableMaxHeight, containerRef: repositoryTasksTableRef } = useDrawerTableMaxHeight()
 const route = useRoute()
 const router = useRouter()
 const pageRequests = usePageRequestScope()
@@ -3702,10 +3705,12 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
           >
             <div class="repo-associated-sources">
               <ElTable
+                ref="associatedSourcesTableRef"
                 v-loading="associatedSourcesLoading"
                 :data="associatedSources"
                 stripe
                 :empty-text="t('repositoriesPage.associatedSourcesEmpty')"
+                :max-height="associatedSourcesTableMaxHeight"
                 class="hfl-list-table repo-associated-sources__table"
               >
                 <ElTableColumn
@@ -4006,10 +4011,12 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 class="repo-tasks__error"
               />
               <ElTable
+                ref="repositoryTasksTableRef"
                 v-loading="repositoryTasksLoading"
                 :data="repositoryTasks"
                 stripe
                 :empty-text="t('repositoriesPage.tasksEmpty')"
+                :max-height="repositoryTasksTableMaxHeight"
                 class="hfl-list-table repo-tasks__table"
                 @row-click="openRepositoryTaskDetail"
               >

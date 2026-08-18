@@ -26,6 +26,7 @@ import { apiErrorMessage } from '../../lib/api'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useDrawerScrollReset } from '../../composables/useDrawerScrollReset'
+import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import {
   useProtectionDemoStore,
@@ -53,6 +54,7 @@ import { listBackupSelectableSources, type BackupSelectableSource } from '../../
 import { listTasks, type TaskRow } from '../../lib/taskApi'
 
 const { t, te, locale } = useI18n()
+const { tableMaxHeight: snapshotDrawerTableMaxHeight, containerRef: snapshotDrawerTableRef } = useDrawerTableMaxHeight()
 const route = useRoute()
 const store = useProtectionDemoStore()
 
@@ -1359,7 +1361,7 @@ function closeDeleteSnapshotDialog() {
     destroy-on-close
     :modal="true"
     :size="drawerSize"
-    class="snapshot-detail-drawer"
+    class="hfl-detail-drawer snapshot-detail-drawer"
     @opened="onSnapshotDrawerOpened"
     @closed="onSnapshotDrawerClosed"
   >
@@ -1368,7 +1370,7 @@ function closeDeleteSnapshotDialog() {
     </template>
     <div
       v-if="activeSnapshot"
-      class="snapshot-drawer-body"
+      class="hfl-detail-drawer__body snapshot-drawer-body"
     >
       <p class="text-sm text-slate-500 m-0 mb-3">
         {{
@@ -1384,9 +1386,11 @@ function closeDeleteSnapshotDialog() {
           {{ t('protection.backupDetail.panelDirList') }}
         </div>
         <el-table
+          ref="snapshotDrawerTableRef"
           v-table-column-resize="'protection.backupDetail.snapshotDrawer.dirs'"
           v-table-overflow-title
           :data="activeSnapshot.dirs"
+          :max-height="snapshotDrawerTableMaxHeight"
           stripe
           class="hfl-list-table"
         >
@@ -1461,7 +1465,7 @@ function closeDeleteSnapshotDialog() {
     destroy-on-close
     :modal="true"
     :size="drawerSize"
-    class="task-detail-drawer"
+    class="hfl-detail-drawer task-detail-drawer"
     @opened="onTaskDrawerOpened"
     @closed="onTaskDrawerClosed"
   >
@@ -1471,7 +1475,7 @@ function closeDeleteSnapshotDialog() {
     <div
       v-if="activeTask"
       ref="drawerScrollAnchorRef"
-      class="snapshot-drawer-body"
+      class="hfl-detail-drawer__body snapshot-drawer-body"
     >
       <el-descriptions
         :column="1"

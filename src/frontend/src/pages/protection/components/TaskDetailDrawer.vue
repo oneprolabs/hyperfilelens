@@ -30,6 +30,7 @@ import {
 } from '../../../lib/protectionStopConfirm'
 import { useProtectionStopConfirmDialog } from '../../../composables/useProtectionStopConfirmDialog'
 import { useDrawerScrollReset } from '../../../composables/useDrawerScrollReset'
+import { useDrawerTableMaxHeight } from '../../../composables/useDrawerTableMaxHeight'
 import { useRepositoryTaskCancellation } from '../../../composables/useRepositoryTaskCancellation'
 import ProtectionStopConfirmDialog from '../../../components/ProtectionStopConfirmDialog.vue'
 import { getSourceResource } from '../../../lib/sourceApi'
@@ -71,6 +72,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, te } = useI18n()
+const { tableMaxHeight: resourceTableMaxHeight, containerRef: resourceTableRef } = useDrawerTableMaxHeight()
 const stopConfirmDialog = useProtectionStopConfirmDialog()
 const stopConfirmOpen = stopConfirmDialog.open
 const stopConfirmKind = stopConfirmDialog.kind
@@ -1147,10 +1149,12 @@ watch(
               </div>
               <el-table
                 v-if="targetRepositoryResources.length"
+                ref="resourceTableRef"
                 v-table-column-resize="'repositories.taskDetail.resources'"
                 v-table-overflow-title
                 v-loading="repositoryResourceLoading"
                 :data="repositoryResourceRows"
+                :max-height="resourceTableMaxHeight"
                 class="hfl-list-table hfl-list-table--compact hfl-task-drawer__resource-table"
               >
                 <el-table-column
@@ -1239,10 +1243,12 @@ watch(
               </div>
               <el-table
                 v-if="resourceTypeTabs.length && selectedResourceType === 'backup_source'"
+                ref="resourceTableRef"
                 v-table-column-resize="'protection.taskDetail.resources'"
                 v-table-overflow-title
                 v-loading="backupSourceLoading"
                 :data="backupSourceRows"
+                :max-height="resourceTableMaxHeight"
                 class="hfl-list-table hfl-list-table--compact hfl-task-drawer__resource-table"
               >
                 <el-table-column
@@ -1304,9 +1310,11 @@ watch(
               </el-table>
               <el-table
                 v-else
+                ref="resourceTableRef"
                 v-table-column-resize="'protection.taskDetail.resources'"
                 v-table-overflow-title
                 :data="selectedResources"
+                :max-height="resourceTableMaxHeight"
                 class="hfl-list-table hfl-list-table--compact hfl-task-drawer__resource-table"
               >
                 <el-table-column
@@ -1529,7 +1537,7 @@ watch(
   padding: 14px;
   border: 1px solid rgb(226 232 240);
   border-radius: 10px;
-  background: #fff;
+  background: var(--el-bg-color);
 }
 
 .hfl-task-drawer__hero,

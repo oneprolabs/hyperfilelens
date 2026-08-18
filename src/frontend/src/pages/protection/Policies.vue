@@ -14,6 +14,7 @@ import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import DangerConfirmDialog, { type DangerConfirmItem } from '../../components/DangerConfirmDialog.vue'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
+import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { useListSearch } from '../../composables/useListSearch'
 import { apiErrorMessage } from '../../lib/api'
@@ -81,6 +82,8 @@ type PolicyRetentionDetailLine = {
 }
 
 const { t, locale } = useI18n()
+const { tableMaxHeight: policyUsageTableMaxHeight, containerRef: policyUsageTableRef } = useDrawerTableMaxHeight()
+const { tableMaxHeight: filterUsageTableMaxHeight, containerRef: filterUsageTableRef } = useDrawerTableMaxHeight()
 const { drawerSize } = useResponsiveDrawerWidth()
 const pageRequests = usePageRequestScope()
 const route = useRoute()
@@ -1504,10 +1507,12 @@ function onMoreDisable() {
                 class="mb-3"
               />
               <el-table
+                ref="policyUsageTableRef"
                 v-table-column-resize="'protection.policies.backup.related'"
                 v-table-overflow-title
                 v-loading="relatedBackupConfigsLoading"
                 :data="pagedRelatedBackupConfigs"
+                :max-height="policyUsageTableMaxHeight"
                 stripe
                 row-key="id"
                 class="hfl-list-table policy-related-backup-table"
@@ -1669,10 +1674,12 @@ function onMoreDisable() {
                 class="mb-3"
               />
               <el-table
+                ref="filterUsageTableRef"
                 v-table-column-resize="'protection.policies.filters.related'"
                 v-table-overflow-title
                 v-loading="filterRelatedBackupConfigsLoading"
                 :data="pagedFilterRelatedBackupConfigs"
+                :max-height="filterUsageTableMaxHeight"
                 stripe
                 row-key="id"
                 class="hfl-list-table policy-related-backup-table"
