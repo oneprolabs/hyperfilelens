@@ -16,6 +16,7 @@ from django.utils import timezone
 from common.errors import AppError
 from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
+from apps.node.services.capabilities import missing_node_capabilities
 from apps.node.services.internal.node_registry import node_is_available_for_work
 from apps.node.services.interface import cancel_agent_task, run_agent_task_async
 from apps.node.models.base import NodeRole
@@ -74,6 +75,8 @@ RESTORABLE_SNAPSHOT_STATUSES = (
     BackupSourceSnapshot.Status.PARTIAL,
 )
 ACTIVE_RESTORE_TASK_STATUSES = (Task.Status.PENDING, Task.Status.RUNNING)
+INSIGHT_SAFE_RESTORE_CAPABILITY = "insight_safe_restore_v1"
+INSIGHT_SAFE_CONTENT_POLICY = "regular_files_only_v1"
 
 logger = logging.getLogger(__name__)
 
@@ -1662,6 +1665,7 @@ def _dispatch_restore_items(
             )
         managed_workspace_payload = {
             "managed_workspace_path": workspace_binding.resolved_path(),
+            "insight_content_policy": INSIGHT_SAFE_CONTENT_POLICY,
             **workspace_identity_payload(workspace_binding),
         }
     node = Node.objects.filter(
@@ -1674,6 +1678,18 @@ def _dispatch_restore_items(
     if not node_is_available_for_work(node):
         raise ValidationError(
             {"target_ref_id": "Restore execution node is unavailable or busy."}
+        )
+    if (
+        record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE
+        and missing_node_capabilities(node, [INSIGHT_SAFE_RESTORE_CAPABILITY])
+    ):
+        raise ValidationError(
+            {
+                "target_ref_id": (
+                    "Upgrade the selected Data Gateway Agent before creating "
+                    "a Chat from backup data."
+                )
+            }
         )
     target_nas_payload: dict[str, Any] = {}
     if record.target_type == RestoreRecord.EndpointType.NAS:

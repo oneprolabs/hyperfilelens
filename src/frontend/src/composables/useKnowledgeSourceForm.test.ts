@@ -91,7 +91,11 @@ function mountForm(editingId: number | null = 1): { form: KnowledgeSourceForm; w
   let form!: KnowledgeSourceForm
   const wrapper = mount(defineComponent({
     setup() {
-      form = useKnowledgeSourceForm(ref(editingId), ref('backup_source'))
+      form = useKnowledgeSourceForm(
+        ref(editingId),
+        ref('backup_source'),
+        { snapshotGatewayLinkId: ref(17) },
+      )
       return () => h('div')
     },
   }))
@@ -227,6 +231,8 @@ describe('knowledge source backup scope validation', () => {
 
       await expect(validation).resolves.toBe(true)
       expect(mocks.browseCopilotSnapshotDirectory).toHaveBeenCalledWith(31, {
+        backupSourceSnapshotId: 71,
+        gatewayLinkId: 17,
         path: 'docs',
         limit: 1,
       }, expect.any(AbortSignal))
@@ -256,6 +262,8 @@ describe('knowledge source backup scope validation', () => {
       await flushPromises()
 
       expect(mocks.browseCopilotSnapshotDirectory).toHaveBeenCalledWith(31, {
+        backupSourceSnapshotId: 71,
+        gatewayLinkId: 17,
         path: 'docs',
         limit: 1,
       }, expect.any(AbortSignal))

@@ -310,6 +310,23 @@ describe('New Chat Public Data Gateway warning', () => {
     wrapper.unmount()
   })
 
+  it('uses the platform default Gateway as the snapshot reader in Auto mode', async () => {
+    const nonDefaultGateway: LensCopilotGatewayOption = {
+      ...publicGateway,
+      gateway_link_id: 12,
+      gateway_id: 102,
+      name: 'public-dg-02',
+      is_platform_default: false,
+    }
+    const wrapper = await mountNewChat({
+      gatewayResponse: [nonDefaultGateway, publicGateway],
+    })
+
+    const options = mocks.useKnowledgeSourceForm.mock.calls[0][2]
+    expect(options.snapshotGatewayLinkId.value).toBe(publicGateway.gateway_link_id)
+    wrapper.unmount()
+  })
+
   it('reuses the create request key after an uncertain transport failure', async () => {
     mocks.createCopilotSession
       .mockRejectedValueOnce(new Error('network unavailable'))

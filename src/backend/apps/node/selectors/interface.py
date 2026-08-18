@@ -28,7 +28,9 @@ from apps.node.selectors.internal.node_task_query import (
     active_node_tasks_for_node,
     latest_node_task_for_node,
     node_task_by_correlation,
+    node_task_by_correlation_for_requesting_org as _node_task_by_correlation_for_requesting_org,
     node_task_by_id,
+    node_task_by_id_for_requesting_org,
     node_task_by_id_global,
     node_tasks_for_org,
     node_tasks_queryset,
@@ -136,6 +138,14 @@ def get_node_task_for_org(
     return node_task_by_id(org=org, task_id=task_id)
 
 
+def get_node_task_for_requesting_org(
+    *,
+    org: Organization,
+    task_id: uuid.UUID | str,
+) -> NodeTask | None:
+    return node_task_by_id_for_requesting_org(org=org, task_id=task_id)
+
+
 def get_node_task_by_correlation(
     *,
     org: Organization,
@@ -144,6 +154,21 @@ def get_node_task_by_correlation(
     active_only: bool = False,
 ) -> NodeTask | None:
     return node_task_by_correlation(
+        org=org,
+        correlation_type=correlation_type,
+        correlation_id=correlation_id,
+        active_only=active_only,
+    )
+
+
+def get_node_task_by_correlation_for_requesting_org(
+    *,
+    org: Organization,
+    correlation_type: str,
+    correlation_id: str,
+    active_only: bool = False,
+) -> NodeTask | None:
+    return _node_task_by_correlation_for_requesting_org(
         org=org,
         correlation_type=correlation_type,
         correlation_id=correlation_id,
@@ -205,7 +230,9 @@ __all__ = [
     "node_display_name",
     "get_node_task",
     "get_node_task_by_correlation",
+    "get_node_task_by_correlation_for_requesting_org",
     "get_node_task_for_org",
+    "get_node_task_for_requesting_org",
     "get_node_task_runtime_info",
     "list_active_node_tasks_for_node",
     "list_node_tasks",

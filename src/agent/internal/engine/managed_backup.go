@@ -1471,11 +1471,12 @@ type snapshotScopeSelection struct {
 }
 
 type insightSnapshotBrowseCollector struct {
-	basePath string
-	limit    int
-	entries  []map[string]any
-	hasMore  bool
-	invalid  bool
+	basePath            string
+	limit               int
+	entries             []map[string]any
+	hasMore             bool
+	invalid             bool
+	skippedSpecialCount int64
 }
 
 func newInsightSnapshotBrowseCollector(basePath string, limit int) *insightSnapshotBrowseCollector {
@@ -1495,16 +1496,20 @@ func (collector *insightSnapshotBrowseCollector) consume(line string) bool {
 		return false
 	}
 	mode, size, modTime, name, ok := parseInsightSnapshotLongLine(line)
-	if !ok || size < 0 {
+	if !ok {
 		collector.invalid = true
 		return false
 	}
-	normalizedMode := strings.ToLower(mode)
-	isDir := strings.HasPrefix(normalizedMode, "d")
-	if !isDir && !strings.HasPrefix(normalizedMode, "-") {
+	pathType, valid := classifyInsightSnapshotEntry(mode, size)
+	if !valid {
 		collector.invalid = true
 		return false
 	}
+	if pathType == "special" {
+		collector.skippedSpecialCount++
+		return true
+	}
+	isDir := pathType == "dir"
 	path := normalizeSnapshotBrowsePath(name, name, collector.basePath, "")
 	collector.entries = append(collector.entries, map[string]any{
 		"name":         snapshotBrowseName(name, path),
@@ -1529,15 +1534,36 @@ func (selection *snapshotScopeSelection) inspectLine(line string) {
 	}
 	selection.found = true
 	selection.modifiedAt = modifiedAt
-	normalizedMode := strings.ToLower(mode)
-	switch {
-	case strings.HasPrefix(normalizedMode, "-") && size >= 0:
+	pathType, valid := classifyInsightSnapshotEntry(mode, size)
+	if !valid {
+		selection.invalidType = true
+		return
+	}
+	switch pathType {
+	case "file":
 		selection.pathType = "file"
 		selection.sizeBytes = size
-	case strings.HasPrefix(normalizedMode, "d") && size >= 0:
+	case "dir":
 		selection.pathType = "dir"
 	default:
 		selection.invalidType = true
+	}
+}
+
+func classifyInsightSnapshotEntry(mode string, size int64) (string, bool) {
+	if size < 0 {
+		return "", false
+	}
+	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
+	switch {
+	case strings.HasPrefix(normalizedMode, "-"):
+		return "file", true
+	case strings.HasPrefix(normalizedMode, "d"):
+		return "dir", true
+	case normalizedMode != "":
+		return "special", true
+	default:
+		return "", false
 	}
 }
 
@@ -1693,7 +1719,12 @@ func (e *Engine) runManagedInsightSnapshotBrowse(
 				}
 				result["count"] = 1
 				result["has_more"] = false
+				result["skipped_special_count"] = int64(0)
 				return "success", result, ""
+			}
+			if inspectErr == nil && selection.found && selection.invalidType {
+				result["error_code"] = insightUnsupportedContentErrorCode
+				return "failed", result, "selected snapshot path type is not supported"
 			}
 		}
 		return "failed", result, snapshotBrowseFailureMessage(res, runErr)
@@ -1701,6 +1732,7 @@ func (e *Engine) runManagedInsightSnapshotBrowse(
 	result["entries"] = collector.entries
 	result["count"] = len(collector.entries)
 	result["has_more"] = collector.hasMore
+	result["skipped_special_count"] = collector.skippedSpecialCount
 	return "success", result, ""
 }
 
@@ -1754,6 +1786,7 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 			return "failed", result, snapshotBrowseFailureMessage(inspectResult, inspectErr)
 		}
 		if selection.invalidType {
+			result["error_code"] = insightUnsupportedContentErrorCode
 			return "failed", result, "selected snapshot path type is not supported"
 		}
 		if !selection.found {
@@ -1767,6 +1800,7 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 		result["file_count"] = int64(1)
 		result["directory_count"] = int64(0)
 		result["size_bytes"] = selectedFileSize
+		result["skipped_special_count"] = int64(0)
 		return "success", result, ""
 	}
 
@@ -1775,6 +1809,7 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 	var fileCount int64
 	var sizeBytes int64
 	var directoryCount int64
+	var skippedSpecialCount int64
 	var invalidTotals bool
 	res, runErr := process.RunStreamingDiscardStdout(
 		ctx,
@@ -1793,23 +1828,21 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 				}
 				return
 			}
-			if strings.HasPrefix(strings.ToLower(mode), "d") {
-				if size < 0 {
-					invalidTotals = true
-					return
-				}
+			pathType, valid := classifyInsightSnapshotEntry(mode, size)
+			if !valid {
+				invalidTotals = true
+				return
+			}
+			if pathType == "dir" {
 				directoryCount++
 				return
 			}
-			if !strings.HasPrefix(strings.ToLower(mode), "-") {
+			if pathType == "special" {
 				// Symlinks, sockets, pipes, devices and other special file
 				// types are present in the snapshot but cannot be used as
 				// chat source entries. Skip them instead of failing the whole
 				// scope resolve.
-				return
-			}
-			if size < 0 {
-				invalidTotals = true
+				skippedSpecialCount++
 				return
 			}
 			fileCount++
@@ -1829,6 +1862,7 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 	result["file_count"] = fileCount
 	result["directory_count"] = directoryCount
 	result["size_bytes"] = sizeBytes
+	result["skipped_special_count"] = skippedSpecialCount
 	return "success", result, ""
 }
 
@@ -1921,6 +1955,15 @@ func (e *Engine) runManagedRestore(
 	if p.SnapshotID == "" {
 		return "failed", nil, "snapshot_id is required"
 	}
+	insightContentPolicy := strings.ToLower(
+		strings.TrimSpace(stringValue(p.Extra["insight_content_policy"])),
+	)
+	if insightContentPolicy != "" && insightContentPolicy != insightRegularFilesOnlyPolicy {
+		return "failed", nil, "insight content policy is not supported"
+	}
+	if insightContentPolicy != "" && payloadStringValue(p.Extra["managed_workspace_path"]) == "" {
+		return "failed", nil, "insight content policy requires a managed workspace"
+	}
 	targetPath := restoreTargetPath(p)
 	if targetPath == "" {
 		return "failed", nil, "target_path is required"
@@ -1953,6 +1996,7 @@ func (e *Engine) runManagedRestore(
 	}
 	restored := make([]map[string]any, 0, len(selectedPaths))
 	var completedBytes int64
+	var skippedSpecialCount int64
 	progressState := newKopiaProgressReporter()
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
@@ -2048,6 +2092,15 @@ func (e *Engine) runManagedRestore(
 			result["restore"] = managedRestoreCommandResult(res, spec, p)
 			return "failed", result, managedRestoreFailureMessage(res, runErr, spec, p)
 		}
+		if insightContentPolicy == insightRegularFilesOnlyPolicy {
+			skipped, contentErr := enforceInsightRestoreContent(restoreTarget)
+			if contentErr != nil {
+				result["restore_results"] = restored
+				return "failed", result, "failed to enforce Insight content policy: " + contentErr.Error()
+			}
+			skippedSpecialCount += skipped
+			restoreEntry["skipped_special_count"] = skipped
+		}
 		if lastPathTotal > 0 {
 			completedBytes += lastPathTotal
 		}
@@ -2060,6 +2113,10 @@ func (e *Engine) runManagedRestore(
 	result["selected_paths"] = selectedPaths
 	result["restore_results"] = restored
 	result["count"] = len(restored)
+	if insightContentPolicy == insightRegularFilesOnlyPolicy {
+		result["insight_content_policy"] = insightRegularFilesOnlyPolicy
+		result["skipped_special_count"] = skippedSpecialCount
+	}
 	_ = sendProgress(ctx, rep, taskID, map[string]any{
 		"phase":             "kopia_transfer",
 		"kopia_phase":       "restore_completed",

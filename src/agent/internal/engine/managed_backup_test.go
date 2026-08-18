@@ -996,6 +996,38 @@ srwxrwxrwx            0 2026-08-12 11:15:59 CST object-sock sub/sock
 	}
 }
 
+func TestInsightSnapshotBrowseCollectorSkipsSpecialEntries(t *testing.T) {
+	collector := newInsightSnapshotBrowseCollector("docs", 10)
+	lines := []string{
+		"drwx------ 1 2026-08-12 11:15:59 CST object-dir sub/",
+		"Lrwxrwxrwx 12 2026-08-12 11:15:59 CST object-link outside-link",
+		"-rw------- 7 2026-08-12 11:15:59 CST object-file report.txt",
+	}
+	for _, line := range lines {
+		if !collector.consume(line) {
+			t.Fatalf("collector rejected valid entry %q", line)
+		}
+	}
+	if collector.invalid {
+		t.Fatal("special entry must not invalidate Insight browsing")
+	}
+	if collector.skippedSpecialCount != 1 {
+		t.Fatalf("skipped special count = %d, want 1", collector.skippedSpecialCount)
+	}
+	if len(collector.entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(collector.entries))
+	}
+}
+
+func TestClassifyInsightSnapshotEntryRejectsInvalidSize(t *testing.T) {
+	if _, valid := classifyInsightSnapshotEntry("-rw-------", -1); valid {
+		t.Fatal("negative regular-file size must be rejected")
+	}
+	if kind, valid := classifyInsightSnapshotEntry("Lrwxrwxrwx", 12); !valid || kind != "special" {
+		t.Fatalf("symlink classification = %q, %v; want special, true", kind, valid)
+	}
+}
+
 func TestInsightSnapshotResultContainsOnlyBusinessIdentity(t *testing.T) {
 	result := newInsightSnapshotResult(" snapshot-1 ", " /reports/quarterly/ ")
 

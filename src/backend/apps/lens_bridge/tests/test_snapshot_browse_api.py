@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.iam.models import Membership
+from apps.iam.models import Membership, Organization
 from apps.iam.services.registration_service import provision_registered_user_tenant
 from apps.lens_bridge.services import snapshot_scope_tasks
 from apps.node.models import Node, NodeTask
@@ -96,7 +96,12 @@ class SnapshotBrowseApiTests(TestCase):
 
         response = self.client.post(
             reverse("lens-copilot-snapshot-browse"),
-            {"directory_id": 31, "path": "reports"},
+            {
+                "directory_id": 31,
+                "backup_source_snapshot_id": 71,
+                "gateway_link_id": 17,
+                "path": "reports",
+            },
             format="json",
             HTTP_X_ORG_KEY=self.organization.key,
         )
@@ -107,6 +112,9 @@ class SnapshotBrowseApiTests(TestCase):
         kwargs = dispatch.call_args.kwargs
         self.assertEqual(kwargs["organization_id"], self.organization.id)
         self.assertEqual(kwargs["directory_id"], 31)
+        self.assertEqual(kwargs["backup_source_snapshot_id"], 71)
+        self.assertEqual(kwargs["gateway_link_id"], 17)
+        self.assertEqual(kwargs["requesting_user_id"], self.owner.id)
         self.assertEqual(kwargs["path"], "reports")
         self.assertEqual(kwargs["limit"], 500)
         self.assertTrue(kwargs["correlation_id"].startswith(f"user:{self.owner.id}:"))
@@ -127,6 +135,39 @@ class SnapshotBrowseApiTests(TestCase):
         self.assertEqual(payload["status"], NodeTask.Status.SUCCESS)
         self.assertEqual(payload["entries"][0]["path"], "reports")
         self.assertIs(payload["has_more"], True)
+
+    def test_tenant_can_read_task_executed_by_shared_platform_gateway(self):
+        platform_org = Organization.objects.create(
+            key="snapshot-browse-platform",
+            name="Snapshot Browse Platform",
+        )
+        platform_gateway = Node.objects.create(
+            organization=platform_org,
+            name="Shared Insight gateway",
+            role=Node.Role.GATEWAY,
+        )
+        task = NodeTask.objects.create(
+            organization=platform_org,
+            requesting_organization_id=self.organization.id,
+            node=platform_gateway,
+            kind="lens.snapshot.browse",
+            correlation_type=snapshot_scope_tasks.BROWSE_CORRELATION_TYPE,
+            correlation_id=f"user:{self.owner.id}:{uuid.uuid4()}",
+            status=NodeTask.Status.SUCCESS,
+            result={"entries": [], "has_more": False},
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(minutes=5),
+        )
+
+        response = self.client.get(
+            reverse(
+                "lens-copilot-snapshot-browse-task",
+                kwargs={"task_id": task.id},
+            ),
+            HTTP_X_ORG_KEY=self.organization.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._payload(response)["task_id"], str(task.id))
 
     def test_failed_task_does_not_expose_agent_diagnostics(self):
         task = self._create_task()

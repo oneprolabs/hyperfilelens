@@ -65,6 +65,22 @@ function newCreateIdempotencyKey(): string {
   return `chat-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+const readyGateways = computed(() => gatewayOptions.value.filter(
+  (row) => row.online && row.hfl_usable && row.copilot_eligible,
+))
+const privateGateways = computed(() => readyGateways.value.filter((row) => row.scope === 'user'))
+const platformGateway = computed(() => {
+  const rows = readyGateways.value.filter((row) => row.scope === 'platform')
+  return rows.find((row) => row.is_platform_default) ?? rows[0] ?? null
+})
+const autoGateway = computed(() => platformGateway.value)
+const snapshotGatewayLinkId = computed(() => {
+  if (gatewayMode.value === 'auto') {
+    return autoGateway.value?.gateway_link_id ?? null
+  }
+  return gatewayLinkId.value
+})
+
 const {
   loading,
   snapshotLoading,
@@ -89,7 +105,7 @@ const {
   validateBackupScopeEntryOnBlur,
   validateAllBackupScopeEntries,
   pickBackupScopeForEntry,
-} = useKnowledgeSourceForm(editingId, sourceType)
+} = useKnowledgeSourceForm(editingId, sourceType, { snapshotGatewayLinkId })
 
 const sourceScopes = computed(() => backupScopeEntries.value
   .filter((row) => row.path.trim() && row.directoryId)
@@ -98,12 +114,6 @@ const sourceScopes = computed(() => backupScopeEntries.value
     backup_snapshot_directory_id: row.directoryId as number,
     path_type: row.pathType,
   })))
-const readyGateways = computed(() => gatewayOptions.value.filter(
-  (row) => row.online && row.hfl_usable && row.copilot_eligible,
-))
-const privateGateways = computed(() => readyGateways.value.filter((row) => row.scope === 'user'))
-const platformGateway = computed(() => readyGateways.value.find((row) => row.scope === 'platform') ?? null)
-const autoGateway = computed(() => platformGateway.value)
 const agentModelReady = computed(() => Boolean(readiness.value?.default_agent_model_ref))
 const visualModelReady = computed(() => Boolean(readiness.value?.default_multimodal_model_ref))
 const selectedGateway = computed(() => gatewayMode.value === 'auto'

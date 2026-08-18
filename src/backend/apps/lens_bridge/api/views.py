@@ -112,6 +112,11 @@ class LensCopilotSnapshotBrowseView(OrgScopedMixin, APIView):
         task = snapshot_scope_tasks.dispatch_snapshot_browse(
             organization_id=self.org.id,
             directory_id=body.validated_data["directory_id"],
+            backup_source_snapshot_id=body.validated_data[
+                "backup_source_snapshot_id"
+            ],
+            gateway_link_id=body.validated_data["gateway_link_id"],
+            requesting_user_id=request.user.id,
             path=body.validated_data.get("path", ""),
             limit=body.validated_data["limit"],
             correlation_id=f"user:{request.user.id}:{uuid.uuid4()}",
@@ -148,7 +153,10 @@ class LensCopilotSnapshotBrowseTaskView(OrgScopedMixin, APIView):
             "task_id": str(task.id),
             "status": str(task.status),
             "error": (
-                "Unable to browse the selected snapshot. Try again."
+                snapshot_scope_tasks.snapshot_task_error(
+                    task,
+                    default="Unable to browse the selected snapshot. Try again.",
+                )
                 if task.status
                 in {
                     NodeTask.Status.FAILED,
@@ -162,6 +170,9 @@ class LensCopilotSnapshotBrowseTaskView(OrgScopedMixin, APIView):
             payload["entries"] = snapshot_scope_tasks.normalized_browse_entries(task)
             result = task.result if isinstance(task.result, dict) else {}
             payload["has_more"] = bool(result.get("has_more"))
+            payload["skipped_special_count"] = (
+                snapshot_scope_tasks.browse_skipped_special_count(task)
+            )
         return Response(payload)
 
 
