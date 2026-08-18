@@ -1,4 +1,4 @@
-name: HFL - Enterprise Build & Deploy
+name: HFL - Enterprise Release & Deploy
 run-name: Enterprise · ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} · Build & deploy
 
 on:
@@ -37,7 +37,7 @@ jobs:
   build-enterprise:
     name: Build & Deploy · Enterprise
     needs: validate-enterprise-build
-    uses: ./.github/workflows/artifact_pipeline.yml
+    uses: ./.github/workflows/release_pipeline.yml
     with:
       channel: release
       edition: enterprise

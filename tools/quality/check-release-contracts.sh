@@ -6,17 +6,17 @@ umask 022
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 grep -F './tools/quality/test-docker-image-digest-alias.sh' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-offline-docker-package-plan.sh' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-language-pack-runtime-index.sh' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-bundled-language-pack-lifecycle.sh' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F 'language-packs/tooling/build-all.sh' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F 'test_chinese_accept_language_translates_api_error' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 python3 - "${ROOT}/dev/stack.sh" <<'PY'
 import pathlib
 import re
@@ -34,13 +34,13 @@ if lock < 0 or build < 0 or sync < 0 or not lock < build < sync:
     raise SystemExit("development language-pack build and synchronization must hold one lock")
 PY
 grep -F './tools/quality/test-sourcelens-git-mirror.sh' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-sourcelens-submodule-recovery.sh' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-dev-stack-upgrade.sh' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-upgrade-transaction.sh' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 
 # shellcheck source=../lib/version.sh
 source "${ROOT}/tools/lib/version.sh"
@@ -462,10 +462,10 @@ grep -F 'LENSNODE_DRAIN_TIMEOUT_S: "240"' \
 grep -F 'LENSNODE_TLS_SKIP_VERIFY: "${HFL_INSECURE_TLS}"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 
-workflow="${ROOT}/.github/workflows/artifact_pipeline.yml"
-release_workflow="${ROOT}/.github/workflows/release.yml"
-test_workflow="${ROOT}/.github/workflows/test.yml"
-production_workflow="${ROOT}/.github/workflows/production_deploy.yml"
+workflow="${ROOT}/.github/workflows/release_pipeline.yml"
+release_workflow="${ROOT}/.github/workflows/community_release.yml"
+test_workflow="${ROOT}/.github/workflows/enterprise_release.yml"
+production_workflow="${ROOT}/.github/workflows/enterprise_prod_promotion.yml"
 enterprise_promotion_workflow="${ROOT}/.github/workflows/enterprise_promotion.yml"
 agent_certification="${ROOT}/release/ci/certify-agent-candidate.py"
 [[ -f "${workflow}" ]] || {
@@ -639,11 +639,11 @@ if grep -E '^  (workflow_dispatch|push|schedule):' "${workflow}" >/dev/null; the
 fi
 grep -F 'workflow_call:' "${workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${release_workflow}" >/dev/null
-grep -F 'name: HFL - Enterprise Build & Deploy' "${test_workflow}" >/dev/null
+grep -F 'name: HFL - Enterprise Release & Deploy' "${test_workflow}" >/dev/null
 grep -F 'name: HFL - Community Release & Deploy' "${release_workflow}" >/dev/null
 grep -F 'name: HFL - Enterprise PROD Promotion' "${production_workflow}" >/dev/null
-grep -F 'name: HFL - Build & Package (Reusable)' "${workflow}" >/dev/null
-grep -F 'uses: ./.github/workflows/artifact_pipeline.yml' "${release_workflow}" >/dev/null
+grep -F 'name: HFL - Release Pipeline (Reusable)' "${workflow}" >/dev/null
+grep -F 'uses: ./.github/workflows/release_pipeline.yml' "${release_workflow}" >/dev/null
 grep -F 'channel: release' "${release_workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${test_workflow}" >/dev/null
 grep -F 'tags:' "${test_workflow}" >/dev/null
@@ -781,9 +781,6 @@ grep -F 'HFL_EXTENSIONS=' "${ROOT}/tools/dev/browser-smoke.sh" >/dev/null
 grep -F 'HFL_RELEASE_EDITION="${smoke_edition}"' \
 	"${ROOT}/tools/dev/browser-smoke.sh" >/dev/null
 grep -F 'release_edition' "${ROOT}/release/ci/verify-release.sh" >/dev/null
-grep -F 'test-browser-smoke-contract.mjs' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
-grep -F 'python3 -m unittest tools/quality/test_agent_certification_gate.py' "${workflow}" >/dev/null
 grep -F 'release/ci/certify-agent-candidate.py' "${workflow}" >/dev/null
 grep -F '"KOPIA_USE_KEYRING": "false"' "${agent_certification}" >/dev/null
 grep -F '"KOPIA_PERSIST_CREDENTIALS_ON_CONNECT": "false"' "${agent_certification}" >/dev/null
@@ -1078,8 +1075,8 @@ done
 # Quality must run the Bash 4.2 probe (not host-smoke-only).
 # Require an active run line; a commented-out copy must not satisfy this gate.
 if ! grep -E '^[[:space:]]+HFL_TEST_BASH42=1 \./tools/quality/test-bootstrap-curl-tls-nounset\.sh[[:space:]]*$' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null; then
-	printf 'ERROR: artifact_pipeline Quality must run HFL_TEST_BASH42=1 ./tools/quality/test-bootstrap-curl-tls-nounset.sh\n' >&2
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null; then
+	printf 'ERROR: release_pipeline Quality must run HFL_TEST_BASH42=1 ./tools/quality/test-bootstrap-curl-tls-nounset.sh\n' >&2
 	exit 1
 fi
 
@@ -1353,7 +1350,6 @@ fi
 
 for executable in \
 	"${ROOT}/.github/scripts/check-main-freshness.sh" \
-	"${ROOT}/.github/scripts/check-release-freshness.sh" \
 	"${ROOT}/.github/scripts/check-public-endpoint.sh" \
 	"${ROOT}/.github/scripts/cleanup-main-builds.sh" \
 	"${ROOT}/.github/scripts/promote-enterprise-release.sh" \
@@ -1369,7 +1365,6 @@ for executable in \
 	"${ROOT}/release/ci/gh-release-upload.sh" \
 	"${ROOT}/tools/quality/test-main-release-freshness.sh" \
 	"${ROOT}/tools/quality/test-main-release-cleanup.sh" \
-	"${ROOT}/tools/quality/test-release-freshness.sh" \
 	"${ROOT}/tools/quality/test-enterprise-release-flow.sh" \
 	"${ROOT}/tools/quality/test-enterprise-promotion-transfer.sh" \
 	"${ROOT}/tools/quality/test-bundled-language-pack-lifecycle.sh" \

@@ -303,14 +303,14 @@ if grep -R -n -E 'ARG SENTRY_DSN|ENV SENTRY_DSN|import\.meta\.env\.SENTRY' \
 	printf 'ERROR: HFL browser DSN must remain runtime-only\n' >&2
 	exit 1
 fi
-grep -F 'TEST_SENTRY_ENABLED' "${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
-grep -F 'COMMUNITY_SENTRY_ENABLED' "${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F 'TEST_SENTRY_ENABLED' "${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
+grep -F 'COMMUNITY_SENTRY_ENABLED' "${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F 'PROD_SENTRY_ENABLED' "${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
-grep -F 'SENTRY_AUTH_TOKEN' "${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F 'SENTRY_AUTH_TOKEN' "${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F "secrets.SENTRY_AUTH_TOKEN != ''" \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 if grep -F 'sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}' \
-	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null; then
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null; then
 	printf 'ERROR: an empty Sentry token can still be passed as a BuildKit secret\n' >&2
 	exit 1
 fi
