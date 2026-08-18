@@ -6250,6 +6250,7 @@ cmd_upgrade() {
 	record_upgrade_transaction_phase sourcelens_complete
 	sync_optional_identity_settings
 	check_local_platform_gateway_continuity
+	ensure_local_platform_gateway
 	record_upgrade_transaction_phase gateway_verified
 	prune_agent_release_media
 	prune_old_managed_image_refs

@@ -99,7 +99,7 @@ on:
       platform_gateway_auto_deploy:
         description: Automatically deploy an HFL-managed local platform Gateway
         required: false
-        default: false
+        default: true
         type: boolean
       hfl_insecure_tls:
         description: Environment-wide TLS policy for remotely enrolled HFL Agents (0 verifies, 1 skips)
@@ -602,11 +602,7 @@ jobs:
             -o TCPKeepAlive=yes \
             -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            'if /opt/hyperfilelens/install.sh platform-gateway verify --required --timeout 0; then
-               echo "Installer-managed Platform Gateway is already online; preserving its independent lifecycle."
-             else
-               /opt/hyperfilelens/install.sh platform-gateway ensure
-             fi'
+            '/opt/hyperfilelens/install.sh platform-gateway ensure'
 
       - name: Verify Platform Gateway Readiness
         if: ${{ inputs.platform_gateway_auto_deploy }}

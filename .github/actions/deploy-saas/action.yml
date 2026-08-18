@@ -173,11 +173,7 @@ runs:
             -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             -o TCPKeepAlive=yes -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            'if /opt/hyperfilelens/install.sh platform-gateway verify --required --timeout 0; then
-               echo "Platform Gateway is already ready; preserving the running deployment";
-             else
-               /opt/hyperfilelens/install.sh platform-gateway ensure;
-             fi &&
+            '/opt/hyperfilelens/install.sh platform-gateway ensure &&
              /opt/hyperfilelens/install.sh platform-gateway verify --required --timeout 180'
     - name: Reconcile default AI model
       shell: bash

@@ -39,7 +39,7 @@ grep -Fq 'registry_login_count > 0' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
 grep -Fq 'for prefix in "${registry_region}" "${fallback_region}"' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
-grep -Fq 'platform-gateway verify --required --timeout 0' \
+grep -Fq 'platform-gateway ensure' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
 grep -Fq 'reconcile-saas-ai-model.sh agent' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
