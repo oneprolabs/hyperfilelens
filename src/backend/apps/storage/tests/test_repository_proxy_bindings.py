@@ -42,6 +42,7 @@ class StorageRepositoryProxyBindingTests(TestCase):
             role=NodeRole.PROXY,
             status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.31",
+            metadata={"inventory": {"capabilities": ["repository_ownership_v1"]}},
         )
         self.proxy_b = Node.objects.create(
             organization=self.org,
@@ -49,6 +50,7 @@ class StorageRepositoryProxyBindingTests(TestCase):
             role=NodeRole.PROXY,
             status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.32",
+            metadata={"inventory": {"capabilities": ["repository_ownership_v1"]}},
         )
 
     def _headers(self):

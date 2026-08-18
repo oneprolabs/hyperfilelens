@@ -348,6 +348,13 @@ def _config_payload(
         "reset_task_uuid": str(config.reset_task_uuid)
         if config.reset_task_uuid
         else None,
+        "provisioning_task_uuid": (
+            str(config.provisioning_task_uuid)
+            if config.provisioning_task_uuid
+            else None
+        ),
+        "provisioning_error_code": config.provisioning_error_code,
+        "provisioning_error_message": config.provisioning_error_message,
         "recovery_plan_enabled": config.recovery_plan_enabled,
         "directories": [_directory_payload(directory) for directory in directories],
         "recovery_plans": [_recovery_plan_payload(plan) for plan in recovery_plans],

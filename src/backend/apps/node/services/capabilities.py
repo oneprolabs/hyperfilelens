@@ -6,6 +6,8 @@ from collections.abc import Iterable
 
 from apps.node.models import Node
 
+REPOSITORY_OWNERSHIP_CAPABILITY = "repository_ownership_v1"
+
 
 def node_capabilities(node: Node) -> frozenset[str]:
     """Return normalized capabilities from the latest Agent inventory."""
@@ -37,4 +39,15 @@ def missing_node_capabilities(
     return expected - node_capabilities(node)
 
 
-__all__ = ["missing_node_capabilities", "node_capabilities"]
+def node_supports_capability(node: Node, capability: str) -> bool:
+    """Return whether the latest Agent inventory advertises one capability."""
+
+    return str(capability or "").strip() in node_capabilities(node)
+
+
+__all__ = [
+    "REPOSITORY_OWNERSHIP_CAPABILITY",
+    "missing_node_capabilities",
+    "node_capabilities",
+    "node_supports_capability",
+]

@@ -1047,7 +1047,13 @@ def _active_repository_tasks(*, repository: Repository):
     return (
         Task.objects.filter(
             organization_id=repository.organization_id,
-            status__in=ACTIVE_TASK_STATUSES,
+        )
+        .filter(
+            Q(status__in=ACTIVE_TASK_STATUSES)
+            | Q(
+                task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+                status__in=[Task.Status.WAITING, Task.Status.BLOCKED],
+            )
         )
         .filter(
             Q(id__in=resource_task_ids)

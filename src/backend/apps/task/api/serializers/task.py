@@ -140,9 +140,15 @@ class TaskSerializer(serializers.ModelSerializer):
                 "TASK_CANCELLED",
             }
         )
+        backup_config_discarded = (
+            obj.task_type == Task.Type.BACKUP_CONFIG_PROVISION
+            and isinstance(obj.result_payload, dict)
+            and obj.result_payload.get("backup_config_discarded") is True
+        )
         return {
             "can_cancel": False
-            if obj.task_type == Task.Type.SOURCE_UNREGISTER
+            if obj.task_type
+            in {Task.Type.SOURCE_UNREGISTER, Task.Type.BACKUP_CONFIG_PROVISION}
             else (
                 obj.status in {Task.Status.PENDING, Task.Status.RUNNING}
                 and obj.task_type
@@ -160,6 +166,7 @@ class TaskSerializer(serializers.ModelSerializer):
                     Task.Type.REPOSITORY_OPERATION,
                 }
                 and not source_unregister_not_started
+                and not backup_config_discarded
                 and obj.status
                 in {Task.Status.FAILED, Task.Status.TIMEOUT, Task.Status.CANCELLED}
             ),

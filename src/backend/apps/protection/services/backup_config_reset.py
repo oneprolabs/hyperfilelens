@@ -188,7 +188,8 @@ def ensure_backup_config_reset_task(
         raise ValidationError(
             {
                 "source_ref_id": (
-                    f"{len(running)} backup or restore task(s) are still running."
+                    f"{len(running)} backup, restore, or storage validation "
+                    "task(s) are still running."
                 )
             }
         )

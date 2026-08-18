@@ -64,6 +64,26 @@ func isMounted(mountPoint string) bool {
 	return netUseShowsDrive(meta.Drive)
 }
 
+func validateMountedShare(spec Spec) error {
+	meta, ok := readMountMeta(spec.MountPoint)
+	if !ok {
+		return &MountSourceMismatchError{Expected: expectedWindowsRemote(spec), Actual: "unmounted"}
+	}
+	expected := expectedWindowsRemote(spec)
+	actual, mounted := netUseRemote(meta.Drive)
+	if !mounted {
+		return &MountSourceMismatchError{Expected: expected, Actual: "unmounted"}
+	}
+	if !strings.EqualFold(strings.TrimRight(actual, `\/`), strings.TrimRight(expected, `\/`)) {
+		return &MountSourceMismatchError{Expected: expected, Actual: actual}
+	}
+	return nil
+}
+
+func expectedWindowsRemote(spec Spec) string {
+	return fmt.Sprintf(`\\%s\%s`, spec.Server, strings.Trim(spec.Share, "/\\"))
+}
+
 func mountShare(ctx context.Context, spec Spec) error {
 	spec.MountPoint = ResolvedMountPoint(spec.MountPoint)
 	if spec.MountPoint == "" {
@@ -83,8 +103,7 @@ func mountShare(ctx context.Context, spec Spec) error {
 }
 
 func mountSMB(ctx context.Context, spec Spec) error {
-	sharePath := strings.Trim(spec.Share, "/\\")
-	remote := fmt.Sprintf(`\\%s\%s`, spec.Server, sharePath)
+	remote := expectedWindowsRemote(spec)
 	user := spec.Username
 	if spec.Domain != "" {
 		user = spec.Domain + `\` + spec.Username
@@ -169,16 +188,24 @@ func pickAvailableDriveLetter() (string, error) {
 }
 
 func netUseShowsDrive(drive string) bool {
+	_, ok := netUseRemote(drive)
+	return ok
+}
+
+func netUseRemote(drive string) (string, bool) {
 	drive = strings.TrimSpace(drive)
 	if drive == "" {
-		return false
+		return "", false
 	}
 	res, err := process.Run(context.Background(), "net", []string{"use", drive}, nil, "")
 	if err != nil {
-		return false
+		return "", false
 	}
-	text := strings.ToLower(res.Stdout + res.Stderr)
-	return strings.Contains(text, strings.ToLower(drive)) && !strings.Contains(text, "disconnected")
+	text := res.Stdout + "\n" + res.Stderr
+	if strings.Contains(strings.ToLower(text), "disconnected") {
+		return "", false
+	}
+	return parseNetUseRemote(text)
 }
 
 func netUseDelete(ctx context.Context, drive string) error {

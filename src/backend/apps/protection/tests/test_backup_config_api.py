@@ -1,3 +1,4 @@
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest import mock
 
@@ -9,7 +10,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
@@ -46,6 +47,7 @@ from apps.storage.services.internal.repository_location import (
     reserve_repository_location,
 )
 from apps.task.models import Task, TaskResource
+from common.errors import AppError
 
 
 class ProtectionBackupConfigApiTests(TestCase):
@@ -71,6 +73,7 @@ class ProtectionBackupConfigApiTests(TestCase):
             availability=Node.Availability.ONLINE,
             ip_address="10.0.0.41",
             os_name="linux",
+            metadata={"inventory": {"capabilities": ["repository_ownership_v1"]}},
         )
         self.repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -176,6 +179,27 @@ class ProtectionBackupConfigApiTests(TestCase):
             result={"ok": True, "ownership_verified": True},
         )
 
+    def _run_latest_provision(self, *, config_name: str):
+        from apps.protection.services.backup_config_provision import (
+            run_backup_config_provision_task,
+        )
+
+        config = BackupConfig.objects.get(name=config_name)
+        task = Task.objects.get(task_uuid=config.provisioning_task_uuid)
+        with (
+            mock.patch(
+                "apps.protection.tasks.repository_policy.sync_backup_config_repository_policy_task.delay"
+            ),
+            mock.patch(
+                "apps.protection.tasks.directory_size_estimate.refresh_backup_config_directory_estimates_task.delay"
+            ),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            result = run_backup_config_provision_task(task_id=task.id)
+        config.refresh_from_db()
+        task.refresh_from_db()
+        return config, task, result
+
     def _proxy(self, *, name: str = "backup-config-proxy"):
         return Node.objects.create(
             organization=self.org,
@@ -184,6 +208,7 @@ class ProtectionBackupConfigApiTests(TestCase):
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
             ip_address="10.0.0.42",
+            metadata={"inventory": {"capabilities": ["repository_ownership_v1"]}},
         )
 
     def _proxy_fs_repository(
@@ -659,7 +684,18 @@ class ProtectionBackupConfigApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        self.assertEqual(create.status_code, status.HTTP_202_ACCEPTED, create.content)
+        self.assertEqual(create.data["status"], BackupConfig.Status.PROVISIONING)
+        config = BackupConfig.objects.get(id=create.data["id"])
+        provision_task = Task.objects.get(task_uuid=config.provisioning_task_uuid)
+        self.assertEqual(provision_task.request_payload["repository_id"], nas_repo.id)
+        self.assertTrue(
+            provision_task.resources.filter(
+                resource_type=TaskResource.Type.REPOSITORY,
+                resource_id=nas_repo.id,
+            ).exists()
+        )
+        self._run_latest_provision(config_name="Direct NAS config")
         run_agent_task_sync.assert_called_once()
         call = run_agent_task_sync.call_args.kwargs
         self.assertEqual(call["node_id"], self.agent.id)
@@ -689,15 +725,298 @@ class ProtectionBackupConfigApiTests(TestCase):
             organization_id=self.org.id,
             repository_ids=[nas_repo.id],
             force=True,
-            trigger="protection.backup_config.create",
+            trigger="protection.backup_config.provision",
         )
+
+    @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
+    def test_direct_nas_activation_survives_followup_dispatch_failure(
+        self,
+        run_agent_task_sync,
+    ):
+        from apps.protection.services.backup_config_provision import (
+            run_backup_config_provision_task,
+        )
+
+        run_agent_task_sync.return_value = self._successful_agent_task()
+        nas_repo = self._direct_nas_repository(name="followup-failure-direct-nas")
+        payload = self._payload(name="Followup failure Direct NAS config")
+        payload["repository_id"] = nas_repo.id
+        response = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        config = BackupConfig.objects.get(id=response.data["id"])
+        task = Task.objects.get(task_uuid=config.provisioning_task_uuid)
+
+        with (
+            mock.patch(
+                "apps.protection.tasks.repository_policy.sync_backup_config_repository_policy_task.delay",
+                side_effect=RuntimeError("broker unavailable"),
+            ),
+            mock.patch(
+                "apps.protection.tasks.directory_size_estimate.refresh_backup_config_directory_estimates_task.delay"
+            ) as estimate_delay,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            result = run_backup_config_provision_task(task_id=task.id)
+
+        config.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(config.status, BackupConfig.Status.ACTIVE)
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        estimate_delay.assert_called_once_with(config_id=config.id)
+        claim = RepositoryLocationClaim.objects.get(
+            repository=nas_repo,
+            owner_node_id=self.agent.id,
+        )
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.OWNED)
+        self.assertIsNotNone(claim.ownership_verified_at)
+
+    def test_successful_node_result_projection_is_leased_while_parent_waits(self):
+        from apps.protection.services.backup_config_provision import (
+            _claim_task_execution,
+        )
+        from apps.task.services.interface import start_task
+
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+            display_name="Lease storage validation result",
+            trigger_type=Task.TriggerType.SYSTEM,
+            status=Task.Status.PENDING,
+        )
+        task = start_task(
+            task_uuid=task.task_uuid,
+            organization_id=self.org.id,
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.agent,
+            parent_task=task,
+            kind="repo.status",
+            status=NodeTask.Status.SUCCESS,
+            watchdog_deadline_at=timezone.now(),
+            result={"ownership_verified": True},
+        )
+        Task.objects.filter(id=task.id).update(status=Task.Status.WAITING)
+
+        _task, first_state, _node_task = _claim_task_execution(task_id=task.id)
+        _task, second_state, _node_task = _claim_task_execution(task_id=task.id)
+
+        self.assertEqual(first_state, "node_success")
+        self.assertEqual(second_state, "dispatch_in_progress")
+
+    @mock.patch(
+        "apps.protection.services.backup_config_provision.queue_backup_config_provision_task",
+        return_value=True,
+    )
+    def test_provision_reconciler_excludes_tasks_with_active_agent_work(
+        self,
+        queue_task,
+    ):
+        from apps.protection.services.backup_config_provision import (
+            reconcile_backup_config_provision_tasks,
+        )
+
+        stale_at = timezone.now() - timedelta(minutes=5)
+        active_parent = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+            display_name="Active Agent validation",
+            trigger_type=Task.TriggerType.SYSTEM,
+            status=Task.Status.WAITING,
+            started_at=stale_at,
+        )
+        dispatchable = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+            display_name="Dispatchable validation",
+            trigger_type=Task.TriggerType.SYSTEM,
+            status=Task.Status.WAITING,
+            started_at=stale_at,
+        )
+        Task.objects.filter(id__in=[active_parent.id, dispatchable.id]).update(
+            updated_at=stale_at
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.agent,
+            parent_task=active_parent,
+            kind="repo.status",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timedelta(minutes=5),
+        )
+
+        result = reconcile_backup_config_provision_tasks(limit=10, stale_seconds=30)
+
+        self.assertEqual(result["active_agent_tasks"], 1)
+        self.assertEqual(result["dispatch_attempted"], 1)
+        queue_task.assert_called_once_with(task_id=dispatchable.id)
+
+    def test_upgrade_recovery_candidates_exclude_unupgraded_agents(self):
+        from apps.protection.services.backup_config_provision import (
+            _upgrade_recovery_candidates,
+        )
+
+        capable = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Capable recovery candidate"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(capable.status_code, status.HTTP_201_CREATED, capable.content)
+        capable_config = BackupConfig.objects.get(id=capable.data["id"])
+        BackupConfig.objects.filter(id=capable_config.id).update(
+            status=BackupConfig.Status.PROVISION_FAILED,
+            provisioning_error_code="AGENT_UPGRADE_REQUIRED",
+        )
+
+        old_agent = Node.objects.create(
+            organization=self.org,
+            name="agent-without-repository-ownership",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.43",
+            metadata={"inventory": {"capabilities": []}},
+        )
+        old = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(
+                source_ref_id=old_agent.id,
+                name="Unupgraded recovery candidate",
+            ),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(old.status_code, status.HTTP_201_CREATED, old.content)
+        old_config = BackupConfig.objects.get(id=old.data["id"])
+        BackupConfig.objects.filter(id=old_config.id).update(
+            status=BackupConfig.Status.PROVISION_FAILED,
+            provisioning_error_code="AGENT_UPGRADE_REQUIRED",
+        )
+
+        candidates = _upgrade_recovery_candidates(limit=10)
+
+        self.assertEqual([config.id for config in candidates], [capable_config.id])
+
+    @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
+    def test_direct_nas_provision_requires_agent_ownership_capability(
+        self,
+        run_agent_task_sync,
+    ):
+        self.agent.metadata = {"inventory": {"capabilities": []}}
+        self.agent.save(update_fields=["metadata", "updated_at"])
+        nas_repo = self._direct_nas_repository(name="upgrade-required-direct-nas")
+        payload = self._payload(name="Upgrade required Direct NAS config")
+        payload["repository_id"] = nas_repo.id
+
+        response = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        config, task, result = self._run_latest_provision(
+            config_name="Upgrade required Direct NAS config"
+        )
+        self.assertEqual(result["error_code"], "AGENT_UPGRADE_REQUIRED")
+        self.assertEqual(config.status, BackupConfig.Status.PROVISION_FAILED)
+        self.assertEqual(config.provisioning_error_code, "AGENT_UPGRADE_REQUIRED")
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(task.current_step, "initialize_repository")
+        self.assertEqual(
+            task.steps.get(step_name="initialize_repository").status,
+            "failed",
+        )
+        self.assertEqual(
+            task.steps.get(step_name="activate_backup_config").status,
+            "skipped",
+        )
+        run_agent_task_sync.assert_not_called()
+        self.assertFalse(nas_repo.location_claims.exists())
+
+        discarded = self.client.delete(
+            f"/api/v1/protection/backup-configs/{config.id}/",
+            **self._headers(),
+        )
+        self.assertEqual(discarded.status_code, status.HTTP_200_OK, discarded.content)
+        self.assertFalse(BackupConfig.objects.filter(id=config.id).exists())
+        task.refresh_from_db()
+        self.assertTrue(task.result_payload["backup_config_discarded"])
+        pipeline = SourceBackupPipelineEntry.objects.get(
+            organization=self.org,
+            source_kind="agent",
+            ref_id=self.agent.id,
+        )
+        self.assertEqual(pipeline.step, 2)
+
+    @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
+    def test_direct_nas_retry_ignores_successful_node_task_from_previous_attempt(
+        self,
+        run_agent_task_sync,
+    ):
+        self.agent.metadata = {"inventory": {"capabilities": []}}
+        self.agent.save(update_fields=["metadata", "updated_at"])
+        nas_repo = self._direct_nas_repository(name="retry-attempt-direct-nas")
+        payload = self._payload(name="Retry attempt Direct NAS config")
+        payload["repository_id"] = nas_repo.id
+        response = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        config, task, _result = self._run_latest_provision(
+            config_name="Retry attempt Direct NAS config"
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.agent,
+            parent_task=task,
+            kind="repo.initialize",
+            status=NodeTask.Status.SUCCESS,
+            watchdog_deadline_at=timezone.now(),
+            result={"ownership_verified": True},
+        )
+
+        self.agent.metadata = {
+            "inventory": {"capabilities": ["repository_ownership_v1"]}
+        }
+        self.agent.save(update_fields=["metadata", "updated_at"])
+        retry = self.client.post(
+            f"/api/v1/protection/backup-configs/{config.id}/retry-provision/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(retry.status_code, status.HTTP_202_ACCEPTED, retry.content)
+
+        run_agent_task_sync.return_value = self._successful_agent_task()
+        config, task, result = self._run_latest_provision(
+            config_name="Retry attempt Direct NAS config"
+        )
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(config.status, BackupConfig.Status.ACTIVE)
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        run_agent_task_sync.assert_called_once()
 
     @mock.patch(
         "apps.protection.services.backup_config._advance_pipeline",
         side_effect=ValidationError("pipeline unavailable"),
     )
     @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
-    def test_direct_nas_persistence_failure_retains_residual_claim(
+    def test_direct_nas_persistence_failure_does_not_touch_remote_storage(
         self,
         run_agent_task_sync,
         _advance_pipeline,
@@ -720,11 +1039,8 @@ class ProtectionBackupConfigApiTests(TestCase):
                 name="Persistence failed Direct NAS config"
             ).exists()
         )
-        claim = RepositoryLocationClaim.objects.get(
-            repository=nas_repo,
-            owner_node_id=self.agent.id,
-        )
-        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+        self.assertFalse(RepositoryLocationClaim.objects.filter(repository=nas_repo).exists())
+        run_agent_task_sync.assert_not_called()
 
     @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
     def test_direct_nas_initialize_retains_residual_if_repository_is_removing(
@@ -750,11 +1066,13 @@ class ProtectionBackupConfigApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("repository_id", self._error_fields(response))
-        self.assertFalse(
-            BackupConfig.objects.filter(name="Removing Direct NAS config").exists()
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        config, task, result = self._run_latest_provision(
+            config_name="Removing Direct NAS config"
         )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(config.status, BackupConfig.Status.PROVISION_FAILED)
+        self.assertEqual(task.status, Task.Status.FAILED)
         claim = RepositoryLocationClaim.objects.get(
             repository=nas_repo,
             owner_node_id=self.agent.id,
@@ -855,7 +1173,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        self.assertEqual(create.status_code, status.HTTP_202_ACCEPTED, create.content)
+        self._run_latest_provision(config_name=create.data["name"])
         call = run_agent_task_sync.call_args.kwargs
         self.assertEqual(call["node_id"], proxy.id)
         self.assertEqual(call["kind"], "repo.initialize")
@@ -891,13 +1210,13 @@ class ProtectionBackupConfigApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(
-            response.status_code, status.HTTP_409_CONFLICT, response.content
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        config, task, result = self._run_latest_provision(
+            config_name="Direct NAS conflict"
         )
-        self.assertEqual(response.data["data"]["code"], REPOSITORY_ALREADY_EXISTS_CODE)
-        self.assertFalse(
-            BackupConfig.objects.filter(name="Direct NAS conflict").exists()
-        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(config.status, BackupConfig.Status.PROVISION_FAILED)
+        self.assertEqual(task.error_code, REPOSITORY_ALREADY_EXISTS_CODE)
         self.assertFalse(
             RepositoryUsageShard.objects.filter(repository_id=nas_repo.id).exists()
         )
@@ -949,9 +1268,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(
-            response.status_code, status.HTTP_201_CREATED, response.content
-        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self._run_latest_provision(config_name="Direct NAS interrupted init")
         claim = RepositoryLocationClaim.objects.get(repository=nas_repo)
         self.assertEqual(claim.state, RepositoryLocationClaim.State.OWNED)
         self.assertTrue(
@@ -994,9 +1312,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(
-            response.status_code, status.HTTP_201_CREATED, response.content
-        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self._run_latest_provision(config_name="Managed Direct NAS")
         self.assertEqual(run_agent_task_sync.call_args.kwargs["kind"], "repo.status")
 
     @mock.patch(
@@ -1029,9 +1346,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(
-            response.status_code, status.HTTP_201_CREATED, response.content
-        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self._run_latest_provision(config_name="Reused Direct NAS")
         self.assertEqual(
             run_agent_task_sync.call_args.kwargs["kind"], "repo.initialize"
         )
@@ -1179,7 +1495,7 @@ class ProtectionBackupConfigApiTests(TestCase):
         )
         nas_repo = self._direct_nas_repository(name="unverified-direct-nas")
 
-        with self.assertRaises(ValidationError):
+        with self.assertRaises(AppError):
             backup_config_service.ensure_direct_nas_repository_for_backup(
                 organization_id=self.org.id,
                 source_type="agent",
@@ -1200,6 +1516,54 @@ class ProtectionBackupConfigApiTests(TestCase):
                 is_active=True,
             ).exists()
         )
+
+    @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
+    def test_backup_allows_old_agent_to_probe_migrated_direct_nas(
+        self,
+        run_agent_task_sync,
+    ):
+        self.agent.metadata = {"inventory": {"capabilities": []}}
+        self.agent.save(update_fields=["metadata", "updated_at"])
+        run_agent_task_sync.return_value = SimpleNamespace(
+            task=SimpleNamespace(status="success", last_error=""),
+            result={"ok": True, "mount_point": "/mnt/hfl/repository"},
+        )
+        nas_repo = self._direct_nas_repository(name="legacy-direct-nas")
+        repository_subdir = f"hp-repos/agent-{self.agent.id}"
+        RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=nas_repo.id,
+            node_id=self.agent.id,
+            repository_subdir=repository_subdir,
+            status=RepositoryUsageShard.Status.SUCCESS,
+            last_success_checked_at=timezone.now(),
+        )
+        claim = reserve_direct_nas_location(
+            repository=nas_repo,
+            node_id=self.agent.id,
+            repository_subdir=repository_subdir,
+        )
+        claim.state = RepositoryLocationClaim.State.OWNED
+        claim.legacy_adoption_required = True
+        claim.save(
+            update_fields=[
+                "state",
+                "legacy_adoption_required",
+                "updated_at",
+            ]
+        )
+
+        backup_config_service.ensure_direct_nas_repository_for_backup(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            repository_id=nas_repo.id,
+        )
+
+        self.assertEqual(run_agent_task_sync.call_args.kwargs["kind"], "repo.status")
+        claim.refresh_from_db()
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.OWNED)
+        self.assertIsNone(claim.ownership_verified_at)
 
     def test_create_backup_config_accepts_agent_source_with_proxy_fs_repository(self):
         proxy_repo = self._proxy_fs_repository()
@@ -1706,6 +2070,30 @@ class ProtectionBackupConfigApiTests(TestCase):
                 source_ref_id=self.agent.id,
             )
 
+    def test_reset_creation_is_blocked_by_active_storage_validation(self):
+        nas_repo = self._direct_nas_repository(name="reset-provisioning-direct-nas")
+        payload = self._payload(name="Reset blocked by storage validation")
+        payload["repository_id"] = nas_repo.id
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_202_ACCEPTED, create.content)
+        Task.objects.filter(
+            task_uuid=create.data["provisioning_task_uuid"],
+        ).update(status=Task.Status.WAITING)
+
+        with self.assertRaises(ValidationError):
+            ensure_backup_config_reset_task(
+                organization_id=self.org.id,
+                source_type="agent",
+                source_ref_id=self.agent.id,
+            )
+
+        config = BackupConfig.objects.get(id=create.data["id"])
+        self.assertEqual(config.status, BackupConfig.Status.PROVISIONING)
         self.assertFalse(
             Task.objects.filter(task_type=Task.Type.BACKUP_CONFIG_RESET).exists()
         )
@@ -2005,6 +2393,33 @@ class ProtectionBackupConfigApiTests(TestCase):
         self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(
             BackupConfig.objects.filter(name="Missing source config").exists()
+        )
+
+    def test_create_backup_config_is_blocked_by_active_source_unregister(self):
+        unregister_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Unregister source before configuration",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=unregister_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Blocked by active unregister"),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST, create.content)
+        self.assertFalse(
+            BackupConfig.objects.filter(name="Blocked by active unregister").exists()
         )
 
     def test_create_backup_config_rejects_parent_child_directories(self):

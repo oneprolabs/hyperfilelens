@@ -37,7 +37,7 @@ const (
 	repositoryAlreadyExistsCode          = "STORAGE.REPOSITORY_ALREADY_EXISTS"
 	repositoryAlreadyExistsMessage       = "A Kopia repository already exists at the selected location. Import is not supported in this version. Choose a different storage location."
 	nasRepositoryWriteDeniedCode         = "NAS_REPOSITORY_WRITE_DENIED"
-	nasRepositoryWriteDeniedMessage      = "The SMB share was mounted, but the Agent could not create the repository directory."
+	nasRepositoryWriteDeniedMessage      = "The NAS share was mounted, but the Agent does not have permission to write repository data."
 )
 
 type repositoryPrepareMode uint8
@@ -546,7 +546,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		nassvc.LogSpec("repository_mount_ensure_begin", *spec.TargetNAS, "task_id", taskID)
 		if err := nassvc.NewService().EnsureMounted(ctx, *spec.TargetNAS); err != nil {
 			nassvc.LogSpec("repository_mount_ensure_failed", *spec.TargetNAS, "task_id", taskID, "err", err.Error())
-			return "", nil, nil, repositorySpec{}, err.Error()
+			return "", nil, nasRepositoryMountErrorResult(err), repositorySpec{}, err.Error()
 		}
 		nassvc.LogSpec("repository_mount_ensure_ok", *spec.TargetNAS, "task_id", taskID)
 		repoPath, pathErr := repositoryNASPath(spec)
@@ -558,25 +558,37 @@ func (e *Engine) prepareManagedRepositoryLocked(
 			return os.MkdirAll(repoPath, 0o755)
 		}); mkErr != nil {
 			nassvc.LogSpec("repository_mkdir_failed", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath, "err", mkErr.Error())
-			if isNASRepositoryWriteDenied(*spec.TargetNAS, mkErr) {
-				return "", nil, map[string]any{
-					"error_code":   nasRepositoryWriteDeniedCode,
-					"protocol":     spec.TargetNAS.Protocol,
-					"stage":        "repository_directory_create",
-					"mount_status": "mounted",
-				}, repositorySpec{}, nasRepositoryWriteDeniedMessage
+			if result, message, classified := classifyNASRepositoryWriteError(*spec.TargetNAS, mkErr, "repository_directory_create"); classified {
+				return "", nil, result, repositorySpec{}, message
 			}
 			return "", nil, nil, repositorySpec{}, mkErr.Error()
 		}
 		nassvc.LogSpec("repository_mkdir_ok", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath)
+		if probeErr := probeNASRepositoryWritable(repoPath); probeErr != nil {
+			nassvc.LogSpec("repository_write_probe_failed", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath, "err", probeErr.Error())
+			if result, message, classified := classifyNASRepositoryWriteError(*spec.TargetNAS, probeErr, "repository_write_probe"); classified {
+				return "", nil, result, repositorySpec{}, message
+			}
+			return "", nil, nil, repositorySpec{}, probeErr.Error()
+		}
 		spec.Path = repoPath
+	}
+	ownershipExistedBeforeInitialize := false
+	if mode == repositoryPrepareInitialize && spec.Type != "s3" && spec.Ownership != nil {
+		var ownershipCheckErr error
+		ownershipExistedBeforeInitialize, ownershipCheckErr = filesystemRepositoryOwnershipMatches(spec)
+		if ownershipCheckErr != nil {
+			return "", nil, map[string]any{
+				"error_code": "REPOSITORY_OWNERSHIP_INVALID",
+			}, spec, ownershipCheckErr.Error()
+		}
 	}
 	if mode == repositoryPrepareInitialize && spec.Type == "proxy_fs" && spec.Layout == "managed_subdir_v1" {
 		exists, pathErr := managedProxyFSCreatePathExists(spec)
 		if pathErr != nil {
 			return "", nil, nil, repositorySpec{}, pathErr.Error()
 		}
-		if exists {
+		if exists && !ownershipExistedBeforeInitialize {
 			return "", nil, map[string]any{
 				"error_code": repositoryAlreadyExistsCode,
 			}, spec, repositoryAlreadyExistsMessage
@@ -657,13 +669,24 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		createRes, createErr := runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, createArgs, env, "")
 		result["repository_create"] = commandResult(createRes)
 		if createErr != nil {
-			if repositoryCreateAlreadyExists(createRes) {
+			if repositoryCreateAlreadyExists(createRes) && ownershipExistedBeforeInitialize {
+				slog.Info("managed_repository", "event", "create_retry_owned_repository", "task_id", taskID, "repo_type", spec.Type)
+				if connectRes, connectErr := runConnect("connect_owned_retry"); connectErr != nil {
+					return "", nil, result, spec, repositoryCommandFailureMessage(connectRes, connectErr)
+				}
+				statusRes, statusErr := runStatus("status_owned_retry")
+				if statusErr != nil {
+					return "", nil, result, spec, repositoryCommandFailureMessage(statusRes, statusErr)
+				}
+				statusVerified = true
+			} else if repositoryCreateAlreadyExists(createRes) {
 				result["error_code"] = repositoryAlreadyExistsCode
 				slog.Info("managed_repository", "event", "create_rejected_existing", "task_id", taskID, "repo_type", spec.Type)
 				return "", nil, result, spec, repositoryAlreadyExistsMessage
+			} else {
+				slog.Warn("managed_repository", "event", "create_failed", "task_id", taskID, "repo_type", spec.Type, "err", createErr.Error())
+				return "", nil, result, spec, repositoryCommandFailureMessage(createRes, createErr)
 			}
-			slog.Warn("managed_repository", "event", "create_failed", "task_id", taskID, "repo_type", spec.Type, "err", createErr.Error())
-			return "", nil, result, spec, repositoryCommandFailureMessage(createRes, createErr)
 		}
 		slog.Info("managed_repository", "event", "create_ok", "task_id", taskID, "repo_type", spec.Type, "duration_ms", time.Since(started).Milliseconds())
 	} else {
@@ -740,8 +763,57 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	return configFile, env, result, spec, ""
 }
 
-func isNASRepositoryWriteDenied(spec nassvc.Spec, err error) bool {
-	return spec.Protocol == "smb" && errors.Is(err, fs.ErrPermission)
+func nasRepositoryMountErrorResult(err error) map[string]any {
+	var mismatch *nassvc.MountSourceMismatchError
+	if errors.As(err, &mismatch) {
+		return map[string]any{"error_code": "NAS_MOUNT_SOURCE_MISMATCH", "stage": "mount_validation"}
+	}
+	var readOnly *nassvc.MountReadOnlyError
+	if errors.As(err, &readOnly) {
+		return map[string]any{"error_code": "NAS_REPOSITORY_READ_ONLY", "stage": "mount_validation"}
+	}
+	return map[string]any{"error_code": "NAS_MOUNT_FAILED", "stage": "mount"}
+}
+
+func probeNASRepositoryWritable(repositoryPath string) error {
+	file, err := os.CreateTemp(repositoryPath, ".hfl-write-probe-*")
+	if err != nil {
+		return err
+	}
+	name := file.Name()
+	if _, err = file.Write([]byte("hfl")); err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	removeErr := os.Remove(name)
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return removeErr
+}
+
+func classifyNASRepositoryWriteError(spec nassvc.Spec, err error, stage string) (map[string]any, string, bool) {
+	code := ""
+	message := ""
+	if strings.Contains(strings.ToLower(err.Error()), "read-only file system") {
+		code = "NAS_REPOSITORY_READ_ONLY"
+		message = "NAS repository is mounted read-only. Enable write access and retry storage validation."
+	} else if errors.Is(err, fs.ErrPermission) {
+		code = nasRepositoryWriteDeniedCode
+		message = nasRepositoryWriteDeniedMessage
+	}
+	if code == "" {
+		return nil, "", false
+	}
+	return map[string]any{
+		"error_code":   code,
+		"protocol":     spec.Protocol,
+		"stage":        stage,
+		"mount_status": "mounted",
+	}, message, true
 }
 
 func managedProxyFSCreatePathExists(spec repositorySpec) (bool, error) {

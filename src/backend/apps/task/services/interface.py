@@ -63,6 +63,12 @@ def _default_steps(task_type: str) -> list[str]:
             "refresh_repository_usage",
             "finalize_repository_operation",
         ]
+    if task_type == Task.Type.BACKUP_CONFIG_PROVISION:
+        return [
+            "validate_repository_target",
+            "initialize_repository",
+            "activate_backup_config",
+        ]
     if task_type in RESTORE_TASK_TYPES:
         return ["restore", "finalize"]
     return ["snapshot", "scan", "chunk", "upload", "finalize"]
@@ -334,6 +340,10 @@ def cancel_task(
         raise ValidationError(
             "Source deregistration tasks cannot be cancelled. Submit a new request "
             "if cleanup did not start."
+        )
+    if task.task_type == Task.Type.BACKUP_CONFIG_PROVISION:
+        raise ValidationError(
+            "Storage validation is controlled by the backup configuration workflow."
         )
     if task.task_type == Task.Type.NODE_LIFECYCLE:
         raise ValidationError(

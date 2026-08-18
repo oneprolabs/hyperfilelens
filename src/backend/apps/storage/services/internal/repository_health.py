@@ -6,6 +6,10 @@ from django.apps import apps
 from django.core.exceptions import ValidationError
 
 from apps.node.models import Node
+from apps.node.services.capabilities import (
+    REPOSITORY_OWNERSHIP_CAPABILITY,
+    node_supports_capability,
+)
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_log import (
     log_agent_dispatch,
@@ -275,6 +279,13 @@ def _probe_unbound_nas_from_node(
         isinstance(outcome.result, dict)
         and outcome.result.get("ownership_verified") is True
     ):
+        if node_supports_capability(node, REPOSITORY_OWNERSHIP_CAPABILITY):
+            logger.warning(
+                "repository ownership capability returned no result repository_id=%s node_id=%s",
+                repository.id,
+                node.id,
+            )
+            return False
         return repository_has_legacy_location(
             repository,
             owner_node_id=node.id,

@@ -12,6 +12,24 @@ import (
 	"hyperfilelens/agent/internal/platform/vfs"
 )
 
+// MountSourceMismatchError prevents a managed mount point from silently using
+// credentials or a share left by an older repository configuration.
+type MountSourceMismatchError struct {
+	Expected string
+	Actual   string
+}
+
+func (e *MountSourceMismatchError) Error() string {
+	return fmt.Sprintf("NAS mount source mismatch: expected %s, found %s", e.Expected, e.Actual)
+}
+
+// MountReadOnlyError reports an active mount that cannot host repository data.
+type MountReadOnlyError struct{ Source string }
+
+func (e *MountReadOnlyError) Error() string {
+	return fmt.Sprintf("NAS repository mount is read-only: %s", e.Source)
+}
+
 // SpaceInfo describes filesystem usage for a mounted NAS path.
 type SpaceInfo struct {
 	TotalBytes uint64
@@ -69,10 +87,12 @@ func (s *Service) EnsureMounted(ctx context.Context, spec Spec) error {
 		return fmt.Errorf("invalid mount_point")
 	}
 	if isMounted(spec.MountPoint) {
-		return nil
+		return validateMountedShare(spec)
 	}
-	_, err := s.Mount(ctx, spec)
-	return err
+	if _, err := s.Mount(ctx, spec); err != nil {
+		return err
+	}
+	return validateMountedShare(spec)
 }
 
 // Mount creates the mount point and mounts the NAS share.
@@ -150,6 +170,23 @@ func removeManagedMountDirectory(mountPoint string) error {
 		return err
 	}
 	return nil
+}
+
+// parseNetUseRemote extracts the UNC path from the line-oriented output of
+// "net use" without splitting share names that contain spaces.
+func parseNetUseRemote(text string) (string, bool) {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		index := strings.Index(line, `\\`)
+		if index < 0 {
+			continue
+		}
+		remote := strings.TrimSpace(line[index:])
+		if remote != "" {
+			return remote, true
+		}
+	}
+	return "", false
 }
 
 // Test mounts the share when needed and returns space information.

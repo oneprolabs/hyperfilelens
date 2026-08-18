@@ -1726,6 +1726,32 @@ class RepositoryCleanupTests(TestCase):
         )
         self.assertEqual(blocker["task_uuid"], str(task.task_uuid))
 
+    def test_preflight_blocks_waiting_backup_config_provision(self):
+        repository = self._s3_repository("waiting-storage-validation")
+        task = create_task(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+            display_name="Waiting storage validation",
+            resources=[
+                {
+                    "resource_type": TaskResource.Type.REPOSITORY,
+                    "resource_id": repository.id,
+                }
+            ],
+        )
+        task.status = Task.Status.WAITING
+        task.save(update_fields=["status", "updated_at"])
+
+        preflight = repository_cleanup_preflight(repository=repository, force=True)
+
+        self.assertFalse(preflight["allowed"])
+        self.assertTrue(
+            any(
+                blocker.get("task_uuid") == str(task.task_uuid)
+                for blocker in preflight["blockers"]
+            )
+        )
+
     def test_preflight_finds_active_backup_from_snapshot_association(self):
         repository = self._s3_repository("active-backup-s3")
         task = create_task(

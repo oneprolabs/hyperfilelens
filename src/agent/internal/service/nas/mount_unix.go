@@ -41,6 +41,67 @@ func isMounted(mountPoint string) bool {
 	return false
 }
 
+func validateMountedShare(spec Spec) error {
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		// Non-Linux Unix platforms do not expose /proc/mounts. The managed-path
+		// write probe remains the authoritative writable check there.
+		return nil
+	}
+	target := filepath.Clean(spec.MountPoint)
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || filepath.Clean(unescapeProcMount(fields[1])) != target {
+			continue
+		}
+		actual := unescapeProcMount(fields[0])
+		expected := expectedMountSource(spec)
+		fsType := strings.ToLower(fields[2])
+		protocolMatches := (spec.Protocol == "nfs" && strings.HasPrefix(fsType, "nfs")) ||
+			(spec.Protocol == "smb" && (fsType == "cifs" || fsType == "smb3"))
+		if !protocolMatches {
+			return &MountSourceMismatchError{Expected: expected, Actual: fmt.Sprintf("%s (%s)", actual, fsType)}
+		}
+		if !sameMountSource(spec.Protocol, actual, expected) {
+			return &MountSourceMismatchError{Expected: expected, Actual: actual}
+		}
+		for _, option := range strings.Split(fields[3], ",") {
+			if option == "ro" {
+				return &MountReadOnlyError{Source: actual}
+			}
+		}
+		return nil
+	}
+	return &MountSourceMismatchError{Expected: expectedMountSource(spec), Actual: "unmounted"}
+}
+
+func expectedMountSource(spec Spec) string {
+	if spec.Protocol == "smb" {
+		return fmt.Sprintf("//%s/%s", spec.Server, strings.Trim(spec.Share, "/"))
+	}
+	return fmt.Sprintf("%s:%s", spec.Server, spec.ExportPath)
+}
+
+func sameMountSource(protocol, actual, expected string) bool {
+	normalize := func(value string) string {
+		return strings.TrimRight(strings.TrimSpace(value), "/")
+	}
+	if protocol == "smb" {
+		return strings.EqualFold(normalize(actual), normalize(expected))
+	}
+	return normalize(actual) == normalize(expected)
+}
+
+func unescapeProcMount(value string) string {
+	replacer := strings.NewReplacer(
+		`\040`, " ",
+		`\011`, "\t",
+		`\012`, "\n",
+		`\134`, `\`,
+	)
+	return replacer.Replace(value)
+}
+
 func mountShare(ctx context.Context, spec Spec) error {
 	LogSpec("mount_begin", spec)
 

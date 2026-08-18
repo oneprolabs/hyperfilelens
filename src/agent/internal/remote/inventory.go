@@ -53,6 +53,7 @@ func SendInventory(
 			"repository_cleanup_v2",
 			"repository_cleanup_ownership_v1",
 			"repository_cleanup_s3_v1",
+			"repository_ownership_v1",
 			"backup_prepared_snapshot_v1",
 			"snapshot_browse_v1",
 			"snapshot_scope_resolve_v1",

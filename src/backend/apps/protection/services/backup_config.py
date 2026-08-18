@@ -12,6 +12,10 @@ from django.utils import timezone
 
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
+from apps.node.services.capabilities import (
+    REPOSITORY_OWNERSHIP_CAPABILITY,
+    node_supports_capability,
+)
 from apps.node.services.internal.node_registry import node_is_available_for_work
 from apps.node.services.internal.agent_log import log_agent_dispatch, log_agent_outcome
 from apps.node.services.interface import run_agent_task_sync
@@ -61,6 +65,7 @@ from apps.storage.services.internal.repository_location import (
     mark_repository_location_owned,
     mark_repository_location_ownership_verified,
     mark_repository_location_residual,
+    repository_has_legacy_location,
     reserve_direct_nas_location,
 )
 from apps.storage.services.internal.repository_workload import (
@@ -215,10 +220,22 @@ def create_backup_config(
 
     org = Organization.objects.filter(id=organization_id).first()
 
-    initialization_error: Exception | None = None
-    persistence_error: Exception | None = None
+    provisioning_task_id: int | None = None
+    direct_nas = False
     with transaction.atomic():
-        _lock_repository_for_backup_config(
+        from apps.source.services.internal.source_operation_fence import (
+            assert_source_product_operation_allowed,
+        )
+
+        # Use the same Source-first lock ordering as Reset and Deregistration.
+        # Once this check succeeds, those workflows will see the durable
+        # provisioning task created below before they can acquire the Source.
+        assert_source_product_operation_allowed(
+            organization_id=organization_id,
+            source_type=payload["source_type"],
+            source_ref_id=payload["source_ref_id"],
+        )
+        repository = _lock_repository_for_backup_config(
             organization_id=organization_id,
             repository_id=payload["repository_id"],
         )
@@ -227,46 +244,64 @@ def create_backup_config(
         if org is not None:
             enforce_license_quota(org, "max_protected_sources", additional=1)
             enforce_license_quota(org, "max_storage_gb", additional=0)
-        # Quota rejection must not initialize a remote Direct NAS repository or
-        # persist its ownership/location records.
-        try:
-            residual_claim = _initialize_direct_nas_repository(
-                organization_id=organization_id,
-                source_type=payload["source_type"],
-                source_ref_id=payload["source_ref_id"],
-                repository_id=payload["repository_id"],
-            )
-        except Exception as exc:
-            # Direct NAS initialization changes remote storage before it can
-            # fail. Commit the residual ownership record, then re-raise after
-            # leaving this transaction so operators can safely recover it.
-            initialization_error = exc
-        if initialization_error is None:
-            try:
-                # Roll back partial config rows independently from the Direct
-                # NAS ownership facts written by the initialization above.
-                with transaction.atomic():
-                    config_id = _persist_backup_config_rows(
-                        organization_id=organization_id,
-                        payload=payload,
-                        directories_data=directories_data,
-                        recovery_plan_enabled=recovery_plan_enabled,
-                        recovery_plans_data=recovery_plans_data,
-                    )
-            except Exception as exc:
-                persistence_error = exc
-                if residual_claim is not None:
-                    repository, owner_node_id, repository_subdir = residual_claim
-                    mark_repository_location_residual(
-                        repository,
-                        owner_node_id=owner_node_id,
-                        repository_subdir=repository_subdir,
-                    )
+        direct_nas = (
+            repository.repo_type == Repository.Type.NAS
+            and repository.bind_node_id is None
+            and not str(repository.bind_node_type or "").strip()
+        )
+        if direct_nas:
+            payload["status"] = BackupConfig.Status.PROVISIONING
+        config_id = _persist_backup_config_rows(
+            organization_id=organization_id,
+            payload=payload,
+            directories_data=directories_data,
+            recovery_plan_enabled=recovery_plan_enabled,
+            recovery_plans_data=recovery_plans_data,
+        )
+        if direct_nas:
+            from apps.task.models import Task, TaskResource
+            from apps.task.services.interface import create_task
 
-    if initialization_error is not None:
-        raise initialization_error
-    if persistence_error is not None:
-        raise persistence_error
+            provision_task = create_task(
+                organization_id=organization_id,
+                task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+                display_name=f'Validate backup target for "{payload["name"]}"',
+                trigger_type=Task.TriggerType.SYSTEM,
+                request_payload={
+                    "backup_config_id": config_id,
+                    "repository_id": int(repository.id),
+                },
+                resources=[
+                    {
+                        "resource_type": TaskResource.Type.BACKUP_CONFIG,
+                        "resource_id": config_id,
+                        "is_primary": True,
+                    },
+                    {
+                        "resource_type": TaskResource.Type.BACKUP_SOURCE,
+                        "resource_subtype": payload["source_type"],
+                        "resource_id": payload["source_ref_id"],
+                    },
+                    {
+                        "resource_type": TaskResource.Type.REPOSITORY,
+                        "resource_id": int(repository.id),
+                    },
+                ],
+                idempotency_key=f"backup-config-provision:{config_id}",
+            )
+            provisioning_task_id = int(provision_task.id)
+            BackupConfig.objects.filter(id=config_id).update(
+                provisioning_task_uuid=provision_task.task_uuid,
+            )
+
+            def _queue_provision(task_id: int = provisioning_task_id) -> None:
+                from apps.protection.services.backup_config_provision import (
+                    queue_backup_config_provision_task,
+                )
+
+                queue_backup_config_provision_task(task_id=task_id)
+
+            transaction.on_commit(_queue_provision)
 
     source_type = payload["source_type"]
     source_ref_id = payload["source_ref_id"]
@@ -279,11 +314,12 @@ def create_backup_config(
         source_ref_id,
         payload["repository_id"],
     )
-    _enqueue_direct_nas_usage_refresh(
-        organization_id=organization_id,
-        repository_ids=[payload["repository_id"]],
-        trigger="protection.backup_config.create",
-    )
+    if not direct_nas:
+        _enqueue_direct_nas_usage_refresh(
+            organization_id=organization_id,
+            repository_ids=[payload["repository_id"]],
+            trigger="protection.backup_config.create",
+        )
     return BackupConfig.objects.get(pk=config_id)
 
 
@@ -690,6 +726,8 @@ def _initialize_direct_nas_repository(
     source_ref_id: int,
     repository_id: int,
     verify_existing: bool = True,
+    parent_task=None,
+    require_ownership_capability: bool = False,
 ) -> tuple[Repository, int, str] | None:
     """Initialize Direct NAS and identify claims to retain on caller rollback.
 
@@ -719,6 +757,28 @@ def _initialize_direct_nas_repository(
         source_type=source_type,
         source_ref_id=source_ref_id,
     )
+    supports_ownership = node_supports_capability(
+        node,
+        REPOSITORY_OWNERSHIP_CAPABILITY,
+    )
+    if require_ownership_capability and not supports_ownership:
+        raise AppError(
+            code="AGENT_UPGRADE_REQUIRED",
+            status=409,
+            retryable=False,
+            title="Agent upgrade required",
+            diagnostic=(
+                f'Agent "{node.name}" (version {str(node.version or "unknown")}) '
+                "does not support repository ownership validation. "
+                "Upgrade the Agent, then retry storage validation."
+            ),
+            meta={
+                "node_id": int(node.id),
+                "node_name": node.name,
+                "current_version": str(node.version or ""),
+                "missing_capability": "repository_ownership_v1",
+            },
+        )
     payload = nas_repository_payload(
         repository=repository,
         subdir=nas_agent_repository_subdir(node.id),
@@ -819,6 +879,7 @@ def _initialize_direct_nas_repository(
             },
             correlation_type="protection.backup_config",
             correlation_id=correlation_id,
+            parent_task=parent_task,
             wait_timeout_seconds=180,
         )
     except Exception:
@@ -861,6 +922,7 @@ def _initialize_direct_nas_repository(
                         },
                         correlation_type="protection.backup_config",
                         correlation_id=correlation_id,
+                        parent_task=parent_task,
                         wait_timeout_seconds=180,
                     )
                 except Exception as exc:
@@ -939,19 +1001,51 @@ def _initialize_direct_nas_repository(
         isinstance(outcome.result, dict)
         and outcome.result.get("ownership_verified") is True
     )
-    if not ownership_verified:
+    legacy_non_destructive_access = (
+        not supports_ownership
+        and previously_initialized
+        and repository_has_legacy_location(
+            repository,
+            owner_node_id=node.id,
+            repository_subdir=repository_subdir,
+        )
+    )
+    if not ownership_verified and not legacy_non_destructive_access:
         mark_repository_location_initialization_failed(
             repository,
             owner_node_id=node.id,
             repository_subdir=repository_subdir,
         )
-        raise ValidationError(
-            {
-                "repository_id": (
-                    "Agent did not verify repository ownership. Upgrade the Agent "
-                    "and retry before using this Direct NAS repository."
-                )
-            }
+        error_code = (
+            "AGENT_PROTOCOL_INVALID"
+            if supports_ownership
+            else "AGENT_UPGRADE_REQUIRED"
+        )
+        diagnostic = (
+            "Agent declared repository ownership support but did not return "
+            "an ownership result. Upgrade the Agent and retry storage validation."
+            if supports_ownership
+            else (
+                "This repository has no verified legacy ownership record and the "
+                "Agent cannot validate repository ownership. Upgrade the Agent and retry."
+            )
+        )
+        raise AppError(
+            code=error_code,
+            status=409,
+            retryable=False,
+            title=(
+                "Agent protocol is incompatible"
+                if supports_ownership
+                else "Agent upgrade required"
+            ),
+            diagnostic=diagnostic,
+            meta={
+                "node_id": int(node.id),
+                "node_name": node.name,
+                "current_version": str(node.version or ""),
+                "missing_result": "ownership_verified",
+            },
         )
     repository_unavailable = False
     with transaction.atomic():
@@ -1369,7 +1463,62 @@ def _optional_int(data: dict[str, Any], key: str) -> int | None:
     return value
 
 
+@transaction.atomic
 def delete_backup_config(*, config: BackupConfig) -> dict[str, Any]:
+    config = BackupConfig.objects.select_for_update().get(
+        id=config.id,
+        organization_id=config.organization_id,
+    )
+    if config.status == BackupConfig.Status.PROVISION_FAILED:
+        from apps.restore.models import RestorePlan
+        from apps.task.models import Task
+
+        task = Task.objects.select_for_update().filter(
+            task_uuid=config.provisioning_task_uuid,
+            organization_id=config.organization_id,
+        ).first()
+        if task is not None and task.status in {
+            Task.Status.PENDING,
+            Task.Status.WAITING,
+            Task.Status.BLOCKED,
+            Task.Status.RUNNING,
+        }:
+            raise ValidationError(
+                {"detail": "Target storage validation is still running."}
+            )
+        if BackupSourceSnapshot.objects.filter(backup_config_id=config.id).exists():
+            raise ValidationError(
+                {"detail": "A backup configuration with snapshots cannot be discarded."}
+            )
+        if task is not None:
+            result_payload = (
+                dict(task.result_payload)
+                if isinstance(task.result_payload, dict)
+                else {}
+            )
+            result_payload["backup_config_discarded"] = True
+            task.result_payload = result_payload
+            task.save(update_fields=["result_payload", "updated_at"])
+        config_id = int(config.id)
+        organization_id = int(config.organization_id)
+        source_type = config.source_type
+        source_ref_id = int(config.source_ref_id)
+        RestorePlan.objects.filter(
+            organization_id=config.organization_id,
+            backup_config_id=config.id,
+        ).delete()
+        config.delete()
+        from apps.source.services.internal.source_pipeline import (
+            PipelineStep,
+            force_set_pipeline_steps,
+        )
+
+        force_set_pipeline_steps(
+            organization_id=organization_id,
+            ids=[f"{source_type}:{source_ref_id}"],
+            step=PipelineStep.CONFIG,
+        )
+        return {"deleted": True, "id": config_id}
     raise ValidationError(
         {
             "detail": "Backup config deletion is not supported. Clean up the source endpoint instead."
@@ -1566,6 +1715,18 @@ def update_backup_config(
     config: BackupConfig,
     data: dict[str, Any],
 ) -> BackupConfig:
+    if config.status in {
+        BackupConfig.Status.PROVISIONING,
+        BackupConfig.Status.PROVISION_FAILED,
+    }:
+        raise ValidationError(
+            {
+                "detail": (
+                    "Finish or retry target storage validation before editing this "
+                    "backup configuration."
+                )
+            }
+        )
     requested_repository_id = int(data.get("repository_id") or config.repository_id)
     if requested_repository_id != config.repository_id:
         raise ValidationError(

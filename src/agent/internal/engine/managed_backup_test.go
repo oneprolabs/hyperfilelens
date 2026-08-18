@@ -83,21 +83,67 @@ func TestRepositoryNASPathRejectsEscapes(t *testing.T) {
 	}
 }
 
-func TestNASRepositoryWriteDeniedIsLimitedToSMBPermissionErrors(t *testing.T) {
+func TestNASRepositoryWriteDeniedClassifiesNASPermissionAndReadOnlyErrors(t *testing.T) {
+	isClassified := func(spec nassvc.Spec, err error) bool {
+		_, _, classified := classifyNASRepositoryWriteError(spec, err, "test")
+		return classified
+	}
 	smb := mustNASSpec(t, map[string]any{
 		"protocol": "smb", "server": "10.0.0.15", "share": "backup",
 		"username": "backup", "password": "secret", "mount_point": testRepositoryMountPoint(t, 42),
 	})
-	if !isNASRepositoryWriteDenied(*smb, fs.ErrPermission) {
+	if !isClassified(*smb, fs.ErrPermission) {
 		t.Fatal("expected SMB permission error to be classified")
 	}
 	nfs := *smb
 	nfs.Protocol = "nfs"
-	if isNASRepositoryWriteDenied(nfs, fs.ErrPermission) {
-		t.Fatal("did not expect NFS permission error to be classified")
+	if !isClassified(nfs, fs.ErrPermission) {
+		t.Fatal("expected NFS permission error to be classified")
 	}
-	if isNASRepositoryWriteDenied(*smb, fs.ErrNotExist) {
+	if !isClassified(nfs, fmt.Errorf("read-only file system")) {
+		t.Fatal("expected read-only NFS error to be classified")
+	}
+	if isClassified(*smb, fs.ErrNotExist) {
 		t.Fatal("did not expect non-permission error to be classified")
+	}
+}
+
+func TestFilesystemRepositoryOwnershipMatchesInterruptedInitialization(t *testing.T) {
+	basePath := t.TempDir()
+	spec := repositorySpec{
+		ID:       42,
+		Type:     "proxy_fs",
+		Path:     filepath.Join(basePath, "hfl-repo-42"),
+		BasePath: basePath,
+		Layout:   "managed_subdir_v1",
+		Ownership: &repositoryOwnership{
+			DeploymentUUID: "deployment-1",
+			RepositoryUUID: "repository-42",
+			LocationDigest: "location-42",
+			MarkerPath:     repositoryOwnershipMarkerPath,
+			FormatVersion:  1,
+			Signature:      "signature-42",
+		},
+	}
+
+	matches, err := filesystemRepositoryOwnershipMatches(spec)
+	if err != nil || matches {
+		t.Fatalf("unexpected ownership before claim: matches=%v err=%v", matches, err)
+	}
+	if err := claimFilesystemRepositoryOwnership(spec); err != nil {
+		t.Fatalf("claim ownership: %v", err)
+	}
+	matches, err = filesystemRepositoryOwnershipMatches(spec)
+	if err != nil || !matches {
+		t.Fatalf("expected matching interrupted ownership: matches=%v err=%v", matches, err)
+	}
+
+	foreign := spec
+	foreignOwnership := *spec.Ownership
+	foreignOwnership.RepositoryUUID = "repository-foreign"
+	foreign.Ownership = &foreignOwnership
+	if _, err := filesystemRepositoryOwnershipMatches(foreign); err == nil {
+		t.Fatal("expected a foreign ownership marker to be rejected")
 	}
 }
 
@@ -474,6 +520,76 @@ func TestManagedRepositoryInitializeRejectsExistingWithoutConnect(t *testing.T) 
 	}
 	if strings.Contains(commandText, "repository connect") {
 		t.Fatalf("initialize must not connect an existing repository: %q", commandText)
+	}
+}
+
+func TestManagedProxyFSInitializeResumesMatchingInterruptedOwnership(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tempDir := t.TempDir()
+	basePath := filepath.Join(tempDir, "repositories")
+	repositoryPath := filepath.Join(basePath, "hfl-repo-42")
+	commandLog := filepath.Join(tempDir, "commands.log")
+	kopiaPath := filepath.Join(tempDir, "kopia")
+	script := fmt.Sprintf(
+		"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\ncase \"$*\" in\n  *\"repository create filesystem\"*) echo 'repository already exists in storage' >&2; exit 1 ;;\nesac\nexit 0\n",
+		commandLog,
+	)
+	if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	repository := map[string]any{
+		"id":             42,
+		"type":           "proxy_fs",
+		"path":           repositoryPath,
+		"base_path":      basePath,
+		"layout":         "managed_subdir_v1",
+		"kopia_password": "repo-pass",
+		"ownership": map[string]any{
+			"deployment_uuid": "deployment-1",
+			"repository_uuid": "repository-42",
+			"location_digest": "location-42",
+			"format_version":  1,
+			"signature":       "signature-42",
+			"marker_path":     repositoryOwnershipMarkerPath,
+		},
+	}
+	spec, ok, err := parseRepositorySpec(repository)
+	if err != nil || !ok {
+		t.Fatalf("parse repository: ok=%v err=%v", ok, err)
+	}
+	if err := claimFilesystemRepositoryOwnership(spec); err != nil {
+		t.Fatalf("claim interrupted ownership: %v", err)
+	}
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir:   filepath.Join(tempDir, "data"),
+		KopiaPath: kopiaPath,
+	}})
+	payload := ParsePayload(map[string]any{"repository": repository})
+
+	status, result, message := engine.runManagedRepositoryInitialize(
+		context.Background(),
+		ReporterSink{},
+		"task-1",
+		payload,
+	)
+
+	if status != "success" || message != "" {
+		t.Fatalf("unexpected result status=%q message=%q result=%#v", status, message, result)
+	}
+	if result["ownership_verified"] != true {
+		t.Fatalf("ownership was not verified: %#v", result)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandText := string(commands)
+	if !strings.Contains(commandText, "repository create filesystem") ||
+		!strings.Contains(commandText, "repository connect filesystem") ||
+		!strings.Contains(commandText, "repository status") {
+		t.Fatalf("interrupted initialization was not resumed: %q", commandText)
 	}
 }
 

@@ -14,6 +14,10 @@ from apps.node.services.internal.agent_log import (
     log_agent_outcome,
 )
 from apps.node.services.interface import run_agent_task_sync
+from apps.node.services.capabilities import (
+    REPOSITORY_OWNERSHIP_CAPABILITY,
+    node_supports_capability,
+)
 from apps.storage.repositories.models import Repository
 from apps.storage.repositories.models import RepositoryLocationClaim
 from apps.storage.services.internal.repository_errors import (
@@ -186,6 +190,15 @@ def _run_proxy_nas_repository_task(
     adopt_legacy_ownership: bool = True,
 ):
     node = validate_proxy_for_repository(repository)
+    supports_ownership = node_supports_capability(
+        node,
+        REPOSITORY_OWNERSHIP_CAPABILITY,
+    )
+    if kind == "repo.initialize" and not supports_ownership:
+        raise NASRepositoryError(
+            f'Agent "{node.name}" must be upgraded before creating this repository.',
+            error_code="AGENT_UPGRADE_REQUIRED",
+        )
     payload = {
         "repository": nas_repository_payload(
             repository=repository,
@@ -265,10 +278,14 @@ def _run_proxy_nas_repository_task(
             repository_has_legacy_location,
         )
 
-        if health_only and repository_has_legacy_location(
-            repository,
-            owner_node_id=node.id,
-            repository_subdir=nas_proxy_repository_subdir(repository),
+        if (
+            not supports_ownership
+            and health_only
+            and repository_has_legacy_location(
+                repository,
+                owner_node_id=node.id,
+                repository_subdir=nas_proxy_repository_subdir(repository),
+            )
         ):
             logger.info(
                 "%s legacy compatibility repository_id=%s node_id=%s org_id=%s",
@@ -278,9 +295,14 @@ def _run_proxy_nas_repository_task(
                 repository.organization_id,
             )
             return outcome
+        if supports_ownership:
+            raise NASRepositoryError(
+                "Agent declared repository ownership support but did not return an ownership result.",
+                error_code="AGENT_PROTOCOL_INVALID",
+            )
         raise NASRepositoryError(
-            "Agent did not verify repository ownership. Upgrade the Agent and retry.",
-            error_code="REPOSITORY_OWNERSHIP_INVALID",
+            f'Agent "{node.name}" must be upgraded to verify repository ownership.',
+            error_code="AGENT_UPGRADE_REQUIRED",
         )
     if not health_only:
         sync_proxy_mount_path_from_repo_status(repository, outcome.result)

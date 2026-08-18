@@ -1178,7 +1178,7 @@ def _create_error_code(exc: Exception) -> str:
     if isinstance(exc, NASRepositoryError):
         return exc.error_code
     if isinstance(exc, ProxyFSRepositoryError):
-        return "REPOSITORY_CREATE_FAILED"
+        return exc.error_code
     if isinstance(exc, (ValidationError, DRFValidationError)):
         return "REPOSITORY_CREATE_INVALID"
     if isinstance(exc, TimeoutError):
