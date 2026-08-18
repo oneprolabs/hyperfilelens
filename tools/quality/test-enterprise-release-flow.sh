@@ -70,10 +70,14 @@ entry_enterprise="${ROOT}/.github/workflows/enterprise_release.yml"
 entry_community="${ROOT}/.github/workflows/community_release.yml"
 promotion="${ROOT}/.github/workflows/enterprise_prod_promotion.yml"
 grep -F 'name: HFL - Enterprise Release & Deploy' "${entry_enterprise}" >/dev/null
-grep -F 'tags:' "${entry_enterprise}" >/dev/null
+grep -F 'workflow_dispatch:' "${entry_enterprise}" >/dev/null
+if grep -F 'push:' "${entry_enterprise}" >/dev/null; then
+	printf 'ERROR: Enterprise release must be started manually (workflow_dispatch only)\n' >&2
+	exit 1
+fi
 grep -F 'edition: enterprise' "${entry_enterprise}" >/dev/null
 grep -F 'needs: validate-enterprise-build' "${entry_enterprise}" >/dev/null
-grep -F 'Manual Enterprise builds must be started from the main branch' \
+grep -F 'Enterprise builds must be started from the main branch' \
 	"${entry_enterprise}" >/dev/null
 grep -F 'name: HFL - Community Release & Deploy' "${entry_community}" >/dev/null
 if grep -F 'tags:' "${entry_community}" >/dev/null; then
