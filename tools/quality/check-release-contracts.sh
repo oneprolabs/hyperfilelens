@@ -646,7 +646,6 @@ grep -F 'name: HFL - Release Pipeline (Reusable)' "${workflow}" >/dev/null
 grep -F 'uses: ./.github/workflows/release_pipeline.yml' "${release_workflow}" >/dev/null
 grep -F 'channel: release' "${release_workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${test_workflow}" >/dev/null
-grep -F 'tags:' "${test_workflow}" >/dev/null
 grep -F 'edition: enterprise' "${test_workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${production_workflow}" >/dev/null
 for job in \

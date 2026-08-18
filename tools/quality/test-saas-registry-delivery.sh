@@ -62,7 +62,7 @@ for deploy_job in deploy-test deploy-prod; do
 	# shellcheck disable=SC2016 # GitHub expression is an intentional literal.
 	grep -Fq 'ref: ${{ needs.prepare.outputs.commit }}' <<<"${job_definition}"
 done
-grep -Fq "format('hyperfilelens-package-{0}', inputs.tag)" \
+grep -Fq "format('hyperfilelens-package-{0}', github.event_name == 'push' && github.ref_name || inputs.tag)" \
 	"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml"
 
 package_root="${tmp}/candidate"
