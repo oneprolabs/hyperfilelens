@@ -595,7 +595,7 @@ class CopilotCapacityReservationConcurrencyTests(TransactionTestCase):
             gateway=gateway,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,
-            capacity_gb=1,
+            capacity_bytes=1024**3,
         )
         session_claims = []
         reservation_bytes = 700 * 1024**2

@@ -1145,21 +1145,21 @@ def _reserve_chat_capacity(
         provider = get_quota_provider()
         if provider is not None:
             limits = provider.get_limits(locked.organization) or {}
-            if "max_public_gateway_capacity_gb" not in limits:
+            if "max_public_gateway_capacity_bytes" not in limits:
                 raise AppError(
                     code="SUBSCRIPTION.QUOTA_EXCEEDED",
                     status=403,
                     title="Organization public gateway capacity is unavailable.",
-                    diagnostic="max_public_gateway_capacity_gb missing from quota limits",
+                    diagnostic="max_public_gateway_capacity_bytes missing from quota limits",
                     meta={
-                        "quota_type": "max_public_gateway_capacity_gb",
+                        "quota_type": "max_public_gateway_capacity_bytes",
                         "scope": "organization",
                     },
                 )
             enforce_license_quota(
                 locked.organization,
-                "max_public_gateway_capacity_gb",
-                additional=float(total_bytes) / float(1024**3),
+                "max_public_gateway_capacity_bytes",
+                additional=total_bytes,
             )
 
     now = timezone.now()
@@ -2340,21 +2340,21 @@ def _assert_retry_public_gateway_capacity(*, session: LensSessionLink) -> None:
     if provider is None:
         return
     limits = provider.get_limits(session.organization) or {}
-    if "max_public_gateway_capacity_gb" not in limits:
+    if "max_public_gateway_capacity_bytes" not in limits:
         raise AppError(
             code="SUBSCRIPTION.QUOTA_EXCEEDED",
             status=403,
             title="Organization public gateway capacity is unavailable.",
-            diagnostic="max_public_gateway_capacity_gb missing from quota limits",
+            diagnostic="max_public_gateway_capacity_bytes missing from quota limits",
             meta={
-                "quota_type": "max_public_gateway_capacity_gb",
+                "quota_type": "max_public_gateway_capacity_bytes",
                 "scope": "organization",
             },
         )
     enforce_license_quota(
         session.organization,
-        "max_public_gateway_capacity_gb",
-        additional=float(requested_bytes) / float(1024**3),
+        "max_public_gateway_capacity_bytes",
+        additional=requested_bytes,
     )
 
 

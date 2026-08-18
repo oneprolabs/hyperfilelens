@@ -21,8 +21,8 @@ UNLIMITED = -1
 #
 # Public gateway model (three layers — do not conflate):
 # 1) License.max_public_gateways — instance count of Public Gateways (not org-split)
-# 2) LensGatewayLink.capacity_gb — per-gateway infrastructure capacity
-# 3) max_public_gateway_capacity_gb — org quota for total Public Gateway capacity use
+# 2) LensGatewayLink.capacity_bytes — per-gateway infrastructure capacity
+# 3) max_public_gateway_capacity_bytes — org quota for total Public Gateway capacity use
 # max_gateways remains private/user Data Gateway node count (org-allocatable).
 QUOTA_KEYS = (
     "max_source_hosts",
@@ -36,7 +36,7 @@ QUOTA_KEYS = (
     "max_storage_gb",
     "max_users",
     "ai_tokens",  # Lifetime Copilot/LLM total_tokens (LensUsageLedger; no period reset)
-    "max_public_gateway_capacity_gb",
+    "max_public_gateway_capacity_bytes",
     "max_alert_policies",
     "gateway_select_max_files",
     "gateway_select_max_bytes",
@@ -45,7 +45,7 @@ QUOTA_KEYS = (
 
 QUOTA_UNITS: dict[str, str] = {
     "max_storage_gb": "gb",
-    "max_public_gateway_capacity_gb": "gb",
+    "max_public_gateway_capacity_bytes": "bytes",
     "gateway_select_max_bytes": "bytes",
     "ai_tokens": "tokens",
 }
@@ -63,7 +63,7 @@ USAGE_KEY_BY_QUOTA: dict[str, str | None] = {
     "max_storage_gb": "storage_used_gb",
     "max_users": "users_count",
     "ai_tokens": "ai_tokens_used",
-    "max_public_gateway_capacity_gb": "public_gateway_capacity_used_gb",
+    "max_public_gateway_capacity_bytes": "public_gateway_capacity_used_bytes",
     "max_alert_policies": "alert_policies_count",
     "gateway_select_max_files": None,
     "gateway_select_max_bytes": None,
@@ -80,8 +80,8 @@ DEFAULT_LIMITS = {
     "max_gateways": 50,
     # Platform Public Gateway count (instance license; not org-split).
     "max_public_gateways": 20,
-    # Instance-wide hard limit for actual Public Gateway capacity use (GiB).
-    "max_public_gateway_capacity_gb": 5000,
+    # Instance-wide hard limit for actual Public Gateway capacity use (bytes).
+    "max_public_gateway_capacity_bytes": 5000 * 1024**3,
     # License.ai_insights_quota stores the instance AI token budget (total_tokens).
     "ai_insights_quota": 50_000_000,
     "ai_tokens": 50_000_000,  # Canonical meter key (alias of ai_insights_quota).

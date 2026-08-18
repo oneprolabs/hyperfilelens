@@ -2,8 +2,8 @@
 
 Layers:
   1) License.max_public_gateways — instance Public Gateway count
-  2) LensGatewayLink.capacity_gb — per-gateway infrastructure capacity (this module)
-  3) Org quota max_public_gateway_capacity_gb — org share (usage via org_* helpers)
+  2) LensGatewayLink.capacity_bytes — per-gateway infrastructure capacity (this module)
+  3) Org quota max_public_gateway_capacity_bytes — org share (usage via org_* helpers)
 """
 
 from __future__ import annotations
@@ -13,11 +13,11 @@ from typing import Any
 
 from common.errors import AppError
 
-_GIB = 1024**3
 _MAX_BIGINT = 2**63 - 1
 _MIN_BIGINT = -(2**63)
+_MIB = 1024**2
 
-# Legacy instance-wide runtime setting (migrated onto LensGatewayLink.capacity_gb).
+# Legacy instance-wide runtime setting (migrated onto LensGatewayLink.capacity_bytes).
 KEY_PUBLIC_GATEWAY_CAPACITY_GB = "gateway.public_total_capacity_gb"
 
 _CAPACITY_FULL_MESSAGE = (
@@ -44,36 +44,40 @@ def _exact_stored_int(value: Any) -> int:
     return parsed
 
 
-def _normalize_capacity_gb(capacity_gb: Any) -> int:
-    value = _exact_stored_int(capacity_gb)
+def _normalize_capacity_bytes(capacity_bytes: Any) -> int:
+    value = _exact_stored_int(capacity_bytes)
     if value < -1:
-        raise ValueError("capacity_gb must be -1 (unlimited) or >= 0")
+        raise ValueError("capacity_bytes must be -1 (unlimited) or >= 0")
+    if value >= 0 and value % _MIB != 0:
+        raise ValueError("capacity_bytes must use whole MiB increments")
     return value
 
 
-def get_public_gateway_capacity_gb(*, gateway_link) -> int:
-    """Configured workspace capacity in GiB for one Public Gateway link (-1 = unlimited)."""
-    raw = getattr(gateway_link, "capacity_gb", None)
+def get_public_gateway_capacity_bytes(*, gateway_link) -> int:
+    """Configured workspace capacity in bytes for one Public Gateway (-1 = unlimited)."""
+    raw = getattr(gateway_link, "capacity_bytes", None)
     if raw is None:
         return -1
     return int(raw)
 
 
-def set_public_gateway_capacity_gb(*, gateway_link, capacity_gb: Any, user=None) -> int:
+def set_public_gateway_capacity_bytes(
+    *, gateway_link, capacity_bytes: Any, user=None
+) -> int:
     del user  # reserved for audit callers
-    value = _normalize_capacity_gb(capacity_gb)
-    if get_public_gateway_capacity_gb(gateway_link=gateway_link) == value:
+    value = _normalize_capacity_bytes(capacity_bytes)
+    if get_public_gateway_capacity_bytes(gateway_link=gateway_link) == value:
         return value
-    gateway_link.capacity_gb = value
-    gateway_link.save(update_fields=["capacity_gb", "updated_at"])
+    gateway_link.capacity_bytes = value
+    gateway_link.save(update_fields=["capacity_bytes", "updated_at"])
     return value
 
 
 def public_gateway_capacity_limit_bytes(*, gateway_link) -> int | None:
-    gb = get_public_gateway_capacity_gb(gateway_link=gateway_link)
-    if gb < 0:
+    capacity_bytes = get_public_gateway_capacity_bytes(gateway_link=gateway_link)
+    if capacity_bytes < 0:
         return None
-    return int(gb) * _GIB
+    return capacity_bytes
 
 
 def lock_public_gateway_capacity(*, gateway_link):
@@ -404,12 +408,12 @@ def bulk_org_public_gateway_used_bytes(
     }
 
 
-def org_public_gateway_capacity_used_gb(*, organization_id: int) -> float:
-    """GiB used by one org across Public Gateways (for EffectiveQuota meters)."""
+def org_public_gateway_capacity_used_bytes(*, organization_id: int) -> int:
+    """Bytes used by one organization across Public Gateways."""
     used_bytes, _unknown = org_public_gateway_used_bytes(
         organization_id=organization_id
     )
-    return round(float(used_bytes) / float(_GIB), 6)
+    return used_bytes
 
 
 def assert_public_gateway_capacity(
@@ -427,7 +431,7 @@ def assert_public_gateway_capacity(
     if limit is None:
         return
     used, used_unknown = public_gateway_used_bytes(gateway_link_id=int(gateway_link.pk))
-    limit_gb = get_public_gateway_capacity_gb(gateway_link=gateway_link)
+    limit_bytes = get_public_gateway_capacity_bytes(gateway_link=gateway_link)
     if unknown_size or used_unknown:
         raise AppError(
             code="SUBSCRIPTION.QUOTA_EXCEEDED",
@@ -435,10 +439,10 @@ def assert_public_gateway_capacity(
             title=_CAPACITY_FULL_MESSAGE,
             diagnostic=_CAPACITY_FULL_MESSAGE,
             meta={
-                "quota_type": "gateway.public_capacity_gb",
+                "quota_type": "gateway.public_capacity_bytes",
                 "gateway_link_id": int(gateway_link.pk),
-                "limit": limit_gb,
-                "used": round(used / _GIB, 3),
+                "limit": limit_bytes,
+                "used": used,
                 "requested": 0,
                 "unknown_size": True,
                 "scope": "gateway",
@@ -446,7 +450,7 @@ def assert_public_gateway_capacity(
         )
     needed = max(0, int(additional_bytes or 0))
     # Match org-pool semantics: at/over capacity, even a zero-byte admit is denied
-    # (capacity_gb=0 must stay hard-empty).
+    # (capacity_bytes=0 must stay hard-empty).
     if used + needed > limit or (needed == 0 and used >= limit):
         raise AppError(
             code="SUBSCRIPTION.QUOTA_EXCEEDED",
@@ -454,18 +458,18 @@ def assert_public_gateway_capacity(
             title=_CAPACITY_FULL_MESSAGE,
             diagnostic=_CAPACITY_FULL_MESSAGE,
             meta={
-                "quota_type": "gateway.public_capacity_gb",
+                "quota_type": "gateway.public_capacity_bytes",
                 "gateway_link_id": int(gateway_link.pk),
-                "limit": limit_gb,
-                "used": round(used / _GIB, 3),
-                "requested": round(needed / _GIB, 3),
+                "limit": limit_bytes,
+                "used": used,
+                "requested": needed,
                 "scope": "gateway",
             },
         )
 
 
 def public_gateway_capacity_payload(*, gateway_link) -> dict:
-    limit_gb = get_public_gateway_capacity_gb(gateway_link=gateway_link)
+    limit_bytes = get_public_gateway_capacity_bytes(gateway_link=gateway_link)
     used_bytes, used_unknown = public_gateway_used_bytes(
         gateway_link_id=int(gateway_link.pk)
     )
@@ -474,12 +478,11 @@ def public_gateway_capacity_payload(*, gateway_link) -> dict:
         "gateway_link_id": int(gateway_link.pk),
         "gateway_id": int(getattr(gateway_link, "gateway_id", 0) or 0),
         "gateway_name": str(getattr(gateway, "name", "") or ""),
-        "capacity_gb": limit_gb,
-        "unlimited": limit_gb < 0,
+        "capacity_bytes": limit_bytes,
+        "unlimited": limit_bytes < 0,
         "used_bytes": used_bytes,
-        "used_gb": round(used_bytes / _GIB, 3),
         "used_incomplete": used_unknown,
-        "limit_bytes": None if limit_gb < 0 else limit_gb * _GIB,
+        "limit_bytes": None if limit_bytes < 0 else limit_bytes,
     }
 
 
@@ -494,18 +497,17 @@ def list_public_gateway_capacity_payloads() -> list[dict]:
     payloads = []
     for link in links:
         used_bytes, used_unknown = used_map.get(int(link.id), (0, False))
-        limit_gb = get_public_gateway_capacity_gb(gateway_link=link)
+        limit_bytes = get_public_gateway_capacity_bytes(gateway_link=link)
         payloads.append(
             {
                 "gateway_link_id": int(link.id),
                 "gateway_id": int(link.gateway_id),
                 "gateway_name": str(getattr(link.gateway, "name", "") or ""),
-                "capacity_gb": limit_gb,
-                "unlimited": limit_gb < 0,
+                "capacity_bytes": limit_bytes,
+                "unlimited": limit_bytes < 0,
                 "used_bytes": used_bytes,
-                "used_gb": round(used_bytes / _GIB, 3),
                 "used_incomplete": used_unknown,
-                "limit_bytes": None if limit_gb < 0 else limit_gb * _GIB,
+                "limit_bytes": None if limit_bytes < 0 else limit_bytes,
             }
         )
     return payloads
@@ -516,14 +518,14 @@ __all__ = [
     "assert_public_gateway_capacity",
     "bulk_org_public_gateway_used_bytes",
     "bulk_public_gateway_used_bytes",
-    "get_public_gateway_capacity_gb",
+    "get_public_gateway_capacity_bytes",
     "list_public_gateway_capacity_payloads",
     "lock_public_gateway_capacity",
-    "org_public_gateway_capacity_used_gb",
+    "org_public_gateway_capacity_used_bytes",
     "org_public_gateway_used_bytes",
     "public_gateway_capacity_limit_bytes",
     "public_gateway_capacity_payload",
     "public_gateway_used_bytes",
     "session_scope_occupancy",
-    "set_public_gateway_capacity_gb",
+    "set_public_gateway_capacity_bytes",
 ]

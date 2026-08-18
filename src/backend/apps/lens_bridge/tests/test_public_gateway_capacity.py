@@ -15,16 +15,16 @@ from apps.lens_bridge.models import (
 from apps.lens_bridge.services import platform_lens
 from apps.lens_bridge.services.public_gateway_capacity import (
     assert_public_gateway_capacity,
-    get_public_gateway_capacity_gb,
-    org_public_gateway_capacity_used_gb,
+    get_public_gateway_capacity_bytes,
+    org_public_gateway_capacity_used_bytes,
     public_gateway_capacity_payload,
-    set_public_gateway_capacity_gb,
+    set_public_gateway_capacity_bytes,
 )
 from apps.node.models import Node
 from common.errors import AppError
 
 
-def _make_platform_gateway(*, name: str, capacity_gb: int = -1) -> LensGatewayLink:
+def _make_platform_gateway(*, name: str, capacity_bytes: int = -1) -> LensGatewayLink:
     org = platform_lens.get_or_create_platform_org()
     node = Node.objects.create(
         organization=org,
@@ -38,46 +38,52 @@ def _make_platform_gateway(*, name: str, capacity_gb: int = -1) -> LensGatewayLi
         gateway=node,
         scope=LensGatewayLink.GatewayScope.PLATFORM,
         origin=LensGatewayLink.Origin.PLATFORM,
-        capacity_gb=capacity_gb,
+        capacity_bytes=capacity_bytes,
     )
 
 
 class PublicGatewayCapacityServiceTests(TestCase):
     def setUp(self):
-        self.link_a = _make_platform_gateway(name="pg-a", capacity_gb=-1)
-        self.link_b = _make_platform_gateway(name="pg-b", capacity_gb=-1)
+        self.link_a = _make_platform_gateway(name="pg-a", capacity_bytes=-1)
+        self.link_b = _make_platform_gateway(name="pg-b", capacity_bytes=-1)
 
     def test_default_unlimited(self):
-        self.assertEqual(get_public_gateway_capacity_gb(gateway_link=self.link_a), -1)
+        self.assertEqual(get_public_gateway_capacity_bytes(gateway_link=self.link_a), -1)
         payload = public_gateway_capacity_payload(gateway_link=self.link_a)
         self.assertTrue(payload["unlimited"])
         self.assertIsNone(payload["limit_bytes"])
 
     def test_set_and_read_capacity_is_per_gateway(self):
-        set_public_gateway_capacity_gb(gateway_link=self.link_a, capacity_gb=10)
+        set_public_gateway_capacity_bytes(
+            gateway_link=self.link_a,
+            capacity_bytes=10 * 1024**2,
+        )
         self.link_a.refresh_from_db()
-        self.assertEqual(get_public_gateway_capacity_gb(gateway_link=self.link_a), 10)
-        self.assertEqual(get_public_gateway_capacity_gb(gateway_link=self.link_b), -1)
+        self.assertEqual(
+            get_public_gateway_capacity_bytes(gateway_link=self.link_a),
+            10 * 1024**2,
+        )
+        self.assertEqual(get_public_gateway_capacity_bytes(gateway_link=self.link_b), -1)
 
     def test_rejects_invalid_capacity(self):
         with self.assertRaises(ValueError):
-            set_public_gateway_capacity_gb(gateway_link=self.link_a, capacity_gb=-2)
+            set_public_gateway_capacity_bytes(gateway_link=self.link_a, capacity_bytes=-2)
 
-        for invalid in (True, False, 1.5, "1.5", 2**63):
+        for invalid in (True, False, 1, 1.5, "1.5", 2**63):
             with self.subTest(invalid=invalid):
                 with self.assertRaises((TypeError, ValueError, OverflowError)):
-                    set_public_gateway_capacity_gb(
+                    set_public_gateway_capacity_bytes(
                         gateway_link=self.link_a,
-                        capacity_gb=invalid,
+                        capacity_bytes=invalid,
                     )
 
         self.link_a.refresh_from_db()
-        self.assertEqual(self.link_a.capacity_gb, -1)
+        self.assertEqual(self.link_a.capacity_bytes, -1)
 
     def test_zero_capacity_is_hard_empty_not_unlimited(self):
-        set_public_gateway_capacity_gb(gateway_link=self.link_a, capacity_gb=0)
+        set_public_gateway_capacity_bytes(gateway_link=self.link_a, capacity_bytes=0)
         self.link_a.refresh_from_db()
-        self.assertEqual(get_public_gateway_capacity_gb(gateway_link=self.link_a), 0)
+        self.assertEqual(get_public_gateway_capacity_bytes(gateway_link=self.link_a), 0)
         payload = public_gateway_capacity_payload(gateway_link=self.link_a)
         self.assertFalse(payload["unlimited"])
         self.assertEqual(payload["limit_bytes"], 0)
@@ -98,7 +104,10 @@ class PublicGatewayCapacityServiceTests(TestCase):
         return_value=(8 * 1024**3, False),
     )
     def test_assert_blocks_when_pool_full(self, _mock_used):
-        set_public_gateway_capacity_gb(gateway_link=self.link_a, capacity_gb=10)
+        set_public_gateway_capacity_bytes(
+            gateway_link=self.link_a,
+            capacity_bytes=10 * 1024**3,
+        )
         self.link_a.refresh_from_db()
         with self.assertRaises(AppError) as ctx:
             assert_public_gateway_capacity(
@@ -107,7 +116,7 @@ class PublicGatewayCapacityServiceTests(TestCase):
             )
         self.assertEqual(ctx.exception.code, "SUBSCRIPTION.QUOTA_EXCEEDED")
         self.assertEqual(
-            ctx.exception.meta.get("quota_type"), "gateway.public_capacity_gb"
+            ctx.exception.meta.get("quota_type"), "gateway.public_capacity_bytes"
         )
 
     @patch(
@@ -115,7 +124,10 @@ class PublicGatewayCapacityServiceTests(TestCase):
         return_value=(1 * 1024**3, False),
     )
     def test_assert_allows_within_capacity(self, _mock_used):
-        set_public_gateway_capacity_gb(gateway_link=self.link_a, capacity_gb=10)
+        set_public_gateway_capacity_bytes(
+            gateway_link=self.link_a,
+            capacity_bytes=10 * 1024**3,
+        )
         self.link_a.refresh_from_db()
         assert_public_gateway_capacity(
             gateway_link=self.link_a,
@@ -292,8 +304,8 @@ class PublicGatewayCapacityServiceTests(TestCase):
             ),
             capacity_reserved_bytes=2 * gib,
         )
-        used_gb = org_public_gateway_capacity_used_gb(organization_id=tenant.id)
-        self.assertAlmostEqual(used_gb, 2.0, places=3)
+        used_bytes = org_public_gateway_capacity_used_bytes(organization_id=tenant.id)
+        self.assertEqual(used_bytes, 2 * gib)
 
     @patch(
         "apps.lens_bridge.services.public_gateway_capacity._occupancy_from_scope_dicts",
@@ -370,7 +382,7 @@ class PublicGatewayCapacityServiceTests(TestCase):
         )
 
         self.assertEqual(
-            org_public_gateway_capacity_used_gb(organization_id=tenant.id),
+            org_public_gateway_capacity_used_bytes(organization_id=tenant.id),
             0,
         )
 
@@ -410,8 +422,8 @@ class PublicGatewayCapacityServiceTests(TestCase):
         )
 
         self.assertEqual(
-            org_public_gateway_capacity_used_gb(organization_id=tenant.id),
-            2,
+            org_public_gateway_capacity_used_bytes(organization_id=tenant.id),
+            2 * gib,
         )
 
     def test_provisioning_chat_reservation_is_not_double_counted_with_workspace(

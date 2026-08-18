@@ -14,6 +14,8 @@ type QuotaDisplayDef = {
   usageKey: string
   limitKey: string
   suffix?: string
+  divisor?: number
+  formatBytes?: boolean
 }
 
 /**
@@ -27,7 +29,7 @@ export const QUOTA_METER_LABEL_KEY: Record<string, string> = {
   max_nodes: 'licenseQuota.nodes',
   max_gateways: 'licenseQuota.privateGateways',
   max_public_gateways: 'licenseQuota.publicGateways',
-  max_public_gateway_capacity_gb: 'licenseQuota.publicGatewayCapacityGb',
+  max_public_gateway_capacity_bytes: 'licenseQuota.publicGatewayCapacity',
   ai_tokens: 'licenseQuota.aiTokens',
   ai_requests: 'licenseQuota.aiTokens',
   ai_insights_quota: 'licenseQuota.aiTokens',
@@ -72,10 +74,10 @@ export const SUBSCRIPTION_QUOTA_DEFS: QuotaDisplayDef[] = [
   },
   {
     key: 'publicGatewayCapacity',
-    labelKey: 'licenseQuota.publicGatewayCapacityGb',
-    usageKey: 'public_gateway_capacity_used_gb',
-    limitKey: 'max_public_gateway_capacity_gb',
-    suffix: 'GiB',
+    labelKey: 'licenseQuota.publicGatewayCapacity',
+    usageKey: 'public_gateway_capacity_used_bytes',
+    limitKey: 'max_public_gateway_capacity_bytes',
+    formatBytes: true,
   },
   {
     key: 'agents',
@@ -178,7 +180,7 @@ export const SUBSCRIPTION_QUOTA_FALLBACK_LIMITS: Record<string, number> = {
   max_users: 500,
   max_storage_gb: 5000,
   max_gateways: 50,
-  max_public_gateway_capacity_gb: 5000,
+  max_public_gateway_capacity_bytes: 5000 * 1024 ** 3,
   max_source_hosts: 200,
   max_proxies: 200,
   max_source_proxies: 200,
@@ -198,6 +200,19 @@ export function quotaDefsForDashboard(): QuotaDisplayDef[] {
 
 export function quotaDefsForSubscription(): QuotaDisplayDef[] {
   return SUBSCRIPTION_QUOTA_DEFS
+}
+
+export function quotaDisplayValue(value: number, divisor = 1): number {
+  if (value < 0 || divisor === 1) return value
+  return Number((value / divisor).toFixed(3))
+}
+
+export function formatQuotaBytes(value: number, unlimitedLabel = 'Unlimited'): string {
+  if (value < 0) return unlimitedLabel
+  if (value > 0 && value < 1024 ** 2) return '< 1 MB'
+  const unit = value >= 1024 ** 3 ? 'GB' : 'MB'
+  const amount = value / (unit === 'GB' ? 1024 ** 3 : 1024 ** 2)
+  return `${Number(amount.toFixed(2)).toLocaleString()} ${unit}`
 }
 
 export function buildQuotaRows(
@@ -223,13 +238,23 @@ export function buildQuotaRows(
     }
   }
 
-  return defs.map(({ key, labelKey, usageKey, limitKey, suffix }) => ({
-    key,
-    labelKey,
-    used: Number(usage[usageKey]) || 0,
-    limit: Number(mergedLimits[limitKey]) || 0,
-    suffix,
-  }))
+  return defs.map((definition) => {
+    const rawUsed = Number(usage[definition.usageKey]) || 0
+    const rawLimit = Number(mergedLimits[definition.limitKey]) || 0
+    const byteDivisor = Math.max(rawUsed, rawLimit) >= 1024 ** 3
+      ? 1024 ** 3
+      : 1024 ** 2
+    const divisor = definition.formatBytes ? byteDivisor : definition.divisor
+    return {
+      key: definition.key,
+      labelKey: definition.labelKey,
+      used: quotaDisplayValue(rawUsed, divisor),
+      limit: quotaDisplayValue(rawLimit, divisor),
+      suffix: definition.formatBytes
+        ? (byteDivisor === 1024 ** 3 ? 'GB' : 'MB')
+        : definition.suffix,
+    }
+  })
 }
 
 export function quotaUsagePercent(used: number, limit: number): number {

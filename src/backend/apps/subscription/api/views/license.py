@@ -125,7 +125,7 @@ class LicenseViewSet(viewsets.GenericViewSet):
                     "max_storage_gb",
                     "max_gateways",
                     "max_public_gateways",
-                    "max_public_gateway_capacity_gb",
+                    "max_public_gateway_capacity_bytes",
                     "max_source_nas",
                     "max_object_storage",
                     "max_target_nas",

@@ -197,9 +197,9 @@ class UsageStatsTests(TestCase):
         with self.assertRaises(RuntimeError):
             collect_meter_usage(
                 organization_id=self.org.id,
-                usage_key="public_gateway_capacity_used_gb",
+                usage_key="public_gateway_capacity_used_bytes",
             )
         with self.assertRaises(RuntimeError):
             collect_instance_meter_usage(
-                usage_key="public_gateway_capacity_used_gb",
+                usage_key="public_gateway_capacity_used_bytes",
             )

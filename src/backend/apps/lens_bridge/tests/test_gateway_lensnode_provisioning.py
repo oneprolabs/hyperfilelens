@@ -189,8 +189,8 @@ class DurableGatewayLensNodeProvisioningTests(TestCase):
         request_json.assert_not_called()
 
     @mock.patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
-    def test_platform_gateway_create_defaults_capacity_gb(self, request_json):
-        """Regression: DB NOT NULL capacity_gb must be set when creating the link."""
+    def test_platform_gateway_create_defaults_capacity_bytes(self, request_json):
+        """Regression: DB NOT NULL capacity_bytes is set when creating the link."""
         platform_org = Organization.objects.create(
             key="__platform_lens__",
             name="Platform Lens",
@@ -220,6 +220,6 @@ class DurableGatewayLensNodeProvisioningTests(TestCase):
             scope=LensGatewayLink.GatewayScope.PLATFORM,
         )
 
-        self.assertEqual(result.capacity_gb, -1)
+        self.assertEqual(result.capacity_bytes, -1)
         self.assertEqual(result.scope, LensGatewayLink.GatewayScope.PLATFORM)
         self.assertEqual(result.sl_lensnode_uuid, remote_uuid)

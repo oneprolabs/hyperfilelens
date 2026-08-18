@@ -59,9 +59,9 @@ class License(models.Model):
     max_public_gateways = models.IntegerField(
         default=DEFAULT_LIMITS["max_public_gateways"]
     )
-    # Instance-wide hard limit for actual Public Gateway capacity use (GiB).
-    max_public_gateway_capacity_gb = models.IntegerField(
-        default=DEFAULT_LIMITS["max_public_gateway_capacity_gb"]
+    # Instance-wide hard limit for actual Public Gateway capacity use (bytes).
+    max_public_gateway_capacity_bytes = models.BigIntegerField(
+        default=DEFAULT_LIMITS["max_public_gateway_capacity_bytes"]
     )
     # Instance workload pools. Keep these separate from storage capacity so a
     # license can express both resource-count and managed-data boundaries.
@@ -130,7 +130,7 @@ class License(models.Model):
             "max_storage_gb": self.max_storage_gb,
             "max_gateways": self.max_gateways,
             "max_public_gateways": self.max_public_gateways,
-            "max_public_gateway_capacity_gb": self.max_public_gateway_capacity_gb,
+            "max_public_gateway_capacity_bytes": self.max_public_gateway_capacity_bytes,
             "max_source_nas": self.max_source_nas,
             "max_object_storage": self.max_object_storage,
             "max_target_nas": self.max_target_nas,
@@ -156,7 +156,7 @@ class License(models.Model):
             max_storage_gb=self.max_storage_gb,
             max_gateways=self.max_gateways,
             max_public_gateways=self.max_public_gateways,
-            max_public_gateway_capacity_gb=self.max_public_gateway_capacity_gb,
+            max_public_gateway_capacity_bytes=self.max_public_gateway_capacity_bytes,
             max_source_nas=self.max_source_nas,
             max_object_storage=self.max_object_storage,
             max_target_nas=self.max_target_nas,
@@ -208,8 +208,8 @@ class LicenseHistory(models.Model):
     max_storage_gb = models.IntegerField()
     max_gateways = models.IntegerField()
     max_public_gateways = models.IntegerField(default=DEFAULT_LIMITS["max_public_gateways"])
-    max_public_gateway_capacity_gb = models.IntegerField(
-        default=DEFAULT_LIMITS["max_public_gateway_capacity_gb"]
+    max_public_gateway_capacity_bytes = models.BigIntegerField(
+        default=DEFAULT_LIMITS["max_public_gateway_capacity_bytes"]
     )
     max_source_nas = models.IntegerField(default=DEFAULT_LIMITS["max_source_nas"])
     max_object_storage = models.IntegerField(

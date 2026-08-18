@@ -260,6 +260,7 @@ class LicenseApiTests(TestCase):
                 "max_users": 100,
                 "max_nodes": 10,
                 "max_storage_gb": 200,
+                "max_public_gateway_capacity_bytes": 500 * 1024**2,
                 "max_source_nas": 11,
                 "max_object_storage": 12,
                 "max_target_nas": 13,
@@ -277,6 +278,10 @@ class LicenseApiTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         lic = License.objects.get(organization=self.org)
         self.assertEqual(lic.max_users, 100)
+        self.assertEqual(
+            lic.max_public_gateway_capacity_bytes,
+            500 * 1024**2,
+        )
         self.assertEqual(lic.max_source_nas, 11)
         self.assertEqual(lic.max_object_storage, 12)
         self.assertEqual(lic.max_target_nas, 13)
@@ -286,6 +291,28 @@ class LicenseApiTests(TestCase):
         self.assertEqual(resp.data["license"]["features"], ["quota_governance"])
         self.assertEqual(lic.get_limits()["max_protected_sources"], 15)
         self.assertTrue(lic.signature)
+
+    def test_signed_license_rejects_sub_mib_capacity_increment(self):
+        machine_code = get_or_create_machine_code(
+            organization=self.org,
+            user=self.user,
+        )
+        code = generate_activation_code(
+            license_key="INVALID-CAPACITY-INCREMENT",
+            machine_code=machine_code,
+            limits={"max_public_gateway_capacity_bytes": 1},
+        )
+
+        response = self.client.post(
+            "/api/v1/subscription/licenses/activate/",
+            {"activation_code": code},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("whole MiB increments", response.data["message"])
+        self.assertFalse(License.objects.filter(organization=self.org).exists())
 
     def test_signed_license_renewal_replaces_persisted_signature(self):
         machine_code = get_or_create_machine_code(organization=self.org, user=self.user)
