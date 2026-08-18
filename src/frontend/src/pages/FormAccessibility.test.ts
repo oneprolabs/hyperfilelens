@@ -20,6 +20,6 @@ describe('form accessibility regressions', () => {
     expect(usage).toContain(":name=\"['usage_start_date', 'usage_end_date']\"")
     expect(usage).toContain('id="usage-question-search"')
     expect(usage).toContain('name="usage_question_search"')
-    expect(usage).toContain('aria-label="Search chats or questions"')
+    expect(usage).toContain(":aria-label=\"t('insight.usage.searchAria')\"")
   })
 })

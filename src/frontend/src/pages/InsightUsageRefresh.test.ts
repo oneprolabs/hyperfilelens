@@ -20,8 +20,9 @@ describe('Insight usage refresh semantics', () => {
 
   it('shows persisted freshness and preserves unknown cost semantics', () => {
     expect(usagePage).toContain('usage.value?.data_freshness')
-    expect(usagePage).toContain('updates automatically')
-    expect(usagePage).toContain("if (value == null) return 'Unavailable'")
+    expect(usagePage).toContain("t('insight.usage.freshnessPending'")
+    expect(usagePage).toContain("t('insight.usage.freshnessRecorded')")
+    expect(usagePage).toContain("if (value == null) return t('insight.usage.unavailable')")
     expect(usagePage).toContain('costMode ? row.total_cost')
   })
 })
