@@ -444,7 +444,6 @@ function validateForm(): boolean {
     { field: 'secretKey', message: t('addS3Repo.errSecretKey'), valid: !!accessKeySecret.value.trim() },
     { field: 'repoName', message: t('repositoriesPage.errName'), valid: !!repoName.value.trim() },
     { field: 'bucket', message: t('repositoriesPage.errBucket'), valid: !!bucket.value.trim() },
-    { field: 'prefix', message: t('addS3Repo.errPrefix'), valid: !!normalizeS3ObjectPrefix(prefix.value) },
     { field: 'quotaThreshold', message: t('repositoriesPage.hintQuotaAlertThreshold'), valid: !enableQuotaAlert.value || validQuotaAlertThreshold.value },
   ])
 }
@@ -971,7 +970,7 @@ function handleBack() {
                       class="fullscreen-form-field"
                     >
                       <label class="fullscreen-form-field__label">
-                        {{ t('addS3Repo.fieldPrefix') }} <span class="fullscreen-form-field__required">*</span>
+                        {{ t('addS3Repo.fieldPrefix') }}
                       </label>
                       <ElInput
                         v-model="prefix"
@@ -982,12 +981,6 @@ function handleBack() {
                       />
                       <p class="fullscreen-form-field__hint">
                         {{ t('addS3Repo.hintPrefix') }}
-                      </p>
-                      <p
-                        v-if="errors.prefix"
-                        class="el-form-item__error"
-                      >
-                        {{ errors.prefix }}
                       </p>
                     </div>
                   </div>

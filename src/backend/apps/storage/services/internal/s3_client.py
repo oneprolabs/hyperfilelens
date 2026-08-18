@@ -37,8 +37,10 @@ _PROVIDER_BUCKET_CAPABILITIES = {
 }
 _ATOMIC_CREATE_IF_NONE_MATCH = "if_none_match"
 _ATOMIC_CREATE_ALIYUN_FORBID_OVERWRITE = "aliyun_forbid_overwrite"
+_ATOMIC_CREATE_HUAWEI_FORBID_OVERWRITE = "huawei_forbid_overwrite"
 _PROVIDER_ATOMIC_CREATE_STRATEGIES = {
     "aliyun": _ATOMIC_CREATE_ALIYUN_FORBID_OVERWRITE,
+    "huaweicloud": _ATOMIC_CREATE_HUAWEI_FORBID_OVERWRITE,
 }
 _BUCKET_REGION_FIELDS = (
     "BucketRegion",
@@ -270,8 +272,9 @@ def create_s3_bucket(
     s3_url_style: str | None = None,
     use_tls: bool = True,
     timeout_seconds: float = 15,
-) -> None:
-    """Create a bucket and reject any existing-name collision."""
+    allow_existing_owned: bool = False,
+) -> bool:
+    """Create a bucket and report whether this call created it."""
     if not str(bucket or "").strip():
         raise S3ClientError("Bucket name is required.")
     client = _client(
@@ -291,21 +294,11 @@ def create_s3_bucket(
         client.create_bucket(**create_args)
     except ClientError as exc:
         if _client_error_code(exc) == "BucketAlreadyOwnedByYou":
-            # The bucket belongs to the current credentials; it may have been
-            # left behind by a previously failed creation attempt. Allow
-            # re-initialization only when the bucket holds no data, otherwise
-            # reject so an existing location is never silently reused.
-            try:
-                holds_state = _prefix_holds_any_state(client, bucket=bucket)
-            except (BotoCoreError, ClientError) as probe_exc:
-                raise S3ClientError(
-                    _error_message(f"Unable to inspect existing S3 bucket {bucket}", probe_exc)
-                ) from probe_exc
-            if holds_state:
-                raise S3ClientError(
-                    f"Unable to create S3 bucket {bucket}: bucket already exists."
-                ) from exc
-            return None
+            if allow_existing_owned:
+                return False
+            raise S3ClientError(
+                f"Unable to create S3 bucket {bucket}: bucket already exists."
+            ) from exc
         if _client_error_code(exc) in {
             "BucketAlreadyExists",
             "OperationAborted",
@@ -313,20 +306,29 @@ def create_s3_bucket(
             raise S3ClientError(
                 f"Unable to create S3 bucket {bucket}: bucket already exists."
             ) from exc
-        if (
-            "CreateBucketConfiguration" in create_args
-            and _client_error_code(exc) in {"InvalidLocationConstraint", "XMinioInvalidRequest"}
-        ):
+        if "CreateBucketConfiguration" in create_args and _client_error_code(exc) in {
+            "InvalidLocationConstraint",
+            "XMinioInvalidRequest",
+        }:
             # Legacy single-Region gateways (e.g. older MinIO) reject the
             # LocationConstraint block; retry with the default placement.
             create_args.pop("CreateBucketConfiguration")
             try:
                 client.create_bucket(**create_args)
-            except (ClientError, BotoCoreError) as retry_exc:
+            except ClientError as retry_exc:
+                if (
+                    allow_existing_owned
+                    and _client_error_code(retry_exc) == "BucketAlreadyOwnedByYou"
+                ):
+                    return False
                 raise S3ClientError(
                     _error_message(f"Unable to create S3 bucket {bucket}", retry_exc)
                 ) from retry_exc
-            return None
+            except BotoCoreError as retry_exc:
+                raise S3ClientError(
+                    _error_message(f"Unable to create S3 bucket {bucket}", retry_exc)
+                ) from retry_exc
+            return True
         raise S3ClientError(
             _error_message(f"Unable to create S3 bucket {bucket}", exc)
         ) from exc
@@ -334,6 +336,7 @@ def create_s3_bucket(
         raise S3ClientError(
             _error_message(f"Unable to create S3 bucket {bucket}", exc)
         ) from exc
+    return True
 
 
 def check_s3_bucket_readable(
@@ -455,7 +458,7 @@ def delete_s3_object(
     use_tls: bool = True,
     timeout_seconds: float = 15,
 ) -> None:
-    """Remove a single owned object (used to hide the ownership marker)."""
+    """Delete one exact object after the ownership service authorizes it."""
     client = _client(
         endpoint=endpoint,
         region=region,
@@ -469,44 +472,7 @@ def delete_s3_object(
         client.delete_object(Bucket=bucket, Key=key)
     except (BotoCoreError, ClientError) as exc:
         raise S3ClientError(
-            _error_message("Unable to hide repository ownership marker", exc)
-        ) from exc
-
-
-def put_s3_object(
-    *,
-    endpoint: str | None,
-    region: str | None,
-    bucket: str,
-    key: str,
-    body: bytes,
-    access_key_id: str,
-    secret_access_key: str,
-    s3_url_style: str | None = None,
-    use_tls: bool = True,
-    timeout_seconds: float = 15,
-) -> None:
-    """Overwrite an existing object (used to restore the ownership marker)."""
-    client = _client(
-        endpoint=endpoint,
-        region=region,
-        access_key_id=access_key_id,
-        secret_access_key=secret_access_key,
-        s3_url_style=s3_url_style,
-        use_tls=use_tls,
-        timeout_seconds=timeout_seconds,
-    )
-    try:
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=body,
-            ContentLength=len(body),
-            ContentType="application/json",
-        )
-    except (BotoCoreError, ClientError, ParamValidationError) as exc:
-        raise S3ClientError(
-            _error_message("Unable to restore repository ownership marker", exc)
+            _error_message("Unable to remove legacy repository ownership marker", exc)
         ) from exc
 
 
@@ -524,7 +490,7 @@ def put_s3_object_if_absent(
     use_tls: bool = True,
     timeout_seconds: float = 15,
 ) -> bool:
-    """Atomically create an ownership marker; return False if it exists."""
+    """Create an ownership marker without replacing a known existing object."""
     client = _client(
         endpoint=endpoint,
         region=region,
@@ -551,6 +517,12 @@ def put_s3_object_if_absent(
             _add_aliyun_forbid_overwrite_header,
             unique_id="hfl-aliyun-forbid-overwrite",
         )
+    elif atomic_create_strategy == _ATOMIC_CREATE_HUAWEI_FORBID_OVERWRITE:
+        client.meta.events.register_first(
+            "before-sign.s3.PutObject",
+            _add_huawei_forbid_overwrite_header,
+            unique_id="hfl-huawei-forbid-overwrite",
+        )
     else:
         put_args["IfNoneMatch"] = "*"
     try:
@@ -564,16 +536,44 @@ def put_s3_object_if_absent(
         }
         if atomic_create_strategy == _ATOMIC_CREATE_ALIYUN_FORBID_OVERWRITE:
             conflict_codes.add("FileAlreadyExists")
+        elif atomic_create_strategy == _ATOMIC_CREATE_HUAWEI_FORBID_OVERWRITE:
+            conflict_codes.update({"Conflict", "ObjectAlreadyExists", "409"})
         if _client_error_code(exc) in conflict_codes:
             return False
         if (
             atomic_create_strategy == _ATOMIC_CREATE_IF_NONE_MATCH
             and _client_error_code(exc) in {"NotImplemented", "XMinioInvalidRequest"}
         ):
-            # Legacy S3-compatible gateways (e.g. older MinIO) do not support
-            # the If-None-Match conditional create. Fall back to a plain
-            # overwrite; the ownership marker is signature-verified downstream.
+            # Legacy MinIO does not support conditional PutObject. Callers use
+            # this fallback only after the database Claim has serialized the
+            # location and Kopia has initialized it. The persisted marker is
+            # immediately read back and signature-verified by the ownership
+            # service; this write is not used as a pre-initialization lock.
             put_args.pop("IfNoneMatch", None)
+            try:
+                client.head_object(Bucket=bucket, Key=key)
+            except ClientError as probe_exc:
+                if _client_error_code(probe_exc) not in {
+                    "404",
+                    "NoSuchKey",
+                    "NotFound",
+                    "XNoSuchKey",
+                }:
+                    raise S3ClientError(
+                        _error_message(
+                            "Unable to inspect repository ownership marker",
+                            probe_exc,
+                        )
+                    ) from probe_exc
+            except BotoCoreError as probe_exc:
+                raise S3ClientError(
+                    _error_message(
+                        "Unable to inspect repository ownership marker",
+                        probe_exc,
+                    )
+                ) from probe_exc
+            else:
+                return False
             try:
                 client.put_object(**put_args)
                 return True
@@ -593,9 +593,9 @@ def put_s3_object_if_absent(
 def _s3_atomic_create_strategy(*, platform: str | None, endpoint: str | None) -> str:
     """Select the Provider-specific atomic object creation contract.
 
-    Older installations stored Aliyun OSS as ``custom``. Endpoint inference is
-    deliberately limited to the official Aliyun domain so arbitrary custom S3
-    gateways continue using the standard conditional PutObject contract.
+    Older installations stored Aliyun OSS and Huawei OBS as ``custom``.
+    Endpoint inference is deliberately limited to official Provider domains so
+    arbitrary custom S3 gateways keep the standard conditional PutObject path.
     """
     normalized_platform = str(platform or "").strip().lower()
     if normalized_platform in {"", "custom"}:
@@ -605,6 +605,10 @@ def _s3_atomic_create_strategy(*, platform: str | None, endpoint: str | None) ->
             ".aliyuncs.com"
         ):
             return _ATOMIC_CREATE_ALIYUN_FORBID_OVERWRITE
+        if normalized_hostname == "myhuaweicloud.com" or normalized_hostname.endswith(
+            ".myhuaweicloud.com"
+        ):
+            return _ATOMIC_CREATE_HUAWEI_FORBID_OVERWRITE
     return _PROVIDER_ATOMIC_CREATE_STRATEGIES.get(
         normalized_platform,
         _ATOMIC_CREATE_IF_NONE_MATCH,
@@ -614,6 +618,11 @@ def _s3_atomic_create_strategy(*, platform: str | None, endpoint: str | None) ->
 def _add_aliyun_forbid_overwrite_header(*, request, **_kwargs) -> None:
     """Apply Aliyun OSS's atomic create-only header before request signing."""
     request.headers["x-oss-forbid-overwrite"] = "true"
+
+
+def _add_huawei_forbid_overwrite_header(*, request, **_kwargs) -> None:
+    """Apply Huawei OBS's atomic create-only header before request signing."""
+    request.headers["x-obs-forbid-overwrite"] = "true"
 
 
 def list_s3_object_keys(
@@ -710,6 +719,63 @@ def s3_prefix_has_any_state(
     except (BotoCoreError, ClientError) as exc:
         raise S3ClientError(
             _error_message("Unable to inspect repository object prefix", exc)
+        ) from exc
+
+
+def s3_prefix_contains_only_key(
+    *,
+    endpoint: str | None,
+    region: str | None,
+    bucket: str,
+    prefix: str,
+    allowed_key: str,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = 30,
+) -> bool:
+    """Return whether all current and historical Prefix state belongs to one key."""
+    client = _client(
+        endpoint=endpoint,
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        s3_url_style=s3_url_style,
+        use_tls=use_tls,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        object_pages = client.get_paginator("list_objects_v2")
+        for page in object_pages.paginate(Bucket=bucket, Prefix=prefix):
+            if any(
+                item.get("Key") and item.get("Key") != allowed_key
+                for item in page.get("Contents", [])
+            ):
+                return False
+        try:
+            version_pages = client.get_paginator("list_object_versions")
+            for page in version_pages.paginate(Bucket=bucket, Prefix=prefix):
+                if any(
+                    item.get("Key") and item.get("Key") != allowed_key
+                    for item in [
+                        *page.get("Versions", []),
+                        *page.get("DeleteMarkers", []),
+                    ]
+                ):
+                    return False
+        except ClientError as exc:
+            if not _is_unsupported_s3_header_error(exc):
+                raise
+        uploads = client.list_multipart_uploads(
+            Bucket=bucket,
+            Prefix=prefix,
+            MaxUploads=1,
+        )
+        return not bool(uploads.get("Uploads"))
+    except (BotoCoreError, ClientError) as exc:
+        raise S3ClientError(
+            _error_message("Unable to inspect legacy ownership residue", exc)
         ) from exc
 
 

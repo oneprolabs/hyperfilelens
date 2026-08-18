@@ -4382,7 +4382,7 @@
     "phBucketSelect": "请选择已有存储桶",
     "phBucketNew": "请输入新存储桶名称，示例：my-backup-bucket",
     "fieldPrefix": "对象前缀",
-    "hintPrefix": "仓库存储数据的对象存储目录路径。",
+    "hintPrefix": "留空表示使用整个 Bucket；也可填写独立目录，系统会自动补全末尾的 /。",
     "fieldQuota": "存储限额",
     "phQuota": "0 表示不限制",
     "hintQuota": "设置为 0 表示不限制存储容量。",

@@ -19,11 +19,16 @@ from apps.storage.services.internal.repository_location import (
     reserve_direct_nas_location,
     reserve_repository_location,
 )
-from apps.storage.services.internal.repository_initializer import initialize_s3_repository
+from apps.storage.services.internal.repository_initializer import (
+    initialize_s3_repository,
+)
+from apps.storage.services.internal.kopia_cli import KopiaCliError
 from apps.storage.services.internal.repository_ownership import (
     RepositoryOwnershipError,
-    claim_s3_repository_ownership,
-    s3_ownership_marker_hidden,
+    S3RepositoryInitializationState,
+    establish_s3_repository_ownership,
+    inspect_s3_repository_initialization,
+    reset_s3_legacy_marker_for_initialization_recovery,
     verify_s3_repository_ownership,
 )
 from apps.storage.services.internal.s3_url_style import S3_URL_STYLE_PATH
@@ -427,26 +432,29 @@ class RepositoryLocationClaimTests(TestCase):
         return_value=None,
     )
     @mock.patch(
+        "apps.storage.services.internal.repository_ownership.list_s3_object_keys",
+        return_value=[],
+    )
+    @mock.patch(
         "apps.storage.services.internal.repository_ownership._ensure_s3_namespace_resolved"
     )
     @mock.patch(
         "apps.storage.services.internal.repository_ownership._s3_args",
         return_value={},
     )
-    def test_s3_claim_rejects_hidden_physical_state(
+    def test_s3_inspection_reports_occupied_physical_state(
         self,
         _s3_args,
         _resolve_namespace,
+        _list_keys,
         _read_marker,
         _prefix_has_state,
     ):
         repository = self._s3_repository(name="Versioned residue", prefix="hfl/")
 
-        with self.assertRaisesRegex(
-            RepositoryOwnershipError,
-            "historical versions",
-        ):
-            claim_s3_repository_ownership(repository)
+        state = inspect_s3_repository_initialization(repository)
+
+        self.assertEqual(state, S3RepositoryInitializationState.OCCUPIED)
 
     @mock.patch(
         "apps.storage.services.internal.repository_ownership.mark_repository_location_ownership_verified"
@@ -483,12 +491,14 @@ class RepositoryLocationClaimTests(TestCase):
     ):
         repository = self._s3_repository(name="Bucket Root", prefix="")
         marker = b'{"marker":"persisted"}'
-        read_marker.side_effect = [None, marker]
+        read_marker.side_effect = [None, None, marker]
         with mock.patch(
             "apps.storage.services.internal.repository_ownership._require_matching_marker"
         ):
-            claim_s3_repository_ownership(repository)
+            state = inspect_s3_repository_initialization(repository)
+            establish_s3_repository_ownership(repository)
 
+        self.assertEqual(state, S3RepositoryInitializationState.EMPTY)
         prefix_has_state.assert_called_once_with(prefix="")
         put_marker.assert_called_once()
         self.assertEqual(
@@ -557,112 +567,11 @@ class RepositoryLocationClaimTests(TestCase):
 
         put_marker.assert_not_called()
 
-    def test_s3_ownership_marker_hidden_removes_marker_before_create_and_restores_after(self):
-        repository = self._s3_repository(name="Hidden marker", prefix="hfl/")
-        marker = (
-            b'{"deployment_uuid":"d","repository_uuid":"r",'
-            b'"location_digest":"l","format_version":1,"signature":"sig"}'
-        )
-        calls: list[str] = []
-
-        with (
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership._s3_args",
-                return_value={},
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership._marker_key",
-                return_value="hfl/.hyperfilelens/repository-owner-v1.json",
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.read_s3_object",
-                return_value=marker,
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.delete_s3_object",
-                side_effect=lambda **_kwargs: calls.append("deleted"),
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.put_s3_object",
-                side_effect=lambda **_kwargs: calls.append("restored"),
-            ),
-        ):
-            with s3_ownership_marker_hidden(repository):
-                calls.append("create")
-
-        self.assertEqual(calls, ["deleted", "create", "restored"])
-
-    def test_s3_ownership_marker_hidden_restores_marker_when_create_fails(self):
-        repository = self._s3_repository(name="Failed create", prefix="hfl/")
-        marker = (
-            b'{"deployment_uuid":"d","repository_uuid":"r",'
-            b'"location_digest":"l","format_version":1,"signature":"sig"}'
-        )
-
-        with (
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership._s3_args",
-                return_value={},
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership._marker_key",
-                return_value="hfl/.hyperfilelens/repository-owner-v1.json",
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.read_s3_object",
-                return_value=marker,
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.delete_s3_object"
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.put_s3_object"
-            ) as put_marker,
-        ):
-            with self.assertRaises(RuntimeError):
-                with s3_ownership_marker_hidden(repository):
-                    raise RuntimeError("kopia create failed")
-
-        put_marker.assert_called_once()
-
-    def test_s3_ownership_marker_hidden_noop_without_marker(self):
-        repository = self._s3_repository(name="No marker", prefix="hfl/")
-        with (
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership._s3_args",
-                return_value={},
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership._marker_key",
-                return_value="hfl/.hyperfilelens/repository-owner-v1.json",
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.read_s3_object",
-                return_value=None,
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.delete_s3_object"
-            ) as delete_marker,
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.put_s3_object"
-            ) as put_marker,
-        ):
-            with s3_ownership_marker_hidden(repository):
-                pass
-
-        delete_marker.assert_not_called()
-        put_marker.assert_not_called()
-
-    def test_initialize_s3_claims_marker_before_hiding_it_for_kopia_create(self):
+    def test_initialize_s3_creates_kopia_before_establishing_ownership(self):
         repository = self._s3_repository(name="Initialized", prefix="hfl/")
-        marker = (
-            b'{"deployment_uuid":"d","repository_uuid":"r",'
-            b'"location_digest":"l","format_version":1,"signature":"sig"}'
-        )
         call_sequence: list[str] = []
 
-        def fake_create(repository):
-            # Kopia create must run while the marker is hidden.
+        def fake_create(_repository):
             call_sequence.append("create")
 
         with (
@@ -685,52 +594,226 @@ class RepositoryLocationClaimTests(TestCase):
             mock.patch(
                 "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
             ),
-            # Run the real claim: a residual marker is validated and kept, then
-            # hidden for the physical create and restored afterwards. A claim
-            # that runs while the marker is already hidden would rewrite the
-            # marker and make Kopia reject the create again.
             mock.patch(
-                "apps.storage.services.internal.repository_ownership._ensure_s3_namespace_resolved"
+                "apps.storage.services.internal.repository_initializer.inspect_s3_repository_initialization",
+                return_value=S3RepositoryInitializationState.EMPTY,
             ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.establish_s3_repository_ownership",
+                side_effect=lambda _repository: call_sequence.append("ownership"),
+            ),
+        ):
+            initialize_s3_repository(repository)
+
+        self.assertEqual(call_sequence, ["create", "ownership"])
+
+    def test_initialize_s3_recovery_connects_residual_kopia_then_establishes_owner(
+        self,
+    ):
+        repository = self._s3_repository(name="Residual Kopia", prefix="hfl/")
+        calls: list[str] = []
+
+        with (
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.resolve_repository_secrets",
+                return_value={},
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.repository_control_endpoint",
+                return_value=None,
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.resolve_s3_url_style",
+                return_value=S3_URL_STYLE_PATH,
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.inspect_s3_repository_initialization",
+                return_value=S3RepositoryInitializationState.OCCUPIED,
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.connect_s3_repository",
+                side_effect=lambda _repository: calls.append("connect"),
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.kopia_status",
+                side_effect=lambda _repository: calls.append("status"),
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.establish_s3_repository_ownership",
+                side_effect=lambda _repository: calls.append("ownership"),
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.create_s3_repository"
+            ) as create_repository,
+        ):
+            initialize_s3_repository(repository, recovery=True)
+
+        self.assertEqual(calls, ["connect", "status", "ownership"])
+        create_repository.assert_not_called()
+
+    def test_initialize_s3_owned_location_connects_without_recreating(self):
+        repository = self._s3_repository(name="Owned Kopia", prefix="hfl/")
+
+        with (
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.resolve_repository_secrets",
+                return_value={},
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.repository_control_endpoint",
+                return_value=None,
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.resolve_s3_url_style",
+                return_value=S3_URL_STYLE_PATH,
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.inspect_s3_repository_initialization",
+                return_value=S3RepositoryInitializationState.OWNED,
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.connect_s3_repository"
+            ) as connect_repository,
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.kopia_status"
+            ) as status_repository,
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.create_s3_repository"
+            ) as create_repository,
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.establish_s3_repository_ownership"
+            ) as establish_ownership,
+        ):
+            initialize_s3_repository(repository, recovery=True)
+
+        connect_repository.assert_called_once_with(repository)
+        status_repository.assert_called_once_with(repository)
+        create_repository.assert_not_called()
+        establish_ownership.assert_not_called()
+
+    def test_initialize_s3_recovery_upgrades_pre_kopia_marker_residue(self):
+        repository = self._s3_repository(name="Legacy marker", prefix="hfl/")
+        calls: list[str] = []
+
+        with (
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.resolve_repository_secrets",
+                return_value={},
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.repository_control_endpoint",
+                return_value=None,
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.resolve_s3_url_style",
+                return_value=S3_URL_STYLE_PATH,
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.inspect_s3_repository_initialization",
+                return_value=S3RepositoryInitializationState.OWNED,
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.connect_s3_repository",
+                side_effect=KopiaCliError("repository is not initialized"),
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.reset_s3_legacy_marker_for_initialization_recovery",
+                side_effect=lambda _repository: calls.append("reset"),
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.create_s3_repository",
+                side_effect=lambda _repository: calls.append("create"),
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_initializer.establish_s3_repository_ownership",
+                side_effect=lambda _repository: calls.append("ownership"),
+            ),
+        ):
+            initialize_s3_repository(repository, recovery=True)
+
+        self.assertEqual(calls, ["reset", "create", "ownership"])
+
+    @mock.patch("apps.storage.services.internal.repository_ownership.delete_s3_object")
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership.s3_prefix_contains_only_key",
+        return_value=True,
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership._require_matching_marker"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership.read_s3_object",
+        side_effect=[b"matching-marker", None, None],
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership._ensure_s3_namespace_resolved"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_ownership._s3_args",
+        return_value={},
+    )
+    def test_legacy_marker_reset_requires_marker_only_prefix(
+        self,
+        _s3_args,
+        _resolve_namespace,
+        _read_marker,
+        _require_marker,
+        contains_only_marker,
+        delete_marker,
+    ):
+        repository = self._s3_repository(name="Marker only", prefix="hfl/")
+
+        reset_s3_legacy_marker_for_initialization_recovery(repository)
+
+        contains_only_marker.assert_called_once_with(
+            prefix="hfl/",
+            allowed_key="hfl/.hyperfilelens/repository-owner-v1.json",
+        )
+        delete_marker.assert_called_once_with(
+            key="hfl/.hyperfilelens/repository-owner-v1.json"
+        )
+
+    def test_legacy_marker_reset_preserves_prefix_with_other_state(self):
+        repository = self._s3_repository(name="Marker plus data", prefix="hfl/")
+        with (
             mock.patch(
                 "apps.storage.services.internal.repository_ownership._s3_args",
                 return_value={},
             ),
             mock.patch(
-                "apps.storage.services.internal.repository_ownership._marker_key",
-                return_value="hfl/.hyperfilelens/repository-owner-v1.json",
+                "apps.storage.services.internal.repository_ownership._ensure_s3_namespace_resolved"
             ),
             mock.patch(
                 "apps.storage.services.internal.repository_ownership.read_s3_object",
-                return_value=marker,
+                return_value=b"matching-marker",
             ),
             mock.patch(
-                "apps.storage.services.internal.repository_ownership._require_matching_marker",
-                side_effect=lambda *_args, **_kwargs: call_sequence.append("claimed"),
+                "apps.storage.services.internal.repository_ownership._require_matching_marker"
             ),
             mock.patch(
-                "apps.storage.services.internal.repository_ownership._reject_foreign_ancestor_markers"
+                "apps.storage.services.internal.repository_ownership.s3_prefix_contains_only_key",
+                return_value=False,
             ),
             mock.patch(
-                "apps.storage.services.internal.repository_ownership._reject_foreign_descendant_markers"
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.mark_repository_location_ownership_verified"
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.delete_s3_object",
-                side_effect=lambda **_kwargs: call_sequence.append("deleted"),
-            ),
-            mock.patch(
-                "apps.storage.services.internal.repository_ownership.put_s3_object",
-                side_effect=lambda **_kwargs: call_sequence.append("restored"),
-            ),
+                "apps.storage.services.internal.repository_ownership.delete_s3_object"
+            ) as delete_marker,
         ):
-            initialize_s3_repository(repository)
+            with self.assertRaisesRegex(
+                RepositoryOwnershipError,
+                "contains repository data",
+            ):
+                reset_s3_legacy_marker_for_initialization_recovery(repository)
 
-        self.assertEqual(
-            call_sequence, ["claimed", "deleted", "create", "restored"]
-        )
+        delete_marker.assert_not_called()
 
     @mock.patch(
         "apps.storage.services.internal.repository_ownership.mark_repository_location_ownership_verified"

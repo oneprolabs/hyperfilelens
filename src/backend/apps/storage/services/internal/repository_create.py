@@ -454,7 +454,15 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
             ):
                 _run_repair_remount(repository_task)
             else:
-                initialization_outcome = _run_initialize(repository)
+                initialization_outcome = _run_initialize(
+                    repository,
+                    recovery=(
+                        not started_now
+                        or repository.location_claims.filter(
+                            state=RepositoryLocationClaim.State.RESIDUAL
+                        ).exists()
+                    ),
+                )
             physical_initialize_done = True
             if (
                 repository_task.operation_type
@@ -688,13 +696,13 @@ def _resolve_create_owner(
     )
 
 
-def _run_initialize(repository: Repository):
+def _run_initialize(repository: Repository, *, recovery: bool = False):
     if repository.repo_type == Repository.Type.NAS:
         return initialize_proxy_nas_repository(repository)
     if repository.repo_type == Repository.Type.PROXY_FS:
         return initialize_proxy_fs_repository(repository)
     if repository.repo_type == Repository.Type.S3:
-        initialize_s3_repository(repository)
+        initialize_s3_repository(repository, recovery=recovery)
         return
     raise ValidationError(
         f"Unsupported repository type for create: {repository.repo_type}"

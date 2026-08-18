@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import ElementPlus, { ElInput, ElOption, ElRadioGroup, ElSelect } from 'element-plus'
+import ElementPlus, { ElButton, ElInput, ElOption, ElRadioGroup, ElSelect } from 'element-plus'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -195,5 +195,42 @@ describe('AddS3Repo Region and Bucket state', () => {
     await nextTick()
 
     expect(bucketInput.props('modelValue')).toBe('new-bucket')
+  })
+
+  it('allows an Existing Bucket to use the Bucket root with an empty Prefix', async () => {
+    mocks.api.mockImplementation((path: string) => {
+      if (path.endsWith('/validate/s3/')) return Promise.resolve({ buckets: ['empty-bucket'] })
+      if (path === '/api/v1/storage/repositories/') {
+        return Promise.resolve({ id: 41, status: 'creating' })
+      }
+      return Promise.resolve({})
+    })
+    const wrapper = await mountForm()
+    const connectionInputs = wrapper
+      .findAllComponents(ElInput)
+      .filter((component) => component.classes().includes('add-s3-element-field'))
+    connectionInputs[2].vm.$emit('update:modelValue', 'access-key')
+    connectionInputs[3].vm.$emit('update:modelValue', 'secret-key')
+    existingBucketSelect(wrapper).vm.$emit('update:modelValue', 'empty-bucket')
+    const prefixInput = wrapper
+      .find('[data-validation-field="prefix"]')
+      .findComponent(ElInput)
+    prefixInput.vm.$emit('update:modelValue', '')
+    await nextTick()
+
+    const createButton = wrapper
+      .findAllComponents(ElButton)
+      .find((button) => button.text().includes('Create and Initialize'))
+    if (!createButton) throw new Error('Create button was not rendered')
+    await createButton.trigger('click')
+    await flushPromises()
+
+    const createCall = mocks.api.mock.calls.find(
+      ([path]) => path === '/api/v1/storage/repositories/',
+    )
+    expect(createCall).toBeDefined()
+    const payload = JSON.parse(String(createCall?.[1]?.body || '{}'))
+    expect(payload.config.prefix).toBeUndefined()
+    expect(wrapper.find('[data-validation-field="prefix"] .el-form-item__error').exists()).toBe(false)
   })
 })

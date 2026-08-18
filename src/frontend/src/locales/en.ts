@@ -2322,7 +2322,7 @@ export const en = {
     phBucketNew: 'Enter a new bucket name, e.g. my-backup-bucket',
     fieldPrefix: 'Object Prefix',
     phPrefix: 'my-backup-prefix',
-    hintPrefix: 'Use a dedicated directory per application for data isolation and management. A trailing "/" will be added automatically if missing.',
+    hintPrefix: 'Leave empty to use the entire Bucket, or enter a dedicated directory. A trailing "/" is added automatically.',
     fieldQuota: 'Storage Limit',
     phQuota: '0 means unlimited',
     hintQuota: 'Set to 0 for unlimited storage capacity.',

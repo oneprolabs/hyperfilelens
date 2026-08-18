@@ -14,6 +14,7 @@ from apps.storage.services.internal.s3_client import (
     list_s3_buckets,
     list_s3_buckets_by_region,
     put_s3_object_if_absent,
+    s3_prefix_contains_only_key,
 )
 from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
@@ -263,9 +264,7 @@ class S3BucketRegionListingTests(TestCase):
                 {"Name": "lookup-match"},
             ]
         }
-        client.get_bucket_location.return_value = {
-            "LocationConstraint": "cn-hangzhou"
-        }
+        client.get_bucket_location.return_value = {"LocationConstraint": "cn-hangzhou"}
         client_factory.return_value = client
 
         buckets = list_s3_buckets_by_region(
@@ -460,9 +459,13 @@ class S3BucketRegionListingTests(TestCase):
 
         self.assertEqual(buckets, [])
         self.assertTrue(any("bucket excluded" in line for line in captured.output))
-        self.assertTrue(any("error_code=AccessDenied" in line for line in captured.output))
+        self.assertTrue(
+            any("error_code=AccessDenied" in line for line in captured.output)
+        )
         self.assertTrue(any("http_status=403" in line for line in captured.output))
-        self.assertTrue(any("request_id=request-123" in line for line in captured.output))
+        self.assertTrue(
+            any("request_id=request-123" in line for line in captured.output)
+        )
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
     def test_aws_empty_location_maps_to_us_east_1_after_fallback(self, client_factory):
@@ -610,7 +613,7 @@ class CreateS3BucketTests(TestCase):
         client = mock.Mock()
         client_factory.return_value = client
 
-        create_s3_bucket(
+        created = create_s3_bucket(
             endpoint="https://s3.example.com",
             region="us-east-1",
             bucket="new-bucket",
@@ -620,9 +623,10 @@ class CreateS3BucketTests(TestCase):
 
         client.create_bucket.assert_called_once_with(Bucket="new-bucket")
         client.list_buckets.assert_not_called()
+        self.assertTrue(created)
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
-    def test_rejects_an_existing_bucket_name_that_holds_data(self, client_factory):
+    def test_rejects_an_existing_bucket_name_on_first_attempt(self, client_factory):
         client = mock.Mock()
         client.create_bucket.side_effect = ClientError(
             {
@@ -631,7 +635,6 @@ class CreateS3BucketTests(TestCase):
             },
             "CreateBucket",
         )
-        client.list_objects_v2.return_value = {"Contents": [{"Key": "existing"}]}
         client_factory.return_value = client
 
         with self.assertRaisesRegex(S3ClientError, "already exists"):
@@ -644,7 +647,7 @@ class CreateS3BucketTests(TestCase):
             )
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
-    def test_allows_reinitialization_when_existing_bucket_is_empty(self, client_factory):
+    def test_recovery_allows_an_existing_owned_bucket(self, client_factory):
         client = mock.Mock()
         client.create_bucket.side_effect = ClientError(
             {
@@ -653,22 +656,19 @@ class CreateS3BucketTests(TestCase):
             },
             "CreateBucket",
         )
-        client.list_objects_v2.return_value = {}
-        client.list_object_versions.return_value = {}
-        client.list_multipart_uploads.return_value = {}
         client_factory.return_value = client
 
-        create_s3_bucket(
+        created = create_s3_bucket(
             endpoint="https://s3.example.com",
             region="us-east-1",
             bucket="leftover-bucket",
             access_key_id="AK",
             secret_access_key="SK",
+            allow_existing_owned=True,
         )
 
-        client.list_objects_v2.assert_called_once_with(
-            Bucket="leftover-bucket", Prefix="", MaxKeys=1
-        )
+        client.list_objects_v2.assert_not_called()
+        self.assertFalse(created)
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
     def test_legacy_gateway_retries_without_location_constraint(self, client_factory):
@@ -710,6 +710,57 @@ class CreateS3BucketTests(TestCase):
         )
 
 
+class S3PrefixContainsOnlyKeyTests(TestCase):
+    def _contains_only(self, client) -> bool:
+        with mock.patch(
+            "apps.storage.services.internal.s3_client._client",
+            return_value=client,
+        ):
+            return s3_prefix_contains_only_key(
+                endpoint="https://s3.example.com",
+                region="us-east-1",
+                bucket="backup-bucket",
+                prefix="hfl/",
+                allowed_key="hfl/.hyperfilelens/repository-owner-v1.json",
+                access_key_id="AK",
+                secret_access_key="SK",
+            )
+
+    def test_accepts_current_and_historical_state_for_the_allowed_marker(self):
+        client = mock.Mock()
+        object_pages = mock.Mock()
+        object_pages.paginate.return_value = [
+            {"Contents": [{"Key": "hfl/.hyperfilelens/repository-owner-v1.json"}]}
+        ]
+        version_pages = mock.Mock()
+        version_pages.paginate.return_value = [
+            {
+                "Versions": [{"Key": "hfl/.hyperfilelens/repository-owner-v1.json"}],
+                "DeleteMarkers": [],
+            }
+        ]
+        client.get_paginator.side_effect = [object_pages, version_pages]
+        client.list_multipart_uploads.return_value = {}
+
+        self.assertTrue(self._contains_only(client))
+
+    def test_rejects_any_other_object_in_the_prefix(self):
+        client = mock.Mock()
+        object_pages = mock.Mock()
+        object_pages.paginate.return_value = [
+            {
+                "Contents": [
+                    {"Key": "hfl/.hyperfilelens/repository-owner-v1.json"},
+                    {"Key": "hfl/kopia.repository"},
+                ]
+            }
+        ]
+        client.get_paginator.return_value = object_pages
+
+        self.assertFalse(self._contains_only(client))
+        client.list_multipart_uploads.assert_not_called()
+
+
 class InitializeS3RepositoryBucketModeTests(TestCase):
     def _repository(self, mode):
         return Repository(
@@ -717,22 +768,42 @@ class InitializeS3RepositoryBucketModeTests(TestCase):
             s3_platform=Repository.S3Platform.AWS,
             s3_bucket="bucket",
             s3_bucket_mode=mode,
-            config={"region": "us-east-1", "prefix": "repo/", "s3_url_style": "virtual_hosted"},
+            config={
+                "region": "us-east-1",
+                "prefix": "repo/",
+                "s3_url_style": "virtual_hosted",
+            },
         )
 
-    @mock.patch("apps.storage.services.internal.repository_initializer.create_s3_repository")
-    @mock.patch("apps.storage.services.internal.repository_initializer.check_s3_bucket_readable")
-    @mock.patch("apps.storage.services.internal.repository_initializer.create_s3_bucket")
-    def test_new_mode_strictly_creates_bucket(self, create_bucket, check_bucket, _create_repo):
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.create_s3_repository"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.create_s3_bucket"
+    )
+    def test_new_mode_strictly_creates_bucket(
+        self, create_bucket, check_bucket, _create_repo
+    ):
         initialize_s3_repository(self._repository(Repository.S3BucketMode.NEW))
 
         create_bucket.assert_called_once()
         check_bucket.assert_not_called()
 
-    @mock.patch("apps.storage.services.internal.repository_initializer.create_s3_repository")
-    @mock.patch("apps.storage.services.internal.repository_initializer.check_s3_bucket_readable")
-    @mock.patch("apps.storage.services.internal.repository_initializer.create_s3_bucket")
-    def test_existing_mode_never_creates_bucket(self, create_bucket, check_bucket, _create_repo):
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.create_s3_repository"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.create_s3_bucket"
+    )
+    def test_existing_mode_never_creates_bucket(
+        self, create_bucket, check_bucket, _create_repo
+    ):
         initialize_s3_repository(self._repository(Repository.S3BucketMode.EXISTING))
 
         check_bucket.assert_called_once()
@@ -750,7 +821,9 @@ class ResolveS3UrlStyleTests(TestCase):
     }
 
     @mock.patch("apps.storage.services.internal.repository_initializer.sleep")
-    @mock.patch("apps.storage.services.internal.repository_initializer.check_s3_bucket_readable")
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+    )
     def test_auto_prefers_virtual_hosted(self, check_bucket, sleep):
         resolved = resolve_s3_url_style(s3_url_style="auto", **self._bucket_args)
 
@@ -761,7 +834,9 @@ class ResolveS3UrlStyleTests(TestCase):
         )
         sleep.assert_not_called()
 
-    @mock.patch("apps.storage.services.internal.repository_initializer.check_s3_bucket_readable")
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+    )
     def test_auto_uses_path_for_ip_literal_endpoint(self, check_bucket):
         resolved = resolve_s3_url_style(
             s3_url_style="auto",
@@ -775,7 +850,9 @@ class ResolveS3UrlStyleTests(TestCase):
         )
 
     @mock.patch("apps.storage.services.internal.repository_initializer.sleep")
-    @mock.patch("apps.storage.services.internal.repository_initializer.check_s3_bucket_readable")
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+    )
     def test_auto_falls_back_to_path(self, check_bucket, _sleep):
         check_bucket.side_effect = [None] + [S3ClientError("virtual failed")] * 3
 
@@ -788,7 +865,9 @@ class ResolveS3UrlStyleTests(TestCase):
         )
 
     @mock.patch("apps.storage.services.internal.repository_initializer.sleep")
-    @mock.patch("apps.storage.services.internal.repository_initializer.check_s3_bucket_readable")
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+    )
     def test_auto_reports_both_probe_failures(self, check_bucket, _sleep):
         check_bucket.side_effect = S3ClientError("unavailable")
 
@@ -808,9 +887,15 @@ class InitializeAutoS3UrlStyleTests(TestCase):
         repository.save = mock.Mock()
         return repository
 
-    @mock.patch("apps.storage.services.internal.repository_initializer.create_s3_repository")
-    @mock.patch("apps.storage.services.internal.repository_initializer.check_s3_bucket_readable")
-    def test_auto_resolution_is_persisted_before_kopia_initialization(self, check_bucket, create_repo):
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.create_s3_repository"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+    )
+    def test_auto_resolution_is_persisted_before_kopia_initialization(
+        self, check_bucket, create_repo
+    ):
         repository = self._repository(Repository.S3BucketMode.EXISTING)
 
         initialize_s3_repository(repository)
@@ -824,22 +909,65 @@ class InitializeAutoS3UrlStyleTests(TestCase):
         create_repo.assert_called_once_with(repository)
 
     @mock.patch("apps.storage.services.internal.repository_initializer.sleep")
-    @mock.patch("apps.storage.services.internal.repository_initializer.create_s3_repository")
-    @mock.patch("apps.storage.services.internal.repository_initializer.delete_s3_bucket_if_empty")
-    @mock.patch("apps.storage.services.internal.repository_initializer.check_s3_bucket_readable")
-    @mock.patch("apps.storage.services.internal.repository_initializer.create_s3_bucket")
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.create_s3_repository"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.delete_s3_bucket_if_empty"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.create_s3_bucket"
+    )
     def test_new_bucket_auto_probe_failure_rolls_back_created_bucket(
         self, create_bucket, check_bucket, delete_bucket, create_repo, _sleep
     ):
         repository = self._repository(Repository.S3BucketMode.NEW)
         check_bucket.side_effect = S3ClientError("unavailable")
-        delete_bucket.return_value = {"bucket": "bucket", "status": "deleted", "reason": "bucket_empty"}
+        delete_bucket.return_value = {
+            "bucket": "bucket",
+            "status": "deleted",
+            "reason": "bucket_empty",
+        }
 
         with self.assertRaises(RepositoryInitializationError):
             initialize_s3_repository(repository)
 
         create_bucket.assert_called_once()
         delete_bucket.assert_called_once()
+        create_repo.assert_not_called()
+
+    @mock.patch("apps.storage.services.internal.repository_initializer.sleep")
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.create_s3_repository"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.delete_s3_bucket_if_empty"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.check_s3_bucket_readable"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_initializer.create_s3_bucket"
+    )
+    def test_recovery_auto_probe_failure_does_not_delete_reused_bucket(
+        self,
+        create_bucket,
+        check_bucket,
+        delete_bucket,
+        create_repo,
+        _sleep,
+    ):
+        repository = self._repository(Repository.S3BucketMode.NEW)
+        create_bucket.return_value = False
+        check_bucket.side_effect = S3ClientError("unavailable")
+
+        with self.assertRaises(RepositoryInitializationError):
+            initialize_s3_repository(repository, recovery=True)
+
+        delete_bucket.assert_not_called()
         create_repo.assert_not_called()
 
 
@@ -923,9 +1051,7 @@ class S3OwnershipMarkerAtomicCreateTests(TestCase):
         self.assertEqual(request.headers["x-oss-forbid-overwrite"], "true")
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
-    def test_legacy_custom_aliyun_endpoint_uses_aliyun_semantics(
-        self, client_factory
-    ):
+    def test_legacy_custom_aliyun_endpoint_uses_aliyun_semantics(self, client_factory):
         client = mock.Mock()
         client_factory.return_value = client
 
@@ -939,6 +1065,25 @@ class S3OwnershipMarkerAtomicCreateTests(TestCase):
 
         self.assertNotIn("IfNoneMatch", client.put_object.call_args.kwargs)
         client.meta.events.register_first.assert_called_once()
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_legacy_custom_huawei_endpoint_uses_huawei_semantics(self, client_factory):
+        client = mock.Mock()
+        client_factory.return_value = client
+
+        self.assertTrue(
+            self._put(
+                platform=Repository.S3Platform.CUSTOM,
+                endpoint="obs.cn-north-4.myhuaweicloud.com",
+                region="cn-north-4",
+            )
+        )
+
+        self.assertNotIn("IfNoneMatch", client.put_object.call_args.kwargs)
+        registration = client.meta.events.register_first.call_args
+        request = SimpleNamespace(headers={})
+        registration.args[1](request=request)
+        self.assertEqual(request.headers["x-obs-forbid-overwrite"], "true")
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
     def test_aliyun_existing_marker_returns_false(self, client_factory):
@@ -963,8 +1108,57 @@ class S3OwnershipMarkerAtomicCreateTests(TestCase):
         )
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_huawei_uses_signed_forbid_overwrite_header(self, client_factory):
+        client = mock.Mock()
+        client_factory.return_value = client
+
+        self.assertTrue(
+            self._put(
+                platform=Repository.S3Platform.HUAWEICLOUD,
+                endpoint="https://obs.cn-north-4.myhuaweicloud.com",
+                region="cn-north-4",
+            )
+        )
+
+        self.assertNotIn("IfNoneMatch", client.put_object.call_args.kwargs)
+        registration = client.meta.events.register_first.call_args
+        self.assertEqual(registration.args[0], "before-sign.s3.PutObject")
+        request = SimpleNamespace(headers={})
+        registration.args[1](request=request)
+        self.assertEqual(request.headers["x-obs-forbid-overwrite"], "true")
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_huawei_existing_marker_returns_false(self, client_factory):
+        client = mock.Mock()
+        client.put_object.side_effect = ClientError(
+            {
+                "Error": {
+                    "Code": "ObjectAlreadyExists",
+                    "Message": "The object already exists.",
+                },
+                "ResponseMetadata": {"HTTPStatusCode": 409},
+            },
+            "PutObject",
+        )
+        client_factory.return_value = client
+
+        self.assertFalse(
+            self._put(
+                platform=Repository.S3Platform.HUAWEICLOUD,
+                endpoint="https://obs.cn-north-4.myhuaweicloud.com",
+            )
+        )
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
     def test_legacy_gateway_falls_back_to_plain_overwrite(self, client_factory):
         client = mock.Mock()
+        client.head_object.side_effect = ClientError(
+            {
+                "Error": {"Code": "NoSuchKey", "Message": "missing"},
+                "ResponseMetadata": {"HTTPStatusCode": 404},
+            },
+            "HeadObject",
+        )
         client.put_object.side_effect = [
             ClientError(
                 {
@@ -987,3 +1181,22 @@ class S3OwnershipMarkerAtomicCreateTests(TestCase):
         second_call = client.put_object.call_args_list[1]
         self.assertIn("IfNoneMatch", first_call.kwargs)
         self.assertNotIn("IfNoneMatch", second_call.kwargs)
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_legacy_gateway_does_not_overwrite_an_existing_marker(self, client_factory):
+        client = mock.Mock()
+        client.put_object.side_effect = ClientError(
+            {
+                "Error": {
+                    "Code": "NotImplemented",
+                    "Message": "conditional write unsupported",
+                },
+                "ResponseMetadata": {"HTTPStatusCode": 501},
+            },
+            "PutObject",
+        )
+        client.head_object.return_value = {"ContentLength": 10}
+        client_factory.return_value = client
+
+        self.assertFalse(self._put())
+        client.put_object.assert_called_once()

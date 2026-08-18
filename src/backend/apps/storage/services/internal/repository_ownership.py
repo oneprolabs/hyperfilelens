@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 
 from django.core.exceptions import ValidationError
 
@@ -28,9 +28,9 @@ from apps.storage.services.internal.s3_client import (
     delete_s3_object,
     identify_s3_namespace,
     list_s3_object_keys,
-    put_s3_object,
     put_s3_object_if_absent,
     read_s3_object,
+    s3_prefix_contains_only_key,
     s3_prefix_has_any_state,
 )
 from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
@@ -46,6 +46,14 @@ class RepositoryOwnershipError(ValidationError):
 
 class RepositoryOwnershipMarkerMissingError(RepositoryOwnershipError):
     """Raised when destructive ownership proof has no physical marker."""
+
+
+class S3RepositoryInitializationState(StrEnum):
+    """Physical states relevant to an S3 repository initialization attempt."""
+
+    EMPTY = "empty"
+    OWNED = "owned"
+    OCCUPIED = "occupied"
 
 
 @dataclass(frozen=True)
@@ -117,8 +125,10 @@ def ownership_payload(
     return {**unsigned, "signature": _sign_marker(unsigned)}
 
 
-def claim_s3_repository_ownership(repository: Repository) -> None:
-    """Resolve the S3 namespace and atomically claim an empty Prefix."""
+def inspect_s3_repository_initialization(
+    repository: Repository,
+) -> S3RepositoryInitializationState:
+    """Inspect the target Prefix without changing its physical contents."""
     s3_args = _s3_args(repository)
     _ensure_s3_namespace_resolved(repository, s3_args=s3_args)
     expected = ownership_payload(repository)
@@ -137,14 +147,42 @@ def claim_s3_repository_ownership(repository: Repository) -> None:
             s3_args=s3_args,
         )
         mark_repository_location_ownership_verified(repository)
-        return
+        return S3RepositoryInitializationState.OWNED
+
+    _reject_foreign_descendant_markers(
+        repository=repository,
+        expected=expected,
+        s3_args=s3_args,
+    )
 
     prefix = _prefix_with_slash(repository)
     if s3_prefix_has_any_state(**s3_args, prefix=prefix):
-        raise RepositoryOwnershipError(
-            "The selected object Prefix contains objects, historical versions, "
-            "or incomplete uploads and cannot be claimed as a new repository."
-        )
+        return S3RepositoryInitializationState.OCCUPIED
+    return S3RepositoryInitializationState.EMPTY
+
+
+def establish_s3_repository_ownership(repository: Repository) -> None:
+    """Persist and verify ownership after Kopia has initialized the Prefix."""
+    s3_args = _s3_args(repository)
+    _ensure_s3_namespace_resolved(repository, s3_args=s3_args)
+    expected = ownership_payload(repository)
+    marker_key = _marker_key(repository)
+    _reject_foreign_ancestor_markers(
+        repository=repository,
+        expected=expected,
+        s3_args=s3_args,
+    )
+    _reject_foreign_descendant_markers(
+        repository=repository,
+        expected=expected,
+        s3_args=s3_args,
+    )
+    existing = read_s3_object(**s3_args, key=marker_key)
+    if existing is not None:
+        _require_matching_marker(existing, expected=expected)
+        mark_repository_location_ownership_verified(repository)
+        return
+
     marker_bytes = _encode_marker(expected)
     if not put_s3_object_if_absent(
         **s3_args,
@@ -164,10 +202,8 @@ def claim_s3_repository_ownership(repository: Repository) -> None:
             "Repository ownership marker was not durable after creation."
         )
     _require_matching_marker(persisted, expected=expected)
-    # A database Claim serializes locations that the control plane can identify,
-    # but different private-network aliases may reach the same storage. Repeat
-    # the physical hierarchy proof after the atomic marker write so neither an
-    # ancestor nor a descendant can slip in between the initial probe and init.
+    # Repeat the hierarchy proof after persisting the marker so a concurrent
+    # ancestor or descendant cannot be accepted as a completed initialization.
     _reject_foreign_ancestor_markers(
         repository=repository,
         expected=expected,
@@ -179,6 +215,39 @@ def claim_s3_repository_ownership(repository: Repository) -> None:
         s3_args=s3_args,
     )
     mark_repository_location_ownership_verified(repository)
+
+
+def reset_s3_legacy_marker_for_initialization_recovery(
+    repository: Repository,
+) -> None:
+    """Remove a matching marker left by the pre-Kopia ownership protocol."""
+    s3_args = _s3_args(repository)
+    _ensure_s3_namespace_resolved(repository, s3_args=s3_args)
+    expected = ownership_payload(repository)
+    marker_key = _marker_key(repository)
+    marker = read_s3_object(**s3_args, key=marker_key)
+    if marker is None:
+        return
+    _require_matching_marker(marker, expected=expected)
+    _reject_foreign_ancestor_markers(
+        repository=repository,
+        expected=expected,
+        s3_args=s3_args,
+    )
+    prefix = _prefix_with_slash(repository)
+    if not s3_prefix_contains_only_key(
+        **s3_args,
+        prefix=prefix,
+        allowed_key=marker_key,
+    ):
+        raise RepositoryOwnershipError(
+            "The owned Prefix contains repository data and cannot be reset for initialization."
+        )
+    delete_s3_object(**s3_args, key=marker_key)
+    if read_s3_object(**s3_args, key=marker_key) is not None:
+        raise RepositoryOwnershipError(
+            "The legacy repository ownership marker could not be removed."
+        )
 
 
 def verify_s3_repository_ownership(
@@ -471,30 +540,6 @@ def _require_matching_marker(
     return marker
 
 
-@contextmanager
-def s3_ownership_marker_hidden(repository: Repository):
-    """Hide the ownership marker while Kopia initializes an empty Prefix.
-
-    ``claim_s3_repository_ownership`` atomically writes an ownership marker
-    before the physical repository is created. Kopia, however, refuses
-    ``repository create`` when the target Prefix already contains *any*
-    object - including our own marker - and reports "found existing data in
-    storage location". Temporarily remove the marker for the duration of the
-    physical create and restore it afterwards so the ownership proof survives.
-    """
-    s3_args = _s3_args(repository)
-    marker_key = _marker_key(repository)
-    marker = read_s3_object(**s3_args, key=marker_key)
-    if marker is None:
-        yield
-        return
-    delete_s3_object(**s3_args, key=marker_key)
-    try:
-        yield
-    finally:
-        put_s3_object(**s3_args, key=marker_key, body=marker)
-
-
 def _sign_marker(payload: dict[str, object]) -> str:
     encoded = json.dumps(
         payload,
@@ -515,10 +560,13 @@ __all__ = [
     "OWNERSHIP_MARKER_PATH",
     "RepositoryOwnershipError",
     "RepositoryOwnershipMarkerMissingError",
-    "claim_s3_repository_ownership",
+    "S3RepositoryInitializationState",
+    "establish_s3_repository_ownership",
+    "inspect_s3_repository_initialization",
     "ownership_payload_for_node",
     "repository_deployment_uuid",
     "repository_location_digest",
+    "reset_s3_legacy_marker_for_initialization_recovery",
     "s3_repository_ownership_marker",
     "verify_s3_repository_deletion_ownership",
     "verify_s3_repository_ownership",
