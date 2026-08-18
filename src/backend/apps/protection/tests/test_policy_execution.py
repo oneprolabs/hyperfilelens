@@ -188,6 +188,27 @@ class PolicyExecutionTests(TestCase):
             schedule_matches_now(legacy, now=datetime(2026, 7, 31, 18, 0, tzinfo=UTC))
         )
 
+    def test_interval_start_seconds_round_up_to_the_next_scheduler_minute(self):
+        interval = {
+            "enabled": True,
+            "mode": "interval",
+            "timezone": "UTC",
+            "starts_at": "2026-07-31T09:30:30",
+            "interval_unit": "hour",
+            "interval_value": 1,
+            "cron_expr": "0 */1 * * *",
+        }
+
+        self.assertFalse(
+            schedule_matches_now(interval, now=datetime(2026, 7, 31, 9, 30, 59, tzinfo=UTC))
+        )
+        self.assertTrue(
+            schedule_matches_now(interval, now=datetime(2026, 7, 31, 9, 31, tzinfo=UTC))
+        )
+        self.assertTrue(
+            schedule_matches_now(interval, now=datetime(2026, 7, 31, 10, 31, tzinfo=UTC))
+        )
+
     def test_repeated_dst_wall_minute_uses_one_fire_key(self):
         schedule = {
             "enabled": True,

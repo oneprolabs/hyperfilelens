@@ -99,17 +99,17 @@ describe('protection policy schedule mapping', () => {
 
   it('formats schedule wall-clock start times without changing their timezone meaning', () => {
     const form = createEmptyPolicyForm()
-    form.scheduleStartsAt = '2026-08-13T14:30'
+    form.scheduleStartsAt = '2026-08-13T14:30:45'
 
-    expect(formatScheduleStartForDisplay(form.scheduleStartsAt)).toBe('2026-08-13 14:30')
-    expect(summarizeSchedule(form)).toContain('starts 2026-08-13 14:30')
-    expect(summarizeSchedule(form)).not.toContain('2026-08-13T14:30')
+    expect(formatScheduleStartForDisplay(form.scheduleStartsAt)).toBe('2026-08-13 14:30:45')
+    expect(summarizeSchedule(form)).toContain('starts 2026-08-13 14:30:45')
+    expect(summarizeSchedule(form)).not.toContain('2026-08-13T14:30:45')
   })
 
   it('serializes hour and day intervals through the shared mapper', () => {
     const form = createEmptyPolicyForm()
     form.scheduleTimezone = 'UTC'
-    form.scheduleStartsAt = '2026-07-31T02:30'
+    form.scheduleStartsAt = '2026-07-31T02:30:15'
     form.simpleIntervalUnit = 'hour'
     form.simpleIntervalValue = 6
 
@@ -119,6 +119,7 @@ describe('protection policy schedule mapping', () => {
       interval_unit: 'hour',
       interval_value: 6,
       cron_expr: '0 */6 * * *',
+      starts_at: '2026-07-31T02:30:15',
     })
 
     form.simpleIntervalUnit = 'day'
@@ -145,14 +146,14 @@ describe('protection policy schedule mapping', () => {
       freqMode: 'simple',
       quickScheduleType: 'weekly',
       scheduleTimezone: 'Asia/Shanghai',
-      scheduleStartsAt: '2026-07-31T09:30',
+      scheduleStartsAt: '2026-07-31T09:30:00',
       scheduleTime: '09:30',
       scheduleWeekdays: [1, 3, 5],
     })
     expect(policyFormToWritePayload(form).schedule).toMatchObject({
       mode: 'weekly',
       timezone: 'Asia/Shanghai',
-      starts_at: '2026-07-31T09:30',
+      starts_at: '2026-07-31T09:30:00',
       time: '09:30',
       weekdays: [1, 3, 5],
       cron_expr: '30 9 * * 1,3,5',
@@ -214,7 +215,18 @@ describe('protection policy schedule mapping', () => {
     form.scheduleMonthEnd = false
     expect(validateScheduleForm(form)).toBe('Select at least one month day or end of month.')
 
-    form.scheduleStartsAt = '2026-02-31T09:00'
+    form.scheduleStartsAt = '2026-02-31T09:00:00'
     expect(validateScheduleForm(form)).toBe('Start time must be a valid date and time.')
+
+    form.scheduleStartsAt = '2026-08-13T14:30:60'
+    expect(validateScheduleForm(form)).toBe('Start time must be a valid date and time.')
+  })
+
+  it('normalizes legacy minute precision before writing', () => {
+    const form = createEmptyPolicyForm()
+    form.scheduleStartsAt = '2026-08-13T14:30'
+
+    expect(validateScheduleForm(form)).toBe('')
+    expect(policyFormToWritePayload(form).schedule.starts_at).toBe('2026-08-13T14:30:00')
   })
 })

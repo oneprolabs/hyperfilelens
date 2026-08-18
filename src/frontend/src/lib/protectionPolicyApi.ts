@@ -11,7 +11,7 @@ export type BackupPolicySchedule = {
   mode?: BackupPolicyScheduleMode
   /** IANA timezone. Legacy policies without one execute in UTC. */
   timezone?: string
-  /** Local wall-clock activation minute in the selected timezone. */
+  /** Local wall-clock activation time in the selected timezone, canonically including seconds. */
   starts_at?: string | null
   interval_unit?: 'minute' | 'hour' | 'day'
   interval_value?: number

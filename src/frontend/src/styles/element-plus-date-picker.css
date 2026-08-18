@@ -100,3 +100,41 @@
 .el-time-spinner__item:hover:not(.is-disabled):not(.is-active) {
   background: var(--el-fill-color-light, #f5f7fa) !important;
 }
+
+/* Backup Policy Start Time has a nested three-column time panel. Keep that
+   panel inside the date picker's editor cell instead of letting the global
+   popper overflow rule clip its right edge. */
+.policy-start-time-popper.el-picker__popper {
+  z-index: 3600 !important;
+}
+
+.policy-start-time-popper .el-date-picker__editor-wrap .el-time-panel {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.policy-start-time-popper .el-time-spinner.has-seconds .el-time-spinner__wrapper {
+  box-sizing: border-box;
+  width: 33.3333%;
+}
+
+@media (max-width: 360px) {
+  .policy-start-time-popper.el-picker__popper,
+  .policy-start-time-popper .el-date-picker {
+    max-width: calc(100vw - 24px);
+  }
+
+  .policy-start-time-popper .el-date-picker,
+  .policy-start-time-popper .el-date-picker .el-picker-panel__content {
+    box-sizing: border-box;
+  }
+
+  .policy-start-time-popper .el-date-picker {
+    width: 100%;
+  }
+
+  .policy-start-time-popper .el-date-picker .el-picker-panel__content {
+    width: calc(100% - 30px);
+  }
+}
