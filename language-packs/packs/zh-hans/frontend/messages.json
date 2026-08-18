@@ -351,7 +351,7 @@
     },
     "viewAllAttention": "查看运营状况",
     "attentionPreview": "显示 {shown} 或 {total}",
-    "openAttentionItem": "看法",
+    "openAttentionItem": "查看",
     "attentionEmptyDesc": "没有活跃的运营问题。",
     "quotaAlertPolicies": "告警规则",
     "capacityPlanner": {
@@ -1638,7 +1638,7 @@
       "flowRestoreRecordItemsProgress": "{done} / {total} 已处理项目",
       "flowRestoreRecordItemsProcessed": "已处理 {n} 件",
       "flowRestoreRecordMetricsUnavailable": "此记录的传输指标不可用。",
-      "snapshotViewAction": "看法",
+      "snapshotViewAction": "查看",
       "flowActionDelete": "取消注册源",
       "flowBackupLastBackupDash": "—",
       "flowRestoreRecordColMode": "配置",
@@ -4126,7 +4126,7 @@
     "cleanupBlockedForceHint": "强制清理无法绕过活动任务或实时资源关系。在删除此存储仓库之前解决以下阻塞项。",
     "cleanupBlockedAssociations": "{n} 链接备份配置：",
     "cleanupFailed": "存储仓库清理失败。查看任务详细信息并重试。",
-    "cleanupForcePrompt": "将尝试每一个物理清理步骤。当存储仓库删除继续进行时，故障将被记录为残留资源。键入强制清理进行确认。",
+    "cleanupForcePrompt": "将尝试每一个物理清理步骤。存储仓库删除将继续进行，失败项会记录为残留资源。请输入 FORCE CLEANUP 以确认。",
     "cleanupForceOption": "对此存储仓库使用强制清理",
     "cleanupForceOptionHint": "继续完成所有清理步骤，记录所有保留的物理资源，并完成存储仓库删除。",
     "colNasShareExport": "路径",
@@ -5880,7 +5880,7 @@
       "details": "细节",
       "occurredAt": "发生过",
       "action": "操作",
-      "open": "看法",
+      "open": "查看",
       "empty": "没有活跃的运营问题。",
       "loadFailed": "无法加载运行状况"
     }
