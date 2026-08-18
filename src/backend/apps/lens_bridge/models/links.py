@@ -221,8 +221,8 @@ class LensGatewayLink(OrganizationScopedModel):
         db_index=True,
     )
     is_platform_default = models.BooleanField(default=False, db_index=True)
-    # Public Gateway workspace pool (GiB). -1 = unlimited. Meaningful for scope=platform.
-    capacity_gb = models.IntegerField(default=-1)
+    # Public Gateway workspace pool (bytes). -1 = unlimited. Meaningful for scope=platform.
+    capacity_bytes = models.BigIntegerField(default=-1)
 
     class Meta:
         db_table = "lens_bridge_gateway_link"

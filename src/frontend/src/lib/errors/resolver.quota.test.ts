@@ -13,7 +13,7 @@ const messages: Record<string, string> = {
   'errors.codes.subscriptionQuotaExceededGateway':
     'This Public Data Gateway is at capacity. Contact your platform administrator to raise the workspace limit on this gateway.',
   'licenseQuota.users': 'Users',
-  'licenseQuota.publicGatewayCapacityGb': 'Public Gateway Capacity (GiB)',
+  'licenseQuota.publicGatewayCapacity': 'Public Gateway Capacity',
 }
 
 function t(key: string, params?: Record<string, unknown>) {
@@ -55,7 +55,7 @@ describe('subscription quota error messages', () => {
         status: 403,
         errorCode: 'SUBSCRIPTION.QUOTA_EXCEEDED',
         message: 'blocked',
-        meta: { quota_type: 'gateway.public_capacity_gb', scope: 'gateway' },
+        meta: { quota_type: 'gateway.public_capacity_bytes', scope: 'gateway' },
       },
       t,
     )

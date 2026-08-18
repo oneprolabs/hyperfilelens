@@ -19,6 +19,9 @@ from apps.subscription.services.internal.usage import collect_usage_stats
 
 
 _MAX_LICENSE_LIMIT = 2**31 - 1
+_MAX_LICENSE_BIGINT_LIMIT = 2**63 - 1
+_MIB = 1024**2
+_BIGINT_LICENSE_LIMIT_FIELDS = frozenset({"max_public_gateway_capacity_bytes"})
 
 
 def _normalize_license_limit(*, field: str, value) -> int:
@@ -34,8 +37,22 @@ def _normalize_license_limit(*, field: str, value) -> int:
     limit = int(numeric)
     if limit < UNLIMITED:
         raise ValueError(f"License limit {field} cannot be less than {UNLIMITED}")
-    if limit > _MAX_LICENSE_LIMIT:
+    max_supported = (
+        _MAX_LICENSE_BIGINT_LIMIT
+        if field in _BIGINT_LICENSE_LIMIT_FIELDS
+        else _MAX_LICENSE_LIMIT
+    )
+    if limit > max_supported:
         raise ValueError(f"License limit {field} exceeds the supported range")
+    if (
+        field == "max_public_gateway_capacity_bytes"
+        and limit >= 0
+        and limit % _MIB != 0
+    ):
+        raise ValueError(
+            "License limit max_public_gateway_capacity_bytes must use "
+            "whole MiB increments"
+        )
     return limit
 
 
@@ -54,9 +71,9 @@ def _map_limits(raw: dict) -> dict:
         "max_public_gateways": raw.get(
             "max_public_gateways", DEFAULT_LIMITS["max_public_gateways"]
         ),
-        "max_public_gateway_capacity_gb": raw.get(
-            "max_public_gateway_capacity_gb",
-            DEFAULT_LIMITS["max_public_gateway_capacity_gb"],
+        "max_public_gateway_capacity_bytes": raw.get(
+            "max_public_gateway_capacity_bytes",
+            DEFAULT_LIMITS["max_public_gateway_capacity_bytes"],
         ),
         "max_source_nas": raw.get("max_source_nas", DEFAULT_LIMITS["max_source_nas"]),
         "max_object_storage": raw.get(

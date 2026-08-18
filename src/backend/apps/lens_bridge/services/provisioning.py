@@ -953,7 +953,7 @@ def _resolve_gateway_link_identity(
                     "scope": desired_scope,
                     "origin": desired_origin,
                     # Infra capacity is set by Platform Ops; unlimited until configured.
-                    "capacity_gb": -1,
+                    "capacity_bytes": -1,
                 },
             )
         if created:

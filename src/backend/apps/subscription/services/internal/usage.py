@@ -27,23 +27,23 @@ _INSTANCE_USAGE_KEYS = (
     "standalone_disk_count",
     "protected_sources_count",
     "storage_used_gb",
-    "public_gateway_capacity_used_gb",
+    "public_gateway_capacity_used_bytes",
     "ai_tokens_used",
     "alert_policies_count",
 )
 
 
-def _org_public_gateway_capacity_used_gb(organization_id: int) -> float:
+def _org_public_gateway_capacity_used_bytes(organization_id: int) -> int:
     try:
         from apps.lens_bridge.services.public_gateway_capacity import (
-            org_public_gateway_capacity_used_gb,
+            org_public_gateway_capacity_used_bytes,
         )
 
-        return float(
-            org_public_gateway_capacity_used_gb(organization_id=organization_id)
+        return int(
+            org_public_gateway_capacity_used_bytes(organization_id=organization_id)
         )
     except Exception:
-        return 0.0
+        return 0
 
 
 def collect_usage_stats(*, organization_id: int) -> dict:
@@ -178,7 +178,7 @@ def collect_usage_stats(*, organization_id: int) -> dict:
         "standalone_disk_count": standalone_disk_count,
         "protected_sources_count": protected_sources_count,
         "storage_used_gb": storage_used_gb,
-        "public_gateway_capacity_used_gb": _org_public_gateway_capacity_used_gb(
+        "public_gateway_capacity_used_bytes": _org_public_gateway_capacity_used_bytes(
             organization_id
         ),
         "ai_tokens_used": ai_tokens_used,
@@ -203,7 +203,7 @@ def _empty_usage() -> dict:
         "standalone_disk_count": 0,
         "protected_sources_count": 0,
         "storage_used_gb": 0.0,
-        "public_gateway_capacity_used_gb": 0.0,
+        "public_gateway_capacity_used_bytes": 0,
         "ai_tokens_used": 0,
         "ai_insights_used": 0,
         "ai_requests_used": 0,
@@ -356,7 +356,7 @@ def collect_meter_usage(*, organization_id: int, usage_key: str) -> int | float:
             status=Repository.Status.REMOVED
         )
         return _storage_usage_gb(repositories)
-    if usage_key == "public_gateway_capacity_used_gb":
+    if usage_key == "public_gateway_capacity_used_bytes":
         from apps.lens_bridge.services.public_gateway_capacity import (
             org_public_gateway_used_bytes,
         )
@@ -365,9 +365,9 @@ def collect_meter_usage(*, organization_id: int, usage_key: str) -> int | float:
         if incomplete:
             raise IncompleteUsageMeasurementError(
                 "Public Gateway usage cannot be measured completely",
-                measured_value=round(float(used_bytes) / float(1024**3), 6),
+                measured_value=used_bytes,
             )
-        return round(float(used_bytes) / float(1024**3), 6)
+        return used_bytes
     if usage_key in {"ai_tokens_used", "ai_insights_used", "ai_requests_used"}:
         from django.db.models import Sum
 
@@ -521,21 +521,19 @@ def collect_instance_meter_usage(*, usage_key: str) -> float:
             platform_org_key=PLATFORM_ORG_KEY,
         ).exclude(status=Repository.Status.REMOVED)
         return _storage_usage_gb(repositories)
-    if usage_key == "public_gateway_capacity_used_gb":
+    if usage_key == "public_gateway_capacity_used_bytes":
         from apps.lens_bridge.services.public_gateway_capacity import (
             bulk_public_gateway_used_bytes,
         )
 
         usage = bulk_public_gateway_used_bytes()
         if any(incomplete for _used, incomplete in usage.values()):
-            measured_gb = float(
-                sum(used for used, _incomplete in usage.values())
-            ) / float(1024**3)
+            measured_bytes = sum(used for used, _incomplete in usage.values())
             raise IncompleteUsageMeasurementError(
                 "Public Gateway usage cannot be measured completely",
-                measured_value=measured_gb,
+                measured_value=measured_bytes,
             )
-        return float(sum(used for used, _incomplete in usage.values())) / float(1024**3)
+        return sum(used for used, _incomplete in usage.values())
     if usage_key in {"ai_tokens_used", "ai_requests_used", "ai_insights_used"}:
         from django.db.models import Sum
 
@@ -715,11 +713,10 @@ def collect_usage_stats_by_organization(
 
     public_usage = bulk_org_public_gateway_used_bytes(org_ids)
     for organization_id, (used_bytes, incomplete) in public_usage.items():
-        usage_by_org[organization_id]["public_gateway_capacity_used_gb"] = round(
-            float(used_bytes) / float(1024**3),
-            6,
-        )
+        usage_by_org[organization_id]["public_gateway_capacity_used_bytes"] = used_bytes
         if incomplete:
-            incomplete_by_org[organization_id].add("public_gateway_capacity_used_gb")
+            incomplete_by_org[organization_id].add(
+                "public_gateway_capacity_used_bytes"
+            )
 
     return usage_by_org, incomplete_by_org

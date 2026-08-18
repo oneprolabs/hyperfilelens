@@ -14,7 +14,7 @@ const props = withDefaults(
     unlimitedTotalLabel?: string
     /**
      * When set, overrides the default "totalBytes > 0 means known".
-     * Use true for hard-empty pools (totalBytes === 0) such as capacity_gb=0.
+     * Use true for hard-empty pools (totalBytes === 0) such as capacity_bytes=0.
      */
     knownTotal?: boolean | null
   }>(),

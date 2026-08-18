@@ -17,7 +17,9 @@ import {
   type LicenseUsage,
 } from '../../lib/subscriptionApi'
 import {
+  formatQuotaBytes,
   quotaDefsForSubscription,
+  quotaDisplayValue,
   quotaUsagePercent,
   SUBSCRIPTION_QUOTA_FALLBACK_LIMITS,
 } from '../../lib/licenseQuotaDisplay'
@@ -54,14 +56,27 @@ const pageSubtitle = computed(() =>
 const limitItems = computed(() =>
   quotaDefsForSubscription().map((def) => {
     const effective = effectiveQuotaByKey.value[def.limitKey]
-    const used = effective?.used ?? getUsage(def.usageKey)
-    const limit = effective?.limit ?? getLimit(def.limitKey)
+    const used = quotaDisplayValue(
+      effective?.used ?? getUsage(def.usageKey),
+      def.divisor,
+    )
+    const limit = quotaDisplayValue(
+      effective?.limit ?? getLimit(def.limitKey),
+      def.divisor,
+    )
+    const unlimitedLabel = t('settings.subscription.unlimited')
     return {
       key: def.key,
       label: t(def.labelKey),
       suffix: def.suffix,
       used,
       limit,
+      displayUsed: def.formatBytes
+        ? formatQuotaBytes(used, unlimitedLabel)
+        : `${used}${def.suffix ? ` ${def.suffix}` : ''}`,
+      displayLimit: def.formatBytes
+        ? formatQuotaBytes(limit, unlimitedLabel)
+        : `${formatLimit(limit)}${def.suffix && limit >= 0 ? ` ${def.suffix}` : ''}`,
       limitSource: effective?.limit_source,
       usagePercent: effective?.usage_percent,
       usageStatus: effective?.usage_status,
@@ -347,10 +362,7 @@ onMounted(loadAll)
             </small>
           </span>
           <span class="subscription-quota-item__numbers">
-            {{ item.used }}
-            <template v-if="item.suffix"> {{ item.suffix }}</template>
-            / {{ formatLimit(item.limit) }}
-            <template v-if="item.suffix && item.limit >= 0"> {{ item.suffix }}</template>
+            {{ item.displayUsed }} / {{ item.displayLimit }}
           </span>
           <ElProgress
             class="subscription-quota-item__progress"

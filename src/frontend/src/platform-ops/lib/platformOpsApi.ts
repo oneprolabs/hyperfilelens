@@ -99,10 +99,9 @@ export type PlatformGatewayCapacity = {
   gateway_link_id: number
   gateway_id: number
   gateway_name: string
-  capacity_gb: number
+  capacity_bytes: number
   unlimited: boolean
   used_bytes: number
-  used_gb: number
   used_incomplete: boolean
   limit_bytes: number | null
 }
@@ -114,12 +113,12 @@ export async function fetchPublicGatewayCapacities(options?: { signal?: AbortSig
   )
 }
 
-export async function patchPublicGatewayCapacity(gatewayId: number, capacity_gb: number) {
+export async function patchPublicGatewayCapacity(gatewayId: number, capacity_bytes: number) {
   return send<PlatformGatewayCapacity>(
     `/api/v1/platform-ops/lens/gateways/${gatewayId}/capacity`,
     {
       method: 'PATCH',
-      body: JSON.stringify({ capacity_gb }),
+      body: JSON.stringify({ capacity_bytes }),
     },
   )
 }

@@ -60,7 +60,9 @@ import {
 } from '../../platform-ops/lib/platformOpsApi'
 import type { ApiNode } from '../../types/node'
 
+const MIB = 1024 ** 2
 const GIB = 1024 ** 3
+type CapacityUnit = 'mib' | 'gib'
 
 export type InsightGatewayRow = ApiNode & LensGatewayInsight
 
@@ -102,7 +104,8 @@ const capacityDialogOpen = ref(false)
 const capacitySaving = ref(false)
 const capacityTarget = ref<InsightGatewayRow | null>(null)
 const capacityUnlimited = ref(false)
-const capacityGbDraft = ref(100)
+const capacityDraft = ref(100)
+const capacityUnit = ref<CapacityUnit>('gib')
 const offlinePendingDeleteCount = computed(
   () => pendingDelete.value.filter((row) => row.routable === false || !row.hfl_agent_online).length,
 )
@@ -297,31 +300,42 @@ function capacityFor(row: InsightGatewayRow): PlatformGatewayCapacity | undefine
 }
 
 function capacityTotalBytes(cap: PlatformGatewayCapacity | undefined): number {
-  if (!cap || cap.unlimited || cap.capacity_gb < 0) return 0
+  if (!cap || cap.unlimited || cap.capacity_bytes < 0) return 0
   if (cap.limit_bytes != null) return Number(cap.limit_bytes)
-  return Number(cap.capacity_gb) * GIB
+  return Number(cap.capacity_bytes)
 }
 
-/** Finite capacity including hard-empty (0 GiB); false for unlimited / unknown. */
+/** Finite capacity including hard-empty (0 bytes); false for unlimited / unknown. */
 function capacityHasKnownTotal(cap: PlatformGatewayCapacity | undefined): boolean {
-  return Boolean(cap && !cap.unlimited && cap.capacity_gb >= 0)
+  return Boolean(cap && !cap.unlimited && cap.capacity_bytes >= 0)
 }
 
 function openCapacityDialog(row: InsightGatewayRow) {
   if (!canManageGateway(row)) return
   const cap = capacityFor(row)
   capacityTarget.value = row
-  capacityUnlimited.value = Boolean(cap?.unlimited || (cap != null && cap.capacity_gb < 0))
-  const gb = cap != null && cap.capacity_gb >= 0 ? Number(cap.capacity_gb) : 100
-  capacityGbDraft.value = Number.isFinite(gb) ? gb : 100
+  const bytes = cap != null && cap.capacity_bytes >= 0 ? Number(cap.capacity_bytes) : -1
+  capacityUnlimited.value = Boolean(cap?.unlimited || bytes < 0)
+  if (bytes >= 0 && bytes % GIB !== 0) {
+    capacityUnit.value = 'mib'
+    capacityDraft.value = bytes / MIB
+  } else {
+    capacityUnit.value = 'gib'
+    capacityDraft.value = bytes >= 0 ? bytes / GIB : 100
+  }
   capacityDialogOpen.value = true
 }
 
 async function submitCapacity() {
   const row = capacityTarget.value
   if (!row || capacitySaving.value) return
-  const next = capacityUnlimited.value ? -1 : Math.trunc(Number(capacityGbDraft.value))
-  if (!capacityUnlimited.value && (!Number.isFinite(next) || next < 0)) {
+  const draft = Number(capacityDraft.value)
+  const multiplier = capacityUnit.value === 'mib' ? MIB : GIB
+  const next = capacityUnlimited.value ? -1 : draft * multiplier
+  if (
+    !capacityUnlimited.value
+    && (!Number.isInteger(draft) || draft < 0 || !Number.isSafeInteger(next))
+  ) {
     ElMessage.warning({ message: t('platformOps.engineGateway.capacitySaveFailed'), grouping: true })
     return
   }
@@ -850,7 +864,7 @@ onUnmounted(() => {
                   variant="compact"
                   :format-bytes="formatNodeBytes"
                   :unlimited-total-label="
-                    capacityFor(row)!.unlimited || capacityFor(row)!.capacity_gb < 0
+                    capacityFor(row)!.unlimited || capacityFor(row)!.capacity_bytes < 0
                       ? t('platformOps.engineGateway.capacityUnlimited')
                       : undefined
                   "
@@ -1124,13 +1138,28 @@ onUnmounted(() => {
           :label="t('platformOps.engineGateway.capacityLabel')"
           required
         >
-          <ElInputNumber
-            v-model="capacityGbDraft"
-            class="w-full"
-            :min="0"
-            :step="1"
-            :precision="0"
-          />
+          <div class="dg-capacity-dialog__input">
+            <ElInputNumber
+              v-model="capacityDraft"
+              class="w-full"
+              :min="0"
+              :step="1"
+              :precision="0"
+            />
+            <el-select
+              v-model="capacityUnit"
+              class="dg-capacity-dialog__unit"
+            >
+              <el-option
+                label="MB"
+                value="mib"
+              />
+              <el-option
+                label="GB"
+                value="gib"
+              />
+            </el-select>
+          </div>
         </ElFormItem>
       </ElForm>
       <template #footer>
@@ -1246,5 +1275,15 @@ onUnmounted(() => {
   color: var(--el-color-warning);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.dg-capacity-dialog__input {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.dg-capacity-dialog__unit {
+  flex: 0 0 104px;
 }
 </style>
