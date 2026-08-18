@@ -6,8 +6,11 @@ from apps.storage.services.internal.s3_client import (
     S3ClientError,
     _bucket_location_from_xml,
     _client,
+    _is_unsupported_s3_header_error,
     _merge_huawei_bucket_location,
     _register_huawei_bucket_location_compatibility,
+    _s3_list_object_versions,
+    _s3_list_object_version_pages,
     check_s3_bucket_readable,
     create_s3_bucket,
     ensure_s3_bucket,
@@ -759,6 +762,82 @@ class S3PrefixContainsOnlyKeyTests(TestCase):
 
         self.assertFalse(self._contains_only(client))
         client.list_multipart_uploads.assert_not_called()
+
+
+class S3ListObjectVersionsFallbackTests(TestCase):
+    def _not_implemented_error(self):
+        return ClientError(
+            error_response={
+                "Error": {
+                    "Code": "NotImplemented",
+                    "Message": "A header you provided implies functionality that is not implemented",
+                }
+            },
+            operation_name="ListObjectVersions",
+        )
+
+    def test_recognizes_unsupported_s3_header_error(self):
+        self.assertTrue(_is_unsupported_s3_header_error(self._not_implemented_error()))
+
+    def test_ignores_other_client_errors(self):
+        exc = ClientError(
+            error_response={"Error": {"Code": "NoSuchBucket", "Message": "No such bucket"}},
+            operation_name="ListObjectVersions",
+        )
+        self.assertFalse(_is_unsupported_s3_header_error(exc))
+
+    def test_list_object_versions_returns_empty_when_unsupported(self):
+        client = mock.Mock()
+        client.list_object_versions.side_effect = self._not_implemented_error()
+
+        result = _s3_list_object_versions(
+            client=client, bucket="bucket", prefix="hfl/"
+        )
+
+        self.assertEqual(result, {})
+        client.list_object_versions.assert_called_once_with(
+            Bucket="bucket", Prefix="hfl/", MaxKeys=1
+        )
+
+    def test_list_object_versions_reraises_other_errors(self):
+        client = mock.Mock()
+        client.list_object_versions.side_effect = ClientError(
+            error_response={"Error": {"Code": "NoSuchBucket", "Message": "missing"}},
+            operation_name="ListObjectVersions",
+        )
+
+        with self.assertRaises(ClientError):
+            _s3_list_object_versions(client=client, bucket="bucket", prefix="hfl/")
+
+    def test_list_object_version_pages_yields_no_pages_when_unsupported(self):
+        paginator = mock.Mock()
+        paginator.paginate.side_effect = self._not_implemented_error()
+        client = mock.Mock()
+        client.get_paginator.return_value = paginator
+
+        pages = list(
+            _s3_list_object_version_pages(
+                client=client, bucket="bucket", prefix="hfl/"
+            )
+        )
+
+        self.assertEqual(pages, [])
+        client.get_paginator.assert_called_once_with("list_object_versions")
+        paginator.paginate.assert_called_once_with(Bucket="bucket", Prefix="hfl/")
+
+    def test_list_object_version_pages_yields_pages_when_supported(self):
+        paginator = mock.Mock()
+        paginator.paginate.return_value = [{"Versions": [{"Key": "hfl/obj"}]}]
+        client = mock.Mock()
+        client.get_paginator.return_value = paginator
+
+        pages = list(
+            _s3_list_object_version_pages(
+                client=client, bucket="bucket", prefix="hfl/"
+            )
+        )
+
+        self.assertEqual(pages, [{"Versions": [{"Key": "hfl/obj"}]}])
 
 
 class InitializeS3RepositoryBucketModeTests(TestCase):
