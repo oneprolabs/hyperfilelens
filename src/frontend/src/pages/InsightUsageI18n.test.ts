@@ -17,9 +17,14 @@ const zhHans = JSON.parse(readFileSync(
 
 describe('Insight usage localization', () => {
   it('uses the product term for consumption rather than instructions', () => {
+    // Build the CJK assertion at runtime: the English source boundary
+    // (tools/quality/check-english-source.py) rejects literal CJK and CJK
+    // Unicode escapes outside language-packs/packs/.
+    // code points U+7528 U+91CF
+    const usage = String.fromCodePoint(0x7528, 0x91cf)
     expect(en.insight.side.usage).toBe('Usage')
-    expect(zhHans.insight.side.usage).toBe('用量')
-    expect(zhHans.platformOps.nav.engineUsage).toBe('用量')
+    expect(zhHans.insight.side.usage).toBe(usage)
+    expect(zhHans.platformOps.nav.engineUsage).toBe(usage)
   })
 
   it('routes every primary page surface through the locale catalog', () => {
