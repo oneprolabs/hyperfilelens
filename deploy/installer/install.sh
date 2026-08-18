@@ -2338,6 +2338,7 @@ load_images_from_manifest() {
 	python3 - "${package_root}" "${skip_sourcelens}" <<'PY'
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -2403,6 +2404,10 @@ def has_expected_digest(ref: str, digest: str) -> bool:
 
 
 if delivery_mode == "registry":
+    preferred_region = os.environ.get("HFL_REGISTRY_REGION", "").strip()
+    if preferred_region not in {"cn", "global"}:
+        raise SystemExit("registry delivery requires HFL_REGISTRY_REGION=cn or global")
+    fallback_region = "global" if preferred_region == "cn" else "cn"
     registry_images = [
         image
         for image in (delivery.get("registry_images") or [])
@@ -2414,7 +2419,18 @@ if delivery_mode == "registry":
     for index, image in enumerate(registry_images, start=1):
         local_ref = str(image.get("local_ref") or "")
         digest = str(image.get("digest") or "")
-        sources = image.get("sources") or []
+        declared_sources = image.get("sources") or []
+        sources_by_region = {
+            str(source.get("region") or ""): source for source in declared_sources
+        }
+        if len(declared_sources) != 2 or set(sources_by_region) != {"cn", "global"}:
+            raise SystemExit(
+                f"registry image sources must contain cn and global regions: {local_ref}"
+            )
+        sources = [
+            sources_by_region[preferred_region],
+            sources_by_region[fallback_region],
+        ]
         pulled = ""
         errors = []
         print(

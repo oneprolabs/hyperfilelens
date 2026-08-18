@@ -29,7 +29,15 @@ grep -Fq 'group: hyperfilelens-deploy-test' \
 grep -Fq 'group: hyperfilelens-deploy-prod' \
 	"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml"
 grep -Fq 'using: composite' "${ROOT}/.github/actions/deploy-saas/action.yml"
+grep -Fq 'HFL_REGISTRY_REGION: ${{ vars.TEST_REGISTRY_REGION }}' \
+	"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml"
+grep -Fq 'HFL_REGISTRY_REGION: ${{ vars.PROD_REGISTRY_REGION }}' \
+	"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml"
+grep -Fq -- '--registry-region "$HFL_REGISTRY_REGION"' \
+	"${ROOT}/.github/actions/deploy-saas/action.yml"
 grep -Fq 'registry_login_count > 0' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+grep -Fq 'for prefix in "${registry_region}" "${fallback_region}"' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
 grep -Fq 'platform-gateway verify --required --timeout 0' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
@@ -42,6 +50,8 @@ grep -Fq 'TEST_AI_MULTIMODAL_MODEL_PROVIDER' \
 grep -Fq 'PROD_AI_MODEL_API_KEY' \
 	"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml"
 grep -Fq 'Required repository secret is empty' \
+	"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml"
+grep -Fq "registry delivery requires HFL_REGISTRY_REGION=cn or global" \
 	"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml"
 for deploy_job in deploy-test deploy-prod; do
 	job_definition="$(awk -v job="${deploy_job}" '
@@ -99,11 +109,18 @@ case "${1:-} ${2:-}" in
 "pull --platform")
 	ref="${4:-}"
 	printf '%s\n' "${ref}" >>"${HFL_TEST_PULL_MARKER}"
-	[[ "${ref}" == registry.example.cn/* ]] && exit 1
-	[[ "${ref}" == docker.io/example/hyperfilelens-backend@sha256:* ]]
+	case "${HFL_TEST_FAIL_REGION:-}" in
+	cn) [[ "${ref}" == registry.example.cn/* ]] && exit 1 ;;
+	global) [[ "${ref}" == docker.io/* ]] && exit 1 ;;
+	both) exit 1 ;;
+	"") ;;
+	*) exit 2 ;;
+	esac
+	[[ "${ref}" == registry.example.cn/* || "${ref}" == docker.io/* ]]
 	printf 'pulled %s\n' "${ref}"
 	;;
-"tag docker.io/example/hyperfilelens-backend@sha256"*)
+"tag "*)
+	[[ "${2:-}" == *@sha256:* ]]
 	: >"${HFL_TEST_TAG_MARKER}"
 	;;
 "image inspect")
@@ -146,10 +163,39 @@ export PATH="${fake_bin}:${PATH}"
 	"${digest}" \
 	registry.example.cn/example/hyperfilelens-backend:1.0.0-ee
 source "${ROOT}/deploy/installer/install.sh"
-load_images_from_manifest 0 "${package_root}"
+HFL_TEST_FAIL_REGION=cn HFL_REGISTRY_REGION=cn \
+	load_images_from_manifest 0 "${package_root}"
 [[ -f "${tag_marker}" ]]
 [[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
-load_images_from_manifest 0 "${package_root}"
+[[ "$(sed -n '1p' "${pull_marker}")" == registry.example.cn/* ]]
+[[ "$(sed -n '2p' "${pull_marker}")" == docker.io/* ]]
+HFL_REGISTRY_REGION=cn load_images_from_manifest 0 "${package_root}"
+[[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
+
+rm -f "${tag_marker}"
+: >"${pull_marker}"
+HFL_REGISTRY_REGION=global load_images_from_manifest 0 "${package_root}"
+[[ -f "${tag_marker}" ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 1 ]]
+[[ "$(sed -n '1p' "${pull_marker}")" == docker.io/* ]]
+
+rm -f "${tag_marker}"
+: >"${pull_marker}"
+HFL_TEST_FAIL_REGION=global HFL_REGISTRY_REGION=global \
+	load_images_from_manifest 0 "${package_root}"
+[[ -f "${tag_marker}" ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
+[[ "$(sed -n '1p' "${pull_marker}")" == docker.io/* ]]
+[[ "$(sed -n '2p' "${pull_marker}")" == registry.example.cn/* ]]
+
+rm -f "${tag_marker}"
+: >"${pull_marker}"
+if HFL_TEST_FAIL_REGION=both HFL_REGISTRY_REGION=cn \
+	load_images_from_manifest 0 "${package_root}" >/dev/null 2>&1; then
+	printf 'ERROR: registry delivery accepted two unavailable sources\n' >&2
+	exit 1
+fi
+[[ ! -e "${tag_marker}" ]]
 [[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
 
 export DEPLOY_SSH_HOST=test.example.com

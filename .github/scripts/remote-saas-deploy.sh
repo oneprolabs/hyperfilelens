@@ -5,6 +5,7 @@ set -euo pipefail
 candidate_archive=""
 candidate_sha256=""
 registry_credentials=""
+registry_region=""
 runtime_env_file=""
 direct_host=""
 public_url=""
@@ -15,6 +16,7 @@ while [[ $# -gt 0 ]]; do
 	--candidate) candidate_archive=${2:-}; shift 2 ;;
 	--candidate-sha256) candidate_sha256=${2:-}; shift 2 ;;
 	--registry-credentials) registry_credentials=${2:-}; shift 2 ;;
+	--registry-region) registry_region=${2:-}; shift 2 ;;
 	--runtime-env-file) runtime_env_file=${2:-}; shift 2 ;;
 	--direct-host) direct_host=${2:-}; shift 2 ;;
 	--public-url) public_url=${2:-}; shift 2 ;;
@@ -27,6 +29,7 @@ done
 [[ "${registry_credentials}" =~ ^/var/tmp/hyperfilelens-saas-[0-9]+-[0-9]+/registry\.json$ ]]
 [[ "${runtime_env_file}" =~ ^/var/tmp/hyperfilelens-saas-[0-9]+-[0-9]+/runtime\.env$ ]]
 [[ "${candidate_sha256}" =~ ^[0-9a-f]{64}$ ]]
+[[ "${registry_region}" =~ ^(cn|global)$ ]]
 [[ -n "${direct_host}" && "${direct_host}" != *[[:space:]]* ]]
 for file in "${candidate_archive}" "${registry_credentials}" "${runtime_env_file}"; do
 	[[ -f "${file}" && ! -L "${file}" ]] || {
@@ -115,7 +118,9 @@ PY
 }
 
 registry_login_count=0
-for prefix in global cn; do
+fallback_region="global"
+[[ "${registry_region}" == "cn" ]] || fallback_region="cn"
+for prefix in "${registry_region}" "${fallback_region}"; do
 	host="$(read_credential "${prefix}_host")"
 	username="$(read_credential "${prefix}_username")"
 	password="$(read_credential "${prefix}_password")"
@@ -135,9 +140,11 @@ done
 }
 
 export DOCKER_CONFIG="${docker_config}"
-python3 - "${candidate_root}/MANIFEST.json" >"${stage_dir}/assets.tsv" <<'PY'
+python3 - "${candidate_root}/MANIFEST.json" "${registry_region}" >"${stage_dir}/assets.tsv" <<'PY'
 import json, pathlib, re, sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+preferred_region = sys.argv[2]
+fallback_region = "global" if preferred_region == "cn" else "cn"
 delivery = manifest.get("delivery") or {}
 if delivery.get("mode") != "registry":
     raise SystemExit("candidate is not registry-backed")
@@ -160,8 +167,14 @@ for image in asset_images:
         local_ref,
     ):
         raise SystemExit("candidate contains invalid asset local reference")
-    refs = [str(item.get("ref") or "") for item in sources]
-    if len(refs) != 2 or any(
+    sources_by_region = {str(item.get("region") or ""): item for item in sources}
+    if len(sources) != 2 or set(sources_by_region) != {"cn", "global"}:
+        raise SystemExit("candidate asset sources must contain cn and global regions")
+    refs = [
+        str(sources_by_region[region].get("ref") or "")
+        for region in (preferred_region, fallback_region)
+    ]
+    if any(
         not re.fullmatch(
             r"[a-z0-9][a-z0-9.-]*(?::[0-9]+)?/[a-z0-9._/-]+:[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
             ref,
@@ -278,7 +291,8 @@ upgrade_args=(
 )
 [[ -z "${public_url}" ]] || upgrade_args+=(--public-url "${public_url}")
 [[ -z "${admin_public_url}" ]] || upgrade_args+=(--admin-public-url "${admin_public_url}")
-HFL_UPGRADE_ARTIFACT_SHA256="${candidate_sha256}" \
+HFL_REGISTRY_REGION="${registry_region}" \
+	HFL_UPGRADE_ARTIFACT_SHA256="${candidate_sha256}" \
 	bash "${candidate_root}/install.sh" "${upgrade_args[@]}"
 
 candidate_id="$(sha256sum "${candidate_root}/MANIFEST.json" | cut -c1-12)"

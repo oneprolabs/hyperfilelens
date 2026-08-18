@@ -41,6 +41,7 @@ runs:
           [[ "$CN_REGISTRY_HOST" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ ]]
           [[ -n "$REGISTRY_USERNAME" && -n "$REGISTRY_PASSWORD" ]]
           [[ -n "$CN_REGISTRY_USERNAME" && -n "$CN_REGISTRY_PASSWORD" ]]
+          [[ "$HFL_REGISTRY_REGION" =~ ^(cn|global)$ ]]
           [[ "$HFL_INSECURE_TLS" =~ ^[01]$ ]]
           case "$DEPLOY_TARGET:$HFL_INSECURE_TLS" in
             test:1|prod:0) ;;
@@ -141,6 +142,7 @@ runs:
               --candidate "$remote_dir/candidate.tar.gz" \
               --candidate-sha256 "$candidate_sha" \
               --registry-credentials "$remote_dir/registry.json" \
+              --registry-region "$HFL_REGISTRY_REGION" \
               --runtime-env-file "$remote_dir/runtime.env" \
               --direct-host "$DEPLOY_SSH_HOST" \
               --public-url "$APP_PUBLIC_URL" \
