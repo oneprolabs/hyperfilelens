@@ -1,0 +1,161 @@
+name: PR Checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hyperfilelens
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hyperfilelens"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hyperfilelens
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CACHE_REDIS_URL: redis://127.0.0.1:6379/1
+      SECRET_KEY: ci-only-secret-key-with-at-least-32-bytes
+      DJANGO_DEBUG: "true"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.10.2"
+          enable-cache: true
+      - name: Backend checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --locked --group dev
+          uv run ruff check src/backend
+          # PR checks run the Community contract (empty Extension socket),
+          # same as the release pipeline quality gate.
+          HFL_EXTENSIONS= uv run python src/backend/manage.py makemigrations --check --dry-run
+          HFL_EXTENSIONS= uv run python src/backend/manage.py test
+
+  frontend:
+    name: Frontend lint and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hyperfilelens
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hyperfilelens"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hyperfilelens
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CACHE_REDIS_URL: redis://127.0.0.1:6379/1
+      SECRET_KEY: ci-only-secret-key-with-at-least-32-bytes
+      DJANGO_DEBUG: "true"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.10.2"
+          enable-cache: true
+      - name: Frontend checks
+        working-directory: src/frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gettext
+          npm ci
+          product_version="$(node -p "require('./package.json').version")"
+          ../../language-packs/tooling/build-all.sh \
+            --version "$product_version"
+          cd ../..
+          # The two backend tests below verify the built language packs
+          # translate product strings (verification email, API errors).
+          uv sync --locked --group dev
+          HFL_EXTENSIONS= \
+            HFL_LANG_PACKS_DIR="$PWD/build/language-packs/staging" \
+            HFL_PRODUCT_VERSION="$product_version" \
+            uv run python src/backend/manage.py test \
+              apps.iam.tests.test_verification_email.VerificationEmailTests.test_chinese_catalog_translates_verification_email \
+              apps.iam.tests.test_verification_email.VerificationEmailTests.test_chinese_accept_language_translates_api_error
+          cd src/frontend
+          npm run lint
+          # Community tests define the Host contract and always run with an
+          # empty Extension socket.
+          HFL_EXTENSIONS= HFL_FRONTEND_TEST_SCOPE=host npm run test:ci
+
+  agent:
+    name: Agent unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: src/agent/go.mod
+          cache-dependency-path: src/agent/go.sum
+      - name: Agent checks
+        working-directory: src/agent
+        run: go test ./...
