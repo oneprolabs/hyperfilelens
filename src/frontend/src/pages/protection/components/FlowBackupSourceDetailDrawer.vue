@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, reactive, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import {
   Archive,
   ArrowLeft,
@@ -30,7 +31,7 @@ import {
   Unlink,
   X,
 } from 'lucide-vue-next'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { pushToast } from '../../../lib/toast/store'
 import type { ElTree } from 'element-plus'
 import HflPopover from '../../../components/HflPopover.vue'
@@ -51,10 +52,12 @@ import type {
 import {
   browseBackupSnapshotDirectory,
   createBackupSnapshotDirectoryBatchDownloadTask,
+  deleteBackupConfig,
   downloadBackupSnapshotDirectoryFile,
   downloadSnapshotArtifactFile,
   getBackupSourceSnapshot,
   listBackupSourceSnapshots,
+  retryBackupConfigProvision,
 } from '../../../lib/protectionBackupConfigApi'
 import {
   applyFilterIgnorePatternsToForm,
@@ -226,9 +229,11 @@ const emit = defineEmits<{
   recover: [sourceId: string]
   'restore-snapshot': [payload: { snapshotId: number }]
   'view-all-restore': [sourceId: string]
+  'config-changed': []
 }>()
 
 const { t, te } = useI18n()
+const router = useRouter()
 const stopConfirmDialog = useProtectionStopConfirmDialog()
 const stopConfirmOpen = stopConfirmDialog.open
 const stopConfirmKind = stopConfirmDialog.kind
@@ -339,7 +344,7 @@ const resourceDetails = reactive<Record<string, ResourceDetailRow[]>>({})
 const resourceErrors = reactive<Record<string, string>>({})
 
 const DEFAULT_TASK_STATUS_OPTIONS = ['pending', 'waiting', 'running', 'success', 'failed', 'cancelled', 'timeout']
-const DEFAULT_TASK_TYPE_OPTIONS = ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'backup_config_reset']
+const DEFAULT_TASK_TYPE_OPTIONS = ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'backup_config_reset', 'backup_config_provision']
 const sourceId = computed(() => props.source?.id ?? '')
 const aggregate = computed(() => (sourceId.value ? aggregateForSource(sourceId.value) : null))
 
@@ -375,6 +380,78 @@ const realSourceConfigs = computed(() => {
   return sourceDetail.value?.backup_configs?.configs || []
 })
 const currentSourceConfig = computed(() => realSourceConfigs.value[0] ?? null)
+const provisionRetrying = ref(false)
+const provisionDiscarding = ref(false)
+const currentProvisionAlertTitle = computed(() => {
+  const config = currentSourceConfig.value
+  if (!config) return ''
+  if (config.status === 'provisioning') {
+    return t('protection.backupsPage.provisionStatusValidating')
+  }
+  switch (config.provisioning_error_code) {
+    case 'AGENT_UPGRADE_REQUIRED':
+      return t('protection.backupsPage.provisionStatusUpgradeRequired')
+    case 'NAS_REPOSITORY_READ_ONLY':
+      return t('protection.backupsPage.provisionStatusReadOnly')
+    case 'NAS_REPOSITORY_WRITE_DENIED':
+      return t('protection.backupsPage.provisionStatusWriteDenied')
+    case 'NAS_MOUNT_SOURCE_MISMATCH':
+      return t('protection.backupsPage.provisionStatusMountMismatch')
+    case 'REPOSITORY_OWNERSHIP_INVALID':
+    case 'AGENT_PROTOCOL_INVALID':
+      return t('protection.backupsPage.provisionStatusOwnershipConflict')
+    default:
+      return t('protection.backupsPage.provisionStatusFailed')
+  }
+})
+
+async function retryCurrentConfigProvision() {
+  const config = currentSourceConfig.value
+  if (!config || provisionRetrying.value) return
+  provisionRetrying.value = true
+  try {
+    await retryBackupConfigProvision(config.id)
+    await loadOverviewForSource()
+    emit('config-changed')
+    ElMessage.success({ message: t('protection.backupsPage.provisionRetryQueued'), grouping: true })
+  } catch (err) {
+    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+  } finally {
+    provisionRetrying.value = false
+  }
+}
+
+function openCurrentProvisionAgent() {
+  const path = currentSourceConfig.value?.source_type === 'nas'
+    ? '/node/agents'
+    : '/protection/backup-sources?tab=host'
+  router.push(path)
+}
+
+async function discardCurrentFailedConfig() {
+  const config = currentSourceConfig.value
+  if (!config || provisionDiscarding.value) return
+  try {
+    await ElMessageBox.confirm(
+      t('protection.backupsPage.provisionDiscardConfirm'),
+      t('protection.backupsPage.provisionDiscard'),
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  provisionDiscarding.value = true
+  try {
+    await deleteBackupConfig(config.id)
+    await loadOverviewForSource()
+    emit('config-changed')
+    ElMessage.success({ message: t('protection.backupsPage.provisionDiscarded'), grouping: true })
+  } catch (err) {
+    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+  } finally {
+    provisionDiscarding.value = false
+  }
+}
 const repositoryPreviewByConfigId = computed<Map<number, BackupSelectableRepositoryPreview>>(() => new Map(
   (sourceDetail.value?.backup_configs?.repos_preview || []).map((repo) => [repo.config_id, repo]),
 ))
@@ -2657,6 +2734,47 @@ function onClosed() {
                   v-if="currentSourceConfig"
                   class="dp-flow-config-detail-list"
                 >
+                  <el-alert
+                    v-if="currentSourceConfig.status === 'provisioning' || currentSourceConfig.status === 'provision_failed'"
+                    :title="currentProvisionAlertTitle"
+                    :type="currentSourceConfig.status === 'provision_failed' ? 'error' : 'info'"
+                    :closable="false"
+                    show-icon
+                  >
+                    <p class="m-0">
+                      {{ currentSourceConfig.provisioning_error_message || t('protection.backupsPage.provisionStatusWaitingDetail') }}
+                    </p>
+                    <el-button
+                      v-if="currentSourceConfig.provisioning_error_code === 'AGENT_UPGRADE_REQUIRED'"
+                      plain
+                      size="small"
+                      class="mt-3 mr-2"
+                      @click="openCurrentProvisionAgent"
+                    >
+                      {{ t('protection.backupsPage.provisionViewAgent') }}
+                    </el-button>
+                    <el-button
+                      v-if="currentSourceConfig.status === 'provision_failed'"
+                      type="primary"
+                      plain
+                      size="small"
+                      class="mt-3"
+                      :loading="provisionRetrying"
+                      @click="retryCurrentConfigProvision"
+                    >
+                      {{ t('protection.backupsPage.provisionRetry') }}
+                    </el-button>
+                    <el-button
+                      v-if="currentSourceConfig.status === 'provision_failed'"
+                      plain
+                      size="small"
+                      class="mt-3"
+                      :loading="provisionDiscarding"
+                      @click="discardCurrentFailedConfig"
+                    >
+                      {{ t('protection.backupsPage.provisionDiscard') }}
+                    </el-button>
+                  </el-alert>
                   <div class="dp-flow-config-subsections">
                     <section class="hfl-detail-section dp-flow-config-subsection">
                       <h6 class="hfl-detail-section__title dp-flow-config-subsection__title">

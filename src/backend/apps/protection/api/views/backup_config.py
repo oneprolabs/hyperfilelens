@@ -107,15 +107,20 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
             )
         except DjangoValidationError as exc:
             raise _validation_error(exc) from exc
-        transaction.on_commit(
-            lambda config_id=config.id: sync_backup_config_repository_policy_task.delay(
-                config_id=config_id
+        if config.status == BackupConfig.Status.ACTIVE:
+            transaction.on_commit(
+                lambda config_id=config.id: sync_backup_config_repository_policy_task.delay(
+                    config_id=config_id
+                )
             )
-        )
-        _queue_directory_estimate_precache(config)
+            _queue_directory_estimate_precache(config)
         return Response(
             BackupConfigDetailSerializer(config).data,
-            status=status.HTTP_201_CREATED,
+            status=(
+                status.HTTP_202_ACCEPTED
+                if config.status == BackupConfig.Status.PROVISIONING
+                else status.HTTP_201_CREATED
+            ),
         )
 
     def retrieve(self, request, *args, **kwargs):
@@ -171,3 +176,23 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
         except DjangoValidationError as exc:
             raise _validation_error(exc) from exc
         return Response(result, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=["post"], url_path="retry-provision")
+    def retry_provision(self, request, *args, **kwargs):
+        config = self.get_object()
+        try:
+            from apps.protection.services.backup_config_provision import (
+                retry_backup_config_provision,
+            )
+
+            task = retry_backup_config_provision(config=config)
+        except DjangoValidationError as exc:
+            raise _validation_error(exc) from exc
+        config.refresh_from_db()
+        return Response(
+            {
+                "backup_config": BackupConfigDetailSerializer(config).data,
+                "task_uuid": str(task.task_uuid),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )

@@ -19,6 +19,10 @@ from django.core.exceptions import ValidationError
 
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
+from apps.node.services.capabilities import (
+    REPOSITORY_OWNERSHIP_CAPABILITY,
+    node_supports_capability,
+)
 from apps.node.services.internal.agent_log import (
     log_agent_dispatch,
     log_agent_exception,
@@ -178,6 +182,15 @@ def _run_proxy_fs_repository_task(
     """Run a strict initialize or connect-only probe on the bound Proxy."""
 
     node = validate_proxy_for_proxy_fs(repository)
+    supports_ownership = node_supports_capability(
+        node,
+        REPOSITORY_OWNERSHIP_CAPABILITY,
+    )
+    if kind == "repo.initialize" and not supports_ownership:
+        raise ProxyFSRepositoryError(
+            f'Agent "{node.name}" must be upgraded before creating this repository.',
+            error_code="AGENT_UPGRADE_REQUIRED",
+        )
     payload = {
         "repository": proxy_fs_repository_payload(repository),
     }
@@ -252,7 +265,11 @@ def _run_proxy_fs_repository_task(
             repository_has_legacy_location,
         )
 
-        if health_only and repository_has_legacy_location(repository):
+        if (
+            not supports_ownership
+            and health_only
+            and repository_has_legacy_location(repository)
+        ):
             logger.info(
                 "%s legacy compatibility repository_id=%s node_id=%s org_id=%s",
                 log_scope,
@@ -261,9 +278,14 @@ def _run_proxy_fs_repository_task(
                 repository.organization_id,
             )
             return outcome
+        if supports_ownership:
+            raise ProxyFSRepositoryError(
+                "Agent declared repository ownership support but did not return an ownership result.",
+                error_code="AGENT_PROTOCOL_INVALID",
+            )
         raise ProxyFSRepositoryError(
-            "Agent did not verify repository ownership. Upgrade the Proxy and retry.",
-            error_code="REPOSITORY_OWNERSHIP_INVALID",
+            f'Agent "{node.name}" must be upgraded to verify repository ownership.',
+            error_code="AGENT_UPGRADE_REQUIRED",
         )
     from apps.storage.services.internal.repository_location import (
         mark_repository_location_ownership_verified,

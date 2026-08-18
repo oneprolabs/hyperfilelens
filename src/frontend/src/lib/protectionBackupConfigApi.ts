@@ -95,8 +95,11 @@ export type BackupConfig = {
   file_filter_rule_id: number | null
   directory_count: number
   compression_level: CompressionLevel
-  status?: 'active' | 'resetting' | 'reset_failed' | string
+  status?: 'provisioning' | 'active' | 'provision_failed' | 'resetting' | 'reset_failed' | string
   reset_task_uuid?: string | null
+  provisioning_task_uuid?: string | null
+  provisioning_error_code?: string
+  provisioning_error_message?: string
   recovery_plan_enabled: boolean
   created_at: string
   updated_at: string
@@ -371,6 +374,16 @@ export async function updateBackupConfig(id: number, payload: BackupConfigUpdate
       headers: orgHeaders(),
     }),
   ))
+}
+
+/** Retry a failed Direct NAS storage validation after correcting the target or Agent. */
+export async function retryBackupConfigProvision(id: number) {
+  return unwrapApiPayload<{ backup_config: BackupConfigDetail; task_uuid: string }>(
+    await api<unknown>(`${configBase}/${id}/retry-provision/`, {
+      method: 'POST',
+      headers: orgHeaders(),
+    }),
+  )
 }
 
 /** List backup source snapshots. */

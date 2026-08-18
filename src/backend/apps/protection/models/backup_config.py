@@ -5,7 +5,9 @@ from django.db import models
 
 class BackupConfig(models.Model):
     class Status(models.TextChoices):
+        PROVISIONING = "provisioning", "Provisioning"
         ACTIVE = "active", "Active"
+        PROVISION_FAILED = "provision_failed", "Provision failed"
         RESETTING = "resetting", "Resetting"
         RESET_FAILED = "reset_failed", "Reset failed"
 
@@ -43,6 +45,9 @@ class BackupConfig(models.Model):
         db_index=True,
     )
     reset_task_uuid = models.UUIDField(blank=True, null=True, db_index=True)
+    provisioning_task_uuid = models.UUIDField(blank=True, null=True, db_index=True)
+    provisioning_error_code = models.CharField(max_length=64, blank=True, default="")
+    provisioning_error_message = models.TextField(blank=True, default="")
     recovery_plan_enabled = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)

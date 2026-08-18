@@ -64,6 +64,7 @@ from apps.task.services.interface import (
     complete_task,
     create_task,
 )
+from common.errors import AppError
 
 _ACTIVE_TASK_STATUSES = {Task.Status.PENDING, Task.Status.RUNNING}
 _TASK_TRIGGER_MAP = {
@@ -674,6 +675,26 @@ def start_backup_tasks(
             source_ref_id=source.source_ref_id,
         )
         for config in configs:
+            if config.status != BackupConfig.Status.ACTIVE:
+                skipped_count += 1
+                results.append(
+                    {
+                        "source_type": source.source_type,
+                        "source_ref_id": source.source_ref_id,
+                        "backup_config_id": config.id,
+                        "task_id": None,
+                        "task_uuid": None,
+                        "source_snapshot_id": None,
+                        "source_snapshot_status": None,
+                        "status": "skipped",
+                        "message": (
+                            "Target storage validation is still running."
+                            if config.status == BackupConfig.Status.PROVISIONING
+                            else "Target storage validation failed. Resolve the issue and retry validation."
+                        ),
+                    }
+                )
+                continue
             item_idempotency_key = (
                 f"{batch_key}:{source.source_type}:{source.source_ref_id}:{config.id}"
             )
@@ -748,7 +769,7 @@ def start_backup_tasks(
                 # Directory size is refreshed asynchronously for every new
                 # backup because configured path contents can change without a
                 # config edit. Never block the Backup Now request on path.size.
-            except ValidationError as exc:
+            except (ValidationError, AppError) as exc:
                 skipped_count += 1
                 results.append(
                     {
@@ -760,7 +781,11 @@ def start_backup_tasks(
                         "source_snapshot_id": None,
                         "source_snapshot_status": None,
                         "status": "failed",
-                        "message": _validation_message(exc),
+                        "message": (
+                            _validation_message(exc)
+                            if isinstance(exc, ValidationError)
+                            else str(exc)
+                        ),
                     }
                 )
                 continue

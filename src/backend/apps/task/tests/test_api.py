@@ -724,6 +724,40 @@ class TaskApiTests(TestCase):
         task.refresh_from_db()
         self.assertEqual(task.status, Task.Status.WAITING)
 
+    def test_backup_config_provision_cannot_be_cancelled_through_task_api_or_service(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+            display_name="Validate backup target",
+            status=Task.Status.WAITING,
+        )
+
+        detail = self.client.get(
+            f"/api/v1/tasks/{task.task_uuid}/",
+            **self._headers(),
+        )
+        cancelled = self.client.post(
+            f"/api/v1/tasks/{task.task_uuid}/cancel/",
+            {"reason": "cancel validation"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertFalse(detail.data["actions"]["can_cancel"])
+        self.assertEqual(cancelled.status_code, status.HTTP_400_BAD_REQUEST)
+        with self.assertRaisesMessage(
+            DjangoValidationError,
+            "Storage validation is controlled by the backup configuration workflow",
+        ):
+            cancel_task(
+                task_uuid=task.task_uuid,
+                organization_id=self.org.id,
+                reason="direct service call",
+            )
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.WAITING)
+
     def test_legacy_cancelled_source_unregister_requires_a_new_submission(self):
         task = Task.objects.create(
             organization_id=self.org.id,

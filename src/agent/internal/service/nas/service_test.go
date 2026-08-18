@@ -68,3 +68,40 @@ func TestUnmountRejectsManagedSymlink(t *testing.T) {
 		t.Fatalf("symlink target was affected: %v", statErr)
 	}
 }
+
+func TestParseNetUseRemote(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want string
+		ok   bool
+	}{
+		{
+			name: "ordinary share",
+			text: "Remote name       \\\\server\\backup\nStatus            OK\n",
+			want: `\\server\backup`,
+			ok:   true,
+		},
+		{
+			name: "share name containing spaces",
+			text: "Local name        Z:\r\nRemote name       \\\\server\\Finance Backup\r\nResource type     Disk\r\nStatus            OK\r\n",
+			want: `\\server\Finance Backup`,
+			ok:   true,
+		},
+		{
+			name: "no UNC path",
+			text: "There are no entries in the list.\r\n",
+			want: "",
+			ok:   false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := parseNetUseRemote(test.text)
+			if got != test.want || ok != test.ok {
+				t.Fatalf("parseNetUseRemote() = (%q, %t), want (%q, %t)", got, ok, test.want, test.ok)
+			}
+		})
+	}
+}

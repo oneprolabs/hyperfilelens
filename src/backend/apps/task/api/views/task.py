@@ -141,6 +141,10 @@ class TaskViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"detail": "Repository tasks are managed by the server scheduler."}
             )
+        if task_type == Task.Type.BACKUP_CONFIG_PROVISION:
+            raise ValidationError(
+                {"detail": "Storage validation is managed by the backup configuration workflow."}
+            )
         if task_type == Task.Type.SOURCE_UNREGISTER:
             raise ValidationError(
                 {
@@ -209,6 +213,26 @@ class TaskViewSet(viewsets.ModelViewSet):
                     organization_id=self._organization_id(),
                     reason=serializer.validated_data.get("reason") or "",
                 )
+            elif current_task.task_type == Task.Type.BACKUP_CONFIG_PROVISION:
+                from apps.protection.models import BackupConfig
+                from apps.protection.services.backup_config_provision import (
+                    retry_backup_config_provision,
+                )
+
+                payload = (
+                    current_task.request_payload
+                    if isinstance(current_task.request_payload, dict)
+                    else {}
+                )
+                config = BackupConfig.objects.filter(
+                    id=int(payload.get("backup_config_id") or 0),
+                    organization_id=self._organization_id(),
+                ).first()
+                if config is None:
+                    raise ValidationError(
+                        {"detail": "Backup configuration no longer exists."}
+                    )
+                task = retry_backup_config_provision(config=config)
             else:
                 task = retry_task(
                     task_uuid=task_uuid,

@@ -1668,6 +1668,41 @@ class StorageRepositoryApiTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.proxy_fs_repository.run_agent_task_sync"
     )
+    def test_create_proxy_fs_requires_agent_ownership_capability(
+        self, run_agent_task_sync
+    ):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="proxy-fs-upgrade-required",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.103",
+            metadata={"inventory": {"capabilities": []}},
+        )
+        response = self._post_repository(
+            {
+                "name": "local-disk-upgrade-required",
+                "repo_type": "proxy_fs",
+                "bind_node_type": "proxy",
+                "bind_node_id": proxy.id,
+                "config": {"proxy_node_dir": "/data/repository"},
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+
+        repository = Repository.objects.get(name="local-disk-upgrade-required")
+        result = self._run_create_task(repository)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "AGENT_UPGRADE_REQUIRED")
+        run_agent_task_sync.assert_not_called()
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.CREATE_FAILED)
+
+    @mock.patch(
+        "apps.storage.services.internal.proxy_fs_repository.run_agent_task_sync"
+    )
     def test_create_proxy_fs_detects_nested_existing_data_error(
         self, run_agent_task_sync
     ):
@@ -1678,6 +1713,7 @@ class StorageRepositoryApiTests(TestCase):
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
             ip_address="10.0.0.101",
+            metadata={"inventory": {"capabilities": ["repository_ownership_v1"]}},
         )
         run_agent_task_sync.return_value = SimpleNamespace(
             task=SimpleNamespace(
@@ -1732,6 +1768,7 @@ class StorageRepositoryApiTests(TestCase):
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
             ip_address="10.0.0.102",
+            metadata={"inventory": {"capabilities": ["repository_ownership_v1"]}},
         )
         run_agent_task_sync.return_value = SimpleNamespace(
             task=SimpleNamespace(

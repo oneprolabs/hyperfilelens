@@ -54,3 +54,12 @@ def register_periodic_tasks() -> None:
         queue=None,
         enabled=True,
     )
+    TASK_REGISTRY.add(
+        name="protection_reconcile_backup_config_provision_tasks",
+        task="apps.protection.tasks.backup_config_provision.reconcile_backup_config_provision_tasks",
+        schedule=60,
+        args=(),
+        kwargs={"limit": 100},
+        queue=None,
+        enabled=True,
+    )

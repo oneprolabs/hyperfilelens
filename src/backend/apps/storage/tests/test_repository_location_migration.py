@@ -1,3 +1,6 @@
+import hashlib
+import json
+
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
@@ -217,3 +220,141 @@ class RepositoryLocationMigrationTests(TransactionTestCase):
             Claim.objects.get(repository_id=self.uncertain_repository_id).state,
             "residual",
         )
+
+
+class BoundNASLocationOwnerRepairMigrationTests(TransactionTestCase):
+    migrate_from = [("storage", "0017_repository_location_claims")]
+    migrate_to = [("storage", "0018_repair_bound_nas_location_owners")]
+
+    def setUp(self):
+        super().setUp()
+        executor = MigrationExecutor(connection)
+        executor.migrate(self.migrate_from)
+        old_apps = executor.loader.project_state(self.migrate_from).apps
+        Repository = old_apps.get_model("storage", "Repository")
+        Namespace = old_apps.get_model("storage", "RepositoryLocationNamespace")
+        Claim = old_apps.get_model("storage", "RepositoryLocationClaim")
+        self.repository = Repository.objects.create(
+            organization_id=1,
+            name="bound-nas-owner-repair",
+            repo_type="nas",
+            status="created",
+            health="offline",
+            nas_protocol="nfs",
+            bind_node_type="proxy",
+            bind_node_id=77,
+            config={"server_address": "nas.example.test", "share_path": "/bound"},
+        )
+        identity = {
+            "kind": "nas",
+            "execution_node_id": 77,
+            "protocol": "nfs",
+            "server": "nas.example.test",
+            "share": "/bound",
+        }
+        key = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        namespace = Namespace.objects.create(
+            namespace_key=key,
+            kind="nas",
+            display_hint="nas.example.test/bound",
+        )
+        Claim.objects.create(
+            organization_id=1,
+            repository_id=self.repository.id,
+            namespace_id=namespace.id,
+            scope="repository",
+            root_path=f"hp-repos/storage-{self.repository.id}",
+            owner_node_id=None,
+            state="owned",
+            legacy_adoption_required=True,
+        )
+        uncertain = Repository.objects.create(
+            organization_id=1,
+            name="uncertain-bound-nas-owner-repair",
+            repo_type="nas",
+            status="created",
+            health="offline",
+            nas_protocol="nfs",
+            bind_node_type="proxy",
+            bind_node_id=79,
+            config={"server_address": "nas.example.test", "share_path": "/uncertain"},
+        )
+        uncertain_identity = {
+            "kind": "nas",
+            "execution_node_id": 79,
+            "protocol": "nfs",
+            "server": "nas.example.test",
+            "share": "/uncertain",
+        }
+        uncertain_key = hashlib.sha256(
+            json.dumps(
+                uncertain_identity,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        uncertain_namespace = Namespace.objects.create(
+            namespace_key=uncertain_key,
+            kind="nas",
+            display_hint="nas.example.test/uncertain",
+        )
+        Claim.objects.create(
+            organization_id=1,
+            repository_id=uncertain.id,
+            namespace_id=uncertain_namespace.id,
+            scope="repository",
+            root_path=f"hp-repos/storage-{uncertain.id}",
+            owner_node_id=None,
+            state="residual",
+            legacy_adoption_required=False,
+        )
+        self.uncertain_id = uncertain.id
+        unrelated = Repository.objects.create(
+            organization_id=1,
+            name="unrelated-residual",
+            repo_type="nas",
+            status="created",
+            health="offline",
+            nas_protocol="nfs",
+            bind_node_type="proxy",
+            bind_node_id=88,
+            config={"server_address": "nas.example.test", "share_path": "/other"},
+        )
+        Claim.objects.create(
+            organization_id=1,
+            repository_id=unrelated.id,
+            namespace_id=namespace.id,
+            scope="repository",
+            root_path="unexpected-root",
+            owner_node_id=None,
+            state="residual",
+        )
+        self.unrelated_id = unrelated.id
+
+        executor = MigrationExecutor(connection)
+        executor.migrate(self.migrate_to)
+        self.apps = executor.loader.project_state(self.migrate_to).apps
+
+    def tearDown(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
+        super().tearDown()
+
+    def test_repairs_only_the_exact_0017_bound_nas_claim_shape(self):
+        Claim = self.apps.get_model("storage", "RepositoryLocationClaim")
+        repaired = Claim.objects.get(repository_id=self.repository.id)
+        self.assertEqual(repaired.owner_node_id, 77)
+        self.assertEqual(repaired.state, "owned")
+        self.assertTrue(repaired.legacy_adoption_required)
+        self.assertIsNone(repaired.ownership_verified_at)
+
+        uncertain = Claim.objects.get(repository_id=self.uncertain_id)
+        self.assertEqual(uncertain.owner_node_id, 79)
+        self.assertEqual(uncertain.state, "residual")
+        self.assertFalse(uncertain.legacy_adoption_required)
+
+        unrelated = Claim.objects.get(repository_id=self.unrelated_id)
+        self.assertIsNone(unrelated.owner_node_id)
+        self.assertEqual(unrelated.state, "residual")

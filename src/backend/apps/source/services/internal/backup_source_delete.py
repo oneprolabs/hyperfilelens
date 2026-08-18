@@ -75,6 +75,7 @@ logger = logging.getLogger(__name__)
 _ACTIVE_TASK_STATUSES = {
     Task.Status.PENDING,
     Task.Status.WAITING,
+    Task.Status.BLOCKED,
     Task.Status.RUNNING,
 }
 
@@ -294,10 +295,19 @@ def _running_tasks_for_source(
             organization_id=organization_id,
             id__in=task_ids,
             status__in=_ACTIVE_TASK_STATUSES,
-            task_type__in=[Task.Type.BACKUP, *RESTORE_TASK_TYPES],
+            task_type__in=[
+                Task.Type.BACKUP,
+                Task.Type.BACKUP_CONFIG_PROVISION,
+                *RESTORE_TASK_TYPES,
+            ],
         ).order_by("-created_at", "-id")
     )
-    return [task for task in tasks if product_task_blocks_cleanup(task=task)]
+    return [
+        task
+        for task in tasks
+        if task.task_type == Task.Type.BACKUP_CONFIG_PROVISION
+        or product_task_blocks_cleanup(task=task)
+    ]
 
 
 def models_Q_subtype(source_type: str):

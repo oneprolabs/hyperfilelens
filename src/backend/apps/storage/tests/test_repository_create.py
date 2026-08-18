@@ -30,6 +30,7 @@ from apps.storage.services.internal.repository_location import (
 )
 from apps.storage.services.internal.s3_client import S3ClientError
 from apps.storage.services.internal.nas_repository import NASRepositoryError
+from apps.storage.services.internal.proxy_fs_repository import ProxyFSRepositoryError
 from apps.task.models import Task
 
 
@@ -59,6 +60,17 @@ class RepositoryCreateTaskTests(TestCase):
                 )
             ),
             "NAS_REPOSITORY_WRITE_DENIED",
+        )
+
+    def test_proxy_fs_agent_upgrade_error_code_is_preserved(self):
+        self.assertEqual(
+            _create_error_code(
+                ProxyFSRepositoryError(
+                    "Agent upgrade required.",
+                    error_code="AGENT_UPGRADE_REQUIRED",
+                )
+            ),
+            "AGENT_UPGRADE_REQUIRED",
         )
 
     @mock.patch(

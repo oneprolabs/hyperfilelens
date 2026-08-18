@@ -422,12 +422,14 @@ const fileFilterById = ref(new Map<number, FileFilterRule>())
 const backupSnapshotRows = ref<BackupSourceSnapshot[]>([])
 const backupTaskRows = ref<TaskRow[]>([])
 const resetTaskRows = ref<TaskRow[]>([])
+const provisionTaskRows = ref<TaskRow[]>([])
 const restoreTaskRows = ref<TaskRow[]>([])
 const restoreRecordRows = ref<RestoreRecord[]>([])
 const EMPTY_TASK_ROWS: TaskRow[] = []
 const sourceRelatedTaskRows = computed(() => [
   ...backupTaskRows.value,
   ...resetTaskRows.value,
+  ...provisionTaskRows.value,
   ...restoreTaskRows.value,
 ])
 
@@ -462,7 +464,7 @@ async function refreshBackupConfigs(signal?: AbortSignal): Promise<boolean> {
     backupConfigSourceIds.value = new Set(
       result.results.map((config) => `${config.source_type}:${config.source_ref_id}`),
     )
-    const [details, repositories, policies, filters, snapshots, backupTasks, resetTasks, restoreTasks, restoreRecords] = await Promise.all([
+    const [details, repositories, policies, filters, snapshots, backupTasks, resetTasks, provisionTasks, restoreTasks, restoreRecords] = await Promise.all([
       Promise.all(result.results.map((config) => getBackupConfig(config.id, { signal }))),
       listAllStorageRepositories({ page_size: 10 }, { signal }).catch((e) => {
         if (pageRequests.isAbortError(e)) throw e
@@ -488,6 +490,10 @@ async function refreshBackupConfigs(signal?: AbortSignal): Promise<boolean> {
         if (pageRequests.isAbortError(e)) throw e
         return { count: 0, results: [] as TaskRow[] }
       }),
+      listTasks({ task_type: 'backup_config_provision', page: 1, page_size: 500 }, { signal }).catch((e) => {
+        if (pageRequests.isAbortError(e)) throw e
+        return { count: 0, results: [] as TaskRow[] }
+      }),
       listTasks({
         task_type: 'restore',
         page: 1,
@@ -509,6 +515,7 @@ async function refreshBackupConfigs(signal?: AbortSignal): Promise<boolean> {
     backupSnapshotRows.value = snapshots.results
     backupTaskRows.value = backupTasks.results
     resetTaskRows.value = resetTasks.results
+    provisionTaskRows.value = provisionTasks.results
     restoreTaskRows.value = restoreTasks.results
     restoreRecordRows.value = restoreRecords.results
     syncRealBackupConfigsToDemoStore(details, snapshots.results)
@@ -528,6 +535,7 @@ async function refreshBackupConfigs(signal?: AbortSignal): Promise<boolean> {
     backupSnapshotRows.value = []
     backupTaskRows.value = []
     resetTaskRows.value = []
+    provisionTaskRows.value = []
     restoreTaskRows.value = []
     restoreRecordRows.value = []
     return false
@@ -2877,6 +2885,43 @@ function sourceResetConfigs(sourceId: string) {
   })
 }
 
+function sourceProvisionConfigs(sourceId: string) {
+  return sourceBackupConfigs(sourceId).filter((config) => {
+    const status = String(config.status || '').toLowerCase()
+    return status === 'provisioning' || status === 'provision_failed'
+  })
+}
+
+function sourceProvisionState(sourceId: string): 'provisioning' | 'provision_failed' | '' {
+  const configs = sourceProvisionConfigs(sourceId)
+  if (configs.some((config) => config.status === 'provision_failed')) return 'provision_failed'
+  if (configs.some((config) => config.status === 'provisioning')) return 'provisioning'
+  return ''
+}
+
+function sourceProvisionStatusLabel(sourceId: string) {
+  return sourceProvisionState(sourceId) === 'provision_failed'
+    ? t('protection.backupsPage.provisionStatusFailed')
+    : t('protection.backupsPage.provisionStatusValidating')
+}
+
+function sourceProvisionStatusDetail(sourceId: string) {
+  const config = sourceProvisionConfigs(sourceId)[0]
+  return config?.provisioning_error_message || t('protection.backupsPage.provisionStatusWaitingDetail')
+}
+
+function openProvisionTaskDetail(row: FlowSourceRow) {
+  const taskUuid = sourceProvisionConfigs(row.id)
+    .map((config) => String(config.provisioning_task_uuid || ''))
+    .find(Boolean)
+  if (!taskUuid) return
+  openFlowSourceDetail(row, {
+    tab: 'tasks',
+    taskSubTab: 'executions',
+    taskUuid,
+  })
+}
+
 function taskIsActive(task?: TaskRow | null) {
   return task?.status === 'pending' || task?.status === 'running'
 }
@@ -3982,6 +4027,7 @@ let step3ActionRefreshSeq = 0
 function hasRunningStep3Tasks() {
   return step3SourceList.value.some((row) =>
     sourceBackupRuntime(row.id).running
+    || sourceProvisionState(row.id) === 'provisioning'
     || sourceResetRunning(row.id)
     || restoreRunningCountForSource(row.id) > 0
     || runtimeStopping(row.id, 'backup')
@@ -4015,13 +4061,15 @@ async function refreshStep3SourceList() {
   step3RefreshInFlight = true
   try {
     await refreshStep3RuntimeRows(signal)
-    if (!resetTrackedIds.length) return
+    const provisionTracked = step3SourceList.value.some((row) => Boolean(sourceProvisionState(row.id)))
+    if (!resetTrackedIds.length && !provisionTracked) return
     const configsLoaded = await refreshBackupConfigs(signal)
     if (!pageRequests.isCurrentSignal(scope, signal)) return
     // Soft-failure clears config/task rows; do not treat empty reset state as success.
     if (!configsLoaded) return
     await loadStep3Selectable({ signal })
     if (!pageRequests.isCurrentSignal(scope, signal)) return
+    if (!resetTrackedIds.length) return
     const finishedIds = selectFinishedResetSourceIds(
       resetTrackedIds,
       (id) => sourceResetState(id),
@@ -4061,7 +4109,7 @@ function syncStep3AutoRefresh() {
 }
 
 watch(flowMainStep, syncStep3AutoRefresh)
-watch([step3SourceList, backupTaskRows, resetTaskRows, restoreRecordRows], syncStep3AutoRefresh)
+watch([step3SourceList, backupTaskRows, resetTaskRows, provisionTaskRows, restoreRecordRows], syncStep3AutoRefresh)
 
 
 const drawerFilteredRestoreTasks = computed(() => {
@@ -10203,7 +10251,17 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       </template>
                       <template #default="{ row }">
                         <button
-                          v-if="sourceResetState(row.id)"
+                          v-if="sourceProvisionState(row.id)"
+                          type="button"
+                          class="reset-status-cell"
+                          :class="sourceProvisionState(row.id) === 'provision_failed' ? 'reset-status-cell--reset_failed' : 'reset-status-cell--resetting'"
+                          :title="sourceProvisionStatusDetail(row.id)"
+                          @click.stop="openProvisionTaskDetail(row)"
+                        >
+                          <span class="reset-status-cell__label">{{ sourceProvisionStatusLabel(row.id) }}</span>
+                        </button>
+                        <button
+                          v-else-if="sourceResetState(row.id)"
                           type="button"
                           class="reset-status-cell"
                           :class="`reset-status-cell--${sourceResetState(row.id)}`"
@@ -11333,6 +11391,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           @recover="openRecoveryForSource"
           @restore-snapshot="openSnapshotRestore"
           @view-all-restore="onFlowSourceDetailViewAllRestore"
+          @config-changed="refreshStep3SourceList"
         />
 
         <TaskDetailDrawer

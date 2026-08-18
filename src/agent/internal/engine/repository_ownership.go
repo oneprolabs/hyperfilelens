@@ -191,6 +191,29 @@ func checkFilesystemRepositoryOwnershipIfPresent(spec repositorySpec) error {
 	return requireMatchingRepositoryOwner(*marker, *spec.Ownership)
 }
 
+func filesystemRepositoryOwnershipMatches(spec repositorySpec) (bool, error) {
+	if spec.Ownership == nil {
+		return false, nil
+	}
+	repositoryPath, allowedRoot, err := filesystemRepositoryOwnershipPath(spec)
+	if err != nil {
+		return false, err
+	}
+	if _, err := validateRepositoryCleanupPath(repositoryPath, allowedRoot); err != nil {
+		return false, err
+	}
+	marker, err := readRepositoryOwnershipMarker(
+		filepath.Join(repositoryPath, repositoryOwnershipMarkerPath),
+	)
+	if err != nil || marker == nil {
+		return false, err
+	}
+	if err := requireMatchingRepositoryOwner(*marker, *spec.Ownership); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func filesystemRepositoryOwnershipPath(spec repositorySpec) (string, string, error) {
 	switch spec.Type {
 	case "nas":

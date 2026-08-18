@@ -17,6 +17,10 @@ class Task(models.Model):
         SNAPSHOT_DOWNLOAD = "snapshot_download", "Snapshot download"
         SNAPSHOT_DELETE = "snapshot_delete", "Snapshot delete"
         BACKUP_CONFIG_RESET = "backup_config_reset", "Backup config reset"
+        BACKUP_CONFIG_PROVISION = (
+            "backup_config_provision",
+            "Backup config provision",
+        )
         SOURCE_UNREGISTER = "source_unregister", "Source unregister"
         NODE_LIFECYCLE = "node_lifecycle", "Node lifecycle"
         REPOSITORY_OPERATION = "repository_operation", "Repository operation"

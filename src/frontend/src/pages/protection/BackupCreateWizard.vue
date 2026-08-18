@@ -5523,6 +5523,7 @@ async function runCreateBackup() {
 
   createPhase.value = 'waiting'
   let allSuccess = true
+  let hasProvisioning = false
   const configuredSourceIds: string[] = []
 
   for (const backup of payload.backups) {
@@ -5586,7 +5587,8 @@ async function runCreateBackup() {
     }
 
     try {
-      await createBackupConfig(apiPayload)
+      const created = await createBackupConfig(apiPayload)
+      hasProvisioning = hasProvisioning || created.status === 'provisioning'
       configuredSourceIds.push(backup.source.id)
     } catch (e) {
       allSuccess = false
@@ -5601,7 +5603,12 @@ async function runCreateBackup() {
       await setPipelineStep(configuredSourceIds, 3)
       step2Sources.value = step2Sources.value.filter((id) => !configuredSourceIds.includes(id))
     }
-    ElMessage.success({ message: t('protection.backupsPage.createSuccess'), grouping: true })
+    ElMessage.success({
+      message: hasProvisioning
+        ? t('protection.backupsPage.createProvisioning')
+        : t('protection.backupsPage.createSuccess'),
+      grouping: true,
+    })
     lastCreatedSourceIds.value = configuredSourceIds
     createPhase.value = 'done'
     nextTick(() => finishCreateAndGoToStep3(configuredSourceIds))

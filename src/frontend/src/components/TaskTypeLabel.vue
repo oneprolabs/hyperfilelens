@@ -23,6 +23,7 @@ const typeIcons = {
   snapshot_download: Download,
   snapshot_delete: Trash2,
   backup_config_reset: Settings2,
+  backup_config_provision: CloudCog,
   source_unregister: Unplug,
   repository_operation: Database,
   storage_provider_validation: CloudCog,
