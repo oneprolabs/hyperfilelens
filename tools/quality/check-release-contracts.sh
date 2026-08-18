@@ -945,6 +945,7 @@ fi
 grep -F 'compose_color "${recovery_color}" start' <<<"${recovery_body}" >/dev/null
 grep -F 'compose_in_root start worker scheduler' <<<"${recovery_body}" >/dev/null
 grep -F './tools/quality/test-blue-green-recovery.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-compose-lifecycle-reconcile.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-nginx-startup-readiness.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-sourcelens-runtime-sync.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-sourcelens-runtime-fingerprint.sh' "${workflow}" >/dev/null
@@ -1359,8 +1360,10 @@ for executable in \
 	"${ROOT}/.github/scripts/stop-enterprise-promotion.sh" \
 	"${ROOT}/.github/scripts/remote-deploy.sh" \
 	"${ROOT}/.github/scripts/store-enterprise-release.sh" \
+	"${ROOT}/deploy/installer/sourcelens/compose-lifecycle.sh" \
 	"${ROOT}/tools/quality/check-python38-runtime.py" \
 	"${ROOT}/tools/quality/test-docker-pull-retry.sh" \
+	"${ROOT}/tools/quality/test-compose-lifecycle-reconcile.sh" \
 	"${ROOT}/tools/quality/test-bootstrap-curl-tls-nounset.sh" \
 	"${ROOT}/tools/quality/test-gh-release-upload-retry.sh" \
 	"${ROOT}/release/ci/gh-release-upload.sh" \
@@ -1387,6 +1390,12 @@ for executable in \
 		exit 1
 	}
 done
+
+grep -F 'compose-lifecycle.sh' "${ROOT}/release/build-sourcelens.sh" >/dev/null
+grep -F 'hfl_compose_command_with_exit_event_recovery' \
+	"${ROOT}/dev/sourcelens.sh" \
+	"${ROOT}/deploy/installer/sourcelens/install.sh" \
+	"${ROOT}/deploy/installer/install.sh" >/dev/null
 
 grep -F 'HFL_TENANT_PORT=11443' "${ROOT}/.env.example" >/dev/null
 grep -F 'HFL_WEBSITE_PORT=11442' "${ROOT}/.env.example" >/dev/null

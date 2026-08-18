@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../tools/sourcelens/common.sh
 source "${SCRIPT_DIR}/../tools/sourcelens/common.sh"
+# shellcheck source=../deploy/installer/sourcelens/compose-lifecycle.sh
+source "${SCRIPT_DIR}/../deploy/installer/sourcelens/compose-lifecycle.sh"
 
 FORCE_BUILD="${SOURCELENS_FORCE_BUILD:-0}"
 CMD=""
@@ -221,7 +223,8 @@ cmd_up() {
 	cmd_prepare
 	sourcelens_ensure_shared_network
 	sourcelens_log "Starting SourceLens stack (project=${SOURCELENS_COMPOSE_PROJECT})"
-	sourcelens_dev_compose up -d --pull never --remove-orphans
+	hfl_compose_command_with_exit_event_recovery \
+		sourcelens_dev_compose up -d --pull never --remove-orphans
 	sourcelens_ensure_database_initialized
 	if command -v curl >/dev/null 2>&1; then
 		sourcelens_wait_for_health || true
@@ -236,7 +239,7 @@ cmd_down() {
 		return 0
 	}
 	sourcelens_log "Stopping SourceLens stack (project=${SOURCELENS_COMPOSE_PROJECT})"
-	sourcelens_dev_compose down
+	hfl_compose_command_with_exit_event_recovery sourcelens_dev_compose down
 }
 
 main() {

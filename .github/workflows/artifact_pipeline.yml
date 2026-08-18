@@ -449,6 +449,7 @@ jobs:
           ./tools/quality/test-upgrade-backup-retention.sh
           ./tools/quality/test-upgrade-transaction.sh
           ./tools/quality/test-blue-green-recovery.sh
+          ./tools/quality/test-compose-lifecycle-reconcile.sh
           ./tools/quality/test-nginx-startup-readiness.sh
           ./tools/quality/test-sourcelens-runtime-sync.sh
           ./tools/quality/test-sourcelens-runtime-fingerprint.sh
