@@ -1,0 +1,778 @@
+name: HFL - Enterprise SaaS Upgrade
+run-name: Enterprise SaaS · ${{ inputs.tag }} · Registry upgrade
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing matching OSS and EE tag (vX.Y.Z)
+        required: true
+        type: string
+      upgrade_test:
+        description: Upgrade the official TEST environment
+        required: true
+        default: true
+        type: boolean
+      upgrade_prod:
+        description: Upgrade the official PROD environment
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  # The existing Release Pipeline already owns this group. Reusing its literal
+  # name serializes same-version pushes without changing that workflow.
+  group: ${{ format('hyperfilelens-package-{0}', inputs.tag) }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY_HOST: ${{ vars.REGISTRY_HOST }}
+  REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE }}
+  REGISTRY_PREFIX: ${{ format('{0}/{1}', vars.REGISTRY_HOST, vars.REGISTRY_NAMESPACE) }}
+  CN_REGISTRY_HOST: ${{ vars.CN_REGISTRY_HOST }}
+  CN_REGISTRY_NAMESPACE: ${{ vars.CN_REGISTRY_NAMESPACE }}
+  CN_REGISTRY_PREFIX: ${{ format('{0}/{1}', vars.CN_REGISTRY_HOST, vars.CN_REGISTRY_NAMESPACE) }}
+
+jobs:
+  prepare:
+    name: Prepare · Enterprise candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+      image_version: ${{ steps.source.outputs.image_version }}
+      release_tag: ${{ steps.source.outputs.release_tag }}
+      commit: ${{ steps.source.outputs.commit }}
+      enterprise_commit: ${{ steps.enterprise.outputs.commit }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.tag }}
+      - name: Validate source and registries
+        id: source
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          CN_REGISTRY_USERNAME: ${{ secrets.CN_REGISTRY_USERNAME }}
+          CN_REGISTRY_PASSWORD: ${{ secrets.CN_REGISTRY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+          version="${BASH_REMATCH[1]}"
+          commit="$(git rev-parse --verify "${RELEASE_TAG}^{commit}")"
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$commit" origin/main
+          for contract in \
+            deploy/installer/install.sh \
+            release/ci/assemble-saas-candidate.sh \
+            release/ci/prepare-saas-asset-context.sh; do
+            [[ -f "$contract" ]] || {
+              echo "Tag $RELEASE_TAG predates the Enterprise SaaS delivery contract: $contract" >&2
+              exit 1
+            }
+          done
+          [[ "$REGISTRY_HOST" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ ]]
+          [[ "$CN_REGISTRY_HOST" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ ]]
+          for namespace in "$REGISTRY_NAMESPACE" "$CN_REGISTRY_NAMESPACE"; do
+            [[ "$namespace" =~ ^[a-z0-9][a-z0-9._/-]*$ && "$namespace" != */ && "$namespace" != *//* ]]
+          done
+          for credential in \
+            REGISTRY_USERNAME REGISTRY_PASSWORD \
+            CN_REGISTRY_USERNAME CN_REGISTRY_PASSWORD; do
+            [[ -n "${!credential}" ]] || {
+              echo "Required repository secret is empty: $credential" >&2
+              exit 1
+            }
+          done
+          {
+            echo "version=$version"
+            echo "image_version=${version}-ee"
+            echo "release_tag=$RELEASE_TAG"
+            echo "commit=$commit"
+          } >>"$GITHUB_OUTPUT"
+      - name: Validate matching Enterprise tag
+        id: enterprise
+        env:
+          ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ENTERPRISE_EXTENSION_REPOSITORY" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?$ ]]
+          commit="$(python3 - "$ENTERPRISE_EXTENSION_REPOSITORY" "$RELEASE_TAG" <<'PY'
+          import re, subprocess, sys
+          from tools.extensions.materialize_extensions import _git_env
+          repository, tag = sys.argv[1:]
+          result = subprocess.run(
+              ["git", "ls-remote", "--exit-code", repository, f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"],
+              check=True, env=_git_env(repository, require_https_auth=True),
+              stdout=subprocess.PIPE, text=True,
+          )
+          refs = dict(line.split("\t", 1)[::-1] for line in result.stdout.splitlines())
+          commit = refs.get(f"refs/tags/{tag}^{{}}") or refs.get(f"refs/tags/{tag}")
+          if not commit or not re.fullmatch(r"[0-9a-f]{40}", commit):
+              raise SystemExit("Enterprise tag did not resolve to one commit")
+          print(commit)
+          PY
+          )"
+          echo "commit=$commit" >>"$GITHUB_OUTPUT"
+
+  quality:
+    name: Verify · SaaS delivery contracts
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - name: Validate shell and release contracts
+        run: |
+          bash -n \
+            deploy/installer/install.sh \
+            release/build-sourcelens.sh \
+            release/ci/assemble-saas-candidate.sh \
+            release/ci/mirror-saas-image.sh \
+            release/ci/prepare-saas-asset-context.sh \
+            release/ci/write-saas-image-metadata.sh \
+            .github/scripts/remote-saas-deploy.sh \
+            .github/scripts/reconcile-saas-ai-model.sh
+          ./tools/quality/check-release-contracts.sh
+          ./tools/quality/test-saas-registry-delivery.sh
+
+  build-hfl-images:
+    name: Build · HFL · ${{ matrix.name }}
+    needs: [prepare, quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            component: hfl-backend
+            repository: hyperfilelens-backend
+            dockerfile: deploy/docker/backend.Dockerfile
+            needs_kopia: true
+          - name: frontend
+            component: hfl-frontend
+            repository: hyperfilelens-frontend
+            dockerfile: deploy/docker/frontend.Dockerfile
+            needs_kopia: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: matrix.needs_kopia
+        with:
+          go-version-file: src/agent/go.mod
+          cache: false
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.CN_REGISTRY_HOST }}
+          username: ${{ secrets.CN_REGISTRY_USERNAME }}
+          password: ${{ secrets.CN_REGISTRY_PASSWORD }}
+      - name: Prepare pinned Kopia binary
+        if: matrix.needs_kopia
+        run: ./tools/kopia/prepare.sh --matrix linux:amd64
+      - name: Prepare Website artifact
+        if: matrix.component == 'hfl-frontend'
+        run: >-
+          ./website/build.sh --output build/website
+          --image-tag "hyperfilelens-website-builder:${GITHUB_RUN_ID}"
+          --platform linux/amd64
+      - name: Materialize Enterprise Extension
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          ENTERPRISE_COMMIT: ${{ needs.prepare.outputs.enterprise_commit }}
+          ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          extensions="$(HFL_EXTENSION_GIT_TOKEN="$HFL_EXTENSION_GIT_TOKEN" \
+            python3 tools/extensions/materialize_extensions.py \
+              --repo-root . \
+              --sources "${ENTERPRISE_EXTENSION_REPOSITORY}@${RELEASE_TAG}" \
+              --expected-commit "$ENTERPRISE_COMMIT" \
+              --bake-dir build/release/extensions \
+              --print-extensions)"
+          echo "HFL_EXTENSIONS=$extensions" >>"$GITHUB_ENV"
+      - name: Build and publish global image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ env.REGISTRY_PREFIX }}/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}
+          build-args: |
+            KOPIA_BINARY=build/kopia/dist/linux/amd64/kopia
+            IMAGE_VERSION=${{ needs.prepare.outputs.image_version }}
+            IMAGE_REVISION=${{ needs.prepare.outputs.commit }}
+            PIP_TIMEOUT=600
+            SENTRY_URL=${{ vars.SENTRY_URL }}
+            SENTRY_ORG=${{ vars.SENTRY_ORG }}
+            SENTRY_FRONTEND_PROJECT=${{ vars.SENTRY_FRONTEND_PROJECT }}
+            SENTRY_RELEASE=hyperfilelens-frontend@${{ needs.prepare.outputs.image_version }}
+            VITE_SHOW_EULA=false
+            HFL_EXTENSIONS=${{ env.HFL_EXTENSIONS }}
+          secrets: ${{ matrix.component == 'hfl-frontend' && secrets.SENTRY_AUTH_TOKEN != '' && format('sentry_auth_token={0}', secrets.SENTRY_AUTH_TOKEN) || '' }}
+          cache-from: type=gha,scope=saas-${{ matrix.component }}
+          cache-to: type=gha,scope=saas-${{ matrix.component }},mode=min
+      - name: Mirror immutable image to CN
+        run: |
+          ./release/ci/mirror-saas-image.sh \
+            "$REGISTRY_PREFIX/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}" \
+            "${{ steps.build.outputs.digest }}" \
+            "$CN_REGISTRY_PREFIX/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}"
+      - name: Record immutable metadata
+        run: |
+          ./release/ci/write-saas-image-metadata.sh \
+            "${{ matrix.component }}" \
+            "$REGISTRY_PREFIX/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}" \
+            "$CN_REGISTRY_PREFIX/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}" \
+            "${{ steps.build.outputs.digest }}" \
+            "${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}" \
+            hyperfilelens \
+            "${{ matrix.component }}.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: saas-metadata-${{ matrix.component }}
+          path: ${{ matrix.component }}.json
+          retention-days: 3
+
+  build-sourcelens-images:
+    name: Build · SourceLens · ${{ matrix.component }}
+    needs: [prepare, quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend, lensnode]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.CN_REGISTRY_HOST }}
+          username: ${{ secrets.CN_REGISTRY_USERNAME }}
+          password: ${{ secrets.CN_REGISTRY_PASSWORD }}
+      - name: Build global image
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_FRONTEND_PROJECT: ${{ vars.SENTRY_FRONTEND_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: >-
+          ./release/ci/build-sourcelens-image.sh
+          "${{ matrix.component }}" "$REGISTRY_PREFIX"
+          "${{ needs.prepare.outputs.version }}" source.json
+      - name: Mirror to CN and normalize metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          global_ref="$(jq -r '.ref' source.json)"
+          digest="$(jq -r '.digest' source.json)"
+          tag="${global_ref##*:}"
+          repository="hyperfilelens-sourcelens-${{ matrix.component }}"
+          cn_ref="$CN_REGISTRY_PREFIX/$repository:$tag"
+          ./release/ci/mirror-saas-image.sh "$global_ref" "$digest" "$cn_ref"
+          ./release/ci/write-saas-image-metadata.sh \
+            "sourcelens-${{ matrix.component }}" "$global_ref" "$cn_ref" "$digest" \
+            "$repository:$tag" "sourcelens-${{ matrix.component }}" \
+            "sourcelens-${{ matrix.component }}.json"
+          jq -s '.[0] * .[1]' source.json "sourcelens-${{ matrix.component }}.json" \
+            > merged.json
+          mv merged.json "sourcelens-${{ matrix.component }}.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: saas-metadata-sourcelens-${{ matrix.component }}
+          path: sourcelens-${{ matrix.component }}.json
+          retention-days: 3
+
+  publish-runtime-images:
+    name: Publish · Runtime · ${{ matrix.component }}
+    needs: [prepare, quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: postgres
+            repository: hyperfilelens-postgres
+            tag: "17"
+            role: shared
+          - component: redis
+            repository: hyperfilelens-redis
+            tag: alpine
+            role: shared
+          - component: sourcelens-nginx
+            repository: hyperfilelens-sourcelens-nginx
+            tag: stable-alpine
+            role: sourcelens-nginx
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.CN_REGISTRY_HOST }}
+          username: ${{ secrets.CN_REGISTRY_USERNAME }}
+          password: ${{ secrets.CN_REGISTRY_PASSWORD }}
+      - name: Publish pinned runtime image
+        shell: bash
+        run: |
+          set -euo pipefail
+          source tools/dependencies/versions/runtime-images.env
+          case "${{ matrix.component }}" in
+            postgres) source_image="$POSTGRES_IMAGE" ;;
+            redis) source_image="$REDIS_IMAGE" ;;
+            sourcelens-nginx) source_image="$NGINX_IMAGE" ;;
+          esac
+          digest="$source_image"
+          digest="${digest##*@}"
+          global_ref="$REGISTRY_PREFIX/${{ matrix.repository }}:${{ matrix.tag }}"
+          cn_ref="$CN_REGISTRY_PREFIX/${{ matrix.repository }}:${{ matrix.tag }}"
+          docker buildx imagetools create --prefer-index=false --tag "$global_ref" "$source_image"
+          ./release/ci/mirror-saas-image.sh "$global_ref" "$digest" "$cn_ref"
+          ./release/ci/write-saas-image-metadata.sh \
+            "${{ matrix.component }}" "$global_ref" "$cn_ref" "$digest" \
+            "${{ matrix.repository }}:${{ matrix.tag }}" "${{ matrix.role }}" \
+            "${{ matrix.component }}.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: saas-metadata-${{ matrix.component }}
+          path: ${{ matrix.component }}.json
+          retention-days: 3
+
+  build-agent-assets:
+    name: Build · Agent asset · ${{ matrix.asset }}
+    needs: [prepare, quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux:amd64
+            asset: linux-amd64
+          - target: linux:arm64
+            asset: linux-arm64
+          - target: darwin:amd64
+            asset: darwin-amd64
+          - target: darwin:arm64
+            asset: darwin-arm64
+          - target: windows:amd64
+            asset: windows-amd64
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: src/agent/go.mod
+          cache-dependency-path: src/agent/go.sum
+      - name: Build Agent bundle
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          APT_MIRROR: ${{ vars.CI_UBUNTU_APT_MIRROR }}
+        run: >-
+          ./release/ci/build-agent-asset.sh "${{ matrix.target }}"
+          "${{ needs.prepare.outputs.version }}" "${{ needs.prepare.outputs.commit }}"
+          "_internal-agent-${{ matrix.asset }}.tar"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: saas-agent-${{ matrix.asset }}
+          path: _internal-agent-${{ matrix.asset }}.tar
+          compression-level: 0
+          retention-days: 3
+
+  build-host-assets:
+    name: Build · Gateway dependencies · Ubuntu ${{ matrix.release }}
+    needs: [prepare, quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - release: "20.04"
+            asset: ubuntu2004
+          - release: "22.04"
+            asset: ubuntu2204
+          - release: "24.04"
+            asset: ubuntu2404
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - name: Build and verify Docker dependency bundle
+        env:
+          APT_MIRROR: ${{ vars.CI_UBUNTU_APT_MIRROR }}
+        run: |
+          ./release/ci/build-host-debs-asset.sh \
+            "${{ matrix.release }}" "_internal-host-debs-${{ matrix.asset }}.tar"
+          ./release/ci/verify-host-debs-asset.sh \
+            "${{ matrix.release }}" "_internal-host-debs-${{ matrix.asset }}.tar"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: saas-host-${{ matrix.asset }}
+          path: _internal-host-debs-${{ matrix.asset }}.tar
+          compression-level: 0
+          retention-days: 3
+
+  build-language-assets:
+    name: Build · Language assets
+    needs: [prepare, quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gettext
+          npm ci --prefix src/frontend
+          ./language-packs/tooling/build-all.sh --version "${{ needs.prepare.outputs.version }}"
+          mkdir -p build/language-bundle/payload/language-packs
+          cp build/language-packs/dist/*.tar.gz build/language-bundle/payload/language-packs/
+          tar -cf _internal-language-packs.tar -C build/language-bundle payload
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: saas-language-packs
+          path: _internal-language-packs.tar
+          compression-level: 0
+          retention-days: 3
+
+  publish-asset-images:
+    name: Publish · ${{ matrix.kind }} assets
+    needs:
+      - prepare
+      - build-sourcelens-images
+      - build-agent-assets
+      - build-host-assets
+      - build-language-assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [agent, gateway, language]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - name: Download Agent assets
+        if: matrix.kind == 'agent'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: saas-agent-*
+          path: build/saas-input
+          merge-multiple: true
+      - name: Download Gateway host assets
+        if: matrix.kind == 'gateway'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: saas-host-*
+          path: build/saas-input
+          merge-multiple: true
+      - name: Download Gateway LensNode metadata
+        if: matrix.kind == 'gateway'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: saas-metadata-sourcelens-lensnode
+          path: build/saas-input
+      - name: Download language assets
+        if: matrix.kind == 'language'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: saas-language-packs
+          path: build/saas-input
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.CN_REGISTRY_HOST }}
+          username: ${{ secrets.CN_REGISTRY_USERNAME }}
+          password: ${{ secrets.CN_REGISTRY_PASSWORD }}
+      - name: Prepare asset image context
+        run: >-
+          ./release/ci/prepare-saas-asset-context.sh "${{ matrix.kind }}"
+          build/saas-input "${{ needs.prepare.outputs.version }}"
+          "build/saas-${{ matrix.kind }}"
+      - name: Build and publish global asset image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: build/saas-${{ matrix.kind }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ env.REGISTRY_PREFIX }}/hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}
+      - name: Mirror immutable asset image to CN
+        run: |
+          ./release/ci/mirror-saas-image.sh \
+            "$REGISTRY_PREFIX/hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}" \
+            "${{ steps.build.outputs.digest }}" \
+            "$CN_REGISTRY_PREFIX/hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}"
+      - name: Record asset metadata
+        shell: bash
+        run: |
+          ./release/ci/write-saas-image-metadata.sh \
+            "${{ matrix.kind }}-assets" \
+            "$REGISTRY_PREFIX/hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}" \
+            "$CN_REGISTRY_PREFIX/hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}" \
+            "${{ steps.build.outputs.digest }}" \
+            "hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}" \
+            "${{ matrix.kind }}-assets" \
+            "${{ matrix.kind }}-assets.json"
+          jq --arg kind "${{ matrix.kind }}" '. + {asset_kind: $kind}' \
+            "${{ matrix.kind }}-assets.json" > metadata.json
+          mv metadata.json "${{ matrix.kind }}-assets.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: saas-metadata-${{ matrix.kind }}-assets
+          path: ${{ matrix.kind }}-assets.json
+          retention-days: 3
+
+  assemble-candidate:
+    name: Assemble · Registry candidate
+    needs:
+      - prepare
+      - build-hfl-images
+      - build-sourcelens-images
+      - publish-runtime-images
+      - publish-asset-images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: saas-metadata-*
+          path: build/saas-metadata
+          merge-multiple: true
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - name: Resolve Enterprise Extension name
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          ENTERPRISE_COMMIT: ${{ needs.prepare.outputs.enterprise_commit }}
+          ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          extensions="$(HFL_EXTENSION_GIT_TOKEN="$HFL_EXTENSION_GIT_TOKEN" \
+            python3 tools/extensions/materialize_extensions.py \
+              --repo-root . \
+              --sources "${ENTERPRISE_EXTENSION_REPOSITORY}@${RELEASE_TAG}" \
+              --expected-commit "$ENTERPRISE_COMMIT" \
+              --bake-dir build/release/extensions-candidate \
+              --print-extensions)"
+          echo "HFL_EXTENSIONS=$extensions" >>"$GITHUB_ENV"
+      - name: Assemble thin Candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/saas-candidate
+          ./release/ci/assemble-saas-candidate.sh \
+            build/saas-metadata \
+            "${{ needs.prepare.outputs.version }}" \
+            "${{ needs.prepare.outputs.commit }}" \
+            "${{ needs.prepare.outputs.enterprise_commit }}" \
+            "$HFL_EXTENSIONS" \
+            build/saas-candidate/candidate.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: enterprise-saas-${{ needs.prepare.outputs.version }}
+          path: |
+            build/saas-candidate/candidate.tar.gz
+            build/saas-candidate/candidate.tar.gz.sha256
+          compression-level: 0
+          retention-days: 3
+
+  deploy-test:
+    name: Deploy · TEST
+    if: ${{ inputs.upgrade_test }}
+    needs: [prepare, assemble-candidate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    concurrency:
+      group: hyperfilelens-deploy-test
+      cancel-in-progress: false
+    env:
+      DEPLOY_TARGET: test
+      DEPLOY_SSH_HOST: ${{ vars.TEST_SSH_HOST }}
+      DEPLOY_SSH_PORT: ${{ vars.TEST_SSH_PORT }}
+      DEPLOY_SSH_USER: ${{ vars.TEST_SSH_USER }}
+      DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.TEST_SSH_KNOWN_HOSTS }}
+      DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
+      REGISTRY_HOST: ${{ vars.REGISTRY_HOST }}
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+      CN_REGISTRY_HOST: ${{ vars.CN_REGISTRY_HOST }}
+      CN_REGISTRY_USERNAME: ${{ secrets.CN_REGISTRY_USERNAME }}
+      CN_REGISTRY_PASSWORD: ${{ secrets.CN_REGISTRY_PASSWORD }}
+      HFL_INSECURE_TLS: ${{ vars.TEST_HFL_INSECURE_TLS }}
+      HFL_PLATFORM_GATEWAY_AUTO_DEPLOY: ${{ vars.TEST_PLATFORM_GATEWAY_AUTO_DEPLOY }}
+      HFL_EMAIL_SIGNUP_ENABLED: ${{ vars.TEST_EMAIL_SIGNUP_ENABLED }}
+      HFL_EMAIL_CODE_LOGIN_ENABLED: ${{ vars.TEST_EMAIL_CODE_LOGIN_ENABLED }}
+      HFL_GOOGLE_OAUTH_ENABLED: ${{ vars.TEST_GOOGLE_OAUTH_ENABLED }}
+      HFL_GA_MEASUREMENT_ID: ""
+      SENTRY_ENABLED: ${{ vars.TEST_SENTRY_ENABLED }}
+      SENTRY_BACKEND_DSN: ${{ secrets.SENTRY_BACKEND_DSN }}
+      SENTRY_FRONTEND_DSN: ${{ secrets.SENTRY_FRONTEND_DSN }}
+      TURNSTILE_ENABLED: ${{ vars.TEST_TURNSTILE_ENABLED }}
+      TURNSTILE_SITE_KEY: ${{ vars.TEST_TURNSTILE_SITE_KEY }}
+      TURNSTILE_SECRET_KEY: ${{ secrets.TEST_TURNSTILE_SECRET_KEY }}
+      SMTP_HOST: ${{ vars.TEST_SMTP_HOST }}
+      SMTP_PORT: ${{ vars.TEST_SMTP_PORT }}
+      SMTP_USERNAME: ${{ vars.TEST_SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.TEST_SMTP_PASSWORD }}
+      SMTP_SECURITY: ${{ vars.TEST_SMTP_SECURITY }}
+      EMAIL_FROM: ${{ vars.TEST_EMAIL_FROM }}
+      GOOGLE_CLIENT_ID: ${{ vars.TEST_GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.TEST_GOOGLE_CLIENT_SECRET }}
+      AI_MODEL_PROVIDER: ${{ vars.TEST_AI_MODEL_PROVIDER }}
+      AI_MODEL_ID: ${{ vars.TEST_AI_MODEL_ID }}
+      AI_MODEL_DISPLAY_NAME: ${{ vars.TEST_AI_MODEL_DISPLAY_NAME }}
+      AI_MULTIMODAL_MODEL_PROVIDER: ${{ vars.TEST_AI_MULTIMODAL_MODEL_PROVIDER }}
+      AI_MULTIMODAL_MODEL_ID: ${{ vars.TEST_AI_MULTIMODAL_MODEL_ID }}
+      AI_MULTIMODAL_MODEL_DISPLAY_NAME: ${{ vars.TEST_AI_MULTIMODAL_MODEL_DISPLAY_NAME }}
+      AI_MODEL_API_BASE: ${{ secrets.TEST_AI_MODEL_API_BASE }}
+      AI_MODEL_API_KEY: ${{ secrets.TEST_AI_MODEL_API_KEY }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: ./.github/actions/deploy-saas
+        with:
+          target: test
+          tag: ${{ needs.prepare.outputs.release_tag }}
+          artifact_name: enterprise-saas-${{ needs.prepare.outputs.version }}
+          public_url: ${{ vars.TEST_PUBLIC_URL }}
+          admin_public_url: ${{ vars.TEST_ADMIN_PUBLIC_URL }}
+
+  deploy-prod:
+    name: Deploy · PROD
+    if: ${{ inputs.upgrade_prod }}
+    needs: [prepare, assemble-candidate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    concurrency:
+      group: hyperfilelens-deploy-prod
+      cancel-in-progress: false
+    env:
+      DEPLOY_TARGET: prod
+      DEPLOY_SSH_HOST: ${{ vars.PROD_SSH_HOST }}
+      DEPLOY_SSH_PORT: ${{ vars.PROD_SSH_PORT }}
+      DEPLOY_SSH_USER: ${{ vars.PROD_SSH_USER }}
+      DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.PROD_SSH_KNOWN_HOSTS }}
+      DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+      REGISTRY_HOST: ${{ vars.REGISTRY_HOST }}
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+      CN_REGISTRY_HOST: ${{ vars.CN_REGISTRY_HOST }}
+      CN_REGISTRY_USERNAME: ${{ secrets.CN_REGISTRY_USERNAME }}
+      CN_REGISTRY_PASSWORD: ${{ secrets.CN_REGISTRY_PASSWORD }}
+      HFL_INSECURE_TLS: ${{ vars.PROD_HFL_INSECURE_TLS }}
+      HFL_PLATFORM_GATEWAY_AUTO_DEPLOY: ${{ vars.PROD_PLATFORM_GATEWAY_AUTO_DEPLOY }}
+      HFL_EMAIL_SIGNUP_ENABLED: ${{ vars.PROD_EMAIL_SIGNUP_ENABLED }}
+      HFL_EMAIL_CODE_LOGIN_ENABLED: ${{ vars.PROD_EMAIL_CODE_LOGIN_ENABLED }}
+      HFL_GOOGLE_OAUTH_ENABLED: ${{ vars.PROD_GOOGLE_OAUTH_ENABLED }}
+      HFL_GA_MEASUREMENT_ID: ${{ vars.PROD_GA_MEASUREMENT_ID }}
+      SENTRY_ENABLED: ${{ vars.PROD_SENTRY_ENABLED }}
+      SENTRY_BACKEND_DSN: ${{ secrets.SENTRY_BACKEND_DSN }}
+      SENTRY_FRONTEND_DSN: ${{ secrets.SENTRY_FRONTEND_DSN }}
+      TURNSTILE_ENABLED: ${{ vars.PROD_TURNSTILE_ENABLED }}
+      TURNSTILE_SITE_KEY: ${{ vars.PROD_TURNSTILE_SITE_KEY }}
+      TURNSTILE_SECRET_KEY: ${{ secrets.PROD_TURNSTILE_SECRET_KEY }}
+      SMTP_HOST: ${{ vars.PROD_SMTP_HOST }}
+      SMTP_PORT: ${{ vars.PROD_SMTP_PORT }}
+      SMTP_USERNAME: ${{ vars.PROD_SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.PROD_SMTP_PASSWORD }}
+      SMTP_SECURITY: ${{ vars.PROD_SMTP_SECURITY }}
+      EMAIL_FROM: ${{ vars.PROD_EMAIL_FROM }}
+      GOOGLE_CLIENT_ID: ${{ vars.PROD_GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.PROD_GOOGLE_CLIENT_SECRET }}
+      AI_MODEL_PROVIDER: ${{ vars.PROD_AI_MODEL_PROVIDER }}
+      AI_MODEL_ID: ${{ vars.PROD_AI_MODEL_ID }}
+      AI_MODEL_DISPLAY_NAME: ${{ vars.PROD_AI_MODEL_DISPLAY_NAME }}
+      AI_MULTIMODAL_MODEL_PROVIDER: ${{ vars.PROD_AI_MULTIMODAL_MODEL_PROVIDER }}
+      AI_MULTIMODAL_MODEL_ID: ${{ vars.PROD_AI_MULTIMODAL_MODEL_ID }}
+      AI_MULTIMODAL_MODEL_DISPLAY_NAME: ${{ vars.PROD_AI_MULTIMODAL_MODEL_DISPLAY_NAME }}
+      AI_MODEL_API_BASE: ${{ secrets.PROD_AI_MODEL_API_BASE }}
+      AI_MODEL_API_KEY: ${{ secrets.PROD_AI_MODEL_API_KEY }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: ./.github/actions/deploy-saas
+        with:
+          target: prod
+          tag: ${{ needs.prepare.outputs.release_tag }}
+          artifact_name: enterprise-saas-${{ needs.prepare.outputs.version }}
+          public_url: ${{ vars.PROD_PUBLIC_URL }}
+          admin_public_url: ${{ vars.PROD_ADMIN_PUBLIC_URL }}

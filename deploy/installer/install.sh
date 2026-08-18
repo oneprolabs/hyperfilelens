@@ -1629,6 +1629,18 @@ print(str(manifest.get("edition") or "community").strip())
 PY
 }
 
+read_delivery_mode_from_dir() {
+	local dir=$1
+	python3 - "${dir}/MANIFEST.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(str((manifest.get("delivery") or {}).get("mode") or "offline").strip())
+PY
+}
+
 display_edition_from_dir() {
 	local edition
 	edition="$(read_edition_from_dir "$1" | tr '[:upper:]' '[:lower:]')"
@@ -1670,6 +1682,8 @@ image_version = str(manifest.get("image_version") or version_file).strip()
 extension_commit = str(manifest.get("extension_commit") or "").strip().lower()
 runtime_images = manifest.get("runtime_images") or {}
 minimum_upgrade_version = str(manifest.get("minimum_upgrade_version") or "").strip()
+delivery = manifest.get("delivery") or {"mode": "offline"}
+delivery_mode = str(delivery.get("mode") or "offline").strip()
 
 if not re.fullmatch(r"[0-9a-f]{40}", commit):
     raise SystemExit("release manifest has an invalid git_commit")
@@ -1700,6 +1714,8 @@ if minimum_upgrade_version and not re.fullmatch(
     raise SystemExit("release package has an invalid minimum_upgrade_version")
 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", image_version):
     raise SystemExit("release package has an invalid image_version")
+if delivery_mode not in {"offline", "registry"}:
+    raise SystemExit("release package has an invalid delivery mode")
 if not runtime_images:
     runtime_images = {
         "backend": f"hyperfilelens-backend:{image_version}",
@@ -1724,6 +1740,84 @@ for role, ref in runtime_images.items():
         raise SystemExit(
             f"release package runtime image is absent from the HFL archive: {role}"
         )
+if delivery_mode == "registry":
+    registry_images = delivery.get("registry_images") or []
+    if not registry_images:
+        raise SystemExit("registry delivery has no runtime images")
+    declared_digests = {}
+    for entry in manifest.get("images", []):
+        refs = [str(ref) for ref in (entry.get("refs") or [])]
+        digests = [str(digest) for digest in (entry.get("digests") or [])]
+        if len(refs) != len(digests):
+            raise SystemExit("registry delivery image refs and digests are incomplete")
+        for ref, digest in zip(refs, digests):
+            if ref in declared_digests:
+                raise SystemExit(f"registry delivery has a duplicate declared image ref: {ref}")
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                raise SystemExit(f"registry delivery has an invalid declared digest for {ref}")
+            declared_digests[ref] = digest
+    declared_refs = set(declared_digests)
+    seen_refs = set()
+    for image in registry_images:
+        role = str(image.get("role") or "")
+        local_ref = str(image.get("local_ref") or "")
+        digest = str(image.get("digest") or "")
+        sources = image.get("sources") or []
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", role):
+            raise SystemExit("registry delivery has an invalid image role")
+        if not re.fullmatch(
+            r"hyperfilelens-[a-z0-9-]+:[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
+            local_ref,
+        ):
+            raise SystemExit(f"registry delivery has an invalid local image ref: {local_ref}")
+        if local_ref not in declared_refs or local_ref in seen_refs:
+            raise SystemExit(f"registry delivery has an undeclared or duplicate image ref: {local_ref}")
+        seen_refs.add(local_ref)
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise SystemExit(f"registry delivery has an invalid digest for {local_ref}")
+        if declared_digests[local_ref] != digest:
+            raise SystemExit(f"registry delivery digest differs for {local_ref}")
+        if not sources:
+            raise SystemExit(f"registry delivery has no source for {local_ref}")
+        for source in sources:
+            ref = str(source.get("ref") or "")
+            if not re.fullmatch(
+                r"[a-z0-9][a-z0-9.-]*(?::[0-9]+)?/[a-z0-9._/-]+:[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
+                ref,
+            ):
+                raise SystemExit(f"registry delivery has an invalid source ref: {ref}")
+    if seen_refs != declared_refs:
+        missing = sorted(declared_refs - seen_refs)
+        raise SystemExit(
+            "registry delivery has no source metadata for: " + ", ".join(missing)
+        )
+    asset_images = delivery.get("asset_images") or []
+    if len(asset_images) != 3:
+        raise SystemExit("registry delivery must declare three asset images")
+    asset_kinds = set()
+    for image in asset_images:
+        kind = str(image.get("asset_kind") or "")
+        local_ref = str(image.get("local_ref") or "")
+        digest = str(image.get("digest") or "")
+        sources = image.get("sources") or []
+        if kind not in {"agent", "gateway", "language"} or kind in asset_kinds:
+            raise SystemExit("registry delivery has an invalid asset kind")
+        asset_kinds.add(kind)
+        if not re.fullmatch(
+            rf"hyperfilelens-{kind}-assets:[A-Za-z0-9][A-Za-z0-9._-]{{0,127}}",
+            local_ref,
+        ):
+            raise SystemExit("registry delivery has an invalid asset image ref")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise SystemExit("registry delivery has an invalid asset image digest")
+        if len(sources) != 2 or any(
+            not re.fullmatch(
+                r"[a-z0-9][a-z0-9.-]*(?::[0-9]+)?/[a-z0-9._/-]+:[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
+                str(source.get("ref") or ""),
+            )
+            for source in sources
+        ):
+            raise SystemExit("registry delivery has invalid asset image sources")
 if edition == "enterprise":
     if not re.fullmatch(r"[0-9a-f]{40}", extension_commit):
         raise SystemExit("Enterprise release package has an invalid extension_commit")
@@ -2114,6 +2208,7 @@ apply_runtime_configuration() {
 
 preflight_package_layout() {
 	local require_blue_green=${1:-1}
+	local delivery_mode
 	step "Checking release package layout..."
 	[[ -f "${ROOT}/MANIFEST.json" ]] || die "missing MANIFEST.json"
 	[[ -f "${ROOT}/docker-compose.yml" ]] || die "missing docker-compose.yml"
@@ -2124,9 +2219,14 @@ preflight_package_layout() {
 		[[ -f "${ROOT}/deploy/blue-green/active-color" ]] \
 			|| die "missing blue/green initial state"
 	fi
-	[[ -f "${ROOT}/images/00-hyperfilelens.tar.gz" ]] || die "missing HFL image archive"
-	[[ -f "${ROOT}/images/01-postgres-17.tar.gz" ]] || die "missing PostgreSQL image archive"
-	[[ -f "${ROOT}/images/02-redis-alpine.tar.gz" ]] || die "missing Redis image archive"
+	delivery_mode="$(read_delivery_mode_from_dir "${ROOT}")"
+	if [[ "${delivery_mode}" == "offline" ]]; then
+		[[ -f "${ROOT}/images/00-hyperfilelens.tar.gz" ]] || die "missing HFL image archive"
+		[[ -f "${ROOT}/images/01-postgres-17.tar.gz" ]] || die "missing PostgreSQL image archive"
+		[[ -f "${ROOT}/images/02-redis-alpine.tar.gz" ]] || die "missing Redis image archive"
+	elif [[ "${delivery_mode}" != "registry" ]]; then
+		die "unsupported release delivery mode: ${delivery_mode}"
+	fi
 	validate_package_identity "${ROOT}"
 	log "Release package check passed"
 }
@@ -2246,6 +2346,8 @@ root = pathlib.Path(sys.argv[1])
 skip_sourcelens = sys.argv[2] == "1"
 with (root / "MANIFEST.json").open(encoding="utf-8") as fh:
     manifest = json.load(fh)
+delivery = manifest.get("delivery") or {"mode": "offline"}
+delivery_mode = str(delivery.get("mode") or "offline")
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -2273,6 +2375,88 @@ def inspect_image(ref: str) -> dict:
     if not isinstance(inspected, list) or len(inspected) != 1:
         return {}
     return inspected[0] if isinstance(inspected[0], dict) else {}
+
+
+def verify_revision(ref: str, role: str) -> None:
+    if not role.startswith("hyperfilelens"):
+        return
+    expected_revision = str(manifest.get("git_commit", "")).strip()
+    if not expected_revision:
+        raise SystemExit("release manifest has no git_commit")
+    config = inspect_image(ref).get("Config") or {}
+    labels = config.get("Labels") or {}
+    actual_revision = str(labels.get("org.opencontainers.image.revision", ""))
+    if actual_revision != expected_revision:
+        raise SystemExit(
+            f"image {ref} revision {actual_revision or '<missing>'} "
+            f"does not match release {expected_revision}"
+        )
+
+
+def has_expected_digest(ref: str, digest: str) -> bool:
+    inspected = inspect_image(ref)
+    repo_digests = inspected.get("RepoDigests") or []
+    return any(
+        isinstance(value, str) and value.rsplit("@", 1)[-1] == digest
+        for value in repo_digests
+    )
+
+
+if delivery_mode == "registry":
+    registry_images = [
+        image
+        for image in (delivery.get("registry_images") or [])
+        if not (
+            skip_sourcelens
+            and str(image.get("role", "")).startswith("sourcelens")
+        )
+    ]
+    for index, image in enumerate(registry_images, start=1):
+        local_ref = str(image.get("local_ref") or "")
+        digest = str(image.get("digest") or "")
+        sources = image.get("sources") or []
+        pulled = ""
+        errors = []
+        print(
+            f"[....] Resolving registry image ({index}/{len(registry_images)}): "
+            f"{local_ref}@{digest}"
+        )
+        if has_expected_digest(local_ref, digest):
+            verify_revision(local_ref, str(image.get("role") or ""))
+            print(f"[ OK ] Reusing registry image: {local_ref}@{digest}")
+            continue
+        for source in sources:
+            source_ref = str(source.get("ref") or "")
+            repository = source_ref.rsplit(":", 1)[0]
+            immutable_ref = f"{repository}@{digest}"
+            completed = subprocess.run(
+                ["docker", "pull", "--platform", "linux/amd64", immutable_ref],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            if completed.returncode == 0:
+                pulled = immutable_ref
+                break
+            errors.append(f"{immutable_ref}: {completed.stdout.strip()[-500:]}")
+        if not pulled:
+            print(
+                f"[install.sh] ERROR: no registry source could provide {local_ref}",
+                file=sys.stderr,
+            )
+            for error in errors:
+                print(f"  - {error}", file=sys.stderr)
+            raise SystemExit(1)
+        subprocess.run(["docker", "tag", pulled, local_ref], check=True)
+        if not has_expected_digest(local_ref, digest):
+            raise SystemExit(f"registry image digest was not retained locally: {local_ref}")
+        verify_revision(local_ref, str(image.get("role") or ""))
+        print(f"[ OK ] Verified registry image: {local_ref}@{digest}")
+    print(f"[ OK ] Processed {len(registry_images)} registry image(s)")
+    raise SystemExit(0)
+if delivery_mode != "offline":
+    raise SystemExit(f"unsupported release delivery mode: {delivery_mode}")
 
 entries = [
     entry
@@ -2304,21 +2488,8 @@ for index, entry in enumerate(entries, start=1):
         )
         sys.exit(1)
     if entry.get("role") == "hyperfilelens":
-        expected_revision = str(manifest.get("git_commit", "")).strip()
-        if not expected_revision:
-            print("[install.sh] ERROR: release manifest has no git_commit", file=sys.stderr)
-            sys.exit(1)
         for ref in refs:
-            config = inspect_image(ref).get("Config") or {}
-            labels = config.get("Labels") or {}
-            actual_revision = str(labels.get("org.opencontainers.image.revision", ""))
-            if actual_revision != expected_revision:
-                print(
-                    f"[install.sh] ERROR: image {ref} revision {actual_revision or '<missing>'} "
-                    f"does not match release {expected_revision}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+            verify_revision(ref, "hyperfilelens")
     print(f"[ OK ] Verified image references: {', '.join(refs)}")
 print(f"[ OK ] Processed {len(entries)} container image archive(s)")
 PY
@@ -2877,6 +3048,9 @@ managed_repositories = {
     "hyperfilelens-sourcelens-backend",
     "hyperfilelens-sourcelens-frontend",
     "hyperfilelens-sourcelens-lensnode",
+    "hyperfilelens-agent-assets",
+    "hyperfilelens-gateway-assets",
+    "hyperfilelens-language-assets",
 }
 protected = set()
 for raw in sys.argv[1:3]:
@@ -2889,6 +3063,11 @@ for raw in sys.argv[1:3]:
         continue
     for image in manifest.get("images", []):
         protected.update(str(ref) for ref in image.get("refs", []) if ref)
+    delivery = manifest.get("delivery") or {}
+    for image in delivery.get("asset_images") or []:
+        local_ref = str(image.get("local_ref") or "")
+        if local_ref:
+            protected.add(local_ref)
 
 gateway_version = sys.argv[3]
 if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", gateway_version):
@@ -3083,11 +3262,18 @@ import sys
 with open(f"{sys.argv[1]}/MANIFEST.json", encoding="utf-8") as fh:
     manifest = json.load(fh)
 seen = set()
-for entry in manifest.get("images", []):
+entries = list(manifest.get("images", []))
+entries.extend(
+    {"refs": [entry.get("local_ref", "")]}
+    for entry in (manifest.get("delivery") or {}).get("asset_images", [])
+)
+for entry in entries:
     if str(entry.get("role", "")).startswith("sourcelens"):
         continue
     for ref in entry.get("refs", []):
         tag = ref.split("@", 1)[0]
+        if not tag:
+            continue
         if tag in seen:
             continue
         seen.add(tag)
@@ -3523,6 +3709,7 @@ PY
 
 preflight_sourcelens_bundle() {
 	local src_root=$1
+	local delivery_mode
 	step "Checking SourceLens bundle in upgrade package ..."
 	local -a runtime_files=(
 		sourcelens/BUILD_INFO.json
@@ -3541,14 +3728,19 @@ preflight_sourcelens_bundle() {
 	for rel in "${runtime_files[@]}"; do
 		[[ -f "${src_root}/${rel}" ]] || die "missing ${rel}"
 	done
-	local -a images=(
-		images/10-sourcelens-app.tar.gz
-		images/11-sourcelens-lensnode.tar.gz
-		images/12-nginx-stable-alpine.tar.gz
-	)
-	for rel in "${images[@]}"; do
-		[[ -f "${src_root}/${rel}" ]] || die "missing SourceLens image archive ${rel}"
-	done
+	delivery_mode="$(read_delivery_mode_from_dir "${src_root}")"
+	if [[ "${delivery_mode}" == "offline" ]]; then
+		local -a images=(
+			images/10-sourcelens-app.tar.gz
+			images/11-sourcelens-lensnode.tar.gz
+			images/12-nginx-stable-alpine.tar.gz
+		)
+		for rel in "${images[@]}"; do
+			[[ -f "${src_root}/${rel}" ]] || die "missing SourceLens image archive ${rel}"
+		done
+	elif [[ "${delivery_mode}" != "registry" ]]; then
+		die "unsupported SourceLens delivery mode: ${delivery_mode}"
+	fi
 	log "SourceLens bundle check passed"
 }
 
