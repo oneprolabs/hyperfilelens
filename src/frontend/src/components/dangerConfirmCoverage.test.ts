@@ -20,10 +20,11 @@ describe('danger confirmation coverage', () => {
       .sort()
 
     expect(actual).toEqual([
+      'lib/logout.ts',
       'pages/node/RepairNasRepository.vue',
       'pages/ops/AlertIncidents.vue',
       'pages/protection/DataProtection.vue',
-      'lib/logout.ts',
+      'pages/protection/components/FlowBackupSourceDetailDrawer.vue',
     ].sort())
   })
 
