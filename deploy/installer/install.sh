@@ -301,7 +301,7 @@ recover_upgrade_services() {
 	set +e
 	if [[ "${UPGRADE_SOURCELENS_WAS_RUNNING}" == "1" ]] && sourcelens_installed; then
 		if [[ "${SOURCELENS_UPGRADE_STARTED}" == "1" ]]; then
-			sourcelens_compose up -d --no-build --pull never
+			sourcelens_compose_with_lifecycle_recovery up -d --no-build --pull never
 		else
 			# Target SourceLens files may already be staged.  Starting existing
 			# containers avoids converging an unchanged live runtime before its
@@ -1314,11 +1314,12 @@ services:
       - ./deploy/nginx/hfl-maintenance/adoption-default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./deploy/nginx/hfl-maintenance:/etc/nginx/hfl-maintenance:ro
 YAML
-		sourcelens_compose -f docker-compose.yml -f "${adoption_override}" \
+		sourcelens_compose_with_lifecycle_recovery \
+			-f docker-compose.yml -f "${adoption_override}" \
 			up -d --no-deps --no-build --pull never --force-recreate nginx || return 1
 	else
-		sourcelens_compose up -d --no-deps --no-build --pull never --force-recreate nginx \
-			|| return 1
+		sourcelens_compose_with_lifecycle_recovery \
+			up -d --no-deps --no-build --pull never --force-recreate nginx || return 1
 	fi
 	local deadline=$((SECONDS + timeout_seconds))
 	while ((SECONDS < deadline)); do
@@ -1360,7 +1361,7 @@ clear_sourcelens_proxy_gate() {
 			warn "SourceLens Nginx reload failed while clearing the direct Run gate; restarting Nginx"
 			# Preserve SOURCELENS_PROXY_GATE_ARMED on failure so the upgrade
 			# exit trap retries instead of leaving old workers blocking Runs.
-			sourcelens_compose restart nginx >/dev/null || return 1
+			sourcelens_compose_with_lifecycle_recovery restart nginx >/dev/null || return 1
 		fi
 	fi
 	SOURCELENS_PROXY_GATE_ARMED=0
@@ -3360,12 +3361,24 @@ sourcelens_compose() {
 	)
 }
 
+load_sourcelens_compose_lifecycle() {
+	local helper="${SOURCELENS_INSTALL_DIR}/compose-lifecycle.sh"
+	[[ -f "${helper}" ]] || die "missing bundled SourceLens lifecycle helper: ${helper}"
+	# shellcheck disable=SC1090
+	source "${helper}"
+}
+
+sourcelens_compose_with_lifecycle_recovery() {
+	load_sourcelens_compose_lifecycle
+	hfl_compose_command_with_exit_event_recovery sourcelens_compose "$@"
+}
+
 stop_bundled_sourcelens() {
 	if ! sourcelens_installed; then
 		return 0
 	fi
 	step "Stopping SourceLens stack ..."
-	sourcelens_compose down
+	sourcelens_compose_with_lifecycle_recovery down
 }
 
 remove_sourcelens_images() {
@@ -3435,7 +3448,7 @@ uninstall_bundled_sourcelens() {
 	fi
 	step "Uninstalling SourceLens ..."
 	if [[ "${configured}" -eq 1 ]]; then
-		if ! sourcelens_compose down --remove-orphans; then
+		if ! sourcelens_compose_with_lifecycle_recovery down --remove-orphans; then
 			warn "SourceLens Compose cleanup failed; removing only containers verified as installer-owned"
 		fi
 	else
@@ -3514,6 +3527,7 @@ preflight_sourcelens_bundle() {
 	local -a runtime_files=(
 		sourcelens/BUILD_INFO.json
 		sourcelens/.env.example
+		sourcelens/compose-lifecycle.sh
 		sourcelens/docker-compose.yml
 		sourcelens/install.sh
 		sourcelens/patch-env-runtime.py
@@ -3568,6 +3582,7 @@ root = pathlib.Path(sys.argv[1])
 paths = [
     "docker-compose.yml",
     ".env.example",
+    "compose-lifecycle.sh",
     "install.sh",
     "patch-env-runtime.py",
     "sync-sentry-runtime.py",
@@ -4408,7 +4423,8 @@ cmd_start() {
 	sync_runtime_media
 	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] && sourcelens_installed; then
 		step "Starting bundled SourceLens ..."
-		sourcelens_compose up -d --no-build --pull never --remove-orphans
+		sourcelens_compose_with_lifecycle_recovery \
+			up -d --no-build --pull never --remove-orphans
 	fi
 	step "Starting services (docker compose up -d --no-build) ..."
 	start_hfl_stack || die "HyperFileLens active color failed to start"

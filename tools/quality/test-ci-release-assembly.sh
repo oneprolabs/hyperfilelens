@@ -91,6 +91,8 @@ mkdir -p "${sl}/sourcelens/deploy/postgresql/initdb.d" \
 	"${sl}/sourcelens/deploy/sentry" \
 	"${sl}/payload/media/gateway-bootstrap"
 printf '#!/usr/bin/env bash\nexit 0\n' >"${sl}/sourcelens/install.sh"
+cp "${ROOT}/deploy/installer/sourcelens/compose-lifecycle.sh" \
+	"${sl}/sourcelens/compose-lifecycle.sh"
 printf '#!/usr/bin/env python3\n' >"${sl}/sourcelens/patch-env-runtime.py"
 printf '#!/usr/bin/env python3\n' >"${sl}/sourcelens/sync-sentry-runtime.py"
 mkdir -p "${sl}/sourcelens/deploy/nginx"

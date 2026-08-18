@@ -10,6 +10,10 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 ROOT="${tmp}/install"
 mkdir -p "${ROOT}"
+SOURCELENS_INSTALL_DIR="${ROOT}/sourcelens"
+mkdir -p "${SOURCELENS_INSTALL_DIR}"
+cp "${ROOT_REPO}/deploy/installer/sourcelens/compose-lifecycle.sh" \
+	"${SOURCELENS_INSTALL_DIR}/compose-lifecycle.sh"
 printf 'APP_VERSION=1.0.0\n' >"${ROOT}/.env"
 
 calls=()
@@ -125,6 +129,8 @@ fi
 
 SOURCELENS_INSTALL_DIR="${tmp}/sourcelens"
 mkdir -p "${SOURCELENS_INSTALL_DIR}/deploy/nginx/hfl-maintenance"
+cp "${ROOT_REPO}/deploy/installer/sourcelens/compose-lifecycle.sh" \
+	"${SOURCELENS_INSTALL_DIR}/compose-lifecycle.sh"
 sourcelens_nginx_running() { return 0; }
 sourcelens_nginx_has_proxy_gate() { return 0; }
 reload_sourcelens_proxy_gate() { calls+=("sourcelens-gate-reload"); }

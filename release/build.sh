@@ -73,6 +73,7 @@ normalize_release_permissions() {
 	fi
 	if [[ -d "${pkg_root}/sourcelens" ]]; then
 		chmod 755 "${pkg_root}/sourcelens/install.sh" \
+			"${pkg_root}/sourcelens/compose-lifecycle.sh" \
 			"${pkg_root}/sourcelens/patch-env-runtime.py" \
 			"${pkg_root}/sourcelens/sync-sentry-runtime.py"
 		find "${pkg_root}/sourcelens/deploy/postgresql/initdb.d" \

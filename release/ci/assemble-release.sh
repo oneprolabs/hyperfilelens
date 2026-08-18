@@ -164,6 +164,7 @@ for required in \
 	images/11-sourcelens-lensnode.tar.gz \
 	images/12-nginx-stable-alpine.tar.gz \
 	sourcelens/BUILD_INFO.json \
+	sourcelens/compose-lifecycle.sh \
 	sourcelens/sync-sentry-runtime.py \
 	sourcelens/deploy/sentry/hfl-sentry-sitecustomize.py \
 	sourcelens/deploy/nginx/hfl-sentry-loader.js; do

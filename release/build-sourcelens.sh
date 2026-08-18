@@ -280,12 +280,15 @@ stage_runtime_tree() {
 	fi
 
 	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/install.sh" "${sl_root}/install.sh"
+	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/compose-lifecycle.sh" \
+		"${sl_root}/compose-lifecycle.sh"
 	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/patch-env-runtime.py" "${sl_root}/patch-env-runtime.py"
 	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/sync-sentry-runtime.py" "${sl_root}/sync-sentry-runtime.py"
 	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/hfl-sentry-sitecustomize.py" \
 		"${sl_root}/deploy/sentry/hfl-sentry-sitecustomize.py"
 	chmod 644 "${sl_root}/deploy/sentry/hfl-sentry-sitecustomize.py"
-	chmod +x "${sl_root}/install.sh" "${sl_root}/patch-env-runtime.py" "${sl_root}/sync-sentry-runtime.py"
+	chmod +x "${sl_root}/install.sh" "${sl_root}/compose-lifecycle.sh" \
+		"${sl_root}/patch-env-runtime.py" "${sl_root}/sync-sentry-runtime.py"
 
 	sourcelens_write_runtime_compose "${sl_root}/docker-compose.yml"
 

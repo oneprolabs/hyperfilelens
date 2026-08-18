@@ -28,6 +28,7 @@ write_bundle() {
 }
 JSON
 	printf 'services: {}\n' >"${root}/docker-compose.yml"
+	printf 'lifecycle-helper-v1\n' >"${root}/compose-lifecycle.sh"
 }
 
 write_bundle "${SOURCELENS_INSTALL_DIR}" old-patchset
@@ -80,6 +81,16 @@ sourcelens_bundle_changed "${tmp}/target"
 record_sourcelens_installed_bundle "${target}"
 if sourcelens_bundle_changed "${tmp}/target"; then
 	printf 'ERROR: recorded SourceLens runtime was reported as changed\n' >&2
+	exit 1
+fi
+
+# Lifecycle recovery is part of the installed runtime contract even when the
+# upstream SourceLens version and image identities stay unchanged.
+printf 'lifecycle-helper-v2\n' >"${target}/compose-lifecycle.sh"
+sourcelens_bundle_changed "${tmp}/target"
+record_sourcelens_installed_bundle "${target}"
+if sourcelens_bundle_changed "${tmp}/target"; then
+	printf 'ERROR: recorded SourceLens lifecycle helper was reported as changed\n' >&2
 	exit 1
 fi
 

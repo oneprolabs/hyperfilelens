@@ -3,6 +3,10 @@
 # Installed under /opt/hyperfilelens/sourcelens by default.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=compose-lifecycle.sh
+source "${SCRIPT_DIR}/compose-lifecycle.sh"
+
 SOURCELENS_INSTALL_DIR="${SOURCELENS_INSTALL_DIR:-/opt/hyperfilelens/sourcelens}"
 SOURCELENS_DATA_DIR="${SOURCELENS_DATA_DIR:-/opt/hyperfilelens/data/sourcelens}"
 SOURCELENS_CONFIG_DIR="${SOURCELENS_CONFIG_DIR:-${SOURCELENS_DATA_DIR}/config}"
@@ -424,7 +428,8 @@ cmd_install() {
 
 	ensure_bridge_network
 	log "Starting SourceLens stack in ${install_root}"
-	compose_cmd "${install_root}" up -d --no-build --pull never --remove-orphans
+	hfl_compose_command_with_exit_event_recovery \
+		compose_cmd "${install_root}" up -d --no-build --pull never --remove-orphans
 
 	wait_for_health "${install_root}"
 	log "SourceLens install complete on private network ${HFL_BRIDGE_NETWORK}"
