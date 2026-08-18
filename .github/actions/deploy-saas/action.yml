@@ -1,0 +1,197 @@
+name: HFL Enterprise SaaS deploy
+description: Deploy one registry-backed Candidate to an already-installed official environment
+inputs:
+  target:
+    description: Official target name, test or prod
+    required: true
+  tag:
+    description: Product release tag
+    required: true
+  artifact_name:
+    description: Actions artifact containing the thin Candidate package
+    required: true
+  public_url:
+    description: Canonical tenant URL
+    required: false
+  admin_public_url:
+    description: Canonical Admin Console URL
+    required: false
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: ${{ runner.temp }}/saas-candidate
+    - name: Validate deployment inputs
+      shell: bash
+      env:
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_TAG: ${{ inputs.tag }}
+      run: |
+          set -euo pipefail
+          [[ "$DEPLOY_TARGET" =~ ^(test|prod)$ ]]
+          [[ "$INPUT_TARGET" == "$DEPLOY_TARGET" ]]
+          [[ "$INPUT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$DEPLOY_SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
+          [[ "$DEPLOY_SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$DEPLOY_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ -n "$DEPLOY_SSH_KNOWN_HOSTS" && -n "$DEPLOY_SSH_PRIVATE_KEY" ]]
+          [[ "$REGISTRY_HOST" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ ]]
+          [[ "$CN_REGISTRY_HOST" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ ]]
+          [[ -n "$REGISTRY_USERNAME" && -n "$REGISTRY_PASSWORD" ]]
+          [[ -n "$CN_REGISTRY_USERNAME" && -n "$CN_REGISTRY_PASSWORD" ]]
+          [[ "$HFL_INSECURE_TLS" =~ ^[01]$ ]]
+          case "$DEPLOY_TARGET:$HFL_INSECURE_TLS" in
+            test:1|prod:0) ;;
+            *) echo "Target refuses HFL_INSECURE_TLS=$HFL_INSECURE_TLS" >&2; exit 1 ;;
+          esac
+          [[ -s "$RUNNER_TEMP/saas-candidate/candidate.tar.gz" ]]
+          [[ -s "$RUNNER_TEMP/saas-candidate/candidate.tar.gz.sha256" ]]
+    - name: Prepare protected deployment files
+      shell: bash
+      run: |
+          set -euo pipefail
+          umask 077
+          install -d -m 0700 ~/.ssh "$RUNNER_TEMP/saas-stage"
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" >~/.ssh/hyperfilelens_saas
+          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" >~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/hyperfilelens_saas ~/.ssh/known_hosts
+          python3 - "$RUNNER_TEMP/saas-stage/registry.json" <<'PY'
+          import json, os, pathlib, sys
+          payload = {
+              "global_host": os.environ["REGISTRY_HOST"],
+              "global_username": os.environ["REGISTRY_USERNAME"],
+              "global_password": os.environ["REGISTRY_PASSWORD"],
+              "cn_host": os.environ["CN_REGISTRY_HOST"],
+              "cn_username": os.environ["CN_REGISTRY_USERNAME"],
+              "cn_password": os.environ["CN_REGISTRY_PASSWORD"],
+          }
+          pathlib.Path(sys.argv[1]).write_text(json.dumps(payload), encoding="utf-8")
+          PY
+          python3 - "$RUNNER_TEMP/saas-stage/runtime.env" <<'PY'
+          import os, pathlib, re, sys
+          names = (
+              "HFL_EMAIL_SIGNUP_ENABLED", "HFL_EMAIL_CODE_LOGIN_ENABLED",
+              "HFL_GOOGLE_OAUTH_ENABLED", "HFL_GA_MEASUREMENT_ID", "HFL_INSECURE_TLS",
+              "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY", "SENTRY_ENABLED", "SENTRY_BACKEND_DSN",
+              "SENTRY_FRONTEND_DSN", "TURNSTILE_ENABLED", "TURNSTILE_SITE_KEY",
+              "TURNSTILE_SECRET_KEY", "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME",
+              "SMTP_PASSWORD", "SMTP_SECURITY", "EMAIL_FROM", "GOOGLE_CLIENT_ID",
+              "GOOGLE_CLIENT_SECRET",
+          )
+          lines = [f"HFL_DEPLOY_TARGET={os.environ['DEPLOY_TARGET']}"]
+          lines.append(f"SENTRY_ENVIRONMENT={'hfl-production' if os.environ['DEPLOY_TARGET'] == 'prod' else 'hfl-test'}")
+          lines.append("SENTRY_TRACES_SAMPLE_RATE=0")
+          for name in names:
+              value = os.environ.get(name, "")
+              if "\n" in value or "\r" in value or "\0" in value:
+                  if name == "HFL_GA_MEASUREMENT_ID":
+                      print(
+                          "::warning title=Google Analytics configuration::"
+                          "The GA4 measurement ID is malformed; analytics will be disabled."
+                      )
+                      lines.append(f"{name}=")
+                      continue
+                  print(
+                      f"::warning title=Optional runtime configuration::"
+                      f"Ignoring malformed {name}; the installed value will be preserved."
+                  )
+                  continue
+              if name == "HFL_GA_MEASUREMENT_ID" and value and not re.fullmatch(r"G-[A-Z0-9]+", value):
+                  print(
+                      "::warning title=Google Analytics configuration::"
+                      "The GA4 measurement ID is malformed; analytics will be disabled."
+                  )
+                  value = ""
+              lines.append(f"{name}={value}")
+          pathlib.Path(sys.argv[1]).write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+    - name: Stage Candidate on target
+      shell: bash
+      run: |
+          set -euo pipefail
+          remote_dir="/var/tmp/hyperfilelens-saas-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ssh_args=(
+            -i ~/.ssh/hyperfilelens_saas -o BatchMode=yes -o StrictHostKeyChecking=yes
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=20
+            -o TCPKeepAlive=yes -p "$DEPLOY_SSH_PORT"
+          )
+          ssh "${ssh_args[@]}" "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            "rm -rf -- '$remote_dir' && install -d -m 0700 '$remote_dir'"
+          scp -i ~/.ssh/hyperfilelens_saas -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes -P "$DEPLOY_SSH_PORT" \
+            "$RUNNER_TEMP/saas-candidate/candidate.tar.gz" \
+            "$RUNNER_TEMP/saas-stage/registry.json" \
+            "$RUNNER_TEMP/saas-stage/runtime.env" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$remote_dir/"
+    - name: Upgrade target from Candidate
+      shell: bash
+      env:
+        APP_PUBLIC_URL: ${{ inputs.public_url }}
+        ADMIN_PUBLIC_URL: ${{ inputs.admin_public_url }}
+      run: |
+          set -euo pipefail
+          remote_dir="/var/tmp/hyperfilelens-saas-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          candidate_sha="$(awk 'NR == 1 {print $1}' "$RUNNER_TEMP/saas-candidate/candidate.tar.gz.sha256")"
+          [[ "$candidate_sha" =~ ^[0-9a-f]{64}$ ]]
+          printf -v remote_command '%q ' \
+            bash -s -- \
+              --candidate "$remote_dir/candidate.tar.gz" \
+              --candidate-sha256 "$candidate_sha" \
+              --registry-credentials "$remote_dir/registry.json" \
+              --runtime-env-file "$remote_dir/runtime.env" \
+              --direct-host "$DEPLOY_SSH_HOST" \
+              --public-url "$APP_PUBLIC_URL" \
+              --admin-public-url "$ADMIN_PUBLIC_URL"
+          ssh -i ~/.ssh/hyperfilelens_saas -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" "$remote_command" \
+            <.github/scripts/remote-saas-deploy.sh
+    - name: Verify target health
+      shell: bash
+      run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/hyperfilelens_saas -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            'curl -kfsS https://127.0.0.1:11442/en/ >/dev/null &&
+             curl -kfsS https://127.0.0.1:11443/health/ready >/dev/null &&
+             curl -kfsS https://127.0.0.1:11444/ >/dev/null &&
+             curl -kfsS https://127.0.0.1:11445/ >/dev/null'
+    - name: Reconcile Platform Gateway
+      if: ${{ env.HFL_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
+      shell: bash
+      run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/hyperfilelens_saas -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            'if /opt/hyperfilelens/install.sh platform-gateway verify --required --timeout 0; then
+               echo "Platform Gateway is already ready; preserving the running deployment";
+             else
+               /opt/hyperfilelens/install.sh platform-gateway ensure;
+             fi &&
+             /opt/hyperfilelens/install.sh platform-gateway verify --required --timeout 180'
+    - name: Reconcile default AI model
+      shell: bash
+      run: .github/scripts/reconcile-saas-ai-model.sh agent
+    - name: Reconcile optional multimodal model
+      shell: bash
+      run: .github/scripts/reconcile-saas-ai-model.sh multimodal
+    - name: Remove staged files
+      if: ${{ always() }}
+      shell: bash
+      run: |
+          rm -rf -- "$RUNNER_TEMP/saas-stage" "$RUNNER_TEMP/saas-candidate"
+          if [[ -f ~/.ssh/hyperfilelens_saas ]]; then
+            remote_dir="/var/tmp/hyperfilelens-saas-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            ssh -i ~/.ssh/hyperfilelens_saas -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=20 -p "$DEPLOY_SSH_PORT" \
+              "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" "rm -rf -- '$remote_dir'" || true
+          fi
+          rm -f -- ~/.ssh/hyperfilelens_saas

@@ -20,6 +20,7 @@ FORCE_PULL=0
 NO_CACHE=0
 FORCE_BUILD="${SOURCELENS_FORCE_BUILD:-0}"
 PREBUILT=0
+RUNTIME_ONLY=0
 LOG_FILE="${HFL_LOG_FILE:-}"
 VERBOSE="${HFL_LOG_VERBOSE:-0}"
 PRINT_CONFIG=0
@@ -40,6 +41,7 @@ Usage: ./release/build-sourcelens.sh --pkg-root DIR --images-dir DIR [options]
   --no-cache           Rebuild SourceLens Docker layers without BuildKit cache
   --force-build        Rebuild SourceLens images even when the build stamp matches
   --prebuilt           Package normalized images already loaded in Docker
+  --runtime-only       Stage runtime configuration without image archives or Gateway payload
   --sourcelens-git-url URL  Override SOURCELENS_GIT_URL
   --sourcelens-ref REF      SourceLens release tag in vX.Y.Z form
   --github-download-mirror URL  GitHub Git mirror with official fallback
@@ -75,6 +77,7 @@ force_build=${FORCE_BUILD}
 force_pull=${FORCE_PULL}
 no_cache=${NO_CACHE}
 prebuilt=${PREBUILT}
+runtime_only=${RUNTIME_ONLY}
 github_download_mirror=${GITHUB_DOWNLOAD_MIRROR:-<official>}
 github_fallback_timeout=${SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS}
 github_token=$(hfl_redact "${GITHUB_TOKEN:-}")
@@ -118,6 +121,10 @@ parse_args() {
 			;;
 		--prebuilt)
 			PREBUILT=1
+			shift
+			;;
+		--runtime-only)
+			RUNTIME_ONLY=1
 			shift
 			;;
 		--sourcelens-git-url | --git-url)
@@ -398,10 +405,14 @@ main() {
 	else
 		sourcelens_build_app_images "${FORCE_BUILD}" "${NO_CACHE}"
 	fi
-	sourcelens_ensure_nginx_image "${FORCE_PULL}"
-	save_image_archives
+	if [[ "${RUNTIME_ONLY}" -eq 0 ]]; then
+		sourcelens_ensure_nginx_image "${FORCE_PULL}"
+		save_image_archives
+	fi
 	stage_runtime_tree
-	publish_gateway_lensnode_bundle
+	if [[ "${RUNTIME_ONLY}" -eq 0 ]]; then
+		publish_gateway_lensnode_bundle
+	fi
 	log "SourceLens bundle staged under ${PKG_ROOT}/sourcelens"
 }
 
