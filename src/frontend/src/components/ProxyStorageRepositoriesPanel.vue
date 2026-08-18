@@ -11,6 +11,7 @@ import {
   nodeSupportsStorageInventory,
 } from '../lib/nodeInventoryDisplay'
 import { usePageRequestScope } from '../composables/usePageRequestScope'
+import { useDrawerTableMaxHeight } from '../composables/useDrawerTableMaxHeight'
 import HflCapacityCell from './HflCapacityCell.vue'
 import RepositoryUsageCell from './RepositoryUsageCell.vue'
 import { remainingLimitExceedsAvailableStorage } from '../lib/repositoryCapacityDisplay'
@@ -35,6 +36,7 @@ const { t } = useI18n()
 const requests = usePageRequestScope()
 const bindings = ref<NodeBindings | null>(null)
 const loading = ref(false)
+const { tableMaxHeight, containerRef: tableRef } = useDrawerTableMaxHeight()
 
 const localStoragePools = computed(() => nodeStoragePoolRows(props.node, 'local_storage_pools'))
 const networkStoragePools = computed(() => nodeStoragePoolRows(props.node, 'network_storage_pools'))
@@ -195,9 +197,11 @@ watch(
 
       <ElTable
         v-if="localStoragePools.length"
+        ref="tableRef"
         :data="localStoragePools"
         size="small"
         class="proxy-storage-panel__table"
+        :max-height="tableMaxHeight"
       >
         <ElTableColumn
           :label="t('protection.sourceResources.storageDevice')"
@@ -265,9 +269,11 @@ watch(
 
       <ElTable
         v-if="networkStoragePools.length"
+        ref="tableRef"
         :data="networkStoragePools"
         size="small"
         class="proxy-storage-panel__table"
+        :max-height="tableMaxHeight"
       >
         <ElTableColumn
           :label="t('protection.sourceResources.storageShare')"
@@ -335,9 +341,11 @@ watch(
 
       <ElTable
         v-if="storagePools.length"
+        ref="tableRef"
         :data="storagePools"
         size="small"
         class="proxy-storage-panel__table"
+        :max-height="tableMaxHeight"
       >
         <ElTableColumn
           :label="t('protection.sourceResources.storageMountPoint')"
@@ -400,9 +408,11 @@ watch(
 
       <ElTable
         v-if="repositories.length"
+        ref="tableRef"
         :data="repositories"
         size="small"
         class="proxy-storage-panel__table"
+        :max-height="tableMaxHeight"
       >
         <ElTableColumn
           :label="t('repositoriesPage.colListName')"

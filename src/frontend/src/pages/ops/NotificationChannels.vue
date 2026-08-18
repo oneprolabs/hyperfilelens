@@ -25,6 +25,7 @@ import HflTypeLabel from '../../components/HflTypeLabel.vue'
 import { useOpsMenus } from '../../composables/useOpsMenus'
 import { useDebouncedAction } from '../../composables/useDebouncedAction'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
+import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { getNotificationTypeIcon } from '../../composables/useNotificationTypeIcon'
 import { formatLocalDateTime } from '../../lib/dateTime'
@@ -57,6 +58,8 @@ const { t, te } = useI18n()
 const opsMenus = useOpsMenus()
 const pageRequests = usePageRequestScope()
 const { drawerSize, bindDrawerResize } = useResponsiveDrawerWidth()
+const { tableMaxHeight: policyTableMaxHeight, containerRef: policyTableRef } = useDrawerTableMaxHeight()
+const { tableMaxHeight: deliveryTableMaxHeight, containerRef: deliveryTableRef } = useDrawerTableMaxHeight()
 const detailsLoading = ref(false)
 const detailsError = ref<string | null>(null)
 const channelInlineEditing = ref<ChannelInlineField | null>(null)
@@ -1684,8 +1687,10 @@ watch(
               name="policies"
             >
               <el-table
+                ref="policyTableRef"
                 v-table-column-resize="'ops.notificationChannels.associatedPolicies'"
                 :data="asList(details.associated_policies)"
+                :max-height="policyTableMaxHeight"
                 stripe
                 class="hfl-list-table"
               >
@@ -1733,8 +1738,10 @@ watch(
               name="deliveries"
             >
               <el-table
+                ref="deliveryTableRef"
                 v-table-column-resize="'ops.notificationChannels.notificationLogs'"
                 :data="asList(details.notification_logs)"
+                :max-height="deliveryTableMaxHeight"
                 stripe
                 class="hfl-list-table"
               >

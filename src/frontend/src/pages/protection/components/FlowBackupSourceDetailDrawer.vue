@@ -32,9 +32,10 @@ import {
 } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import { pushToast } from '../../../lib/toast/store'
-import type { ElTable, ElTree } from 'element-plus'
+import type { ElTree } from 'element-plus'
 import HflPopover from '../../../components/HflPopover.vue'
 import HflPagination from '../../../components/HflPagination.vue'
+import { useDrawerTableMaxHeight } from '../../../composables/useDrawerTableMaxHeight'
 import { apiErrorMessage } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
 import { getNode } from '../../../lib/nodeApi'
@@ -253,7 +254,10 @@ const activeTab = ref<FlowSourceDetailTab>('overview')
 const activeTaskSubTab = ref<FlowSourceDetailTaskSubTab>('history')
 const dirsSectionRef = ref<HTMLElement | null>(null)
 const targetsSectionRef = ref<HTMLElement | null>(null)
-const snapshotTableRef = ref<InstanceType<typeof ElTable> | null>(null)
+const { tableMaxHeight: snapshotTableMaxHeight, containerRef: snapshotTableRef } = useDrawerTableMaxHeight()
+const { tableMaxHeight: restoreTableMaxHeight, containerRef: restoreTableRef } = useDrawerTableMaxHeight()
+const { tableMaxHeight: sourceTasksTableMaxHeight, containerRef: sourceTasksTableRef } = useDrawerTableMaxHeight()
+const { tableMaxHeight: taskResourceTableMaxHeight, containerRef: taskResourceTableRef } = useDrawerTableMaxHeight()
 const selectedSnapshotId = ref<number | null>(null)
 const expandedSnapshotRowKeys = ref<number[]>([])
 const snapshotDetailLoading = ref(false)
@@ -3130,7 +3134,7 @@ function onClosed() {
             :data="pagedSourceSnapshots"
             stripe
             row-key="id"
-            max-height="calc(var(--app-viewport-height) - 260px)"
+            :max-height="snapshotTableMaxHeight"
             :expand-row-keys="expandedSnapshotRowKeys"
             :header-cell-style="TABLE_HEADER_STYLE"
             class="hfl-list-table"
@@ -3164,6 +3168,7 @@ function onClosed() {
                     v-table-column-resize="'protection.flowBackupSource.snapshotDirectories'"
                     v-table-overflow-title
                     :data="selectedSnapshotDirectories"
+                    :max-height="snapshotTableMaxHeight"
                     :fit="false"
                     stripe
                     :header-cell-style="TABLE_HEADER_STYLE"
@@ -3679,13 +3684,14 @@ function onClosed() {
           />
           <el-table
             v-if="displayedRestoreRecords.length || restoreRecordsLoading"
+            ref="restoreTableRef"
             v-table-column-resize="'protection.flowBackupSource.restoreRecords'"
             v-table-overflow-title
             v-loading="restoreRecordsLoading"
             :data="displayedRestoreRecords"
             :fit="false"
             row-key="id"
-            max-height="calc(var(--app-viewport-height) - 260px)"
+            :max-height="restoreTableMaxHeight"
             :expand-row-keys="expandedRestoreRecordRowKeys"
             :header-cell-style="TABLE_HEADER_STYLE"
             stripe
@@ -4222,11 +4228,13 @@ function onClosed() {
             </div>
           </div>
           <el-table
+            ref="sourceTasksTableRef"
             v-table-column-resize="'protection.flowBackupSource.sourceTasks'"
             v-table-overflow-title
             v-loading="sourceTasksLoading"
             :data="sourceTaskRows"
             stripe
+            :max-height="sourceTasksTableMaxHeight"
             class="restore-task-drawer-table dp-source-task-table hfl-list-table"
             :row-class-name="sourceTaskRowClassName"
           >
@@ -4370,7 +4378,7 @@ function onClosed() {
 
   <ElDrawer
     v-model="taskDetailOpen"
-    class="dp-task-detail-drawer"
+    class="hfl-task-drawer dp-task-detail-drawer"
     :size="taskDetailDrawerSize"
     :z-index="3200"
     @opened="resetDrawerScroll"
@@ -4445,7 +4453,7 @@ function onClosed() {
       v-if="activeTask"
       ref="drawerScrollAnchorRef"
       v-loading="activeTaskLoading"
-      class="dp-task-detail__body"
+      class="hfl-task-drawer__body dp-task-detail__body"
     >
       <section class="dp-task-detail__hero">
         <div class="dp-task-detail__hero-section-title">
@@ -4933,10 +4941,12 @@ function onClosed() {
               </div>
 
               <el-table
+                ref="taskResourceTableRef"
                 v-table-column-resize="'protection.flowBackupSource.resources'"
                 v-table-overflow-title
                 v-loading="resourceLoading"
                 :data="selectedResourceRows"
+                :max-height="taskResourceTableMaxHeight"
                 class="hfl-list-table hfl-list-table--compact dp-task-detail__resource-table"
               >
                 <el-table-column
@@ -6103,7 +6113,7 @@ function onClosed() {
 }
 
 .dp-flow-source-detail-tabs :deep(.el-tabs__content) {
-  overflow: visible;
+  overflow: hidden;
 }
 
 .dp-flow-source-detail-drawer__body .hfl-list-footer {
@@ -6399,7 +6409,7 @@ function onClosed() {
   flex-direction: column;
   gap: 14px;
   padding: 0;
-  background: #fff;
+  background: var(--el-bg-color);
 }
 
 .dp-task-detail__hero {

@@ -19,6 +19,7 @@ import { useOpsMenus } from '../../composables/useOpsMenus'
 import { useListSearch } from '../../composables/useListSearch'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useDrawerScrollReset } from '../../composables/useDrawerScrollReset'
+import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { useRepositoryTaskCancellation } from '../../composables/useRepositoryTaskCancellation'
 import { apiErrorMessage, apiErrorMessageI18n } from '../../lib/api'
@@ -70,6 +71,7 @@ import type { TaskResourceRow } from '../../lib/taskApi'
 import { isRestoreTaskType } from '../../lib/taskType'
 
 const { t, te } = useI18n()
+const { tableMaxHeight: resourceTableMaxHeight, containerRef: resourceTableRef } = useDrawerTableMaxHeight()
 const stopConfirmDialog = useProtectionStopConfirmDialog()
 const stopConfirmOpen = stopConfirmDialog.open
 const stopConfirmKind = stopConfirmDialog.kind
@@ -2036,10 +2038,12 @@ watch(
                 </div>
 
                 <el-table
+                  ref="resourceTableRef"
                   v-table-column-resize="'ops.tasks.resources'"
                   v-table-overflow-title
                   v-loading="resourceLoading"
                   :data="selectedResourceRows"
+                  :max-height="resourceTableMaxHeight"
                   class="hfl-list-table hfl-list-table--compact hfl-task-drawer__resource-table"
                 >
                   <el-table-column
@@ -2331,8 +2335,7 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 2px 24px 24px;
-  background: #fff;
+  background: var(--el-bg-color);
 }
 
 .hfl-task-drawer__loading {
@@ -3054,10 +3057,6 @@ watch(
 
   .hfl-task-drawer :deep(.el-drawer__body) {
     padding: 0;
-  }
-
-  .hfl-task-drawer__body {
-    padding: 2px 18px 18px;
   }
 
   .hfl-task-drawer__header-title {

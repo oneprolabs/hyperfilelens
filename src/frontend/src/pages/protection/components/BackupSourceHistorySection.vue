@@ -10,6 +10,7 @@ import type { DemoBackup, DemoFsNode, DemoSnapshotDir } from '../../../composabl
 import { useProtectionDemoStore } from '../../../composables/useProtectionDemoStore'
 import { useResponsiveDrawerWidth } from '../../../composables/useResponsiveDrawerWidth'
 import { useDrawerScrollReset } from '../../../composables/useDrawerScrollReset'
+import { useDrawerTableMaxHeight } from '../../../composables/useDrawerTableMaxHeight'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import {
   buildHistoryTasksForBackups,
@@ -26,6 +27,7 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const store = useProtectionDemoStore()
+const { tableMaxHeight: drawerTableMaxHeight, containerRef: drawerTableRef } = useDrawerTableMaxHeight()
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -411,7 +413,7 @@ onBeforeUnmount(() => {
       :modal="true"
       :z-index="3200"
       :size="drawerSize"
-      class="snapshot-detail-drawer"
+      class="hfl-detail-drawer snapshot-detail-drawer"
       @opened="onSnapshotDrawerOpened"
       @closed="onSnapshotDrawerClosed"
     >
@@ -428,7 +430,7 @@ onBeforeUnmount(() => {
       </template>
       <div
         v-if="activeSnapshot"
-        class="snapshot-drawer-body"
+        class="hfl-detail-drawer__body snapshot-drawer-body"
       >
         <p class="text-sm text-slate-500 m-0 mb-3">
           {{
@@ -444,12 +446,13 @@ onBeforeUnmount(() => {
             {{ t('protection.backupDetail.panelDirList') }}
           </div>
           <el-table
+            ref="drawerTableRef"
             v-table-column-resize="'protection.backupSourceHistory.dirs'"
             v-table-overflow-title
             :data="activeSnapshot.dirs"
             stripe
             :row-key="snapshotDirRowKey"
-            max-height="calc(var(--app-viewport-height) - 250px)"
+            :max-height="drawerTableMaxHeight"
             :header-cell-style="TABLE_HEADER_STYLE"
             class="hfl-list-table"
           >
@@ -529,7 +532,7 @@ onBeforeUnmount(() => {
       :modal="true"
       :z-index="3200"
       :size="drawerSize"
-      class="task-detail-drawer"
+      class="hfl-detail-drawer task-detail-drawer"
       @opened="onTaskDrawerOpened"
       @closed="onTaskDrawerClosed"
     >
@@ -547,7 +550,7 @@ onBeforeUnmount(() => {
       <div
         v-if="activeTask"
         ref="drawerScrollAnchorRef"
-        class="snapshot-drawer-body"
+        class="hfl-detail-drawer__body snapshot-drawer-body"
       >
         <el-descriptions
           :column="1"

@@ -68,6 +68,7 @@ import { useNodeLifecycleOps } from '../../composables/useNodeLifecycleOps'
 import { flowSourceReadyStatus } from '../../lib/flowSourceDisplay'
 import { backupSourceLifecycleDisplay } from '../../lib/backupSourceLifecycleDisplay'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
+import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { useRestoreTargetCatalog } from '../../composables/useRestoreTargetCatalog'
 import {
@@ -269,6 +270,8 @@ const fixedRestoreDirtyTracking = ref(false)
 let fixedRestoreLeaveApproved = false
 
 const { t, te, locale } = useI18n()
+const { tableMaxHeight: runningRestoreTableMaxHeight, containerRef: runningRestoreTableRef } = useDrawerTableMaxHeight()
+const { tableMaxHeight: restoreHistoryTableMaxHeight, containerRef: restoreHistoryTableRef } = useDrawerTableMaxHeight()
 const sourcePendingOps = useBackupWizardSourcePendingOps({ t })
 
 const lifecycleOps = useNodeLifecycleOps({
@@ -11343,7 +11346,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           direction="rtl"
           :size="drawerSize"
           destroy-on-close
-          class="dp-restore-task-drawer"
+          class="hfl-detail-drawer dp-restore-task-drawer"
           @closed="onRestoreTaskDrawerClosed"
         >
           <template #header>
@@ -11355,7 +11358,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             </div>
           </template>
 
-          <div class="space-y-4">
+          <div class="hfl-detail-drawer__body space-y-4">
             <section
               v-if="drawerRunningRestoreTasks.length > 0"
               class="restore-task-section"
@@ -11371,8 +11374,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 </el-tag>
               </div>
               <el-table
+                ref="runningRestoreTableRef"
                 v-table-overflow-title
                 :data="drawerRunningRestoreTasks"
+                :max-height="runningRestoreTableMaxHeight"
                 stripe
                 class="hfl-list-table restore-task-drawer-table"
               >
@@ -11431,8 +11436,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 </el-tag>
               </div>
               <el-table
+                ref="restoreHistoryTableRef"
                 v-table-overflow-title
                 :data="drawerPagedHistoryRestoreTasks"
+                :max-height="restoreHistoryTableMaxHeight"
                 stripe
                 class="hfl-list-table restore-task-drawer-table"
               >

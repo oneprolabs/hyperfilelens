@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { getSourceResource, listSourceResources, type SourceResource } from '../lib/sourceApi'
 import { listAllNodes } from '../lib/nodeApi'
 import { usePageRequestScope } from '../composables/usePageRequestScope'
+import { useDrawerTableMaxHeight } from '../composables/useDrawerTableMaxHeight'
 import type { ApiNode } from '../types/node'
 import NasSourceListTable from './NasSourceListTable.vue'
 import NasSourceDetailDrawer from '../pages/protection/components/NasSourceDetailDrawer.vue'
@@ -18,6 +19,7 @@ const proxyNodes = ref<ApiNode[]>([])
 const loading = ref(false)
 const detailOpen = ref(false)
 const detail = ref<SourceResource | null>(null)
+const { tableMaxHeight, containerRef: tableRef } = useDrawerTableMaxHeight()
 
 async function loadProxyNodes(signal?: AbortSignal) {
   try {
@@ -88,9 +90,11 @@ watch(
 <template>
   <div class="proxy-bound-nas-panel">
     <NasSourceListTable
+      ref="tableRef"
       :rows="rows"
       :proxy-nodes="proxyNodes"
       :loading="loading"
+      :max-height="tableMaxHeight"
       @row-click="openDetail"
     />
     <NasSourceDetailDrawer
