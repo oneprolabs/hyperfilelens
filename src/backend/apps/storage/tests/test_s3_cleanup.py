@@ -289,7 +289,7 @@ class S3PrefixCleanupTests(SimpleTestCase):
                 )
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
-    def test_fails_closed_when_version_api_is_unsupported(self, build_client):
+    def test_deletes_objects_when_version_api_is_unsupported(self, build_client):
         client = self._client()
         unsupported_versions = ClientError(
             {
@@ -331,16 +331,32 @@ class S3PrefixCleanupTests(SimpleTestCase):
         client.delete_objects.return_value = {}
         build_client.return_value = client
 
-        with self.assertRaises(S3ClientError):
-            self._delete(
-                endpoint="https://s3.example.test",
-                region="us-east-1",
-                bucket="bucket",
-                prefix="repo/",
-                access_key_id="key",
-                secret_access_key="secret",
-            )
-        client.delete_objects.assert_not_called()
+        # Backends without versioning support are treated as version-free:
+        # current objects are deleted, no version/marker accounting, and the
+        # ownership marker itself is removed via a plain object delete.
+        result = self._delete(
+            endpoint="https://s3.example.test",
+            region="us-east-1",
+            bucket="bucket",
+            prefix="repo/",
+            access_key_id="key",
+            secret_access_key="secret",
+        )
+        self.assertEqual(result["deleted_versions"], 0)
+        self.assertEqual(result["deleted_markers"], 0)
+        self.assertEqual(result["deleted_objects"], 2)
+        deleted_keys = [
+            item["Key"]
+            for call in client.delete_objects.call_args_list
+            for item in call.kwargs["Delete"]["Objects"]
+        ]
+        self.assertEqual(
+            sorted(deleted_keys),
+            [
+                "repo/.hyperfilelens/repository-owner-v1.json",
+                "repo/object",
+            ],
+        )
 
 
 class S3BucketCleanupTests(SimpleTestCase):

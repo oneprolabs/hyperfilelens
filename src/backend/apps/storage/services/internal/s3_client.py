@@ -1100,8 +1100,9 @@ def _chunks(items: list[dict], size: int):
 def _next_s3_non_owner_version_batch(
     *, client, bucket: str, prefix: str, marker_key: str
 ) -> tuple[list[dict], list[dict]]:
-    paginator = client.get_paginator("list_object_versions")
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+    for page in _s3_list_object_version_pages(
+        client=client, bucket=bucket, prefix=prefix
+    ):
         versions = [
             {"Key": item["Key"], "VersionId": item["VersionId"]}
             for item in page.get("Versions", [])
@@ -1198,9 +1199,10 @@ def _require_s3_cleanup_marker(
 
 
 def _s3_marker_version_entries(*, client, bucket: str, key: str) -> list[dict] | None:
-    paginator = client.get_paginator("list_object_versions")
     entries: list[dict] = []
-    for page in paginator.paginate(Bucket=bucket, Prefix=key):
+    for page in _s3_list_object_version_pages(
+        client=client, bucket=bucket, prefix=key
+    ):
         entries.extend(
             {
                 "Key": item["Key"],
@@ -1225,8 +1227,9 @@ def _s3_marker_version_entries(*, client, bucket: str, key: str) -> list[dict] |
 def _verify_s3_prefix_contains_only_marker(
     *, client, bucket: str, prefix: str, marker_key: str
 ) -> None:
-    paginator = client.get_paginator("list_object_versions")
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+    for page in _s3_list_object_version_pages(
+        client=client, bucket=bucket, prefix=prefix
+    ):
         entries = [
             *page.get("Versions", []),
             *page.get("DeleteMarkers", []),
@@ -1262,6 +1265,43 @@ def _is_unsupported_s3_header_error(exc: ClientError) -> bool:
     return "header you provided implies functionality" in message
 
 
+def _s3_list_object_versions(*, client, bucket: str, prefix: str) -> dict:
+    """Call list_object_versions, treating unsupported versioning as empty.
+
+    Some S3-compatible backends (e.g. Huawei Cloud OBS without versioning,
+    or older MinIO configurations) return NotImplemented for
+    ListObjectVersions. We treat that as "no versions" so deletion can fall
+    back to the non-versioned object cleanup path.
+    """
+    try:
+        return client.list_object_versions(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+    except ClientError as exc:
+        if _is_unsupported_s3_header_error(exc):
+            logger.debug(
+                "list_object_versions not supported for %s/%s, treating as empty",
+                bucket,
+                prefix,
+            )
+            return {}
+        raise
+
+
+def _s3_list_object_version_pages(*, client, bucket: str, prefix: str):
+    """Paginator for list_object_versions with NotImplemented fallback."""
+    paginator = client.get_paginator("list_object_versions")
+    try:
+        yield from paginator.paginate(Bucket=bucket, Prefix=prefix)
+    except ClientError as exc:
+        if _is_unsupported_s3_header_error(exc):
+            logger.debug(
+                "list_object_versions paginator not supported for %s/%s",
+                bucket,
+                prefix,
+            )
+            return
+        raise
+
+
 def _should_fallback_from_batch_delete(exc: ClientError) -> bool:
     return (
         _is_unsupported_s3_header_error(exc)
@@ -1270,7 +1310,9 @@ def _should_fallback_from_batch_delete(exc: ClientError) -> bool:
 
 
 def _verify_s3_prefix_empty(*, client, bucket: str, prefix: str) -> None:
-    versions = client.list_object_versions(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+    versions = _s3_list_object_versions(
+        client=client, bucket=bucket, prefix=prefix
+    )
     if versions.get("Versions") or versions.get("DeleteMarkers"):
         raise S3ClientError(
             "Repository object prefix still contains object versions after cleanup."
