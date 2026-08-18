@@ -24,6 +24,7 @@ from apps.lens_bridge.services import (
     ingest_policy,
     managed_datasource,
     provisioning,
+    sl_client,
 )
 from apps.lens_bridge.services.gateway_execution import context_for_knowledge_source
 from apps.node.models.node import Node
@@ -477,26 +478,58 @@ def run_knowledge_source_sync(
             ks=ks,
             progress_callback=progress_callback,
         )
+        _clear_source_lens_transient_state(ks)
         _release_sync_claim(
             knowledge_source_id=knowledge_source_id,
             claim_token=claim_token,
         )
         return result
     except managed_datasource.ManagedDatasourcePending as exc:
+        retry_after_seconds = exc.retry_after_seconds
+        _clear_source_lens_transient_state(ks)
         _release_sync_claim(
             knowledge_source_id=knowledge_source_id,
             claim_token=claim_token,
             next_poll_at=(
                 timezone.now()
-                + timedelta(
-                    seconds=managed_datasource.CONVERSION_RETRY_SECONDS
-                )
+                + timedelta(seconds=retry_after_seconds)
             ),
         )
         return {
             "knowledge_source_id": ks.id,
             "status": "waiting",
             "detail": str(exc),
+            "retry_after_seconds": retry_after_seconds,
+        }
+    except sl_client.LensBridgeUnavailable as exc:
+        retry_after_seconds = managed_datasource.CONVERSION_TRANSIENT_RETRY_MAX_SECONDS // 10
+        sync_state = dict(ks.sync_state_json or {})
+        transient = dict(sync_state.get("source_lens_transient") or {})
+        transient_count = int(transient.get("count") or 0) + 1
+        retry_after_seconds = min(
+            managed_datasource.CONVERSION_TRANSIENT_RETRY_MAX_SECONDS,
+            retry_after_seconds * (2 ** max(0, min(transient_count - 1, 3))),
+        )
+        sync_state["source_lens_transient"] = {
+            "count": transient_count,
+            "last_seen_at": timezone.now().isoformat(),
+        }
+        ks.sync_state_json = sync_state
+        ks.status = LensKnowledgeSource.Status.SYNCING
+        ks.status_detail = "SourceLens is temporarily unavailable. Retrying automatically."
+        ks.save(
+            update_fields=["sync_state_json", "status", "status_detail", "updated_at"]
+        )
+        _release_sync_claim(
+            knowledge_source_id=knowledge_source_id,
+            claim_token=claim_token,
+            next_poll_at=timezone.now() + timedelta(seconds=retry_after_seconds),
+        )
+        return {
+            "knowledge_source_id": ks.id,
+            "status": "waiting",
+            "detail": str(exc.detail),
+            "retry_after_seconds": retry_after_seconds,
         }
     except Exception as exc:
         logger.exception(
@@ -510,6 +543,27 @@ def run_knowledge_source_sync(
             claim_token=claim_token,
         )
         raise
+
+
+def _clear_source_lens_transient_state(ks: LensKnowledgeSource) -> None:
+    """Clear a recovered bridge outage without overwriting pipeline progress."""
+
+    current_state = (
+        LensKnowledgeSource.all_objects.filter(pk=ks.id)
+        .values_list("sync_state_json", flat=True)
+        .first()
+    )
+    if (
+        not isinstance(current_state, dict)
+        or "source_lens_transient" not in current_state
+    ):
+        return
+    current_state = dict(current_state)
+    current_state.pop("source_lens_transient", None)
+    LensKnowledgeSource.all_objects.filter(pk=ks.id).update(
+        sync_state_json=current_state,
+        updated_at=timezone.now(),
+    )
 
 
 def _run_sync_pipeline(

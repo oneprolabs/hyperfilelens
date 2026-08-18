@@ -97,7 +97,12 @@ def queue_sl_chat_user_provision(*, user_id: int, gateway_operator: bool = False
         thread.start()
 
 
-def queue_copilot_chat_provision(*, session_link_id: int) -> None:
+def queue_copilot_chat_provision(
+    *,
+    session_link_id: int,
+    expected_generation: int | None = None,
+    expected_poll_sequence: int | None = None,
+) -> None:
     """Queue a durable Copilot job.
 
     Copilot provisioning owns external resources and must never run in an API
@@ -106,8 +111,17 @@ def queue_copilot_chat_provision(*, session_link_id: int) -> None:
     """
     from apps.lens_bridge.tasks.chat_lifecycle import execute_copilot_chat_provision_task
 
+    expected_generation = 1 if expected_generation is None else expected_generation
+    expected_poll_sequence = (
+        0 if expected_poll_sequence is None else expected_poll_sequence
+    )
+
     try:
-        execute_copilot_chat_provision_task.delay(session_link_id=session_link_id)
+        execute_copilot_chat_provision_task.delay(
+            session_link_id=session_link_id,
+            expected_generation=int(expected_generation),
+            expected_poll_sequence=int(expected_poll_sequence),
+        )
     except Exception as exc:
         logger.exception("Failed to queue copilot chat provision via Celery session=%s", session_link_id)
         raise RuntimeError("Unable to queue chat provisioning.") from exc

@@ -198,6 +198,31 @@ class ManagedDatasourceTests(SimpleTestCase):
         )
 
     @patch("apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id")
+    def test_audited_manual_confirmation_unblocks_terminal_conversion(self, get_task):
+        knowledge_source = self._knowledge_source()
+        knowledge_source.sync_state_json = {
+            "conversion": {
+                "task_id": "convert-1",
+                "manual_stop_confirmation": {
+                    "confirmed": True,
+                    "task_id": "convert-1",
+                },
+            }
+        }
+        get_task.return_value = {
+            "task_id": "convert-1",
+            "status": "REVOKED",
+            "metadata": {
+                "datasource_conversion_request_id": "request-1",
+                "manual_revoked_at": "2026-08-18T01:00:00Z",
+            },
+        }
+
+        self.assertTrue(
+            managed_datasource.conversion_stop_confirmed(knowledge_source)
+        )
+
+    @patch("apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id")
     def test_missing_dispatched_task_does_not_prove_conversion_stopped(
         self,
         get_task,
@@ -248,6 +273,49 @@ class ManagedDatasourceTests(SimpleTestCase):
 
         start_conversion.assert_not_called()
         self.assertIn("lookup_missing_at", sync_state["conversion"])
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.start_managed_datasource_conversion"
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        side_effect=sl_client.LensBridgeUnavailable(),
+    )
+    def test_temporary_poll_failure_is_pending_with_backoff(
+        self,
+        _get_task,
+        start_conversion,
+    ):
+        knowledge_source = self._knowledge_source()
+        knowledge_source.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "convert-1",
+                "status": "STARTED",
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(policy)
+                ),
+                "started_at": timezone.now().isoformat(),
+            }
+        }
+
+        with self.assertRaises(
+            managed_datasource.ManagedDatasourcePending
+        ) as raised:
+            managed_datasource.convert_documents(
+                ks=knowledge_source,
+                sync_state=sync_state,
+                conversion=policy,
+            )
+
+        self.assertGreaterEqual(raised.exception.retry_after_seconds, 15)
+        self.assertEqual(
+            sync_state["conversion"]["last_transient_operation"],
+            "poll_conversion",
+        )
+        start_conversion.assert_not_called()
 
     @patch("apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id")
     def test_failed_dispatched_conversion_waits_for_lensnode_callback(

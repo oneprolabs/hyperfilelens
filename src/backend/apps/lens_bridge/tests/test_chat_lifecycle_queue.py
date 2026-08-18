@@ -42,7 +42,15 @@ from common.errors import AppError
 class CopilotLifecycleQueueTests(SimpleTestCase):
     @patch(
         "apps.lens_bridge.services.chat_lifecycle.run_copilot_chat_provision",
-        return_value={"session_link_id": 42, "status": "waiting"},
+        return_value={
+            "session_link_id": 42,
+            "status": "waiting",
+            "next_poll": {
+                "generation": 3,
+                "sequence": 8,
+                "retry_after_seconds": 30,
+            },
+        },
     )
     def test_pending_task_schedules_a_short_follow_up(self, _run):
         task = chat_lifecycle_tasks.execute_copilot_chat_provision_task
@@ -51,11 +59,15 @@ class CopilotLifecycleQueueTests(SimpleTestCase):
 
         self.assertEqual(result["status"], "waiting")
         apply_async.assert_called_once_with(
-            kwargs={"session_link_id": 42},
-            countdown=5,
+            kwargs={
+                "session_link_id": 42,
+                "expected_generation": 3,
+                "expected_poll_sequence": 8,
+            },
+            countdown=30,
         )
 
-    @patch("apps.lens_bridge.services.chat_lifecycle._release_provision_claim")
+    @patch("apps.lens_bridge.services.chat_lifecycle._defer_provision_poll")
     @patch(
         "apps.lens_bridge.services.chat_lifecycle._claim_copilot_chat_provision",
         return_value=("claim-token", "claimed"),
@@ -68,12 +80,47 @@ class CopilotLifecycleQueueTests(SimpleTestCase):
         self,
         _run,
         _claim,
-        release_claim,
+        defer_poll,
     ):
         result = chat_lifecycle.run_copilot_chat_provision(session_link_id=42)
 
         self.assertEqual(result["status"], "waiting")
-        release_claim.assert_called_once_with(42, "claim-token")
+        defer_poll.assert_called_once_with(
+            42,
+            "claim-token",
+            retry_after_seconds=5,
+        )
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._cleanup_failed_provision")
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle._defer_provision_for_transient_error",
+        return_value={
+            "generation": 2,
+            "sequence": 4,
+            "retry_after_seconds": 30,
+        },
+    )
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle._claim_copilot_chat_provision",
+        return_value=("claim-token", "claimed"),
+    )
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle._run_copilot_chat_provision",
+        side_effect=chat_lifecycle.sl_client.LensBridgeUnavailable(),
+    )
+    def test_transient_source_lens_failure_waits_without_cleanup(
+        self,
+        _run,
+        _claim,
+        defer_transient,
+        cleanup_failed,
+    ):
+        result = chat_lifecycle.run_copilot_chat_provision(session_link_id=42)
+
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(result["next_poll"]["sequence"], 4)
+        defer_transient.assert_called_once()
+        cleanup_failed.assert_not_called()
 
     @patch("apps.lens_bridge.services.chat_lifecycle.LensSessionLink.objects.filter")
     @patch("apps.lens_bridge.services.chat_lifecycle._mark_provision_failed_by_id")
@@ -108,7 +155,11 @@ class CopilotLifecycleQueueTests(SimpleTestCase):
     def test_provision_dispatches_to_celery(self, delay):
         queue_copilot_chat_provision(session_link_id=42)
 
-        delay.assert_called_once_with(session_link_id=42)
+        delay.assert_called_once_with(
+            session_link_id=42,
+            expected_generation=1,
+            expected_poll_sequence=0,
+        )
 
     @patch(
         "apps.lens_bridge.tasks.chat_lifecycle.execute_copilot_chat_teardown_task.delay",
@@ -357,6 +408,99 @@ class CopilotRetryTests(TestCase):
 
         with self.assertRaisesRegex(ValidationError, "Session is not retryable"):
             chat_lifecycle.retry_copilot_chat_provision(session)
+
+    def test_cleanup_blocked_session_is_not_retryable(self):
+        session = self.create_session(LensSessionLink.LifecycleStatus.FAILED)
+        session.cleanup_intent = LensSessionLink.CleanupIntent.RESET_FOR_RETRY
+        session.cleanup_status = LensSessionLink.CleanupStatus.BLOCKED
+        session.save(
+            update_fields=["cleanup_intent", "cleanup_status", "updated_at"]
+        )
+
+        with self.assertRaisesRegex(ValidationError, "recovery must finish"):
+            chat_lifecycle.retry_copilot_chat_provision(session)
+
+    def test_stale_poll_message_cannot_claim_or_spawn_a_successor(self):
+        session = self.create_session(LensSessionLink.LifecycleStatus.PROVISIONING)
+        session.provision_generation = 3
+        session.provision_poll_sequence = 2
+        session.save(
+            update_fields=[
+                "provision_generation",
+                "provision_poll_sequence",
+                "updated_at",
+            ]
+        )
+
+        token, status = chat_lifecycle._claim_copilot_chat_provision(
+            session.id,
+            expected_generation=3,
+            expected_poll_sequence=1,
+        )
+
+        self.assertIsNone(token)
+        self.assertEqual(status, "stale")
+        session.refresh_from_db()
+        self.assertIsNone(session.provision_claim_token)
+
+    def test_legacy_message_cannot_claim_a_new_generation(self):
+        session = self.create_session(LensSessionLink.LifecycleStatus.PROVISIONING)
+        session.provision_generation = 2
+        session.provision_poll_sequence = 0
+        session.save(
+            update_fields=[
+                "provision_generation",
+                "provision_poll_sequence",
+                "updated_at",
+            ]
+        )
+
+        token, status = chat_lifecycle._claim_copilot_chat_provision(session.id)
+
+        self.assertIsNone(token)
+        self.assertEqual(status, "stale")
+        session.refresh_from_db()
+        self.assertIsNone(session.provision_claim_token)
+
+    def test_partially_fenced_message_is_stale(self):
+        session = self.create_session(LensSessionLink.LifecycleStatus.PROVISIONING)
+
+        token, status = chat_lifecycle._claim_copilot_chat_provision(
+            session.id,
+            expected_generation=1,
+        )
+
+        self.assertIsNone(token)
+        self.assertEqual(status, "stale")
+        session.refresh_from_db()
+        self.assertIsNone(session.provision_claim_token)
+
+    def test_valid_poll_advances_exactly_one_sequence(self):
+        session = self.create_session(LensSessionLink.LifecycleStatus.PROVISIONING)
+        session.provision_generation = 3
+        session.provision_poll_sequence = 2
+        session.save(
+            update_fields=[
+                "provision_generation",
+                "provision_poll_sequence",
+                "updated_at",
+            ]
+        )
+        token, status = chat_lifecycle._claim_copilot_chat_provision(
+            session.id,
+            expected_generation=3,
+            expected_poll_sequence=2,
+        )
+
+        self.assertEqual(status, "claimed")
+        next_poll = chat_lifecycle._defer_provision_poll(
+            session.id,
+            token,
+            retry_after_seconds=30,
+        )
+
+        self.assertEqual(next_poll["generation"], 3)
+        self.assertEqual(next_poll["sequence"], 3)
 
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
     @patch(

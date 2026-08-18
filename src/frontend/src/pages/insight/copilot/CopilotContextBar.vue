@@ -24,8 +24,20 @@ const { t } = useI18n()
 const router = useRouter()
 const detailsOpen = ref(false)
 const activeRunStatuses = new Set(['queued', 'running', 'streaming'])
+const isRecoveryCleanup = computed(() => (
+  props.session.lifecycle_status === 'failed'
+  && props.session.cleanup_intent === 'reset_for_retry'
+  && ['pending', 'running'].includes(props.session.cleanup_status || '')
+))
+const isCleanupBlocked = computed(() => (
+  props.session.lifecycle_status === 'failed'
+  && props.session.cleanup_intent === 'reset_for_retry'
+  && props.session.cleanup_status === 'blocked'
+))
 
 const statusLabel = computed(() => {
+  if (isRecoveryCleanup.value) return 'Recovering…'
+  if (isCleanupBlocked.value) return 'Recovery Blocked'
   if (props.session.lifecycle_status === 'failed') return 'Failed'
   if (props.session.lifecycle_status === 'provisioning') return 'Preparing…'
   if (props.session.lifecycle_status === 'deleting') return 'Deleting…'
@@ -34,8 +46,8 @@ const statusLabel = computed(() => {
 })
 
 const statusClass = computed(() => ({
-  'is-failed': props.session.lifecycle_status === 'failed',
-  'is-preparing': props.session.lifecycle_status === 'provisioning',
+  'is-failed': props.session.lifecycle_status === 'failed' && !isRecoveryCleanup.value,
+  'is-preparing': props.session.lifecycle_status === 'provisioning' || isRecoveryCleanup.value,
   'is-deleting': props.session.lifecycle_status === 'deleting',
   'is-answering': activeRunStatuses.has(props.session.active_run_status || ''),
 }))

@@ -47,6 +47,12 @@ class SourceLensClientReadinessTests(SimpleTestCase):
 
         self.assertNotIn("must-not-leak", str(raised.exception))
 
+    def test_remote_rate_limit_is_retryable(self) -> None:
+        response = Mock(status_code=429, content=b"rate limited")
+
+        with self.assertRaises(sl_client.LensBridgeUnavailable):
+            sl_client._raise_for_response(response)
+
     @patch.object(sl_client, "_auth_headers", return_value={})
     @patch.object(sl_client, "_base_url", return_value="http://sourcelens")
     @patch.object(sl_client.requests, "get")

@@ -859,7 +859,12 @@ export function useKnowledgeSourceForm(
             backup_snapshot_directory_id: sourceScopes[0].backup_snapshot_directory_id,
             source_path: sourceScopes[0].source_path,
             source_scopes: sourceScopes,
-            linked_version_mode: 'latest',
+            linked_version_mode: snapshotPickerValue.value === SNAPSHOT_PICKER_LATEST
+              ? 'latest'
+              : 'pinned',
+            pinned_snapshot_id: snapshotPickerValue.value === SNAPSHOT_PICKER_LATEST
+              ? null
+              : effectiveSnapshotId.value,
             scan_enabled: scanEnabled.value,
             ingest_policy: normalizeLensIngestPolicy(ingestPolicy.value),
           })

@@ -629,6 +629,18 @@ class LensSessionLink(OrganizationScopedModel):
         DELETING = "deleting", "Deleting"
         DELETED = "deleted", "Deleted"
 
+    class CleanupIntent(models.TextChoices):
+        NONE = "none", "None"
+        RESET_FOR_RETRY = "reset_for_retry", "Reset for retry"
+        DELETE_SESSION = "delete_session", "Delete session"
+
+    class CleanupStatus(models.TextChoices):
+        NONE = "none", "None"
+        PENDING = "pending", "Pending"
+        RUNNING = "running", "Running"
+        BLOCKED = "blocked", "Blocked"
+        COMPLETE = "complete", "Complete"
+
     class GatewaySelectionMode(models.TextChoices):
         AUTO = "auto", "Auto"
         MANUAL = "manual", "Manual"
@@ -746,6 +758,20 @@ class LensSessionLink(OrganizationScopedModel):
     provision_claim_token = models.UUIDField(null=True, blank=True, unique=True)
     provision_claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
     provision_next_retry_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    provision_generation = models.PositiveBigIntegerField(default=1)
+    provision_poll_sequence = models.PositiveBigIntegerField(default=0)
+    cleanup_intent = models.CharField(
+        max_length=24,
+        choices=CleanupIntent.choices,
+        default=CleanupIntent.NONE,
+        db_index=True,
+    )
+    cleanup_status = models.CharField(
+        max_length=16,
+        choices=CleanupStatus.choices,
+        default=CleanupStatus.NONE,
+        db_index=True,
+    )
     teardown_state_json = models.JSONField(default=dict, blank=True)
     teardown_attempts = models.PositiveIntegerField(default=0)
     teardown_claim_token = models.UUIDField(null=True, blank=True, unique=True)

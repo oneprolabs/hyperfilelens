@@ -75,11 +75,14 @@ function deferred<T>() {
 
 const SimpleStub = defineComponent({ template: '<div />' })
 
-function sessionRow(activeRun: { uuid: string; status: string } | null = null) {
+function sessionRow(
+  activeRun: { uuid: string; status: string } | null = null,
+  lifecycleStatus = 'ready',
+) {
   return {
     id: 444,
     title: 'Chat',
-    lifecycle_status: 'ready',
+    lifecycle_status: lifecycleStatus,
     status: 'active',
     sl_session_uuid: 'session-1',
     sl_assistant_uuid: 'assistant-1',
@@ -149,6 +152,34 @@ describe('InsightCopilot starter question submission', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('keeps long lifecycle polling active and stops it after unmount', async () => {
+    vi.useFakeTimers()
+    mocks.listCopilotSessions.mockResolvedValue([
+      sessionRow(null, 'provisioning'),
+    ])
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+    const wrapper = mountCopilot(i18n)
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(2_400_000)
+    await flushPromises()
+
+    expect(mocks.listCopilotSessions.mock.calls.length).toBeGreaterThan(121)
+    wrapper.unmount()
+    const callsAfterUnmount = mocks.listCopilotSessions.mock.calls.length
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    await flushPromises()
+
+    expect(mocks.listCopilotSessions).toHaveBeenCalledTimes(callsAfterUnmount)
   })
 
   it('submits the starter question without copying it into the composer', async () => {

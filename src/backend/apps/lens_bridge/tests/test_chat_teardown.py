@@ -269,6 +269,71 @@ class CopilotChatTeardownTests(TestCase):
         self.assertIsNone(self.session.knowledge_source_id)
         self.assertIn("LensNode was unavailable", self.session.lifecycle_error)
 
+    @mock.patch("apps.lens_bridge.services.assistant_access.soft_delete_assistant_link")
+    @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
+    @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")
+    def test_unconfirmed_conversion_stop_blocks_cleanup_without_deleting_workspace(
+        self,
+        request_json,
+        _delete_assistant,
+        _soft_delete_assistant,
+    ):
+        request_json.side_effect = self._not_found()
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.RESET_FOR_RETRY
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.PENDING
+        self.session.status = LensSessionLink.Status.ACTIVE
+        self.session.teardown_state_json = {
+            "intent": "reset_for_retry",
+            "provision_error": "conversion failed",
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "cleanup_intent",
+                "cleanup_status",
+                "status",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+
+        def block_knowledge_source_cleanup(**_kwargs):
+            LensKnowledgeSource.all_objects.filter(
+                pk=self.knowledge_source.id
+            ).update(
+                teardown_state_json={
+                    "cancel_conversion": {"status": "waiting"}
+                }
+            )
+            raise knowledge_source_teardown.KnowledgeSourceTeardownIncompleteError(
+                "Waiting for LensNode to stop document conversion."
+            )
+
+        with mock.patch(
+            "apps.lens_bridge.services.knowledge_source_teardown."
+            "run_knowledge_source_teardown",
+            side_effect=block_knowledge_source_cleanup,
+        ), self.assertRaises(chat_lifecycle.ChatTeardownIncompleteError):
+            chat_lifecycle.run_copilot_chat_teardown(
+                session_link_id=self.session.id
+            )
+
+        self.session.refresh_from_db()
+        self.workspace_binding.refresh_from_db()
+        self.assertEqual(
+            self.session.lifecycle_status,
+            LensSessionLink.LifecycleStatus.FAILED,
+        )
+        self.assertEqual(
+            self.session.cleanup_status,
+            LensSessionLink.CleanupStatus.BLOCKED,
+        )
+        self.assertEqual(
+            self.workspace_binding.state,
+            LensWorkspaceBinding.State.READY,
+        )
+
     @mock.patch(
         "apps.lens_bridge.services.chat_lifecycle."
         "_queue_teardown_or_record_error"
@@ -298,8 +363,91 @@ class CopilotChatTeardownTests(TestCase):
             self.session.teardown_state_json["intent"],
             "reset_for_retry",
         )
+        self.assertEqual(
+            self.session.lifecycle_status,
+            LensSessionLink.LifecycleStatus.FAILED,
+        )
+        self.assertEqual(
+            self.session.cleanup_intent,
+            LensSessionLink.CleanupIntent.RESET_FOR_RETRY,
+        )
+        self.assertEqual(
+            self.session.cleanup_status,
+            LensSessionLink.CleanupStatus.PENDING,
+        )
         self.assertEqual(self.session.status, LensSessionLink.Status.ACTIVE)
         queue_teardown.assert_called_once_with(self.session.id)
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "knowledge_source_sync.run_knowledge_source_sync",
+        return_value={"status": "waiting", "retry_after_seconds": 15},
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "knowledge_source_sync.prepare_new_knowledge_source",
+        side_effect=lambda *, org, ks: ks,
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "chat_user_provisioning.ensure_sl_chat_user"
+    )
+    @mock.patch("apps.lens_bridge.services.chat_lifecycle._reserve_chat_capacity")
+    @mock.patch(
+        "apps.lens_bridge.services.chat_lifecycle._resolve_chat_scopes",
+        return_value=None,
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.gateway_execution.context_for_gateway_link"
+    )
+    def test_chat_knowledge_source_always_pins_selected_snapshot(
+        self,
+        _context,
+        _resolve_scopes,
+        _reserve_capacity,
+        _ensure_user,
+        _prepare_knowledge_source,
+        _run_sync,
+    ):
+        claim_token = uuid.uuid4()
+        self.session.knowledge_source = None
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
+        self.session.provision_claim_token = claim_token
+        self.session.provision_claimed_at = timezone.now()
+        self.session.backup_source_snapshot_id = 11
+        self.session.source_scopes_json = [
+            {
+                "source_path": "/data",
+                "backup_snapshot_directory_id": 12,
+                "path_type": "dir",
+            }
+        ]
+        self.session.save(
+            update_fields=[
+                "knowledge_source",
+                "lifecycle_status",
+                "provision_claim_token",
+                "provision_claimed_at",
+                "backup_source_snapshot_id",
+                "source_scopes_json",
+                "updated_at",
+            ]
+        )
+
+        result = chat_lifecycle._run_copilot_chat_provision(
+            session_link_id=self.session.id,
+            claim_token=str(claim_token),
+        )
+
+        self.assertEqual(result["status"], "waiting")
+        self.session.refresh_from_db()
+        knowledge_source = self.session.knowledge_source
+        self.assertIsNotNone(knowledge_source)
+        self.assertEqual(
+            knowledge_source.linked_version_mode,
+            LensKnowledgeSource.LinkedVersionMode.PINNED,
+        )
+        self.assertEqual(knowledge_source.pinned_snapshot_id, 11)
 
     @mock.patch(
         "apps.lens_bridge.services.sync_queue.queue_knowledge_source_teardown"
@@ -523,7 +671,7 @@ class CopilotChatTeardownTests(TestCase):
         "apps.lens_bridge.services.chat_lifecycle._run_copilot_chat_provision",
         side_effect=RuntimeError("provision failed"),
     )
-    def test_failed_provision_with_incomplete_compensation_becomes_teardown(
+    def test_failed_provision_with_incomplete_compensation_starts_recovery(
         self,
         _run_provision,
         _cleanup,
@@ -557,13 +705,17 @@ class CopilotChatTeardownTests(TestCase):
         self.session.refresh_from_db()
         self.assertEqual(
             self.session.lifecycle_status,
-            LensSessionLink.LifecycleStatus.DELETING,
+            LensSessionLink.LifecycleStatus.FAILED,
         )
         self.assertEqual(
             self.session.provision_phase,
             LensSessionLink.ProvisionPhase.CLEANING_UP,
         )
         self.assertIsNone(self.session.provision_claim_token)
+        self.assertEqual(
+            self.session.cleanup_status,
+            LensSessionLink.CleanupStatus.PENDING,
+        )
         queue_teardown.assert_called_once_with(self.session.id)
 
     @mock.patch(
@@ -1126,7 +1278,11 @@ class CopilotChatTeardownTests(TestCase):
         result = reconcile_copilot_chat_provisions_task(limit=10)
 
         self.assertEqual(result["session_ids"], [self.session.id])
-        delay.assert_called_once_with(session_link_id=self.session.id)
+        delay.assert_called_once_with(
+            session_link_id=self.session.id,
+            expected_generation=self.session.provision_generation,
+            expected_poll_sequence=self.session.provision_poll_sequence,
+        )
 
     @mock.patch(
         "apps.lens_bridge.tasks.chat_lifecycle."

@@ -33,7 +33,13 @@ _CHAT_PROVISION_WAIT_SECONDS = 5
     soft_time_limit=_PROVISION_SOFT_LIMIT,
     time_limit=_PROVISION_TIME_LIMIT,
 )
-def execute_copilot_chat_provision_task(self, *, session_link_id: int) -> dict:
+def execute_copilot_chat_provision_task(
+    self,
+    *,
+    session_link_id: int,
+    expected_generation: int | None = None,
+    expected_poll_sequence: int | None = None,
+) -> dict:
     with celery_trace(
         f"copilot-provision-{session_link_id}",
         task_name="apps.lens_bridge.tasks.chat_lifecycle.execute_copilot_chat_provision_task",
@@ -41,12 +47,34 @@ def execute_copilot_chat_provision_task(self, *, session_link_id: int) -> dict:
         from apps.lens_bridge.services.chat_lifecycle import run_copilot_chat_provision
 
         logger.info("copilot chat provision celery started session_link_id=%s", session_link_id)
-        result = run_copilot_chat_provision(session_link_id=int(session_link_id))
-        if result.get("status") == "waiting":
-            self.apply_async(
-                kwargs={"session_link_id": int(session_link_id)},
-                countdown=_CHAT_PROVISION_WAIT_SECONDS,
+        result = run_copilot_chat_provision(
+            session_link_id=int(session_link_id),
+            expected_generation=expected_generation,
+            expected_poll_sequence=expected_poll_sequence,
+        )
+        next_poll = result.get("next_poll")
+        if result.get("status") == "waiting" and isinstance(next_poll, dict):
+            retry_after_seconds = max(
+                _CHAT_PROVISION_WAIT_SECONDS,
+                int(next_poll.get("retry_after_seconds") or 0),
             )
+            try:
+                self.apply_async(
+                    kwargs={
+                        "session_link_id": int(session_link_id),
+                        "expected_generation": int(next_poll["generation"]),
+                        "expected_poll_sequence": int(next_poll["sequence"]),
+                    },
+                    countdown=retry_after_seconds,
+                )
+            except Exception:
+                logger.exception(
+                    "copilot provision follow-up dispatch failed; durable reconciler will retry "
+                    "session_link_id=%s generation=%s sequence=%s",
+                    session_link_id,
+                    next_poll.get("generation"),
+                    next_poll.get("sequence"),
+                )
         logger.info(
             "copilot chat provision celery finished session_link_id=%s status=%s",
             session_link_id,
@@ -93,7 +121,7 @@ def reconcile_copilot_chat_provisions_task(*, limit: int = 100) -> dict:
 
     now = timezone.now()
     stale_claim = now - timedelta(seconds=PROVISION_CLAIM_TTL_SECONDS)
-    session_ids = list(
+    sessions = list(
         LensSessionLink.objects.filter(
             lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
         )
@@ -106,13 +134,19 @@ def reconcile_copilot_chat_provisions_task(*, limit: int = 100) -> dict:
             | Q(provision_claimed_at__lte=stale_claim)
         )
         .order_by("provision_next_retry_at", "id")
-        .values_list("id", flat=True)[: max(1, min(int(limit), 500))]
+        .values_list("id", "provision_generation", "provision_poll_sequence")[
+            : max(1, min(int(limit), 500))
+        ]
     )
     queued_session_ids: list[int] = []
     failures: list[dict[str, str | int]] = []
-    for session_id in session_ids:
+    for session_id, generation, poll_sequence in sessions:
         try:
-            execute_copilot_chat_provision_task.delay(session_link_id=session_id)
+            execute_copilot_chat_provision_task.delay(
+                session_link_id=session_id,
+                expected_generation=generation,
+                expected_poll_sequence=poll_sequence,
+            )
             queued_session_ids.append(session_id)
         except Exception as exc:
             logger.exception(
@@ -145,7 +179,29 @@ def reconcile_lens_resource_teardowns_task(*, limit: int = 100) -> dict:
     stale_claim = now - timedelta(seconds=TEARDOWN_CLAIM_TTL_SECONDS)
     session_ids = list(
         LensSessionLink.objects.filter(
-            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            (
+                (
+                    Q(
+                        lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+                        cleanup_intent=LensSessionLink.CleanupIntent.DELETE_SESSION,
+                    )
+                    | Q(
+                        lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
+                        cleanup_intent=LensSessionLink.CleanupIntent.RESET_FOR_RETRY,
+                    )
+                )
+                & Q(
+                    cleanup_status__in=(
+                        LensSessionLink.CleanupStatus.PENDING,
+                        LensSessionLink.CleanupStatus.RUNNING,
+                        LensSessionLink.CleanupStatus.BLOCKED,
+                    )
+                )
+            )
+            | Q(
+                lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+                cleanup_intent=LensSessionLink.CleanupIntent.NONE,
+            )
         )
         .filter(
             Q(teardown_next_retry_at__isnull=True)

@@ -57,7 +57,10 @@ def execute_knowledge_source_sync_task(
                     "knowledge_source_id": int(knowledge_source_id),
                     "mode": "resume",
                 },
-                countdown=CONVERSION_RETRY_SECONDS,
+                countdown=max(
+                    CONVERSION_RETRY_SECONDS,
+                    int(result.get("retry_after_seconds") or 0),
+                ),
             )
         logger.info(
             "knowledge source sync celery finished ks_id=%s status=%s",

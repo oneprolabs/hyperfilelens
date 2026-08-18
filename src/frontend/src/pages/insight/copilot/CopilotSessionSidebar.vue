@@ -49,6 +49,8 @@ function sessionTitle(row: SessionRow) {
 }
 
 function sessionMeta(row: SessionRow) {
+  if (sessionIsRecovering(row)) return 'Recovering Chat…'
+  if (sessionCleanupBlocked(row)) return 'Recovery Needs Attention'
   if (row.lifecycle_status === 'provisioning') return 'Preparing Chat…'
   if (row.lifecycle_status === 'failed') return 'Preparation Failed'
   if (row.lifecycle_status === 'deleting') return 'Deleting…'
@@ -63,6 +65,23 @@ function sessionMeta(row: SessionRow) {
   if (allFiles) scopeLabel = `${scopes.length} File${scopes.length === 1 ? '' : 's'}`
   if (allFolders) scopeLabel = `${scopes.length} Folder${scopes.length === 1 ? '' : 's'}`
   return `${source} · ${scopeLabel}`
+}
+
+function sessionIsRecovering(row: SessionRow) {
+  return row.lifecycle_status === 'failed'
+    && row.cleanup_intent === 'reset_for_retry'
+    && ['pending', 'running'].includes(row.cleanup_status || '')
+}
+
+function sessionCleanupBlocked(row: SessionRow) {
+  return row.lifecycle_status === 'failed'
+    && row.cleanup_intent === 'reset_for_retry'
+    && row.cleanup_status === 'blocked'
+}
+
+function sessionIsRetryable(row: SessionRow) {
+  return row.lifecycle_status === 'failed'
+    && !['pending', 'running', 'blocked'].includes(row.cleanup_status || '')
 }
 
 function sessionIsRunning(row: SessionRow) {
@@ -189,15 +208,20 @@ function handleAction(command: string, row: SessionRow) {
               aria-hidden="true"
             >
               <span
-                v-if="row.lifecycle_status === 'failed'"
+                v-if="sessionCleanupBlocked(row)"
+                class="copilot-session-item__state is-failed"
+                title="Recovery needs attention"
+              ><AlertCircle :size="14" /></span>
+              <span
+                v-else-if="row.lifecycle_status === 'provisioning' || sessionIsRecovering(row)"
+                class="copilot-session-item__state is-preparing"
+                :title="sessionIsRecovering(row) ? 'Recovering' : 'Preparing'"
+              ><i /><i /><i /></span>
+              <span
+                v-else-if="row.lifecycle_status === 'failed'"
                 class="copilot-session-item__state is-failed"
                 title="Preparation failed"
               ><AlertCircle :size="14" /></span>
-              <span
-                v-else-if="row.lifecycle_status === 'provisioning'"
-                class="copilot-session-item__state is-preparing"
-                title="Preparing"
-              ><i /><i /><i /></span>
               <span
                 v-else-if="sessionIsRunning(row)"
                 class="copilot-session-item__state is-running"
@@ -240,7 +264,7 @@ function handleAction(command: string, row: SessionRow) {
                       Rename Chat
                     </ElDropdownItem>
                     <ElDropdownItem
-                      v-if="row.lifecycle_status === 'failed'"
+                      v-if="sessionIsRetryable(row)"
                       class="copilot-session-menu__retry"
                       command="retry"
                       :icon="RotateCcw"

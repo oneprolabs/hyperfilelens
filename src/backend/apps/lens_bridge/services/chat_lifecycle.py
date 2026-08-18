@@ -56,6 +56,8 @@ _ASSISTANT_CREATE_OPERATION = "assistant_create"
 _SESSION_CREATE_OPERATION = "session_create"
 _TEARDOWN_INTENT_DELETE = "delete_session"
 _TEARDOWN_INTENT_RESET_FOR_RETRY = "reset_for_retry"
+_PROVISION_TRANSIENT_RETRY_BASE_SECONDS = 15
+_PROVISION_TRANSIENT_RETRY_MAX_SECONDS = 300
 _SCOPE_TASK_STATE_KEY = "scope_resolution"
 _MAX_BIGINT = 2**63 - 1
 _MIN_BIGINT = -(2**63)
@@ -504,10 +506,24 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
     if locked.lifecycle_status == LensSessionLink.LifecycleStatus.DELETED:
         return locked
 
-    teardown_intent = str((locked.teardown_state_json or {}).get("intent") or "")
+    legacy_teardown_intent = str(
+        (locked.teardown_state_json or {}).get("intent") or ""
+    )
     delete_intent_already_active = (
         locked.lifecycle_status == LensSessionLink.LifecycleStatus.DELETING
-        and teardown_intent == _TEARDOWN_INTENT_DELETE
+        and (
+            (
+                locked.cleanup_intent
+                == LensSessionLink.CleanupIntent.DELETE_SESSION
+                and locked.cleanup_status
+                in {
+                    LensSessionLink.CleanupStatus.PENDING,
+                    LensSessionLink.CleanupStatus.RUNNING,
+                    LensSessionLink.CleanupStatus.BLOCKED,
+                }
+            )
+            or legacy_teardown_intent == _TEARDOWN_INTENT_DELETE
+        )
     )
     if not delete_intent_already_active:
         locked.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
@@ -518,6 +534,10 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
         locked.provision_claim_token = None
         locked.provision_claimed_at = None
         locked.provision_next_retry_at = None
+        locked.provision_generation += 1
+        locked.provision_poll_sequence = 0
+        locked.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        locked.cleanup_status = LensSessionLink.CleanupStatus.PENDING
         locked.teardown_attempts = 0
         locked.teardown_claim_token = None
         locked.teardown_claimed_at = None
@@ -533,6 +553,10 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
                 "provision_claim_token",
                 "provision_claimed_at",
                 "provision_next_retry_at",
+                "provision_generation",
+                "provision_poll_sequence",
+                "cleanup_intent",
+                "cleanup_status",
                 "teardown_attempts",
                 "teardown_claim_token",
                 "teardown_claimed_at",
@@ -547,6 +571,9 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
 
 def _claim_copilot_chat_provision(
     session_link_id: int,
+    *,
+    expected_generation: int | None = None,
+    expected_poll_sequence: int | None = None,
 ) -> tuple[str | None, str]:
     """Claim one queued or stale Chat provisioning execution."""
     now = timezone.now()
@@ -560,6 +587,20 @@ def _claim_copilot_chat_provision(
             return None, "missing"
         if link.lifecycle_status != LensSessionLink.LifecycleStatus.PROVISIONING:
             return None, str(link.lifecycle_status)
+        if expected_generation is None and expected_poll_sequence is None:
+            # Messages published before poll fencing was deployed carry no
+            # tokens. They may claim only the initial migrated generation;
+            # accepting them after Retry/Delete has advanced the generation
+            # would let an old message take ownership of a new lifecycle run.
+            if link.provision_generation != 1 or link.provision_poll_sequence != 0:
+                return None, "stale"
+        elif expected_generation is None or expected_poll_sequence is None:
+            return None, "stale"
+        elif (
+            link.provision_generation != int(expected_generation)
+            or link.provision_poll_sequence != int(expected_poll_sequence)
+        ):
+            return None, "stale"
         if link.provision_claimed_at and link.provision_claimed_at > now - timedelta(
             seconds=PROVISION_CLAIM_TTL_SECONDS
         ):
@@ -568,7 +609,8 @@ def _claim_copilot_chat_provision(
             return None, "scheduled"
 
         claim_token = uuid_lib.uuid4()
-        link.provision_attempts += 1
+        if link.provision_poll_sequence == 0:
+            link.provision_attempts += 1
         link.provision_claim_token = claim_token
         link.provision_claimed_at = now
         link.provision_next_retry_at = next_retry_at(link.provision_attempts)
@@ -586,9 +628,18 @@ def _claim_copilot_chat_provision(
     return str(claim_token), "claimed"
 
 
-def run_copilot_chat_provision(*, session_link_id: int) -> dict[str, Any]:
+def run_copilot_chat_provision(
+    *,
+    session_link_id: int,
+    expected_generation: int | None = None,
+    expected_poll_sequence: int | None = None,
+) -> dict[str, Any]:
     """Provision one chat and persist failures from every execution stage."""
-    claim_token, claim_status = _claim_copilot_chat_provision(session_link_id)
+    claim_token, claim_status = _claim_copilot_chat_provision(
+        session_link_id,
+        expected_generation=expected_generation,
+        expected_poll_sequence=expected_poll_sequence,
+    )
     if claim_token is None:
         return {"session_link_id": session_link_id, "status": claim_status}
     try:
@@ -597,7 +648,17 @@ def run_copilot_chat_provision(*, session_link_id: int) -> dict[str, Any]:
             claim_token=claim_token,
         )
         if result.get("status") == "waiting":
-            _release_provision_claim(session_link_id, claim_token)
+            sync_result = result.get("sync") if isinstance(result.get("sync"), dict) else {}
+            retry_after_seconds = int(
+                result.get("retry_after_seconds")
+                or sync_result.get("retry_after_seconds")
+                or 5
+            )
+            result["next_poll"] = _defer_provision_poll(
+                session_link_id,
+                claim_token,
+                retry_after_seconds=retry_after_seconds,
+            )
         return result
     except ChatProvisionLeaseLostError:
         current_status = (
@@ -613,6 +674,18 @@ def run_copilot_chat_provision(*, session_link_id: int) -> dict[str, Any]:
         return {
             "session_link_id": session_link_id,
             "status": current_status or "missing",
+        }
+    except sl_client.LensBridgeUnavailable as exc:
+        next_poll = _defer_provision_for_transient_error(
+            session_link_id,
+            claim_token,
+            detail=str(exc.detail),
+        )
+        return {
+            "session_link_id": session_link_id,
+            "status": "waiting",
+            "detail": str(exc.detail),
+            "next_poll": next_poll,
         }
     except Exception as exc:
         logger.exception(
@@ -741,6 +814,8 @@ def _run_copilot_chat_provision(
             backup_snapshot_directory_id=first_directory_id,
             source_path=first_path,
             source_scopes_json=scopes,
+            linked_version_mode=LensKnowledgeSource.LinkedVersionMode.PINNED,
+            pinned_snapshot_id=snapshot_id,
             sl_lensnode_uuid=gateway_link.sl_lensnode_uuid,
             ingest_policy_json=ingest_policy.normalize_ingest_policy(
                 {
@@ -782,11 +857,26 @@ def _run_copilot_chat_provision(
         progress_callback=sync_progress,
     )
     if sync_result.get("status") in {"waiting", "busy", "scheduled"}:
+        retry_after_seconds = int(sync_result.get("retry_after_seconds") or 0)
+        if retry_after_seconds <= 0:
+            next_poll_at = (
+                LensKnowledgeSource.objects.filter(pk=ks.id)
+                .values_list("sync_next_poll_at", flat=True)
+                .first()
+            )
+            if next_poll_at is not None:
+                retry_after_seconds = max(
+                    1,
+                    int((next_poll_at - timezone.now()).total_seconds()),
+                )
+        if retry_after_seconds <= 0:
+            retry_after_seconds = 10 if sync_result.get("status") == "busy" else 5
         return {
             "session_link_id": link.id,
             "status": "waiting",
             "knowledge_source_id": ks.id,
             "sync": sync_result,
+            "retry_after_seconds": retry_after_seconds,
         }
     ks.refresh_from_db()
     if ks.status not in (
@@ -1198,21 +1288,92 @@ def _require_provision_claim(link_id: int, claim_token: str) -> None:
         raise ChatProvisionLeaseLostError("Chat provisioning lease was lost.")
 
 
-def _release_provision_claim(link_id: int, claim_token: str) -> None:
-    """Release a healthy provision lease while external work is pending."""
+@transaction.atomic
+def _defer_provision_poll(
+    link_id: int,
+    claim_token: str,
+    *,
+    retry_after_seconds: int,
+    transient_detail: str = "",
+) -> dict[str, int]:
+    """Advance one durable poll generation and release the worker lease."""
 
-    updated = LensSessionLink.objects.filter(
-        pk=link_id,
-        lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
-        provision_claim_token=claim_token,
-    ).update(
-        provision_claim_token=None,
-        provision_claimed_at=None,
-        provision_next_retry_at=None,
-        updated_at=timezone.now(),
+    link = (
+        LensSessionLink.objects.select_for_update()
+        .filter(
+            pk=link_id,
+            lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+            provision_claim_token=claim_token,
+        )
+        .first()
     )
-    if updated != 1:
+    if link is None:
         raise ChatProvisionLeaseLostError("Chat provisioning lease was lost.")
+    delay = max(1, min(int(retry_after_seconds), _PROVISION_TRANSIENT_RETRY_MAX_SECONDS))
+    link.provision_poll_sequence += 1
+    link.provision_claim_token = None
+    link.provision_claimed_at = None
+    link.provision_next_retry_at = timezone.now() + timedelta(seconds=delay)
+    state = dict(link.provision_state_json or {})
+    if transient_detail:
+        transient = dict(state.get("source_lens_transient") or {})
+        transient.update(
+            {
+                "count": int(transient.get("count") or 0) + 1,
+                "detail": transient_detail[:500],
+                "last_seen_at": timezone.now().isoformat(),
+            }
+        )
+        state["source_lens_transient"] = transient
+        link.provision_state_json = state
+        link.provision_detail = (
+            "SourceLens is temporarily unavailable. Retrying automatically."
+        )
+    else:
+        state.pop("source_lens_transient", None)
+        link.provision_state_json = state
+    link.save(
+        update_fields=[
+            "provision_poll_sequence",
+            "provision_claim_token",
+            "provision_claimed_at",
+            "provision_next_retry_at",
+            "provision_state_json",
+            "provision_detail",
+            "updated_at",
+        ]
+    )
+    return {
+        "generation": int(link.provision_generation),
+        "sequence": int(link.provision_poll_sequence),
+        "retry_after_seconds": delay,
+    }
+
+
+def _defer_provision_for_transient_error(
+    link_id: int,
+    claim_token: str,
+    *,
+    detail: str,
+) -> dict[str, int]:
+    state = (
+        LensSessionLink.objects.filter(pk=link_id)
+        .values_list("provision_state_json", flat=True)
+        .first()
+        or {}
+    )
+    transient = state.get("source_lens_transient") if isinstance(state, dict) else {}
+    count = int((transient or {}).get("count") or 0) + 1
+    delay = min(
+        _PROVISION_TRANSIENT_RETRY_MAX_SECONDS,
+        _PROVISION_TRANSIENT_RETRY_BASE_SECONDS * (2 ** min(count - 1, 4)),
+    )
+    return _defer_provision_poll(
+        link_id,
+        claim_token,
+        retry_after_seconds=delay,
+        transient_detail=detail,
+    )
 
 
 def _update_provision_claim(
@@ -1599,7 +1760,10 @@ def _complete_copilot_chat_provision(
             operation["status"] = "bound"
             operation["updated_at"] = timezone.now().isoformat()
             provision_state[kind] = operation
+    provision_state.pop("source_lens_transient", None)
     link.provision_state_json = provision_state
+    link.cleanup_intent = LensSessionLink.CleanupIntent.NONE
+    link.cleanup_status = LensSessionLink.CleanupStatus.NONE
     link.provision_claim_token = None
     link.provision_claimed_at = None
     link.provision_next_retry_at = None
@@ -1612,6 +1776,8 @@ def _complete_copilot_chat_provision(
             "provision_detail",
             "lifecycle_error",
             "provision_state_json",
+            "cleanup_intent",
+            "cleanup_status",
             "provision_claim_token",
             "provision_claimed_at",
             "provision_next_retry_at",
@@ -1732,32 +1898,71 @@ def _record_late_source_lens_resource(
     else:
         setattr(link, field, resource_uuid)
         update_fields = [field, "lifecycle_error", "updated_at"]
+    delete_session = (
+        link.lifecycle_status
+        in {
+            LensSessionLink.LifecycleStatus.DELETING,
+            LensSessionLink.LifecycleStatus.DELETED,
+        }
+        or link.cleanup_intent == LensSessionLink.CleanupIntent.DELETE_SESSION
+        or link.status == LensSessionLink.Status.ARCHIVED
+    )
+    cleanup_intent = (
+        LensSessionLink.CleanupIntent.DELETE_SESSION
+        if delete_session
+        else LensSessionLink.CleanupIntent.RESET_FOR_RETRY
+    )
     link.lifecycle_error = error[:2000]
-    if link.lifecycle_status != LensSessionLink.LifecycleStatus.DELETING:
+    link.cleanup_intent = cleanup_intent
+    link.cleanup_status = LensSessionLink.CleanupStatus.PENDING
+    teardown_state = dict(link.teardown_state_json or {})
+    teardown_state["intent"] = cleanup_intent
+    link.teardown_state_json = teardown_state
+    update_fields.extend(
+        ["cleanup_intent", "cleanup_status", "teardown_state_json"]
+    )
+    link.teardown_claim_token = None
+    link.teardown_claimed_at = None
+    link.teardown_next_retry_at = None
+    update_fields.extend(
+        [
+            "teardown_claim_token",
+            "teardown_claimed_at",
+            "teardown_next_retry_at",
+        ]
+    )
+    link.provision_claim_token = None
+    link.provision_claimed_at = None
+    link.provision_next_retry_at = None
+    link.provision_generation += 1
+    link.provision_poll_sequence = 0
+    update_fields.extend(
+        [
+            "provision_claim_token",
+            "provision_claimed_at",
+            "provision_next_retry_at",
+            "provision_generation",
+            "provision_poll_sequence",
+        ]
+    )
+    if delete_session:
         link.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
         link.status = LensSessionLink.Status.ARCHIVED
-        link.provision_phase = LensSessionLink.ProvisionPhase.CLEANING_UP
+        link.provision_phase = LensSessionLink.ProvisionPhase.DELETING
         link.provision_detail = "Deleting a resource returned after Chat deletion."
-        link.provision_claim_token = None
-        link.provision_claimed_at = None
-        link.provision_next_retry_at = None
-        link.teardown_claim_token = None
-        link.teardown_claimed_at = None
-        link.teardown_next_retry_at = None
-        update_fields.extend(
-            [
-                "lifecycle_status",
-                "status",
-                "provision_phase",
-                "provision_detail",
-                "provision_claim_token",
-                "provision_claimed_at",
-                "provision_next_retry_at",
-                "teardown_claim_token",
-                "teardown_claimed_at",
-                "teardown_next_retry_at",
-            ]
-        )
+    else:
+        link.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
+        link.status = LensSessionLink.Status.ACTIVE
+        link.provision_phase = LensSessionLink.ProvisionPhase.CLEANING_UP
+        link.provision_detail = "Cleaning up a late resource from failed preparation."
+    update_fields.extend(
+        [
+            "lifecycle_status",
+            "status",
+            "provision_phase",
+            "provision_detail",
+        ]
+    )
     link.save(update_fields=update_fields)
     transaction.on_commit(lambda: _queue_teardown_or_record_error(link.id))
 
@@ -1827,8 +2032,34 @@ def _claim_copilot_chat_teardown(session_link_id: int) -> tuple[str | None, str]
             return None, "missing"
         if link.lifecycle_status == LensSessionLink.LifecycleStatus.DELETED:
             return None, "deleted"
-        if link.lifecycle_status != LensSessionLink.LifecycleStatus.DELETING:
+        if link.cleanup_intent == LensSessionLink.CleanupIntent.NONE:
+            legacy_intent = str((link.teardown_state_json or {}).get("intent") or "")
+            if (
+                link.lifecycle_status == LensSessionLink.LifecycleStatus.DELETING
+                and not legacy_intent
+            ):
+                legacy_intent = _TEARDOWN_INTENT_DELETE
+            if (
+                link.lifecycle_status == LensSessionLink.LifecycleStatus.DELETING
+                and legacy_intent
+                in {_TEARDOWN_INTENT_DELETE, _TEARDOWN_INTENT_RESET_FOR_RETRY}
+            ):
+                link.cleanup_intent = legacy_intent
+                link.cleanup_status = LensSessionLink.CleanupStatus.PENDING
+                if legacy_intent == _TEARDOWN_INTENT_RESET_FOR_RETRY:
+                    link.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
+        delete_cleanup = (
+            link.cleanup_intent == LensSessionLink.CleanupIntent.DELETE_SESSION
+            and link.lifecycle_status == LensSessionLink.LifecycleStatus.DELETING
+        )
+        reset_cleanup = (
+            link.cleanup_intent == LensSessionLink.CleanupIntent.RESET_FOR_RETRY
+            and link.lifecycle_status == LensSessionLink.LifecycleStatus.FAILED
+        )
+        if not (delete_cleanup or reset_cleanup):
             return None, str(link.lifecycle_status)
+        if link.cleanup_status == LensSessionLink.CleanupStatus.COMPLETE:
+            return None, "complete"
         if link.teardown_claimed_at and link.teardown_claimed_at > now - timedelta(
             seconds=TEARDOWN_CLAIM_TTL_SECONDS
         ):
@@ -1836,8 +2067,8 @@ def _claim_copilot_chat_teardown(session_link_id: int) -> tuple[str | None, str]
         if link.teardown_next_retry_at and link.teardown_next_retry_at > now:
             return None, "scheduled"
         claim_token = uuid_lib.uuid4()
-        link.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
         link.teardown_attempts += 1
+        link.cleanup_status = LensSessionLink.CleanupStatus.RUNNING
         link.teardown_claim_token = claim_token
         link.teardown_claimed_at = now
         link.teardown_next_retry_at = next_retry_at(link.teardown_attempts)
@@ -1845,6 +2076,8 @@ def _claim_copilot_chat_teardown(session_link_id: int) -> tuple[str | None, str]
             update_fields=[
                 "teardown_attempts",
                 "lifecycle_status",
+                "cleanup_intent",
+                "cleanup_status",
                 "teardown_claim_token",
                 "teardown_claimed_at",
                 "teardown_next_retry_at",
@@ -1887,7 +2120,7 @@ def _update_chat_claim(
     updated = LensSessionLink.objects.filter(
         pk=link.id,
         teardown_claim_token=claim_token,
-        lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+        cleanup_status=LensSessionLink.CleanupStatus.RUNNING,
     ).update(**values)
     if updated != 1:
         raise ChatTeardownIncompleteError("Chat teardown lease was lost.")
@@ -1916,7 +2149,13 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     critical_errors: list[str] = []
     warnings: list[str] = []
     teardown_state = dict(link.teardown_state_json or {})
-    teardown_intent = str(teardown_state.get("intent") or _TEARDOWN_INTENT_DELETE)
+    teardown_intent = str(link.cleanup_intent or teardown_state.get("intent") or "")
+    if teardown_intent not in {
+        _TEARDOWN_INTENT_DELETE,
+        _TEARDOWN_INTENT_RESET_FOR_RETRY,
+    }:
+        teardown_intent = _TEARDOWN_INTENT_DELETE
+    teardown_state["intent"] = teardown_intent
 
     if link.active_run_uuid:
         try:
@@ -2003,6 +2242,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     journal_assistant_uuid: uuid_lib.UUID | None = None
     failed_assistant_uuids: list[uuid_lib.UUID] = []
     ks = link.knowledge_source
+    cleanup_waiting_for_conversion_stop = False
     assistant_uuids: set[uuid_lib.UUID] = set()
     if session_cleanup_complete:
         try:
@@ -2121,6 +2361,19 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
             _teardown_step(teardown_state, "cleanup_workspace", status="success")
         except Exception as exc:
             critical_errors.append(f"cleanup_workspace: {exc}")
+            latest_ks_teardown_state = (
+                LensKnowledgeSource.all_objects.filter(pk=ks.id)
+                .values_list("teardown_state_json", flat=True)
+                .first()
+                or {}
+            )
+            cleanup_waiting_for_conversion_stop = bool(
+                isinstance(latest_ks_teardown_state, dict)
+                and (
+                    latest_ks_teardown_state.get("cancel_conversion") or {}
+                ).get("status")
+                == "waiting"
+            )
             _teardown_step(
                 teardown_state, "cleanup_workspace", status="retry", error=str(exc)
             )
@@ -2140,21 +2393,36 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         )
 
     reset_for_retry = teardown_intent == _TEARDOWN_INTENT_RESET_FOR_RETRY
+    cleanup_blocked = cleanup_waiting_for_conversion_stop
     if critical_errors:
-        link.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        link.lifecycle_status = (
+            LensSessionLink.LifecycleStatus.FAILED
+            if reset_for_retry
+            else LensSessionLink.LifecycleStatus.DELETING
+        )
         link.status = (
             LensSessionLink.Status.ACTIVE
             if reset_for_retry
             else LensSessionLink.Status.ARCHIVED
         )
         link.provision_phase = LensSessionLink.ProvisionPhase.CLEANING_UP
-        link.provision_detail = "Chat cleanup is incomplete and will be retried."
+        link.cleanup_status = (
+            LensSessionLink.CleanupStatus.BLOCKED
+            if cleanup_blocked
+            else LensSessionLink.CleanupStatus.PENDING
+        )
+        link.provision_detail = (
+            "Cleanup is waiting for SourceLens to confirm conversion has stopped."
+            if cleanup_blocked
+            else "Chat cleanup is incomplete and will be retried."
+        )
         link.lifecycle_error = "; ".join([*critical_errors, *warnings])[:2000]
     elif reset_for_retry:
         link.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
         link.status = LensSessionLink.Status.ACTIVE
         link.provision_phase = LensSessionLink.ProvisionPhase.QUEUED
         link.provision_detail = "Chat preparation failed. Retry to try again."
+        link.cleanup_status = LensSessionLink.CleanupStatus.COMPLETE
         provision_error = str(teardown_state.get("provision_error") or "")
         link.lifecycle_error = "; ".join(
             item for item in [provision_error, *warnings] if item
@@ -2164,18 +2432,21 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         link.status = LensSessionLink.Status.ARCHIVED
         link.provision_phase = LensSessionLink.ProvisionPhase.DELETED
         link.provision_detail = "Chat resources deleted."
+        link.cleanup_status = LensSessionLink.CleanupStatus.COMPLETE
         link.lifecycle_error = "; ".join(warnings)[:2000]
     link.active_run_uuid = None
     link.active_run_status = ""
     link.teardown_state_json = teardown_state
     link.teardown_claim_token = None
     link.teardown_claimed_at = None
-    if not critical_errors:
+    if cleanup_blocked:
+        link.teardown_next_retry_at = timezone.now() + timedelta(minutes=5)
+    elif not critical_errors:
         link.teardown_next_retry_at = None
     final_query = LensSessionLink.objects.filter(
         pk=link.id,
         teardown_claim_token=claim_token,
-        lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+        cleanup_status=LensSessionLink.CleanupStatus.RUNNING,
     )
     if not critical_errors:
         final_query = final_query.filter(
@@ -2192,6 +2463,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         active_run_uuid=None,
         active_run_status="",
         teardown_state_json=teardown_state,
+        cleanup_status=link.cleanup_status,
         teardown_claim_token=None,
         teardown_claimed_at=None,
         teardown_next_retry_at=link.teardown_next_retry_at,
@@ -2231,6 +2503,8 @@ def _mark_provision_failed_by_id(
         provision_claim_token=None,
         provision_claimed_at=None,
         provision_next_retry_at=None,
+        cleanup_intent=LensSessionLink.CleanupIntent.RESET_FOR_RETRY,
+        cleanup_status=LensSessionLink.CleanupStatus.COMPLETE,
         capacity_reservation_status=LensSessionLink.CapacityReservationStatus.RELEASED,
         updated_at=timezone.now(),
     )
@@ -2255,7 +2529,7 @@ def _transition_failed_provision_to_teardown(
     )
     if link is None:
         return False
-    link.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+    link.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
     link.status = LensSessionLink.Status.ACTIVE
     link.provision_phase = LensSessionLink.ProvisionPhase.CLEANING_UP
     link.provision_detail = "Provisioning cleanup is incomplete and will be retried."
@@ -2263,6 +2537,10 @@ def _transition_failed_provision_to_teardown(
     link.provision_claim_token = None
     link.provision_claimed_at = None
     link.provision_next_retry_at = None
+    link.provision_generation += 1
+    link.provision_poll_sequence = 0
+    link.cleanup_intent = LensSessionLink.CleanupIntent.RESET_FOR_RETRY
+    link.cleanup_status = LensSessionLink.CleanupStatus.PENDING
     link.teardown_attempts = 0
     link.teardown_claim_token = None
     link.teardown_claimed_at = None
@@ -2281,6 +2559,10 @@ def _transition_failed_provision_to_teardown(
             "provision_claim_token",
             "provision_claimed_at",
             "provision_next_retry_at",
+            "provision_generation",
+            "provision_poll_sequence",
+            "cleanup_intent",
+            "cleanup_status",
             "teardown_attempts",
             "teardown_claim_token",
             "teardown_claimed_at",
@@ -2377,6 +2659,18 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             return locked
     elif locked.lifecycle_status != LensSessionLink.LifecycleStatus.FAILED:
         raise ValidationError({"lifecycle_status": "Session is not retryable."})
+    if locked.cleanup_status in {
+        LensSessionLink.CleanupStatus.PENDING,
+        LensSessionLink.CleanupStatus.RUNNING,
+        LensSessionLink.CleanupStatus.BLOCKED,
+    }:
+        raise ValidationError(
+            {
+                "lifecycle_status": (
+                    "Chat recovery must finish before preparation can be retried."
+                )
+            }
+        )
 
     _assert_retry_public_gateway_capacity(session=locked)
 
@@ -2387,6 +2681,10 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     locked.provision_claim_token = None
     locked.provision_claimed_at = None
     locked.provision_next_retry_at = None
+    locked.provision_generation += 1
+    locked.provision_poll_sequence = 0
+    locked.cleanup_intent = LensSessionLink.CleanupIntent.NONE
+    locked.cleanup_status = LensSessionLink.CleanupStatus.NONE
     locked.teardown_attempts = 0
     locked.teardown_claim_token = None
     locked.teardown_claimed_at = None
@@ -2394,6 +2692,7 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     locked.teardown_state_json = {}
     provision_state = dict(locked.provision_state_json or {})
     provision_state.pop(_SCOPE_TASK_STATE_KEY, None)
+    provision_state.pop("source_lens_transient", None)
     locked.provision_state_json = provision_state
     if locked.knowledge_source_id is None:
         locked.capacity_reservation_status = (
@@ -2408,6 +2707,10 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             "provision_claim_token",
             "provision_claimed_at",
             "provision_next_retry_at",
+            "provision_generation",
+            "provision_poll_sequence",
+            "cleanup_intent",
+            "cleanup_status",
             "teardown_attempts",
             "teardown_claim_token",
             "teardown_claimed_at",
@@ -2422,11 +2725,28 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     return locked
 
 
-def _queue_provision_or_mark_failed(session_link_id: int) -> None:
+def _queue_provision_or_mark_failed(
+    session_link_id: int,
+) -> None:
     from apps.lens_bridge.services.sync_queue import queue_copilot_chat_provision
 
     try:
-        queue_copilot_chat_provision(session_link_id=session_link_id)
+        tokens = (
+            LensSessionLink.objects.filter(
+                pk=session_link_id,
+                lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+            )
+            .values_list("provision_generation", "provision_poll_sequence")
+            .first()
+        )
+        if tokens is None:
+            return
+        generation, poll_sequence = tokens
+        queue_copilot_chat_provision(
+            session_link_id=session_link_id,
+            expected_generation=generation,
+            expected_poll_sequence=poll_sequence,
+        )
     except Exception as exc:
         logger.exception(
             "copilot chat provision dispatch failed session_link_id=%s", session_link_id
@@ -2453,12 +2773,25 @@ def _queue_teardown_or_record_error(session_link_id: int) -> None:
         logger.exception(
             "copilot chat teardown dispatch failed session_link_id=%s", session_link_id
         )
-        LensSessionLink.objects.filter(
+        cleanup_query = LensSessionLink.objects.filter(
             pk=session_link_id,
-            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
-        ).update(
+            cleanup_status__in=(
+                LensSessionLink.CleanupStatus.PENDING,
+                LensSessionLink.CleanupStatus.RUNNING,
+                LensSessionLink.CleanupStatus.BLOCKED,
+            ),
+        )
+        cleanup_intent = cleanup_query.values_list(
+            "cleanup_intent", flat=True
+        ).first()
+        cleanup_query.update(
             lifecycle_error=("Teardown queue unavailable: " + str(exc))[:2000],
-            provision_detail="Deletion is waiting for the worker queue.",
+            provision_detail=(
+                "Recovery cleanup is waiting for the worker queue."
+                if cleanup_intent
+                == LensSessionLink.CleanupIntent.RESET_FOR_RETRY
+                else "Deletion is waiting for the worker queue."
+            ),
             updated_at=timezone.now(),
         )
 
