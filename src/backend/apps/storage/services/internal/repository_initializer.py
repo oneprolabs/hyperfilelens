@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
 from ipaddress import ip_address
 from time import sleep
 from urllib.parse import urlparse
@@ -18,8 +17,10 @@ from apps.storage.services.internal.repository_errors import (
 )
 from apps.storage.services.internal.repository_ownership import (
     RepositoryOwnershipError,
-    claim_s3_repository_ownership,
-    s3_ownership_marker_hidden,
+    S3RepositoryInitializationState,
+    establish_s3_repository_ownership,
+    inspect_s3_repository_initialization,
+    reset_s3_legacy_marker_for_initialization_recovery,
     verify_s3_repository_ownership,
 )
 from apps.storage.services.internal.s3_client import (
@@ -36,7 +37,9 @@ from apps.storage.services.internal.repository_secrets import (
     scrub_secrets,
     secret_values_for_scrub,
 )
-from apps.storage.services.internal.repository_endpoints import repository_control_endpoint
+from apps.storage.services.internal.repository_endpoints import (
+    repository_control_endpoint,
+)
 from apps.storage.services.internal.s3_url_style import (
     S3_URL_STYLE_AUTO,
     S3_URL_STYLE_PATH,
@@ -62,7 +65,9 @@ def resolve_s3_url_style(*, s3_url_style: str | None, **bucket_args) -> str:
     normalized = normalize_s3_url_style(s3_url_style)
     if normalized != S3_URL_STYLE_AUTO:
         return normalized
-    probe_args = {key: value for key, value in bucket_args.items() if key != "s3_url_style"}
+    probe_args = {
+        key: value for key, value in bucket_args.items() if key != "s3_url_style"
+    }
     failures: dict[str, str] = {}
     successful_styles: set[str] = set()
     for style in (S3_URL_STYLE_PATH, S3_URL_STYLE_VIRTUAL_HOSTED):
@@ -72,7 +77,9 @@ def resolve_s3_url_style(*, s3_url_style: str | None, **bucket_args) -> str:
             # botocore silently falls back to path-style for IP endpoints even
             # when asked for virtual addressing. Kopia does not, so consider
             # this candidate incompatible rather than accepting a false probe.
-            failures[style] = "Virtual Hosted Style requires a DNS endpoint, not an IP address."
+            failures[style] = (
+                "Virtual Hosted Style requires a DNS endpoint, not an IP address."
+            )
             continue
         for attempt in range(S3_URL_STYLE_PROBE_ATTEMPTS):
             try:
@@ -108,7 +115,12 @@ def _s3_endpoint_is_ip_literal(endpoint: object) -> bool:
     return True
 
 
-def initialize_s3_repository(repository: Repository) -> None:
+def initialize_s3_repository(
+    repository: Repository,
+    *,
+    recovery: bool = False,
+) -> None:
+    """Initialize or recover an S3-backed Kopia repository."""
     config = dict(repository.config or {})
     secrets_payload = resolve_repository_secrets(repository)
     try:
@@ -123,13 +135,20 @@ def initialize_s3_repository(repository: Repository) -> None:
             ),
             use_tls=config.get("use_tls") is not False,
         )
+        bucket_created = False
         if repository.s3_bucket_mode == Repository.S3BucketMode.NEW:
-            create_s3_bucket(**bucket_args)
+            bucket_created = create_s3_bucket(
+                **bucket_args,
+                allow_existing_owned=recovery,
+            )
         if bucket_args["s3_url_style"] == S3_URL_STYLE_AUTO:
             try:
                 resolved_url_style = resolve_s3_url_style(**bucket_args)
             except S3UrlStyleProbeError as exc:
-                if repository.s3_bucket_mode != Repository.S3BucketMode.NEW:
+                if (
+                    repository.s3_bucket_mode != Repository.S3BucketMode.NEW
+                    or not bucket_created
+                ):
                     raise
                 rollback = delete_s3_bucket_if_empty(**bucket_args)
                 rollback_detail = ""
@@ -150,30 +169,48 @@ def initialize_s3_repository(repository: Repository) -> None:
             config["s3_url_style"] = resolved_url_style
             repository.config = config
             repository.save(update_fields=["config", "updated_at"])
-        # The lifecycle path persists the Repository before initialization, so
-        # the ownership Claim is mandatory there. Keep this low-level helper
-        # compatible with older/unit callers that pass an unsaved model (there
-        # is no database Claim to coordinate for such an object); those calls
-        # cannot be used by the Controller lifecycle and therefore must not
-        # weaken persisted-repository cleanup authorization.
-        # Kopia refuses to create a repository inside a Prefix that already
-        # contains any object - including the ownership marker written by the
-        # Claim (it reports "found existing data in storage location").
-        # Claim first so the marker is validated (a residual marker left by a
-        # failed attempt is matched and kept; a fresh Prefix is atomically
-        # claimed). Only then hide the marker while Kopia initializes the empty
-        # Prefix, and restore it afterwards so the ownership proof survives.
-        # Unsaved models (older unit callers) have no Claim and therefore no
-        # marker to hide.
-        if repository.pk is not None:
-            claim_s3_repository_ownership(repository)
-        marker_context = (
-            s3_ownership_marker_hidden(repository)
-            if repository.pk is not None
-            else nullcontext()
-        )
-        with marker_context:
+        # Kopia requires an empty Bucket+Prefix during first initialization.
+        # Persisted repositories therefore inspect without writing the HFL
+        # owner marker, initialize Kopia first, and establish ownership only
+        # after the physical repository exists. Unsaved unit/legacy callers
+        # retain the low-level create-only behavior and cannot authorize any
+        # later destructive lifecycle operation.
+        if repository.pk is None:
             create_s3_repository(repository)
+            return
+
+        initialization_state = inspect_s3_repository_initialization(repository)
+        if initialization_state == S3RepositoryInitializationState.OWNED:
+            try:
+                connect_s3_repository(repository)
+                kopia_status(repository)
+            except KopiaCliError:
+                if not recovery:
+                    raise
+                reset_s3_legacy_marker_for_initialization_recovery(repository)
+                create_s3_repository(repository)
+                establish_s3_repository_ownership(repository)
+            return
+        if initialization_state == S3RepositoryInitializationState.OCCUPIED:
+            if not recovery:
+                raise RepositoryAlreadyExistsError(
+                    "The selected object Prefix already contains data."
+                )
+            try:
+                connect_s3_repository(repository)
+                kopia_status(repository)
+            except KopiaCliError as exc:
+                raise RepositoryAlreadyExistsError(
+                    _sanitize(
+                        "The residual object Prefix is not a recoverable Kopia repository.",
+                        repository,
+                    )
+                ) from exc
+            establish_s3_repository_ownership(repository)
+            return
+
+        create_s3_repository(repository)
+        establish_s3_repository_ownership(repository)
     except S3UrlStyleProbeError as exc:
         raise RepositoryInitializationError(_sanitize(str(exc), repository)) from exc
     except KopiaRepositoryAlreadyExistsError as exc:
@@ -218,10 +255,15 @@ def validate_s3_connection(
             use_tls=use_tls,
         )
     except S3ClientError as exc:
-        raise RepositoryInitializationError(_sanitize(str(exc), {
-            "access_key_id": access_key_id,
-            "secret_access_key": secret_access_key,
-        })) from exc
+        raise RepositoryInitializationError(
+            _sanitize(
+                str(exc),
+                {
+                    "access_key_id": access_key_id,
+                    "secret_access_key": secret_access_key,
+                },
+            )
+        ) from exc
 
 
 def verify_s3_bucket_access(
@@ -245,10 +287,15 @@ def verify_s3_bucket_access(
             use_tls=use_tls,
         )
     except S3ClientError as exc:
-        raise RepositoryInitializationError(_sanitize(str(exc), {
-            "access_key_id": access_key_id,
-            "secret_access_key": secret_access_key,
-        })) from exc
+        raise RepositoryInitializationError(
+            _sanitize(
+                str(exc),
+                {
+                    "access_key_id": access_key_id,
+                    "secret_access_key": secret_access_key,
+                },
+            )
+        ) from exc
 
 
 def check_s3_repository(
@@ -292,6 +339,10 @@ def _sanitize(message: str, source) -> str:
     else:
         config = source or {}
         secrets_payload = config
-    return str(scrub_secrets(message, extra_values=secret_values_for_scrub(None, secrets_payload) + [
-        str(config.get("access_key_id") or "")
-    ]))
+    return str(
+        scrub_secrets(
+            message,
+            extra_values=secret_values_for_scrub(None, secrets_payload)
+            + [str(config.get("access_key_id") or "")],
+        )
+    )

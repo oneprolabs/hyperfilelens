@@ -153,7 +153,7 @@ class RepositoryCreateTaskTests(TestCase):
         repository.refresh_from_db()
         self.assertEqual(repository.status, Repository.Status.CREATED)
         self.assertEqual(repository.health, Repository.Health.ONLINE)
-        initialize.assert_called_once_with(repository)
+        initialize.assert_called_once_with(repository, recovery=False)
         _enqueue.assert_called_once()
 
     @mock.patch(
@@ -530,6 +530,7 @@ class RepositoryCreateTaskTests(TestCase):
         self.assertEqual(repository.status, Repository.Status.CREATE_FAILED)
         claim.refresh_from_db()
         self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+        initialize.assert_called_once_with(repository, recovery=True)
         check_repository.assert_called_once_with(repository)
 
     @mock.patch(
@@ -558,6 +559,7 @@ class RepositoryCreateTaskTests(TestCase):
         self.assertEqual(repository.status, Repository.Status.CREATE_FAILED)
         claim.refresh_from_db()
         self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+        _initialize.assert_called_once_with(repository, recovery=True)
         check_repository.assert_called_once_with(repository)
 
     @mock.patch("apps.storage.services.internal.repository_create.check_s3_repository")
@@ -587,6 +589,7 @@ class RepositoryCreateTaskTests(TestCase):
         claim.refresh_from_db()
         self.assertEqual(repository.status, Repository.Status.CREATED)
         self.assertEqual(claim.state, RepositoryLocationClaim.State.OWNED)
+        _initialize.assert_called_once_with(repository, recovery=True)
         check_repository.assert_called_once_with(repository)
 
     @mock.patch(
