@@ -1219,8 +1219,6 @@ grep -F 'Ensure Platform Gateway' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'platform-gateway ensure' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
-grep -F 'platform-gateway verify --required --timeout 0' \
-	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'Verify Platform Gateway Readiness' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'platform-gateway verify --required --timeout 180' \

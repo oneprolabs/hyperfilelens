@@ -1080,16 +1080,25 @@ ensure_local_platform_gateway_dev() {
 	log "Ensuring local public Data Gateway (platform Gateway auto-deploy)"
 	# Sidecar install expects :latest; versioned tags alone leave gateway-install
 	# downloading the bootstrap archive (or failing when that archive is stale).
-	if ! docker image inspect hyperfilelens-sourcelens-lensnode:latest >/dev/null 2>&1; then
-		local versioned=""
-		versioned="$(
-			docker images --format '{{.Repository}}:{{.Tag}}' \
-				| grep -E '^hyperfilelens-sourcelens-lensnode:[0-9]' \
-				| head -1 || true
-		)"
-		if [[ -n "${versioned}" ]]; then
-			docker tag "${versioned}" hyperfilelens-sourcelens-lensnode:latest
-			log "Tagged ${versioned} -> hyperfilelens-sourcelens-lensnode:latest for Gateway sidecar"
+	# Re-tag whenever the newest versioned image differs from :latest so the
+	# sidecar (which compares image IDs) is recreated after a SourceLens rebuild.
+	local latest_id versioned_ref versioned_id
+	latest_id="$(docker image inspect --format '{{.Id}}' hyperfilelens-sourcelens-lensnode:latest 2>/dev/null || true)"
+	versioned_ref="$(
+		docker images --format '{{.Repository}}:{{.Tag}}' \
+			| grep -E '^hyperfilelens-sourcelens-lensnode:[0-9]' \
+			| while read -r ref; do
+				printf '%s %s\n' "$(docker image inspect --format '{{.Created}}' "${ref}" 2>/dev/null || true)" "${ref}"
+			done \
+			| sort -r \
+			| head -1 \
+			| awk '{print $NF}'
+	)"
+	if [[ -n "${versioned_ref}" ]]; then
+		versioned_id="$(docker image inspect --format '{{.Id}}' "${versioned_ref}" 2>/dev/null || true)"
+		if [[ -z "${latest_id}" || "${latest_id}" != "${versioned_id}" ]]; then
+			docker tag "${versioned_ref}" hyperfilelens-sourcelens-lensnode:latest
+			log "Refreshed hyperfilelens-sourcelens-lensnode:latest from ${versioned_ref} for Gateway sidecar"
 		fi
 	fi
 
