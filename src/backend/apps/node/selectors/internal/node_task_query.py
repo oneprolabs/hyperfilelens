@@ -73,6 +73,24 @@ def node_task_by_id(
     return node_tasks_for_org(org=org).filter(pk=task_id).first()
 
 
+def node_task_by_id_for_requesting_org(
+    *,
+    org: Organization,
+    task_id: uuid.UUID | str,
+) -> NodeTask | None:
+    """Resolve a task through its tenant/requesting identity.
+
+    Shared platform nodes execute under the platform organization, while the
+    initiating tenant remains the only product-facing owner of the task.
+    """
+
+    return (
+        node_tasks_queryset()
+        .filter(requesting_organization_id=org.id, pk=task_id)
+        .first()
+    )
+
+
 def node_task_by_id_global(
     *,
     task_id: uuid.UUID | str,
@@ -97,6 +115,21 @@ def node_task_by_correlation(
         )
         .first()
     )
+
+
+def node_task_by_correlation_for_requesting_org(
+    *,
+    org: Organization,
+    correlation_type: str,
+    correlation_id: str,
+    active_only: bool = False,
+) -> NodeTask | None:
+    queryset = node_tasks_queryset(
+        correlation_type=correlation_type,
+        correlation_id=correlation_id,
+        active_only=active_only,
+    ).filter(requesting_organization_id=org.id)
+    return queryset.first()
 
 
 def latest_node_task_for_node(

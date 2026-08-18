@@ -68,7 +68,12 @@ describe('Insight snapshot browsing', () => {
         entries: [{ name: 'reports', path: 'reports', type: 'dir' }],
       })
 
-    const request = browseCopilotSnapshotDirectory(31, { path: 'docs', limit: 10 })
+    const request = browseCopilotSnapshotDirectory(31, {
+      backupSourceSnapshotId: 71,
+      gatewayLinkId: 17,
+      path: 'docs',
+      limit: 10,
+    })
     await vi.runAllTimersAsync()
 
     await expect(request).resolves.toMatchObject({
@@ -80,7 +85,13 @@ describe('Insight snapshot browsing', () => {
       '/api/v1/lens/copilot/snapshot-browse/',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ directory_id: 31, path: 'docs', limit: 10 }),
+        body: JSON.stringify({
+          directory_id: 31,
+          backup_source_snapshot_id: 71,
+          gateway_link_id: 17,
+          path: 'docs',
+          limit: 10,
+        }),
       }),
     )
   })
@@ -88,7 +99,10 @@ describe('Insight snapshot browsing', () => {
   it('stops polling a task that never reaches a terminal state', async () => {
     vi.mocked(api).mockResolvedValue({ task_id: 'browse-stuck', status: 'pending' })
 
-    const request = browseCopilotSnapshotDirectory(31)
+    const request = browseCopilotSnapshotDirectory(31, {
+      backupSourceSnapshotId: 71,
+      gatewayLinkId: 17,
+    })
     const rejection = expect(request).rejects.toThrow('Snapshot browsing timed out')
     await vi.runAllTimersAsync()
 
@@ -102,7 +116,10 @@ describe('Insight snapshot browsing', () => {
     controller.abort()
 
     await expect(
-      browseCopilotSnapshotDirectory(31, undefined, controller.signal),
+      browseCopilotSnapshotDirectory(31, {
+        backupSourceSnapshotId: 71,
+        gatewayLinkId: 17,
+      }, controller.signal),
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(api).toHaveBeenCalledTimes(1)
   })

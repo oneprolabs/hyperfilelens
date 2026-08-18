@@ -1090,9 +1090,12 @@ def _resolve_chat_scopes(
                 )
                 raise ValidationError(
                     {
-                        "source_scopes": (
-                            "Selected backup data could not be validated. "
-                            "Try again or choose another file or folder."
+                        "source_scopes": snapshot_scope_tasks.snapshot_task_error(
+                            task,
+                            default=(
+                                "Selected backup data could not be validated. "
+                                "Try again or choose another file or folder."
+                            ),
                         )
                     }
                 )
@@ -1149,6 +1152,9 @@ def _resolve_chat_scopes(
         task = snapshot_scope_tasks.dispatch_scope_resolution(
             organization_id=link.organization_id,
             directory_id=directory.id,
+            backup_source_snapshot_id=link.backup_source_snapshot_id,
+            gateway_link_id=link.gateway_link_id,
+            requesting_user_id=link.hfl_user_id,
             path=relative_path,
             correlation_id=correlation_id,
         )

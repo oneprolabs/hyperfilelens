@@ -655,6 +655,8 @@ class LensSnapshotBrowseCreateSerializer(serializers.Serializer):
     """Insight-owned asynchronous snapshot browse request."""
 
     directory_id = serializers.IntegerField(min_value=1)
+    backup_source_snapshot_id = serializers.IntegerField(min_value=1)
+    gateway_link_id = serializers.IntegerField(min_value=1)
     path = serializers.CharField(required=False, allow_blank=True, max_length=2000)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=500, default=500)
 

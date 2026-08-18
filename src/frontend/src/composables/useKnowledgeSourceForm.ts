@@ -84,6 +84,7 @@ function createBackupScopeEntry(): BackupScopeEntry {
 export function useKnowledgeSourceForm(
   editingId: Ref<number | null>,
   sourceType: Ref<KnowledgeSourceType> = ref('backup_source'),
+  options: { snapshotGatewayLinkId?: Ref<number | null> } = {},
 ) {
   const { t } = useI18n()
 
@@ -125,12 +126,20 @@ export function useKnowledgeSourceForm(
     directoryId: number,
     params: { path?: string; limit?: number },
   ) {
+    const snapshotId = effectiveSnapshotId.value
+    const gatewayLinkId = snapshotReaderGatewayLinkId.value
+    if (!snapshotId) throw new Error('Select a backup snapshot before browsing files.')
+    if (!gatewayLinkId) throw new Error('Select an available Data Gateway before browsing files.')
     const controller = new AbortController()
     snapshotBrowseControllers.add(controller)
     try {
       return await browseCopilotSnapshotDirectory(
         directoryId,
-        params,
+        {
+          ...params,
+          backupSourceSnapshotId: snapshotId,
+          gatewayLinkId,
+        },
         controller.signal,
       )
     } finally {
@@ -180,6 +189,12 @@ export function useKnowledgeSourceForm(
       ?? gateways.value.find((row) => row.id === gatewayId.value)
       ?? null,
   )
+
+  const snapshotReaderGatewayLinkId = computed(() => {
+    const explicit = options.snapshotGatewayLinkId?.value
+    if (explicit != null) return explicit
+    return selectedGateway.value?.gateway_link_id ?? null
+  })
 
   const snapshotDirectories = computed(() => snapshotDetail.value?.directories ?? [])
 

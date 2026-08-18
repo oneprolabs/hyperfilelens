@@ -914,11 +914,17 @@ export type LensSnapshotBrowseTask = {
   error?: string
   entries?: BackupSnapshotBrowserEntry[]
   has_more?: boolean
+  skipped_special_count?: number
 }
 
 export async function startCopilotSnapshotBrowse(
   directoryId: number,
-  params?: { path?: string; limit?: number },
+  params: {
+    backupSourceSnapshotId: number
+    gatewayLinkId: number
+    path?: string
+    limit?: number
+  },
   signal?: AbortSignal,
 ): Promise<LensSnapshotBrowseTask> {
   const raw = await api(lensUrl('copilot/snapshot-browse/'), {
@@ -927,6 +933,8 @@ export async function startCopilotSnapshotBrowse(
     signal,
     body: JSON.stringify({
       directory_id: directoryId,
+      backup_source_snapshot_id: params.backupSourceSnapshotId,
+      gateway_link_id: params.gatewayLinkId,
       path: params?.path || '',
       limit: Math.max(1, Math.min(params?.limit || 500, 500)),
     }),
@@ -947,9 +955,18 @@ export async function fetchCopilotSnapshotBrowse(
 
 export async function browseCopilotSnapshotDirectory(
   directoryId: number,
-  params?: { path?: string; limit?: number },
+  params: {
+    backupSourceSnapshotId: number
+    gatewayLinkId: number
+    path?: string
+    limit?: number
+  },
   signal?: AbortSignal,
-): Promise<{ entries: BackupSnapshotBrowserEntry[]; has_more: boolean }> {
+): Promise<{
+  entries: BackupSnapshotBrowserEntry[]
+  has_more: boolean
+  skipped_special_count: number
+}> {
   const started = await startCopilotSnapshotBrowse(directoryId, params, signal)
   let task = started
   let polls = 0
@@ -981,6 +998,7 @@ export async function browseCopilotSnapshotDirectory(
   return {
     entries: (task.entries || []).slice(0, params?.limit || 500),
     has_more: Boolean(task.has_more),
+    skipped_special_count: Math.max(0, Number(task.skipped_special_count || 0)),
   }
 }
 

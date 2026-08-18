@@ -168,6 +168,15 @@ class RestoreApiTests(TestCase):
         }
 
     def _workspace_binding(self, gateway_link: LensGatewayLink):
+        gateway = gateway_link.gateway
+        metadata = dict(gateway.metadata or {})
+        inventory = dict(metadata.get("inventory") or {})
+        capabilities = set(inventory.get("capabilities") or [])
+        capabilities.add("insight_safe_restore_v1")
+        inventory["capabilities"] = sorted(capabilities)
+        metadata["inventory"] = inventory
+        gateway.metadata = metadata
+        gateway.save(update_fields=["metadata", "updated_at"])
         knowledge_source = LensKnowledgeSource.objects.create(
             organization=self.org,
             name="Restore test KS",
@@ -312,6 +321,10 @@ class RestoreApiTests(TestCase):
         )
         self.assertEqual(node_task.organization_id, platform_org.id)
         self.assertEqual(node_task.requesting_organization_id, self.org.id)
+        self.assertEqual(
+            node_task.payload["insight_content_policy"],
+            restore_service.INSIGHT_SAFE_CONTENT_POLICY,
+        )
         retried = restore_service.create_lens_workspace_restore_record(
             organization_id=self.org.id,
             workspace_binding_id=workspace_binding.id,
@@ -339,6 +352,51 @@ class RestoreApiTests(TestCase):
         self.assertEqual(
             product_task.task_type,
             Task.Type.INSIGHT_WORKSPACE_RESTORE,
+        )
+
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
+    def test_lens_workspace_restore_requires_safe_content_capability(self, _ready):
+        private_gateway = Node.objects.create(
+            organization=self.org,
+            name="legacy-lens-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.org,
+            gateway=private_gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+        )
+        workspace_binding = self._workspace_binding(gateway_link)
+        private_gateway.metadata = {"inventory": {"capabilities": []}}
+        private_gateway.save(update_fields=["metadata", "updated_at"])
+        payload = self._manual_restore_payload()
+        payload.update(
+            {
+                "target_ref_id": private_gateway.id,
+                "target_path": workspace_binding.resolved_path(),
+                "idempotency_key": "lens-workspace:legacy-agent",
+            }
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Upgrade the selected Data Gateway Agent",
+        ):
+            restore_service.create_lens_workspace_restore_record(
+                organization_id=self.org.id,
+                workspace_binding_id=workspace_binding.id,
+                data=payload,
+            )
+
+        self.assertFalse(
+            RestoreRecord.objects.filter(
+                idempotency_key="lens-workspace:legacy-agent"
+            ).exists()
         )
 
     @patch(
@@ -2016,6 +2074,7 @@ class RestoreApiTests(TestCase):
         )
         self.assertEqual(node_task.payload["repository"]["type"], Repository.Type.S3)
         self.assertEqual(node_task.payload["selected_paths"], ["subdir/file.txt"])
+        self.assertNotIn("insight_content_policy", node_task.payload)
         node_task.status = NodeTask.Status.SUCCESS
         node_task.result = {"restored": True}
         node_task.save(update_fields=["status", "result", "updated_at"])
