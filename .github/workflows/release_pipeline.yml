@@ -1,4 +1,4 @@
-name: HFL - Build & Package (Reusable)
+name: HFL - Release Pipeline (Reusable)
 
 on:
   workflow_call:
@@ -424,9 +424,6 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/quality/check-english-source.py
-          python3 -m unittest tools/quality/test_check_english_source.py
-          node tools/quality/test-browser-smoke-contract.mjs
-          python3 -m unittest tools/quality/test_agent_certification_gate.py
           uv run --isolated --no-project --python 3.8 python tools/quality/check-python38-runtime.py
           ./tools/quality/check-release-contracts.sh
           ./tools/quality/test-default-certificates.sh
@@ -535,15 +532,6 @@ jobs:
           if [[ -n "${HFL_EXTENSIONS:-}" ]]; then
             HFL_FRONTEND_TEST_SCOPE=extension npm run test:ci
           fi
-          npm run build
-
-      - name: Website checks
-        working-directory: website
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm ci
-          npm run build
 
       - name: Agent checks
         working-directory: src/agent

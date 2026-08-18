@@ -65,11 +65,11 @@ grep -Fx 'HFL_EXTENSIONS=/opt/hfl/extensions/platform' "${env_file}" >/dev/null
 rm -rf "${tmp_extensions}"
 trap - EXIT
 
-workflow="${ROOT}/.github/workflows/artifact_pipeline.yml"
-entry_enterprise="${ROOT}/.github/workflows/test.yml"
-entry_community="${ROOT}/.github/workflows/release.yml"
-promotion="${ROOT}/.github/workflows/production_deploy.yml"
-grep -F 'name: HFL - Enterprise Build & Deploy' "${entry_enterprise}" >/dev/null
+workflow="${ROOT}/.github/workflows/release_pipeline.yml"
+entry_enterprise="${ROOT}/.github/workflows/enterprise_release.yml"
+entry_community="${ROOT}/.github/workflows/community_release.yml"
+promotion="${ROOT}/.github/workflows/enterprise_prod_promotion.yml"
+grep -F 'name: HFL - Enterprise Release & Deploy' "${entry_enterprise}" >/dev/null
 grep -F 'tags:' "${entry_enterprise}" >/dev/null
 grep -F 'edition: enterprise' "${entry_enterprise}" >/dev/null
 grep -F 'needs: validate-enterprise-build' "${entry_enterprise}" >/dev/null

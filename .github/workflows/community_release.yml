@@ -30,7 +30,7 @@ jobs:
   release-community:
     name: Build, Release & Deploy · Community
     needs: validate-community-release
-    uses: ./.github/workflows/artifact_pipeline.yml
+    uses: ./.github/workflows/release_pipeline.yml
     with:
       channel: release
       edition: community
