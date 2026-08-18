@@ -550,6 +550,17 @@ html[data-theme='dark'] .fullscreen-form-select__control:focus {
   --fullscreen-form-footer-bg: rgba(43, 45, 54, 0.98);
   --fullscreen-form-footer-border: transparent;
   --fullscreen-form-footer-shadow: 0 -8px 24px rgba(0, 0, 0, 0.12);
+  --fullscreen-form-secondary-bg: rgba(255, 255, 255, 0.06);
+  --fullscreen-form-secondary-border: rgba(255, 255, 255, 0.45);
+  --fullscreen-form-secondary-text: var(--el-color-white);
+  --fullscreen-form-secondary-hover-bg: color-mix(in srgb, var(--color-primary) 32%, transparent);
+  --fullscreen-form-secondary-hover-border: var(--color-brand-violet-soft);
+  --fullscreen-form-secondary-hover-text: var(--el-color-white);
+  --fullscreen-form-secondary-active-bg: color-mix(in srgb, var(--color-primary) 48%, transparent);
+  --fullscreen-form-secondary-active-text: var(--el-color-white);
+  --fullscreen-form-secondary-disabled-bg: rgba(255, 255, 255, 0.04);
+  --fullscreen-form-secondary-disabled-border: rgba(255, 255, 255, 0.16);
+  --fullscreen-form-secondary-disabled-text: rgba(255, 255, 255, 0.46);
   position: fixed;
   right: 0;
   bottom: 0;
@@ -596,10 +607,48 @@ html[data-theme='dark'] .fullscreen-form-select__control:focus {
   margin-left: 0;
 }
 
+.fullscreen-form-footer .el-button:not(.is-text):not(.is-link):not(.el-button--primary):not(.el-button--danger):not(.el-button--warning):not(.el-button--success):not(.el-button--info) {
+  --el-button-outline-color: var(--fullscreen-form-secondary-hover-border);
+  background-color: var(--fullscreen-form-secondary-bg) !important;
+  border-color: var(--fullscreen-form-secondary-border) !important;
+  color: var(--fullscreen-form-secondary-text) !important;
+}
+
+.fullscreen-form-footer .el-button:not(.is-text):not(.is-link):not(.el-button--primary):not(.el-button--danger):not(.el-button--warning):not(.el-button--success):not(.el-button--info):not(.is-disabled):not(:disabled):hover,
+.fullscreen-form-footer .el-button:not(.is-text):not(.is-link):not(.el-button--primary):not(.el-button--danger):not(.el-button--warning):not(.el-button--success):not(.el-button--info):not(.is-disabled):not(:disabled):focus-visible {
+  background-color: var(--fullscreen-form-secondary-hover-bg) !important;
+  border-color: var(--fullscreen-form-secondary-hover-border) !important;
+  color: var(--fullscreen-form-secondary-hover-text) !important;
+}
+
+.fullscreen-form-footer .el-button:not(.is-text):not(.is-link):not(.el-button--primary):not(.el-button--danger):not(.el-button--warning):not(.el-button--success):not(.el-button--info):not(.is-disabled):not(:disabled):active {
+  background-color: var(--fullscreen-form-secondary-active-bg) !important;
+  border-color: var(--fullscreen-form-secondary-hover-border) !important;
+  color: var(--fullscreen-form-secondary-active-text) !important;
+}
+
+.fullscreen-form-footer .el-button:not(.is-text):not(.is-link):not(.el-button--primary):not(.el-button--danger):not(.el-button--warning):not(.el-button--success):not(.el-button--info).is-disabled,
+.fullscreen-form-footer .el-button:not(.is-text):not(.is-link):not(.el-button--primary):not(.el-button--danger):not(.el-button--warning):not(.el-button--success):not(.el-button--info):disabled {
+  background-color: var(--fullscreen-form-secondary-disabled-bg) !important;
+  border-color: var(--fullscreen-form-secondary-disabled-border) !important;
+  color: var(--fullscreen-form-secondary-disabled-text) !important;
+}
+
 html[data-theme='light'] .fullscreen-form-footer {
   --fullscreen-form-footer-bg: rgba(255, 255, 255, 0.96);
   --fullscreen-form-footer-border: #e5e6eb;
   --fullscreen-form-footer-shadow: 0 -4px 16px rgba(29, 33, 41, 0.06);
+  --fullscreen-form-secondary-bg: var(--el-fill-color-blank);
+  --fullscreen-form-secondary-border: var(--color-border);
+  --fullscreen-form-secondary-text: var(--el-text-color-regular);
+  --fullscreen-form-secondary-hover-bg: color-mix(in srgb, var(--color-primary) 8%, white);
+  --fullscreen-form-secondary-hover-border: var(--color-primary);
+  --fullscreen-form-secondary-hover-text: var(--color-primary-hover);
+  --fullscreen-form-secondary-active-bg: color-mix(in srgb, var(--color-primary) 14%, white);
+  --fullscreen-form-secondary-active-text: var(--color-primary-active);
+  --fullscreen-form-secondary-disabled-bg: var(--el-fill-color-blank);
+  --fullscreen-form-secondary-disabled-border: var(--el-border-color-light);
+  --fullscreen-form-secondary-disabled-text: var(--el-disabled-text-color);
 }
 
 html[data-theme='dark'] .fullscreen-form-footer {
