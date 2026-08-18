@@ -335,7 +335,7 @@ def _raise_for_response(response: requests.Response) -> Any:
         except ValueError:
             return response.text
         return _unwrap_sl_body(body)
-    if response.status_code >= 500:
+    if response.status_code == 429 or response.status_code >= 500:
         logger.warning("SourceLens upstream returned status=%s", response.status_code)
         raise LensBridgeUnavailable()
     detail = response.text[:2000]

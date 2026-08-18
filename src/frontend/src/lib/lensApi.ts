@@ -328,6 +328,8 @@ export type LensSessionLink = {
   lifecycle_error?: string
   provision_phase?: string
   provision_detail?: string
+  cleanup_intent?: 'none' | 'reset_for_retry' | 'delete_session' | string
+  cleanup_status?: 'none' | 'pending' | 'running' | 'blocked' | 'complete' | string
   document_conversion?: DocumentConversion | null
   data_context?: SessionDataContext | null
   last_message_at: string | null

@@ -76,6 +76,16 @@ const showFailedConversionPanel = computed(() => Boolean(
   conversion.value
   && (countsLabel.value || problemItems.value.length || conversion.value.error || conversionWarnings.value.length),
 ))
+const isRecoveryCleanup = computed(() => (
+  props.session.lifecycle_status === 'failed'
+  && props.session.cleanup_intent === 'reset_for_retry'
+  && ['pending', 'running'].includes(props.session.cleanup_status || '')
+))
+const isCleanupBlocked = computed(() => (
+  props.session.lifecycle_status === 'failed'
+  && props.session.cleanup_intent === 'reset_for_retry'
+  && props.session.cleanup_status === 'blocked'
+))
 
 function stepState(index: number) {
   if (index < currentStep.value) return 'done'
@@ -87,7 +97,38 @@ function stepState(index: number) {
 <template>
   <main class="copilot-lifecycle-state">
     <div
-      v-if="session.lifecycle_status === 'failed'"
+      v-if="isRecoveryCleanup"
+      class="copilot-lifecycle-card"
+    >
+      <span class="copilot-lifecycle-icon"><LoaderCircle
+        :size="30"
+        class="copilot-lifecycle-spin"
+      /></span>
+      <h2>Recovering Chat Resources</h2>
+      <p>Preparation stopped, and temporary resources are being cleaned up safely. You can retry when recovery finishes.</p>
+      <div class="copilot-lifecycle-actions">
+        <ElButton @click="emit('delete')">
+          Delete Chat
+        </ElButton>
+      </div>
+    </div>
+
+    <div
+      v-else-if="isCleanupBlocked"
+      class="copilot-lifecycle-card is-failed"
+    >
+      <span class="copilot-lifecycle-icon is-failed"><TriangleAlert :size="30" /></span>
+      <h2>Chat Recovery Needs Attention</h2>
+      <p>Cleanup is waiting for SourceLens to confirm that document conversion has stopped. Temporary data is being retained to prevent unsafe deletion.</p>
+      <div class="copilot-lifecycle-actions">
+        <ElButton @click="emit('delete')">
+          Delete Chat
+        </ElButton>
+      </div>
+    </div>
+
+    <div
+      v-else-if="session.lifecycle_status === 'failed'"
       class="copilot-lifecycle-card is-failed"
     >
       <span class="copilot-lifecycle-icon is-failed"><AlertCircle :size="30" /></span>

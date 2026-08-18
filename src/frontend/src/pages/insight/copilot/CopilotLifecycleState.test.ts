@@ -102,4 +102,28 @@ describe('CopilotLifecycleState', () => {
     expect(steps[0].classes()).toContain('is-active')
     expect(steps[1].classes()).toContain('is-pending')
   })
+
+  it('shows automatic compensation as recovery instead of chat deletion', () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'failed',
+      cleanup_intent: 'reset_for_retry',
+      cleanup_status: 'running',
+    }))
+
+    expect(wrapper.text()).toContain('Recovering Chat Resources')
+    expect(wrapper.text()).not.toContain('Deleting Chat')
+    expect(wrapper.text()).not.toContain('Try Again')
+  })
+
+  it('explains blocked cleanup without an endless deleting spinner', () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'failed',
+      cleanup_intent: 'reset_for_retry',
+      cleanup_status: 'blocked',
+    }))
+
+    expect(wrapper.text()).toContain('Chat Recovery Needs Attention')
+    expect(wrapper.text()).toContain('Temporary data is being retained')
+    expect(wrapper.text()).not.toContain('Deleting Chat')
+  })
 })

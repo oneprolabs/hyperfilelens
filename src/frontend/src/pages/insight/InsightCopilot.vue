@@ -80,8 +80,10 @@ const selectedStarterBySession = ref<Record<number, string>>({})
 const input = ref('')
 const composerAttachments = ref<CopilotComposerAttachment[]>([])
 const messageListRef = ref<{ scrollToBottom: () => void } | null>(null)
-const lifecyclePollingIds = new Set<number>()
+const lifecyclePollingEpochs = new Map<number, number>()
 let componentUnmounted = false
+let componentActive = false
+let lifecyclePollingEpoch = 0
 let composerLifecycleGeneration = 0
 
 let idSeq = 0
@@ -353,6 +355,18 @@ const copilotReadiness = computed((): CopilotReadiness => {
 
 const showActiveChat = computed(() => activeSession.value != null)
 
+function sessionCleanupInProgress(session: LensSessionLink | SessionRow) {
+  return session.lifecycle_status === 'failed'
+    && session.cleanup_intent === 'reset_for_retry'
+    && ['pending', 'running', 'blocked'].includes(session.cleanup_status || '')
+}
+
+function sessionNeedsLifecyclePolling(session: LensSessionLink | SessionRow) {
+  return session.lifecycle_status === 'provisioning'
+    || session.lifecycle_status === 'deleting'
+    || sessionCleanupInProgress(session)
+}
+
 async function markSessionViewed(sessionId: number) {
   copilotStore.markSessionViewed(sessionId)
   try {
@@ -415,7 +429,7 @@ async function bootstrap() {
     sessions.value = toSessionRows(sessionRows)
     refreshPollerSessions()
     for (const session of sessions.value) {
-      if (session.lifecycle_status === 'provisioning' || session.lifecycle_status === 'deleting') {
+      if (sessionNeedsLifecyclePolling(session)) {
         void pollSessionLifecycle(session.id)
       }
     }
@@ -432,7 +446,7 @@ async function bootstrap() {
       }
       activeSessionId.value = nextId
       const next = sessions.value.find((row) => row.id === nextId)
-      if (next?.lifecycle_status === 'provisioning') {
+      if (next && sessionNeedsLifecyclePolling(next)) {
         void pollSessionLifecycle(nextId)
       } else if (next?.lifecycle_status !== 'failed') {
         await copilotStore.syncSession(nextId, syncHandlers, nextId, { attachStream: true })
@@ -466,13 +480,32 @@ function openNewChatFlow() {
 }
 
 async function pollSessionLifecycle(sessionId: number) {
-  if (lifecyclePollingIds.has(sessionId)) return
-  lifecyclePollingIds.add(sessionId)
+  if (componentUnmounted || !componentActive) return
+  const pollingEpoch = lifecyclePollingEpoch
+  if (lifecyclePollingEpochs.get(sessionId) === pollingEpoch) return
+  lifecyclePollingEpochs.set(sessionId, pollingEpoch)
   try {
-    for (let i = 0; i < 120 && !componentUnmounted; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 3000))
+    let pollDelayMilliseconds = 3000
+    let unchangedPolls = 0
+    let previousFingerprint = ''
+    while (
+      !componentUnmounted
+      && componentActive
+      && lifecyclePollingEpoch === pollingEpoch
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, pollDelayMilliseconds))
+      if (
+        componentUnmounted
+        || !componentActive
+        || lifecyclePollingEpoch !== pollingEpoch
+      ) return
       try {
         const rows = await listCopilotSessions()
+        if (
+          componentUnmounted
+          || !componentActive
+          || lifecyclePollingEpoch !== pollingEpoch
+        ) return
         sessions.value = toSessionRows(rows)
         refreshPollerSessions()
         const current = sessions.value.find((row) => row.id === sessionId)
@@ -485,13 +518,32 @@ async function pollSessionLifecycle(sessionId: number) {
           }
           return
         }
-        if (current.lifecycle_status === 'failed' || current.lifecycle_status === 'deleted') return
+        if (current.lifecycle_status === 'deleted') return
+        if (current.lifecycle_status === 'failed' && !sessionCleanupInProgress(current)) return
+        const fingerprint = [
+          current.lifecycle_status,
+          current.provision_phase,
+          current.provision_detail,
+          current.cleanup_status,
+        ].join(':')
+        unchangedPolls = fingerprint === previousFingerprint ? unchangedPolls + 1 : 0
+        previousFingerprint = fingerprint
+        if (current.cleanup_status === 'blocked' || unchangedPolls >= 20) {
+          pollDelayMilliseconds = 15000
+        } else if (unchangedPolls >= 5) {
+          pollDelayMilliseconds = 10000
+        } else {
+          pollDelayMilliseconds = 3000
+        }
       } catch {
         if (componentUnmounted) return
+        pollDelayMilliseconds = Math.min(30000, Math.max(5000, pollDelayMilliseconds * 2))
       }
     }
   } finally {
-    lifecyclePollingIds.delete(sessionId)
+    if (lifecyclePollingEpochs.get(sessionId) === pollingEpoch) {
+      lifecyclePollingEpochs.delete(sessionId)
+    }
   }
 }
 
@@ -951,6 +1003,7 @@ async function stopStreaming() {
 
 onMounted(() => {
   componentUnmounted = false
+  componentActive = true
   void bootstrap()
 })
 
@@ -963,6 +1016,7 @@ watch(
 
 onActivated(() => {
   componentUnmounted = false
+  componentActive = true
   if (bridgeReady.value) {
     copilotStore.startBackgroundPoller(syncHandlers, () => activeSessionId.value)
     const id = activeSessionId.value
@@ -970,7 +1024,7 @@ onActivated(() => {
       void copilotStore.syncSession(id, syncHandlers, id, { attachStream: true })
     }
     for (const session of sessions.value) {
-      if (session.lifecycle_status === 'provisioning' || session.lifecycle_status === 'deleting') {
+      if (sessionNeedsLifecyclePolling(session)) {
         void pollSessionLifecycle(session.id)
       }
     }
@@ -978,12 +1032,16 @@ onActivated(() => {
 })
 
 onDeactivated(() => {
+  componentActive = false
+  lifecyclePollingEpoch += 1
   clearComposerAttachments({ deleteDocuments: true })
   copilotStore.detachSessionStream(activeSessionId.value ?? -1)
 })
 
 onUnmounted(() => {
   componentUnmounted = true
+  componentActive = false
+  lifecyclePollingEpoch += 1
   clearComposerAttachments({ deleteDocuments: true })
   copilotStore.teardown()
 })

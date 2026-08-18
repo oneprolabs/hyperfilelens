@@ -16,6 +16,8 @@ from apps.lens_bridge.services import sl_client
 CONVERSION_WAIT_SECONDS = 6 * 3600
 CONVERSION_RETRY_SECONDS = 5
 CONVERSION_RECOVERY_CLOCK_SKEW_SECONDS = 60
+CONVERSION_TRANSIENT_RETRY_MAX_SECONDS = 300
+CONVERSION_IDLE_RETRY_MAX_SECONDS = 60
 
 
 class ManagedDatasourceError(RuntimeError):
@@ -24,6 +26,47 @@ class ManagedDatasourceError(RuntimeError):
 
 class ManagedDatasourcePending(RuntimeError):
     """Raised when durable conversion work must be polled by a later task."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after_seconds: int = CONVERSION_RETRY_SECONDS,
+    ):
+        super().__init__(message)
+        self.retry_after_seconds = max(1, int(retry_after_seconds))
+
+
+def _transient_retry_seconds(attempt: int) -> int:
+    return min(
+        CONVERSION_TRANSIENT_RETRY_MAX_SECONDS,
+        15 * (2 ** max(0, min(int(attempt) - 1, 5))),
+    )
+
+
+def _record_transient_state(
+    *,
+    ks: LensKnowledgeSource,
+    sync_state: dict[str, Any],
+    state: dict[str, Any],
+    operation: str,
+) -> int:
+    count = int(state.get("transient_error_count") or 0) + 1
+    state.update(
+        {
+            "transient_error_count": count,
+            "last_transient_operation": operation,
+            "last_transient_error_at": timezone.now().isoformat(),
+        }
+    )
+    _persist_conversion_state(ks=ks, sync_state=sync_state, state=state)
+    return _transient_retry_seconds(count)
+
+
+def _clear_transient_state(state: dict[str, Any]) -> None:
+    state.pop("transient_error_count", None)
+    state.pop("last_transient_operation", None)
+    state.pop("last_transient_error_at", None)
 
 
 def _save_sync_state(
@@ -408,6 +451,13 @@ def conversion_stop_confirmed(ks: LensKnowledgeSource) -> bool:
         return True
     if status not in {"FAILURE", "REVOKED"}:
         return False
+    manual_confirmation = conversion_state.get("manual_stop_confirmation")
+    if (
+        isinstance(manual_confirmation, dict)
+        and manual_confirmation.get("confirmed") is True
+        and str(manual_confirmation.get("task_id") or "") == task_id
+    ):
+        return True
     metadata = (
         task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
     )
@@ -448,10 +498,22 @@ def convert_documents(
         and state.get("policy_fingerprint") == fingerprint
         and str(state.get("status") or "").upper() == "STARTING"
     ):
-        task = _recover_started_conversion(
-            datasource_uuid=str(ks.sl_datasource_uuid),
-            state=state,
-        )
+        try:
+            task = _recover_started_conversion(
+                datasource_uuid=str(ks.sl_datasource_uuid),
+                state=state,
+            )
+        except sl_client.LensBridgeUnavailable as exc:
+            retry_after = _record_transient_state(
+                ks=ks,
+                sync_state=sync_state,
+                state=state,
+                operation="recover_conversion_start",
+            )
+            raise ManagedDatasourcePending(
+                "SourceLens is temporarily unavailable while reconciling the conversion.",
+                retry_after_seconds=retry_after,
+            ) from exc
         if task is None:
             state["lookup_missing_at"] = timezone.now().isoformat()
             _persist_conversion_state(
@@ -481,7 +543,19 @@ def convert_documents(
             state=state,
         )
     if task_id and state.get("policy_fingerprint") == fingerprint:
-        task = task or sl_client.get_task_by_id(task_id)
+        try:
+            task = task or sl_client.get_task_by_id(task_id)
+        except sl_client.LensBridgeUnavailable as exc:
+            retry_after = _record_transient_state(
+                ks=ks,
+                sync_state=sync_state,
+                state=state,
+                operation="poll_conversion",
+            )
+            raise ManagedDatasourcePending(
+                "SourceLens is temporarily unavailable while checking conversion progress.",
+                retry_after_seconds=retry_after,
+            ) from exc
         if task is None:
             state["lookup_missing_at"] = timezone.now().isoformat()
             _persist_conversion_state(
@@ -497,6 +571,7 @@ def convert_documents(
                 "Document conversion state is being reconciled."
             )
         elif str(task.get("status") or "") == "SUCCESS":
+            _clear_transient_state(state)
             summary = _conversion_summary(task)
             state.update(
                 {
@@ -571,13 +646,15 @@ def convert_documents(
                 raise ManagedDatasourceError(
                     "SourceLens rejected the document conversion request."
                 ) from exc
-            _persist_conversion_state(
+            retry_after = _record_transient_state(
                 ks=ks,
                 sync_state=sync_state,
                 state=state,
+                operation="start_conversion",
             )
             raise ManagedDatasourcePending(
-                "Document conversion start is being reconciled."
+                "Document conversion start is being reconciled.",
+                retry_after_seconds=retry_after,
             ) from exc
         task_id = str(started["task_id"])
         state.update(
@@ -588,6 +665,7 @@ def convert_documents(
                 "start_confirmed_at": timezone.now().isoformat(),
             }
         )
+        _clear_transient_state(state)
         _persist_conversion_state(
             ks=ks,
             sync_state=sync_state,
@@ -600,6 +678,26 @@ def convert_documents(
         task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
     )
     summary = _conversion_summary(task)
+    previous_progress = str(state.get("progress_fingerprint") or "")
+    progress_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "status": status,
+                "step": metadata.get("progress_step") or "",
+                "message": metadata.get("progress_message") or "",
+                "percent": metadata.get("progress_percent"),
+                "summary": summary,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    idle_polls = (
+        int(state.get("idle_poll_count") or 0) + 1
+        if previous_progress == progress_fingerprint
+        else 0
+    )
     state.update(
         {
             "status": status,
@@ -611,8 +709,11 @@ def convert_documents(
                 summary,
                 visual_model_configured=bool(conversion.get("vision_model_ref")),
             ),
+            "progress_fingerprint": progress_fingerprint,
+            "idle_poll_count": idle_polls,
         }
     )
+    _clear_transient_state(state)
     _persist_conversion_state(
         ks=ks,
         sync_state=sync_state,
@@ -645,6 +746,11 @@ def convert_documents(
         raise ManagedDatasourceError(
             "SourceLens conversion did not complete before the wait timeout."
         )
+    retry_after = min(
+        CONVERSION_IDLE_RETRY_MAX_SECONDS,
+        CONVERSION_RETRY_SECONDS * (2 ** min(idle_polls, 4)),
+    )
     raise ManagedDatasourcePending(
-        str(state.get("progress_message") or "Document conversion is running.")
+        str(state.get("progress_message") or "Document conversion is running."),
+        retry_after_seconds=retry_after,
     )

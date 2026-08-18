@@ -304,6 +304,38 @@ class LensKnowledgeSourceCreateSerializer(serializers.ModelSerializer):
                     {"backup_snapshot_directory_id": "Select a snapshot directory root."}
                 )
 
+        mode = attrs.get(
+            "linked_version_mode",
+            LensKnowledgeSource.LinkedVersionMode.LATEST,
+        )
+        if mode == LensKnowledgeSource.LinkedVersionMode.PINNED:
+            pinned_snapshot_id = (
+                attrs.get("pinned_snapshot_id")
+                or attrs.get("backup_source_snapshot_id")
+            )
+            if not pinned_snapshot_id:
+                raise serializers.ValidationError(
+                    {
+                        "pinned_snapshot_id": (
+                            "Pinned snapshot id is required when mode is pinned."
+                        )
+                    }
+                )
+            if (
+                attrs.get("backup_source_snapshot_id")
+                and pinned_snapshot_id != attrs["backup_source_snapshot_id"]
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "pinned_snapshot_id": (
+                            "Pinned snapshot must match the selected snapshot."
+                        )
+                    }
+                )
+            attrs["pinned_snapshot_id"] = pinned_snapshot_id
+        else:
+            attrs["pinned_snapshot_id"] = None
+
         raw_ingest_policy = attrs.pop("ingest_policy", None)
         if (
             raw_ingest_policy
@@ -481,6 +513,8 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             "lifecycle_status",
             "provision_phase",
             "provision_detail",
+            "cleanup_intent",
+            "cleanup_status",
             "document_conversion",
             "data_context",
             "lifecycle_error",

@@ -8,6 +8,7 @@ import { useKnowledgeSourceForm } from './useKnowledgeSourceForm'
 
 const mocks = vi.hoisted(() => ({
   browseCopilotSnapshotDirectory: vi.fn(),
+  createKnowledgeSource: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
   success: vi.fn(),
@@ -32,7 +33,7 @@ vi.mock('../lib/api', () => ({
 vi.mock('../lib/lensApi', () => ({
   browseCopilotSnapshotDirectory: mocks.browseCopilotSnapshotDirectory,
   browseGatewayDirectory: vi.fn(),
-  createKnowledgeSource: vi.fn(),
+  createKnowledgeSource: mocks.createKnowledgeSource,
   fetchKnowledgeSource: vi.fn(),
   listLensGateways: vi.fn().mockResolvedValue([]),
   patchKnowledgeSource: vi.fn(),
@@ -86,11 +87,11 @@ function snapshotFixture(): BackupSourceSnapshot {
   }
 }
 
-function mountForm(): { form: KnowledgeSourceForm; wrapper: VueWrapper } {
+function mountForm(editingId: number | null = 1): { form: KnowledgeSourceForm; wrapper: VueWrapper } {
   let form!: KnowledgeSourceForm
   const wrapper = mount(defineComponent({
     setup() {
-      form = useKnowledgeSourceForm(ref(1), ref('backup_source'))
+      form = useKnowledgeSourceForm(ref(editingId), ref('backup_source'))
       return () => h('div')
     },
   }))
@@ -111,6 +112,62 @@ describe('knowledge source backup scope validation', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('submits a selected snapshot as pinned', async () => {
+    const { form, wrapper } = mountForm(null)
+    try {
+      await flushPromises()
+      form.name.value = 'Pinned source'
+      form.gatewayId.value = 6
+      form.snapshotPickerValue.value = 71
+      form.pickBackupScopeForEntry(form.backupScopeEntries.value[0].id, {
+        id: '31:dir:/root/datatest',
+        label: 'datatest',
+        path: '/root/datatest',
+        type: 'dir',
+        directoryId: 31,
+        isLeaf: false,
+      })
+
+      await expect(form.submit()).resolves.toBe(true)
+
+      expect(mocks.createKnowledgeSource).toHaveBeenCalledWith(expect.objectContaining({
+        backup_source_snapshot_id: 71,
+        linked_version_mode: 'pinned',
+        pinned_snapshot_id: 71,
+      }))
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('submits latest mode without a pinned snapshot', async () => {
+    const { form, wrapper } = mountForm(null)
+    try {
+      await flushPromises()
+      form.name.value = 'Latest source'
+      form.gatewayId.value = 6
+      form.snapshotPickerValue.value = 'latest'
+      form.pickBackupScopeForEntry(form.backupScopeEntries.value[0].id, {
+        id: '31:dir:/root/datatest',
+        label: 'datatest',
+        path: '/root/datatest',
+        type: 'dir',
+        directoryId: 31,
+        isLeaf: false,
+      })
+
+      await expect(form.submit()).resolves.toBe(true)
+
+      expect(mocks.createKnowledgeSource).toHaveBeenCalledWith(expect.objectContaining({
+        backup_source_snapshot_id: 71,
+        linked_version_mode: 'latest',
+        pinned_snapshot_id: null,
+      }))
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('does not warn when blur is caused by opening the scope picker', async () => {
