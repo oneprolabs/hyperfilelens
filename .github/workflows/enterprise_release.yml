@@ -1,10 +1,7 @@
 name: HFL - Enterprise Release & Deploy
-run-name: Enterprise · ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} · Build & deploy
+run-name: Enterprise · ${{ inputs.tag }} · Build & deploy
 
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
     inputs:
       tag:
@@ -25,14 +22,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
-              echo "::error::Manual Enterprise builds must be started from the main branch"
-              exit 1
-            }
-          else
-            [[ "$GITHUB_REF" == refs/tags/v* ]]
-          fi
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "::error::Enterprise builds must be started from the main branch"
+            exit 1
+          }
 
   build-enterprise:
     name: Build & Deploy · Enterprise
@@ -41,5 +34,5 @@ jobs:
     with:
       channel: release
       edition: enterprise
-      release_tag: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+      release_tag: ${{ inputs.tag }}
     secrets: inherit

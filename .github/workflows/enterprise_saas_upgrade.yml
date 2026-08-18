@@ -1,7 +1,10 @@
 name: HFL - Enterprise SaaS Upgrade
-run-name: Enterprise SaaS · ${{ inputs.tag }} · Registry upgrade
+run-name: Enterprise SaaS · ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} · Registry upgrade
 
 on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
     inputs:
       tag:
@@ -22,7 +25,7 @@ on:
 concurrency:
   # The existing Release Pipeline already owns this group. Reusing its literal
   # name serializes same-version pushes without changing that workflow.
-  group: ${{ format('hyperfilelens-package-{0}', inputs.tag) }}
+  group: ${{ format('hyperfilelens-package-{0}', github.event_name == 'push' && github.ref_name || inputs.tag) }}
   cancel-in-progress: false
 
 permissions:
@@ -52,11 +55,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
       - name: Validate source and registries
         id: source
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
           CN_REGISTRY_USERNAME: ${{ secrets.CN_REGISTRY_USERNAME }}
@@ -64,7 +67,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            [[ "$GITHUB_REF" == refs/tags/v* ]]
+          else
+            [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+              echo "::error::Manual SaaS upgrades must be started from the main branch"
+              exit 1
+            }
+          fi
           [[ "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
           version="${BASH_REMATCH[1]}"
           commit="$(git rev-parse --verify "${RELEASE_TAG}^{commit}")"
@@ -111,7 +121,7 @@ jobs:
         env:
           ENTERPRISE_EXTENSION_REPOSITORY: ${{ vars.ENTERPRISE_EXTENSION_REPOSITORY }}
           HFL_EXTENSION_GIT_TOKEN: ${{ secrets.ENTERPRISE_EXTENSION_GIT_TOKEN }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -661,7 +671,7 @@ jobs:
 
   deploy-test:
     name: Deploy · TEST
-    if: ${{ inputs.upgrade_test }}
+    if: ${{ github.event_name == 'push' || inputs.upgrade_test }}
     needs: [prepare, assemble-candidate]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -725,7 +735,7 @@ jobs:
 
   deploy-prod:
     name: Deploy · PROD
-    if: ${{ inputs.upgrade_prod }}
+    if: ${{ github.event_name == 'push' || inputs.upgrade_prod }}
     needs: [prepare, assemble-candidate]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
