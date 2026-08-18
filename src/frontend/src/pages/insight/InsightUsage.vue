@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
@@ -27,6 +28,7 @@ import {
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent])
 
+const { t, locale } = useI18n()
 const insightMenus = useInsightSideNav()
 const loading = ref(false)
 const usage = ref<LensCopilotUsageOverview | null>(null)
@@ -42,11 +44,12 @@ const page = ref(1)
 const pageSize = ref(20)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let loadRequestId = 0
+const intlLocale = computed(() => locale.value === 'en' ? 'en-US' : locale.value)
 
 const questionHistoryEmptyDescription = computed(() => (
   searchQuery.value.trim() || backupSourceFilter.value || statusFilter.value
-    ? 'No Questions Match the Current Filters'
-    : 'No Question History for This Period'
+    ? t('insight.usage.noFilteredQuestions')
+    : t('insight.usage.noQuestionHistory')
 ))
 
 function localDateValue(date: Date) {
@@ -115,7 +118,7 @@ async function loadUsage() {
     if (requestId === loadRequestId) usage.value = nextUsage
   } catch (error) {
     if (requestId === loadRequestId) {
-      ElMessage.error({ message: apiErrorMessage(error, 'Unable to load AI usage.'), grouping: true })
+      ElMessage.error({ message: apiErrorMessage(error, t('insight.usage.loadFailed')), grouping: true })
     }
   } finally {
     if (requestId === loadRequestId) loading.value = false
@@ -123,19 +126,19 @@ async function loadUsage() {
 }
 
 function formatNumber(value: number | null | undefined) {
-  return new Intl.NumberFormat('en-US').format(Number(value || 0))
+  return new Intl.NumberFormat(intlLocale.value).format(Number(value || 0))
 }
 
 function formatCompact(value: number | null | undefined) {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat(intlLocale.value, {
     notation: 'compact',
     maximumFractionDigits: 2,
   }).format(Number(value || 0))
 }
 
 function formatCost(value: number | null | undefined, currency = 'USD') {
-  if (value == null) return 'Unavailable'
-  return new Intl.NumberFormat('en-US', {
+  if (value == null) return t('insight.usage.unavailable')
+  return new Intl.NumberFormat(intlLocale.value, {
     style: 'currency',
     currency,
     minimumFractionDigits: 2,
@@ -147,7 +150,7 @@ function formatShortDateTime(value: string | null | undefined) {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('en-US', {
+  return new Intl.DateTimeFormat(intlLocale.value, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -157,12 +160,12 @@ function formatShortDateTime(value: string | null | undefined) {
 }
 
 function statusLabel(status: string) {
-  if (status === 'done') return 'Completed'
-  if (status === 'failed') return 'Failed'
-  if (status === 'cancelled') return 'Cancelled'
-  if (status === 'queued') return 'Queued'
-  if (status === 'running' || status === 'streaming') return 'In Progress'
-  return status || 'Unknown'
+  if (status === 'done') return t('insight.usage.statusCompleted')
+  if (status === 'failed') return t('insight.usage.statusFailed')
+  if (status === 'cancelled') return t('insight.usage.statusCancelled')
+  if (status === 'queued') return t('insight.usage.statusQueued')
+  if (status === 'running' || status === 'streaming') return t('insight.usage.statusInProgress')
+  return status || t('insight.usage.statusUnknown')
 }
 
 const summary = computed(() => usage.value?.summary ?? {
@@ -182,40 +185,42 @@ const usageFreshness = computed(() => {
   const freshness = usage.value?.data_freshness
   if (!freshness) return ''
   if (freshness.pending_runs > 0) {
-    return `${formatNumber(freshness.pending_runs)} in progress · updates automatically`
+    return t('insight.usage.freshnessPending', { n: formatNumber(freshness.pending_runs) })
   }
   if (freshness.last_source_sync_at) {
-    return `Usage updated ${formatShortDateTime(freshness.last_source_sync_at)}`
+    return t('insight.usage.freshnessUpdatedAt', {
+      time: formatShortDateTime(freshness.last_source_sync_at),
+    })
   }
   if (summary.value.q_and_a_requests > 0) {
-    return 'Usage recorded · updates automatically'
+    return t('insight.usage.freshnessRecorded')
   }
-  return 'No recorded usage'
+  return t('insight.usage.freshnessEmpty')
 })
 
 const tokenBreakdown = computed(() => {
   const primaryTotal = summary.value.prompt_tokens + summary.value.completion_tokens
   return [
     {
-      label: 'Input Tokens',
+      label: t('insight.usage.inputTokens'),
       value: summary.value.prompt_tokens,
       color: '#6d5dfc',
       percent: primaryTotal > 0 ? (summary.value.prompt_tokens / primaryTotal) * 100 : 0,
     },
     {
-      label: 'Output Tokens',
+      label: t('insight.usage.outputTokens'),
       value: summary.value.completion_tokens,
       color: '#16a085',
       percent: primaryTotal > 0 ? (summary.value.completion_tokens / primaryTotal) * 100 : 0,
     },
     {
-      label: 'Cached Input Tokens',
+      label: t('insight.usage.cachedInputTokens'),
       value: summary.value.cached_tokens,
       color: '#2f7cf6',
       percent: null,
     },
     {
-      label: 'Reasoning Tokens',
+      label: t('insight.usage.reasoningTokens'),
       value: summary.value.reasoning_tokens,
       color: '#e39a24',
       percent: null,
@@ -240,7 +245,7 @@ const chartOption = computed(() => {
         const value = rawValue == null ? null : Number(rawValue)
         const formattedValue = costMode
           ? formatCost(value)
-          : `${formatNumber(value)} tokens`
+          : t('insight.usage.tokenCount', { n: formatNumber(value) })
         return `${point?.axisValueLabel || ''}\n${formattedValue}`
       },
     },
@@ -252,7 +257,7 @@ const chartOption = computed(() => {
         const date = new Date(row.bucket)
         return Number.isNaN(date.getTime())
           ? row.bucket
-          : new Intl.DateTimeFormat('en-US', hourly
+          : new Intl.DateTimeFormat(intlLocale.value, hourly
             ? { hour: '2-digit', minute: '2-digit', hour12: false }
             : { month: 'short', day: 'numeric' }).format(date)
       }),
@@ -320,37 +325,37 @@ onBeforeUnmount(() => {
     >
       <section
         class="usage-period"
-        aria-label="Usage period"
+        :aria-label="t('insight.usage.periodAria')"
       >
-        <span class="usage-period__label">Date Range</span>
+        <span class="usage-period__label">{{ t('insight.usage.dateRange') }}</span>
         <div class="usage-segments">
           <button
             :class="{ active: periodPreset === 'today' }"
             type="button"
             @click="selectPreset('today')"
           >
-            Today
+            {{ t('insight.usage.today') }}
           </button>
           <button
             :class="{ active: periodPreset === '7d' }"
             type="button"
             @click="selectPreset('7d')"
           >
-            Last 7 Days
+            {{ t('insight.usage.last7Days') }}
           </button>
           <button
             :class="{ active: periodPreset === '30d' }"
             type="button"
             @click="selectPreset('30d')"
           >
-            Last 30 Days
+            {{ t('insight.usage.last30Days') }}
           </button>
           <button
             :class="{ active: periodPreset === 'month' }"
             type="button"
             @click="selectPreset('month')"
           >
-            This Month
+            {{ t('insight.usage.thisMonth') }}
           </button>
         </div>
         <div class="usage-period__tail">
@@ -362,10 +367,10 @@ onBeforeUnmount(() => {
             format="YYYY-MM-DD"
             value-format="YYYY-MM-DD"
             :name="['usage_start_date', 'usage_end_date']"
-            aria-label="Usage date range"
+            :aria-label="t('insight.usage.dateRangeAria')"
             range-separator="~"
-            start-placeholder="Start date"
-            end-placeholder="End date"
+            :start-placeholder="t('insight.usage.startDate')"
+            :end-placeholder="t('insight.usage.endDate')"
             class="usage-date-picker"
             @change="applyCustomRange"
           />
@@ -376,7 +381,7 @@ onBeforeUnmount(() => {
           <button
             class="usage-icon-button"
             type="button"
-            aria-label="Refresh usage"
+            :aria-label="t('insight.usage.refresh')"
             :disabled="loading"
             @click="loadUsage"
           >
@@ -391,39 +396,39 @@ onBeforeUnmount(() => {
       <section class="usage-summary-grid">
         <article class="usage-summary-card">
           <span class="usage-summary-card__icon is-cost"><CircleDollarSign :size="19" /></span>
-          <div><span>Total Cost</span><strong>{{ formatCost(summary.estimated_cost, summary.cost_currency) }}</strong></div>
+          <div><span>{{ t('insight.usage.totalCost') }}</span><strong>{{ formatCost(summary.estimated_cost, summary.cost_currency) }}</strong></div>
         </article>
         <article class="usage-summary-card">
           <span class="usage-summary-card__icon is-calls"><Cpu :size="19" /></span>
-          <div><span>AI Calls</span><strong>{{ formatNumber(summary.model_calls) }}</strong></div>
+          <div><span>{{ t('insight.usage.aiCalls') }}</span><strong>{{ formatNumber(summary.model_calls) }}</strong></div>
         </article>
         <article class="usage-summary-card">
           <span class="usage-summary-card__icon is-token"><Coins :size="19" /></span>
-          <div><span>Total Tokens</span><strong>{{ formatCompact(summary.total_tokens) }}</strong></div>
+          <div><span>{{ t('insight.usage.totalTokens') }}</span><strong>{{ formatCompact(summary.total_tokens) }}</strong></div>
         </article>
         <article class="usage-summary-card">
           <span class="usage-summary-card__icon is-qa"><MessageSquareText :size="19" /></span>
-          <div><span>Questions</span><strong>{{ formatNumber(summary.q_and_a_requests) }}</strong></div>
+          <div><span>{{ t('insight.usage.questions') }}</span><strong>{{ formatNumber(summary.q_and_a_requests) }}</strong></div>
         </article>
       </section>
 
       <section class="usage-panel usage-trend-panel">
         <div class="usage-panel__head">
-          <div><h2>Usage Trend</h2></div>
+          <div><h2>{{ t('insight.usage.usageTrend') }}</h2></div>
           <div class="usage-segments usage-segments--small">
             <button
               :class="{ active: chartMetric === 'cost' }"
               type="button"
               @click="chartMetric = 'cost'"
             >
-              Cost
+              {{ t('insight.usage.cost') }}
             </button>
             <button
               :class="{ active: chartMetric === 'tokens' }"
               type="button"
               @click="chartMetric = 'tokens'"
             >
-              Tokens
+              {{ t('insight.usage.tokens') }}
             </button>
           </div>
         </div>
@@ -437,14 +442,14 @@ onBeforeUnmount(() => {
           v-else
           class="usage-chart-empty"
         >
-          <ChartNoAxesCombined :size="25" /><span>No Usage for This Period</span>
+          <ChartNoAxesCombined :size="25" /><span>{{ t('insight.usage.noUsageForPeriod') }}</span>
         </div>
       </section>
 
       <div class="usage-breakdown-grid">
         <section class="usage-panel">
           <div class="usage-panel__head">
-            <div><h2>Token Usage</h2></div>
+            <div><h2>{{ t('insight.usage.tokenUsage') }}</h2></div>
           </div>
           <div class="token-breakdown">
             <div
@@ -466,7 +471,7 @@ onBeforeUnmount(() => {
 
         <section class="usage-panel">
           <div class="usage-panel__head">
-            <div><h2>Usage by Backup Source</h2></div>
+            <div><h2>{{ t('insight.usage.usageByBackupSource') }}</h2></div>
           </div>
           <ElTable
             :data="usage?.by_backup_source || []"
@@ -474,7 +479,7 @@ onBeforeUnmount(() => {
             @row-click="filterByBackupSource"
           >
             <ElTableColumn
-              label="Backup Source"
+              :label="t('insight.usage.backupSource')"
               min-width="240"
             >
               <template #default="{ row }">
@@ -485,7 +490,7 @@ onBeforeUnmount(() => {
               </template>
             </ElTableColumn>
             <ElTableColumn
-              label="Questions"
+              :label="t('insight.usage.questions')"
               width="110"
               align="right"
             >
@@ -494,7 +499,7 @@ onBeforeUnmount(() => {
               </template>
             </ElTableColumn>
             <ElTableColumn
-              label="AI Calls"
+              :label="t('insight.usage.aiCalls')"
               width="110"
               align="right"
             >
@@ -503,7 +508,7 @@ onBeforeUnmount(() => {
               </template>
             </ElTableColumn>
             <ElTableColumn
-              label="Total Tokens"
+              :label="t('insight.usage.totalTokens')"
               width="120"
               align="right"
             >
@@ -512,7 +517,7 @@ onBeforeUnmount(() => {
               </template>
             </ElTableColumn>
             <ElTableColumn
-              label="Cost"
+              :label="t('insight.usage.cost')"
               width="130"
               align="right"
             >
@@ -521,7 +526,7 @@ onBeforeUnmount(() => {
               </template>
             </ElTableColumn>
             <template #empty>
-              <ElEmpty description="No Backup Source Usage for This Period" />
+              <ElEmpty :description="t('insight.usage.noBackupSourceUsage')" />
             </template>
           </ElTable>
         </section>
@@ -529,7 +534,7 @@ onBeforeUnmount(() => {
 
       <section class="usage-panel usage-table-panel">
         <div class="usage-panel__head usage-history-head">
-          <h2>Question History</h2>
+          <h2>{{ t('insight.usage.questionHistory') }}</h2>
           <div class="usage-history-actions">
             <div class="usage-search">
               <Search
@@ -541,14 +546,14 @@ onBeforeUnmount(() => {
                 v-model="searchQuery"
                 type="search"
                 name="usage_question_search"
-                aria-label="Search chats or questions"
-                placeholder="Search Chats or Questions..."
+                :aria-label="t('insight.usage.searchAria')"
+                :placeholder="t('insight.usage.searchPlaceholder')"
               >
             </div>
             <ElSelect
               v-model="backupSourceFilter"
               clearable
-              placeholder="All Backup Sources"
+              :placeholder="t('insight.usage.allBackupSources')"
               class="usage-filter-select"
             >
               <ElOption
@@ -561,19 +566,19 @@ onBeforeUnmount(() => {
             <ElSelect
               v-model="statusFilter"
               clearable
-              placeholder="All Statuses"
+              :placeholder="t('insight.usage.allStatuses')"
               class="usage-filter-select usage-filter-select--status"
             >
               <ElOption
-                label="Completed"
+                :label="t('insight.usage.statusCompleted')"
                 value="done"
               />
               <ElOption
-                label="Failed"
+                :label="t('insight.usage.statusFailed')"
                 value="failed"
               />
               <ElOption
-                label="Cancelled"
+                :label="t('insight.usage.statusCancelled')"
                 value="cancelled"
               />
             </ElSelect>
@@ -589,16 +594,16 @@ onBeforeUnmount(() => {
           row-key="run_uuid"
         >
           <ElTableColumn
-            label="Question"
+            :label="t('insight.usage.question')"
             min-width="280"
             fixed="left"
           >
             <template #default="{ row }">
-              <span class="usage-history-question">{{ row.question || 'Question Unavailable' }}</span>
+              <span class="usage-history-question">{{ row.question || t('insight.usage.questionUnavailable') }}</span>
             </template>
           </ElTableColumn>
           <ElTableColumn
-            label="Time"
+            :label="t('insight.usage.time')"
             width="150"
           >
             <template #default="{ row }">
@@ -609,12 +614,12 @@ onBeforeUnmount(() => {
             </template>
           </ElTableColumn>
           <ElTableColumn
-            label="Chat"
+            :label="t('insight.usage.chat')"
             min-width="180"
             prop="chat_title"
           />
           <ElTableColumn
-            label="Backup Source"
+            :label="t('insight.usage.backupSource')"
             min-width="220"
           >
             <template #default="{ row }">
@@ -625,7 +630,7 @@ onBeforeUnmount(() => {
             </template>
           </ElTableColumn>
           <ElTableColumn
-            label="AI Calls"
+            :label="t('insight.usage.aiCalls')"
             width="100"
             align="right"
           >
@@ -634,7 +639,7 @@ onBeforeUnmount(() => {
             </template>
           </ElTableColumn>
           <ElTableColumn
-            label="Total Tokens"
+            :label="t('insight.usage.totalTokens')"
             width="120"
             align="right"
           >
@@ -643,7 +648,7 @@ onBeforeUnmount(() => {
             </template>
           </ElTableColumn>
           <ElTableColumn
-            label="Cost"
+            :label="t('insight.usage.cost')"
             width="120"
             align="right"
           >
@@ -652,7 +657,7 @@ onBeforeUnmount(() => {
             </template>
           </ElTableColumn>
           <ElTableColumn
-            label="Status"
+            :label="t('insight.usage.status')"
             width="110"
           >
             <template #default="{ row }">
