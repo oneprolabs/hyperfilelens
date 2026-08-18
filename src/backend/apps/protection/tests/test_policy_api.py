@@ -98,7 +98,7 @@ class ProtectionPolicyApiTests(TestCase):
             "enabled": True,
             "mode": "weekly",
             "timezone": "Asia/Shanghai",
-            "starts_at": "2026-07-31T09:30",
+            "starts_at": "2026-07-31T09:30:45",
             "time": "09:30",
             "weekdays": [5, 1, 3, 3],
             "cron_expr": "ignored by normalization",
@@ -118,13 +118,40 @@ class ProtectionPolicyApiTests(TestCase):
                 "enabled": True,
                 "mode": "weekly",
                 "timezone": "Asia/Shanghai",
-                "starts_at": "2026-07-31T09:30",
+                "starts_at": "2026-07-31T09:30:45",
                 "time": "09:30",
                 "weekdays": [1, 3, 5],
                 "cron_expr": "30 9 * * 1,3,5",
             },
         )
         self.assertIn("Asia/Shanghai", response.data["schedule_summary"])
+
+        legacy_start = self._policy_payload("Legacy minute start")
+        legacy_start["schedule"] = {
+            **weekly["schedule"],
+            "starts_at": "2026-07-31T09:30",
+        }
+        legacy_response = self.client.post(
+            "/api/v1/protection/policies/",
+            legacy_start,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(legacy_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(legacy_response.data["schedule"]["starts_at"], "2026-07-31T09:30:00")
+
+        invalid_second = self._policy_payload("Invalid start second")
+        invalid_second["schedule"] = {
+            **weekly["schedule"],
+            "starts_at": "2026-07-31T09:30:60",
+        }
+        invalid_second_response = self.client.post(
+            "/api/v1/protection/policies/",
+            invalid_second,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(invalid_second_response.status_code, status.HTTP_400_BAD_REQUEST)
 
         invalid_timezone = self._policy_payload("Invalid timezone")
         invalid_timezone["schedule"] = {
@@ -143,7 +170,7 @@ class ProtectionPolicyApiTests(TestCase):
         nonexistent_start["schedule"] = {
             **weekly["schedule"],
             "timezone": "America/New_York",
-            "starts_at": "2026-03-08T02:30",
+            "starts_at": "2026-03-08T02:30:15",
         }
         dst_response = self.client.post(
             "/api/v1/protection/policies/",

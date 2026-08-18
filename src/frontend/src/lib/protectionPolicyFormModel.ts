@@ -20,7 +20,7 @@ export type SimpleIntervalUnit = 'minute' | 'hour' | 'day'
 export type ScheduleWeekday = 1 | 2 | 3 | 4 | 5 | 6 | 7
 
 const SCHEDULE_TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/
-const SCHEDULE_START_RE = /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):([0-5]\d)$/
+const SCHEDULE_START_RE = /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/
 
 export interface ScheduleTimezoneOption {
   value: string
@@ -86,7 +86,15 @@ function formatScheduleStart(date = new Date()): string {
   const day = String(date.getDate()).padStart(2, '0')
   const hour = String(date.getHours()).padStart(2, '0')
   const minute = String(date.getMinutes()).padStart(2, '0')
-  return `${year}-${month}-${day}T${hour}:${minute}`
+  const second = String(date.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}`
+}
+
+function normalizeScheduleStart(value: string): string {
+  const normalized = String(value || '').trim()
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(normalized)
+    ? `${normalized}:00`
+    : normalized
 }
 
 export interface SimpleIntervalUnitMeta {
@@ -385,7 +393,10 @@ export function summarizeSchedule(f: BackupPolicyForm, locale: MessageLocale = '
 export function formatScheduleStartForDisplay(value: string, fallback = '—'): string {
   const normalized = String(value || '').trim()
   if (!normalized) return fallback
-  return normalized.replace(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/, '$1 $2')
+  return normalizeScheduleStart(normalized).replace(
+    /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})$/,
+    '$1 $2',
+  )
 }
 
 function resolveHourlyHours(raw: Partial<BackupPolicyRetention>, fallback: number): number {
@@ -975,16 +986,18 @@ function scheduleTimeParts(value: string): { hour: number; minute: number } | nu
 
 function isValidScheduleStart(value: string): boolean {
   const text = value.trim()
-  if (!SCHEDULE_START_RE.test(text)) return false
+  const match = SCHEDULE_START_RE.exec(text)
+  if (!match) return false
   const [datePart, timePart] = text.split('T')
   const [year, month, day] = datePart!.split('-').map(Number)
-  const [hour, minute] = timePart!.split(':').map(Number)
-  const parsed = new Date(year!, month! - 1, day!, hour!, minute!)
+  const [hour, minute, second = 0] = timePart!.split(':').map(Number)
+  const parsed = new Date(year!, month! - 1, day!, hour!, minute!, second)
   return parsed.getFullYear() === year
     && parsed.getMonth() === month! - 1
     && parsed.getDate() === day
     && parsed.getHours() === hour
     && parsed.getMinutes() === minute
+    && parsed.getSeconds() === second
 }
 
 export function quickScheduleToCron(policyForm: BackupPolicyForm): string {
@@ -1095,7 +1108,7 @@ function applyScheduleFromApi(
       simpleIntervalValue: Number(schedule.interval_value) || base.simpleIntervalValue,
       cronExpr: expr || base.cronExpr,
       scheduleTimezone: schedule.timezone || 'UTC',
-      scheduleStartsAt: schedule.starts_at || '',
+      scheduleStartsAt: normalizeScheduleStart(schedule.starts_at || ''),
       scheduleTime: schedule.time || base.scheduleTime,
       scheduleWeekdays: weekdays.length ? weekdays : base.scheduleWeekdays,
       scheduleMonthDays: monthDays,
@@ -1185,7 +1198,7 @@ export function policyFormToWritePayload(policyForm: BackupPolicyForm): BackupPo
   const scheduleBase = {
     enabled: policyForm.sectionScheduleEnabled,
     timezone: policyForm.scheduleTimezone.trim() || 'UTC',
-    starts_at: (policyForm.scheduleStartsAt || '').trim() || null,
+    starts_at: normalizeScheduleStart(policyForm.scheduleStartsAt || '') || null,
   }
   let schedule: BackupPolicySchedule
   if (policyForm.freqMode === 'advanced') {

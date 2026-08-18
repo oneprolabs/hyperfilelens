@@ -457,6 +457,8 @@ function toggleScheduleMonthDay(day: number) {
               class="schedule-context-control"
               format="YYYY-MM-DD HH:mm:ss"
               value-format="YYYY-MM-DDTHH:mm:ss"
+              popper-class="policy-start-time-popper"
+              :teleported="true"
               :placeholder="t('protection.policiesPage.scheduleStartsAtPlaceholder')"
             />
           </ElFormItem>

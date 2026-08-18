@@ -106,14 +106,25 @@ def _schedule_start(schedule: dict) -> datetime | None:
     raw = str(schedule.get("starts_at") or "").strip()
     if not raw:
         return None
-    try:
-        return datetime.strptime(raw, "%Y-%m-%dT%H:%M")
-    except ValueError:
+    for value_format in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+        try:
+            return datetime.strptime(raw, value_format)
+        except ValueError:
+            continue
+    return None
+
+
+def _schedule_start_minute(schedule: dict) -> datetime | None:
+    starts_at = _schedule_start(schedule)
+    if starts_at is None:
         return None
+    if starts_at.second or starts_at.microsecond:
+        starts_at += timedelta(minutes=1)
+    return starts_at.replace(second=0, microsecond=0)
 
 
 def _schedule_start_instant(schedule: dict) -> datetime | None:
-    starts_at = _schedule_start(schedule)
+    starts_at = _schedule_start_minute(schedule)
     if starts_at is None:
         return None
     return starts_at.replace(
@@ -122,7 +133,7 @@ def _schedule_start_instant(schedule: dict) -> datetime | None:
 
 
 def _schedule_has_started(schedule: dict, current) -> bool:
-    starts_at = _schedule_start(schedule)
+    starts_at = _schedule_start_minute(schedule)
     if starts_at is None:
         return True
     return current.replace(tzinfo=None) >= starts_at
@@ -154,7 +165,7 @@ def schedule_matches_now(schedule: dict, *, now=None) -> bool:
             timezone_name=str(schedule.get("timezone") or "UTC"),
         )
     if mode == "interval":
-        starts_at = _schedule_start(schedule)
+        starts_at = _schedule_start_minute(schedule)
         if starts_at is None:
             return cron_matches_now(
                 str(schedule.get("cron_expr") or ""),

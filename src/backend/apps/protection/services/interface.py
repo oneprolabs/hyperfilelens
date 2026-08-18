@@ -14,7 +14,8 @@ from apps.protection.models import BackupConfig, BackupPolicy, FileFilterRule
 CRON_FIELD_RE = re.compile(r"^(\*|\d+(-\d+)?)(/\d+)?(,(\*|\d+(-\d+)?)(/\d+)?)*$")
 SCHEDULE_MODES = {"interval", "daily", "weekly", "monthly", "advanced"}
 SCHEDULE_INTERVAL_LIMITS = {"minute": 59, "hour": 23, "day": 365}
-SCHEDULE_LOCAL_DATETIME_FORMAT = "%Y-%m-%dT%H:%M"
+SCHEDULE_LOCAL_DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S"
+LEGACY_SCHEDULE_LOCAL_DATETIME_FORMAT = "%Y-%m-%dT%H:%M"
 SCHEDULE_TIME_FORMAT = "%H:%M"
 
 
@@ -56,12 +57,25 @@ def _normalize_schedule_starts_at(raw: Any, timezone_name: str) -> str | None:
     if raw in (None, ""):
         return None
     text = str(raw).strip()
-    try:
-        parsed = datetime.strptime(text, SCHEDULE_LOCAL_DATETIME_FORMAT)
-    except (TypeError, ValueError) as exc:
+    parsed = None
+    for value_format in (
+        SCHEDULE_LOCAL_DATETIME_FORMAT,
+        LEGACY_SCHEDULE_LOCAL_DATETIME_FORMAT,
+    ):
+        try:
+            parsed = datetime.strptime(text, value_format)
+            break
+        except (TypeError, ValueError):
+            continue
+    if parsed is None:
         raise ValidationError(
-            {"schedule": "starts_at must use YYYY-MM-DDTHH:MM in the selected timezone."}
-        ) from exc
+            {
+                "schedule": (
+                    "starts_at must use YYYY-MM-DDTHH:MM:SS in the selected timezone "
+                    "(legacy YYYY-MM-DDTHH:MM is also accepted)."
+                )
+            }
+        )
     schedule_timezone = ZoneInfo(timezone_name)
     round_tripped = (
         parsed.replace(tzinfo=schedule_timezone)
