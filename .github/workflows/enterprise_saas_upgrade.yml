@@ -71,6 +71,8 @@ jobs:
           git fetch origin main --no-tags
           git merge-base --is-ancestor "$commit" origin/main
           for contract in \
+            .github/actions/deploy-saas/action.yml \
+            .github/scripts/remote-saas-deploy.sh \
             deploy/installer/install.sh \
             release/ci/assemble-saas-candidate.sh \
             release/ci/prepare-saas-asset-context.sh; do
@@ -79,6 +81,12 @@ jobs:
               exit 1
             }
           done
+          grep -Fq -- '--registry-region "$HFL_REGISTRY_REGION"' \
+            .github/actions/deploy-saas/action.yml
+          grep -Fq 'HFL_REGISTRY_REGION="${registry_region}"' \
+            .github/scripts/remote-saas-deploy.sh
+          grep -Fq 'registry delivery requires HFL_REGISTRY_REGION=cn or global' \
+            deploy/installer/install.sh
           [[ "$REGISTRY_HOST" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ ]]
           [[ "$CN_REGISTRY_HOST" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ ]]
           for namespace in "$REGISTRY_NAMESPACE" "$CN_REGISTRY_NAMESPACE"; do
@@ -673,6 +681,7 @@ jobs:
       CN_REGISTRY_HOST: ${{ vars.CN_REGISTRY_HOST }}
       CN_REGISTRY_USERNAME: ${{ secrets.CN_REGISTRY_USERNAME }}
       CN_REGISTRY_PASSWORD: ${{ secrets.CN_REGISTRY_PASSWORD }}
+      HFL_REGISTRY_REGION: ${{ vars.TEST_REGISTRY_REGION }}
       HFL_INSECURE_TLS: ${{ vars.TEST_HFL_INSECURE_TLS }}
       HFL_PLATFORM_GATEWAY_AUTO_DEPLOY: ${{ vars.TEST_PLATFORM_GATEWAY_AUTO_DEPLOY }}
       HFL_EMAIL_SIGNUP_ENABLED: ${{ vars.TEST_EMAIL_SIGNUP_ENABLED }}
@@ -736,6 +745,7 @@ jobs:
       CN_REGISTRY_HOST: ${{ vars.CN_REGISTRY_HOST }}
       CN_REGISTRY_USERNAME: ${{ secrets.CN_REGISTRY_USERNAME }}
       CN_REGISTRY_PASSWORD: ${{ secrets.CN_REGISTRY_PASSWORD }}
+      HFL_REGISTRY_REGION: ${{ vars.PROD_REGISTRY_REGION }}
       HFL_INSECURE_TLS: ${{ vars.PROD_HFL_INSECURE_TLS }}
       HFL_PLATFORM_GATEWAY_AUTO_DEPLOY: ${{ vars.PROD_PLATFORM_GATEWAY_AUTO_DEPLOY }}
       HFL_EMAIL_SIGNUP_ENABLED: ${{ vars.PROD_EMAIL_SIGNUP_ENABLED }}
