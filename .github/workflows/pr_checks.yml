@@ -1,4 +1,4 @@
-name: PR Checks
+name: HFL - PR Checks
 
 on:
   pull_request:
