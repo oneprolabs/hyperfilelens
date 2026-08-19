@@ -21,6 +21,7 @@ type Handler struct {
 	tracker           *controller.Tracker
 	tasks             *database.TaskRepo
 	snapshotScheduler *controller.Scheduler
+	nasLeases         *engine.NASLeaseCoordinator
 	resultAckEnabled  atomic.Bool
 }
 
@@ -52,6 +53,7 @@ func NewHandler(
 		tracker:           tracker,
 		tasks:             tasks,
 		snapshotScheduler: snapshotScheduler,
+		nasLeases:         engine.NewNASLeaseCoordinator(),
 	}
 }
 
@@ -215,7 +217,7 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 
 	logging.InfoTask(taskCtx, "task execution started", cmd.NodeID, cmd.TaskID, cmd.Kind)
 
-	eng := engine.New(h.provider)
+	eng := engine.NewWithNASLeaseCoordinator(h.provider, h.nasLeases)
 
 	now := time.Now().UTC()
 

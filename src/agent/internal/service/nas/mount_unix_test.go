@@ -4,6 +4,7 @@ package nas
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -81,6 +82,21 @@ func TestIsBusyMountErrorDetectsCIFSError16(t *testing.T) {
 	res := process.Result{Stderr: "mount error(16): Device or resource busy"}
 	if !isBusyMountError(res, fmt.Errorf("exit 32")) {
 		t.Fatal("expected CIFS error 16 to be treated as busy")
+	}
+}
+
+func TestParseNestedMountDetails(t *testing.T) {
+	raw := `31 24 0:27 / /opt/hfl/data/mounts/sources/7 rw - nfs server:/source rw
+32 31 0:28 / /opt/hfl/data/mounts/sources/7/nested rw - nfs server:/nested rw
+33 31 0:29 / /opt/hfl/data/mounts/sources/7/folder\040with\040spaces rw - nfs server:/spaces rw
+34 24 0:30 / /opt/hfl/data/mounts/sources/70 rw - nfs server:/other rw`
+	want := []string{
+		"nested_mount=/opt/hfl/data/mounts/sources/7/folder with spaces",
+		"nested_mount=/opt/hfl/data/mounts/sources/7/nested",
+	}
+	got := parseNestedMountDetails(raw, "/opt/hfl/data/mounts/sources/7")
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseNestedMountDetails()=%v want=%v", got, want)
 	}
 }
 

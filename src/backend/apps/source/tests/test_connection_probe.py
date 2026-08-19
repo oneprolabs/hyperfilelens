@@ -13,8 +13,10 @@ from apps.source.services.internal.availability import (
     confirmed_agent_failure,
     project_node_availability,
 )
+from apps.source.services.internal.connection import best_effort_unmount_on_proxy
 from apps.source.services.interface import (
     bind_node,
+    mount_resource,
     test_resource_connection,
     update_source_resource,
 )
@@ -24,6 +26,7 @@ from apps.source.tasks.connection_probe import (
     reconcile_stale_source_connection_probes,
     run_source_resource_capacity_probe,
 )
+from apps.task.models import Task
 
 
 class SourceConnectionProbeTests(TestCase):
@@ -119,8 +122,15 @@ class SourceConnectionProbeTests(TestCase):
         self.assertEqual(self.resource.total_size, 0)
         self.assertIsNone(self.resource.last_connection_test)
 
+    @mock.patch(
+        "apps.source.tasks.connection_probe.best_effort_unmount_on_proxy"
+    )
     @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
-    def test_probe_discards_result_after_source_delete(self, run_test):
+    def test_probe_discards_result_after_source_delete(
+        self,
+        run_test,
+        best_effort_unmount,
+    ):
         def delete_source(**_kwargs):
             SourceResource.objects.get(pk=self.resource.id).soft_delete()
             return {"success": True, "message": "Connection test successful"}
@@ -140,6 +150,388 @@ class SourceConnectionProbeTests(TestCase):
         )
         self.assertTrue(deleted.is_deleted)
         self.assertEqual(deleted.total_size, 0)
+        best_effort_unmount.assert_called_once_with(
+            resource=mock.ANY,
+            node_id=self.proxy.id,
+            force=True,
+        )
+
+    @mock.patch(
+        "apps.source.tasks.connection_probe.best_effort_unmount_on_proxy"
+    )
+    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
+    def test_probe_success_racing_removal_is_compensated(
+        self,
+        run_test,
+        best_effort_unmount,
+    ):
+        def remove_source(**_kwargs):
+            SourceResource.objects.filter(pk=self.resource.id).update(
+                status="removing",
+            )
+            return {"success": True, "message": "Connection test successful"}
+
+        run_test.side_effect = remove_source
+
+        result = run_source_resource_capacity_probe(
+            resource_id=self.resource.id,
+            probe_token=str(self.probe_token),
+            expected_bound_node_id=self.proxy.id,
+        )
+
+        self.assertEqual(
+            result,
+            {"status": "discarded", "reason": "source_removing"},
+        )
+        best_effort_unmount.assert_called_once_with(
+            resource=mock.ANY,
+            node_id=self.proxy.id,
+            force=True,
+        )
+
+    @mock.patch(
+        "apps.source.tasks.connection_probe.best_effort_unmount_on_proxy"
+    )
+    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
+    def test_probe_failure_racing_removal_is_compensated(
+        self,
+        run_test,
+        best_effort_unmount,
+    ):
+        def remove_source(**_kwargs):
+            SourceResource.objects.filter(pk=self.resource.id).update(
+                status="removing",
+            )
+            return {"success": False, "message": "Capacity read failed"}
+
+        run_test.side_effect = remove_source
+
+        result = run_source_resource_capacity_probe(
+            resource_id=self.resource.id,
+            probe_token=str(self.probe_token),
+            expected_bound_node_id=self.proxy.id,
+        )
+
+        self.assertEqual(
+            result,
+            {"status": "discarded", "reason": "source_removing"},
+        )
+        best_effort_unmount.assert_called_once_with(
+            resource=mock.ANY,
+            node_id=self.proxy.id,
+            force=True,
+        )
+
+    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
+    def test_probe_skips_remove_failed_source(self, run_test):
+        SourceResource.objects.filter(pk=self.resource.id).update(
+            status="remove_failed",
+        )
+
+        result = run_source_resource_capacity_probe(
+            resource_id=self.resource.id,
+            probe_token=str(self.probe_token),
+            expected_bound_node_id=self.proxy.id,
+        )
+
+        self.assertEqual(result, {"status": "skipped", "reason": "source_removing"})
+        run_test.assert_not_called()
+
+    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
+    def test_probe_claim_cannot_overwrite_removing_fence(self, run_test):
+        from apps.source.tasks import connection_probe
+
+        original_target = connection_probe._probe_target
+
+        def fence_after_read(**kwargs):
+            resource, reason = original_target(**kwargs)
+            SourceResource.objects.filter(pk=self.resource.id).update(
+                status="removing",
+            )
+            return resource, reason
+
+        with mock.patch(
+            "apps.source.tasks.connection_probe._probe_target",
+            side_effect=fence_after_read,
+        ):
+            result = run_source_resource_capacity_probe(
+                resource_id=self.resource.id,
+                probe_token=str(self.probe_token),
+                expected_bound_node_id=self.proxy.id,
+            )
+
+        self.assertEqual(result, {"status": "skipped", "reason": "source_removing"})
+        self.resource.refresh_from_db()
+        self.assertEqual(self.resource.status, "removing")
+        run_test.assert_not_called()
+
+    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
+    def test_probe_claim_reports_source_change_race(self, run_test):
+        from apps.source.tasks import connection_probe
+
+        original_target = connection_probe._probe_target
+        calls = 0
+
+        def change_after_read(**kwargs):
+            nonlocal calls
+            calls += 1
+            resource, reason = original_target(**kwargs)
+            if calls == 1:
+                SourceResource.objects.filter(pk=self.resource.id).update(
+                    connection_probe_token=uuid4(),
+                )
+            return resource, reason
+
+        with mock.patch(
+            "apps.source.tasks.connection_probe._probe_target",
+            side_effect=change_after_read,
+        ):
+            result = run_source_resource_capacity_probe(
+                resource_id=self.resource.id,
+                probe_token=str(self.probe_token),
+                expected_bound_node_id=self.proxy.id,
+            )
+
+        self.assertEqual(result, {"status": "skipped", "reason": "source_changed"})
+        run_test.assert_not_called()
+
+    @mock.patch("apps.source.services.interface.run_connection_test")
+    def test_manual_probe_does_not_cross_removal_fence(self, run_test):
+        SourceResource.objects.filter(pk=self.resource.id).update(
+            status="remove_failed",
+        )
+
+        result = test_resource_connection(resource=self.resource)
+
+        self.assertFalse(result["success"])
+        self.assertIn("being removed", result["message"])
+        run_test.assert_not_called()
+
+    @mock.patch("apps.source.services.interface.best_effort_unmount_on_proxy")
+    @mock.patch("apps.source.services.interface.run_connection_test")
+    def test_manual_probe_failure_racing_removal_is_compensated(
+        self,
+        run_test,
+        best_effort_unmount,
+    ):
+        def remove_source(**_kwargs):
+            SourceResource.objects.filter(pk=self.resource.id).update(
+                status="removing",
+            )
+            return {"success": False, "message": "Capacity read failed"}
+
+        run_test.side_effect = remove_source
+
+        result = test_resource_connection(resource=self.resource)
+
+        self.assertFalse(result["success"])
+        self.assertTrue(result["stale"])
+        best_effort_unmount.assert_called_once_with(
+            resource=self.resource,
+            node_id=self.proxy.id,
+            force=True,
+        )
+
+    @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_manual_mount_does_not_cross_removal_fence(self, dispatch_task):
+        SourceResource.objects.filter(pk=self.resource.id).update(
+            status="remove_failed",
+        )
+
+        result = mount_resource(resource=self.resource)
+
+        self.assertFalse(result["success"])
+        self.assertIn("being removed", result["message"])
+        dispatch_task.assert_not_called()
+
+    @mock.patch(
+        "apps.source.services.internal.connection.best_effort_unmount_on_proxy"
+    )
+    @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_mount_success_racing_removal_is_compensated(
+        self,
+        dispatch_task,
+        best_effort_unmount,
+    ):
+        def fence_during_mount(**_kwargs):
+            SourceResource.objects.filter(pk=self.resource.id).update(
+                status="removing",
+            )
+            return SimpleNamespace(timed_out=False, ok=True, result={})
+
+        dispatch_task.side_effect = fence_during_mount
+
+        result = mount_resource(resource=self.resource)
+
+        self.assertFalse(result["success"])
+        self.assertTrue(result["stale"])
+        best_effort_unmount.assert_called_once_with(
+            resource=self.resource,
+            node_id=self.proxy.id,
+            force=True,
+        )
+
+    @mock.patch(
+        "apps.source.services.internal.connection.best_effort_unmount_on_proxy"
+    )
+    @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_mount_failure_racing_removal_is_compensated(
+        self,
+        dispatch_task,
+        best_effort_unmount,
+    ):
+        def fence_during_mount(**_kwargs):
+            SourceResource.objects.filter(pk=self.resource.id).update(
+                status="removing",
+            )
+            return SimpleNamespace(
+                timed_out=False,
+                ok=False,
+                result={},
+                task=SimpleNamespace(last_error="Capacity read failed", status="failed"),
+                stream_message=None,
+            )
+
+        dispatch_task.side_effect = fence_during_mount
+
+        result = mount_resource(resource=self.resource)
+
+        self.assertFalse(result["success"])
+        best_effort_unmount.assert_called_once_with(
+            resource=self.resource,
+            node_id=self.proxy.id,
+            force=True,
+        )
+
+    @mock.patch(
+        "apps.source.services.internal.connection.best_effort_unmount_on_proxy"
+    )
+    @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_mount_timeout_racing_removal_is_compensated(
+        self,
+        dispatch_task,
+        best_effort_unmount,
+    ):
+        def fence_during_mount(**_kwargs):
+            Task.objects.create(
+                organization_id=self.org.id,
+                task_type=Task.Type.SOURCE_UNREGISTER,
+                status=Task.Status.RUNNING,
+                request_payload={
+                    "source_ids": [f"nas:{self.resource.id}"],
+                    "force": False,
+                },
+            )
+            SourceResource.objects.filter(pk=self.resource.id).update(
+                status="removing",
+            )
+            return SimpleNamespace(timed_out=True, ok=False)
+
+        dispatch_task.side_effect = fence_during_mount
+
+        result = mount_resource(resource=self.resource)
+
+        self.assertFalse(result["success"])
+        best_effort_unmount.assert_called_once_with(
+            resource=self.resource,
+            node_id=self.proxy.id,
+            force=False,
+        )
+
+    @mock.patch(
+        "apps.source.services.internal.connection.best_effort_unmount_on_proxy"
+    )
+    @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_mount_timeout_without_removal_does_not_force_cleanup(
+        self,
+        dispatch_task,
+        best_effort_unmount,
+    ):
+        dispatch_task.return_value = SimpleNamespace(timed_out=True, ok=False)
+
+        result = mount_resource(resource=self.resource)
+
+        self.assertFalse(result["success"])
+        best_effort_unmount.assert_not_called()
+        self.resource.refresh_from_db()
+        self.assertEqual(self.resource.mount_status, "error")
+
+    @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_removal_compensation_requests_force_cleanup(self, dispatch_task):
+        dispatch_task.return_value = SimpleNamespace(timed_out=False, ok=True)
+
+        best_effort_unmount_on_proxy(
+            resource=self.resource,
+            node_id=self.proxy.id,
+            force=True,
+        )
+
+        self.assertTrue(dispatch_task.call_args.kwargs["payload"]["force_cleanup"])
+
+    @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_regular_proxy_cleanup_does_not_request_force_cleanup(self, dispatch_task):
+        dispatch_task.return_value = SimpleNamespace(timed_out=False, ok=True)
+
+        best_effort_unmount_on_proxy(
+            resource=self.resource,
+            node_id=self.proxy.id,
+        )
+
+        self.assertNotIn("force_cleanup", dispatch_task.call_args.kwargs["payload"])
+
+    @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_strict_removal_compensation_does_not_request_force_cleanup(
+        self,
+        dispatch_task,
+    ):
+        Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            status=Task.Status.RUNNING,
+            request_payload={
+                "source_ids": [f"nas:{self.resource.id}"],
+                "force": False,
+            },
+        )
+        SourceResource.objects.filter(pk=self.resource.id).update(status="removing")
+        dispatch_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=True,
+            result={"cleanup_complete": True},
+        )
+
+        best_effort_unmount_on_proxy(
+            resource=self.resource,
+            node_id=self.proxy.id,
+            force=True,
+        )
+
+        self.assertNotIn("force_cleanup", dispatch_task.call_args.kwargs["payload"])
+
+    @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    def test_compensating_force_cleanup_returns_retained_resources(self, dispatch_task):
+        dispatch_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=True,
+            result={
+                "cleanup_complete": False,
+                "retained_resources": ["nas_mount_reference"],
+                "warnings": ["The NAS mount was lazily detached."],
+            },
+        )
+
+        result = best_effort_unmount_on_proxy(
+            resource=self.resource,
+            node_id=self.proxy.id,
+            force=True,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertFalse(result["cleanup_complete"])
+        self.assertEqual(
+            result["retained_resources"],
+            ["nas_mount_reference"],
+        )
 
     @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
     def test_probe_skips_when_proxy_is_offline(self, run_test):

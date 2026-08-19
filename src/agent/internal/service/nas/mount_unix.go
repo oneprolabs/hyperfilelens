@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 
 	"log/slog"
@@ -100,6 +102,10 @@ func unescapeProcMount(value string) string {
 		`\134`, `\`,
 	)
 	return replacer.Replace(value)
+}
+
+func hasUnmountWork(mountPoint string) bool {
+	return isMounted(mountPoint)
 }
 
 func mountShare(ctx context.Context, spec Spec) error {
@@ -314,6 +320,126 @@ func unmountShare(ctx context.Context, mountPoint string) error {
 		return fmt.Errorf("unmount NAS share: %s", msg)
 	}
 	return nil
+}
+
+func lazyUnmountShare(ctx context.Context, mountPoint string) error {
+	res, runErr := process.Run(ctx, "umount", []string{"-l", mountPoint}, nil, "")
+	if runErr != nil {
+		msg := strings.TrimSpace(res.Stderr)
+		if msg == "" {
+			msg = runErr.Error()
+		}
+		return fmt.Errorf("lazy unmount NAS share: %s", msg)
+	}
+	return nil
+}
+
+func unmountBusyDetails(mountPoint string) string {
+	mountPoint = filepath.Clean(mountPoint)
+	details := nestedMountDetails(mountPoint)
+	procEntries, err := os.ReadDir("/proc")
+	if err != nil {
+		return strings.Join(details, ", ")
+	}
+	for _, entry := range procEntries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, parseErr := strconv.Atoi(entry.Name())
+		if parseErr != nil || pid <= 0 {
+			continue
+		}
+		procRoot := filepath.Join("/proc", entry.Name())
+		for _, reference := range []string{"cwd", "root"} {
+			target, readErr := os.Readlink(filepath.Join(procRoot, reference))
+			if readErr == nil && pathWithinMount(target, mountPoint) {
+				details = append(details, processReferenceDetail(procRoot, pid, reference))
+				break
+			}
+		}
+		if len(details) >= 8 {
+			break
+		}
+		fdEntries, readErr := os.ReadDir(filepath.Join(procRoot, "fd"))
+		if readErr != nil {
+			continue
+		}
+		for _, fd := range fdEntries {
+			target, linkErr := os.Readlink(filepath.Join(procRoot, "fd", fd.Name()))
+			if linkErr == nil && pathWithinMount(strings.TrimSuffix(target, " (deleted)"), mountPoint) {
+				details = append(details, processReferenceDetail(procRoot, pid, "fd:"+fd.Name()))
+				break
+			}
+		}
+		if len(details) >= 8 {
+			break
+		}
+	}
+	sort.Strings(details)
+	if len(details) > 12 {
+		details = details[:12]
+	}
+	return strings.Join(details, ", ")
+}
+
+func nestedMountDetails(mountPoint string) []string {
+	raw, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return nil
+	}
+	return parseNestedMountDetails(string(raw), mountPoint)
+}
+
+func parseNestedMountDetails(raw string, mountPoint string) []string {
+	mountPoint = filepath.Clean(mountPoint)
+	details := []string{}
+	seen := map[string]struct{}{}
+	for line := range strings.SplitSeq(raw, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		child := filepath.Clean(unescapeMountInfoPath(fields[4]))
+		if child == mountPoint || !pathWithinMount(child, mountPoint) {
+			continue
+		}
+		detail := fmt.Sprintf("nested_mount=%s", child)
+		if _, exists := seen[detail]; exists {
+			continue
+		}
+		seen[detail] = struct{}{}
+		details = append(details, detail)
+	}
+	sort.Strings(details)
+	return details
+}
+
+func unescapeMountInfoPath(path string) string {
+	return strings.NewReplacer(
+		`\040`, " ",
+		`\011`, "\t",
+		`\012`, "\n",
+		`\134`, `\`,
+	).Replace(path)
+}
+
+func pathWithinMount(path string, mountPoint string) bool {
+	path = filepath.Clean(path)
+	if path == mountPoint {
+		return true
+	}
+	rel, err := filepath.Rel(mountPoint, path)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+func processReferenceDetail(procRoot string, pid int, reference string) string {
+	name := "unknown"
+	if raw, err := os.ReadFile(filepath.Join(procRoot, "comm")); err == nil {
+		if value := strings.TrimSpace(string(raw)); value != "" {
+			name = value
+		}
+	}
+	return fmt.Sprintf("pid=%d command=%s reference=%s", pid, name, reference)
 }
 
 func writeSMBCredentials(spec Spec) (string, error) {

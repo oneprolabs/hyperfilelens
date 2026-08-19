@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"hyperfilelens/agent/internal/platform/disk"
 	"hyperfilelens/agent/internal/platform/vfs"
@@ -37,17 +38,69 @@ type SpaceInfo struct {
 	FreeBytes  uint64
 }
 
+// UnmountOptions controls how an Agent-owned NAS mount is released.
+type UnmountOptions struct {
+	Force bool
+}
+
+// UnmountResult reports whether cleanup detached the mount while retaining
+// local references or mount-directory residue.
+type UnmountResult struct {
+	Attempts          int
+	CleanupComplete   bool
+	LazyUnmount       bool
+	RetainedResources []string
+	Warnings          []string
+}
+
+type unmountLocalCleanupError struct {
+	err error
+}
+
+func (e *unmountLocalCleanupError) Error() string {
+	return e.err.Error()
+}
+
+func (e *unmountLocalCleanupError) Unwrap() error {
+	return e.err
+}
+
+func localUnmountCleanupError(err error) error {
+	return &unmountLocalCleanupError{err: err}
+}
+
+func isLocalUnmountCleanupError(err error) bool {
+	var cleanupErr *unmountLocalCleanupError
+	return errors.As(err, &cleanupErr)
+}
+
+const unmountAttempts = 3
+
 // Service mounts and validates NAS shares on the local host.
-type Service struct{}
+type Service struct {
+	isMountedFn      func(string) bool
+	hasUnmountWorkFn func(string) bool
+	unmountFn        func(context.Context, string) error
+	lazyUnmountFn    func(context.Context, string) error
+	removeMountDirFn func(string) error
+	retryWaitFn      func(context.Context, time.Duration) error
+}
 
 func NewService() *Service {
-	return &Service{}
+	return &Service{
+		isMountedFn:      isMounted,
+		hasUnmountWorkFn: hasUnmountWork,
+		unmountFn:        unmountShare,
+		lazyUnmountFn:    lazyUnmountShare,
+		removeMountDirFn: removeManagedMountDirectory,
+		retryWaitFn:      waitUnmountRetry,
+	}
 }
 
 // IsMounted reports whether mountPoint is an active filesystem mount.
 func (s *Service) IsMounted(mountPoint string) bool {
 	mountPoint = ResolvedMountPoint(mountPoint)
-	return mountPoint != "" && isMounted(mountPoint)
+	return mountPoint != "" && s.isMounted(mountPoint)
 }
 
 // CleanupUnmountedMountPoint removes an empty managed mount-point directory.
@@ -58,7 +111,7 @@ func (s *Service) CleanupUnmountedMountPoint(mountPoint string) (bool, error) {
 	if mountPoint == "" {
 		return false, fmt.Errorf("invalid mount_point")
 	}
-	if isMounted(mountPoint) {
+	if s.hasUnmountWork(mountPoint) {
 		return false, nil
 	}
 	entries, err := os.ReadDir(mountPoint)
@@ -68,7 +121,7 @@ func (s *Service) CleanupUnmountedMountPoint(mountPoint string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if len(entries) != 0 || isMounted(mountPoint) {
+	if len(entries) != 0 || s.hasUnmountWork(mountPoint) {
 		return false, nil
 	}
 	if err := removeManagedMountDirectory(mountPoint); err != nil {
@@ -86,7 +139,7 @@ func (s *Service) EnsureMounted(ctx context.Context, spec Spec) error {
 	if spec.MountPoint == "" {
 		return fmt.Errorf("invalid mount_point")
 	}
-	if isMounted(spec.MountPoint) {
+	if s.isMounted(spec.MountPoint) {
 		return validateMountedShare(spec)
 	}
 	if _, err := s.Mount(ctx, spec); err != nil {
@@ -104,6 +157,14 @@ func (s *Service) Mount(ctx context.Context, spec Spec) (SpaceInfo, error) {
 	if spec.MountPoint == "" {
 		return SpaceInfo{}, fmt.Errorf("invalid mount_point")
 	}
+	if s.isMounted(spec.MountPoint) {
+		return s.spaceInfo(spec.MountPoint)
+	}
+	if s.hasUnmountWork(spec.MountPoint) {
+		if _, err := s.UnmountWithOptions(ctx, spec.MountPoint, UnmountOptions{}); err != nil {
+			return SpaceInfo{}, fmt.Errorf("cleanup stale mount state: %w", err)
+		}
+	}
 	if err := mountShare(ctx, spec); err != nil {
 		return SpaceInfo{}, err
 	}
@@ -116,25 +177,149 @@ func (s *Service) Mount(ctx context.Context, spec Spec) (SpaceInfo, error) {
 
 // Unmount removes the NAS mount from the local host.
 func (s *Service) Unmount(ctx context.Context, mountPoint string) error {
+	_, err := s.UnmountWithOptions(ctx, mountPoint, UnmountOptions{})
+	return err
+}
+
+// UnmountWithOptions releases a managed mount with bounded retries. Force mode
+// may lazily detach a busy Linux mount, but it never kills unknown processes.
+func (s *Service) UnmountWithOptions(
+	ctx context.Context,
+	mountPoint string,
+	options UnmountOptions,
+) (UnmountResult, error) {
+	result := UnmountResult{CleanupComplete: true}
 	if err := ctx.Err(); err != nil {
-		return err
+		return result, err
 	}
 	mountPoint = ResolvedMountPoint(mountPoint)
 	if mountPoint == "" {
-		return fmt.Errorf("invalid mount_point")
+		return result, fmt.Errorf("invalid mount_point")
 	}
-	if isMounted(mountPoint) {
-		if err := unmountShare(ctx, mountPoint); err != nil {
-			return err
+	if s.hasUnmountWork(mountPoint) {
+		var unmountErr error
+		for attempt := 1; attempt <= unmountAttempts; attempt++ {
+			result.Attempts = attempt
+			unmountErr = s.unmount(ctx, mountPoint)
+			// The live mount table is authoritative. The command can report an
+			// error after the kernel has already detached the mount.
+			if !s.hasUnmountWork(mountPoint) && !isLocalUnmountCleanupError(unmountErr) {
+				unmountErr = nil
+				break
+			}
+			if unmountErr == nil {
+				unmountErr = fmt.Errorf("mount point remains active after unmount")
+			}
+			if !isBusyUnmountError(unmountErr) || attempt == unmountAttempts {
+				break
+			}
+			if err := s.waitUnmountRetry(ctx, time.Duration(attempt)*200*time.Millisecond); err != nil {
+				return result, err
+			}
 		}
-		if isMounted(mountPoint) {
-			return fmt.Errorf("mount point remains active after unmount")
+		if unmountErr != nil {
+			if !options.Force || !isBusyUnmountError(unmountErr) {
+				return result, withUnmountDiagnostics(mountPoint, unmountErr)
+			}
+			details := strings.TrimSpace(unmountBusyDetails(mountPoint))
+			if err := s.lazyUnmount(ctx, mountPoint); err != nil {
+				return result, withUnmountDiagnostics(mountPoint, err)
+			}
+			warning := "The managed NAS mount was lazily detached because local references remained."
+			if details != "" {
+				warning += " Active references: " + details + "."
+			}
+			result.CleanupComplete = false
+			result.LazyUnmount = true
+			result.RetainedResources = append(result.RetainedResources, "nas_mount_reference")
+			result.Warnings = append(result.Warnings, warning)
+		}
+		if s.hasUnmountWork(mountPoint) {
+			return result, fmt.Errorf("mount point remains active after unmount")
 		}
 	}
-	if err := removeManagedMountDirectory(mountPoint); err != nil {
-		return fmt.Errorf("cleanup mount directory: %w", err)
+	if err := s.removeMountDirectory(mountPoint); err != nil {
+		if !options.Force {
+			return result, fmt.Errorf("cleanup mount directory: %w", err)
+		}
+		result.CleanupComplete = false
+		result.RetainedResources = append(result.RetainedResources, "nas_mount_directory")
+		result.Warnings = append(result.Warnings, "The managed NAS mount directory requires later cleanup.")
 	}
-	return nil
+	return result, nil
+}
+
+func (s *Service) isMounted(mountPoint string) bool {
+	if s != nil && s.isMountedFn != nil {
+		return s.isMountedFn(mountPoint)
+	}
+	return isMounted(mountPoint)
+}
+
+func (s *Service) hasUnmountWork(mountPoint string) bool {
+	if s != nil && s.hasUnmountWorkFn != nil {
+		return s.hasUnmountWorkFn(mountPoint)
+	}
+	return hasUnmountWork(mountPoint)
+}
+
+func (s *Service) unmount(ctx context.Context, mountPoint string) error {
+	if s != nil && s.unmountFn != nil {
+		return s.unmountFn(ctx, mountPoint)
+	}
+	return unmountShare(ctx, mountPoint)
+}
+
+func (s *Service) lazyUnmount(ctx context.Context, mountPoint string) error {
+	if s != nil && s.lazyUnmountFn != nil {
+		return s.lazyUnmountFn(ctx, mountPoint)
+	}
+	return lazyUnmountShare(ctx, mountPoint)
+}
+
+func (s *Service) removeMountDirectory(mountPoint string) error {
+	if s != nil && s.removeMountDirFn != nil {
+		return s.removeMountDirFn(mountPoint)
+	}
+	return removeManagedMountDirectory(mountPoint)
+}
+
+func (s *Service) waitUnmountRetry(ctx context.Context, delay time.Duration) error {
+	if s != nil && s.retryWaitFn != nil {
+		return s.retryWaitFn(ctx, delay)
+	}
+	return waitUnmountRetry(ctx, delay)
+}
+
+func waitUnmountRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isBusyUnmountError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "device is busy") ||
+		strings.Contains(message, "device or resource busy") ||
+		strings.Contains(message, "target is busy") ||
+		strings.Contains(message, "mount point remains active") ||
+		strings.Contains(message, "resource busy")
+}
+
+func withUnmountDiagnostics(mountPoint string, err error) error {
+	details := strings.TrimSpace(unmountBusyDetails(mountPoint))
+	if details == "" {
+		return err
+	}
+	return fmt.Errorf("%w; active references: %s", err, details)
 }
 
 func removeManagedMountDirectory(mountPoint string) error {

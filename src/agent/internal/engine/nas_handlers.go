@@ -196,15 +196,38 @@ func (e *Engine) runNasUnmount(ctx context.Context, p Payload) (string, map[stri
 		return "failed", nil, "mount_point is required"
 	}
 	logNasTask(ctx, "unmount_start", "", nas.Spec{MountPoint: mountPoint}, "mount_point", mountPoint)
-	if err := nas.NewService().Unmount(ctx, mountPoint); err != nil {
+	forceCleanup, _ := payloadBoolValue(p.Extra["force_cleanup"])
+	cleanup, err := nas.NewService().UnmountWithOptions(
+		ctx,
+		mountPoint,
+		nas.UnmountOptions{Force: forceCleanup},
+	)
+	if err != nil {
 		logNasTask(ctx, "unmount_failed", "", nas.Spec{MountPoint: mountPoint}, "err", err.Error())
 		return "failed", nil, err.Error()
 	}
-	logNasTask(ctx, "unmount_ok", "", nas.Spec{MountPoint: mountPoint})
-	return "success", map[string]any{
-		"mount_point":  mountPoint,
-		"mount_status": "unmounted",
-	}, ""
+	logNasTask(
+		ctx,
+		"unmount_ok",
+		"",
+		nas.Spec{MountPoint: mountPoint},
+		"attempts",
+		cleanup.Attempts,
+		"lazy_unmount",
+		cleanup.LazyUnmount,
+		"cleanup_complete",
+		cleanup.CleanupComplete,
+	)
+	result := map[string]any{
+		"mount_point":        mountPoint,
+		"mount_status":       "unmounted",
+		"cleanup_complete":   cleanup.CleanupComplete,
+		"lazy_unmount":       cleanup.LazyUnmount,
+		"unmount_attempts":   cleanup.Attempts,
+		"retained_resources": cleanup.RetainedResources,
+		"warnings":           cleanup.Warnings,
+	}
+	return "success", result, ""
 }
 
 func (e *Engine) runNasTest(ctx context.Context, p Payload) (string, map[string]any, string) {

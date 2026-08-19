@@ -103,7 +103,7 @@ class SourceRemoteTransactionBoundaryTests(TransactionTestCase):
         )
         resource_id = resource.id
 
-        def perform_unmount(*, resource):
+        def perform_unmount(*, resource, force):
             self.assertFalse(connection.in_atomic_block)
             self.assertEqual(resource.id, resource_id)
             return {"success": True, "message": "Unmounted"}
@@ -117,4 +117,4 @@ class SourceRemoteTransactionBoundaryTests(TransactionTestCase):
 
         self.assertEqual(result["result"], "success")
         self.assertTrue(SourceResource.all_objects.get(pk=resource.id).is_deleted)
-        unmount.assert_called_once()
+        unmount.assert_called_once_with(resource=resource, force=False)
