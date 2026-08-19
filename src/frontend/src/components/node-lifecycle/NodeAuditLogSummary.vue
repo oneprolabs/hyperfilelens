@@ -63,12 +63,6 @@ function resultTagType(result: string) {
   return 'info'
 }
 
-function resultLabel(result: string) {
-  if (result === 'success') return t('nodeAuditLogSummary.success') || 'Success'
-  if (result === 'failure') return t('nodeAuditLogSummary.failed') || 'Failed'
-  return result || '—'
-}
-
 function actionLabel(action: string) {
   if (action === 'node.lifecycle.upgrade') return t('nodeAuditLogSummary.actionUpgrade') || 'Upgrade'
   if (action === 'node.lifecycle.upgrade.complete') return t('nodeAuditLogSummary.actionUpgradeComplete') || 'Upgrade Complete'

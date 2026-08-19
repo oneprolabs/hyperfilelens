@@ -547,7 +547,6 @@ def _build_upgrade_timeline(*, node: Node, task: NodeTask) -> list[dict[str, Any
     is_success = task.status == NodeTask.Status.SUCCESS
     is_active = task.status in _ACTIVE_TASK_STATUSES
 
-    detached_at = None
     verify_started_at = None
     result = task.result if isinstance(task.result, dict) else {}
     if result.get("verify_started_at"):

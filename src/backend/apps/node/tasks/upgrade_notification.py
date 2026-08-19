@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 
-from apps.iam.models import Organization
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_upgrade import validate_agent_upgrade
@@ -70,5 +69,5 @@ def notify_agent_upgrades_available() -> None:
                 title=f"Agent upgrade available for {node_info['node_name']}",
                 summary=f"Version {node_info['target_version']} is available (current: {node_info['current_version']})",
                 severity="info",
-                target_url=f"/protection/backup-sources?tab=host",
+                target_url="/protection/backup-sources?tab=host",
             )
