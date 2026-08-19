@@ -38,7 +38,7 @@ services:
       redis:
         condition: service_healthy
     command: gunicorn
-    mem_limit: 512m
+    mem_limit: 1g
     cpus: 0.50
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
@@ -137,7 +137,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    mem_limit: 512m
+    mem_limit: 1536m
     cpus: 0.50
 # HFL_EMBED_LENSNODE_SERVICE_END
 

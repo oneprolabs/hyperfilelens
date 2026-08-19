@@ -259,7 +259,7 @@ ${sentry_volume_block}
     tmpfs:
       # Hide the host Agent's same-filesystem deletion quarantine from LensNode.
       - ${HFL_GATEWAY_TRASH_ROOT}:mode=0700
-    mem_limit: 512m
+    mem_limit: 1536m
     cpus: 0.50
 EOF
 	)
