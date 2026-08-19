@@ -129,6 +129,18 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(loader).not.toContain('selectedSnapshotId.value = null')
   })
 
+  it('hands ready snapshot artifacts to the browser without buffering a Blob', () => {
+    const downloader = sourceBetween(
+      'async function startNativeArtifactDownload',
+      'function closeSnapshotFileBrowser',
+    )
+
+    expect(downloader).toContain('createSnapshotArtifactDownloadUrl(artifactId)')
+    expect(downloader).toContain('anchor.href = result.url')
+    expect(downloader).not.toContain('URL.createObjectURL')
+    expect(downloader).not.toContain('.blob()')
+  })
+
   it('clears cached expansion state when pagination changes', () => {
     const paginationWatcher = sourceBetween(
       '() => [snapshotPagination.page, snapshotPagination.pageSize] as const,',

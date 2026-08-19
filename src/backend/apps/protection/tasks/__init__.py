@@ -16,7 +16,7 @@ from .policy_execution import run_backup_policy_maintenance_task
 from .directory_size_estimate import refresh_backup_config_directory_estimates_task
 from .repository_policy import sync_backup_config_repository_policy_task
 from .snapshot_delete import execute_snapshot_delete_task, reconcile_snapshot_delete_tasks_task
-from .snapshot_download import execute_snapshot_download_task
+from .snapshot_download import cleanup_snapshot_download_artifacts, execute_snapshot_download_task
 
 __all__ = [
     "advance_backup_task",
@@ -28,6 +28,7 @@ __all__ = [
     "execute_snapshot_delete_task",
     "reconcile_snapshot_delete_tasks_task",
     "execute_snapshot_download_task",
+    "cleanup_snapshot_download_artifacts",
     "reconcile_backup_tasks_task",
     "reconcile_interrupted_backup_tasks_task",
     "refresh_backup_config_directory_estimates_task",

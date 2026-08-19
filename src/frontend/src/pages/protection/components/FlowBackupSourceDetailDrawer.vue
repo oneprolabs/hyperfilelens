@@ -51,10 +51,10 @@ import type {
 } from '../../../lib/protectionBackupConfigApi'
 import {
   browseBackupSnapshotDirectory,
+  createBackupSnapshotDirectoryDownloadTask,
   createBackupSnapshotDirectoryBatchDownloadTask,
+  createSnapshotArtifactDownloadUrl,
   deleteBackupConfig,
-  downloadBackupSnapshotDirectoryFile,
-  downloadSnapshotArtifactFile,
   getBackupSourceSnapshot,
   listBackupSourceSnapshots,
   retryBackupConfigProvision,
@@ -1807,17 +1807,6 @@ function snapshotDirectoryIcon(dir: BackupSourceSnapshotDirectory) {
   return snapshotDirectoryKind(dir) === 'file' ? File : Folder
 }
 
-function saveBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename || 'snapshot-download'
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(url)
-}
-
 function snapshotFileFallbackName(dir: BackupSourceSnapshotDirectory) {
   return dir.display_name || dir.source_path.split(/[\\/]/).filter(Boolean).pop() || 'snapshot-file'
 }
@@ -1855,13 +1844,24 @@ async function downloadSelectedSnapshotFile() {
   }
   downloadingSnapshotFile.value = true
   try {
-    const result = await downloadBackupSnapshotDirectoryFile(dir.id, '')
-    saveBlob(result.blob, result.filename || snapshotFileFallbackName(dir))
+    const task = await createBackupSnapshotDirectoryDownloadTask(dir.id, '')
+    const artifactId = await waitForDownloadArtifact(task.task_uuid)
+    await startNativeArtifactDownload(artifactId)
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
   } finally {
     downloadingSnapshotFile.value = false
   }
+}
+
+async function startNativeArtifactDownload(artifactId: number) {
+  const result = await createSnapshotArtifactDownloadUrl(artifactId)
+  const anchor = document.createElement('a')
+  anchor.href = result.url
+  anchor.rel = 'noopener'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
 }
 
 function closeSnapshotFileBrowser() {
@@ -2178,15 +2178,7 @@ async function downloadSelectedBrowserPaths() {
   try {
     const task = await createBackupSnapshotDirectoryBatchDownloadTask(selectedSnapshotDirectory.value.id, paths)
     const artifactId = await waitForDownloadArtifact(task.task_uuid)
-    const result = await downloadSnapshotArtifactFile(artifactId)
-    const url = URL.createObjectURL(result.blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = result.filename || 'snapshot-download.zip'
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-    URL.revokeObjectURL(url)
+    await startNativeArtifactDownload(artifactId)
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
   } finally {

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import tempfile
 import zipfile
+from datetime import timedelta
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -17,10 +22,19 @@ from apps.protection.models import (
     BackupConfig,
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
+    SnapshotDownloadArtifact,
 )
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
-from apps.protection.services.snapshot_browser import SnapshotFileDownload
-from apps.protection.services.snapshot_download import run_snapshot_download_task
+from apps.protection.services.snapshot_browser import (
+    SnapshotArtifactUploadUnsupported,
+    SnapshotFileDownload,
+)
+from apps.protection.services.snapshot_download import (
+    _create_pending_artifact,
+    cleanup_expired_snapshot_download_artifacts,
+    prepare_snapshot_artifact_upload,
+    run_snapshot_download_task,
+)
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 
@@ -323,6 +337,9 @@ class SnapshotBrowserApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
         self.assertEqual(response.content, b"hello snapshot")
         self.assertIn("readme.txt", response["Content-Disposition"])
+        kwargs = mock_run_agent_task_sync.call_args.kwargs
+        self.assertIn("repository", kwargs["payload"])
+        self.assertNotIn("repository", kwargs["persisted_payload"])
 
     @patch("apps.protection.services.snapshot_browser.run_agent_task_sync")
     def test_download_empty_snapshot_file(self, mock_run_agent_task_sync):
@@ -345,6 +362,27 @@ class SnapshotBrowserApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
         self.assertEqual(response.content, b"")
         self.assertIn("__init__.py", response["Content-Disposition"])
+
+    @patch("apps.protection.services.snapshot_browser.run_agent_task_sync")
+    def test_download_reports_legacy_agent_result_limit(self, mock_run_agent_task_sync):
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            ok=True,
+            timed_out=False,
+            result={
+                "filename": "large.bin",
+                "size_bytes": 1024 * 1024,
+                "result_truncated": True,
+            },
+            task=SimpleNamespace(last_error=""),
+        )
+
+        response = self.client.get(
+            f"/api/v1/protection/backup-source-snapshot-directories/{self.directory.id}/download/?path=large.bin",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
+        self.assertIn(b"Upgrade the Agent", response.content)
 
     @patch("apps.protection.services.snapshot_browser.run_agent_task_sync")
     def test_download_root_file_snapshot(self, mock_run_agent_task_sync):
@@ -456,6 +494,7 @@ class SnapshotBrowserApiTests(TestCase):
         with zipfile.ZipFile(nested, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("guide.txt", b"guide")
         mock_download_snapshot_file.side_effect = [
+            SnapshotArtifactUploadUnsupported("legacy Agent"),
             SnapshotFileDownload(filename="docs.zip", content=nested.getvalue(), content_type="application/zip"),
             SnapshotFileDownload(filename="readme.txt", content=b"hello", content_type="application/octet-stream"),
         ]
@@ -473,6 +512,12 @@ class SnapshotBrowserApiTests(TestCase):
             start=1,
         ):
             TaskStep.objects.create(task=task, step_index=index, step_name=step_name)
+        _create_pending_artifact(
+            task=task,
+            directory_id=self.directory.id,
+            relative_path="docs,readme.txt",
+            filename=f"snapshot-download-{task.id}.zip",
+        )
 
         result = run_snapshot_download_task(task=task)
 
@@ -497,3 +542,83 @@ class SnapshotBrowserApiTests(TestCase):
         with zipfile.ZipFile(artifact.storage_path, "r") as archive:
             self.assertEqual(archive.read("docs/guide.txt"), b"guide")
             self.assertEqual(archive.read("readme.txt"), b"hello")
+
+    @override_settings(PROTECTION_SNAPSHOT_DOWNLOAD_MAX_BYTES=1024)
+    @patch("apps.protection.services.snapshot_download._queue_snapshot_download_execution")
+    def test_agent_streams_snapshot_artifact_with_signed_task_token(self, mock_queue):
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            response = self.client.post(
+                f"/api/v1/protection/backup-source-snapshot-directories/{self.directory.id}/download-tasks/",
+                {"path": "readme.txt"},
+                format="json",
+                **self._headers(),
+            )
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+            artifact = SnapshotDownloadArtifact.objects.get(task__task_uuid=response.data["task_uuid"])
+            Task.objects.filter(id=artifact.task_id).update(status=Task.Status.RUNNING)
+            upload = prepare_snapshot_artifact_upload(artifact=artifact, node_id=self.agent.id)
+            content = b"streamed snapshot content"
+            checksum = hashlib.sha256(content).hexdigest()
+
+            uploaded = self.client.generic(
+                "PUT",
+                upload["path"],
+                data=content,
+                content_type="application/octet-stream",
+                HTTP_AUTHORIZATION=f"Bearer {upload['token']}",
+                HTTP_X_CONTENT_SHA256=checksum,
+                HTTP_X_ARTIFACT_FILENAME="readme.txt",
+            )
+
+            self.assertEqual(uploaded.status_code, status.HTTP_200_OK, uploaded.content)
+            artifact.refresh_from_db()
+            self.assertEqual(artifact.status, SnapshotDownloadArtifact.Status.READY)
+            self.assertEqual(artifact.sha256, checksum)
+            self.assertEqual(artifact.size_bytes, len(content))
+            self.assertEqual(Path(artifact.storage_path).read_bytes(), content)
+            replayed = self.client.generic(
+                "PUT",
+                upload["path"],
+                data=content,
+                content_type="application/octet-stream",
+                HTTP_AUTHORIZATION=f"Bearer {upload['token']}",
+                HTTP_X_CONTENT_SHA256=checksum,
+                HTTP_X_ARTIFACT_FILENAME="readme.txt",
+            )
+            self.assertEqual(replayed.status_code, status.HTTP_200_OK, replayed.content)
+            download_url = self.client.get(
+                f"/api/v1/protection/snapshot-download-artifacts/{artifact.id}/download-url/",
+                **self._headers(),
+            )
+            self.assertEqual(download_url.status_code, status.HTTP_200_OK, download_url.content)
+            downloaded = self.client.get(download_url.data["url"])
+            self.assertEqual(downloaded.status_code, status.HTTP_200_OK)
+            self.assertEqual(b"".join(downloaded.streaming_content), content)
+            mock_queue.assert_called_once()
+
+    def test_cleanup_expires_failed_artifacts_and_partial_files(self):
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            task = Task.objects.create(
+                organization_id=self.org.id,
+                task_type=Task.Type.SNAPSHOT_DOWNLOAD,
+                display_name="Expired snapshot download",
+            )
+            artifact = _create_pending_artifact(
+                task=task,
+                directory_id=self.directory.id,
+                relative_path="readme.txt",
+                filename="readme.txt",
+            )
+            artifact.status = SnapshotDownloadArtifact.Status.FAILED
+            artifact.expires_at = timezone.now() - timedelta(seconds=1)
+            artifact.save(update_fields=["status", "expires_at", "updated_at"])
+            path = Path(artifact.storage_path)
+            path.parent.mkdir(parents=True)
+            partial = path.with_name(f".{path.name}.stale.part")
+            partial.write_bytes(b"partial")
+
+            self.assertEqual(cleanup_expired_snapshot_download_artifacts(), 1)
+
+            artifact.refresh_from_db()
+            self.assertEqual(artifact.status, SnapshotDownloadArtifact.Status.EXPIRED)
+            self.assertFalse(partial.exists())

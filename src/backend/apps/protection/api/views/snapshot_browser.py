@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlencode
 from pathlib import Path
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -8,6 +8,7 @@ from django.http import FileResponse, HttpResponse
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
@@ -22,8 +23,12 @@ from apps.protection.services.snapshot_browser import (
 from apps.protection.services.snapshot_download import (
     create_snapshot_batch_download_task,
     create_snapshot_download_task,
+    create_snapshot_artifact_file_token,
+    accept_snapshot_artifact_upload,
     get_snapshot_download_artifact,
     mark_artifact_downloaded,
+    SnapshotArtifactUploadError,
+    validate_snapshot_artifact_file_token,
 )
 from apps.protection.models import SnapshotDownloadArtifact
 from apps.task.api.serializers import TaskSerializer
@@ -146,6 +151,18 @@ class SnapshotDownloadArtifactFileView(APIView):
 
     def get(self, request, artifact_id: int):
         org = require_org(request)
+        token = str(request.query_params.get("token") or "").strip()
+        if token:
+            try:
+                token_organization_id = validate_snapshot_artifact_file_token(
+                    token=token,
+                    artifact_id=int(artifact_id),
+                    user_id=int(request.user.id),
+                )
+            except SnapshotArtifactUploadError as exc:
+                raise PermissionDenied(str(exc)) from exc
+            if token_organization_id != org.id:
+                raise PermissionDenied("snapshot download link does not match the organization")
         artifact = get_snapshot_download_artifact(
             organization_id=org.id,
             artifact_id=int(artifact_id),
@@ -165,3 +182,56 @@ class SnapshotDownloadArtifactFileView(APIView):
         response["Content-Disposition"] = f"attachment; filename*=UTF-8''{filename}"
         response["Content-Length"] = str(artifact.size_bytes)
         return response
+
+
+class SnapshotDownloadArtifactDownloadUrlView(APIView):
+    permission_classes = [IsAuthenticated, IsOrgReader]
+
+    def get(self, request, artifact_id: int):
+        org = require_org(request)
+        artifact = get_snapshot_download_artifact(
+            organization_id=org.id,
+            artifact_id=int(artifact_id),
+        )
+        if artifact is None:
+            raise NotFound("snapshot download artifact not found")
+        if artifact.status != SnapshotDownloadArtifact.Status.READY or artifact.expires_at <= timezone.now():
+            raise ValidationError({"detail": "snapshot download artifact is not available"})
+        token = create_snapshot_artifact_file_token(
+            artifact=artifact,
+            user_id=int(request.user.id),
+        )
+        path = f"/api/v1/protection/snapshot-download-artifacts/{artifact.id}/file/"
+        return Response({"url": f"{path}?{urlencode({'token': token, 'org': org.key})}"})
+
+
+class SnapshotDownloadArtifactContentView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    parser_classes = []
+
+    def put(self, request, artifact_id: int):
+        authorization = str(request.META.get("HTTP_AUTHORIZATION") or "")
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not token.strip():
+            raise PermissionDenied("snapshot download upload token is required")
+        try:
+            artifact = accept_snapshot_artifact_upload(
+                artifact_id=int(artifact_id),
+                token=token.strip(),
+                stream=request.stream,
+                content_length=request.META.get("CONTENT_LENGTH"),
+                content_type=request.content_type or "application/octet-stream",
+                expected_sha256=request.META.get("HTTP_X_CONTENT_SHA256") or "",
+                filename=unquote(request.META.get("HTTP_X_ARTIFACT_FILENAME") or ""),
+            )
+        except SnapshotArtifactUploadError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        return Response(
+            {
+                "artifact_id": artifact.id,
+                "size_bytes": artifact.size_bytes,
+                "sha256": artifact.sha256,
+                "status": artifact.status,
+            }
+        )
