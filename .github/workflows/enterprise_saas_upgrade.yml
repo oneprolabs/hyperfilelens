@@ -510,47 +510,163 @@ jobs:
           compression-level: 0
           retention-days: 3
 
-  publish-asset-images:
-    name: Publish · ${{ matrix.kind }} assets
+  publish-agent-assets:
+    name: Publish · Agent assets
     needs:
       - prepare
-      - build-sourcelens-images
       - build-agent-assets
-      - build-host-assets
-      - build-language-assets
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        kind: [agent, gateway, language]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
           ref: ${{ needs.prepare.outputs.commit }}
       - name: Download Agent assets
-        if: matrix.kind == 'agent'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: saas-agent-*
           path: build/saas-input
           merge-multiple: true
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.CN_REGISTRY_HOST }}
+          username: ${{ secrets.CN_REGISTRY_USERNAME }}
+          password: ${{ secrets.CN_REGISTRY_PASSWORD }}
+      - name: Prepare asset image context
+        run: >-
+          ./release/ci/prepare-saas-asset-context.sh agent
+          build/saas-input "${{ needs.prepare.outputs.version }}"
+          "build/saas-agent"
+      - name: Build and publish global asset image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: build/saas-agent
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ env.REGISTRY_PREFIX }}/hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}
+      - name: Mirror immutable asset image to CN
+        run: |
+          ./release/ci/mirror-saas-image.sh \
+            "$REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}" \
+            "${{ steps.build.outputs.digest }}" \
+            "$CN_REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}"
+      - name: Record asset metadata
+        shell: bash
+        run: |
+          ./release/ci/write-saas-image-metadata.sh \
+            "agent-assets" \
+            "$REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}" \
+            "$CN_REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}" \
+            "${{ steps.build.outputs.digest }}" \
+            "hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}" \
+            "agent-assets" \
+            "agent-assets.json"
+          jq --arg kind agent '. + {asset_kind: $kind}' \
+            "agent-assets.json" > metadata.json
+          mv metadata.json "agent-assets.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: saas-metadata-agent-assets
+          path: agent-assets.json
+          retention-days: 3
+
+  publish-gateway-assets:
+    name: Publish · Gateway assets
+    needs:
+      - prepare
+      - build-sourcelens-images
+      - build-host-assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
       - name: Download Gateway host assets
-        if: matrix.kind == 'gateway'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: saas-host-*
           path: build/saas-input
           merge-multiple: true
       - name: Download Gateway LensNode metadata
-        if: matrix.kind == 'gateway'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: saas-metadata-sourcelens-lensnode
           path: build/saas-input
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.CN_REGISTRY_HOST }}
+          username: ${{ secrets.CN_REGISTRY_USERNAME }}
+          password: ${{ secrets.CN_REGISTRY_PASSWORD }}
+      - name: Prepare asset image context
+        run: >-
+          ./release/ci/prepare-saas-asset-context.sh gateway
+          build/saas-input "${{ needs.prepare.outputs.version }}"
+          "build/saas-gateway"
+      - name: Build and publish global asset image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: build/saas-gateway
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ env.REGISTRY_PREFIX }}/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}
+      - name: Mirror immutable asset image to CN
+        run: |
+          ./release/ci/mirror-saas-image.sh \
+            "$REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}" \
+            "${{ steps.build.outputs.digest }}" \
+            "$CN_REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}"
+      - name: Record asset metadata
+        shell: bash
+        run: |
+          ./release/ci/write-saas-image-metadata.sh \
+            "gateway-assets" \
+            "$REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}" \
+            "$CN_REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}" \
+            "${{ steps.build.outputs.digest }}" \
+            "hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}" \
+            "gateway-assets" \
+            "gateway-assets.json"
+          jq --arg kind gateway '. + {asset_kind: $kind}' \
+            "gateway-assets.json" > metadata.json
+          mv metadata.json "gateway-assets.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: saas-metadata-gateway-assets
+          path: gateway-assets.json
+          retention-days: 3
+
+  publish-language-assets:
+    name: Publish · Language assets
+    needs:
+      - prepare
+      - build-language-assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
       - name: Download language assets
-        if: matrix.kind == 'language'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: saas-language-packs
@@ -568,42 +684,42 @@ jobs:
           password: ${{ secrets.CN_REGISTRY_PASSWORD }}
       - name: Prepare asset image context
         run: >-
-          ./release/ci/prepare-saas-asset-context.sh "${{ matrix.kind }}"
+          ./release/ci/prepare-saas-asset-context.sh language
           build/saas-input "${{ needs.prepare.outputs.version }}"
-          "build/saas-${{ matrix.kind }}"
+          "build/saas-language"
       - name: Build and publish global asset image
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: build/saas-${{ matrix.kind }}
+          context: build/saas-language
           platforms: linux/amd64
           push: true
           provenance: false
-          tags: ${{ env.REGISTRY_PREFIX }}/hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}
+          tags: ${{ env.REGISTRY_PREFIX }}/hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}
       - name: Mirror immutable asset image to CN
         run: |
           ./release/ci/mirror-saas-image.sh \
-            "$REGISTRY_PREFIX/hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}" \
+            "$REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}" \
             "${{ steps.build.outputs.digest }}" \
-            "$CN_REGISTRY_PREFIX/hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}"
+            "$CN_REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}"
       - name: Record asset metadata
         shell: bash
         run: |
           ./release/ci/write-saas-image-metadata.sh \
-            "${{ matrix.kind }}-assets" \
-            "$REGISTRY_PREFIX/hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}" \
-            "$CN_REGISTRY_PREFIX/hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}" \
+            "language-assets" \
+            "$REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}" \
+            "$CN_REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}" \
             "${{ steps.build.outputs.digest }}" \
-            "hyperfilelens-${{ matrix.kind }}-assets:${{ needs.prepare.outputs.image_version }}" \
-            "${{ matrix.kind }}-assets" \
-            "${{ matrix.kind }}-assets.json"
-          jq --arg kind "${{ matrix.kind }}" '. + {asset_kind: $kind}' \
-            "${{ matrix.kind }}-assets.json" > metadata.json
-          mv metadata.json "${{ matrix.kind }}-assets.json"
+            "hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}" \
+            "language-assets" \
+            "language-assets.json"
+          jq --arg kind language '. + {asset_kind: $kind}' \
+            "language-assets.json" > metadata.json
+          mv metadata.json "language-assets.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: saas-metadata-${{ matrix.kind }}-assets
-          path: ${{ matrix.kind }}-assets.json
+          name: saas-metadata-language-assets
+          path: language-assets.json
           retention-days: 3
 
   assemble-candidate:
@@ -613,7 +729,9 @@ jobs:
       - build-hfl-images
       - build-sourcelens-images
       - publish-runtime-images
-      - publish-asset-images
+      - publish-agent-assets
+      - publish-gateway-assets
+      - publish-language-assets
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
