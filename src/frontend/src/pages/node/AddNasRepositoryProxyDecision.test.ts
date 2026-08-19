@@ -144,6 +144,9 @@ describe('AddNasRepository Proxy decision', () => {
       'proxy-alpha (192.168.10.17)',
       'proxy-beta (192.168.10.23)',
       en.addNasRepo.optionNoProxy,
+      'GB',
+      'TB',
+      'PB',
     ])
     expect(wrapper.text()).toContain(en.addNasRepo.hintProxyUndecided)
   })
