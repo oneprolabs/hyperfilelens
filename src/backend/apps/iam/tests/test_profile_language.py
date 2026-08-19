@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -63,6 +65,42 @@ class ProfileLanguageAPITests(TestCase):
         self.assertEqual(self.user.profile.language, "en")
         errors = response.data["data"]["errors"]
         self.assertTrue(any(error["field"] == "language" for error in errors))
+
+    @patch(
+        "apps.lens_bridge.services.chat_user_provisioning.sync_sl_user_language",
+        return_value=True,
+    )
+    def test_language_update_syncs_source_lens_answer_language(
+        self, sync_sl_user_language
+    ) -> None:
+        response = self.client.patch(
+            "/api/v1/auth/user",
+            {"language": "zh-hans"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.profile.refresh_from_db()
+        self.assertEqual(self.user.profile.language, "zh-hans")
+        sync_sl_user_language.assert_called_once_with(self.user, "zh-hans")
+
+    @patch(
+        "apps.lens_bridge.services.chat_user_provisioning.sync_sl_user_language",
+        return_value=True,
+    )
+    def test_language_update_does_not_sync_when_unchanged(
+        self, sync_sl_user_language
+    ) -> None:
+        response = self.client.patch(
+            "/api/v1/auth/user",
+            {"language": "en"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.profile.refresh_from_db()
+        self.assertEqual(self.user.profile.language, "en")
+        sync_sl_user_language.assert_not_called()
 
     def test_user_without_profile_still_receives_english_fallback(self) -> None:
         profileless_user = User.objects.create_user(

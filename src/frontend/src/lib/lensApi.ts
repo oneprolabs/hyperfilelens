@@ -387,6 +387,17 @@ export type LensChatThinkingStep = {
   agent_event?: string
   activity?: string
   message?: string
+  display_message?: string
+  summary?: string
+  path?: string
+  query?: string
+  plan?: string
+  tokens?: number
+  input_tokens?: number
+  output_tokens?: number
+  duration_ms?: number
+  tool_name?: string
+  error?: string
 }
 
 export type LensChatAttachment = {
@@ -402,6 +413,14 @@ export type LensChatAttachment = {
   expires_at?: string
 }
 
+export type LensRunOutputFile = {
+  uuid: string
+  url?: string
+  filename: string
+  content_type?: string
+  byte_size?: number
+}
+
 export type LensChatMessage = {
   uuid?: string
   role: 'user' | 'assistant' | 'system'
@@ -414,6 +433,7 @@ export type LensChatMessage = {
     steps?: LensChatThinkingStep[]
   }
   attachments?: LensChatAttachment[]
+  output_files?: LensRunOutputFile[]
 }
 
 export async function fetchLensHealth(): Promise<LensHealth> {

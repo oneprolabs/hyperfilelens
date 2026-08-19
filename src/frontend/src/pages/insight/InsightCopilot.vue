@@ -165,6 +165,7 @@ function mapApiMessage(row: LensChatMessage): CopilotDisplayMessage | null {
     runId: row.run,
     thinking: row.thinking,
     attachments: row.attachments,
+    outputFiles: row.output_files,
   }
 }
 

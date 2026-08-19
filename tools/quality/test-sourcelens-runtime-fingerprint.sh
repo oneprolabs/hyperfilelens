@@ -19,7 +19,7 @@ write_bundle() {
 	local root=$1 patchset=$2
 	cat >"${root}/BUILD_INFO.json" <<JSON
 {
-  "git_url": "https://github.com/HyperBDR/sourcelens.git",
+  "git_url": "https://github.com/oneprolabs/sourcelens.git",
   "git_ref": "v0.20.0",
   "git_commit": "source-commit",
   "version": "0.20.0",

@@ -8,6 +8,16 @@ export type ThinkingStep = {
   agentEvent?: string
   activity?: string
   displayMessage?: string
+  summary?: string
+  path?: string
+  query?: string
+  plan?: string
+  tokens?: number
+  inputTokens?: number
+  outputTokens?: number
+  durationMs?: number
+  toolName?: string
+  error?: string
 }
 
 export type SessionRunStreamState = {
@@ -133,7 +143,7 @@ class SessionRunStreamController {
     runUuid: string,
     status: string,
     partialContent: string,
-    thinking: Array<{ message?: string; agent_event?: string; activity?: string }>,
+    thinking: Array<Record<string, unknown>>,
     elapsedAnchorAt?: string | null,
   ) {
     this.state.isSubmitting = false
@@ -145,12 +155,25 @@ class SessionRunStreamController {
     if (thinking.length) {
       this.state.thinkingSteps = thinking
         .map((item) => {
-          const message = item.message || item.agent_event || item.activity
+          const message =
+            (item.message as string) ||
+            (item.agent_event as string) ||
+            (item.activity as string)
           if (!message) return null
           const step: ThinkingStep = {
             message,
-            agentEvent: item.agent_event,
-            activity: item.activity,
+            agentEvent: item.agent_event as string,
+            activity: item.activity as string,
+            summary: item.summary as string,
+            path: item.path as string,
+            query: item.query as string,
+            plan: item.plan as string,
+            tokens: item.tokens as number,
+            inputTokens: item.input_tokens as number,
+            outputTokens: item.output_tokens as number,
+            durationMs: item.duration_ms as number,
+            toolName: item.tool_name as string,
+            error: item.error as string,
           }
           step.displayMessage = formatThinkingStepLabel(step)
           return step
@@ -173,21 +196,30 @@ class SessionRunStreamController {
     this.ensureElapsedTimer(elapsedAnchorAt)
   }
 
-  private pushThinkingStep(item: {
-    message?: string
-    agent_event?: string
-    activity?: string
-    summary?: string
-  }) {
-    const message = item.message || item.summary || item.agent_event || item.activity
+  private pushThinkingStep(item: Record<string, unknown>) {
+    const message =
+      (item.message as string) ||
+      (item.summary as string) ||
+      (item.agent_event as string) ||
+      (item.activity as string)
     if (!message) return
-    const key = `${item.agent_event || ''}|${message}`
+    const key = `${(item.agent_event as string) || ''}|${message}`
     if (this.seenActivityKeys.has(key)) return
     this.seenActivityKeys.add(key)
     const step: ThinkingStep = {
       message,
-      agentEvent: item.agent_event,
-      activity: item.activity,
+      agentEvent: item.agent_event as string,
+      activity: item.activity as string,
+      summary: item.summary as string,
+      path: item.path as string,
+      query: item.query as string,
+      plan: item.plan as string,
+      tokens: item.tokens as number,
+      inputTokens: item.input_tokens as number,
+      outputTokens: item.output_tokens as number,
+      durationMs: item.duration_ms as number,
+      toolName: item.tool_name as string,
+      error: item.error as string,
     }
     step.displayMessage = formatThinkingStepLabel(step)
     this.state.thinkingSteps = [...this.state.thinkingSteps, step]
@@ -210,9 +242,7 @@ class SessionRunStreamController {
     const newEvents = events.slice(seenCount)
     this.seenStepEventCounts.set(stepKey, events.length)
     for (const item of newEvents) {
-      this.pushThinkingStep(
-        item as { message?: string; agent_event?: string; activity?: string; summary?: string },
-      )
+      this.pushThinkingStep(item)
     }
   }
 

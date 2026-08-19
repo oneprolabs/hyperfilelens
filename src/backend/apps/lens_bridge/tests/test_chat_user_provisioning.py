@@ -1,7 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
-from django.test import SimpleTestCase, override_settings
+from django.contrib.auth.models import User
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.lens_bridge.models import LensSlUserLink
 from apps.lens_bridge.services import chat_user_provisioning
@@ -22,6 +23,7 @@ class ChatUserProvisioningTests(SimpleTestCase):
                 "id": 23,
                 "username": "hfl-u-7",
                 "email": "hfl-u-7@users.hyperfilelens.invalid",
+                "language": "en-US",
             },
         ]
         link = Mock(sl_username="hfl-u-7", sl_email="")
@@ -52,6 +54,7 @@ class ChatUserProvisioningTests(SimpleTestCase):
                         "is_staff": False,
                         "role_ids": [],
                         "preferred_platform": "workspace",
+                        "language": "en-US",
                     },
                 ),
             ],
@@ -74,6 +77,7 @@ class ChatUserProvisioningTests(SimpleTestCase):
                 "id": 23,
                 "username": "hfl-u-7",
                 "email": "hfl-u-7@users.hyperfilelens.invalid",
+                "language": "en-US",
             },
         ]
         link = Mock(sl_username="hfl-u-7", sl_email="")
@@ -213,4 +217,62 @@ class ChatUserProvisioningTests(SimpleTestCase):
             email="hfl-u-7@users.hyperfilelens.invalid",
             password=chat_user_provisioning._sl_password_for_hfl_user(self.user),
             legacy_username="hfl-u-7",
+        )
+
+
+class SyncSlUserLanguageTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="language-user",
+            email="language-user@example.com",
+            password="not-used",
+        )
+        self.link = LensSlUserLink.objects.create(
+            hfl_user=self.user,
+            sl_user_id=99,
+            sl_username=chat_user_provisioning.sl_username_for_hfl_user(self.user),
+            sl_email=chat_user_provisioning.sl_email_for_hfl_user(self.user),
+            gateway_operator=False,
+            provision_status=LensSlUserLink.ProvisionStatus.READY,
+        )
+
+    def tearDown(self):
+        chat_user_provisioning.invalidate_user_token(self.user.pk)
+
+    @patch("apps.lens_bridge.services.chat_user_provisioning.sl_client.request_json")
+    def test_pushes_mapped_language_and_invalidates_token(self, request_json):
+        request_json.return_value = {"id": 99, "language": "zh-CN"}
+        chat_user_provisioning._USER_TOKENS[self.user.pk] = ("cached-token", 99999)
+
+        result = chat_user_provisioning.sync_sl_user_language(self.user, "zh-hans")
+
+        self.assertTrue(result)
+        request_json.assert_called_once_with(
+            "PATCH",
+            "/api/v1/management/users/99/",
+            json_body={"language": "zh-CN"},
+        )
+        self.assertNotIn(self.user.pk, chat_user_provisioning._USER_TOKENS)
+
+    def test_returns_false_without_ready_link(self):
+        self.link.delete()
+
+        self.assertFalse(
+            chat_user_provisioning.sync_sl_user_language(self.user, "zh-hans")
+        )
+
+    @patch("apps.lens_bridge.services.chat_user_provisioning.sl_client.request_json")
+    def test_returns_false_on_remote_failure(self, request_json):
+        request_json.side_effect = LensBridgeError("boom")
+
+        self.assertFalse(
+            chat_user_provisioning.sync_sl_user_language(self.user, "zh-hans")
+        )
+
+    @patch("apps.lens_bridge.services.chat_user_provisioning.sl_client.request_json")
+    def test_returns_false_on_invalid_remote_response(self, request_json):
+        request_json.return_value = None
+
+        self.assertFalse(
+            chat_user_provisioning.sync_sl_user_language(self.user, "en")
         )

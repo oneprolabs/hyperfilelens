@@ -249,9 +249,9 @@ grep -F 'no_cache=1' <<<"${config}" >/dev/null
 grep -F -- '--prebuilt' "${ROOT}/release/build-sourcelens.sh" >/dev/null
 grep -F 'ln "${source_archive}" "${temporary}"' \
 	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
-grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.30.0}"' \
+grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.40.0}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
-grep -F 'SOURCELENS_GIT_REF=v0.30.0' \
+grep -F 'SOURCELENS_GIT_REF=v0.40.0' \
 	"${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
@@ -400,7 +400,7 @@ grep -F 'NPM_REGISTRY: ${NPM_REGISTRY:-}' \
 grep -F 'CODEGRAPH_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}' \
 	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 
-grep -F '# SourceLens v0.30.0 requires no HFL functional patches.' \
+grep -F '# SourceLens v0.40.0 requires no HFL functional patches.' \
 	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
 [[ -f "${ROOT}/tools/sourcelens/patches/retired/lensnode-tls-v0.4.0.patch" ]]
 if [[ -e "${ROOT}/deploy/installer/sourcelens/lensnode-tls.patch" \

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, ChevronDown, ChevronUp, Copy, RotateCcw, Share2, Sparkles } from 'lucide-vue-next'
+import { ArrowDown, ChevronDown, ChevronUp, Copy, RefreshCw, Share2, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -8,10 +8,10 @@ import { currentUser } from '../../../composables/useAuth'
 import CopilotMarkdown from '../../../components/copilot/CopilotMarkdown.vue'
 import CopilotStreamingMarkdown from '../../../components/copilot/CopilotStreamingMarkdown.vue'
 import CopilotAttachmentList from './CopilotAttachmentList.vue'
+import CopilotOutputFileList from './CopilotOutputFileList.vue'
+import CopilotThinkingTimeline from './CopilotThinkingTimeline.vue'
 import type { CopilotDisplayMessage } from './types'
 import type { ThinkingStep } from '../../../composables/useLensRunStream'
-import { formatThinkingStepLabel } from '../../../lib/copilotStreamLabels'
-import type { LensChatThinkingStep } from '../../../lib/lensApi'
 
 const props = defineProps<{
   sessionId: number
@@ -34,6 +34,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const expandedThinking = ref<Set<string>>(new Set())
 const liveThinkingOpen = ref(true)
+const messageFeedback = ref<Record<string, 'up' | 'down' | null>>({})
 const chatScrollRef = ref<HTMLElement | null>(null)
 const copilotThreadRef = ref<HTMLElement | null>(null)
 const followsLatest = ref(true)
@@ -134,27 +135,16 @@ function thinkingStepsFor(message: CopilotDisplayMessage) {
   return message.thinking?.steps ?? []
 }
 
-function stepLabel(step: ThinkingStep | LensChatThinkingStep) {
-  if ('displayMessage' in step && step.displayMessage) {
-    return step.displayMessage
-  }
-  return formatThinkingStepLabel({
-    message: step.message || '',
-    agentEvent: 'agent_event' in step ? step.agent_event : step.agentEvent,
-    activity: step.activity,
-  })
-}
-
 function liveThinkingStatus() {
   const seconds = props.streamingElapsedSeconds ?? 0
   const count = props.streamingThinking?.length ?? 0
   if (seconds > 0 && count > 0) {
-    return t('insight.copilot.thinkingLiveProgress', { seconds, count })
+    return t('insight.copilot.agentActivitiesLiveProgress', { seconds, count })
   }
   if (seconds > 0) {
-    return t('insight.copilot.thinkingLiveElapsed', { seconds })
+    return t('insight.copilot.agentActivitiesLiveElapsed', { seconds })
   }
-  return t('insight.copilot.thinkingLive')
+  return t('insight.copilot.agentActivitiesLive')
 }
 
 const showRetrievalHint = computed(
@@ -228,6 +218,20 @@ function shareMessage() {
   ElMessage.info({ message: t('insight.copilot.shareComingSoon'), grouping: true })
 }
 
+function feedbackForMessage(message: CopilotDisplayMessage) {
+  return messageFeedback.value[message.id] ?? null
+}
+
+function likeMessage(message: CopilotDisplayMessage) {
+  messageFeedback.value[message.id] = feedbackForMessage(message) === 'up' ? null : 'up'
+  ElMessage.success({ message: t('insight.copilot.feedbackThanks'), grouping: true })
+}
+
+function dislikeMessage(message: CopilotDisplayMessage) {
+  messageFeedback.value[message.id] = feedbackForMessage(message) === 'down' ? null : 'down'
+  ElMessage.info({ message: t('insight.copilot.feedbackReceived'), grouping: true })
+}
+
 const showLiveRow = computed(() => props.streaming)
 </script>
 
@@ -283,11 +287,11 @@ const showLiveRow = computed(() => props.streaming)
                 <span class="thinking-panel-status">
                   {{
                     thinkingDuration(msg) != null
-                      ? t('insight.copilot.thinkingDone', {
+                      ? t('insight.copilot.agentActivitiesDone', {
                         seconds: thinkingDuration(msg),
                         count: thinkingStepsFor(msg).length,
                       })
-                      : t('insight.copilot.thinkingDoneSteps', {
+                      : t('insight.copilot.agentActivitiesDoneSteps', {
                         count: thinkingStepsFor(msg).length,
                       })
                   }}
@@ -307,14 +311,7 @@ const showLiveRow = computed(() => props.streaming)
                 v-if="expandedThinking.has(msg.id)"
                 class="thinking-panel-body"
               >
-                <div
-                  v-for="(step, idx) in thinkingStepsFor(msg)"
-                  :key="idx"
-                  class="thinking-step-item"
-                >
-                  <span class="thinking-step-bullet">▸</span>
-                  <span class="thinking-step-text">{{ stepLabel(step) }}</span>
-                </div>
+                <CopilotThinkingTimeline :steps="thinkingStepsFor(msg)" />
               </div>
             </div>
 
@@ -349,6 +346,12 @@ const showLiveRow = computed(() => props.streaming)
               >
                 {{ msg.text }}
               </div>
+
+              <CopilotOutputFileList
+                v-if="msg.role === 'assistant' && msg.outputFiles?.length"
+                :session-id="sessionId"
+                :files="msg.outputFiles"
+              />
 
               <div
                 v-if="msg.starterChips"
@@ -387,31 +390,53 @@ const showLiveRow = computed(() => props.streaming)
               v-if="msg.role === 'assistant' && msg.text && !msg.starterChips && !msg.isError"
               class="message-actions"
             >
-              <button
-                type="button"
-                class="message-action-btn"
-                :title="t('common.copy')"
-                @click="copyText(msg.text || '')"
-              >
-                <Copy :size="16" />
-              </button>
-              <button
-                type="button"
-                class="message-action-btn"
-                :title="t('insight.copilot.retryQuestion')"
-                :disabled="!questionForMessage(msg)"
-                @click="retryForMessage(msg)"
-              >
-                <RotateCcw :size="16" />
-              </button>
-              <button
-                type="button"
-                class="message-action-btn"
-                :title="t('insight.copilot.shareAnswer')"
-                @click="shareMessage()"
-              >
-                <Share2 :size="16" />
-              </button>
+              <div class="message-actions-group">
+                <button
+                  type="button"
+                  class="message-action-btn"
+                  :title="t('common.copy')"
+                  @click="copyText(msg.text || '')"
+                >
+                  <Copy :size="16" />
+                </button>
+                <button
+                  type="button"
+                  class="message-action-btn"
+                  :class="{ 'is-active': feedbackForMessage(msg) === 'up' }"
+                  :title="t('insight.copilot.likeAnswer')"
+                  @click="likeMessage(msg)"
+                >
+                  <ThumbsUp :size="16" />
+                </button>
+                <button
+                  type="button"
+                  class="message-action-btn"
+                  :class="{ 'is-active': feedbackForMessage(msg) === 'down' }"
+                  :title="t('insight.copilot.dislikeAnswer')"
+                  @click="dislikeMessage(msg)"
+                >
+                  <ThumbsDown :size="16" />
+                </button>
+              </div>
+              <div class="message-actions-group">
+                <button
+                  type="button"
+                  class="message-action-btn"
+                  :title="t('insight.copilot.shareAnswer')"
+                  @click="shareMessage()"
+                >
+                  <Share2 :size="16" />
+                </button>
+                <button
+                  type="button"
+                  class="message-action-btn"
+                  :title="t('insight.copilot.regenerateAnswer')"
+                  :disabled="!questionForMessage(msg)"
+                  @click="retryForMessage(msg)"
+                >
+                  <RefreshCw :size="16" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -477,14 +502,7 @@ const showLiveRow = computed(() => props.streaming)
                 v-if="liveThinkingOpen && streamingThinking?.length"
                 class="thinking-panel-body"
               >
-                <div
-                  v-for="(step, idx) in streamingThinking"
-                  :key="idx"
-                  class="thinking-step-item"
-                >
-                  <span class="thinking-step-bullet">▸</span>
-                  <span class="thinking-step-text">{{ step.displayMessage || stepLabel(step) }}</span>
-                </div>
+                <CopilotThinkingTimeline :steps="streamingThinking" />
               </div>
             </div>
 
@@ -663,6 +681,14 @@ const showLiveRow = computed(() => props.streaming)
   min-width: 0;
 }
 
+.message-card.assistant {
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
 .message-card--error .message-text {
   padding: 10px 12px;
   border-radius: 10px;
@@ -680,7 +706,13 @@ const showLiveRow = computed(() => props.streaming)
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 0;
+  padding: 10px 14px;
+  background: #f3f4f6;
+  border-color: #e5e7eb;
+  color: #6b7280;
+  font-size: 14px;
+  border-radius: 16px;
+  box-shadow: none;
 }
 
 .message-text {
@@ -694,8 +726,22 @@ const showLiveRow = computed(() => props.streaming)
   color: var(--color-text-primary);
 }
 
+.message-row-user .message-card {
+  display: inline-block;
+  padding: 12px 16px;
+  border-radius: 18px 18px 4px 18px;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  text-align: left;
+}
+
 .message-row-user .message-text {
-  text-align: right;
+  text-align: left;
+  color: #111827;
+}
+
+.message-row-user .message-markdown {
+  text-align: left;
 }
 
 .message-row-user :deep(.copilot-message-attachments) {
@@ -746,12 +792,20 @@ const showLiveRow = computed(() => props.streaming)
 
 .message-actions {
   display: flex;
-  gap: 4px;
-  margin-top: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .message-row-user .message-actions {
   justify-content: flex-end;
+}
+
+.message-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .message-action-btn {
@@ -772,8 +826,13 @@ const showLiveRow = computed(() => props.streaming)
 }
 
 .message-action-btn:hover:not(:disabled) {
-  background: var(--color-grey-2);
-  color: var(--color-text-secondary);
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.message-action-btn.is-active {
+  background: #eff6ff;
+  color: #2563eb;
 }
 
 .message-action-btn:disabled {

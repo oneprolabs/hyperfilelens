@@ -23,7 +23,7 @@ sourcelens_git_network_once() {
 	esac
 }
 
-SOURCELENS_GIT_URL=https://github.com/HyperBDR/sourcelens.git
+SOURCELENS_GIT_URL=https://github.com/oneprolabs/sourcelens.git
 GITHUB_DOWNLOAD_MIRROR=https://ghfast.top
 GITHUB_TOKEN=
 SOURCELENS_GIT_TIMEOUT_SECONDS=120
@@ -56,7 +56,7 @@ fi
 
 : >"${network_log}"
 GITHUB_DOWNLOAD_MIRROR=https://ghfast.top
-SOURCELENS_GIT_URL=https://git.example.test/HyperBDR/sourcelens.git
+SOURCELENS_GIT_URL=https://git.example.test/oneprolabs/sourcelens.git
 if sourcelens_git_network fetch origin --tags --prune; then
 	printf 'ERROR: custom SourceLens Git URL test unexpectedly succeeded\n' >&2
 	exit 1
@@ -74,7 +74,7 @@ timeout() {
 }
 
 : >"${network_log}"
-SOURCELENS_GIT_URL=https://github.com/HyperBDR/sourcelens.git
+SOURCELENS_GIT_URL=https://github.com/oneprolabs/sourcelens.git
 GITHUB_DOWNLOAD_MIRROR=https://ghfast.top
 GITHUB_TOKEN=
 sourcelens_git_network_once mirror 120 fetch origin --tags --prune

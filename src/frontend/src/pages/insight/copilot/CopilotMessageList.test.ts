@@ -106,7 +106,7 @@ describe('CopilotMessageList starter questions and live feedback', () => {
     const livePanel = wrapper.get('.thinking-panel-live')
     const status = livePanel.get('[role="status"]')
     expect(status.attributes('aria-live')).toBe('polite')
-    expect(status.text()).toContain('Thinking… 2s')
+    expect(status.text()).toContain('Agent activity · 2s')
     expect(livePanel.find('.thinking-panel-body').exists()).toBe(false)
     expect(wrapper.find('.message-card--typing').exists()).toBe(false)
     wrapper.unmount()

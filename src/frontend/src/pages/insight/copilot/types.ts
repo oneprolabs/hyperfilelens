@@ -1,4 +1,4 @@
-import type { LensChatAttachment, LensChatMessage } from '../../../lib/lensApi'
+import type { LensChatAttachment, LensChatMessage, LensRunOutputFile } from '../../../lib/lensApi'
 
 export type CopilotComposerAttachment = LensChatAttachment & {
   key: string
@@ -16,4 +16,5 @@ export type CopilotDisplayMessage = {
   runId?: string
   thinking?: LensChatMessage['thinking']
   attachments?: LensChatMessage['attachments']
+  outputFiles?: LensRunOutputFile[]
 }

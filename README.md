@@ -269,7 +269,7 @@ Skip SourceLens preparation for an HFL-only development session with:
 ```
 
 SourceLens is maintained as a separate upstream project at
-[HyperBDR/sourcelens](https://github.com/HyperBDR/sourcelens).
+[oneprolabs/sourcelens](https://github.com/oneprolabs/sourcelens).
 
 ## Development
 

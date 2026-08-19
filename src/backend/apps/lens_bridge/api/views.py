@@ -79,6 +79,7 @@ from common.drf.renderers import ServerSentEventsRenderer
 
 
 _ATTACHMENT_PROXY_SIGNING_SALT = "lens_bridge.copilot_attachment"
+_OUTPUT_FILE_PROXY_SIGNING_SALT = "lens_bridge.copilot_output_file"
 
 
 class SourceLensMaintenanceUnavailable(APIException):
@@ -276,6 +277,49 @@ def _require_attachment_proxy_token(
         raise NotFound()
 
 
+def _output_file_proxy_url(session_id: int, file_uuid: str) -> str:
+    """Build a tamper-evident URL for a run output file; HFL auth still gates it."""
+
+    file_uuid = _canonical_attachment_uuid(file_uuid)
+    path = reverse(
+        "lens-copilot-session-output-file-content",
+        kwargs={
+            "pk": session_id,
+            "file_uuid": file_uuid,
+        },
+    )
+    token = signing.dumps(
+        {
+            "session_id": session_id,
+            "file_uuid": file_uuid,
+        },
+        salt=_OUTPUT_FILE_PROXY_SIGNING_SALT,
+        compress=True,
+    )
+    return f"{path}?{urlencode({'token': token})}"
+
+
+def _require_output_file_proxy_token(
+    request,
+    *,
+    session_id: int,
+    file_uuid: uuid.UUID,
+) -> None:
+    token = request.query_params.get("token", "")
+    try:
+        payload = signing.loads(
+            token,
+            salt=_OUTPUT_FILE_PROXY_SIGNING_SALT,
+        )
+    except signing.BadSignature as exc:
+        raise NotFound() from exc
+    if not isinstance(payload, dict) or payload != {
+        "session_id": session_id,
+        "file_uuid": str(file_uuid),
+    }:
+        raise NotFound()
+
+
 def _rewrite_attachment_urls(messages, *, session_id: int):
     if not isinstance(messages, list):
         return messages
@@ -283,15 +327,23 @@ def _rewrite_attachment_urls(messages, *, session_id: int):
         if not isinstance(message, dict):
             continue
         attachments = message.get("attachments")
-        if not isinstance(attachments, list):
-            continue
-        for attachment in attachments:
-            if not isinstance(attachment, dict) or not attachment.get("uuid"):
-                continue
-            attachment["url"] = _attachment_proxy_url(
-                session_id,
-                str(attachment["uuid"]),
-            )
+        if isinstance(attachments, list):
+            for attachment in attachments:
+                if not isinstance(attachment, dict) or not attachment.get("uuid"):
+                    continue
+                attachment["url"] = _attachment_proxy_url(
+                    session_id,
+                    str(attachment["uuid"]),
+                )
+        output_files = message.get("output_files")
+        if isinstance(output_files, list):
+            for output_file in output_files:
+                if not isinstance(output_file, dict) or not output_file.get("uuid"):
+                    continue
+                output_file["url"] = _output_file_proxy_url(
+                    session_id,
+                    str(output_file["uuid"]),
+                )
     return messages
 
 
@@ -1274,6 +1326,48 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             )
             return Response(status=status.HTTP_204_NO_CONTENT)
         upstream = sl_client.stream_binary(path, hfl_user=request.user)
+        try:
+            response = StreamingHttpResponse(
+                upstream.body,
+                content_type=upstream.content_type,
+            )
+            if upstream.content_length:
+                response["Content-Length"] = upstream.content_length
+            if upstream.content_disposition:
+                response["Content-Disposition"] = upstream.content_disposition
+            response["Cache-Control"] = upstream.cache_control
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+        except Exception:
+            upstream.body.close()
+            raise
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"output-files/(?P<file_uuid>[0-9a-fA-F-]+)",
+    )
+    def output_file_content(
+        self,
+        request,
+        pk=None,
+        file_uuid=None,
+    ):
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        try:
+            output_file_id = uuid.UUID(str(file_uuid))
+        except (TypeError, ValueError) as exc:
+            raise NotFound() from exc
+        _require_output_file_proxy_token(
+            request,
+            session_id=link.id,
+            file_uuid=output_file_id,
+        )
+        upstream = sl_client.stream_binary(
+            f"/api/lens/output-files/{output_file_id}/",
+            hfl_user=request.user,
+        )
         try:
             response = StreamingHttpResponse(
                 upstream.body,
