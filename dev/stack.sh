@@ -90,6 +90,7 @@ EXTENSION_SOURCES=()
 EXTENSION_SOURCES_CSV=""
 DEV_PUBLIC_URL=""
 DEV_ADMIN_PUBLIC_URL=""
+UPGRADE_GATEWAY=0
 
 usage() {
 	cat <<'USAGE'
@@ -97,6 +98,9 @@ Usage: ./dev/stack.sh <command> [options]
 
 Commands:
   up                 Prepare dependencies and start the development stack
+  up|restart --upgrade-gateway
+                     Force reinstall the local Data Gateway host Agent from the
+                     newest published release (env: HFL_UPGRADE_GATEWAY=1)
   down               Stop HyperFileLens + bundled SourceLens
   down --hfl-only    Stop HyperFileLens only; leave SourceLens running
   restart            Refresh dependencies/configuration and recreate changed services
@@ -169,6 +173,7 @@ Output options:
 Examples:
   ./dev/stack.sh up
   ./dev/stack.sh up --extension-source ../hyperfilelens-ee
+  ./dev/stack.sh up --upgrade-gateway
   ./dev/stack.sh up --public-url https://192.168.8.69:11443 \
     --admin-public-url https://192.168.8.69:11444
   ./dev/stack.sh up --ubuntu2404-arch amd64
@@ -288,6 +293,7 @@ docker_pull_timeout=${DOCKER_PULL_TIMEOUT}
 docker_pull_retries=${DOCKER_PULL_RETRIES}
 offline=${DEV_OFFLINE}
 force_pull=${FORCE_PULL}
+upgrade_gateway=${UPGRADE_GATEWAY}
 state_file=${STATE_FILE#${ROOT}/}
 log_file=${LOG_FILE:-<none>}
 verbose=${VERBOSE}
@@ -1059,7 +1065,11 @@ platform_gateway_auto_deploy_enabled() {
 # Failures warn instead of aborting stack up so Darwin/non-root hosts stay usable.
 ensure_local_platform_gateway_dev() {
 	if ! platform_gateway_auto_deploy_enabled; then
-		log "Local platform Gateway auto-deploy is disabled (HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false)"
+		if [[ "${UPGRADE_GATEWAY}" -eq 1 ]]; then
+			warn "--upgrade-gateway ignored: local platform Gateway auto-deploy is disabled (HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false)"
+		else
+			log "Local platform Gateway auto-deploy is disabled (HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false)"
+		fi
 		return 0
 	fi
 	if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
@@ -1173,6 +1183,15 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		fi
 	fi
 
+	local gateway_args=(--yes --no-banner)
+	# --reinstall mirrors helper InstallState.Installed, which stat()s the agent
+	# binary (not agent.env), so gate on the same path (-e) to avoid a misleading error.
+	local agent_bin="/opt/hyperfilelens-agent/hfl-agent"
+	if [[ "${UPGRADE_GATEWAY}" -eq 1 && -e "${agent_bin}" ]]; then
+		gateway_args+=(--reinstall)
+		log "Forcing local Data Gateway host Agent upgrade to the newest published release"
+	fi
+
 	set +e
 	env \
 		-u SENTRY_ENABLED \
@@ -1190,7 +1209,7 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		HFL_INSECURE_TLS=1 \
 		HFL_FORCE_SIDECAR_INSTALL=1 \
 		HFL_NO_BANNER=1 \
-		"${helper}" gateway-install --yes --no-banner
+		"${helper}" gateway-install "${gateway_args[@]}"
 	command_status=$?
 	set -e
 	if [[ "${command_status}" -ne 0 ]]; then
@@ -1620,6 +1639,9 @@ main() {
 
 	local cmd=""
 	local restart_force=0
+	if [[ "${HFL_UPGRADE_GATEWAY:-0}" == "1" ]]; then
+		UPGRADE_GATEWAY=1
+	fi
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1630,6 +1652,10 @@ main() {
 			;;
 		--force)
 			restart_force=1
+			shift
+			;;
+		--upgrade-gateway)
+			UPGRADE_GATEWAY=1
 			shift
 			;;
 		--runtime | --cache | --data | --all)
@@ -1717,6 +1743,9 @@ main() {
 
 	if [[ "${restart_force}" -eq 1 && "${cmd}" != "restart" ]]; then
 		die "--force is only valid with restart" 2
+	fi
+	if [[ "${UPGRADE_GATEWAY}" -eq 1 && "${cmd}" != "up" && "${cmd}" != "restart" ]]; then
+		die "--upgrade-gateway is only valid with up or restart" 2
 	fi
 	if [[ "${HFL_ONLY_DOWN}" -eq 1 && "${cmd}" != "down" ]]; then
 		die "--hfl-only is only valid with down" 2
