@@ -31,6 +31,7 @@ onMounted(() => {
 const loginUrl = computed(() => `${appOrigin.value || '#'}${appOrigin.value ? '/login' : ''}`)
 
 const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
+const sourceLensUrl = 'https://github.com/HyperBDR/sourcelens'
 
 function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
   const target = loginUrl.value
@@ -83,9 +84,6 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       <symbol id="icon-building" viewBox="0 0 24 24">
         <path d="M4 21V5l8-3 8 3v16M8 8h2M14 8h2M8 12h2M14 12h2M8 16h2M14 16h2M2 21h20" />
       </symbol>
-      <symbol id="icon-terminal" viewBox="0 0 24 24">
-        <rect x="2" y="4" width="20" height="16" rx="2" /><path d="m6 9 3 3-3 3M12 15h5" />
-      </symbol>
     </svg>
 
     <header class="site-header-wrap">
@@ -95,17 +93,17 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           <span>HyperFileLens</span>
         </a>
         <nav aria-label="Main navigation">
-          <a href="#platform">Platform</a>
-          <a href="#how-it-works">How it works</a>
-          <a href="#use-cases">Use cases</a>
-          <a href="#deploy">Deploy</a>
+          <a href="#use-cases">Use Cases</a>
+          <a href="#how-it-works">How It Works</a>
+          <a href="#open-source">Open Source</a>
+          <a href="#contact">Contact</a>
         </nav>
         <div class="header-actions">
           <a class="github-link" :href="githubUrl" aria-label="HyperFileLens on GitHub">
             <svg aria-hidden="true"><use href="#icon-github" /></svg>
             <span>GitHub</span>
           </a>
-          <a class="header-cta" :href="loginUrl" @click="openApp($event, 'header')">Open app</a>
+          <a class="header-cta" :href="loginUrl" @click="openApp($event, 'header')">Try free</a>
         </div>
       </div>
     </header>
@@ -115,196 +113,132 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <div class="hero-backdrop" aria-hidden="true"></div>
         <div class="hero-copy">
           <a class="open-source-pill" :href="githubUrl">
-            <span class="pill-status"></span>
-            Open source · Public beta
+            <svg aria-hidden="true"><use href="#icon-github" /></svg>
+            OneProLabs · Apache 2.0
             <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
           </a>
-          <h1 id="hero-title">Your files, protected.<br /><span>Your knowledge, discoverable.</span></h1>
+          <h1 id="hero-title">Your backups know<br /><span>more than you think.</span></h1>
           <p class="hero-lead">
-            HyperFileLens gives infrastructure teams one control plane to protect distributed file data,
-            recover it with confidence, and turn trusted snapshots into useful AI knowledge.
+            HyperFileLens runs agentic RAG over every file it protects — reasoning straight from your backups,
+            no embeddings required, and no impact on production.
           </p>
           <div class="hero-actions">
             <a class="button button-primary" :href="loginUrl" @click="openApp($event, 'hero')">
-              Open HyperFileLens
+              <img src="/logo-mark-white.svg" alt="" class="button-logo" />
+              Try HyperFileLens
               <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
+              <span class="free-badge">Free</span>
             </a>
             <a class="button button-secondary" :href="githubUrl">
               <svg aria-hidden="true"><use href="#icon-github" /></svg>
-              Explore the source
+              View on GitHub
             </a>
           </div>
           <div class="hero-proof" aria-label="Key product qualities">
-            <span><svg aria-hidden="true"><use href="#icon-check" /></svg>Self-hostable</span>
-            <span><svg aria-hidden="true"><use href="#icon-check" /></svg>Offline-ready</span>
-            <span><svg aria-hidden="true"><use href="#icon-check" /></svg>No source data migration</span>
+            <span><svg aria-hidden="true"><use href="#icon-check" /></svg>Data Governance</span>
+            <span><svg aria-hidden="true"><use href="#icon-check" /></svg>Agentic RAG</span>
+            <span><svg aria-hidden="true"><use href="#icon-check" /></svg>Agent Harness</span>
+            <span><svg aria-hidden="true"><use href="#icon-check" /></svg>Never Disrupts Production</span>
           </div>
         </div>
 
         <div class="product-stage" aria-label="HyperFileLens control plane preview">
-          <div class="product-window">
-            <div class="window-bar">
-              <div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div>
-              <div class="window-title"><img src="/logo-mark.svg" alt="" />HyperFileLens</div>
-              <div class="window-user" aria-hidden="true">OP</div>
-            </div>
-            <div class="product-shell">
-              <aside aria-hidden="true">
-                <span class="nav-mark active"><i></i>Overview</span>
-                <span class="nav-mark"><i></i>Protection</span>
-                <span class="nav-mark"><i></i>Recovery</span>
-                <span class="nav-mark"><i></i>File Insight</span>
-                <span class="nav-mark"><i></i>Data Gateways</span>
-              </aside>
-              <div class="dashboard">
-                <div class="dashboard-heading"><div><small>Overview</small><strong>Good morning, Operator</strong></div><button tabindex="-1">New protection policy</button></div>
-                <div class="metric-grid">
-                  <div><span>Protected sources</span><strong>24</strong><small><i class="good"></i> All policies healthy</small></div>
-                  <div><span>Latest snapshots</span><strong>156</strong><small><i class="good"></i> 12 completed today</small></div>
-                  <div><span>Data gateways</span><strong>6</strong><small><i class="good"></i> All nodes online</small></div>
-                </div>
-                <div class="dashboard-grid">
-                  <div class="activity-card">
-                    <div class="card-heading"><strong>Protection activity</strong><span>Last 7 days</span></div>
-                    <div class="bar-chart" aria-hidden="true">
-                      <i style="--bar: 41%"></i><i style="--bar: 58%"></i><i style="--bar: 48%"></i><i style="--bar: 72%"></i><i style="--bar: 62%"></i><i style="--bar: 88%"></i><i style="--bar: 77%"></i>
-                    </div>
-                    <div class="chart-labels"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div>
-                  </div>
-                  <div class="source-card">
-                    <div class="card-heading"><strong>Recent sources</strong><span>View all</span></div>
-                    <div class="source-item"><span class="source-symbol blue"><svg><use href="#icon-server" /></svg></span><div><strong>Finance Archive</strong><small>2 min ago</small></div><b>Healthy</b></div>
-                    <div class="source-item"><span class="source-symbol mint"><svg><use href="#icon-building" /></svg></span><div><strong>Product NAS</strong><small>18 min ago</small></div><b>Healthy</b></div>
-                    <div class="source-item"><span class="source-symbol violet"><svg><use href="#icon-server" /></svg></span><div><strong>Research Files</strong><small>1 hr ago</small></div><b>Healthy</b></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="floating-status status-protected"><span><svg><use href="#icon-shield" /></svg></span><div><strong>Protection completed</strong><small>Finance Archive · just now</small></div></div>
-          <div class="floating-status status-search"><span><svg><use href="#icon-search" /></svg></span><div><strong>Knowledge is ready</strong><small>156 snapshots indexed</small></div></div>
-        </div>
-      </section>
-
-      <section class="trust-strip" aria-label="HyperFileLens capabilities">
-        <p>Built for the realities of distributed file data</p>
-        <div>
-          <span>Central control plane</span><i></i><span>Distributed gateways</span><i></i><span>Kopia-powered protection</span><i></i><span>Optional AI intelligence</span>
-        </div>
-      </section>
-
-      <section id="platform" class="section-block platform" aria-labelledby="platform-title">
-        <div class="section-heading centered">
-          <p class="section-kicker">One platform. The complete file lifecycle.</p>
-          <h2 id="platform-title">Protection is only the beginning.</h2>
-          <p>Keep operational control from first connection through recovery and knowledge discovery—without stitching together separate consoles.</p>
-        </div>
-        <div class="bento-grid">
-          <article class="bento-card bento-protection">
-            <div class="card-icon"><svg aria-hidden="true"><use href="#icon-shield" /></svg></div>
-            <p class="card-label">Data protection</p>
-            <h3>Policies that stay visible.</h3>
-            <p>Coordinate sources, repositories, schedules, retention, snapshots, and recovery tasks from a single operational view.</p>
-            <div class="policy-preview" aria-hidden="true">
-              <div><span><i class="good"></i>Critical file policy</span><b>Healthy</b></div>
-              <div class="policy-meter"><i></i></div>
-              <small>Last snapshot 8 minutes ago · 2.8 TB protected</small>
-            </div>
-          </article>
-          <article class="bento-card bento-gateway">
-            <div class="card-icon mint"><svg aria-hidden="true"><use href="#icon-network" /></svg></div>
-            <p class="card-label">Data Gateway</p>
-            <h3>Reach data where it lives.</h3>
-            <p>Connect private and remote environments through distributed gateways while keeping the control plane centralized.</p>
-            <div class="gateway-map" aria-hidden="true">
-              <span class="map-node node-core"><img src="/logo-mark.svg" alt="" /></span>
-              <span class="map-node node-a"><svg><use href="#icon-server" /></svg></span>
-              <span class="map-node node-b"><svg><use href="#icon-building" /></svg></span>
-              <span class="map-node node-c"><svg><use href="#icon-server" /></svg></span>
-              <i class="map-line line-a"></i><i class="map-line line-b"></i><i class="map-line line-c"></i>
-            </div>
-          </article>
-          <article class="bento-card bento-insight">
-            <div class="card-icon violet"><svg aria-hidden="true"><use href="#icon-search" /></svg></div>
-            <p class="card-label">File intelligence</p>
-            <h3>Ask trusted data better questions.</h3>
-            <p>Use selected, protected snapshots as governed knowledge sources for discovery and AI-assisted workflows.</p>
-            <div class="search-preview" aria-hidden="true">
-              <svg><use href="#icon-search" /></svg><span>Find retention requirements in legal archives</span><kbd>↵</kbd>
-            </div>
-          </article>
-          <article class="bento-card bento-recovery">
-            <div class="card-icon amber"><svg aria-hidden="true"><use href="#icon-restore" /></svg></div>
-            <p class="card-label">Recovery & audit</p>
-            <h3>Recover with evidence.</h3>
-            <p>Navigate snapshots, launch restore work, and preserve a traceable history of platform actions and outcomes.</p>
-            <ul class="recovery-list">
-              <li><svg><use href="#icon-check" /></svg>Snapshot-level recovery</li>
-              <li><svg><use href="#icon-check" /></svg>Task and audit history</li>
-              <li><svg><use href="#icon-check" /></svg>Operational alerts</li>
-            </ul>
-          </article>
-        </div>
-      </section>
-
-      <section id="how-it-works" class="section-block flow-section" aria-labelledby="flow-title">
-        <div class="section-heading flow-copy">
-          <p class="section-kicker">Built around your infrastructure</p>
-          <h2 id="flow-title">A control plane—not another data silo.</h2>
-          <p>Deploy a lightweight Data Gateway close to each environment. HyperFileLens coordinates protection and intelligence centrally while your files remain where your teams already manage them.</p>
-          <a class="text-link" :href="githubUrl">See the architecture on GitHub <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
-        </div>
-        <div class="architecture" aria-label="HyperFileLens architecture flow">
-          <div class="architecture-column source-column">
-            <small>Your environments</small>
-            <div><svg><use href="#icon-server" /></svg><span><strong>File servers</strong><em>Private networks</em></span></div>
-            <div><svg><use href="#icon-building" /></svg><span><strong>NAS & archives</strong><em>Remote sites</em></span></div>
-            <div><svg><use href="#icon-network" /></svg><span><strong>Object storage</strong><em>S3-compatible</em></span></div>
-          </div>
-          <div class="architecture-arrow" aria-hidden="true"><i></i><span>Secure orchestration</span></div>
-          <div class="architecture-column control-column">
-            <small>HyperFileLens</small>
-            <div class="control-core"><img src="/logo-mark.svg" alt="" /><span><strong>Unified control plane</strong><em>Policies · tasks · audit</em></span></div>
-            <div class="control-output"><span><svg><use href="#icon-shield" /></svg>Protected snapshots</span><span><svg><use href="#icon-search" /></svg>File intelligence</span></div>
-          </div>
+          <img
+            class="product-shot"
+            src="/product-overview.webp"
+            width="1672"
+            height="941"
+            alt="HyperFileLens Overview dashboard showing the data protection pipeline from production source to isolated target storage to recovery drill, with 452 sources and 428.7 TB protected, all systems healthy, and recovery verification ready."
+          />
         </div>
       </section>
 
       <section id="use-cases" class="section-block use-cases" aria-labelledby="use-cases-title">
         <div class="section-heading centered">
-          <p class="section-kicker">Made for teams responsible for data</p>
-          <h2 id="use-cases-title">One foundation. Different jobs to be done.</h2>
+          <p class="section-kicker">Use Cases</p>
+          <h2 id="use-cases-title">Answers, not just backup search results.</h2>
         </div>
         <div class="use-case-grid">
           <article>
-            <span class="use-case-number">01</span>
-            <h3>Infrastructure & platform teams</h3>
-            <p>Standardize protection across sites without losing visibility into nodes, policies, tasks, and capacity.</p>
-            <ul><li>Distributed source management</li><li>Central health and task history</li><li>Repeatable protection policies</li></ul>
+            <div class="use-case-head">
+              <div class="card-icon violet"><svg aria-hidden="true"><use href="#icon-search" /></svg></div>
+              <h3>Customer support Q&A</h3>
+            </div>
+            <p>Answer customer questions straight from your product docs, PDFs, and slide decks — multimodal understanding reads across formats, so nothing needs to be reformatted first.</p>
           </article>
           <article>
-            <span class="use-case-number">02</span>
-            <h3>Data owners & operations</h3>
-            <p>Know that important files are recoverable and find the right snapshot when business work depends on it.</p>
-            <ul><li>Clear protection status</li><li>Browsable snapshot history</li><li>Controlled restore workflows</li></ul>
+            <div class="use-case-head">
+              <div class="card-icon"><svg aria-hidden="true"><use href="#icon-network" /></svg></div>
+              <h3>Company knowledge base</h3>
+            </div>
+            <p>Turn scattered specs, policies, and decisions — engineering or company-wide — into one knowledge base every team can actually query, not just search and summarize.</p>
           </article>
           <article>
-            <span class="use-case-number">03</span>
-            <h3>Knowledge & AI teams</h3>
-            <p>Build searchable, scoped knowledge from protected content rather than another uncontrolled data copy.</p>
-            <ul><li>Snapshot-backed knowledge sources</li><li>Configurable model providers</li><li>AI-assisted file discovery</li></ul>
+            <div class="use-case-head">
+              <div class="card-icon amber"><svg aria-hidden="true"><use href="#icon-code" /></svg></div>
+              <h3>Source-grounded root cause analysis</h3>
+            </div>
+            <p>Not keyword matching, not log scraping — the agent reads and reasons through your real source code, the way a senior engineer would, until it can confirm the actual root cause.</p>
+          </article>
+          <p class="use-case-divider">Still a rock-solid backup tool</p>
+          <article>
+            <div class="use-case-head">
+              <div class="card-icon"><svg aria-hidden="true"><use href="#icon-server" /></svg></div>
+              <h3>Any host, plus NAS</h3>
+            </div>
+            <p>Windows, Linux, and Mac — servers and workstations alike — plus NAS shares, all protected under one policy, not three different tools.</p>
+          </article>
+          <article>
+            <div class="use-case-head">
+              <div class="card-icon violet"><svg aria-hidden="true"><use href="#icon-network" /></svg></div>
+              <h3>No storage lock-in</h3>
+            </div>
+            <p>Object storage or local storage, any S3-compatible provider — your backups aren't tied to one storage vendor.</p>
+          </article>
+          <article>
+            <div class="use-case-head">
+              <div class="card-icon amber"><svg aria-hidden="true"><use href="#icon-restore" /></svg></div>
+              <h3>Single-file recovery</h3>
+            </div>
+            <p>Need one file back right now? Browse any snapshot and restore just that file in seconds — no full-volume restore required.</p>
           </article>
         </div>
       </section>
 
-      <section class="open-source-section" aria-labelledby="open-source-title">
+      <section id="how-it-works" class="section-block how-it-works" aria-labelledby="flow-title">
+        <div class="section-heading centered">
+          <p class="section-kicker">How It Works</p>
+          <h2 id="flow-title">Your files stay put. The engine comes to them.</h2>
+          <p>HyperFileLens backs up your documents and code into a safe, isolated copy — then an open source AI agent reasons directly over that copy, never touching production.</p>
+        </div>
+        <div class="engine-diagram-frame">
+          <img
+            class="engine-diagram"
+            src="/how-it-works.webp"
+            width="1600"
+            height="878"
+            loading="lazy"
+            alt="Your documents (Word, PDF, Excel, PowerPoint, images, code, markdown) flow into HyperFileLens for open source backup, protection, and flexible storage. HyperFileLens produces an isolated safe copy with no impact on production, which the SourceLens open source AI agent reasons over directly — reading, searching, navigating, and reasoning with no pre-built index — to produce AI insights: customer support Q&A, a company knowledge base, source-grounded root cause analysis, and actionable insights. The whole pipeline is governed and secure: access control, data stays in your control, audit and compliance, enterprise ready. Open source, Apache 2.0."
+          />
+        </div>
+      </section>
+
+      <section id="open-source" class="open-source-section" aria-labelledby="open-source-title">
         <div class="open-source-grid">
           <div class="open-source-copy">
-            <p class="section-kicker dark-kicker">Open source by design</p>
+            <p class="section-kicker dark-kicker">Open Source</p>
             <h2 id="open-source-title">Inspect it. Run it. Improve it.</h2>
-            <p>HyperFileLens is built in public for teams that need transparency and deployment control. Review the architecture, follow development, or contribute directly on GitHub.</p>
+            <p>HyperFileLens and the AI engine behind it are both fully open source. Review the architecture, follow development, or contribute directly on GitHub.</p>
+            <div class="open-source-callout">
+              <svg aria-hidden="true"><use href="#icon-check" /></svg>
+              <p>No vendor lock-in — bring your own S3-compatible storage and your own AI model or API key, self-hosted or hosted. Switch anytime.</p>
+            </div>
             <div class="open-source-actions">
               <a class="button button-light" :href="githubUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>View on GitHub</a>
+              <a class="button button-dark-outline" :href="githubUrl">⭐ Star this project</a>
+            </div>
+            <div class="open-source-links">
+              <a class="source-link" :href="sourceLensUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>AI engine repo</a>
               <a class="source-link" :href="`${githubUrl}/releases`">Browse releases <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
             </div>
             <p class="beta-note">HyperFileLens is currently in public beta.</p>
@@ -323,60 +257,45 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         </div>
       </section>
 
-      <section id="deploy" class="section-block deployment" aria-labelledby="deployment-title">
-        <div class="section-heading deployment-heading">
-          <div><p class="section-kicker">Deploy on your terms</p><h2 id="deployment-title">From managed access to offline infrastructure.</h2></div>
-          <p>Choose the operating model that fits your environment today without giving up a path to more control later.</p>
+      <section id="contact" class="section-block contact-section" aria-labelledby="contact-title">
+        <div class="section-heading centered">
+          <p class="section-kicker">Contact</p>
+          <h2 id="contact-title">Contact us</h2>
         </div>
-        <div class="deployment-grid">
+        <div class="contact-grid">
           <article>
-            <div class="deployment-icon"><svg><use href="#icon-network" /></svg></div>
-            <span>Fastest start</span>
-            <h3>Hosted service</h3>
-            <p>Use the managed HyperFileLens control plane and connect your environments through Data Gateways.</p>
-            <a :href="loginUrl" @click="openApp($event, 'hosted_service')">Open the app <svg><use href="#icon-arrow" /></svg></a>
-          </article>
-          <article class="featured-deployment">
-            <div class="deployment-icon"><svg><use href="#icon-server" /></svg></div>
-            <span>Full control</span>
-            <h3>Self-hosted</h3>
-            <p>Run the complete platform inside your own Ubuntu amd64 environment using the packaged installer.</p>
-            <a :href="`${githubUrl}/releases`">View releases <svg><use href="#icon-arrow" /></svg></a>
+            <div class="use-case-head">
+              <div class="card-icon"><svg aria-hidden="true"><use href="#icon-building" /></svg></div>
+              <h3>Enterprise deployment</h3>
+            </div>
+            <p>Planning a private, self-hosted deployment for your organization? We can help you scope it.</p>
+            <a class="text-link" href="mailto:oneprolabs@oneprocloud.com">Email us <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
           </article>
           <article>
-            <div class="deployment-icon"><svg><use href="#icon-terminal" /></svg></div>
-            <span>Restricted networks</span>
-            <h3>Offline-ready</h3>
-            <p>Install from a complete image-only release bundle when the target environment cannot reach the internet.</p>
-            <a :href="`${githubUrl}#requirements`">Read requirements <svg><use href="#icon-arrow" /></svg></a>
+            <div class="use-case-head">
+              <div class="card-icon violet"><svg aria-hidden="true"><use href="#icon-github" /></svg></div>
+              <h3>Technical support</h3>
+            </div>
+            <p>Running into an issue or found a bug? File it on GitHub and we'll take it from there.</p>
+            <a class="text-link" :href="`${githubUrl}/issues`">Open an issue <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
           </article>
         </div>
       </section>
 
-      <section class="final-cta" aria-labelledby="cta-title">
-        <div class="cta-glow" aria-hidden="true"></div>
-        <div>
-          <p class="section-kicker dark-kicker">Start with a clearer view of your data</p>
-          <h2 id="cta-title">Protect the files you rely on.<br />Put their knowledge to work.</h2>
-        </div>
-        <div class="cta-actions">
-          <a class="button button-light" :href="loginUrl" @click="openApp($event, 'cta')">Open HyperFileLens <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
-          <a class="button button-dark-outline" :href="githubUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>Explore GitHub</a>
-        </div>
-      </section>
     </main>
 
     <footer>
       <div class="footer-brand">
         <a class="brand" href="/en/"><img src="/logo-mark.svg" alt="" width="32" height="32" /><span>HyperFileLens</span></a>
-        <p>Open-source data protection and file intelligence.</p>
+        <p>Open source backup with agentic AI insight, by OneProLabs.</p>
+        <a class="footer-social" :href="githubUrl" aria-label="HyperFileLens on GitHub"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
       </div>
       <div class="footer-links">
-        <div><strong>Product</strong><a href="#platform">Platform</a><a href="#how-it-works">How it works</a><a href="#deploy">Deployment</a></div>
-        <div><strong>Open source</strong><a :href="githubUrl">GitHub</a><a :href="`${githubUrl}/releases`">Releases</a><a :href="`${githubUrl}/issues`">Issues</a></div>
-        <div><strong>Access</strong><a :href="loginUrl" @click="openApp($event, 'footer')">Open app</a><a href="/en/">English</a></div>
+        <div><strong>Product</strong><a href="#use-cases">Use Cases</a><a href="#how-it-works">How It Works</a><a :href="loginUrl" @click="openApp($event, 'footer')">Try free</a></div>
+        <div><strong>Open Source</strong><a :href="githubUrl">HyperFileLens</a><a :href="sourceLensUrl">AI engine</a><a :href="`${githubUrl}/releases`">Releases</a></div>
+        <div><strong>Contact</strong><a href="mailto:oneprolabs@oneprocloud.com">Enterprise deployment</a><a :href="`${githubUrl}/issues`">Technical support</a></div>
       </div>
-      <div class="footer-bottom"><span>© 2026 HyperFileLens contributors</span><span>Public beta · Built in the open</span></div>
+      <div class="footer-bottom"><span>© 2026 OneProLabs</span><span>Public beta · Built in the open</span></div>
     </footer>
   </div>
 </template>
