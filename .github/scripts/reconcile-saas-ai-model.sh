@@ -80,6 +80,10 @@ payload = {
     "api_base": os.environ["AI_MODEL_API_BASE"],
     "api_key": os.environ["AI_MODEL_API_KEY"],
 }
+# SourceLens >= 0.39 requires multimodal models to declare vision capability
+# before assistant creation (MODEL_NOT_VISION_CAPABLE).
+if os.environ["ROLE"] == "multimodal":
+    payload["supports_vision"] = True
 pathlib.Path(sys.argv[1]).write_text(json.dumps(payload), encoding="utf-8")
 PY
 

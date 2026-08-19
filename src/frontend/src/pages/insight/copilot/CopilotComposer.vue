@@ -432,14 +432,14 @@ watch(
 }
 
 .copilot-send-btn.is-active {
-  background: var(--color-grey-3, #e2e8f0);
-  color: var(--color-text-secondary, #64748b);
+  background: #111827;
+  color: #ffffff;
   cursor: pointer;
 }
 
 .copilot-send-btn.is-active:hover {
-  background: var(--color-grey-4, #cbd5e1);
-  color: var(--color-text-primary, #334155);
+  background: #374151;
+  color: #ffffff;
 }
 
 .copilot-send-btn.is-active:active,

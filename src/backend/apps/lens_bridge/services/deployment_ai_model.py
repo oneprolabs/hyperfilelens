@@ -74,6 +74,16 @@ def _validated_api_base(values: Mapping[str, Any]) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, normalized_path, "", ""))
 
 
+def _coerced_bool(values: Mapping[str, Any], key: str) -> bool:
+    """Coerce a JSON boolean or common string representation to bool."""
+    value = values.get(key)
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"true", "1", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class DeploymentAiModelConfig:
     """Validated deployment input for one OpenAI-compatible model."""
@@ -83,6 +93,9 @@ class DeploymentAiModelConfig:
     display_name: str
     api_base: str
     api_key: str
+    # SourceLens >= 0.39 validates multimodal models against an explicit
+    # vision-capability declaration before it allows assistant creation.
+    supports_vision: bool = False
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> DeploymentAiModelConfig:
@@ -103,6 +116,7 @@ class DeploymentAiModelConfig:
             ),
             api_base=_validated_api_base(values),
             api_key=_required_single_line(values, "api_key", max_length=4096),
+            supports_vision=_coerced_bool(values, "supports_vision"),
         )
 
 
@@ -125,6 +139,7 @@ def _deployment_fingerprint(config: DeploymentAiModelConfig) -> str:
             "display_name": config.display_name,
             "api_base": config.api_base,
             "api_key": config.api_key,
+            "supports_vision": config.supports_vision,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -147,6 +162,7 @@ def _source_lens_payload(
             "model": config.model_id,
             "api_base": config.api_base,
             "api_key": config.api_key,
+            "supports_vision": config.supports_vision,
         },
         "is_active": True,
     }
@@ -176,6 +192,17 @@ def _source_lens_model_is_active(config_ref: str) -> bool:
         return False
     status = str(data.get("status") or "").strip().lower()
     return status not in {"inactive", "disabled"}
+
+
+def _sl_model_supports_vision(data: dict[str, Any] | None) -> bool:
+    """Return whether the installed SourceLens model declares vision support."""
+    if not isinstance(data, dict):
+        return False
+    config = data.get("config")
+    if not isinstance(config, dict):
+        return False
+    value = config.get("supports_vision")
+    return value is True or str(value).strip().lower() in {"true", "1", "yes", "on"}
 
 
 def _created_uuid(data: Any) -> uuid.UUID:
@@ -377,6 +404,24 @@ def ensure_platform_ai_model(
     ):
         connectivity_ok = _test_connection(link.sl_config_uuid)
         if connectivity_ok:
+            # Upgrade repair: SourceLens >= 0.39 requires multimodal models to
+            # declare vision capability before assistant creation. Patch the
+            # installed model in place instead of recreating it, so the
+            # config_uuid and any administrator selections stay stable.
+            if config.supports_vision and not _sl_model_supports_vision(current):
+                # Deliberately omit is_default from the patch payload: the PUT
+                # endpoint applies partial updates and would otherwise clear
+                # SourceLens's process-wide default if this model holds it.
+                sl_client.request_json(
+                    "PUT",
+                    f"/api/v1/admin/llm-config/{link.sl_config_uuid}/",
+                    json_body=_source_lens_payload(config),
+                )
+                logger.info(
+                    "Repaired SourceLens multimodal model %s vision-capability "
+                    "declaration.",
+                    link.sl_config_uuid,
+                )
             if should_select_managed:
                 with transaction.atomic():
                     _set_role_default(

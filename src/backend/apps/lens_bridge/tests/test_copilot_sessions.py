@@ -19,7 +19,9 @@ from apps.lens_bridge.api.serializers import (
 )
 from apps.lens_bridge.api.views import (
     _attachment_proxy_url,
+    _output_file_proxy_url,
     _require_attachment_proxy_token,
+    _rewrite_attachment_urls,
     _source_lens_session_meta,
 )
 from apps.lens_bridge.models import (
@@ -440,6 +442,90 @@ class CopilotSessionApiTests(TestCase):
 
         self.assertEqual(response.status_code, 404)
         stream_binary.assert_not_called()
+
+    @patch("apps.lens_bridge.api.views.sl_client.stream_binary")
+    def test_output_file_content_is_streamed_through_hfl(self, stream_binary):
+        self._mark_session_ready()
+        output_file_uuid = uuid.uuid4()
+        stream_binary.return_value = sl_client.BinaryStreamResponse(
+            body=iter([b"abc", b"def"]),
+            content_type="text/markdown",
+            content_length="6",
+            content_disposition='attachment; filename="report.md"',
+            cache_control="private, max-age=3600",
+        )
+
+        response = self.client.get(
+            _output_file_proxy_url(self.session.pk, str(output_file_uuid)),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"abcdef")
+        self.assertEqual(response["Content-Type"], "text/markdown")
+        stream_binary.assert_called_once_with(
+            f"/api/lens/output-files/{output_file_uuid}/",
+            hfl_user=self.user,
+        )
+
+    @patch("apps.lens_bridge.api.views.sl_client.stream_binary")
+    def test_output_file_content_rejects_an_unsigned_uuid(self, stream_binary):
+        self._mark_session_ready()
+        output_file_uuid = uuid.uuid4()
+
+        response = self.client.get(
+            reverse(
+                "lens-copilot-session-output-file-content",
+                kwargs={
+                    "pk": self.session.pk,
+                    "file_uuid": output_file_uuid,
+                },
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 404)
+        stream_binary.assert_not_called()
+
+    def test_rewrite_attachment_urls_rewrites_output_file_urls(self):
+        messages = [
+            {
+                "output_files": [
+                    {
+                        "uuid": str(uuid.uuid4()),
+                        "filename": "report.md",
+                        "url": "https://sourcelens/api/lens/output-files/x/",
+                    }
+                ],
+            },
+        ]
+
+        rewritten = _rewrite_attachment_urls(messages, session_id=17)
+
+        output_file = rewritten[0]["output_files"][0]
+        self.assertIn("output-files/", output_file["url"])
+        self.assertNotIn("sourcelens", output_file["url"])
+        self.assertIn("token=", output_file["url"])
+
+    def test_rewrite_attachment_urls_rewrites_output_files_without_attachments(self):
+        messages = [
+            {
+                "attachments": None,
+                "output_files": [
+                    {
+                        "uuid": str(uuid.uuid4()),
+                        "filename": "report.md",
+                        "url": "https://sourcelens/api/lens/output-files/x/",
+                    }
+                ],
+            },
+        ]
+
+        rewritten = _rewrite_attachment_urls(messages, session_id=17)
+
+        output_file = rewritten[0]["output_files"][0]
+        self.assertIn("output-files/", output_file["url"])
+        self.assertNotIn("sourcelens", output_file["url"])
 
     @patch("apps.lens_bridge.api.views.sl_client.stream_sse")
     def test_run_stream_requires_the_run_bound_to_the_session(self, stream_sse):

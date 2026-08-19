@@ -40,6 +40,25 @@ def _sl_password_for_hfl_user(user: AbstractBaseUser) -> str:
     return f"Hfl!{digest}"
 
 
+def _sl_answer_language(language: str | None) -> str:
+    """Map an HFL language code to the SourceLens answer language value.
+
+    SourceLens resolves the answer language from ``profile.language`` and only
+    honors explicit ``zh`` / ``en`` values (``normalize_answer_language``);
+    everything else falls back to ``en-US``.
+    """
+    code = (language or "").strip().lower()
+    if code.startswith("zh"):
+        return "zh-CN"
+    return "en-US"
+
+
+def _sl_answer_language_for_hfl_user(user: AbstractBaseUser) -> str:
+    """Derive the SourceLens answer language from the HFL user's profile."""
+    profile = getattr(user, "profile", None)
+    return _sl_answer_language(getattr(profile, "language", None))
+
+
 def _find_remote_user(username: str) -> dict[str, Any] | None:
     page = 1
     page_size = 100
@@ -132,6 +151,7 @@ def _provision_remote(
                     "is_staff": False,
                     "role_ids": [],
                     "preferred_platform": "workspace",
+                    "language": _sl_answer_language_for_hfl_user(user),
                 },
             )
         except sl_client.LensBridgeError:
@@ -171,6 +191,19 @@ def _provision_remote(
             "SourceLens did not confirm the migrated chat user email."
         )
 
+    desired_language = _sl_answer_language_for_hfl_user(user)
+    if payload.get("language") != desired_language:
+        updated = sl_client.request_json(
+            "PATCH",
+            f"/api/v1/management/users/{sl_user_id}/",
+            json_body={"language": desired_language},
+        )
+        if not isinstance(updated, dict):
+            raise sl_client.LensBridgeError(
+                "SourceLens language sync returned an invalid response."
+            )
+        payload = updated
+
     link.sl_user_id = sl_user_id
     link.sl_username = str(payload.get("username") or link.sl_username)
     link.sl_email = email
@@ -190,6 +223,45 @@ def _provision_remote(
     )
     with _USER_TOKEN_LOCK:
         _USER_TOKENS.pop(user.pk, None)
+
+
+def sync_sl_user_language(user: AbstractBaseUser, language: str | None) -> bool:
+    """Best-effort sync of a user's answer language to the SL chat profile.
+
+    SourceLens resolves each run's answer language from the profile, so keeping
+    it in sync makes new runs answer in the language the user chose in the UI.
+    Returns ``False`` (without raising) when there is no ready SL link or the
+    remote update fails; ``True`` when the language was pushed successfully.
+    """
+    link = LensSlUserLink.objects.filter(
+        hfl_user=user,
+        provision_status=LensSlUserLink.ProvisionStatus.READY,
+    ).first()
+    if link is None:
+        return False
+    sl_language = _sl_answer_language(language)
+    try:
+        updated = sl_client.request_json(
+            "PATCH",
+            f"/api/v1/management/users/{link.sl_user_id}/",
+            json_body={"language": sl_language},
+        )
+    except sl_client.LensBridgeError:
+        logger.warning(
+            "Failed to sync answer language for HFL user %s to SourceLens.",
+            user.pk,
+            exc_info=True,
+        )
+        return False
+    if not isinstance(updated, dict):
+        logger.warning(
+            "Unexpected response while syncing answer language for HFL user %s.",
+            user.pk,
+        )
+        return False
+    with _USER_TOKEN_LOCK:
+        _USER_TOKENS.pop(user.pk, None)
+    return True
 
 
 def mint_sl_access_token(user: AbstractBaseUser) -> str:

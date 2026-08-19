@@ -37,6 +37,87 @@ class DeploymentAiModelConfigTests(TestCase):
         self.assertEqual(config.provider, "openai_compatible")
         self.assertEqual(config.api_base, "https://models.example/custom/api")
 
+    def test_supports_vision_absent_defaults_to_false(self):
+        config = deployment_ai_model.DeploymentAiModelConfig.from_mapping(
+            {
+                "provider": "openai_compatible",
+                "model_id": "model/one",
+                "display_name": "Model One",
+                "api_base": "https://models.example/v1",
+                "api_key": "secret",
+            }
+        )
+
+        self.assertFalse(config.supports_vision)
+
+    def test_coerces_supports_vision_boolean_and_string_forms(self):
+        base = {
+            "provider": "openai_compatible",
+            "model_id": "model/one",
+            "display_name": "Model One",
+            "api_base": "https://models.example/v1",
+            "api_key": "secret",
+        }
+        expected = {
+            True: True,
+            False: False,
+            "true": True,
+            "1": True,
+            "yes": True,
+            "on": True,
+            "false": False,
+            "0": False,
+            None: False,
+        }
+        for raw, want in expected.items():
+            values = dict(base, supports_vision=raw)
+            with self.subTest(raw=raw):
+                config = deployment_ai_model.DeploymentAiModelConfig.from_mapping(
+                    values
+                )
+                self.assertEqual(config.supports_vision, want)
+
+    def test_payload_includes_vision_declaration_without_is_default(self):
+        config = deployment_ai_model.DeploymentAiModelConfig(
+            provider="openai_compatible",
+            model_id="deepseek/DeepSeek-V4-Flash/8f94e",
+            display_name="DeepSeek V4 Flash",
+            api_base="https://models.example/custom/api",
+            api_key="deployment-secret",
+            supports_vision=True,
+        )
+
+        payload = deployment_ai_model._source_lens_payload(config)
+
+        self.assertTrue(payload["config"]["supports_vision"])
+        self.assertNotIn("is_default", payload)
+        payload = deployment_ai_model._source_lens_payload(
+            config, make_default=False
+        )
+        self.assertFalse(payload["is_default"])
+
+    def test_vision_declaration_changes_deployment_fingerprint(self):
+        base = deployment_ai_model.DeploymentAiModelConfig(
+            provider="openai_compatible",
+            model_id="deepseek/DeepSeek-V4-Flash/8f94e",
+            display_name="DeepSeek V4 Flash",
+            api_base="https://models.example/custom/api",
+            api_key="deployment-secret",
+        )
+        vision = deployment_ai_model.DeploymentAiModelConfig(
+            provider=base.provider,
+            model_id=base.model_id,
+            display_name=base.display_name,
+            api_base=base.api_base,
+            api_key=base.api_key,
+            supports_vision=True,
+        )
+
+        self.assertNotEqual(
+            deployment_ai_model._deployment_fingerprint(base),
+            deployment_ai_model._deployment_fingerprint(vision),
+        )
+
 
 class DeploymentAiModelServiceTests(TestCase):
     model_uuid = uuid.UUID("876742d4-c3b7-4f6c-84a8-a3c0cc8ac38e")
@@ -198,6 +279,120 @@ class DeploymentAiModelServiceTests(TestCase):
         )
 
         self.assertTrue(result.connectivity_ok)
+        defaults.refresh_from_db()
+        self.assertEqual(defaults.default_multimodal_model_ref, self.model_uuid)
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_recheck_patches_vision_capability_without_touching_default(
+        self,
+        request_json,
+    ):
+        org = platform_lens.get_or_create_platform_org()
+        vision_config = deployment_ai_model.DeploymentAiModelConfig(
+            provider=self.config.provider,
+            model_id=self.config.model_id,
+            display_name=self.config.display_name,
+            api_base=self.config.api_base,
+            api_key=self.config.api_key,
+            supports_vision=True,
+        )
+        LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=(
+                deployment_ai_model.DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY
+            ),
+            deployment_role=LensOrgModelLink.DeploymentRole.MULTIMODAL,
+            deployment_fingerprint=(
+                deployment_ai_model._deployment_fingerprint(vision_config)
+            ),
+        )
+        defaults = LensOrgLink.objects.create(
+            organization=org,
+            default_multimodal_model_ref=self.model_uuid,
+        )
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "provider": vision_config.provider,
+                "is_active": True,
+                "config": {
+                    "model": vision_config.model_id,
+                    "api_base": vision_config.api_base,
+                },
+            },
+            {"ok": True},
+            {},
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(
+            vision_config,
+            role="multimodal",
+        )
+
+        self.assertEqual(result.action, "updated")
+        self.assertTrue(result.connectivity_ok)
+        put_call = request_json.call_args_list[2]
+        self.assertEqual(
+            put_call.args,
+            ("PUT", f"/api/v1/admin/llm-config/{self.model_uuid}/"),
+        )
+        patch_payload = put_call.kwargs["json_body"]
+        self.assertTrue(patch_payload["config"]["supports_vision"])
+        # The patch must never touch SourceLens's process-wide default.
+        self.assertNotIn("is_default", patch_payload)
+        defaults.refresh_from_db()
+        self.assertEqual(
+            defaults.default_multimodal_model_ref,
+            self.model_uuid,
+        )
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_recheck_skips_patch_when_vision_already_declared(self, request_json):
+        org = platform_lens.get_or_create_platform_org()
+        vision_config = deployment_ai_model.DeploymentAiModelConfig(
+            provider=self.config.provider,
+            model_id=self.config.model_id,
+            display_name=self.config.display_name,
+            api_base=self.config.api_base,
+            api_key=self.config.api_key,
+            supports_vision=True,
+        )
+        LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=(
+                deployment_ai_model.DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY
+            ),
+            deployment_role=LensOrgModelLink.DeploymentRole.MULTIMODAL,
+            deployment_fingerprint=(
+                deployment_ai_model._deployment_fingerprint(vision_config)
+            ),
+        )
+        defaults = LensOrgLink.objects.create(organization=org)
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "provider": vision_config.provider,
+                "is_active": True,
+                "config": {
+                    "model": vision_config.model_id,
+                    "api_base": vision_config.api_base,
+                    "supports_vision": True,
+                },
+            },
+            {"ok": True},
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(
+            vision_config,
+            role="multimodal",
+        )
+
+        self.assertTrue(result.connectivity_ok)
+        self.assertEqual(request_json.call_count, 2)
+        for call in request_json.call_args_list:
+            self.assertNotEqual(call.args[0], "PUT")
         defaults.refresh_from_db()
         self.assertEqual(defaults.default_multimodal_model_ref, self.model_uuid)
 

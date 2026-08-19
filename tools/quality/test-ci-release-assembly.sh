@@ -109,7 +109,7 @@ cp "${sl}/images/11-sourcelens-lensnode.tar.gz" \
 cat >"${sl}/sourcelens/BUILD_INFO.json" <<JSON
 {
   "enabled": true,
-  "git_url": "https://github.com/HyperBDR/sourcelens.git",
+  "git_url": "https://github.com/oneprolabs/sourcelens.git",
   "git_ref": "v0.20.0",
   "git_commit": "0000000000000000000000000000000000000000",
   "git_commit_short": "0000000",
