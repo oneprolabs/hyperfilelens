@@ -22,6 +22,7 @@ from apps.source import conf as source_conf
 from apps.source.models import SourceResource
 from apps.source.services.internal.connection import (
     apply_connection_test_result_if_current,
+    best_effort_unmount_on_proxy,
     run_connection_test,
 )
 
@@ -41,7 +42,7 @@ def _probe_target(
     resource = SourceResource.all_objects.filter(pk=resource_id).first()
     if resource is None or resource.is_deleted:
         return None, "source_deleted"
-    if resource.status in {ResourceStatus.REMOVING, ResourceStatus.REMOVED}:
+    if resource.status in ResourceStatus.REMOVAL_FENCED:
         return None, "source_removing"
     if resource.resource_type not in ResourceType.REQUIRES_MOUNT:
         return None, "mount_not_required"
@@ -83,16 +84,25 @@ def run_source_resource_capacity_probe(
             return {"status": "discarded", "reason": skip_reason}
         return {"status": "failed", "reason": "proxy_offline"}
 
-    SourceResource.all_objects.filter(
+    claimed = SourceResource.all_objects.filter(
         pk=resource.id,
         connection_probe_token=probe_token,
-    ).update(
+        is_deleted=False,
+    ).exclude(status__in=ResourceStatus.REMOVAL_FENCED).update(
         connection_test_status=ConnectionTestStatus.RUNNING,
         status=ResourceStatus.PROBING,
         updated_at=timezone.now(),
     )
+    if not claimed:
+        _, skip_reason = _probe_target(
+            resource_id=resource_id,
+            probe_token=probe_token,
+            expected_bound_node_id=expected_bound_node_id,
+        )
+        return {"status": "skipped", "reason": skip_reason or "source_changed"}
 
-    result = run_connection_test(resource=resource)
+    probe_resource = resource
+    result = run_connection_test(resource=probe_resource)
 
     # The remote call may wait for up to 180 seconds. Lock and re-read the row
     # before applying the result so an edit, rebind, or delete wins the race.
@@ -104,6 +114,15 @@ def run_source_resource_capacity_probe(
         result=result,
     )
     if resource is None:
+        if skip_reason in {
+            "source_deleted",
+            "source_removing",
+        }:
+            best_effort_unmount_on_proxy(
+                resource=probe_resource,
+                node_id=expected_bound_node_id,
+                force=True,
+            )
         return {"status": "discarded", "reason": skip_reason}
     return {
         "status": "success" if result.get("success") else "failed",
@@ -239,7 +258,7 @@ def _queue_availability_probe(
         )
         if resource is None:
             return False
-        if resource.status in {ResourceStatus.REMOVING, ResourceStatus.REMOVED}:
+        if resource.status in ResourceStatus.REMOVAL_FENCED:
             return False
         if resource.connection_test_status in ConnectionTestStatus.ACTIVE:
             return False
@@ -298,7 +317,7 @@ def queue_source_availability_probes_for_proxy(
             is_deleted=False,
         )
         .exclude(connection_test_status__in=ConnectionTestStatus.ACTIVE)
-        .exclude(status__in={ResourceStatus.REMOVING, ResourceStatus.REMOVED})
+        .exclude(status__in=ResourceStatus.REMOVAL_FENCED)
         .order_by("availability_updated_at", "id")
         .values_list("id", flat=True)[:batch_size]
     )
@@ -344,7 +363,7 @@ def reconcile_source_availability(*, limit: int | None = None) -> dict[str, int]
             resource_type__in=ResourceType.REQUIRES_MOUNT,
             is_deleted=False,
         )
-        .exclude(status__in={ResourceStatus.REMOVING, ResourceStatus.REMOVED})
+        .exclude(status__in=ResourceStatus.REMOVAL_FENCED)
         .filter(
             Q(
                 availability_updated_at__lte=refresh_cutoff,

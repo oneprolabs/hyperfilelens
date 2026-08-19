@@ -78,6 +78,11 @@ class ResourceStatus:
         (REMOVED, "Removed"),
     )
 
+    # Removal is an operational fence, not another availability result.  A
+    # failed deregistration stays fenced until the operator explicitly retries
+    # cleanup or restores the source to service.
+    REMOVAL_FENCED = frozenset({REMOVING, REMOVE_FAILED, REMOVED})
+
 
 class SelectableSourceKind:
     AGENT = "agent"

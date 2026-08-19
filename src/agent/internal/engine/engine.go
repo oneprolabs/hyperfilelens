@@ -28,11 +28,25 @@ type Engine struct {
 	activeKill            func()
 	repositoryServerMu    sync.Mutex
 	repositoryServerPorts map[int]struct{}
+	nasLeaseOnce          sync.Once
+	nasLeaseCoordinator   *NASLeaseCoordinator
 }
 
 // New returns an engine that reads config from provider on each command.
 func New(provider config.Provider) *Engine {
-	return &Engine{provider: provider}
+	return NewWithNASLeaseCoordinator(provider, nil)
+}
+
+// NewWithNASLeaseCoordinator returns an engine sharing mount lifetime leases
+// with other task-scoped engines in the same Agent process.
+func NewWithNASLeaseCoordinator(
+	provider config.Provider,
+	coordinator *NASLeaseCoordinator,
+) *Engine {
+	if coordinator == nil {
+		coordinator = NewNASLeaseCoordinator()
+	}
+	return &Engine{provider: provider, nasLeaseCoordinator: coordinator}
 }
 
 func (e *Engine) current() *model.AgentConfig {
@@ -50,6 +64,18 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 
 	kind := NormalizeKind(cmd.Kind)
 	p := ParsePayload(cmd.Payload)
+	leasePaths := nasLeasePaths(p)
+	if len(leasePaths) > 0 {
+		release, leaseErr := e.nasLeases().acquire(
+			ctx,
+			leasePaths,
+			needsExclusiveNASLease(kind, p),
+		)
+		if leaseErr != nil {
+			return Result{Status: "failed", Error: "canceled"}
+		}
+		defer release()
+	}
 	rep := ReporterSink{Sink: sink, TaskID: cmd.ID}
 	nodeID := e.current().NodeID
 	slog.InfoContext(ctx, "engine task started", "node_id", nodeID, "task_id", cmd.ID, "kind", kind)
@@ -230,6 +256,15 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 		slog.WarnContext(ctx, "engine task finished", "node_id", nodeID, "task_id", cmd.ID, "kind", kind, "status", status, "err", errMsg)
 	}
 	return Result{Status: status, Result: result, Error: errMsg}
+}
+
+func (e *Engine) nasLeases() *nasLeaseRegistry {
+	e.nasLeaseOnce.Do(func() {
+		if e.nasLeaseCoordinator == nil {
+			e.nasLeaseCoordinator = NewNASLeaseCoordinator()
+		}
+	})
+	return e.nasLeaseCoordinator.registry()
 }
 
 func (e *Engine) kopiaBin(ctx context.Context) (string, error) {

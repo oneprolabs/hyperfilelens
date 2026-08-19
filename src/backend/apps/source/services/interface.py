@@ -24,6 +24,7 @@ from apps.source.models import SourceResource
 from apps.source.selectors.interface import source_resource_by_id, source_resources_queryset
 from apps.source.services.internal.connection import (
     apply_connection_test_result_if_current,
+    best_effort_unmount_on_proxy,
     mount_resource as _mount_resource,
     schedule_remount_after_proxy_change,
     run_connection_test,
@@ -358,15 +359,20 @@ def delete_source_resource(*, resource: SourceResource, user, force: bool = Fals
 
 def test_resource_connection(*, resource: SourceResource) -> dict:
     probe_token = uuid4()
-    resource.connection_test_status = ConnectionTestStatus.RUNNING
-    resource.connection_probe_token = probe_token
-    resource.save(
-        update_fields=[
-            "connection_test_status",
-            "connection_probe_token",
-            "updated_at",
-        ]
+    claimed = (
+        SourceResource.all_objects.filter(pk=resource.id, is_deleted=False)
+        .exclude(status__in=ResourceStatus.REMOVAL_FENCED)
+        .update(
+            connection_test_status=ConnectionTestStatus.RUNNING,
+            connection_probe_token=probe_token,
+            updated_at=timezone.now(),
+        )
     )
+    if not claimed:
+        return {
+            "success": False,
+            "message": "Connection testing is unavailable while this source is being removed.",
+        }
     if resource.resource_type == ResourceType.NAS:
         sync_pipeline_projection(
             organization_id=resource.organization_id,
@@ -384,12 +390,21 @@ def test_resource_connection(*, resource: SourceResource) -> dict:
             "success": False,
             "message": "Connection test failed unexpectedly. Try again.",
         }
-    current, _skip_reason = apply_connection_test_result_if_current(
+    current, skip_reason = apply_connection_test_result_if_current(
         resource_id=resource.id,
         probe_token=probe_token,
         result=result,
     )
     if current is None:
+        if skip_reason in {
+            "source_deleted",
+            "source_removing",
+        }:
+            best_effort_unmount_on_proxy(
+                resource=resource,
+                node_id=int(resource.bound_node_id or 0),
+                force=True,
+            )
         return {**public_connection_result(result), "stale": True}
     return public_connection_result(result)
 
@@ -557,5 +572,5 @@ def mount_resource(*, resource: SourceResource) -> dict:
     return _mount_resource(resource)
 
 
-def unmount_resource(*, resource: SourceResource) -> dict:
-    return _unmount_resource(resource)
+def unmount_resource(*, resource: SourceResource, force: bool = False) -> dict:
+    return _unmount_resource(resource, force=force)

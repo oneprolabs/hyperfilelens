@@ -3162,6 +3162,8 @@ class BackupSourceBulkDeleteTests(TestCase):
             },
             mount_status="mounted",
             bound_node=proxy,
+            connection_test_status="success",
+            connection_probe_token=uuid4(),
         )
         SourceBackupPipelineEntry.objects.create(
             organization=self.org,
@@ -3187,6 +3189,10 @@ class BackupSourceBulkDeleteTests(TestCase):
             response.content,
         )
         self.assertEqual(response.data["reasons"][0]["code"], "nas_umount_failed")
+        resource.refresh_from_db()
+        self.assertEqual(resource.status, "remove_failed")
+        self.assertEqual(resource.connection_test_status, "idle")
+        self.assertIsNone(resource.connection_probe_token)
         task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
         task.refresh_from_db()
         resource.refresh_from_db()

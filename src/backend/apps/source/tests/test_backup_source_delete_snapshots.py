@@ -16,7 +16,7 @@ from apps.audit.models import AuditLog
 from apps.audit.services.interface import write_audit_log as persist_audit_log
 from apps.iam.models import Membership, Organization
 from apps.node import agent_paths
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
@@ -752,9 +752,141 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
         )
         self.assertEqual(
             result["retained_resources"],
-            [self.resource.effective_mount_point()],
+            [f"source_nas_mount:{self.resource.id}"],
         )
         self.assertTrue(self.resource.is_deleted)
+
+    @patch(
+        "apps.source.services.internal.backup_source_delete.unmount_resource",
+        return_value={
+            "success": True,
+            "cleanup_complete": False,
+            "retained_resources": [
+                "nas_mount_reference",
+                "nas_mount_directory",
+            ],
+            "warnings": ["The NAS mount was lazily detached."],
+        },
+    )
+    def test_force_nas_unmount_namespaces_agent_residue(self, _unmount_resource):
+        self.snapshot.status = self.snapshot.Status.DELETED
+        self.snapshot.save(update_fields=["status", "updated_at"])
+
+        result = delete_backup_sources(
+            org=self.org,
+            ids=[f"nas:{self.resource.id}"],
+            force=True,
+            user=self.user,
+        )
+
+        self.assertEqual(result["result"], "partial_success")
+        self.assertIn(
+            f"source_nas_mount:{self.resource.id}",
+            result["retained_resources"],
+        )
+        self.assertIn(
+            f"source_nas_mount_directory:{self.resource.id}",
+            result["retained_resources"],
+        )
+
+    @patch(
+        "apps.source.services.internal.backup_source_delete.unmount_resource",
+        return_value={
+            "success": True,
+            "cleanup_complete": False,
+            "retained_resources": ["nas_mount_reference"],
+            "warnings": ["The NAS mount still has local references."],
+        },
+    )
+    def test_strict_nas_unmount_rejects_success_with_residue(
+        self,
+        _unmount_resource,
+    ):
+        self.snapshot.status = self.snapshot.Status.DELETED
+        self.snapshot.save(update_fields=["status", "updated_at"])
+
+        with self.assertRaises(BackupSourceDeleteFailed) as raised:
+            delete_backup_sources(
+                org=self.org,
+                ids=[f"nas:{self.resource.id}"],
+                force=False,
+                user=self.user,
+            )
+
+        self.resource.refresh_from_db()
+        self.assertEqual(raised.exception.reasons[0].code, "nas_umount_retained")
+        self.assertFalse(self.resource.is_deleted)
+
+    @patch(
+        "apps.source.services.internal.backup_source_delete.unmount_resource"
+    )
+    def test_force_nas_unmount_merges_compensating_task_residue(
+        self,
+        unmount_resource,
+    ):
+        self.snapshot.status = self.snapshot.Status.DELETED
+        self.snapshot.save(update_fields=["status", "updated_at"])
+
+        def complete_with_compensation_residue(**_kwargs):
+            NodeTask.objects.create(
+                organization=self.org,
+                requesting_organization_id=self.org.id,
+                node=self.proxy,
+                kind="nas.unmount",
+                correlation_type="source.unmount",
+                correlation_id=str(self.resource.id),
+                status=NodeTask.Status.SUCCESS,
+                result={
+                    "cleanup_complete": False,
+                    "retained_resources": ["nas_mount_reference"],
+                    "warnings": ["The NAS mount was lazily detached."],
+                },
+                watchdog_deadline_at=timezone.now(),
+            )
+            return {"success": True, "cleanup_complete": True}
+
+        unmount_resource.side_effect = complete_with_compensation_residue
+
+        result = delete_backup_sources(
+            org=self.org,
+            ids=[f"nas:{self.resource.id}"],
+            force=True,
+            user=self.user,
+        )
+
+        self.assertEqual(result["result"], "partial_success")
+        self.assertFalse(result["cleanup_complete"])
+        self.assertEqual(
+            result["retained_resources"],
+            [f"source_nas_mount:{self.resource.id}"],
+        )
+
+    @patch(
+        "apps.source.services.internal.backup_source_delete.unmount_resource",
+        return_value={
+            "success": False,
+            "message": "cleanup mount directory: directory not empty",
+        },
+    )
+    def test_force_nas_directory_failure_uses_stable_residue_id(
+        self,
+        _unmount_resource,
+    ):
+        self.snapshot.status = self.snapshot.Status.DELETED
+        self.snapshot.save(update_fields=["status", "updated_at"])
+
+        result = delete_backup_sources(
+            org=self.org,
+            ids=[f"nas:{self.resource.id}"],
+            force=True,
+            user=self.user,
+        )
+
+        self.assertEqual(result["result"], "partial_success")
+        self.assertEqual(
+            result["retained_resources"],
+            [f"source_nas_mount_directory:{self.resource.id}"],
+        )
 
     @patch(
         "apps.source.services.internal.backup_source_delete.unmount_resource",

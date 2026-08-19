@@ -1300,6 +1300,8 @@ def _set_source_nas_removal_status(
     ).update(
         status=status,
         status_message=message[:2000],
+        connection_test_status=ConnectionTestStatus.IDLE,
+        connection_probe_token=None,
         updated_at=timezone.now(),
     )
 
@@ -2427,6 +2429,7 @@ def _execute_source_unregister_work(
                 force=force,
                 reasons=reasons,
                 warnings=warnings,
+                unregister_task=unregister_task,
             )
             _renew_unregister_execution_lease(
                 task=unregister_task,
@@ -3870,18 +3873,87 @@ def _cleanup_download_artifacts(*, organization_id: int, config_ids: list[int]) 
     return count
 
 
+def _nas_unmount_retained_warning(
+    *,
+    ctx: SourceDeleteContext,
+    result: dict[str, Any],
+) -> DeleteWarning | None:
+    """Normalize Agent NAS residue into the source unregister result."""
+    resource = ctx.nas_resource
+    if resource is None or bool(result.get("cleanup_complete", True)):
+        return None
+
+    detail = "NAS mount was detached with retained local references."
+    raw_warnings = result.get("warnings")
+    if isinstance(raw_warnings, list) and raw_warnings:
+        detail = str(raw_warnings[0] or detail)
+    retained_resources = []
+    for retained in result.get("retained_resources") or []:
+        retained_name = str(retained or "").strip()
+        if retained_name == "nas_mount_reference":
+            retained_name = f"source_nas_mount:{resource.id}"
+        elif retained_name == "nas_mount_directory":
+            retained_name = f"source_nas_mount_directory:{resource.id}"
+        elif retained_name:
+            retained_name = f"source_nas:{resource.id}:{retained_name}"
+        if retained_name:
+            retained_resources.append(retained_name)
+    return DeleteWarning(
+        code="nas_umount_retained",
+        detail=detail,
+        source_id=ctx.selectable_id,
+        source_name=ctx.display_name,
+        retained_resources=tuple(
+            retained_resources or [f"source_nas_mount:{resource.id}"]
+        ),
+    )
+
+
+def _recent_nas_unmount_residue_warnings(
+    *,
+    ctx: SourceDeleteContext,
+    unregister_task: Task,
+) -> list[DeleteWarning]:
+    """Return residue reported by concurrent compensating unmount tasks."""
+    resource = ctx.nas_resource
+    if resource is None or resource.bound_node_id is None:
+        return []
+    results = (
+        NodeTask.objects.filter(
+            organization_id=resource.organization_id,
+            node_id=resource.bound_node_id,
+            kind="nas.unmount",
+            correlation_type="source.unmount",
+            correlation_id=str(resource.id),
+            status=NodeTask.Status.SUCCESS,
+            created_at__gte=unregister_task.created_at,
+        )
+        .order_by("created_at", "id")
+        .values_list("result", flat=True)
+    )
+    warnings: list[DeleteWarning] = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        warning = _nas_unmount_retained_warning(ctx=ctx, result=result)
+        if warning is not None:
+            warnings.append(warning)
+    return warnings
+
+
 def _strict_nas_umount(
     *,
     ctx: SourceDeleteContext,
     force: bool,
     reasons: list[DeleteReason],
     warnings: list[DeleteWarning],
+    unregister_task: Task,
 ) -> dict[str, Any]:
     resource = ctx.nas_resource
     if resource is None:
         return {"skipped": True}
     try:
-        result = unmount_resource(resource=resource)
+        result = unmount_resource(resource=resource, force=force)
     except Exception as exc:
         logger.exception(
             "Backup source NAS unmount raised source=%s resource=%s",
@@ -3893,6 +3965,27 @@ def _strict_nas_umount(
             "message": (f"NAS unmount failed unexpectedly ({exc.__class__.__name__})."),
         }
     if result.get("success"):
+        warning = _nas_unmount_retained_warning(ctx=ctx, result=result)
+        if warning is not None:
+            if not force:
+                reasons.append(
+                    DeleteReason(
+                        code=warning.code,
+                        detail=warning.detail,
+                        source_id=warning.source_id,
+                        source_name=warning.source_name,
+                    )
+                )
+                return {"failed": True}
+            if warning not in warnings:
+                warnings.append(warning)
+        if force:
+            for residue_warning in _recent_nas_unmount_residue_warnings(
+                ctx=ctx,
+                unregister_task=unregister_task,
+            ):
+                if residue_warning not in warnings:
+                    warnings.append(residue_warning)
         return {"success": True}
     message = str(result.get("message") or "NAS unmount failed.")
     failure_code = (
@@ -4239,11 +4332,17 @@ def _finalize_single_source_delete(
         warning.code in {"nas_umount_failed", "mount_directory_cleanup_failed"}
         for warning in warnings
     )
-    retained_resources = (
-        [ctx.nas_resource.effective_mount_point()]
-        if nas_unmount_failed and ctx.nas_resource is not None
-        else []
-    )
+    retained_resources: list[str] = []
+    if nas_unmount_failed and ctx.nas_resource is not None:
+        if any(warning.code == "nas_umount_failed" for warning in warnings):
+            retained_resources.append(f"source_nas_mount:{ctx.nas_resource.id}")
+        if any(
+            warning.code == "mount_directory_cleanup_failed"
+            for warning in warnings
+        ):
+            retained_resources.append(
+                f"source_nas_mount_directory:{ctx.nas_resource.id}"
+            )
 
     return {
         "source_id": ctx.selectable_id,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from typing import Any
 from uuid import UUID
 
 from django.db import transaction
@@ -153,7 +154,8 @@ def run_connection_test(
             resource.id if resource else payload.get("resource_id"),
             message[:500],
         )
-        result = outcome.result if isinstance(outcome.result, dict) else {}
+        raw_result = getattr(outcome, "result", None)
+        result = raw_result if isinstance(raw_result, dict) else {}
         details = {"storage_type": rtype, "protocol": payload.get("protocol")}
         for key in ("charset", "kernel", "cleanup_status", "mount_status"):
             if key in result:
@@ -253,7 +255,7 @@ def apply_connection_test_result_if_current(
         )
         if resource is None or resource.is_deleted:
             return None, "source_deleted"
-        if resource.status in {ResourceStatus.REMOVING, ResourceStatus.REMOVED}:
+        if resource.status in ResourceStatus.REMOVAL_FENCED:
             return None, "source_removing"
         if require_mount and not resource.requires_mount:
             return None, "mount_not_required"
@@ -269,11 +271,102 @@ def apply_connection_test_result_if_current(
         return resource, ""
 
 
+def _source_removal_fenced(resource_id: int) -> bool:
+    state = (
+        SourceResource.all_objects.filter(pk=resource_id)
+        .values_list("status", "is_deleted")
+        .first()
+    )
+    return (
+        state is None
+        or bool(state[1])
+        or state[0] in ResourceStatus.REMOVAL_FENCED
+    )
+
+
+def _source_removal_force_requested(resource: SourceResource) -> bool:
+    """Return the cleanup mode selected by the latest source unregister task."""
+    from apps.task.models import Task
+
+    source_id = f"nas:{resource.id}"
+    task = (
+        Task.objects.filter(
+            organization_id=resource.organization_id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            request_payload__source_ids__contains=[source_id],
+        )
+        .order_by("-created_at", "-id")
+        .only("request_payload")
+        .first()
+    )
+    if task is None or not isinstance(task.request_payload, dict):
+        # Legacy fenced rows may predate durable unregister tasks. Preserve the
+        # existing best-effort behavior for those rows.
+        return True
+    return bool(task.request_payload.get("force"))
+
+
+def _compensate_mount_if_removal_fenced(resource: SourceResource) -> bool:
+    if not _source_removal_fenced(resource.id):
+        return False
+    best_effort_unmount_on_proxy(
+        resource=resource,
+        node_id=int(resource.bound_node_id or 0),
+        force=_source_removal_force_requested(resource),
+    )
+    return True
+
+
+def _apply_mount_success_if_not_fenced(
+    resource: SourceResource,
+    result: dict[str, Any],
+) -> SourceResource | None:
+    """Apply a mount result while holding the same row used by removal."""
+    with transaction.atomic():
+        current = (
+            SourceResource.all_objects.select_for_update()
+            .filter(pk=resource.id, is_deleted=False)
+            .first()
+        )
+        if current is None or current.status in ResourceStatus.REMOVAL_FENCED:
+            return None
+        apply_mount_success(current, result)
+        return current
+
+
+def _apply_mount_failure_if_not_fenced(
+    resource: SourceResource,
+    message: str,
+    *,
+    availability_confirmed: bool,
+) -> bool:
+    """Apply a mount failure only while removal has not claimed the source."""
+    with transaction.atomic():
+        current = (
+            SourceResource.all_objects.select_for_update()
+            .filter(pk=resource.id, is_deleted=False)
+            .first()
+        )
+        if current is None or current.status in ResourceStatus.REMOVAL_FENCED:
+            return False
+        apply_mount_failure(
+            current,
+            message,
+            availability_confirmed=availability_confirmed,
+        )
+        return True
+
+
 def mount_resource(resource: SourceResource) -> dict:
     if not resource.requires_mount:
         return {
             "success": False,
             "message": f"{resource.resource_type} does not require mounting.",
+        }
+    if _source_removal_fenced(resource.id):
+        return {
+            "success": False,
+            "message": "Mounting is unavailable while this source is being removed.",
         }
     validation_error = _validate_proxy_node(resource.bound_node, resource=resource)
     if validation_error:
@@ -297,7 +390,12 @@ def mount_resource(resource: SourceResource) -> dict:
     )
     if outcome.timed_out:
         message = "Mount timed out on the proxy agent."
-        apply_mount_failure(resource, message, availability_confirmed=False)
+        if not _apply_mount_failure_if_not_fenced(
+            resource,
+            message,
+            availability_confirmed=False,
+        ):
+            _compensate_mount_if_removal_fenced(resource)
         return {"success": False, "message": message}
     if not outcome.ok:
         message = explain_nas_mount_point_error(
@@ -305,45 +403,62 @@ def mount_resource(resource: SourceResource) -> dict:
             agent_message=_task_error_message(outcome),
             payload_mount_point=str(payload.get("mount_point") or ""),
         )
-        apply_mount_failure(
+        if not _apply_mount_failure_if_not_fenced(
             resource,
             message,
             availability_confirmed=confirmed_agent_failure(outcome),
-        )
+        ):
+            _compensate_mount_if_removal_fenced(resource)
         result = {"success": False, "message": message}
         if error_code := task_error_code(outcome):
             result["error_code"] = error_code
         return result
 
     result = outcome.result if isinstance(outcome.result, dict) else {}
-    apply_mount_success(resource, result)
+    mounted_resource = _apply_mount_success_if_not_fenced(resource, result)
+    if mounted_resource is None:
+        _compensate_mount_if_removal_fenced(resource)
+        return {
+            "success": False,
+            "message": "Mount result was discarded because this source is being removed.",
+            "stale": True,
+        }
     logger.info(
         "source mount ok node_id=%s resource_id=%s mount_point=%s",
         resource.bound_node_id,
         resource.id,
-        resource.mount_point,
+        mounted_resource.mount_point,
     )
     return {
         "success": True,
         "message": "Resource mounted successfully",
-        "mount_point": resource.mount_point,
+        "mount_point": mounted_resource.mount_point,
     }
 
 
-def best_effort_unmount_on_proxy(*, resource: SourceResource, node_id: int) -> None:
-    """Best-effort NAS unmount on a proxy that no longer owns the source binding."""
+def best_effort_unmount_on_proxy(
+    *,
+    resource: SourceResource,
+    node_id: int,
+    force: bool = False,
+) -> dict[str, object]:
+    """Compensate a stale NAS mount on the selected proxy."""
 
     if not resource.requires_mount:
-        return
+        return {"success": True, "skipped": True}
     node = Node.objects.filter(
         id=node_id,
         organization_id=resource.organization_id,
         is_deleted=False,
     ).first()
     if node is None:
-        return
+        return {"success": False, "message": "Proxy node not found."}
 
     payload = build_nas_agent_payload(resource=resource)
+    if force and _source_removal_fenced(resource.id):
+        force = _source_removal_force_requested(resource)
+    if force:
+        payload["force_cleanup"] = True
     try:
         outcome = dispatch_nas_agent_task(
             node=node,
@@ -354,19 +469,43 @@ def best_effort_unmount_on_proxy(*, resource: SourceResource, node_id: int) -> N
             wait_timeout_seconds=60,
         )
         if outcome.timed_out or not outcome.ok:
+            message = _task_error_message(outcome)
             logger.warning(
-                "source NAS unmount on old proxy failed resource_id=%s node_id=%s error=%s",
+                "compensating source NAS unmount failed resource_id=%s node_id=%s error=%s",
                 resource.id,
                 node_id,
-                _task_error_message(outcome),
+                message,
             )
+            return {"success": False, "message": message}
+        raw_result = getattr(outcome, "result", None)
+        result = raw_result if isinstance(raw_result, dict) else {}
+        response: dict[str, object] = {"success": True}
+        for key in (
+            "cleanup_complete",
+            "lazy_unmount",
+            "retained_resources",
+            "warnings",
+        ):
+            if key in result:
+                response[key] = result[key]
+        if not bool(result.get("cleanup_complete", True)):
+            logger.warning(
+                "compensating source NAS unmount retained resources "
+                "resource_id=%s node_id=%s retained_resources=%s warnings=%s",
+                resource.id,
+                node_id,
+                result.get("retained_resources") or [],
+                result.get("warnings") or [],
+            )
+        return response
     except Exception:
         logger.warning(
-            "source NAS unmount on old proxy failed resource_id=%s node_id=%s",
+            "compensating source NAS unmount failed resource_id=%s node_id=%s",
             resource.id,
             node_id,
             exc_info=True,
         )
+        return {"success": False, "message": "Compensating NAS unmount failed."}
 
 
 def remount_after_proxy_change(
@@ -448,12 +587,14 @@ def _unmount_old_proxy_after_commit(*, resource_id: int, old_node_id: int) -> No
     best_effort_unmount_on_proxy(resource=resource, node_id=old_node_id)
 
 
-def unmount_resource(resource: SourceResource) -> dict:
+def unmount_resource(resource: SourceResource, *, force: bool = False) -> dict:
     validation_error = _validate_proxy_node(resource.bound_node, resource=resource)
     if validation_error:
         return {"success": False, "message": validation_error}
 
     payload = build_nas_agent_payload(resource=resource)
+    if force:
+        payload["force_cleanup"] = True
     logger.info(
         "source unmount start node_id=%s resource_id=%s mount_point=%s",
         resource.bound_node_id,
@@ -479,4 +620,14 @@ def unmount_resource(resource: SourceResource) -> dict:
         resource.bound_node_id,
         resource.id,
     )
-    return {"success": True, "message": "Resource unmounted successfully"}
+    response = {"success": True, "message": "Resource unmounted successfully"}
+    if isinstance(outcome.result, dict):
+        for key in (
+            "cleanup_complete",
+            "lazy_unmount",
+            "retained_resources",
+            "warnings",
+        ):
+            if key in outcome.result:
+                response[key] = outcome.result[key]
+    return response
