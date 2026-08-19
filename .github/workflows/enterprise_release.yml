@@ -1,5 +1,5 @@
 name: HFL - Enterprise Release & Deploy
-run-name: Enterprise · ${{ inputs.tag }} · Build & deploy
+run-name: Enterprise · ${{ inputs.tag }} · Release & Deploy
 
 on:
   workflow_dispatch:
