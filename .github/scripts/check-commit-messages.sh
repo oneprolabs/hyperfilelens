@@ -83,12 +83,14 @@ NON_LATIN_BLOCKS = (
     (0x0900, 0x097F),   # Devanagari
     (0x0E00, 0x0E7F),   # Thai
     (0x1100, 0x11FF),   # Hangul Jamo
+    (0x3000, 0x303F),   # CJK Symbols and Punctuation (full-width 、。， etc.)
     (0x3040, 0x309F),   # Hiragana
     (0x30A0, 0x30FF),   # Katakana
     (0x3400, 0x4DBF),   # CJK Unified Ideographs Extension A
     (0x4E00, 0x9FFF),   # CJK Unified Ideographs
     (0xAC00, 0xD7AF),   # Hangul Syllables
     (0xF900, 0xFAFF),   # CJK Compatibility Ideographs
+    (0xFF00, 0xFFEF),   # Halfwidth and Fullwidth Forms (full-width ：，？ etc.)
     (0x20000, 0x2FA1F), # CJK Unified Ideographs Extension B..G
 )
 
@@ -127,6 +129,21 @@ def contains_non_latin(text):
     return False
 
 
+def summarize(line, max_len=160):
+    # Center the snippet on the first offending character so the annotation
+    # always shows the non-English text, even in very long lines.
+    if len(line) <= max_len:
+        return line
+    first_bad = min(i for i, ch in enumerate(line) if contains_non_latin(ch))
+    start = max(0, first_bad - 60)
+    end = min(len(line), start + max_len)
+    return (
+        ("..." if start > 0 else "")
+        + line[start:end]
+        + ("..." if end < len(line) else "")
+    )
+
+
 violations = []
 for commit in commits:
     sha = commit["sha"][:8]
@@ -141,7 +158,7 @@ for commit in commits:
 step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
 if violations:
     for sha, line in violations:
-        snippet = line[:160]
+        snippet = summarize(line)
         print(
             f"::error title=Commit message language check::"
             f"Commit {sha}: non-English text: {esc(snippet)}"
@@ -151,7 +168,7 @@ if violations:
             fh.write("### Commit message language check\n\n")
             fh.write("Found non-English text in commit messages:\n\n")
             for sha, line in violations:
-                fh.write(f"- `{sha}`: `{line[:160]}`\n")
+                fh.write(f"- `{sha}`: `{summarize(line)}`\n")
             fh.write("\n")
     sys.exit(1)
 
