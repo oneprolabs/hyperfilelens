@@ -222,7 +222,12 @@ func mountRunErrorMessage(res process.Result, err error) string {
 func ensureSMBMountHelper(ctx context.Context) error {
 	helper := mountHelperPath("mount.cifs")
 	if helper == "" {
-		return fmt.Errorf("mount SMB share: cifs-utils is not installed on this proxy host (missing mount.cifs helper)")
+		return &MountHelperError{
+			Code:       MountHelperMissing,
+			Operation:  "mount SMB share",
+			Dependency: "cifs-utils",
+			Helper:     "mount.cifs",
+		}
 	}
 	res, err := process.Run(ctx, helper, []string{"--version"}, nil, "")
 	if err == nil && res.ExitCode == 0 {
@@ -238,7 +243,13 @@ func ensureSMBMountHelper(ctx context.Context) error {
 	if msg == "" {
 		msg = fmt.Sprintf("exit code %d", res.ExitCode)
 	}
-	return fmt.Errorf("mount SMB share: cifs-utils is installed but not usable on this proxy host (mount.cifs failed to start: %s)", msg)
+	return &MountHelperError{
+		Code:       MountHelperUnusable,
+		Operation:  "mount SMB share",
+		Dependency: "cifs-utils",
+		Helper:     "mount.cifs",
+		Cause:      msg,
+	}
 }
 
 func mountNFS(ctx context.Context, spec Spec) error {
@@ -272,7 +283,12 @@ func ensureNFSMountHelper() error {
 	if mountHelperPath("mount.nfs") != "" {
 		return nil
 	}
-	return fmt.Errorf("mount NFS export: nfs-common is not installed on this proxy host (missing mount.nfs helper)")
+	return &MountHelperError{
+		Code:       MountHelperMissing,
+		Operation:  "mount NFS export",
+		Dependency: "nfs-common",
+		Helper:     "mount.nfs",
+	}
 }
 
 func mountHelperPath(name string) string {

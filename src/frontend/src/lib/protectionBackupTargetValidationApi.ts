@@ -27,6 +27,11 @@ export type BackupTargetValidationResult = {
     endpoint?: string
     address_source?: string
     port_range?: string
+    remediation?: string
+    dependency?: string
+    helper?: string
+    execution_node_name?: string
+    execution_node_address?: string
   }
 }
 

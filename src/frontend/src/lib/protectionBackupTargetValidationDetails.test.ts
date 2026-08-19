@@ -12,6 +12,11 @@ const messages: Record<string, string> = {
   'protection.backupsPage.targetValidationFailedFallback': 'No diagnostic was returned.',
   'protection.backupsPage.targetValidationFailedTitle': 'Backup target validation failed',
   'protection.backupsPage.targetValidationGenericResolution': 'Check settings on {source}.',
+  'protection.backupsPage.targetValidationMountHelperNodeFallback': 'the node running the Agent',
+  'protection.backupsPage.targetValidationMountHelperInstall': "On {node}, install {dependency} using the operating system's package manager.",
+  'protection.backupsPage.targetValidationMountHelperRepair': "On {node}, repair or reinstall {dependency} using the operating system's package manager.",
+  'protection.backupsPage.targetValidationMountHelperVerifyAvailable': 'Verify that {helper} is available and executable.',
+  'protection.backupsPage.targetValidationMountHelperVerifyUsable': 'Verify that {helper} starts successfully.',
   'protection.backupsPage.targetValidationClockSkewSummary': 'Source host time is out of sync.',
   'protection.backupsPage.targetValidationClockSkewTitle': 'Source host time differs from S3.',
   'protection.backupsPage.targetValidationClockSkewIssue': '{source} differs too much from S3.',
@@ -159,5 +164,63 @@ describe('backup target validation failure details', () => {
     expect(details.issue).toBe(result.message)
     expect(details.reasons).toEqual([result.message])
     expect(details.resolutions).toContain('Check settings on host-a.')
+  })
+
+  it.each([
+    ['name and address', 'agent-a', '10.0.0.20', 'agent-a (10.0.0.20)'],
+    ['name only', 'agent-a', '', 'agent-a'],
+    ['address only', '', '10.0.0.20', '10.0.0.20'],
+    ['fallback', '', '', 'the node running the Agent'],
+  ])('formats the mount-helper execution node with %s', (_, name, address, nodeLabel) => {
+    const result: BackupTargetValidationResult = {
+      key: 'host:agent:11',
+      status: 'failed',
+      code: 'NAS_MOUNT_FAILED',
+      message: 'mount NFS export: nfs-common is not installed (missing mount.nfs helper)',
+      details: {
+        stage: 'mount_helper',
+        remediation: 'install_nas_mount_helper',
+        dependency: 'nfs-common',
+        helper: 'mount.nfs',
+        execution_node_name: name,
+        execution_node_address: address,
+      },
+    }
+
+    const details = backupTargetValidationFailureDetails({ result, sourceName: 'source-a', t })
+    expect(details.resolutions).toEqual([
+      `On ${nodeLabel}, install nfs-common using the operating system's package manager.`,
+      'Verify that mount.nfs is available and executable.',
+      'Retry validation.',
+    ])
+    expect(details.rawDetail).toMatchObject({
+      execution_node_name: name,
+      execution_node_address: address,
+      dependency: 'nfs-common',
+      helper: 'mount.nfs',
+    })
+  })
+
+  it('explains how to repair an unusable SMB mount helper', () => {
+    const result: BackupTargetValidationResult = {
+      key: 'host:agent:11',
+      status: 'failed',
+      code: 'NAS_MOUNT_FAILED',
+      message: 'mount SMB share: cifs-utils is installed but not usable',
+      details: {
+        stage: 'mount_helper',
+        remediation: 'repair_nas_mount_helper',
+        dependency: 'cifs-utils',
+        helper: 'mount.cifs',
+        execution_node_name: 'agent-a',
+        execution_node_address: '10.0.0.20',
+      },
+    }
+
+    const details = backupTargetValidationFailureDetails({ result, sourceName: 'source-a', t })
+    expect(details.resolutions).toContain(
+      "On agent-a (10.0.0.20), repair or reinstall cifs-utils using the operating system's package manager.",
+    )
+    expect(details.resolutions).toContain('Verify that mount.cifs starts successfully.')
   })
 })

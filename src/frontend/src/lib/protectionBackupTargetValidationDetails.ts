@@ -17,6 +17,20 @@ const proxyRepositoryCodes = new Set([
   'PROXY_REPOSITORY_SERVER_CONNECTION_FAILED',
 ])
 const s3ClockSkewCode = 'S3_CLOCK_SKEW'
+const mountHelperRemediations = new Set([
+  'install_nas_mount_helper',
+  'repair_nas_mount_helper',
+])
+
+function mountHelperNodeLabel(
+  details: NonNullable<BackupTargetValidationResult['details']>,
+  t: ComposerTranslation,
+): string {
+  const name = String(details.execution_node_name || '').trim()
+  const address = String(details.execution_node_address || '').trim()
+  if (name && address) return `${name} (${address})`
+  return name || address || t('protection.backupsPage.targetValidationMountHelperNodeFallback')
+}
 
 export function backupTargetValidationFailureSummary({
   result,
@@ -58,6 +72,42 @@ export function backupTargetValidationFailureDetails({
         source: sourceName,
         error_code: result.code,
         ...result.details,
+      },
+    }
+  }
+
+  const mountDetails = result.details || {}
+  const mountRemediation = String(mountDetails.remediation || '')
+  const dependency = String(mountDetails.dependency || '').trim()
+  const helper = String(mountDetails.helper || '').trim()
+  if (
+    result.code === 'NAS_MOUNT_FAILED'
+    && mountHelperRemediations.has(mountRemediation)
+    && dependency
+    && helper
+  ) {
+    const node = mountHelperNodeLabel(mountDetails, t)
+    const repair = mountRemediation === 'repair_nas_mount_helper'
+    return {
+      title: t('protection.backupsPage.targetValidationFailedTitle'),
+      summary: backupTargetValidationFailureSummary({ result, sourceName, t }),
+      errorCode: result.code,
+      issue: message,
+      reasons: [message],
+      resolutions: [
+        repair
+          ? t('protection.backupsPage.targetValidationMountHelperRepair', { node, dependency })
+          : t('protection.backupsPage.targetValidationMountHelperInstall', { node, dependency }),
+        repair
+          ? t('protection.backupsPage.targetValidationMountHelperVerifyUsable', { helper })
+          : t('protection.backupsPage.targetValidationMountHelperVerifyAvailable', { helper }),
+        t('protection.backupsPage.targetValidationRetryStep'),
+      ],
+      rawDetail: {
+        source: sourceName,
+        error_code: result.code,
+        ...mountDetails,
+        agent_message: message,
       },
     }
   }

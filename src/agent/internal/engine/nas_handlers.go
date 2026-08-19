@@ -167,7 +167,7 @@ func (e *Engine) runNasMount(ctx context.Context, p Payload) (string, map[string
 	info, err := nas.NewService().Mount(ctx, spec)
 	if err != nil {
 		logNasTask(ctx, "mount_failed", "", spec, "err", err.Error())
-		if result := smbCharsetFailureResult(err); result != nil {
+		if result := nasFailureResult(err); result != nil {
 			return "failed", result, err.Error()
 		}
 		return "failed", nil, err.Error()
@@ -243,7 +243,7 @@ func runNasTestWithService(ctx context.Context, p Payload, service nasTestServic
 			"server":       spec.Server,
 			"mount_point":  spec.MountPoint,
 		}
-		for key, value := range smbCharsetFailureResult(testErr) {
+		for key, value := range nasFailureResult(testErr) {
 			result[key] = value
 		}
 		if cleanupAfterTest {
@@ -282,4 +282,28 @@ func smbCharsetFailureResult(err error) map[string]any {
 		"charset":    charsetErr.Charset,
 		"kernel":     charsetErr.Kernel,
 	}
+}
+
+func mountHelperFailureResult(err error) map[string]any {
+	var helperErr *nas.MountHelperError
+	if !errors.As(err, &helperErr) {
+		return nil
+	}
+	remediation := "install_nas_mount_helper"
+	if helperErr.Code == nas.MountHelperUnusable {
+		remediation = "repair_nas_mount_helper"
+	}
+	return map[string]any{
+		"error_code":  helperErr.Code,
+		"remediation": remediation,
+		"dependency":  helperErr.Dependency,
+		"helper":      helperErr.Helper,
+	}
+}
+
+func nasFailureResult(err error) map[string]any {
+	if result := mountHelperFailureResult(err); result != nil {
+		return result
+	}
+	return smbCharsetFailureResult(err)
 }

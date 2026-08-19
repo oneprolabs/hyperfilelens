@@ -238,6 +238,57 @@ func TestRunNASTestReportsSMBCharsetUnavailable(t *testing.T) {
 	}
 }
 
+func TestRunNASTestReportsMountHelperRemediation(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         *nas.MountHelperError
+		remediation string
+	}{
+		{
+			name: "missing NFS helper",
+			err: &nas.MountHelperError{
+				Code:       nas.MountHelperMissing,
+				Operation:  "mount NFS export",
+				Dependency: "nfs-common",
+				Helper:     "mount.nfs",
+			},
+			remediation: "install_nas_mount_helper",
+		},
+		{
+			name: "unusable SMB helper",
+			err: &nas.MountHelperError{
+				Code:       nas.MountHelperUnusable,
+				Operation:  "mount SMB share",
+				Dependency: "cifs-utils",
+				Helper:     "mount.cifs",
+				Cause:      "permission denied",
+			},
+			remediation: "repair_nas_mount_helper",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeNASTestService{testErr: test.err}
+			status, result, message := runNasTestWithService(
+				context.Background(),
+				nasValidationTestPayload(t, true),
+				service,
+			)
+
+			if status != "failed" || message != test.err.Error() {
+				t.Fatalf("status=%q message=%q", status, message)
+			}
+			if result["error_code"] != test.err.Code || result["remediation"] != test.remediation {
+				t.Fatalf("unexpected helper result: %#v", result)
+			}
+			if result["dependency"] != test.err.Dependency || result["helper"] != test.err.Helper {
+				t.Fatalf("unexpected dependency result: %#v", result)
+			}
+		})
+	}
+}
+
 func TestRunNASTestCleanupIgnoresCanceledProbeContext(t *testing.T) {
 	service := &fakeNASTestService{testErr: context.Canceled}
 	ctx, cancel := context.WithCancel(context.Background())

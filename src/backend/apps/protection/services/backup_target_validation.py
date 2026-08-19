@@ -62,6 +62,26 @@ _S3_CLOCK_SKEW_MARKERS = (
     "the difference between the request time and the server's time is too large",
     "request time is too skewed",
 )
+_NAS_MOUNT_HELPER_RESULTS = {
+    (
+        "NAS_MOUNT_HELPER_MISSING",
+        "install_nas_mount_helper",
+        "nfs-common",
+        "mount.nfs",
+    ),
+    (
+        "NAS_MOUNT_HELPER_MISSING",
+        "install_nas_mount_helper",
+        "cifs-utils",
+        "mount.cifs",
+    ),
+    (
+        "NAS_MOUNT_HELPER_UNUSABLE",
+        "repair_nas_mount_helper",
+        "cifs-utils",
+        "mount.cifs",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -433,10 +453,11 @@ def _validate_direct_nas_route(
             deadline=validation_deadline,
             max_wait_seconds=TARGET_VALIDATION_AGENT_SECONDS,
         )
-        validation_result = _outcome_result(
+        validation_result = _nas_outcome_result(
             outcome,
-            failure_code="NAS_MOUNT_FAILED",
             repository=repository,
+            execution_node_name=assignment.target.node.name,
+            execution_node_address=assignment.target.node.ip_address,
         )
     except Exception as exc:
         validation_result = _validation_exception_result(exc, repository=repository)
@@ -935,6 +956,45 @@ def _outcome_result(
             outcome.message or "Backup target connection failed.",
             repository=repository,
         ),
+    )
+
+
+def _nas_outcome_result(
+    outcome: _AgentOutcome,
+    *,
+    repository: Repository,
+    execution_node_name: str,
+    execution_node_address: str,
+) -> TargetValidationResult:
+    result = _outcome_result(
+        outcome,
+        failure_code="NAS_MOUNT_FAILED",
+        repository=repository,
+    )
+    if result.status != "failed" or result.code != "NAS_MOUNT_FAILED":
+        return result
+
+    helper_result = (
+        str(outcome.result.get("error_code") or "").strip(),
+        str(outcome.result.get("remediation") or "").strip(),
+        str(outcome.result.get("dependency") or "").strip(),
+        str(outcome.result.get("helper") or "").strip(),
+    )
+    if helper_result not in _NAS_MOUNT_HELPER_RESULTS:
+        return result
+
+    return TargetValidationResult(
+        status=result.status,
+        code=result.code,
+        message=result.message,
+        details={
+            "stage": "mount_helper",
+            "remediation": helper_result[1],
+            "dependency": helper_result[2],
+            "helper": helper_result[3],
+            "execution_node_name": str(execution_node_name or "").strip(),
+            "execution_node_address": str(execution_node_address or "").strip(),
+        },
     )
 
 
