@@ -234,7 +234,7 @@ prefixes = {
 }[kind]
 ancestors = {pathlib.PurePosixPath(".asset-kind")}
 for prefix in prefixes:
-    ancestors.update(prefix.parents[:-1])
+    ancestors.update(list(prefix.parents)[:-1])
     ancestors.add(prefix)
 
 seen_prefixes = set()
