@@ -159,42 +159,46 @@ watch(
 
             <div
               v-else-if="phase === 'waiting'"
-              class="fullscreen-form-card py-10 text-center"
+              class="create-backup-step-body dp-process-page create-backup-loading-pane"
             >
-              <el-progress
-                :percentage="66"
-                :indeterminate="true"
-                status="warning"
-                class="mb-4"
-              />
-              <p class="text-slate-600">
-                {{ waitingText }}
-              </p>
+              <div class="fullscreen-form-card create-backup-status-card py-10 text-center">
+                <el-progress
+                  :percentage="66"
+                  :indeterminate="true"
+                  status="warning"
+                  class="mb-4"
+                />
+                <p class="text-slate-600">
+                  {{ waitingText }}
+                </p>
+              </div>
             </div>
 
             <div
               v-else
-              class="fullscreen-form-card py-8 text-center space-y-4"
+              class="create-backup-step-body dp-process-page create-backup-loading-pane"
             >
-              <el-result
-                icon="success"
-                :title="resultTitle"
-                :sub-title="resultSubtitle"
-              >
-                <template #extra>
-                  <div class="flex flex-wrap items-center justify-center gap-2">
-                    <ElButton
-                      type="primary"
-                      @click="emit('close')"
-                    >
-                      {{ closeLabel }}
-                    </ElButton>
-                    <ElButton @click="emit('goToStartBackup')">
-                      {{ goToStartBackupLabel }}
-                    </ElButton>
-                  </div>
-                </template>
-              </el-result>
+              <div class="fullscreen-form-card create-backup-status-card py-8 text-center space-y-4">
+                <el-result
+                  icon="success"
+                  :title="resultTitle"
+                  :sub-title="resultSubtitle"
+                >
+                  <template #extra>
+                    <div class="flex flex-wrap items-center justify-center gap-2">
+                      <ElButton
+                        type="primary"
+                        @click="emit('close')"
+                      >
+                        {{ closeLabel }}
+                      </ElButton>
+                      <ElButton @click="emit('goToStartBackup')">
+                        {{ goToStartBackupLabel }}
+                      </ElButton>
+                    </div>
+                  </template>
+                </el-result>
+              </div>
             </div>
           </main>
         </div>
@@ -321,6 +325,12 @@ watch(
   margin: 0 auto;
   padding: 40px 32px;
   text-align: center;
+}
+
+.create-backup-status-card {
+  border: none;
+  box-shadow: none;
+  background: transparent;
 }
 
 .create-backup-footer__inner,
