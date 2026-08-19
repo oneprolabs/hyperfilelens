@@ -496,8 +496,11 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(len(preview["eligible"]), 1)
         self.assertEqual(preview["eligible"][0]["target_version"], "1.2.0")
 
-    def test_compute_upgrade_verifying_state(self):
-        task = NodeTask.objects.create(
+    def test_upgrade_success_clears_lifecycle_when_version_differs(self):
+        """Lifecycle is always cleared on SUCCESS — version was already verified
+        by _advance_upgrade_verify before marking the task SUCCESS. A redundant
+        post-SUCCESS version check risks false negatives (#639)."""
+        NodeTask.objects.create(
             organization=self.org,
             node=self.node,
             kind="agent.upgrade",
@@ -509,9 +512,7 @@ class NodeLifecycleTests(TestCase):
         )
         with patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=True):
             lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
-        self.assertIsNotNone(lifecycle)
-        self.assertEqual(lifecycle["state"], "verifying")
-        self.assertEqual(lifecycle["task_id"], str(task.id))
+        self.assertIsNone(lifecycle)
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_upgrade_success_clears_when_version_matches_despite_stale_ws(self, _routable):
