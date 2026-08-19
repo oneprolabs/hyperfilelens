@@ -16,6 +16,9 @@ from apps.protection.services.backup_target_validation import (
     _ActivityRegistry,
     _AgentOutcome,
     _execute_agent_task,
+    _merge_cleanup_failure,
+    _nas_outcome_result,
+    TargetValidationResult,
     validate_backup_targets,
 )
 from apps.source.constants import ResourceType
@@ -81,6 +84,86 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             "repository_id": self.s3_repository.id,
             "repository_endpoint_type": "external",
         }
+
+    def test_cleanup_failure_preserves_mount_helper_details(self):
+        current = TargetValidationResult(
+            status="failed",
+            code="NAS_MOUNT_FAILED",
+            message="mount helper is missing",
+            details={
+                "stage": "mount_helper",
+                "remediation": "install_nas_mount_helper",
+                "dependency": "nfs-common",
+                "helper": "mount.nfs",
+            },
+        )
+
+        result = _merge_cleanup_failure(
+            current,
+            _AgentOutcome(
+                ok=False,
+                status="failed",
+                message="mount remains active",
+                result={},
+            ),
+            repository=self.s3_repository,
+            resource_label="NAS validation mount",
+        )
+
+        self.assertEqual(result.code, "NAS_MOUNT_FAILED")
+        self.assertEqual(result.details, current.details)
+        self.assertIn("Cleanup also failed", result.message)
+
+    def test_nas_outcome_result_accepts_only_supported_helper_contracts(self):
+        cases = (
+            (
+                "NAS_MOUNT_HELPER_MISSING",
+                "install_nas_mount_helper",
+                "cifs-utils",
+                "mount.cifs",
+                True,
+            ),
+            (
+                "NAS_MOUNT_HELPER_UNUSABLE",
+                "repair_nas_mount_helper",
+                "cifs-utils",
+                "mount.cifs",
+                True,
+            ),
+            (
+                "NAS_MOUNT_HELPER_MISSING",
+                "install_nas_mount_helper",
+                "unexpected-package",
+                "unexpected-helper",
+                False,
+            ),
+        )
+
+        for error_code, remediation, dependency, helper, supported in cases:
+            with self.subTest(error_code=error_code, dependency=dependency):
+                result = _nas_outcome_result(
+                    _AgentOutcome(
+                        ok=False,
+                        status="failed",
+                        message="safe helper failure",
+                        result={
+                            "error_code": error_code,
+                            "remediation": remediation,
+                            "dependency": dependency,
+                            "helper": helper,
+                        },
+                    ),
+                    repository=self.s3_repository,
+                    execution_node_name="agent-a",
+                    execution_node_address="10.0.0.20",
+                )
+
+                self.assertEqual(result.code, "NAS_MOUNT_FAILED")
+                if supported:
+                    self.assertEqual(result.details["dependency"], dependency)
+                    self.assertEqual(result.details["helper"], helper)
+                else:
+                    self.assertEqual(result.details, {})
 
     @mock.patch(
         "apps.protection.api.views.backup_target_validation.validate_backup_targets"
@@ -264,6 +347,113 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertTrue(test_payload["cleanup_after_test"])
         self.assertIn("/mounts/validations/", test_payload["mount_point"])
         self.assertNotIn("repository", test_payload)
+
+    @mock.patch(
+        "apps.protection.services.backup_target_validation._execute_agent_task"
+    )
+    def test_direct_nas_reports_structured_mount_helper_guidance(self, execute):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="direct-nas-missing-helper",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            config={
+                "server_address": "10.0.0.30",
+                "share_path": "/backup",
+                "kopia_password": "direct-kopia-password",
+            },
+        )
+        execute.side_effect = [
+            _AgentOutcome(
+                ok=False,
+                status="failed",
+                message=(
+                    "mount NFS export: nfs-common is not installed "
+                    "(missing mount.nfs helper)"
+                ),
+                result={
+                    "error_code": "NAS_MOUNT_HELPER_MISSING",
+                    "remediation": "install_nas_mount_helper",
+                    "dependency": "nfs-common",
+                    "helper": "mount.nfs",
+                    "ignored": "must-not-be-exposed",
+                },
+            ),
+            _AgentOutcome(ok=True, status="success", message="", result={}),
+        ]
+
+        result = validate_backup_targets(
+            organization_id=self.org.id,
+            sources=[{
+                "key": "direct-row",
+                "source_type": "agent",
+                "source_ref_id": self.agent.id,
+                "repository_id": repository.id,
+                "repository_endpoint_type": "external",
+            }],
+        )
+
+        row = result["results"][0]
+        self.assertEqual(row["code"], "NAS_MOUNT_FAILED")
+        self.assertNotIn("proxy", row["message"].lower())
+        self.assertNotIn("on this host", row["message"].lower())
+        self.assertEqual(
+            row["details"],
+            {
+                "stage": "mount_helper",
+                "remediation": "install_nas_mount_helper",
+                "dependency": "nfs-common",
+                "helper": "mount.nfs",
+                "execution_node_name": "validation-agent",
+                "execution_node_address": "10.0.0.20",
+            },
+        )
+        self.assertNotIn("ignored", row["details"])
+
+    @mock.patch(
+        "apps.protection.services.backup_target_validation._execute_agent_task"
+    )
+    def test_direct_nas_keeps_old_agent_failure_generic(self, execute):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="direct-nas-old-agent",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            config={
+                "server_address": "10.0.0.30",
+                "share_path": "/backup",
+                "kopia_password": "direct-kopia-password",
+            },
+        )
+        execute.side_effect = [
+            _AgentOutcome(
+                ok=False,
+                status="failed",
+                message="legacy mount failure",
+                result={},
+            ),
+            _AgentOutcome(ok=True, status="success", message="", result={}),
+        ]
+
+        result = validate_backup_targets(
+            organization_id=self.org.id,
+            sources=[{
+                "key": "direct-row",
+                "source_type": "agent",
+                "source_ref_id": self.agent.id,
+                "repository_id": repository.id,
+                "repository_endpoint_type": "external",
+            }],
+        )
+
+        row = result["results"][0]
+        self.assertEqual(row["code"], "NAS_MOUNT_FAILED")
+        self.assertEqual(row["message"], "legacy mount failure")
+        self.assertEqual(row["details"], {})
 
     @mock.patch(
         "apps.protection.services.backup_target_validation._execute_agent_task"
