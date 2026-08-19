@@ -9,6 +9,7 @@ from apps.node import conf as node_conf
 from apps.node.constants import (
     TASK_ADVANCE_ACTIVE_LIFECYCLE_NODES,
     TASK_INGEST_NODE_UPLINK_STREAMS,
+    TASK_NOTIFY_AGENT_UPGRADES_AVAILABLE,
     TASK_RECONCILE_EXECUTION_STATE,
     TASK_RECONCILE_NODE_AVAILABILITY,
     TASK_RECONCILE_UNACCEPTED_AGENT_TASKS,
@@ -93,4 +94,14 @@ def register_periodic_tasks() -> None:
         queue="node.ingest",
         enabled=True,
         expire_seconds=node_conf.UPLINK_INGEST_EXPIRE_SECONDS,
+    )
+    TASK_REGISTRY.add(
+        name="node_notify_agent_upgrades_available",
+        task=TASK_NOTIFY_AGENT_UPGRADES_AVAILABLE,
+        schedule=6 * 3600,  # every 6 hours
+        args=(),
+        kwargs={},
+        queue=None,
+        enabled=True,
+        expire_seconds=600,
     )
