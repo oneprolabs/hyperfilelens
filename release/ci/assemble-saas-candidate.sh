@@ -22,7 +22,7 @@ extensions=$5
 output=$6
 [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 [[ "${oss_commit}" =~ ^[0-9a-f]{40}$ && "${ee_commit}" =~ ^[0-9a-f]{40}$ ]]
-[[ "${extensions}" =~ ^[a-z0-9_]+(,[a-z0-9_]+)*$ ]]
+[[ "${extensions}" =~ ^/opt/hfl/extensions/[a-zA-Z0-9._-]+(,/opt/hfl/extensions/[a-zA-Z0-9._-]+)*$ ]]
 
 for component in \
 	hfl-backend hfl-frontend \
