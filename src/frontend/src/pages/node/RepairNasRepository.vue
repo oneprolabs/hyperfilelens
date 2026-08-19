@@ -1635,7 +1635,7 @@ onMounted(async () => {
   font-weight: 500;
   color: rgb(30 41 59);
   text-align: right;
-  word-break: break-all;
+  overflow-wrap: break-word;
 }
 
 .add-nas-preview-row__value--empty {
