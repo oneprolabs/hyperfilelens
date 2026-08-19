@@ -1,5 +1,5 @@
 name: HFL - Enterprise SaaS Upgrade
-run-name: Enterprise SaaS · ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} · Registry upgrade
+run-name: Enterprise · ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} · SaaS Upgrade
 
 on:
   push:

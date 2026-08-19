@@ -1,5 +1,5 @@
 name: HFL - Enterprise PROD Promotion
-run-name: PROD · ${{ inputs.tag }} · Promote
+run-name: Enterprise · ${{ inputs.tag }} · PROD Promotion
 
 on:
   workflow_dispatch:

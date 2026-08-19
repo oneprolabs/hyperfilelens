@@ -1,5 +1,5 @@
 name: HFL - Community Release & Deploy
-run-name: Community · ${{ inputs.tag }} · Release & deploy
+run-name: Community · ${{ inputs.tag }} · Release & Deploy
 
 on:
   workflow_dispatch:
