@@ -1,5 +1,5 @@
 ---
 layout: hfl-home
 title: HyperFileLens
-description: Open-source data protection and file intelligence for distributed infrastructure.
+description: Open source backup with agentic AI insight — protect your files without touching production, then ask deep questions, no pre-built index required.
 ---
