@@ -540,14 +540,11 @@ def _upgrade_lifecycle_payload(
     if task.status != NodeTask.Status.SUCCESS:
         return None
 
-    if target_version and _version_matches_target(
-        node=node,
-        target_version=target_version,
-        target_commit=_target_commit_from_task(task),
-    ):
-        return None
-
-    return {**base, "state": "verifying", "phase": "waiting_for_version"}
+    # Upgrade completed successfully — no lifecycle to report.
+    # The version was already verified by _advance_upgrade_verify before
+    # marking the task SUCCESS; a redundant check here risks false
+    # negatives that leave the lifecycle stuck at "verifying" (#639).
+    return None
 
 
 def _remove_lifecycle_payload(
