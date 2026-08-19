@@ -1,4 +1,5 @@
 name: HFL - PR Checks
+run-name: "PR Checks · #${{ github.event.pull_request.number }} · ${{ github.event.pull_request.title }}"
 
 on:
   pull_request:
