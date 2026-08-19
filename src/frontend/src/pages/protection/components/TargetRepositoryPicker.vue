@@ -43,6 +43,7 @@ const props = withDefaults(defineProps<{
   repoType: string
   nasMode?: NasTargetMode
   targets: TargetRepositoryItem[]
+  allTargets?: TargetRepositoryItem[]
   selectedTarget?: TargetRepositoryItem | null
   repoTypeOptions: string[]
   targetPlaceholder: string
@@ -55,6 +56,7 @@ const props = withDefaults(defineProps<{
   refreshing?: boolean
   refreshTitle?: string
 }>(), {
+  allTargets: () => [],
   nasMode: 'per_directory_repo',
   selectedTarget: null,
   teleported: true,
@@ -153,8 +155,9 @@ function isRepoTypeFilterChecked(value: string): boolean {
 }
 
 function repoTypeFilterCount(value: string): number {
-  if (value === ALL_REPO_TYPE_VALUE) return props.targets.length
-  return props.targets.filter((target) => target.repoType === value).length
+  const source = props.allTargets && props.allTargets.length > 0 ? props.allTargets : props.targets
+  if (value === ALL_REPO_TYPE_VALUE) return source.length
+  return source.filter((target) => target.repoType === value).length
 }
 
 function clearTargetSearch() {
