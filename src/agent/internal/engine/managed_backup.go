@@ -14,7 +14,10 @@ import (
 	"io/fs"
 	"log/slog"
 	"math"
+	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -27,6 +30,7 @@ import (
 	agentdisk "hyperfilelens/agent/internal/platform/disk"
 	"hyperfilelens/agent/internal/platform/kopia"
 	"hyperfilelens/agent/internal/platform/process"
+	"hyperfilelens/agent/internal/platform/tlsclient"
 	nassvc "hyperfilelens/agent/internal/service/nas"
 )
 
@@ -1960,33 +1964,353 @@ func (e *Engine) runManagedSnapshotDownload(
 		return "failed", result, mkErr.Error()
 	}
 	defer os.RemoveAll(tempDir)
-	target := snapshotObjectPath(p.SnapshotID, p.Path)
-	isDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, target)
-	result["snapshot_download_inspect"] = commandResult(inspectRes)
-	if inspectErr != nil && !snapshotDownloadInspectNotDirectory(inspectRes) {
-		return "failed", result, snapshotDownloadFailureMessage(inspectRes, inspectErr)
+	restoreRoot := filepath.Join(tempDir, "restore")
+	if err := os.MkdirAll(restoreRoot, 0o700); err != nil {
+		return "failed", result, err.Error()
 	}
-	restoreTarget := tempDir
-	if !isDir {
-		restoreTarget = filepath.Join(tempDir, snapshotDownloadFilename(p.Path))
+	requestedPaths, pathsErr := snapshotDownloadPaths(p)
+	if pathsErr != nil {
+		return "failed", result, pathsErr.Error()
 	}
-	restoreArgs := []string{"--config-file=" + configFile, "restore", target, restoreTarget}
-	res, runErr := process.Run(ctx, bin, restoreArgs, env, "")
-	result["snapshot_download"] = commandResult(res)
-	if runErr != nil {
-		return "failed", result, snapshotDownloadFailureMessage(res, runErr)
+	batchDownload := len(requestedPaths) > 0
+	forceZip := batchDownload
+	if len(requestedPaths) == 0 {
+		requestedPaths = []string{strings.Trim(strings.TrimSpace(p.Path), "/\\")}
 	}
-	downloadContent, filename, contentType, collectErr := collectRestoredDownload(tempDir, p.Path, isDir)
-	if collectErr != nil {
-		return "failed", result, collectErr.Error()
+	var singleIsDir bool
+	for _, requestedPath := range requestedPaths {
+		target := snapshotObjectPath(p.SnapshotID, requestedPath)
+		isDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, target)
+		result["snapshot_download_inspect"] = commandResult(inspectRes)
+		if inspectErr != nil && !snapshotDownloadInspectNotDirectory(inspectRes) {
+			return "failed", result, snapshotDownloadFailureMessage(inspectRes, inspectErr)
+		}
+		singleIsDir = isDir
+		forceZip = forceZip || isDir
+		restoreTarget := restoreRoot
+		if batchDownload {
+			restoreTarget = filepath.Join(restoreRoot, filepath.FromSlash(requestedPath))
+			if err := os.MkdirAll(filepath.Dir(restoreTarget), 0o700); err != nil {
+				return "failed", result, err.Error()
+			}
+		} else if !isDir {
+			restoreTarget = filepath.Join(restoreRoot, snapshotDownloadFilename(requestedPath))
+		}
+		restoreArgs := []string{"--config-file=" + configFile, "restore", target, restoreTarget}
+		res, runErr := process.Run(ctx, bin, restoreArgs, env, "")
+		result["snapshot_download"] = commandResult(res)
+		if runErr != nil {
+			return "failed", result, snapshotDownloadFailureMessage(res, runErr)
+		}
+	}
+
+	uploadSpec, hasUpload, uploadErr := parseSnapshotArtifactUpload(p.Extra["artifact_upload"])
+	if uploadErr != nil {
+		return "failed", result, uploadErr.Error()
+	}
+	artifactPath := ""
+	filename := ""
+	contentType := "application/octet-stream"
+	if forceZip {
+		filename = snapshotDownloadArchiveName(p.Path, batchDownload)
+		artifactPath = filepath.Join(tempDir, filename)
+		maxBytes := int64(0)
+		if hasUpload {
+			maxBytes = uploadSpec.MaxBytes
+		}
+		if err := zipDirectoryContentsToFile(restoreRoot, artifactPath, maxBytes); err != nil {
+			return "failed", result, err.Error()
+		}
+		contentType = "application/zip"
+	} else {
+		entries, readErr := os.ReadDir(restoreRoot)
+		if readErr != nil || len(entries) != 1 || entries[0].IsDir() || singleIsDir {
+			return "failed", result, "restored file was not found"
+		}
+		artifactPath = filepath.Join(restoreRoot, entries[0].Name())
+		filename = entries[0].Name()
+	}
+	info, statErr := os.Stat(artifactPath)
+	if statErr != nil {
+		return "failed", result, statErr.Error()
+	}
+	if hasUpload {
+		uploadResult, uploadErr := e.uploadSnapshotArtifact(
+			ctx, uploadSpec, artifactPath, filename, contentType,
+		)
+		if uploadErr != nil {
+			return "failed", result, uploadErr.Error()
+		}
+		for key, value := range uploadResult {
+			result[key] = value
+		}
+		result["snapshot_id"] = p.SnapshotID
+		result["path"] = strings.Trim(strings.TrimSpace(p.Path), "/\\")
+		return "success", result, ""
+	}
+	downloadContent, readErr := os.ReadFile(artifactPath)
+	if readErr != nil {
+		return "failed", result, readErr.Error()
 	}
 	result["snapshot_id"] = p.SnapshotID
 	result["path"] = strings.Trim(strings.TrimSpace(p.Path), "/\\")
 	result["filename"] = filename
-	result["size_bytes"] = len(downloadContent)
+	result["size_bytes"] = info.Size()
 	result["content_type"] = contentType
 	result["content_base64"] = base64.StdEncoding.EncodeToString(downloadContent)
 	return "success", result, ""
+}
+
+type snapshotArtifactUploadSpec struct {
+	ArtifactID int64
+	Path       string
+	Token      string
+	MaxBytes   int64
+}
+
+func parseSnapshotArtifactUpload(raw any) (snapshotArtifactUploadSpec, bool, error) {
+	data, ok := raw.(map[string]any)
+	if !ok || len(data) == 0 {
+		return snapshotArtifactUploadSpec{}, false, nil
+	}
+	artifactID, idOK := exactInt64Value(data["artifact_id"])
+	maxBytes, maxOK := exactInt64Value(data["max_bytes"])
+	spec := snapshotArtifactUploadSpec{
+		ArtifactID: artifactID,
+		Path:       strings.TrimSpace(stringValue(data["path"])),
+		Token:      strings.TrimSpace(stringValue(data["token"])),
+		MaxBytes:   maxBytes,
+	}
+	if !idOK || spec.ArtifactID <= 0 || !maxOK || spec.MaxBytes <= 0 || spec.Path == "" || spec.Token == "" {
+		return snapshotArtifactUploadSpec{}, false, fmt.Errorf("snapshot artifact upload contract is invalid")
+	}
+	if !strings.HasPrefix(spec.Path, "/api/") || strings.Contains(spec.Path, "..") {
+		return snapshotArtifactUploadSpec{}, false, fmt.Errorf("snapshot artifact upload path is invalid")
+	}
+	return spec, true, nil
+}
+
+func snapshotDownloadPaths(p Payload) ([]string, error) {
+	raw, ok := p.Extra["paths"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("snapshot download paths must be a list")
+	}
+	paths := make([]string, 0, len(items))
+	seen := map[string]struct{}{}
+	for _, item := range items {
+		value := strings.TrimSpace(stringValue(item))
+		value = strings.ReplaceAll(value, "\\", "/")
+		if path.IsAbs(value) || filepath.VolumeName(value) != "" {
+			return nil, fmt.Errorf("snapshot download path is invalid")
+		}
+		value = strings.Trim(value, "/")
+		clean := path.Clean(value)
+		if value == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+			return nil, fmt.Errorf("snapshot download path is invalid")
+		}
+		if _, exists := seen[clean]; exists {
+			continue
+		}
+		seen[clean] = struct{}{}
+		paths = append(paths, clean)
+	}
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("snapshot download paths are empty")
+	}
+	return paths, nil
+}
+
+func snapshotDownloadArchiveName(requestedPath string, batch bool) string {
+	if batch {
+		return "snapshot-download.zip"
+	}
+	name := snapshotDownloadFilename(requestedPath)
+	if name == "download" {
+		name = "snapshot"
+	}
+	return name + ".zip"
+}
+
+func fileSHA256(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func (e *Engine) uploadSnapshotArtifact(
+	ctx context.Context,
+	spec snapshotArtifactUploadSpec,
+	filePath string,
+	filename string,
+	contentType string,
+) (map[string]any, error) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > spec.MaxBytes {
+		return nil, fmt.Errorf("snapshot download exceeds the configured size limit")
+	}
+	checksum, err := fileSHA256(filePath)
+	if err != nil {
+		return nil, err
+	}
+	base := strings.TrimRight(strings.TrimSpace(e.current().APIBaseURL), "/")
+	if base == "" {
+		return nil, fmt.Errorf("control plane API URL is not configured")
+	}
+	baseURL, err := url.Parse(base)
+	if err != nil || (baseURL.Scheme != "https" && baseURL.Scheme != "http") || baseURL.Host == "" {
+		return nil, fmt.Errorf("control plane API URL is invalid")
+	}
+	uploadURL := base + spec.Path
+	client := &http.Client{}
+	if tlsclient.InsecureTLSEnabled() {
+		client.Transport = tlsclient.Transport()
+	}
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		file, openErr := os.Open(filePath)
+		if openErr != nil {
+			return nil, openErr
+		}
+		req, requestErr := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, file)
+		if requestErr != nil {
+			file.Close()
+			return nil, requestErr
+		}
+		req.ContentLength = info.Size()
+		req.Header.Set("Authorization", "Bearer "+spec.Token)
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("X-Content-SHA256", checksum)
+		req.Header.Set("X-Artifact-Filename", url.QueryEscape(filename))
+		resp, sendErr := client.Do(req)
+		file.Close()
+		if sendErr != nil {
+			lastErr = sendErr
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return map[string]any{
+				"artifact_id":  spec.ArtifactID,
+				"filename":     filename,
+				"content_type": contentType,
+				"size_bytes":   info.Size(),
+				"sha256":       checksum,
+			}, nil
+		}
+		lastErr = fmt.Errorf("snapshot artifact upload returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		if resp.StatusCode == http.StatusUnauthorized ||
+			resp.StatusCode == http.StatusForbidden ||
+			resp.StatusCode == http.StatusNotFound ||
+			resp.StatusCode == http.StatusRequestEntityTooLarge {
+			break
+		}
+	}
+	return nil, fmt.Errorf("snapshot artifact upload failed: %w", lastErr)
+}
+
+type boundedArtifactWriter struct {
+	w        io.Writer
+	written  int64
+	maxBytes int64
+}
+
+func (w *boundedArtifactWriter) Write(p []byte) (int, error) {
+	if w.maxBytes > 0 && w.written+int64(len(p)) > w.maxBytes {
+		return 0, fmt.Errorf("snapshot download exceeds the configured size limit")
+	}
+	n, err := w.w.Write(p)
+	w.written += int64(n)
+	return n, err
+}
+
+func zipDirectoryContentsToFile(root string, destination string, maxBytes int64) error {
+	file, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	bounded := &boundedArtifactWriter{w: file, maxBytes: maxBytes}
+	zw := zip.NewWriter(bounded)
+	walkErr := filepath.WalkDir(root, func(filePath string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if filePath == root {
+			return nil
+		}
+		relative, err := filepath.Rel(root, filePath)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		if entry.IsDir() {
+			_, err = zw.Create(relative + "/")
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+		header.Name = relative
+		header.Method = zip.Deflate
+		writer, err := zw.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+		input, err := os.Open(filePath)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(writer, input)
+		closeErr := input.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
+	closeZipErr := zw.Close()
+	closeFileErr := file.Close()
+	if walkErr != nil {
+		os.Remove(destination)
+		return walkErr
+	}
+	if closeZipErr != nil {
+		os.Remove(destination)
+		return closeZipErr
+	}
+	if closeFileErr != nil {
+		os.Remove(destination)
+		return closeFileErr
+	}
+	return nil
 }
 
 func snapshotDownloadTargetIsDir(ctx context.Context, bin string, configFile string, env map[string]string, target string) (bool, process.Result, error) {
@@ -2702,9 +3026,15 @@ func zipDirectoryContents(root string) ([]byte, error) {
 			_, createErr := zw.Create(rel + "/")
 			return createErr
 		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
 		info, infoErr := d.Info()
 		if infoErr != nil {
 			return infoErr
+		}
+		if !info.Mode().IsRegular() {
+			return nil
 		}
 		header, headerErr := zip.FileInfoHeader(info)
 		if headerErr != nil {
@@ -2897,6 +3227,41 @@ func truncateSnapshotBrowseError(value string, limit int) string {
 	return value[:limit]
 }
 
+// formatModTimeUTC parses a time string from Kopia output and returns it as
+// RFC 3339 (ISO 8601) in UTC. Kopia snapshot timestamps are always UTC but
+// the ls -l output omits the timezone indicator, causing frontends to
+// misinterpret them as local time.
+func formatModTimeUTC(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	// Strip trailing " UTC" / " UTC" that some Kopia JSON outputs append.
+	utcStripped := strings.TrimSuffix(raw, " UTC")
+	utcStripped = strings.TrimSuffix(utcStripped, " UTC")
+	utcStripped = strings.TrimSpace(utcStripped)
+	formats := []string{
+		"Jan 2 2006",
+		"Jan 2 15:04",
+		"Jan 2 15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		time.RFC3339,
+	}
+	for _, layout := range formats {
+		t, err := time.Parse(layout, utcStripped)
+		if err != nil {
+			continue
+		}
+		year := t.Year()
+		if year == 0 {
+			year = time.Now().Year()
+		}
+		return time.Date(year, t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC).Format(time.RFC3339)
+	}
+	return raw
+}
+
 func parseSnapshotBrowseLongLine(line string) (mode string, size int64, modTime string, name string, ok bool) {
 	fields := strings.Fields(line)
 	if len(fields) < 7 || !looksLikeMode(fields[0]) {
@@ -2904,7 +3269,7 @@ func parseSnapshotBrowseLongLine(line string) (mode string, size int64, modTime 
 	}
 	mode = fields[0]
 	size, _ = strconv.ParseInt(fields[1], 10, 64)
-	modTime = strings.Join(fields[2:5], " ")
+	modTime = formatModTimeUTC(strings.Join(fields[2:5], " "))
 	objectID := fields[5]
 	idx := strings.Index(line, objectID)
 	if idx < 0 {
@@ -3032,7 +3397,7 @@ func collectSnapshotEntries(raw any, rows *[]map[string]any, basePath string, sn
 			typ = "file"
 		}
 		size, _ := int64Value(firstPresent(value, "size", "size_bytes", "length"))
-		modTime := strings.TrimSpace(stringValue(firstPresent(value, "mod_time", "modified_at", "mtime", "modTime")))
+		modTime := formatModTimeUTC(strings.TrimSpace(stringValue(firstPresent(value, "mod_time", "modified_at", "mtime", "modTime"))))
 		path := normalizeSnapshotBrowsePath(
 			strings.TrimSpace(stringValue(firstPresent(value, "path", "name"))),
 			name,

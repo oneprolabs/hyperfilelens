@@ -5,8 +5,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1586,6 +1589,122 @@ func TestCollectRestoredDownloadReturnsZipForDirectoryContainingOnlyDotfile(t *t
 	}
 	if len(zr.File) != 1 || zr.File[0].Name != ".hidden-note" {
 		t.Fatalf("expected zip to contain .hidden-note, got %#v", zr.File)
+	}
+}
+
+func TestUploadSnapshotArtifactStreamsFileWithIntegrityHeaders(t *testing.T) {
+	t.Setenv("HFL_INSECURE_TLS", "0")
+	content := []byte("streamed snapshot artifact")
+	var received []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/upload" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer task-token" {
+			t.Fatalf("unexpected authorization header")
+		}
+		if r.Header.Get("X-Content-SHA256") == "" || r.Header.Get("X-Artifact-Filename") != "report.txt" {
+			t.Fatalf("missing artifact integrity headers: %#v", r.Header)
+		}
+		var err error
+		received, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	filePath := filepath.Join(t.TempDir(), "report.txt")
+	if err := os.WriteFile(filePath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{APIBaseURL: server.URL}})
+	result, err := engine.uploadSnapshotArtifact(
+		context.Background(),
+		snapshotArtifactUploadSpec{ArtifactID: 7, Path: "/upload", Token: "task-token", MaxBytes: 1024},
+		filePath,
+		"report.txt",
+		"application/octet-stream",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(received, content) || result["artifact_id"] != int64(7) {
+		t.Fatalf("unexpected upload result %#v content=%q", result, received)
+	}
+}
+
+func TestUploadSnapshotArtifactHonorsInsecureTLS(t *testing.T) {
+	content := []byte("self-signed snapshot artifact")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/upload" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	filePath := filepath.Join(t.TempDir(), "report.txt")
+	if err := os.WriteFile(filePath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{APIBaseURL: server.URL}})
+	spec := snapshotArtifactUploadSpec{ArtifactID: 7, Path: "/upload", Token: "task-token", MaxBytes: 1024}
+
+	t.Setenv("HFL_INSECURE_TLS", "0")
+	if _, err := engine.uploadSnapshotArtifact(
+		context.Background(), spec, filePath, "report.txt", "application/octet-stream",
+	); err == nil {
+		t.Fatal("expected strict TLS verification to reject the self-signed server")
+	}
+
+	t.Setenv("HFL_INSECURE_TLS", "1")
+	if _, err := engine.uploadSnapshotArtifact(
+		context.Background(), spec, filePath, "report.txt", "application/octet-stream",
+	); err != nil {
+		t.Fatalf("expected configured insecure TLS upload to succeed: %v", err)
+	}
+}
+
+func TestZipDirectoryContentsToFileEnforcesArtifactLimit(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "large.bin"), bytes.Repeat([]byte("x"), 4096), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "download.zip")
+	if err := zipDirectoryContentsToFile(root, destination, 16); err == nil {
+		t.Fatal("expected configured artifact limit to reject ZIP output")
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("partial ZIP was not removed: %v", err)
+	}
+}
+
+func TestZipDirectoryContentsToFileDoesNotFollowSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires additional privileges on Windows")
+	}
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("must not be archived"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked-secret")); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "download.zip")
+	if err := zipDirectoryContentsToFile(root, destination, 1024); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := zip.OpenReader(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	if len(archive.File) != 0 {
+		t.Fatalf("symlink target escaped into artifact: %#v", archive.File)
 	}
 }
 

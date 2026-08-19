@@ -63,3 +63,12 @@ def register_periodic_tasks() -> None:
         queue=None,
         enabled=True,
     )
+    TASK_REGISTRY.add(
+        name="protection_cleanup_snapshot_download_artifacts",
+        task="apps.protection.tasks.snapshot_download.cleanup_snapshot_download_artifacts",
+        schedule=60 * 60,
+        args=(),
+        kwargs={"limit": 1000},
+        queue=None,
+        enabled=True,
+    )

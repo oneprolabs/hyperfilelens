@@ -15,6 +15,8 @@ from apps.protection.api.views.snapshot_browser import (
     SnapshotDirectoryDownloadView,
     SnapshotDirectoryDownloadTaskView,
     SnapshotDownloadArtifactFileView,
+    SnapshotDownloadArtifactContentView,
+    SnapshotDownloadArtifactDownloadUrlView,
 )
 
 __all__ = [
@@ -32,5 +34,7 @@ __all__ = [
     "SnapshotDirectoryDownloadView",
     "SnapshotDirectoryDownloadTaskView",
     "SnapshotDownloadArtifactFileView",
+    "SnapshotDownloadArtifactContentView",
+    "SnapshotDownloadArtifactDownloadUrlView",
     "health",
 ]

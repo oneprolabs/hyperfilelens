@@ -33,11 +33,16 @@ class SnapshotBrowserForbidden(PermissionError):
     """Snapshot directory exists but cannot be browsed."""
 
 
+class SnapshotArtifactUploadUnsupported(SnapshotBrowserError):
+    """The selected repository reader predates artifact upload support."""
+
+
 @dataclass(frozen=True)
 class SnapshotFileDownload:
     filename: str
     content: bytes
     content_type: str = "application/octet-stream"
+    artifact_id: int | None = None
 
 
 def _clean_relative_path(path: str) -> str:
@@ -151,6 +156,7 @@ def _run_snapshot_agent_task(
     kind: str,
     path: str,
     wait_timeout_seconds: int,
+    extra_payload: dict[str, Any] | None = None,
 ) -> Any:
     snapshot = row.source_snapshot
     repository = _repository_for_directory(row)
@@ -177,15 +183,32 @@ def _run_snapshot_agent_task(
         path,
         wait_timeout_seconds,
     )
+    payload = {
+        "repository": repository_access.repository_payload,
+        "snapshot_id": row.kopia_snapshot_id,
+        "path": path,
+    }
+    if extra_payload:
+        payload.update(extra_payload)
+    persisted_payload = {
+        "snapshot_id": row.kopia_snapshot_id,
+        "path": path,
+    }
+    if isinstance(payload.get("paths"), list):
+        persisted_payload["paths"] = payload["paths"]
+    if isinstance(payload.get("artifact_upload"), dict):
+        upload = payload["artifact_upload"]
+        persisted_payload["artifact_upload"] = {
+            "artifact_id": upload.get("artifact_id"),
+            "path": upload.get("path"),
+            "max_bytes": upload.get("max_bytes"),
+        }
     outcome = run_agent_task_sync(
         organization_id=row.organization_id,
         node_id=repository_access.node.id,
         kind=kind,
-        payload={
-            "repository": repository_access.repository_payload,
-            "snapshot_id": row.kopia_snapshot_id,
-            "path": path,
-        },
+        payload=payload,
+        persisted_payload=persisted_payload,
         correlation_type="protection.snapshot_browser",
         correlation_id=str(row.id),
         wait_timeout_seconds=wait_timeout_seconds,
@@ -259,22 +282,78 @@ def download_snapshot_file(
     directory_id: int,
     path: str,
     wait_timeout_seconds: int | None = None,
+    upload_artifact=None,
+    paths: list[str] | None = None,
 ) -> SnapshotFileDownload:
     clean_path = _clean_relative_path(path)
     row = _get_directory(organization_id=organization_id, directory_id=directory_id)
-    if not clean_path and row.path_type != BackupSourceSnapshotDirectory.PathType.FILE:
+    clean_paths = [_clean_relative_path(item) for item in paths or []]
+    if not clean_path and not clean_paths and row.path_type != BackupSourceSnapshotDirectory.PathType.FILE:
         raise SnapshotBrowserForbidden("File path is required.")
+    extra_payload: dict[str, Any] = {}
+    if clean_paths:
+        extra_payload["paths"] = clean_paths
+    if upload_artifact is not None:
+        from apps.protection.services.snapshot_download import prepare_snapshot_artifact_upload
+
+        repository = _repository_for_directory(row)
+        fallback_target = None
+        if not repository_uses_bound_proxy(repository):
+            fallback_target = _resolve_execution_target(source_snapshot=row.source_snapshot)
+        repository_access = resolve_snapshot_repository_reader(
+            directory=row,
+            repository=repository,
+            fallback_node=fallback_target.node if fallback_target is not None else None,
+            source_type=row.source_snapshot.source_type,
+            source_ref_id=row.source_snapshot.source_ref_id,
+        )
+        metadata = repository_access.node.metadata if isinstance(repository_access.node.metadata, dict) else {}
+        inventory = metadata.get("inventory") if isinstance(metadata.get("inventory"), dict) else {}
+        capabilities = inventory.get("capabilities", metadata.get("capabilities", []))
+        capabilities = capabilities if isinstance(capabilities, (list, tuple, set)) else []
+        if clean_paths and "snapshot_artifact_upload_v1" not in capabilities:
+            raise SnapshotArtifactUploadUnsupported(
+                "The repository access Agent must be upgraded before downloading multiple snapshot paths."
+            )
+        extra_payload["artifact_upload"] = prepare_snapshot_artifact_upload(
+            artifact=upload_artifact,
+            node_id=repository_access.node.id,
+        )
     outcome = _run_snapshot_agent_task(
         row=row,
         kind="snapshot.download",
         path=clean_path,
         wait_timeout_seconds=_snapshot_browser_timeout_seconds() if wait_timeout_seconds is None else wait_timeout_seconds,
+        extra_payload=extra_payload,
     )
+    if upload_artifact is not None:
+        upload_artifact.refresh_from_db()
+        if upload_artifact.status == upload_artifact.Status.READY:
+            return SnapshotFileDownload(
+                filename=upload_artifact.filename,
+                content=b"",
+                content_type=upload_artifact.content_type,
+                artifact_id=upload_artifact.id,
+            )
     if getattr(outcome, "timed_out", False):
         raise SnapshotBrowserError("Snapshot download timed out.")
     if not getattr(outcome, "ok", False):
         raise SnapshotBrowserError(_agent_result_error(outcome, "Snapshot download failed."))
     result = outcome.result if isinstance(outcome.result, dict) else {}
+    if result.get("result_truncated"):
+        raise SnapshotBrowserError(
+            "Snapshot download content exceeded the legacy Agent result limit. Upgrade the Agent and retry."
+        )
+    if upload_artifact is not None and int(result.get("artifact_id") or 0) == int(upload_artifact.id):
+        upload_artifact.refresh_from_db()
+        if upload_artifact.status != upload_artifact.Status.READY:
+            raise SnapshotBrowserError("Snapshot download upload did not finalize the artifact.")
+        return SnapshotFileDownload(
+            filename=upload_artifact.filename,
+            content=b"",
+            content_type=upload_artifact.content_type,
+            artifact_id=upload_artifact.id,
+        )
     raw = str(result.get("content_base64") or "").strip()
     size_bytes: int | None
     try:

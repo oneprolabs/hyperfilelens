@@ -7,7 +7,9 @@ from apps.task.models import Task
 
 class SnapshotDownloadArtifact(models.Model):
     class Status(models.TextChoices):
+        UPLOADING = "uploading", "Uploading"
         READY = "ready", "Ready"
+        FAILED = "failed", "Failed"
         EXPIRED = "expired", "Expired"
         DELETED = "deleted", "Deleted"
 
@@ -22,7 +24,9 @@ class SnapshotDownloadArtifact(models.Model):
     filename = models.CharField(max_length=300)
     content_type = models.CharField(max_length=120, default="application/octet-stream")
     size_bytes = models.BigIntegerField(default=0)
+    sha256 = models.CharField(max_length=64, blank=True, default="")
     storage_path = models.CharField(max_length=1200)
+    upload_token_digest = models.CharField(max_length=64, blank=True, default="")
     status = models.CharField(
         max_length=20,
         choices=Status.choices,

@@ -490,6 +490,18 @@ export function snapshotDownloadArtifactFileUrl(artifactId: number) {
   return `/api/v1/protection/snapshot-download-artifacts/${artifactId}/file/`
 }
 
+export async function createSnapshotArtifactDownloadUrl(artifactId: number) {
+  const result = unwrapApiPayload<{ url: string }>(
+    await api<unknown>(`/api/v1/protection/snapshot-download-artifacts/${artifactId}/download-url/`, {
+      headers: orgHeaders(),
+    }),
+  )
+  const url = String(result.url || '')
+  return {
+    url: /^(?:https?:)?\/\//.test(url) ? url : `${API_BASE}${url}`,
+  }
+}
+
 export async function downloadSnapshotArtifactFile(artifactId: number) {
   const path = snapshotDownloadArtifactFileUrl(artifactId)
   const res = await fetch(`${API_BASE}${path}`, {
