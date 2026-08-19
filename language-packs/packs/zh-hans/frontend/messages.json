@@ -4104,6 +4104,7 @@
     "confirmDeleteTitle": "删除存储仓库",
     "confirmDelete": "确定删除仓库「{name}」？",
     "fieldQuota": "存储配额",
+    "quotaUnit": "存储配额单位",
     "phQuota": "0 表示不限制",
     "hintQuota": "用于容量规划和告警，0 表示不限制。",
     "fieldQuotaAlert": "启用配额监控",
