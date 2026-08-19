@@ -1151,7 +1151,7 @@ html:not([data-theme='dark']) .resource-add-fullscreen :is(.add-s3-platform-btn:
 
 .resource-add-fullscreen .add-form-preview-row__value {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   color: #1d2129;
   font-size: 13px;
   font-weight: 500;
@@ -1749,7 +1749,7 @@ html:not([data-theme='dark']) .fullscreen-form-icon-btn:not(.hfl-refresh-button)
 
 .add-form-preview-row__value {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   color: var(--color-text-title, #303133);
   font-size: 13px;
   font-weight: 500;
