@@ -2,7 +2,7 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-    dependencies = [("protection", "0018_backup_directory_repository_locator")]
+    dependencies = [("protection", "0020_backup_config_provisioning")]
 
     operations = [
         migrations.AddField(
