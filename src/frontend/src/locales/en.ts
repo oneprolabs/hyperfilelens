@@ -2107,6 +2107,7 @@ export const en = {
     confirmDeleteTitle: 'Delete Repository',
     confirmDelete: 'Delete repository “{name}”?',
     fieldQuota: 'Storage Quota',
+    quotaUnit: 'Storage limit unit',
     phQuota: '0 means unlimited',
     hintQuota: 'Used for capacity planning and alerting; 0 means unlimited.',
     fieldQuotaAlert: 'Enable Quota Monitoring',

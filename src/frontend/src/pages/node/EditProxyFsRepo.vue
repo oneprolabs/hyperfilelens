@@ -15,6 +15,13 @@ import {
   type StorageRepository,
 } from '../../lib/storageRepositoryApi'
 import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
+import {
+  REPOSITORY_QUOTA_UNITS,
+  normalizeRepositoryQuotaUnit,
+  repositoryQuotaToGb,
+  repositoryQuotaValueFromGb,
+  type RepositoryQuotaUnit,
+} from '../../lib/repositoryQuota'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -34,12 +41,14 @@ const repo = ref<StorageRepository | null>(null)
 const name = ref('')
 /* quota values read directly from `config` so we can build the PATCH payload */
 const quotaGb = ref(0)
+const quotaUnit = ref<RepositoryQuotaUnit>('GB')
 const quotaAlertEnabled = ref(false)
 const quotaAlertThreshold = ref<number>(80)
 
 /* read-only mirrors for change detection */
 const originName = ref('')
 const originQuotaGb = ref(0)
+const originQuotaUnit = ref<RepositoryQuotaUnit>('GB')
 const originQuotaAlertEnabled = ref(false)
 const originQuotaAlertThreshold = ref(80)
 
@@ -94,6 +103,7 @@ const validQuotaAlertThreshold = computed(() => {
 const dirty = computed(() => {
   if (name.value.trim() !== originName.value) return true
   if (Number(quotaGb.value || 0) !== originQuotaGb.value) return true
+  if (quotaUnit.value !== originQuotaUnit.value) return true
   if (Boolean(quotaAlertEnabled.value) !== originQuotaAlertEnabled.value) return true
   if (quotaAlertEnabled.value && Number(quotaAlertThreshold.value || 0) !== originQuotaAlertThreshold.value) return true
   return false
@@ -152,11 +162,13 @@ async function maybeFetchProxyNode(data: StorageRepository) {
 function hydrate(data: StorageRepository) {
   const cfg = (data.config || {}) as Record<string, unknown>
   name.value = data.name || ''
-  quotaGb.value = Number(cfg.quota_gb || 0)
+  quotaUnit.value = normalizeRepositoryQuotaUnit(cfg.quota_unit)
+  quotaGb.value = repositoryQuotaValueFromGb(cfg.quota_gb, quotaUnit.value)
   quotaAlertEnabled.value = Boolean(cfg.quota_alert_enabled)
   quotaAlertThreshold.value = Number(cfg.quota_alert_threshold || 80)
   originName.value = name.value
   originQuotaGb.value = quotaGb.value
+  originQuotaUnit.value = quotaUnit.value
   originQuotaAlertEnabled.value = quotaAlertEnabled.value
   originQuotaAlertThreshold.value = quotaAlertThreshold.value
 }
@@ -164,7 +176,8 @@ function hydrate(data: StorageRepository) {
 /* ---------- save ---------- */
 function buildPayload() {
   const config: Record<string, unknown> = {
-    quota_gb: Number(quotaGb.value || 0),
+    quota_gb: repositoryQuotaToGb(quotaGb.value, quotaUnit.value),
+    quota_unit: quotaUnit.value,
     quota_alert_enabled: Boolean(quotaAlertEnabled.value),
     quota_alert_threshold: quotaAlertEnabled.value
       ? Number(quotaAlertThreshold.value || 0)
@@ -325,17 +338,28 @@ watch(repositoryId, (id) => {
                     {{ t('repositoriesPage.fieldQuota') }}
                   </label>
                   <div class="add-proxy-fs-quota-control">
-                    <div class="hfl-detail-form-input hfl-detail-form-input--narrow add-proxy-fs-quota-input">
+                    <div class="hfl-detail-form-input hfl-detail-form-input--narrow add-proxy-fs-quota-input repository-quota-split-input repository-quota-split-input--edit">
                       <ElInputNumber
                         v-model="quotaGb"
                         class="hfl-detail-form-input__num"
                         :placeholder="t('repositoriesPage.phQuota')"
                         :min="0"
+                        :precision="0"
+                        :step="1"
                         controls-position="right"
                       />
-                      <div class="hfl-detail-form-input__suffix">
-                        GB
-                      </div>
+                      <ElSelect
+                        v-model="quotaUnit"
+                        class="hfl-detail-form-input__unit"
+                        :aria-label="t('repositoriesPage.quotaUnit')"
+                      >
+                        <ElOption
+                          v-for="unit in REPOSITORY_QUOTA_UNITS"
+                          :key="unit"
+                          :label="unit"
+                          :value="unit"
+                        />
+                      </ElSelect>
                     </div>
                   </div>
                   <p class="fullscreen-form-field__hint">

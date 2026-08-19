@@ -28,6 +28,7 @@ import RepositoryBackingStorageTooltip from '../../components/RepositoryBackingS
 import RepositoryCapacityConflictAlert from '../../components/RepositoryCapacityConflictAlert.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import { remainingLimitExceedsAvailableStorage, repositoryCapacityParts, repositoryStorageParts } from '../../lib/repositoryCapacityDisplay'
+import { repositoryQuotaDisplay } from '../../lib/repositoryQuota'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
@@ -148,6 +149,7 @@ export type RepositoryConfig = {
   proxy_node_base_dir?: string
   proxy_fs_layout?: string
   quota_gb?: number
+  quota_unit?: string
   quota_alert_enabled?: boolean
   quota_alert_threshold?: number
 }
@@ -475,6 +477,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
         ),
         use_tls: configBoolean(config, 'use_tls') ?? r.use_tls !== false,
         quota_gb: configNumber(config, 'quota_gb') ?? 0,
+        quota_unit: configString(config, 'quota_unit'),
         quota_alert_enabled: configBoolean(config, 'quota_alert_enabled') ?? false,
         quota_alert_threshold: configNumber(config, 'quota_alert_threshold') ?? 0,
       },
@@ -517,6 +520,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
         proxy_fs_layout: configString(config, 'proxy_fs_layout'),
         proxy_repository_server_host: configString(config, 'proxy_repository_server_host'),
         quota_gb: configNumber(config, 'quota_gb') ?? 0,
+        quota_unit: configString(config, 'quota_unit'),
         quota_alert_enabled: configBoolean(config, 'quota_alert_enabled') ?? false,
         quota_alert_threshold: configNumber(config, 'quota_alert_threshold') ?? 0,
       },
@@ -578,6 +582,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       nfs_export: configString(config, 'nfs_export') || r.nfs_export || (protocol === 'nfs' ? sharePath : ''),
       nfs_options: configString(config, 'nfs_options') || r.nfs_options || configString(config, 'mount_options'),
       quota_gb: configNumber(config, 'quota_gb') ?? 0,
+      quota_unit: configString(config, 'quota_unit'),
       quota_alert_enabled: configBoolean(config, 'quota_alert_enabled') ?? false,
       quota_alert_threshold: configNumber(config, 'quota_alert_threshold') ?? 0,
     },
@@ -1102,15 +1107,11 @@ async function copyDetailText(value: string) {
 }
 
 function s3QuotaLimitLabel(row: RepositoryRow) {
-  const quotaGb = Number(row.config.quota_gb ?? 0)
-  if (quotaGb > 0) return `${quotaGb} GB`
-  return t('repositoriesPage.noConfiguredLimit')
+  return repositoryQuotaDisplay(row.config) || t('repositoriesPage.noConfiguredLimit')
 }
 
 function storageLimitLabel(row: RepositoryRow) {
-  const quotaGb = Number(row.config.quota_gb ?? 0)
-  if (quotaGb > 0) return `${quotaGb} GB`
-  return t('repositoriesPage.noConfiguredLimit')
+  return repositoryQuotaDisplay(row.config) || t('repositoriesPage.noConfiguredLimit')
 }
 
 function quotaMonitoringEnabled(row: RepositoryRow) {

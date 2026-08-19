@@ -64,6 +64,7 @@ FORBIDDEN_CONFIG_FIELDS = {
 # valid.
 S3_NON_CONNECTION_CONFIG_FIELDS = {
     "quota_gb",
+    "quota_unit",
     "quota_alert_enabled",
     "quota_alert_threshold",
 }
@@ -379,6 +380,10 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
         if forbidden:
             raise serializers.ValidationError(
                 f"config contains forbidden fields: {', '.join(forbidden)}"
+            )
+        if "quota_unit" in value and value["quota_unit"] not in {"GB", "TB", "PB"}:
+            raise serializers.ValidationError(
+                {"quota_unit": "Storage limit unit must be GB, TB, or PB."}
             )
         if "proxy_repository_server_host" in value:
             value = dict(value)
@@ -858,6 +863,10 @@ class NASRepositoryRepairSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 "These NAS repository fields cannot be modified: %s"
                 % ", ".join(unsupported)
+            )
+        if "quota_unit" in value and value["quota_unit"] not in {"GB", "TB", "PB"}:
+            raise serializers.ValidationError(
+                {"quota_unit": "Storage limit unit must be GB, TB, or PB."}
             )
         if "proxy_repository_server_host" in value:
             value = dict(value)

@@ -4,7 +4,7 @@ export type RepositoryCapacityLike = {
   storage_total_bytes?: number
   storage_used_bytes?: number
   storage_available_bytes?: number
-  config?: { quota_gb?: number | string | null } | null
+  config?: { quota_gb?: number | string | null; quota_unit?: string | null } | null
 }
 
 export function repositoryEffectiveCapacityBytes(row: RepositoryCapacityLike): number {

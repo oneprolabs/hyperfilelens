@@ -74,6 +74,7 @@ NAS_REPAIR_MUTABLE_CONFIG_FIELDS = frozenset(
     {
         "mount_options",
         "quota_gb",
+        "quota_unit",
         "quota_alert_enabled",
         "quota_alert_threshold",
         "smb_username",

@@ -4047,6 +4047,7 @@
   "repositoriesPage.confirmDeleteTitle": "29e0dba6a441f51ebe314f70363610c4855ca819df3097f2bfe456c1598a2545",
   "repositoriesPage.confirmDelete": "6cf4cca36cd2756fffc76b957ed5e7188517e3a017d5602642297e4f85a61324",
   "repositoriesPage.fieldQuota": "910a2f6c05017bf4e76a986754e92c57593fc4857815c667faf0de4d84488ba9",
+  "repositoriesPage.quotaUnit": "bc5eddbfdd5a0bb84d12b9dcb99ef218d88a7f4e1045a977d84d33ef73fef623",
   "repositoriesPage.phQuota": "781066c76172ad9a41070652a361a5f2fb7206c84c1845c256d090cbe667179b",
   "repositoriesPage.hintQuota": "8bf84230a99b20244b195709852d0648a166a788ea9a6157af635fd704c91780",
   "repositoriesPage.fieldQuotaAlert": "a42fd2620969926b1a72ed475a8ce8dff6b8917d685e624fa1fafa1b0bbfa879",

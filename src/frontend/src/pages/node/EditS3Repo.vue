@@ -23,6 +23,13 @@ import {
   type S3UrlStyle,
 } from '../../lib/s3ProviderProfiles'
 import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
+import {
+  REPOSITORY_QUOTA_UNITS,
+  normalizeRepositoryQuotaUnit,
+  repositoryQuotaToGb,
+  repositoryQuotaValueFromGb,
+  type RepositoryQuotaUnit,
+} from '../../lib/repositoryQuota'
 
 
 const { t } = useI18n()
@@ -53,6 +60,7 @@ const region = ref('')
 const s3UrlStyle = ref<S3UrlStyle>(defaultS3UrlStyle('custom'))
 const useTls = ref(true)
 const quotaGb = ref(0)
+const quotaUnit = ref<RepositoryQuotaUnit>('GB')
 const quotaAlertEnabled = ref(false)
 const quotaAlertThreshold = ref<number>(80)
 
@@ -137,7 +145,8 @@ function hydrate(data: StorageRepository) {
   const loadedUrlStyle = normalizeS3UrlStyle(cfg.s3_url_style, platform.value)
   s3UrlStyle.value = loadedUrlStyle === 'auto' ? 'virtual_hosted' : loadedUrlStyle
   useTls.value = cfg.use_tls !== false
-  quotaGb.value = Number(cfg.quota_gb || 0)
+  quotaUnit.value = normalizeRepositoryQuotaUnit(cfg.quota_unit)
+  quotaGb.value = repositoryQuotaValueFromGb(cfg.quota_gb, quotaUnit.value)
   quotaAlertEnabled.value = Boolean(cfg.quota_alert_enabled)
   quotaAlertThreshold.value = Number(cfg.quota_alert_threshold || 80)
   hasAccessKey.value = Boolean(String(cfg.access_key_id || '').trim())
@@ -172,7 +181,8 @@ function cancelRewriteSecret() {
 
 function buildPayload() {
   const config: Record<string, unknown> = {
-    quota_gb: quotaGb.value || 0,
+    quota_gb: repositoryQuotaToGb(quotaGb.value, quotaUnit.value),
+    quota_unit: quotaUnit.value,
     quota_alert_enabled: quotaAlertEnabled.value,
     quota_alert_threshold: quotaAlertEnabled.value ? Number(quotaAlertThreshold.value || 0) : 0,
   }
@@ -593,17 +603,28 @@ watch(repositoryId, (id) => {
                         {{ t('addS3Repo.fieldQuota') }}
                       </label>
                       <div class="add-s3-quota-pair__control">
-                        <div class="hfl-detail-form-input hfl-detail-form-input--narrow add-s3-quota-pair__input">
+                        <div class="hfl-detail-form-input hfl-detail-form-input--narrow add-s3-quota-pair__input repository-quota-split-input repository-quota-split-input--edit">
                           <ElInputNumber
                             v-model="quotaGb"
                             class="hfl-detail-form-input__num"
                             :placeholder="t('addS3Repo.phQuota')"
                             :min="0"
+                            :precision="0"
+                            :step="1"
                             controls-position="right"
                           />
-                          <div class="hfl-detail-form-input__suffix">
-                            GB
-                          </div>
+                          <ElSelect
+                            v-model="quotaUnit"
+                            class="hfl-detail-form-input__unit"
+                            :aria-label="t('repositoriesPage.quotaUnit')"
+                          >
+                            <ElOption
+                              v-for="unit in REPOSITORY_QUOTA_UNITS"
+                              :key="unit"
+                              :label="unit"
+                              :value="unit"
+                            />
+                          </ElSelect>
                         </div>
                       </div>
                       <p class="fullscreen-form-field__hint">
@@ -811,7 +832,7 @@ watch(repositoryId, (id) => {
                     class="add-form-preview-row__value"
                     :class="{ 'add-form-preview-row__value--highlight': quotaGb > 0 }"
                   >
-                    {{ quotaGb > 0 ? `${quotaGb} GB` : t('addS3Repo.previewUnlimited') }}
+                    {{ quotaGb > 0 ? `${quotaGb} ${quotaUnit}` : t('addS3Repo.previewUnlimited') }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">

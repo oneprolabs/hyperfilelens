@@ -1137,6 +1137,7 @@ class StorageRepositoryApiTests(TestCase):
                 "name": "legacy-managed-s3-renamed",
                 "config": {
                     "quota_gb": 10,
+                    "quota_unit": "TB",
                     "quota_alert_enabled": True,
                     "quota_alert_threshold": 80,
                 },
@@ -1149,11 +1150,34 @@ class StorageRepositoryApiTests(TestCase):
         repository.refresh_from_db()
         self.assertEqual(repository.name, "legacy-managed-s3-renamed")
         self.assertEqual(repository.config["quota_gb"], 10)
+        self.assertEqual(repository.config["quota_unit"], "TB")
         self.assertEqual(
             repository.config["region"], "legacy-region-no-longer-in-catalog"
         )
         self.assertEqual(repository.config["endpoint"], "obs.legacy.example.com")
         enqueue_usage.assert_called_once()
+
+    def test_repository_update_rejects_invalid_quota_unit(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="quota-unit-validation",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"proxy_node_dir": "/data/repository", "quota_gb": 10},
+        )
+
+        response = self.client.patch(
+            f"/api/v1/storage/repositories/{repository.id}/",
+            {"config": {"quota_gb": 10, "quota_unit": "MB"}},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("quota_unit", str(response.data))
+        repository.refresh_from_db()
+        self.assertNotIn("quota_unit", repository.config)
 
     def test_associated_sources_lists_direct_nas_agent_health(self):
         agent = Node.objects.create(

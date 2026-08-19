@@ -21,6 +21,11 @@ import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
 import type { ApiNode } from '../../types/node'
 import NasProxyTopology from './NasProxyTopology.vue'
 import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
+import {
+  REPOSITORY_QUOTA_UNITS,
+  repositoryQuotaToGb,
+  type RepositoryQuotaUnit,
+} from '../../lib/repositoryQuota'
 
 type NasProtocol = 'smb' | 'nfs'
 
@@ -71,6 +76,7 @@ const nfsExport = ref('')
 /* Step 1: repo info */
 const repoName = ref('')
 const quota = ref(0)
+const quotaUnit = ref<RepositoryQuotaUnit>('GB')
 const enableQuotaAlert = ref(false)
 const quotaAlertThreshold = ref<number | undefined>(undefined)
 const proxyNodeId = ref<number | undefined>(undefined)
@@ -176,7 +182,8 @@ function buildCreatePayload(): StorageRepositoryCreatePayload {
     server_address: protocol.value === 'smb' ? smbHost.value.trim() : nfsHost.value.trim(),
     share_path: protocol.value === 'smb' ? smbShare.value.trim() : nfsExport.value.trim(),
     mount_options: mountOptions.value.trim() || undefined,
-    quota_gb: quota.value || 0,
+    quota_gb: repositoryQuotaToGb(quota.value, quotaUnit.value),
+    quota_unit: quotaUnit.value,
     quota_alert_enabled: enableQuotaAlert.value,
     quota_alert_threshold: enableQuotaAlert.value ? Number(quotaAlertThreshold.value || 0) : 0,
   }
@@ -696,17 +703,28 @@ watch(enableQuotaAlert, (enabled) => {
                     <div class="fullscreen-form-field repository-quota-field">
                       <label class="fullscreen-form-field__label repository-quota-head">{{ t('repositoriesPage.fieldQuota') }}</label>
                       <div class="repository-quota-control">
-                        <div class="repository-quota-number repository-quota-input">
+                        <div class="repository-quota-number repository-quota-input repository-quota-split-input repository-quota-split-input--add">
                           <ElInputNumber
                             v-model="quota"
                             class="repository-quota-number__input"
                             :placeholder="t('repositoriesPage.phQuota')"
                             :min="0"
+                            :precision="0"
+                            :step="1"
                             controls-position="right"
                           />
-                          <div class="repository-quota-number__suffix">
-                            GB
-                          </div>
+                          <ElSelect
+                            v-model="quotaUnit"
+                            class="repository-quota-number__unit"
+                            :aria-label="t('repositoriesPage.quotaUnit')"
+                          >
+                            <ElOption
+                              v-for="unit in REPOSITORY_QUOTA_UNITS"
+                              :key="unit"
+                              :label="unit"
+                              :value="unit"
+                            />
+                          </ElSelect>
                         </div>
                       </div>
                       <p class="fullscreen-form-field__hint">
@@ -833,7 +851,7 @@ watch(enableQuotaAlert, (enabled) => {
                     class="add-form-preview-row__value"
                     :class="{ 'add-form-preview-row__value--highlight': quota > 0 }"
                   >
-                    {{ quota > 0 ? `${quota} GB` : t('addS3Repo.previewUnlimited') }}
+                    {{ quota > 0 ? `${quota} ${quotaUnit}` : t('addS3Repo.previewUnlimited') }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">

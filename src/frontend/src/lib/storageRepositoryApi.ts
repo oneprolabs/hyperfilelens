@@ -139,6 +139,7 @@ export type StorageRepositoryUpdatePayload = {
     s3_url_style?: 'auto' | 'virtual_hosted' | 'path'
     use_tls?: boolean
     quota_gb?: number
+    quota_unit?: 'GB' | 'TB' | 'PB'
     quota_alert_enabled?: boolean
     quota_alert_threshold?: number
     access_key_id?: string
@@ -160,6 +161,7 @@ export type StorageRepositoryUpdatePayload = {
 export type StorageRepositoryRepairConfig = {
   mount_options?: string
   quota_gb?: number
+  quota_unit?: 'GB' | 'TB' | 'PB'
   quota_alert_enabled?: boolean
   quota_alert_threshold?: number
   smb_username?: string

@@ -97,6 +97,7 @@ describe('EditS3Repo save behavior', () => {
       name: 'Object storage',
       config: {
         quota_gb: 200,
+        quota_unit: 'GB',
         quota_alert_enabled: true,
         quota_alert_threshold: 80,
       },

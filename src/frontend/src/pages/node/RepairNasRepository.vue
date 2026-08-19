@@ -21,6 +21,13 @@ import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
 import type { ApiNode } from '../../types/node'
 import NasProxyTopology from './NasProxyTopology.vue'
 import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
+import {
+  REPOSITORY_QUOTA_UNITS,
+  normalizeRepositoryQuotaUnit,
+  repositoryQuotaToGb,
+  repositoryQuotaValueFromGb,
+  type RepositoryQuotaUnit,
+} from '../../lib/repositoryQuota'
 
 type NasProtocol = 'smb' | 'nfs'
 
@@ -60,6 +67,7 @@ const smbPasswordDraft = ref('')
 const smbDomain = ref('')
 
 const quotaGb = ref(0)
+const quotaUnit = ref<RepositoryQuotaUnit>('GB')
 const quotaAlertEnabled = ref(false)
 const quotaAlertThreshold = ref<number | undefined>(80)
 
@@ -147,7 +155,8 @@ async function loadRepository() {
     smbUsernameDraft.value = ''
     smbPasswordDraft.value = ''
     smbDomain.value = extractConfigString(cfg, 'smb_domain')
-    quotaGb.value = Number(cfg.quota_gb || 0) || 0
+    quotaUnit.value = normalizeRepositoryQuotaUnit(cfg.quota_unit)
+    quotaGb.value = repositoryQuotaValueFromGb(cfg.quota_gb, quotaUnit.value)
     quotaAlertEnabled.value = Boolean(cfg.quota_alert_enabled)
     if (typeof cfg.quota_alert_threshold === 'number') {
       quotaAlertThreshold.value = cfg.quota_alert_threshold
@@ -283,7 +292,8 @@ async function onSubmit() {
   try {
     const config: Record<string, unknown> = {
       mount_options: mountOptionsDraft.value.trim() || undefined,
-      quota_gb: quotaGb.value || 0,
+      quota_gb: repositoryQuotaToGb(quotaGb.value, quotaUnit.value),
+      quota_unit: quotaUnit.value,
       quota_alert_enabled: quotaAlertEnabled.value,
       quota_alert_threshold: quotaAlertEnabled.value
         ? Number(quotaAlertThreshold.value || 0)
@@ -675,17 +685,28 @@ onMounted(async () => {
                       {{ t('repairNasRepo.labelQuota') }}
                     </label>
                     <div class="add-nas-quota-control">
-                      <div class="hfl-detail-form-input hfl-detail-form-input--narrow add-nas-quota-input">
+                      <div class="hfl-detail-form-input hfl-detail-form-input--narrow add-nas-quota-input repository-quota-split-input repository-quota-split-input--edit">
                         <ElInputNumber
                           v-model="quotaGb"
                           class="hfl-detail-form-input__num"
                           :placeholder="t('repairNasRepo.phQuota')"
                           :min="0"
+                          :precision="0"
+                          :step="1"
                           controls-position="right"
                         />
-                        <div class="hfl-detail-form-input__suffix">
-                          GB
-                        </div>
+                        <ElSelect
+                          v-model="quotaUnit"
+                          class="hfl-detail-form-input__unit"
+                          :aria-label="t('repositoriesPage.quotaUnit')"
+                        >
+                          <ElOption
+                            v-for="unit in REPOSITORY_QUOTA_UNITS"
+                            :key="unit"
+                            :label="unit"
+                            :value="unit"
+                          />
+                        </ElSelect>
                       </div>
                     </div>
                   </div>
@@ -924,7 +945,7 @@ onMounted(async () => {
                     class="add-nas-preview-row__value"
                     :class="{ 'add-nas-preview-row__value--highlight': quotaGb > 0 }"
                   >
-                    {{ quotaGb > 0 ? `${quotaGb} GB` : t('addS3Repo.previewUnlimited') }}
+                    {{ quotaGb > 0 ? `${quotaGb} ${quotaUnit}` : t('addS3Repo.previewUnlimited') }}
                   </span>
                 </div>
                 <div class="add-nas-preview-row">

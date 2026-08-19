@@ -762,6 +762,126 @@ html:not([data-theme='dark']) .resource-add-fullscreen :is(.add-s3-platform-btn:
   white-space: nowrap;
 }
 
+.resource-add-fullscreen .repository-quota-number__unit {
+  flex: 0 0 82px;
+  width: 82px;
+  border-left: 1px solid var(--el-border-color);
+}
+
+.resource-add-fullscreen .repository-quota-number__unit .el-select__wrapper {
+  height: 32px;
+  min-height: 32px;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+/* Keep the capacity value and unit visually related without fusing them into
+ * one ambiguous control. This follows the split field + unit selector pattern
+ * used by storage and infrastructure consoles. */
+.repository-quota-split-input {
+  width: 248px !important;
+  max-width: 100%;
+  gap: 8px;
+  overflow: visible !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.repository-quota-split-input:focus-within {
+  border-color: transparent !important;
+}
+
+.repository-quota-split-input :is(.repository-quota-number__input, .hfl-detail-form-input__num) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.repository-quota-split-input :is(.repository-quota-number__input, .hfl-detail-form-input__num) .el-input__wrapper,
+.repository-quota-split-input :is(.repository-quota-number__unit, .hfl-detail-form-input__unit) .el-select__wrapper {
+  border: 0 !important;
+  border-radius: var(--el-border-radius-base) !important;
+  background: var(--el-fill-color-blank) !important;
+  box-shadow: 0 0 0 1px var(--el-border-color) inset, 0 1px 2px rgb(15 23 42 / 4%) !important;
+  transition: box-shadow var(--el-transition-duration-fast);
+}
+
+.repository-quota-split-input :is(.repository-quota-number__input, .hfl-detail-form-input__num):hover .el-input__wrapper,
+.repository-quota-split-input :is(.repository-quota-number__unit, .hfl-detail-form-input__unit):hover .el-select__wrapper {
+  box-shadow: 0 0 0 1px var(--el-border-color-hover) inset, 0 1px 2px rgb(15 23 42 / 4%) !important;
+}
+
+.repository-quota-split-input :is(.repository-quota-number__input, .hfl-detail-form-input__num) .el-input__wrapper.is-focus,
+.repository-quota-split-input :is(.repository-quota-number__unit, .hfl-detail-form-input__unit) .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset, 0 0 0 3px var(--el-color-primary-light-9) !important;
+}
+
+.repository-quota-split-input :is(.repository-quota-number__unit, .hfl-detail-form-input__unit) {
+  flex: 0 0 82px;
+  width: 82px;
+  border-left: 0;
+}
+
+/* Only restore the standard background on the Storage Limit value input.
+ * Keep this selector local so other fields and the unit selector are untouched. */
+.resource-add-fullscreen
+  .repository-quota-split-input
+  > .repository-quota-number__input.el-input-number
+  .el-input__wrapper,
+.resource-add-fullscreen
+  .repository-quota-split-input
+  > .hfl-detail-form-input__num.el-input-number
+  .el-input__wrapper {
+  background: var(--el-fill-color-blank) !important;
+}
+
+/* New-repository forms keep the value and unit as two independent fields,
+ * matching the rounded treatment used by the surrounding Element Plus inputs. */
+.resource-add-fullscreen .repository-quota-split-input--add {
+  width: 248px !important;
+  gap: 8px;
+  overflow: visible !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.resource-add-fullscreen .repository-quota-split-input--add:focus-within {
+  border-color: transparent !important;
+}
+
+.resource-add-fullscreen .repository-quota-split-input--add
+  :is(.repository-quota-number__input, .hfl-detail-form-input__num)
+  .el-input__wrapper,
+.resource-add-fullscreen .repository-quota-split-input--add
+  :is(.repository-quota-number__unit, .hfl-detail-form-input__unit)
+  .el-select__wrapper {
+  border: 0 !important;
+  border-radius: var(--el-border-radius-base) !important;
+  background: var(--el-fill-color-blank) !important;
+  box-shadow: 0 0 0 1px var(--el-border-color) inset, 0 1px 2px rgb(15 23 42 / 4%) !important;
+}
+
+.resource-add-fullscreen .repository-quota-split-input--add
+  :is(.repository-quota-number__unit, .hfl-detail-form-input__unit) {
+  border-left: 0;
+}
+
+/* Element Plus exposes the stepper buttons as separate right-edge controls.
+ * Restore their matching corners for the three edit/repair quota fields. */
+.resource-add-fullscreen .repository-quota-split-input--edit
+  .hfl-detail-form-input__num.el-input-number.is-controls-right
+  .el-input-number__increase {
+  border-top-right-radius: var(--el-border-radius-base) !important;
+}
+
+.resource-add-fullscreen .repository-quota-split-input--edit
+  .hfl-detail-form-input__num.el-input-number.is-controls-right
+  .el-input-number__decrease {
+  border-bottom-right-radius: var(--el-border-radius-base) !important;
+}
+
 .resource-add-fullscreen :is(.add-s3-quota-threshold-row, .add-nas-quota-threshold-row, .add-proxy-fs-quota-threshold-row) {
   display: flex;
   align-items: center;

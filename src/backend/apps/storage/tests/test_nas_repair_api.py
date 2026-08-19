@@ -168,6 +168,7 @@ class NasRepairApiTests(TestCase):
                 "name": "renamed",
                 "config": {
                     "quota_gb": 200,
+                    "quota_unit": "PB",
                     "mount_options": "rw,soft",
                 },
             },
@@ -178,12 +179,28 @@ class NasRepairApiTests(TestCase):
         repo.refresh_from_db()
         self.assertEqual(repo.name, "renamed")
         self.assertEqual(repo.config["quota_gb"], 200)
+        self.assertEqual(repo.config["quota_unit"], "PB")
         self.assertEqual(repo.config["mount_options"], "rw,soft")
         # Mount options should be replaced, not appended.
         self.assertNotIn("ro,soft", repo.config["mount_options"])
         # No binding happened.
         self.assertFalse(repo.bind_node_id)
         self.assertNotEqual(repo.bind_node_type, Repository.BindNodeType.PROXY)
+
+    def test_repair_rejects_invalid_quota_unit(self):
+        repo = self._make_unbound_nas()
+
+        response = self.client.patch(
+            f"/api/v1/storage/repositories/{repo.id}/repair/",
+            {"config": {"quota_unit": "MB"}},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("quota_unit", str(response.data))
+        repo.refresh_from_db()
+        self.assertNotIn("quota_unit", repo.config)
 
     @mock.patch(
         "apps.storage.services.internal.nas_repair.enqueue_repository_usage_refresh"
