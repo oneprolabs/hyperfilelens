@@ -22,19 +22,49 @@ python3 - <<'PY'
 import json
 import os
 import re
-import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 repo = os.environ["GITHUB_REPOSITORY"]
 pr = os.environ["PR_NUMBER"]
+token = os.environ.get("GH_TOKEN", "")
 
-raw = subprocess.run(
-    ["gh", "api", f"repos/{repo}/pulls/{pr}/commits", "--paginate"],
-    check=True,
-    capture_output=True,
-    text=True,
-).stdout
-commits = json.loads(raw)
+# Allow offline testing by injecting a local fixture.
+fixture = os.environ.get("HFL_COMMITS_FILE")
+if fixture:
+    with open(fixture, encoding="utf-8") as fh:
+        commits = json.load(fh)
+else:
+    commits = []
+    page = 1
+    while True:
+        url = (
+            f"https://api.github.com/repos/{repo}/pulls/{pr}/commits"
+            f"?per_page=100&page={page}"
+        )
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "hyperfilelens-pr-checks",
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                batch = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:400]
+            print(
+                f"::error title=Commit message language check::"
+                f"GitHub API returned HTTP {exc.code} for {url}: {detail}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        commits.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
 
 # Unicode blocks of non-Latin writing systems treated as non-English prose
 # (ranges are inclusive).

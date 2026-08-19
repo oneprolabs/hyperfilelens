@@ -174,4 +174,5 @@ jobs:
       - name: Check commit message language
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/check-commit-messages.sh
