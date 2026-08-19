@@ -7536,6 +7536,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                   v-model:nas-mode="batchNasTargetMode"
                   :model-value="batchTargetPicker.targetId"
                   :targets="targetOptionsForBatch()"
+                  :all-targets="selectableTargets"
                   :selected-target="batchSelectedTarget"
                   :repo-type-options="repoTypeOptions"
                   :target-placeholder="t('protection.backupsPage.phSearchTargets')"
