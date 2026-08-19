@@ -58,13 +58,13 @@ else:
             # Workflow commands (::error) are only parsed from stdout.
             print(
                 f"::error title=Commit message language check::"
-                f"GitHub API returned HTTP {exc.code} for {url}: {detail}",
+                f"GitHub API returned HTTP {exc.code} for {esc(url)}: {esc(detail)}",
             )
             sys.exit(1)
         except urllib.error.URLError as exc:
             print(
                 f"::error title=Commit message language check::"
-                f"Failed to reach GitHub API for {url}: {exc.reason}",
+                f"Failed to reach GitHub API for {esc(url)}: {esc(str(exc.reason))}",
             )
             sys.exit(1)
         commits.extend(batch)
@@ -107,6 +107,18 @@ def clean(line):
     return line
 
 
+def esc(value):
+    # Escape workflow-command special characters so annotations remain
+    # parseable when the message contains ':', '%' or line breaks.
+    # Order matters: '%' first, otherwise we re-escape the injected %0A/%25.
+    return (
+        value.replace("%", "%25")
+        .replace("\r", "%0D")
+        .replace("\n", "%0A")
+        .replace(":", "%3A")
+    )
+
+
 def contains_non_latin(text):
     for ch in text:
         cp = ord(ch)
@@ -132,7 +144,7 @@ if violations:
         snippet = line[:160]
         print(
             f"::error title=Commit message language check::"
-            f"Commit {sha}: non-English text: {snippet}"
+            f"Commit {sha}: non-English text: {esc(snippet)}"
         )
     if step_summary:
         with open(step_summary, "a", encoding="utf-8") as fh:
