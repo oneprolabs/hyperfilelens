@@ -400,7 +400,7 @@ for pkg in docker-ce docker-compose-plugin containerd.io; do
 done
 
 cd /out
-apt-ftparchive packages . | gzip -9c > Packages.gz
+apt-ftparchive packages . | gzip -9cn > Packages.gz
 echo "  wrote ${count} deb(s) + Packages.gz"
 INNER
 

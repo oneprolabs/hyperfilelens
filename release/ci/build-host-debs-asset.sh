@@ -25,7 +25,9 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 gateway_dir="${tmp}/payload/media/gateway-bootstrap"
 mkdir -p "${gateway_dir}"
-tar -C "${source_dir}" -czf \
-	"${gateway_dir}/docker-debs-ubuntu${release_id}-amd64.tar.gz" .
+# Deterministic packaging: fixed entry order and zeroed mtimes so identical
+# dependency sets produce byte-identical bundles (digest reuse across versions).
+tar -C "${source_dir}" --sort=name --mtime='@0' -c . \
+	| gzip -n > "${gateway_dir}/docker-debs-ubuntu${release_id}-amd64.tar.gz"
 mkdir -p "$(dirname "${output}")"
-tar -C "${tmp}" -cf "${output}" payload
+tar -C "${tmp}" --sort=name --mtime='@0' -cf "${output}" payload

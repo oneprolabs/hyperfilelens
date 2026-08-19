@@ -112,16 +112,20 @@ func runStreaming(
 		cmd.Env = append(os.Environ(), mapToEnv(extraEnv)...)
 	}
 
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return Result{}, err
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return Result{}, err
-	}
+	// Route subprocess output through io.Pipe write ends owned by os/exec.
+	// Wait returns only after the child's output has been fully copied into
+	// these pipes, so the readers below can never miss data. Reading via
+	// StdoutPipe/StderrPipe instead lets Wait close the read ends as soon as
+	// the child exits, which drops buffered output when the capture goroutines
+	// have not been scheduled yet (flaky empty streamed lines on loaded CI).
+	stdoutReader, stdoutWriter := io.Pipe()
+	stderrReader, stderrWriter := io.Pipe()
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 
 	if err := cmd.Start(); err != nil {
+		_ = stdoutWriter.Close()
+		_ = stderrWriter.Close()
 		return Result{}, err
 	}
 
@@ -138,18 +142,24 @@ func runStreaming(
 	}
 
 	wg.Add(2)
-	go capture(stdoutPipe, false, stdoutBuf)
-	go capture(stderrPipe, true, stderrBuf)
+	go capture(stdoutReader, false, stdoutBuf)
+	go capture(stderrReader, true, stderrBuf)
 
 	stopKill, err := startContextProcessGroupKill(ctx, cmd)
 	if err != nil {
 		killProcessGroup(cmd.Process)
 		_ = cmd.Wait()
+		_ = stdoutWriter.Close()
+		_ = stderrWriter.Close()
 		wg.Wait()
 		return Result{}, err
 	}
 	runErr := cmd.Wait()
 	stopKill()
+	// Wait has copied all child output into the pipes; closing the write ends
+	// lets the readers drain the remainder and hit EOF.
+	_ = stdoutWriter.Close()
+	_ = stderrWriter.Close()
 	wg.Wait()
 
 	res := Result{
