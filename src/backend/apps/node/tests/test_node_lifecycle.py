@@ -500,7 +500,7 @@ class NodeLifecycleTests(TestCase):
         """Lifecycle is always cleared on SUCCESS — version was already verified
         by _advance_upgrade_verify before marking the task SUCCESS. A redundant
         post-SUCCESS version check risks false negatives (#639)."""
-        task = NodeTask.objects.create(
+        NodeTask.objects.create(
             organization=self.org,
             node=self.node,
             kind="agent.upgrade",
