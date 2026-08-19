@@ -281,6 +281,47 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
     @action(
         detail=True,
         methods=["get"],
+        url_path="audit-logs",
+        permission_classes=[node_permissions.IsOrgStaffReader],
+    )
+    def audit_logs(self, request, pk=None):
+        """Return recent lifecycle audit logs for this node."""
+        node = self.get_object()
+        from apps.audit.models.audit_log import AuditLog
+
+        logs = (
+            AuditLog.objects.filter(
+                organization=self.org,
+                target_type="node",
+                target_id=str(node.id),
+                action__startswith="node.lifecycle.",
+            )
+            .order_by("-created_at")[:20]
+        )
+
+        return Response(
+            {
+                "node_id": node.id,
+                "results": [
+                    {
+                        "id": log.id,
+                        "action": log.action,
+                        "user_display": log.user_name or (log.user.email if log.user else None) or "—",
+                        "result": log.result,
+                        "created_at": log.created_at.isoformat() if log.created_at else None,
+                        "ip_address": log.ip_address,
+                        "error_message": log.error_message,
+                        "correlation_id": log.correlation_id,
+                        "metadata": log.metadata,
+                    }
+                    for log in logs
+                ],
+            }
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
         permission_classes=[node_permissions.IsOrgStaffReader],
     )
     def bindings(self, request, pk=None):

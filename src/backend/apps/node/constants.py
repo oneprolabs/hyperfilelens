@@ -37,6 +37,9 @@ TASK_RECONCILE_OFFLINE_STALE_NODE_TASKS = (
 TASK_RECONCILE_EXECUTION_STATE = (
     "apps.node.tasks.offline_reconcile.reconcile_execution_state_task"
 )
+TASK_NOTIFY_AGENT_UPGRADES_AVAILABLE = (
+    "apps.node.tasks.upgrade_notification.notify_agent_upgrades_available"
+)
 
 __all__ = [
     "NodeRole",
@@ -45,6 +48,7 @@ __all__ = [
     "TASK_ADVANCE_ACTIVE_LIFECYCLE_NODES",
     "TASK_ADVANCE_NODE_LIFECYCLE",
     "TASK_INGEST_NODE_UPLINK_STREAMS",
+    "TASK_NOTIFY_AGENT_UPGRADES_AVAILABLE",
     "TASK_RECONCILE_EXECUTION_STATE",
     "TASK_RECONCILE_OFFLINE_STALE_NODE_TASKS",
     "TASK_RECONCILE_NODE_AVAILABILITY",

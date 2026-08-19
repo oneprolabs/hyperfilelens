@@ -10,6 +10,8 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from apps.audit.constants import AuditResult
+from apps.audit.services.interface import write_audit_log
 from apps.iam.models import Organization
 from apps.node import conf as node_conf
 from apps.node.exceptions import AgentUpgradeError, NodeLifecycleError
@@ -441,6 +443,24 @@ def _advance_upgrade_verify(*, node: Node, task: NodeTask) -> bool:
         task.id,
         int(stable_for.total_seconds()),
     )
+    write_audit_log(
+        organization=node.organization,
+        action="node.lifecycle.upgrade.complete",
+        target_type="node",
+        target_id=str(node.id),
+        resource_type="node",
+        resource_id=str(node.id),
+        resource_name=node.name,
+        result=AuditResult.SUCCESS,
+        metadata={
+            "kind": LIFECYCLE_KIND_UPGRADE,
+            "role": node.role,
+            "task_id": str(task.id),
+            "target_version": _target_version_from_task(task),
+            "current_version": _node_installed_version(node),
+            "stable_seconds": int(stable_for.total_seconds()),
+        },
+    )
     return True
 
 
@@ -485,7 +505,136 @@ def _fail_stale_upgrade_task(*, node: Node, task: NodeTask) -> bool:
         node.id,
         task.id,
     )
+    write_audit_log(
+        organization=node.organization,
+        action="node.lifecycle.upgrade.failed",
+        target_type="node",
+        target_id=str(node.id),
+        resource_type="node",
+        resource_id=str(node.id),
+        resource_name=node.name,
+        result=AuditResult.FAILURE,
+        error_message="Upgrade timed out waiting for agent to reconnect.",
+        metadata={
+            "kind": LIFECYCLE_KIND_UPGRADE,
+            "role": node.role,
+            "task_id": str(task.id),
+            "target_version": target_version,
+            "current_version": _node_installed_version(node),
+        },
+    )
     return True
+
+
+def _build_upgrade_timeline(*, node: Node, task: NodeTask) -> list[dict[str, Any]]:
+    """Build a timeline of upgrade phases with timestamps."""
+
+    def _ts(dt) -> str | None:
+        if dt is None:
+            return None
+        return dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
+
+    def _phase_status(at) -> str:
+        if at is None:
+            return "pending"
+        return "completed"
+
+    is_failed = task.status in {
+        NodeTask.Status.FAILED,
+        NodeTask.Status.TIMEOUT,
+        NodeTask.Status.CANCELED,
+    }
+    is_success = task.status == NodeTask.Status.SUCCESS
+    is_active = task.status in _ACTIVE_TASK_STATUSES
+
+    verify_started_at = None
+    result = task.result if isinstance(task.result, dict) else {}
+    if result.get("verify_started_at"):
+        from django.utils.dateparse import parse_datetime
+
+        parsed = parse_datetime(str(result["verify_started_at"]))
+        if parsed is not None:
+            verify_started_at = parsed
+    detached = _detached_at_from_task(task)
+
+    # Determine the active phase for in-progress tasks
+    active_phase = None
+    if is_active:
+        if is_failed:
+            active_phase = None
+        elif verify_started_at is not None:
+            active_phase = "verifying"
+        elif detached is not None:
+            active_phase = "restarting"
+        elif task.dispatched_at is not None:
+            active_phase = "upgrading"
+        else:
+            active_phase = "dispatching"
+
+    phases = [
+        {
+            "phase": "dispatching",
+            "label": "Dispatching",
+            "at": _ts(task.created_at) if task.created_at else None,
+            "status": (
+                "active"
+                if active_phase == "dispatching"
+                else ("completed" if task.created_at else "pending")
+            ),
+        },
+        {
+            "phase": "upgrading",
+            "label": "Upgrading",
+            "at": _ts(task.dispatched_at) if task.dispatched_at else None,
+            "status": (
+                "active"
+                if active_phase == "upgrading"
+                else (
+                    "completed"
+                    if task.dispatched_at or active_phase in ("restarting", "verifying")
+                    or is_success
+                    else "pending"
+                )
+            ),
+        },
+        {
+            "phase": "restarting",
+            "label": "Restarting",
+            "at": _ts(detached) if detached else None,
+            "status": (
+                "active"
+                if active_phase == "restarting"
+                else (
+                    "completed"
+                    if detached and (active_phase == "verifying" or is_success)
+                    else "pending"
+                )
+            ),
+        },
+        {
+            "phase": "verifying",
+            "label": "Verifying",
+            "at": _ts(verify_started_at) if verify_started_at else None,
+            "status": (
+                "active"
+                if active_phase == "verifying"
+                else ("completed" if is_success else "pending")
+            ),
+        },
+        {
+            "phase": "success" if not is_failed else "failed",
+            "label": "Success" if not is_failed else "Failed",
+            "at": _ts(task.updated_at) if (is_success or is_failed) else None,
+            "status": (
+                "completed"
+                if is_success
+                else ("failed" if is_failed else "pending")
+            ),
+            "error": task.last_error if is_failed else None,
+        },
+    ]
+
+    return phases
 
 
 def _upgrade_lifecycle_payload(
@@ -504,11 +653,15 @@ def _upgrade_lifecycle_payload(
         except Exception:
             target_version = ""
 
+    current_version = _node_installed_version(node)
+
     base: dict[str, Any] = {
         "kind": LIFECYCLE_KIND_UPGRADE,
         "task_id": str(task.id),
         "target_version": target_version,
+        "current_version": current_version,
         "started_at": task.created_at.isoformat() if task.created_at else None,
+        "timeline": _build_upgrade_timeline(node=node, task=task),
     }
 
     if task.status in _ACTIVE_TASK_STATUSES:

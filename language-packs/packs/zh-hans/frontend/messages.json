@@ -3814,6 +3814,26 @@
       "service": "控制 hyperfilelens-agent 和 LensNode 容器"
     }
   },
+  "nodeUpgradeProgress": {
+    "title": "升级进度",
+    "completed": "已完成",
+    "inProgress": "进行中",
+    "pending": "等待中",
+    "failed": "已失败",
+    "noActiveUpgrade": "无进行中的升级"
+  },
+  "nodeAuditLogSummary": {
+    "title": "操作记录",
+    "loading": "加载中...",
+    "loadFailed": "加载审计日志失败",
+    "empty": "无审计日志",
+    "success": "成功",
+    "failed": "失败",
+    "actionUpgrade": "升级",
+    "actionUpgradeComplete": "升级完成",
+    "actionUpgradeFailed": "升级失败",
+    "viewFullLogs": "查看完整审计日志"
+  },
   "repositoriesPage": {
     "tabS3": "对象存储",
     "tabNas": "目标NAS",

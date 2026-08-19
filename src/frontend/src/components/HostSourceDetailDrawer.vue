@@ -4,6 +4,8 @@ import { useI18n } from 'vue-i18n'
 import NodeBasicInfoPanel from './NodeBasicInfoPanel.vue'
 import NodePerfSettingsPanel from './NodePerfSettingsPanel.vue'
 import NodeMaintenancePanel from './NodeMaintenancePanel.vue'
+import NodeUpgradeProgress from './node-lifecycle/NodeUpgradeProgress.vue'
+import NodeAuditLogSummary from './node-lifecycle/NodeAuditLogSummary.vue'
 import HflDetailDrawerFooter from './HflDetailDrawerFooter.vue'
 import { getNode } from '../lib/nodeApi'
 import type { SourceResource } from '../lib/sourceApi'
@@ -43,10 +45,15 @@ const node = ref<ApiNode | null>(null)
 const busy = ref(false)
 const saving = ref(false)
 const savedInSession = ref(false)
-const drawerTab = ref<'basic' | 'performance' | 'maintenance'>('basic')
+const drawerTab = ref<'basic' | 'performance' | 'maintenance' | 'upgrade'>('basic')
 const basicPanelRef = ref<InstanceType<typeof NodeBasicInfoPanel> | null>(null)
 const perfPanelRef = ref<InstanceType<typeof NodePerfSettingsPanel> | null>(null)
 const { drawerSize, updateDrawerWidth, bindDrawerResize, unbindDrawerResize } = useResponsiveDrawerWidth()
+
+const hasUpgradeLifecycle = computed(() => {
+  const lc = node.value?.lifecycle
+  return lc != null && lc.kind === 'upgrade' && lc.timeline != null && lc.timeline.length > 0
+})
 
 const perfTabActive = computed(() => open.value && drawerTab.value === 'performance')
 
@@ -229,6 +236,21 @@ onUnmounted(() => {
           </ElTabPane>
 
           <ElTabPane
+            v-if="hasUpgradeLifecycle"
+            :label="t('nodeUpgradeProgress.title')"
+            name="upgrade"
+            lazy
+          >
+            <div class="node-upgrade-tab">
+              <NodeUpgradeProgress :lifecycle="node?.lifecycle ?? null" />
+              <NodeAuditLogSummary
+                v-if="nodeId != null"
+                :node-id="nodeId"
+              />
+            </div>
+          </ElTabPane>
+
+          <ElTabPane
             :label="t('nodeLifecycle.maintenance')"
             name="maintenance"
             lazy
@@ -262,3 +284,11 @@ onUnmounted(() => {
     </template>
   </ElDrawer>
 </template>
+
+<style scoped>
+.node-upgrade-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+</style>

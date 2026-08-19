@@ -62,7 +62,7 @@ import { buildNasSourceCreatePayload } from '../../lib/nasSourceCreate'
 import { defaultNasMountOptions } from '../../lib/nasMountOptions'
 import { preflightSourceNasCreate, showNasDraftPreflightGuidance } from '../../lib/nasDraftPreflight'
 import { listNodes, listNodesPaged, updateNode, fetchLatestAgentVersion, type EnrollmentOs } from '../../lib/nodeApi'
-import { canRemoteAgentUpgrade } from '../../lib/agentVersion'
+import { canRemoteAgentUpgrade, needsAgentUpgrade } from '../../lib/agentVersion'
 import { backupSourceLifecycleDisplay } from '../../lib/backupSourceLifecycleDisplay'
 import type { ApiNode } from '../../types/node'
 import {
@@ -742,6 +742,19 @@ function agentVersion(node: ApiNode) {
 
 function agentCanUpgrade(node: ApiNode) {
   return canRemoteAgentUpgrade(agentInstalledVersion(node), latestAgentVersion.value)
+}
+
+function agentNeedsUpgrade(node: ApiNode): boolean {
+  return needsAgentUpgrade(agentInstalledVersion(node), latestAgentVersion.value)
+}
+
+function agentUpgradeTargetVersion(node: ApiNode) {
+  return agentNeedsUpgrade(node) ? latestAgentVersion.value ?? '—' : '—'
+}
+
+function agentIsUpgrading(node: ApiNode): boolean {
+  const lc = node.lifecycle
+  return lc?.kind === 'upgrade' && ['upgrading', 'restarting', 'verifying', 'queued'].includes(lc.state)
 }
 
 function agentOnlineLabel(node: ApiNode) {
@@ -2376,11 +2389,29 @@ onUnmounted(() => {
               min-width="115"
             >
               <template #default="{ row }">
-                <NodeVersionCell
-                  :node="row"
-                  :version-label="agentVersion(row)"
-                  :resolve-version-display="lifecycleOps.resolveVersionDisplay"
-                />
+                <div
+                  class="source-version-cell"
+                  :class="{ 'source-version-cell--stacked': agentNeedsUpgrade(row) && latestAgentVersion }"
+                >
+                  <NodeVersionCell
+                    :node="row"
+                    :version-label="agentVersion(row)"
+                    :resolve-version-display="lifecycleOps.resolveVersionDisplay"
+                  />
+                  <ElTooltip
+                    v-if="agentNeedsUpgrade(row) && latestAgentVersion && !agentIsUpgrading(row)"
+                    :content="t('nodesPage.latestVersionTip', { version: agentUpgradeTargetVersion(row) })"
+                    placement="top"
+                  >
+                    <span class="source-version-cell__hint">
+                      <TriangleAlert
+                        :size="14"
+                        stroke-width="2.1"
+                      />
+                      <span>{{ t('nodesPage.versionUpgradeAvailable') }}</span>
+                    </span>
+                  </ElTooltip>
+                </div>
               </template>
             </el-table-column>
             <el-table-column
@@ -3758,5 +3789,24 @@ onUnmounted(() => {
 
 .source-fullscreen--form-shell .add-nas-form {
   max-width: none;
+}
+
+.source-version-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.source-version-cell--stacked {
+  gap: 4px;
+}
+
+.source-version-cell__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: rgb(180 83 9);
+  cursor: default;
 }
 </style>

@@ -26,13 +26,23 @@ export type NodeLifecyclePhase =
   | 'failed'
   | string
 
+export type UpgradeTimelinePhase = {
+  phase: string
+  label: string
+  at: string | null
+  status: 'completed' | 'active' | 'pending' | 'failed'
+  error?: string | null
+}
+
 export type NodeLifecycleInfo = {
   kind: NodeLifecycleKind
   state: NodeLifecycleState
   phase?: NodeLifecyclePhase | null
   task_id?: string | null
   target_version?: string | null
+  current_version?: string | null
   started_at?: string | null
+  timeline?: UpgradeTimelinePhase[] | null
   error?: string | null
 }
 
