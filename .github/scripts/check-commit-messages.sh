@@ -51,14 +51,20 @@ else:
             headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 batch = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:400]
+            # Workflow commands (::error) are only parsed from stdout.
             print(
                 f"::error title=Commit message language check::"
                 f"GitHub API returned HTTP {exc.code} for {url}: {detail}",
-                file=sys.stderr,
+            )
+            sys.exit(1)
+        except urllib.error.URLError as exc:
+            print(
+                f"::error title=Commit message language check::"
+                f"Failed to reach GitHub API for {url}: {exc.reason}",
             )
             sys.exit(1)
         commits.extend(batch)
