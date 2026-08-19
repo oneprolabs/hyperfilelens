@@ -1807,17 +1807,6 @@ function snapshotDirectoryIcon(dir: BackupSourceSnapshotDirectory) {
   return snapshotDirectoryKind(dir) === 'file' ? File : Folder
 }
 
-function saveBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename || 'snapshot-download'
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(url)
-}
-
 function snapshotFileFallbackName(dir: BackupSourceSnapshotDirectory) {
   return dir.display_name || dir.source_path.split(/[\\/]/).filter(Boolean).pop() || 'snapshot-file'
 }
