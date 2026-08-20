@@ -1,5 +1,6 @@
 from unittest import mock
 
+from botocore.exceptions import ClientError
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
@@ -211,6 +212,43 @@ class RepositoryCreateTaskTests(TestCase):
         self.assertNotIn("secret-token-value", result["error"])
         repository_task.task.refresh_from_db()
         self.assertNotIn("secret-token-value", repository_task.task.error_message)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
+    def test_run_create_task_persists_bucket_name_provider_failure(self, initialize):
+        provider_error = ClientError(
+            {
+                "Error": {
+                    "Code": "BucketAlreadyExists",
+                    "Message": "unsafe provider detail",
+                }
+            },
+            "CreateBucket",
+        )
+        try:
+            raise S3ClientError("unsafe wrapper text") from provider_error
+        except S3ClientError as upstream:
+            initialize.side_effect = RepositoryInitializationError(
+                "unsafe initialization detail"
+            )
+            initialize.side_effect.__cause__ = upstream
+        repository = self._s3_repository()
+        repository_task = self._enqueue_create(repository)
+
+        result = run_repository_create_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(
+            result["error_code"],
+            "STORAGE.S3_BUCKET_NAME_UNAVAILABLE",
+        )
+        self.assertNotIn("unsafe", result["error"])
+        repository_task.task.refresh_from_db()
+        self.assertEqual(
+            repository_task.task.error_code,
+            "STORAGE.S3_BUCKET_NAME_UNAVAILABLE",
+        )
+        self.assertNotIn("unsafe", repository_task.task.error_message)
 
     @mock.patch(
         "apps.storage.services.internal.repository_create.check_s3_repository",

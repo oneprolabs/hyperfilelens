@@ -187,6 +187,52 @@ class StorageRepositoryApiTests(TestCase):
             {item["field"] for item in response.data["data"]["errors"]},
         )
 
+    def test_new_managed_bucket_rejects_invalid_name_with_stable_field_error(self):
+        payload = self._s3_payload()
+        payload["s3_bucket_mode"] = "new"
+        payload["s3_bucket"] = "Invalid_Bucket"
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        problem = response.data["data"]
+        self.assertEqual(problem["code"], "STORAGE.S3_BUCKET_NAME_INVALID")
+        self.assertEqual(problem["errors"][0]["field"], "s3_bucket")
+
+    def test_empty_new_bucket_keeps_the_required_field_error(self):
+        payload = self._s3_payload()
+        payload["s3_bucket_mode"] = "new"
+        payload["s3_bucket"] = ""
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        problem = response.data["data"]
+        self.assertEqual(problem["code"], "VALIDATION.FAILED")
+        self.assertIn(
+            "s3_bucket",
+            {item["field"] for item in problem["errors"]},
+        )
+
+    def test_existing_bucket_does_not_apply_new_bucket_name_rules(self):
+        payload = self._s3_payload()
+        payload["s3_bucket_mode"] = "existing"
+        payload["s3_bucket"] = "Legacy_Bucket"
+
+        response = self._post_repository(payload)
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.data)
+
     def test_create_s3_repository_allows_bucket_root(self):
         payload = self._s3_payload()
         payload["config"]["prefix"] = "   "

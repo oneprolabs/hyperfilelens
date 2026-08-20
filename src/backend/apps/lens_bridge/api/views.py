@@ -154,23 +154,27 @@ class LensCopilotSnapshotBrowseTaskView(OrgScopedMixin, APIView):
             or not str(task.correlation_id or "").startswith(f"user:{request.user.id}:")
         ):
             raise NotFound("Insight snapshot operation was not found.")
+        terminal_failure = task.status in {
+            NodeTask.Status.FAILED,
+            NodeTask.Status.TIMEOUT,
+            NodeTask.Status.CANCELED,
+        }
+        failure = (
+            snapshot_scope_tasks.snapshot_task_failure(
+                task,
+                default="Unable to browse the selected snapshot. Try again.",
+            )
+            if terminal_failure
+            else None
+        )
         payload = {
             "task_id": str(task.id),
             "status": str(task.status),
-            "error": (
-                snapshot_scope_tasks.snapshot_task_error(
-                    task,
-                    default="Unable to browse the selected snapshot. Try again.",
-                )
-                if task.status
-                in {
-                    NodeTask.Status.FAILED,
-                    NodeTask.Status.TIMEOUT,
-                    NodeTask.Status.CANCELED,
-                }
-                else ""
-            ),
+            "error": failure.message if failure else "",
         }
+        if failure:
+            payload["error_code"] = failure.code
+            payload["retryable"] = failure.retryable
         if task.status == NodeTask.Status.SUCCESS:
             payload["entries"] = snapshot_scope_tasks.normalized_browse_entries(task)
             result = task.result if isinstance(task.result, dict) else {}

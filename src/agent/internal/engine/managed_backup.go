@@ -1737,7 +1737,7 @@ func (e *Engine) runManagedInsightSnapshotBrowse(
 	if err != nil {
 		return "failed", nil, err.Error()
 	}
-	configFile, env, _, _, prepErr := e.prepareManagedRepository(
+	configFile, env, prepareResult, _, prepErr := e.prepareManagedRepository(
 		ctx,
 		rep,
 		taskID,
@@ -1745,6 +1745,11 @@ func (e *Engine) runManagedInsightSnapshotBrowse(
 		repositoryPrepareConnect,
 	)
 	if prepErr != "" {
+		if prepareResult != nil {
+			return "failed", map[string]any{
+				"error_code": insightRepositoryUnavailableErrorCode,
+			}, "snapshot repository is unavailable"
+		}
 		return "failed", nil, prepErr
 	}
 	basePath := strings.Trim(strings.TrimSpace(p.Path), "/\\")
@@ -1802,6 +1807,10 @@ func (e *Engine) runManagedInsightSnapshotBrowse(
 				result["error_code"] = insightUnsupportedContentErrorCode
 				return "failed", result, "selected snapshot path type is not supported"
 			}
+			if inspectErr == nil && !selection.found {
+				result["error_code"] = insightSnapshotPathNotFoundErrorCode
+				return "failed", result, "selected snapshot path was not found"
+			}
 		}
 		return "failed", result, snapshotBrowseFailureMessage(res, runErr)
 	}
@@ -1825,7 +1834,7 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 	if err != nil {
 		return "failed", nil, err.Error()
 	}
-	configFile, env, _, _, prepErr := e.prepareManagedRepository(
+	configFile, env, prepareResult, _, prepErr := e.prepareManagedRepository(
 		ctx,
 		rep,
 		taskID,
@@ -1833,6 +1842,11 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 		repositoryPrepareConnect,
 	)
 	if prepErr != "" {
+		if prepareResult != nil {
+			return "failed", map[string]any{
+				"error_code": insightRepositoryUnavailableErrorCode,
+			}, "snapshot repository is unavailable"
+		}
 		return "failed", nil, prepErr
 	}
 	cleanPath := strings.Trim(strings.TrimSpace(p.Path), "/\\")
@@ -1866,6 +1880,7 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 			return "failed", result, "selected snapshot path type is not supported"
 		}
 		if !selection.found {
+			result["error_code"] = insightSnapshotPathNotFoundErrorCode
 			return "failed", result, "selected snapshot path was not found"
 		}
 		pathType = selection.pathType

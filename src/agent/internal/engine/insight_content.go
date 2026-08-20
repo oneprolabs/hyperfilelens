@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	insightRegularFilesOnlyPolicy      = "regular_files_only_v1"
-	insightUnsupportedContentErrorCode = "INSIGHT_UNSUPPORTED_CONTENT_TYPE"
+	insightRegularFilesOnlyPolicy         = "regular_files_only_v1"
+	insightUnsupportedContentErrorCode    = "INSIGHT_UNSUPPORTED_CONTENT_TYPE"
+	insightRepositoryUnavailableErrorCode = "INSIGHT_REPOSITORY_UNAVAILABLE"
+	insightSnapshotPathNotFoundErrorCode  = "INSIGHT_SNAPSHOT_PATH_NOT_FOUND"
 )
 
 // enforceInsightRestoreContent removes filesystem objects that SourceLens

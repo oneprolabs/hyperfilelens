@@ -197,6 +197,36 @@ describe('AddS3Repo Region and Bucket state', () => {
     expect(bucketInput.props('modelValue')).toBe('new-bucket')
   })
 
+  it('blocks an invalid managed New Bucket name with inline guidance', async () => {
+    const wrapper = await mountForm()
+    const connectionInputs = wrapper
+      .findAllComponents(ElInput)
+      .filter((component) => component.classes().includes('add-s3-element-field'))
+    connectionInputs[2].vm.$emit('update:modelValue', 'access-key')
+    connectionInputs[3].vm.$emit('update:modelValue', 'secret-key')
+    const mode = wrapper
+      .findAllComponents(ElRadioGroup)
+      .find((component) => component.classes().includes('add-s3-bucket-segment'))
+    if (!mode) throw new Error('Bucket mode selector was not rendered')
+    mode.vm.$emit('update:modelValue', 'new')
+    await nextTick()
+
+    const bucketField = wrapper.find('[data-validation-field="bucket"]')
+    const bucketInput = bucketField.findComponent(ElInput)
+    bucketInput.vm.$emit('update:modelValue', 'Invalid_Bucket')
+    await nextTick()
+
+    const createButton = wrapper
+      .findAllComponents(ElButton)
+      .find((button) => button.text().includes('Create and Initialize'))
+    if (!createButton) throw new Error('Create button was not rendered')
+    await createButton.trigger('click')
+    await nextTick()
+
+    expect(bucketField.find('.el-form-item__error').text()).toContain('lowercase')
+    expect(mocks.api).not.toHaveBeenCalled()
+  })
+
   it('allows an Existing Bucket to use the Bucket root with an empty Prefix', async () => {
     mocks.api.mockImplementation((path: string) => {
       if (path.endsWith('/validate/s3/')) return Promise.resolve({ buckets: ['empty-bucket'] })

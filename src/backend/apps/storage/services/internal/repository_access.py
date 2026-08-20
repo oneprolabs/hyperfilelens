@@ -21,6 +21,11 @@ EXPLICIT_REPOSITORY_SERVER_HOST_KEYS = (
     "advertise_host",
 )
 
+
+class RepositoryReaderUnavailableError(ValidationError):
+    """The repository's required bound Proxy cannot currently execute reads."""
+
+
 @dataclass(frozen=True)
 class RepositoryExecutionTarget:
     node: Node
@@ -249,7 +254,9 @@ def _bound_proxy(
 ) -> Node:
     resolved_node_id = node_id or repository.bind_node_id
     if repository.bind_node_type != Repository.BindNodeType.PROXY or not resolved_node_id:
-        raise ValidationError({"repository_id": f"{message_prefix} is not bound to a proxy node."})
+        raise RepositoryReaderUnavailableError(
+            {"repository_id": f"{message_prefix} is not bound to a proxy node."}
+        )
     node = Node.objects.filter(
         id=resolved_node_id,
         organization_id=repository.organization_id,
@@ -257,15 +264,20 @@ def _bound_proxy(
         is_deleted=False,
     ).first()
     if node is None:
-        raise ValidationError({"repository_id": f"{message_prefix} bound proxy node not found."})
+        raise RepositoryReaderUnavailableError(
+            {"repository_id": f"{message_prefix} bound proxy node not found."}
+        )
     if node.availability != Node.Availability.ONLINE:
-        raise ValidationError({"repository_id": f'{message_prefix} bound proxy node "{node.name}" is offline.'})
+        raise RepositoryReaderUnavailableError(
+            {"repository_id": f'{message_prefix} bound proxy node "{node.name}" is offline.'}
+        )
     return node
 
 
 __all__ = [
     "RepositoryAccess",
     "RepositoryExecutionTarget",
+    "RepositoryReaderUnavailableError",
     "normalize_repository_server_host",
     "repository_payload_for_node",
     "repository_uses_bound_proxy",

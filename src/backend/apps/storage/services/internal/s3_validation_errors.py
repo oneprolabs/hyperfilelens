@@ -45,11 +45,15 @@ _PERMISSION_CODES = {
     "Unauthorized",
 }
 _BUCKET_MISSING_CODES = {"NoSuchBucket", "NotFound", "XNoSuchBucket"}
+_BUCKET_NAME_INVALID_CODES = {"InvalidBucketName", "InvalidBucketNameException"}
+_BUCKET_NAME_UNAVAILABLE_CODES = {
+    "BucketAlreadyExists",
+    "BucketAlreadyOwnedByYou",
+}
 _CONFIGURATION_CODES = {
     "AuthorizationHeaderMalformed",
     "IncompleteBody",
     "InvalidArgument",
-    "InvalidBucketName",
     "InvalidEndpoint",
     "InvalidLocationConstraint",
     "InvalidRegion",
@@ -101,6 +105,16 @@ def classify_s3_validation_error(
         return S3ValidationFailure(
             "STORAGE.S3_BUCKET_NOT_FOUND",
             "The bucket was not found. Check the bucket name, endpoint, and Region, then try again.",
+        )
+    if error_code in _BUCKET_NAME_INVALID_CODES:
+        return S3ValidationFailure(
+            "STORAGE.S3_BUCKET_NAME_INVALID",
+            "The bucket name is not valid for this object storage provider. Check the naming rules and try again.",
+        )
+    if error_code in _BUCKET_NAME_UNAVAILABLE_CODES:
+        return S3ValidationFailure(
+            "STORAGE.S3_BUCKET_NAME_UNAVAILABLE",
+            "The bucket name is already in use. If the bucket belongs to this account, select Existing Bucket; otherwise choose another name.",
         )
     if error_code in _PERMISSION_CODES:
         if operation == "bucket_access":

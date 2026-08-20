@@ -1,6 +1,7 @@
 import { getEffectiveOrgKey } from '../composables/useAuth'
 import { api, isAbortError } from './api'
 import type { DocumentConversion, SessionDataContext } from './conversionSummary'
+import type { AppErrorShape } from './errors'
 import type { BackupSnapshotBrowserEntry } from './protectionBackupConfigApi'
 import { asList, unwrapApiPayload } from './parse'
 
@@ -976,6 +977,8 @@ export type LensSnapshotBrowseTask = {
   task_id: string
   status: 'pending' | 'running' | 'success' | 'failed' | 'timeout' | 'canceled' | string
   error?: string
+  error_code?: string
+  retryable?: boolean
   entries?: BackupSnapshotBrowserEntry[]
   has_more?: boolean
   skipped_special_count?: number
@@ -1036,7 +1039,13 @@ export async function browseCopilotSnapshotDirectory(
   let polls = 0
   while (task.status === 'pending' || task.status === 'running') {
     if (polls >= COPILOT_SNAPSHOT_BROWSE_MAX_POLLS) {
-      throw new Error('Snapshot browsing timed out. Try again.')
+      throw <AppErrorShape>{
+        status: 504,
+        message: 'Snapshot browsing timed out. Check the Reader and try again.',
+        code: 'INSIGHT.SNAPSHOT_BROWSE_TIMEOUT',
+        errorCode: 'INSIGHT.SNAPSHOT_BROWSE_TIMEOUT',
+        retryable: true,
+      }
     }
     polls += 1
     await new Promise<void>((resolve, reject) => {
@@ -1057,7 +1066,15 @@ export async function browseCopilotSnapshotDirectory(
     task = await fetchCopilotSnapshotBrowse(task.task_id, signal)
   }
   if (task.status !== 'success') {
-    throw new Error(task.error || 'Unable to browse the selected snapshot.')
+    const errorCode = task.error_code || 'INSIGHT.SNAPSHOT_BROWSE_FAILED'
+    throw <AppErrorShape>{
+      status: task.retryable ? 503 : 409,
+      message: task.error || 'Unable to browse the selected snapshot. Try again.',
+      code: errorCode,
+      errorCode,
+      retryable: Boolean(task.retryable),
+      detail: { task_id: task.task_id, status: task.status },
+    }
   }
   return {
     entries: (task.entries || []).slice(0, params?.limit || 500),
