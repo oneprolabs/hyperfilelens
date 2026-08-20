@@ -291,12 +291,6 @@ func (c *Connector) connectOnce(
 		slog.Info("websocket reconnected", "node_id", nodeID)
 	}
 
-	if onConnected != nil {
-		if hookErr := onConnected(sessionCtx); hookErr != nil {
-			slog.Warn("websocket onConnected hook failed", "err", hookErr)
-		}
-	}
-
 	done := make(chan struct{})
 	sessionErr := make(chan error, 1)
 
@@ -326,6 +320,15 @@ func (c *Connector) connectOnce(
 			}
 		}
 	}()
+
+	// Start the read loop before the connection hook. The hook can flush a
+	// bounded result window, and peers are allowed to ACK those frames
+	// immediately while the hook continues its reconnect work.
+	if onConnected != nil {
+		if hookErr := onConnected(sessionCtx); hookErr != nil {
+			slog.Warn("websocket onConnected hook failed", "err", hookErr)
+		}
+	}
 
 	var loopErr error
 	select {

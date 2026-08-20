@@ -23,6 +23,8 @@ from apps.storage.repositories.models import RepositoryLocationClaim
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_MESSAGE,
     RepositoryAlreadyExistsError,
+    RepositoryHealthTransportUnconfirmed,
+    agent_task_transport_unconfirmed,
     agent_repository_failure_message,
     agent_result_has_repository_conflict,
 )
@@ -189,7 +191,12 @@ def _run_proxy_nas_repository_task(
     health_only: bool = False,
     adopt_legacy_ownership: bool = True,
 ):
-    node = validate_proxy_for_repository(repository)
+    try:
+        node = validate_proxy_for_repository(repository)
+    except ValidationError as exc:
+        if health_only:
+            raise RepositoryHealthTransportUnconfirmed(str(exc)) from exc
+        raise
     supports_ownership = node_supports_capability(
         node,
         REPOSITORY_OWNERSHIP_CAPABILITY,
@@ -247,6 +254,8 @@ def _run_proxy_nas_repository_task(
             correlation_id=str(repository.id),
             repository_id=repository.id,
         )
+        if health_only:
+            raise RepositoryHealthTransportUnconfirmed(str(exc)) from exc
         raise NASRepositoryError(str(exc)) from exc
     log_agent_outcome(
         log_scope,
@@ -257,6 +266,10 @@ def _run_proxy_nas_repository_task(
         correlation_id=str(repository.id),
         repository_id=repository.id,
     )
+    if agent_task_transport_unconfirmed(outcome):
+        raise RepositoryHealthTransportUnconfirmed(
+            "Agent repository probe did not return a terminal result."
+        )
     if outcome.task.status != "success":
         if agent_result_has_repository_conflict(outcome.result):
             raise RepositoryAlreadyExistsError(REPOSITORY_ALREADY_EXISTS_MESSAGE)

@@ -312,11 +312,29 @@ def _handle_task_result(*, node_id: int, message: ParsedUplink) -> NodeTask:
     return task
 
 
+def project_identical_task_result_recovery(*, node_task: NodeTask) -> None:
+    """Apply only idempotent health recovery for an unchanged terminal replay."""
+
+    from apps.storage.services.internal.repository_health import (
+        project_repository_health_from_agent_result,
+    )
+
+    project_repository_health_from_agent_result(node_task=node_task)
+
+
 def trigger_task_result_followup(*, node_task_id) -> None:
     """Run domain follow-up after NodeTask commit/ACK; periodic jobs remain the fallback."""
     task = NodeTask.objects.filter(pk=node_task_id).first()
     if task is None:
         return
+    try:
+        from apps.storage.services.internal.repository_health import (
+            project_repository_health_from_agent_result,
+        )
+
+        project_repository_health_from_agent_result(node_task=task)
+    except Exception:
+        logger.exception("repository health result projection failed task_id=%s", task.id)
     try:
         from apps.node.services.internal.node_lifecycle import (
             queue_detached_remove_verification,

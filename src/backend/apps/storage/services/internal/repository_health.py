@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from enum import StrEnum
 
 from django.apps import apps
 from django.core.exceptions import ValidationError
@@ -30,6 +31,10 @@ from apps.storage.services.internal.proxy_fs_repository import (
     check_proxy_fs_repository,
 )
 from apps.storage.services.internal.repository_initializer import check_s3_repository
+from apps.storage.services.internal.repository_errors import (
+    RepositoryHealthTransportUnconfirmed,
+    agent_task_transport_unconfirmed,
+)
 from apps.storage.services.internal.repository_location import (
     invalidate_repository_location_ownership,
     mark_repository_location_ownership_verified,
@@ -41,6 +46,12 @@ from apps.storage.services.internal.repository_ownership import (
 
 
 logger = logging.getLogger(__name__)
+
+
+class _AgentProbeState(StrEnum):
+    ONLINE = "online"
+    CONFIRMED_FAILURE = "confirmed_failure"
+    TRANSPORT_UNKNOWN = "transport_unknown"
 
 
 def is_repository_ownership_failure(exc: Exception) -> bool:
@@ -57,6 +68,71 @@ def is_repository_ownership_failure(exc: Exception) -> bool:
             return True
         current = current.__cause__ or current.__context__
     return False
+
+
+def project_repository_health_from_agent_result(*, node_task) -> bool:
+    """Project a current successful ``repo.status`` result back to repository health."""
+
+    if (
+        str(getattr(node_task, "kind", "") or "") != "repo.status"
+        or str(getattr(node_task, "correlation_type", "") or "")
+        != "storage_repository"
+        or str(getattr(node_task, "status", "") or "") != "success"
+    ):
+        return False
+    correlation_id = str(getattr(node_task, "correlation_id", "") or "").strip()
+    if not correlation_id.isdigit():
+        return False
+    repository = Repository.objects.filter(
+        pk=int(correlation_id),
+        organization_id=node_task.organization_id,
+        status=Repository.Status.CREATED,
+        updated_at__lte=node_task.created_at,
+    ).first()
+    if repository is None:
+        return False
+
+    current_scope = Repository.objects.filter(
+        pk=repository.id,
+        organization_id=node_task.organization_id,
+        status=Repository.Status.CREATED,
+        updated_at=repository.updated_at,
+    )
+    if repository.repo_type == Repository.Type.PROXY_FS or (
+        repository.repo_type == Repository.Type.NAS
+        and repository.bind_node_type == Repository.BindNodeType.PROXY
+    ):
+        if (
+            repository.bind_node_type != Repository.BindNodeType.PROXY
+            or repository.bind_node_id != node_task.node_id
+        ):
+            return False
+        current_scope = current_scope.filter(
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=node_task.node_id,
+        )
+    elif (
+        repository.repo_type == Repository.Type.NAS
+        and not repository.bind_node_type
+        and not repository.bind_node_id
+    ):
+        _has_associations, _has_claims, nodes = _unbound_nas_execution_nodes(
+            repository
+        )
+        if node_task.node_id not in {node.id for node in nodes}:
+            return False
+        current_scope = current_scope.filter(
+            bind_node_type__isnull=True,
+            bind_node_id__isnull=True,
+        )
+    else:
+        return False
+    return bool(
+        current_scope.update(
+            health=Repository.Health.ONLINE,
+            health_failures=0,
+        )
+    )
 
 
 def probe_repository_health(repository: Repository) -> str:
@@ -102,15 +178,24 @@ def probe_unbound_nas_repository_health(
     if not has_associations or not has_claimed_locations:
         return Repository.Health.UNVERIFIED
 
+    transport_unknown = not nodes
     for node in nodes:
         if node.availability != Node.Availability.ONLINE:
+            transport_unknown = True
             continue
-        if _probe_unbound_nas_from_node(
+        probe_state = _probe_unbound_nas_from_node(
             repository=repository,
             node=node,
             adopt_legacy_ownership=adopt_legacy_ownership,
-        ):
+        )
+        if probe_state == _AgentProbeState.ONLINE:
             return Repository.Health.ONLINE
+        if probe_state == _AgentProbeState.TRANSPORT_UNKNOWN:
+            transport_unknown = True
+    if transport_unknown:
+        raise RepositoryHealthTransportUnconfirmed(
+            "No associated execution node returned an authoritative repository result."
+        )
     return Repository.Health.OFFLINE
 
 
@@ -198,7 +283,7 @@ def _probe_unbound_nas_from_node(
     repository: Repository,
     node: Node,
     adopt_legacy_ownership: bool = True,
-) -> bool:
+) -> _AgentProbeState:
     log_scope = "storage direct nas health probe"
     payload = {
         "repository": nas_repository_payload(
@@ -255,7 +340,7 @@ def _probe_unbound_nas_from_node(
             node.id,
             type(exc).__name__,
         )
-        return False
+        return _AgentProbeState.TRANSPORT_UNKNOWN
 
     log_agent_outcome(
         log_scope,
@@ -266,6 +351,8 @@ def _probe_unbound_nas_from_node(
         correlation_id=str(repository.id),
         repository_id=repository.id,
     )
+    if agent_task_transport_unconfirmed(outcome):
+        return _AgentProbeState.TRANSPORT_UNKNOWN
     if outcome.task.status != "success":
         result = outcome.result if isinstance(outcome.result, dict) else {}
         if result.get("error_code") == "REPOSITORY_OWNERSHIP_INVALID":
@@ -274,7 +361,7 @@ def _probe_unbound_nas_from_node(
                 owner_node_id=node.id,
                 repository_subdir=nas_agent_repository_subdir(node.id),
             )
-        return False
+        return _AgentProbeState.CONFIRMED_FAILURE
     if not (
         isinstance(outcome.result, dict)
         and outcome.result.get("ownership_verified") is True
@@ -285,15 +372,17 @@ def _probe_unbound_nas_from_node(
                 repository.id,
                 node.id,
             )
-            return False
-        return repository_has_legacy_location(
+            return _AgentProbeState.CONFIRMED_FAILURE
+        if repository_has_legacy_location(
             repository,
             owner_node_id=node.id,
             repository_subdir=nas_agent_repository_subdir(node.id),
-        )
+        ):
+            return _AgentProbeState.ONLINE
+        return _AgentProbeState.CONFIRMED_FAILURE
     mark_repository_location_ownership_verified(
         repository,
         owner_node_id=node.id,
         repository_subdir=nas_agent_repository_subdir(node.id),
     )
-    return True
+    return _AgentProbeState.ONLINE

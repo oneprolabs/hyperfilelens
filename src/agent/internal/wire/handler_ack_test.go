@@ -3,6 +3,7 @@ package wire
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func TestFlushUnreportedWaitsForAckInAckMode(t *testing.T) {
 	if len(sender.frames) != 1 {
 		t.Fatalf("frames = %d, want 1", len(sender.frames))
 	}
-	pending, err := repo.ListUnreported(t.Context())
+	pending, err := repo.ListUnreported(t.Context(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +64,7 @@ func TestFlushUnreportedWaitsForAckInAckMode(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	pending, err = repo.ListUnreported(t.Context())
+	pending, err = repo.ListUnreported(t.Context(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,8 +89,19 @@ func TestFlushUnreportedRetransmitsIdenticalResultUntilAck(t *testing.T) {
 	if err := handler.FlushUnreportedResults(t.Context(), sender); err != nil {
 		t.Fatal(err)
 	}
+	if len(sender.frames) != 1 {
+		t.Fatalf("frames before retry deadline = %d, want 1", len(sender.frames))
+	}
+	handler.resultMu.Lock()
+	delivery := handler.resultInFlight["task-1"]
+	delivery.deadline = time.Now().Add(-time.Second)
+	handler.resultInFlight["task-1"] = delivery
+	handler.resultMu.Unlock()
+	if err := handler.FlushUnreportedResults(t.Context(), sender); err != nil {
+		t.Fatal(err)
+	}
 	if len(sender.frames) != 2 {
-		t.Fatalf("frames = %d, want 2", len(sender.frames))
+		t.Fatalf("frames after retry deadline = %d, want 2", len(sender.frames))
 	}
 	first, err := json.Marshal(sender.frames[0])
 	if err != nil {
@@ -104,13 +116,78 @@ func TestFlushUnreportedRetransmitsIdenticalResultUntilAck(t *testing.T) {
 	}
 }
 
+func TestFlushUnreportedBoundsAckWindowAndRefillsAfterAck(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := database.NewTaskRepo(db)
+	const pendingTaskCount = 101
+	for i := 0; i < pendingTaskCount; i++ {
+		taskID := fmt.Sprintf("task-%03d", i)
+		if err := repo.RecordCommand(ctx, database.RecordInput{TaskID: taskID, Kind: "backup.run"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Finish(ctx, taskID, model.TaskStatusSucceeded, map[string]any{"index": i}, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := NewHandler(nil, controller.NewTracker(), repo)
+	handler.SetTaskResultAckEnabled(true)
+	sender := &captureSender{}
+	if err := handler.FlushUnreportedResults(ctx, sender); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.frames) != resultOutboxWindow {
+		t.Fatalf("initial frames = %d, want %d", len(sender.frames), resultOutboxWindow)
+	}
+	first := sender.frames[0].(TaskResult)
+	if err := handler.Handle(
+		ctx,
+		[]byte(fmt.Sprintf(`{"type":"task.result.ack","task_id":%q}`, first.TaskID)),
+		sender,
+	); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-handler.ResultOutboxWake():
+	default:
+		t.Fatal("ACK did not wake result outbox")
+	}
+	if err := handler.FlushUnreportedResults(ctx, sender); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.frames) != resultOutboxWindow+1 {
+		t.Fatalf("frames after ACK refill = %d, want %d", len(sender.frames), resultOutboxWindow+1)
+	}
+}
+
+func TestLiveTaskResultSharesAckWindowWithOutbox(t *testing.T) {
+	handler, _ := newFinishedTaskHandler(t)
+	handler.SetTaskResultAckEnabled(true)
+	sender := &captureSender{}
+	if err := handler.sendLiveTaskResult(
+		t.Context(), sender, "task-1", "success", map[string]any{"kopia_snapshot_id": "snap-1"}, "",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.FlushUnreportedResults(t.Context(), sender); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.frames) != 1 {
+		t.Fatalf("frames = %d, want live result without periodic duplicate", len(sender.frames))
+	}
+}
+
 func TestFlushUnreportedKeepsLegacyMarkOnWrite(t *testing.T) {
 	handler, repo := newFinishedTaskHandler(t)
 	handler.SetTaskResultAckEnabled(false)
 	if err := handler.FlushUnreportedResults(t.Context(), &captureSender{}); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := repo.ListUnreported(t.Context())
+	pending, err := repo.ListUnreported(t.Context(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

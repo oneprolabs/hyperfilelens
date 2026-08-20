@@ -334,7 +334,7 @@ func tasksFlush(ctx context.Context, args []string) error {
 	}
 	defer rt.close()
 
-	pending, err := rt.tasks.ListUnreported(ctx)
+	pending, err := rt.tasks.ListUnreported(ctx, 0)
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -193,6 +194,54 @@ func TestConnectorNegotiatesTaskResultAckSubprotocol(t *testing.T) {
 	}, false)
 	if !<-negotiated {
 		t.Fatal("server did not negotiate task result ACK subprotocol")
+	}
+}
+
+func TestConnectorReadsFramesWhileOnConnectedHookRuns(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer conn.Close()
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"task.result.ack","task_id":"task-1"}`)); err != nil {
+			t.Errorf("write frame: %v", err)
+			return
+		}
+		_, _, _ = conn.ReadMessage()
+	}))
+	defer server.Close()
+
+	connector := NewConnector(staticProvider{cfg: &model.AgentConfig{
+		WSSURL:    "ws" + strings.TrimPrefix(server.URL, "http"),
+		NodeID:    "1",
+		NodeToken: "token",
+	}})
+	connector.heartbeatInterval = time.Hour
+	messageRead := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err, _ := connector.connectOnce(
+		ctx,
+		func(context.Context, []byte) error {
+			close(messageRead)
+			return nil
+		},
+		func(context.Context) error {
+			select {
+			case <-messageRead:
+				cancel()
+				return nil
+			case <-time.After(250 * time.Millisecond):
+				return errors.New("read loop did not run during onConnected hook")
+			}
+		},
+		false,
+	)
+	if err != context.Canceled {
+		t.Fatalf("connectOnce() error = %v, want context.Canceled", err)
 	}
 }
 

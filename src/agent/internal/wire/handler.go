@@ -23,18 +23,129 @@ type Handler struct {
 	snapshotScheduler *controller.Scheduler
 	nasLeases         *engine.NASLeaseCoordinator
 	resultAckEnabled  atomic.Bool
+	resultMu          sync.Mutex
+	resultInFlight    map[string]resultDelivery
+	resultWake        chan struct{}
+}
+
+const resultOutboxWindow = 32
+
+var (
+	resultOutboxRetryBase = 30 * time.Second
+	resultOutboxRetryMax  = 5 * time.Minute
+)
+
+type resultDelivery struct {
+	attempts int
+	deadline time.Time
 }
 
 // SetTaskResultAckEnabled selects ACK mode for the current WebSocket session.
 func (h *Handler) SetTaskResultAckEnabled(enabled bool) {
 	if h != nil {
 		h.resultAckEnabled.Store(enabled)
+		h.resultMu.Lock()
+		clear(h.resultInFlight)
+		h.resultMu.Unlock()
 	}
 }
 
 // TaskResultAckEnabled reports whether task.result requires a control-plane ACK.
 func (h *Handler) TaskResultAckEnabled() bool {
 	return h != nil && h.resultAckEnabled.Load()
+}
+
+// ResultOutboxWake reports ACK-driven capacity becoming available.
+func (h *Handler) ResultOutboxWake() <-chan struct{} {
+	if h == nil {
+		return nil
+	}
+	return h.resultWake
+}
+
+// ResultOutboxPollInterval bounds how long an expired delivery waits for retry.
+func ResultOutboxPollInterval() time.Duration {
+	return resultOutboxRetryBase
+}
+
+func resultRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := resultOutboxRetryBase
+	for i := 1; i < attempt && delay < resultOutboxRetryMax; i++ {
+		delay *= 2
+		if delay >= resultOutboxRetryMax {
+			return resultOutboxRetryMax
+		}
+	}
+	return delay
+}
+
+func (h *Handler) reserveResultDelivery(taskID string) bool {
+	if h == nil || taskID == "" || !h.TaskResultAckEnabled() {
+		return true
+	}
+	now := time.Now()
+	h.resultMu.Lock()
+	defer h.resultMu.Unlock()
+	if delivery, exists := h.resultInFlight[taskID]; exists && delivery.deadline.After(now) {
+		return false
+	}
+	active := 0
+	for _, delivery := range h.resultInFlight {
+		if delivery.deadline.After(now) {
+			active++
+		}
+	}
+	if active >= resultOutboxWindow {
+		return false
+	}
+	delivery := h.resultInFlight[taskID]
+	delivery.attempts++
+	delivery.deadline = now.Add(resultRetryDelay(delivery.attempts))
+	h.resultInFlight[taskID] = delivery
+	return true
+}
+
+func (h *Handler) releaseResultDelivery(taskID string) {
+	if h == nil || taskID == "" {
+		return
+	}
+	h.resultMu.Lock()
+	delete(h.resultInFlight, taskID)
+	h.resultMu.Unlock()
+}
+
+func (h *Handler) acknowledgeResultDelivery(taskID string) {
+	h.releaseResultDelivery(taskID)
+	select {
+	case h.resultWake <- struct{}{}:
+	default:
+	}
+}
+
+func (h *Handler) sendLiveTaskResult(
+	ctx context.Context,
+	sink Sender,
+	taskID string,
+	status string,
+	result map[string]any,
+	errMsg string,
+) error {
+	if h.TaskResultAckEnabled() && !h.reserveResultDelivery(taskID) {
+		return nil
+	}
+	if err := SendTaskResult(ctx, sink, taskID, status, result, errMsg); err != nil {
+		if h.TaskResultAckEnabled() {
+			h.releaseResultDelivery(taskID)
+		}
+		return err
+	}
+	if h.tasks != nil && !h.TaskResultAckEnabled() {
+		return h.tasks.MarkResultReported(ctx, taskID)
+	}
+	return nil
 }
 
 // NewHandler returns a protocol handler bound to config, tracker, and local task storage.
@@ -54,6 +165,8 @@ func NewHandler(
 		tasks:             tasks,
 		snapshotScheduler: snapshotScheduler,
 		nasLeases:         engine.NewNASLeaseCoordinator(),
+		resultInFlight:    make(map[string]resultDelivery),
+		resultWake:        make(chan struct{}, 1),
 	}
 }
 
@@ -89,7 +202,7 @@ func (h *Handler) Handle(ctx context.Context, raw []byte, sink Sender) error {
 			}
 			shouldRun = inserted
 			if !inserted && persisted.Status != model.TaskStatusRunning && persisted.Status != model.TaskStatusPending {
-				_ = SendTaskResult(ctx, sink, persisted.ID, database.WireStatus(persisted.Status), persisted.Result, persisted.Error)
+				_ = h.sendLiveTaskResult(ctx, sink, persisted.ID, database.WireStatus(persisted.Status), persisted.Result, persisted.Error)
 				return nil
 			}
 		}
@@ -131,6 +244,7 @@ func (h *Handler) Handle(ctx context.Context, raw []byte, sink Sender) error {
 			slog.Warn("persist task.result ack failed", "task_id", dl.TaskResultAck.TaskID, "err", err)
 			return nil
 		}
+		h.acknowledgeResultDelivery(dl.TaskResultAck.TaskID)
 		slog.Info("task.result acknowledged", "task_id", dl.TaskResultAck.TaskID)
 		return nil
 	default:
@@ -146,17 +260,27 @@ func (h *Handler) FlushUnreportedResults(ctx context.Context, sink Sender) error
 	if h.tasks == nil || sink == nil {
 		return nil
 	}
-	pending, err := h.tasks.ListUnreported(ctx)
+	limit := 0
+	if h.TaskResultAckEnabled() {
+		limit = resultOutboxWindow
+	}
+	pending, err := h.tasks.ListUnreported(ctx, limit)
 	if err != nil {
 		return err
 	}
 	for _, task := range pending {
+		if h.TaskResultAckEnabled() && !h.reserveResultDelivery(task.ID) {
+			continue
+		}
 		wireStatus := database.WireStatus(task.Status)
 		errMsg := task.Error
 		if errMsg == "" && wireStatus == "failed" {
 			errMsg = string(task.Status)
 		}
 		if err := SendTaskResult(ctx, sink, task.ID, wireStatus, task.Result, errMsg); err != nil {
+			if h.TaskResultAckEnabled() {
+				h.releaseResultDelivery(task.ID)
+			}
 			slog.Warn("flush task.result failed", "task_id", task.ID, "err", err)
 			continue
 		}
@@ -258,7 +382,7 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 						persistCtx, cmd.TaskID, model.TaskStatusCancelled, nil, "canceled",
 					)
 				}
-				_ = SendTaskResult(persistCtx, sink, cmd.TaskID, "failed", nil, "canceled")
+				_ = h.sendLiveTaskResult(persistCtx, sink, cmd.TaskID, "failed", nil, "canceled")
 				return
 			}
 			logging.InfoTask(
@@ -321,10 +445,8 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 				slog.Warn("persist running task failed", "task_id", cmd.TaskID, "err", err)
 			}
 		}
-		if err := SendTaskResult(taskCtx, sink, cmd.TaskID, status, result, errMsg); err != nil {
+		if err := h.sendLiveTaskResult(taskCtx, sink, cmd.TaskID, status, result, errMsg); err != nil {
 			slog.Warn("send task.result failed", "task_id", cmd.TaskID, "err", err)
-		} else if h.tasks != nil && !h.TaskResultAckEnabled() {
-			_ = h.tasks.MarkResultReported(taskCtx, cmd.TaskID)
 		}
 		return
 	}
@@ -361,10 +483,8 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 		}
 	}
 
-	if err := SendTaskResult(persistCtx, sink, cmd.TaskID, status, result, errMsg); err != nil {
+	if err := h.sendLiveTaskResult(persistCtx, sink, cmd.TaskID, status, result, errMsg); err != nil {
 		slog.Warn("send task.result failed", "task_id", cmd.TaskID, "err", err)
-	} else if h.tasks != nil && !h.TaskResultAckEnabled() {
-		_ = h.tasks.MarkResultReported(persistCtx, cmd.TaskID)
 	}
 }
 

@@ -9,10 +9,52 @@ REPOSITORY_ALREADY_EXISTS_MESSAGE = (
     "A Kopia repository already exists at the selected location. "
     "Import is not supported in this version. Choose a different storage location."
 )
+AGENT_TASK_TRANSPORT_UNCONFIRMED_CODE = "AGENT_TASK_TRANSPORT_UNCONFIRMED"
 
 
 class RepositoryAlreadyExistsError(RuntimeError):
     """Raised when strict repository initialization finds an existing repository."""
+
+
+class RepositoryHealthTransportUnconfirmed(RuntimeError):
+    """Raised when an Agent probe has no authoritative repository outcome."""
+
+    error_code = AGENT_TASK_TRANSPORT_UNCONFIRMED_CODE
+
+
+def agent_task_transport_unconfirmed(outcome: Any) -> bool:
+    """Return whether an Agent outcome only proves delivery/wait uncertainty."""
+
+    if getattr(outcome, "timed_out", False) is True:
+        return True
+    task = getattr(outcome, "task", None)
+    status = str(getattr(task, "status", "") or "").strip().lower()
+    if status in {"pending", "running", "timeout"}:
+        return True
+    if status in {"failed", "canceled", "cancelled"}:
+        accepted_at = getattr(task, "accepted_at", None)
+        result = getattr(outcome, "result", None)
+        if accepted_at is None and not result:
+            return True
+    return False
+
+
+def is_repository_health_transport_unconfirmed(exc: BaseException) -> bool:
+    """Inspect an exception chain for an unconfirmed Agent health probe."""
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, RepositoryHealthTransportUnconfirmed):
+            return True
+        if (
+            str(getattr(current, "error_code", "") or "").strip()
+            == AGENT_TASK_TRANSPORT_UNCONFIRMED_CODE
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 _REPOSITORY_CONFLICT_MARKERS = (

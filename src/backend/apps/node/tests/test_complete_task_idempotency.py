@@ -160,3 +160,26 @@ class CompleteTaskIdempotencyTests(TestCase):
         self.assertEqual(updated.status, NodeTask.Status.SUCCESS)
         self.assertEqual(updated.result["kopia_snapshot_id"], "snapshot-repeat")
         metric.inc.assert_called_once_with()
+
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch("apps.node.services.internal.task._sync_task_info")
+    @patch("apps.node.ws.uplink.TASK_RESULT_RETRANSMISSIONS")
+    def test_identical_terminal_retransmission_skips_duplicate_writes_and_streams(
+        self,
+        metric,
+        sync_task_info,
+        push_task_stream,
+    ):
+        message = ParsedUplink(
+            msg_type=WireType.TASK_RESULT,
+            task_id=str(self.task.id),
+            status="success",
+            result={"mode": "local_detached"},
+        )
+
+        updated = _handle_task_result(node_id=self.node.id, message=message)
+
+        self.assertTrue(updated._result_retransmission_unchanged)
+        sync_task_info.assert_not_called()
+        push_task_stream.assert_not_called()
+        metric.inc.assert_called_once_with()

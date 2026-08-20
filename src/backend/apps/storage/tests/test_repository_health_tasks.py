@@ -10,7 +10,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from apps.iam.models import Organization
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.protection.models import BackupConfig
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
@@ -28,8 +28,12 @@ from apps.storage.services.internal.nas_repository import (
     nas_proxy_repository_subdir,
 )
 from apps.storage.services.internal.repository_health import (
+    project_repository_health_from_agent_result,
     probe_repository_health,
     probe_unbound_nas_repository_health,
+)
+from apps.storage.services.internal.repository_errors import (
+    RepositoryHealthTransportUnconfirmed,
 )
 from apps.storage.services.internal.repository_location import (
     mark_repository_location_owned,
@@ -247,6 +251,38 @@ class RepositoryHealthTaskTests(TestCase):
         self.assertEqual(result["status"], Repository.Health.OFFLINE)
         self.assertEqual(repository.health, Repository.Health.OFFLINE)
         self.assertEqual(repository.health_failures, 2)
+
+    @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
+    @mock.patch("apps.storage.tasks.cache.delete")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=True)
+    @mock.patch(
+        "apps.storage.tasks.probe_repository_health",
+        side_effect=RepositoryHealthTransportUnconfirmed("result ACK congested"),
+    )
+    def test_transport_unknown_preserves_health_without_retry(
+        self,
+        _probe,
+        _cache_add,
+        _cache_delete,
+        apply_async,
+    ):
+        repository = self._repository(
+            "local",
+            Repository.Type.PROXY_FS,
+            health=Repository.Health.ONLINE,
+            health_failures=1,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=10,
+        )
+
+        result = check_storage_repository_health.run(repository_id=repository.id)
+
+        repository.refresh_from_db()
+        self.assertEqual(result["status"], Repository.Health.ONLINE)
+        self.assertEqual(result["probe_status"], "transport_unknown")
+        self.assertEqual(repository.health, Repository.Health.ONLINE)
+        self.assertEqual(repository.health_failures, 1)
+        apply_async.assert_not_called()
 
     @mock.patch("apps.storage.tasks.cache.delete")
     @mock.patch("apps.storage.tasks.cache.add", return_value=True)
@@ -586,10 +622,28 @@ class UnboundNASRepositoryHealthTests(TestCase):
         agent = self._node("agent-a", online=False)
         self._agent_config(agent, name="agent-config")
 
-        health = probe_unbound_nas_repository_health(self.repository)
-
-        self.assertEqual(health, Repository.Health.OFFLINE)
+        with self.assertRaises(RepositoryHealthTransportUnconfirmed):
+            probe_unbound_nas_repository_health(self.repository)
         run_agent.assert_not_called()
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_timed_out_execution_path_is_transport_unknown(self, run_agent):
+        agent = self._node("agent-timeout")
+        self._agent_config(agent, name="agent-timeout-config")
+        run_agent.return_value = mock.Mock(
+            task=mock.Mock(
+                id="node-task-timeout",
+                status="timeout",
+                last_error="watchdog timeout (no progress)",
+                accepted_at=timezone.now(),
+            ),
+            result={},
+            timed_out=False,
+            ok=False,
+        )
+
+        with self.assertRaises(RepositoryHealthTransportUnconfirmed):
+            probe_unbound_nas_repository_health(self.repository)
 
     @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
     def test_residual_location_is_rechecked_without_ownership_adoption(self, run_agent):
@@ -614,6 +668,64 @@ class UnboundNASRepositoryHealthTests(TestCase):
             run_agent.call_args.kwargs["payload"]["allow_ownership_adoption"]
         )
 
+
+class RepositoryHealthResultProjectionTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(
+            key="repository-health-projection-org",
+            name="Repository Health Projection Org",
+        )
+        self.proxy = Node.objects.create(
+            organization=self.organization,
+            name="projection-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        self.repository = Repository.objects.create(
+            organization_id=self.organization.id,
+            name="projection-local",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.OFFLINE,
+            health_failures=2,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=self.proxy.id,
+        )
+
+    def _repo_status_task(self) -> NodeTask:
+        return NodeTask.objects.create(
+            organization=self.organization,
+            node=self.proxy,
+            kind="repo.status",
+            correlation_type="storage_repository",
+            correlation_id=str(self.repository.id),
+            status=NodeTask.Status.SUCCESS,
+            result={"ownership_verified": True},
+            watchdog_deadline_at=timezone.now(),
+        )
+
+    def test_current_late_success_restores_online_health(self):
+        task = self._repo_status_task()
+
+        projected = project_repository_health_from_agent_result(node_task=task)
+
+        self.assertTrue(projected)
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health, Repository.Health.ONLINE)
+        self.assertEqual(self.repository.health_failures, 0)
+
+    def test_stale_result_after_repository_configuration_change_is_ignored(self):
+        task = self._repo_status_task()
+        self.repository.config = {"proxy_node_dir": "/new-location"}
+        self.repository.save(update_fields=["config", "updated_at"])
+
+        projected = project_repository_health_from_agent_result(node_task=task)
+
+        self.assertFalse(projected)
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health, Repository.Health.OFFLINE)
+        self.assertEqual(self.repository.health_failures, 2)
 
 class RepositoryHealthProbeTests(TestCase):
     def setUp(self):

@@ -159,3 +159,39 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
 
         consumer.send.assert_not_awaited()
         followup.assert_not_called()
+
+    async def test_identical_retransmission_is_acked_without_followup(self):
+        task = SimpleNamespace(
+            id="550e8400-e29b-41d4-a716-446655440000",
+            _result_retransmission_unchanged=True,
+        )
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.task_result_ack_enabled = True
+        consumer.send = AsyncMock()
+
+        with (
+            patch("apps.node.ws.node_agent.handle_uplink", return_value=task),
+            patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
+            ),
+            patch(
+                "apps.node.ws.node_agent.project_identical_task_result_recovery"
+            ) as recovery,
+            patch("apps.node.ws.node_agent.trigger_task_result_followup") as followup,
+        ):
+            await consumer.receive(
+                text_data=json.dumps(
+                    {
+                        "type": "task.result",
+                        "task_id": task.id,
+                        "status": "success",
+                        "result": {},
+                    }
+                )
+            )
+
+        consumer.send.assert_awaited_once()
+        recovery.assert_called_once_with(node_task=task)
+        followup.assert_not_called()
