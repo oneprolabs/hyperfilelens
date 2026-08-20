@@ -824,6 +824,32 @@ class RestoreApiTests(TestCase):
         )
         return task
 
+    def _active_backup_task(
+        self,
+        *,
+        source_ref_id: int | None = None,
+        status_value: str = Task.Status.RUNNING,
+    ) -> Task:
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Backup active task",
+            status=status_value,
+            trigger_type=Task.TriggerType.MANUAL,
+            request_payload={
+                "source_type": "agent",
+                "source_ref_id": source_ref_id or self.agent.id,
+                "backup_config_id": self.config.id,
+            },
+        )
+        TaskResource.objects.create(
+            task=task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=source_ref_id or self.agent.id,
+        )
+        return task
+
     def _assert_restore_already_running(self, response, task: Task) -> None:
         self.assertEqual(
             response.status_code, status.HTTP_409_CONFLICT, response.content
@@ -831,6 +857,17 @@ class RestoreApiTests(TestCase):
         problem = response.data["data"]
         self.assertEqual(problem["code"], "RESTORE.ALREADY_RUNNING")
         self.assertEqual(problem["meta"]["task_uuid"], str(task.task_uuid))
+        self.assertEqual(problem["meta"]["source_type"], "agent")
+        self.assertEqual(problem["meta"]["source_ref_id"], self.agent.id)
+
+    def _assert_backup_already_running(self, response, task: Task) -> None:
+        self.assertEqual(
+            response.status_code, status.HTTP_409_CONFLICT, response.content
+        )
+        problem = response.data["data"]
+        self.assertEqual(problem["code"], "BACKUP.ALREADY_RUNNING")
+        self.assertEqual(problem["meta"]["task_uuid"], str(task.task_uuid))
+        self.assertEqual(problem["meta"]["task_type"], Task.Type.BACKUP)
         self.assertEqual(problem["meta"]["source_type"], "agent")
         self.assertEqual(problem["meta"]["source_ref_id"], self.agent.id)
 
@@ -856,6 +893,60 @@ class RestoreApiTests(TestCase):
         self.assertEqual(listing.status_code, status.HTTP_200_OK)
         self.assertEqual(listing.data["count"], 1)
         self.assertEqual(listing.data["results"][0]["id"], plan_id)
+
+    def test_restore_plan_mutations_are_blocked_while_backup_is_active(self):
+        plan = RestorePlan.objects.create(
+            organization_id=self.org.id,
+            **self._plan_payload(),
+        )
+        task = self._active_backup_task()
+
+        create = self.client.post(
+            "/api/v1/restore/plans/",
+            {**self._plan_payload(), "restore_dir": "/restore/other"},
+            format="json",
+            **self._headers(),
+        )
+        patch_response = self.client.patch(
+            f"/api/v1/restore/plans/{plan.id}/",
+            {"restore_dir": "/restore/updated"},
+            format="json",
+            **self._headers(),
+        )
+        delete = self.client.delete(
+            f"/api/v1/restore/plans/{plan.id}/",
+            **self._headers(),
+        )
+
+        self._assert_backup_already_running(create, task)
+        self._assert_backup_already_running(patch_response, task)
+        self._assert_backup_already_running(delete, task)
+        plan.refresh_from_db()
+        self.assertEqual(plan.restore_dir, "/restore/data")
+
+    def test_restore_run_is_blocked_while_backup_is_active(self):
+        plan = RestorePlan.objects.create(
+            organization_id=self.org.id,
+            **self._plan_payload(),
+        )
+        task = self._active_backup_task(status_value=Task.Status.PENDING)
+
+        plan_run = self.client.post(
+            f"/api/v1/restore/plans/{plan.id}/run/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+        manual_run = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+
+        self._assert_backup_already_running(plan_run, task)
+        self._assert_backup_already_running(manual_run, task)
+        self.assertEqual(RestoreRecord.objects.count(), 0)
 
     def test_create_restore_plan_accepts_zero_sort_order_and_nested_source_path(self):
         payload = self._plan_payload()

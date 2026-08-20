@@ -498,7 +498,7 @@ class ProtectionBackupConfigApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("repository_id", self._error_fields(response))
 
-    def test_endpoint_type_cannot_change_while_backup_is_active(self):
+    def test_backup_config_cannot_change_while_backup_is_active(self):
         repository = self._distinct_endpoint_repository()
         payload = self._payload(name="Active backup Endpoint config")
         payload.update(
@@ -534,8 +534,13 @@ class ProtectionBackupConfigApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("repository_endpoint_type", self._error_fields(blocked))
+        self.assertEqual(blocked.status_code, status.HTTP_409_CONFLICT)
+        problem = blocked.data["data"]
+        self.assertEqual(problem["code"], "BACKUP.ALREADY_RUNNING")
+        self.assertEqual(problem["meta"]["task_uuid"], str(task.task_uuid))
+        self.assertEqual(problem["meta"]["task_type"], Task.Type.BACKUP)
+        self.assertEqual(problem["meta"]["source_type"], "agent")
+        self.assertEqual(problem["meta"]["source_ref_id"], self.agent.id)
         task.status = Task.Status.SUCCESS
         task.save(update_fields=["status", "updated_at"])
 

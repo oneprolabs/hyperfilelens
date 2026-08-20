@@ -199,6 +199,7 @@ const props = withDefaults(
     fileFilters?: Map<number, FileFilterRule>
     backupSnapshots?: BackupSourceSnapshot[]
     backupTasks?: TaskRow[]
+    restoreBlockedByBackup?: boolean
   }>(),
   {
     drawerSize: '720px',
@@ -216,6 +217,7 @@ const props = withDefaults(
     fileFilters: () => new Map<number, FileFilterRule>(),
     backupSnapshots: () => [],
     backupTasks: () => [],
+    restoreBlockedByBackup: false,
   },
 )
 
@@ -1915,10 +1917,13 @@ function toggleSnapshot(row: BackupSourceSnapshot) {
 }
 
 function canRestoreSnapshot(row: BackupSourceSnapshot) {
-  return isSnapshotRestorable(row)
+  return !props.restoreBlockedByBackup && isSnapshotRestorable(row)
 }
 
 function snapshotRestoreDisabledReason(row: BackupSourceSnapshot) {
+  if (props.restoreBlockedByBackup) {
+    return t('protection.backupsPage.msgBackupActiveBlocksActions')
+  }
   const status = String(row.status || '').toLowerCase()
   if (status !== 'available' && status !== 'partial') {
     return t('protection.backupsPage.snapshotReasonStatusUnavailable')

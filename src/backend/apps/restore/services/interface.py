@@ -137,14 +137,25 @@ def _ensure_no_active_restore_for_source(
         )
 
 
+@transaction.atomic
 def create_restore_plan(*, organization_id: int, data: dict[str, Any]) -> RestorePlan:
     payload = _plan_payload(organization_id=organization_id, data=data)
+    from apps.source.services.internal.source_operation_fence import (
+        assert_no_active_backup_for_source,
+    )
+
+    assert_no_active_backup_for_source(
+        organization_id=organization_id,
+        source_type=payload["source_type"],
+        source_ref_id=int(payload["source_ref_id"]),
+    )
     _validate_restore_plan_configuration(
         organization_id=organization_id, payload=payload
     )
     return RestorePlan.objects.create(organization_id=organization_id, **payload)
 
 
+@transaction.atomic
 def update_restore_plan(*, plan: RestorePlan, data: dict[str, Any]) -> RestorePlan:
     merged = {
         "backup_config_id": plan.backup_config_id,
@@ -162,6 +173,17 @@ def update_restore_plan(*, plan: RestorePlan, data: dict[str, Any]) -> RestorePl
     }
     merged.update(data)
     payload = _plan_payload(organization_id=plan.organization_id, data=merged)
+    from apps.source.services.internal.source_operation_fence import (
+        assert_no_active_backup_for_sources,
+    )
+
+    assert_no_active_backup_for_sources(
+        organization_id=plan.organization_id,
+        sources=[
+            (plan.source_type, int(plan.source_ref_id)),
+            (payload["source_type"], int(payload["source_ref_id"])),
+        ],
+    )
     _validate_restore_plan_configuration(
         organization_id=plan.organization_id, payload=payload, exclude_plan_id=plan.id
     )
@@ -171,7 +193,17 @@ def update_restore_plan(*, plan: RestorePlan, data: dict[str, Any]) -> RestorePl
     return plan
 
 
+@transaction.atomic
 def delete_restore_plan(*, plan: RestorePlan) -> dict[str, Any]:
+    from apps.source.services.internal.source_operation_fence import (
+        assert_no_active_backup_for_source,
+    )
+
+    assert_no_active_backup_for_source(
+        organization_id=plan.organization_id,
+        source_type=plan.source_type,
+        source_ref_id=int(plan.source_ref_id),
+    )
     plan_id = int(plan.id)
     plan.delete()
     return {"deleted": True, "id": plan_id}
@@ -1497,10 +1529,16 @@ def _ensure_no_active_restore_for_source(
     *, organization_id: int, source_type: str, source_ref_id: int
 ) -> None:
     from apps.source.services.internal.source_operation_fence import (
+        assert_no_active_backup_for_source,
         assert_source_product_operation_allowed,
     )
 
     assert_source_product_operation_allowed(
+        organization_id=organization_id,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+    )
+    assert_no_active_backup_for_source(
         organization_id=organization_id,
         source_type=source_type,
         source_ref_id=source_ref_id,

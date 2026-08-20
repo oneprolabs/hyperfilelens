@@ -1743,6 +1743,22 @@ def update_backup_config(
         sorted(data.keys()),
     )
     preflight_payload = _config_payload(data, current=config)
+    source_identities = [
+        (config.source_type, int(config.source_ref_id)),
+        (
+            str(preflight_payload["source_type"]),
+            int(preflight_payload["source_ref_id"]),
+        ),
+    ]
+    from apps.source.services.internal.source_operation_fence import (
+        assert_no_active_backup_for_sources,
+    )
+
+    with transaction.atomic():
+        assert_no_active_backup_for_sources(
+            organization_id=config.organization_id,
+            sources=source_identities,
+        )
     if _should_initialize_direct_nas_repository(
         current=config, payload=preflight_payload
     ):
@@ -1754,6 +1770,10 @@ def update_backup_config(
         )
 
     with transaction.atomic():
+        assert_no_active_backup_for_sources(
+            organization_id=config.organization_id,
+            sources=source_identities,
+        )
         config = BackupConfig.objects.select_for_update().get(pk=config.pk)
         requested_repository_id = int(data.get("repository_id") or config.repository_id)
         if requested_repository_id != config.repository_id:
@@ -1777,24 +1797,6 @@ def update_backup_config(
             repository_id=config.repository_id,
             directories=effective_directories,
         )
-        if payload["repository_endpoint_type"] != config.repository_endpoint_type:
-            from apps.protection.services.backup_task import find_active_backup_task
-
-            active_task = find_active_backup_task(
-                organization_id=config.organization_id,
-                source_type=config.source_type,
-                source_ref_id=config.source_ref_id,
-                backup_config_id=config.id,
-            )
-            if active_task is not None:
-                raise ValidationError(
-                    {
-                        "repository_endpoint_type": (
-                            "Endpoint type cannot be modified while a backup task "
-                            "is pending or running."
-                        )
-                    }
-                )
         for field in (
             "name",
             "remark",

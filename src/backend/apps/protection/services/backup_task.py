@@ -723,10 +723,16 @@ def start_backup_tasks(
             try:
                 with transaction.atomic():
                     from apps.source.services.internal.source_operation_fence import (
+                        assert_no_active_restore_for_source,
                         assert_source_product_operation_allowed,
                     )
 
                     assert_source_product_operation_allowed(
+                        organization_id=organization_id,
+                        source_type=source.source_type,
+                        source_ref_id=source.source_ref_id,
+                    )
+                    assert_no_active_restore_for_source(
                         organization_id=organization_id,
                         source_type=source.source_type,
                         source_ref_id=source.source_ref_id,
@@ -780,7 +786,12 @@ def start_backup_tasks(
                         "task_uuid": None,
                         "source_snapshot_id": None,
                         "source_snapshot_status": None,
-                        "status": "failed",
+                        "status": (
+                            "conflict"
+                            if isinstance(exc, AppError)
+                            and exc.code == "RESTORE.ALREADY_RUNNING"
+                            else "failed"
+                        ),
                         "message": (
                             _validation_message(exc)
                             if isinstance(exc, ValidationError)
@@ -806,10 +817,16 @@ def start_backup_tasks(
             try:
                 with transaction.atomic():
                     from apps.source.services.internal.source_operation_fence import (
+                        assert_no_active_restore_for_source,
                         assert_source_product_operation_allowed,
                     )
 
                     assert_source_product_operation_allowed(
+                        organization_id=organization_id,
+                        source_type=source.source_type,
+                        source_ref_id=source.source_ref_id,
+                    )
+                    assert_no_active_restore_for_source(
                         organization_id=organization_id,
                         source_type=source.source_type,
                         source_ref_id=source.source_ref_id,
@@ -979,7 +996,7 @@ def start_backup_tasks(
                         "status": "conflict",
                         "message": "A backup task for this source and backup config is already running.",
                     }
-            except ValidationError as exc:
+            except (ValidationError, AppError) as exc:
                 skipped_count += 1
                 results.append(
                     {
@@ -990,8 +1007,17 @@ def start_backup_tasks(
                         "task_uuid": None,
                         "source_snapshot_id": None,
                         "source_snapshot_status": None,
-                        "status": "failed",
-                        "message": _validation_message(exc),
+                        "status": (
+                            "conflict"
+                            if isinstance(exc, AppError)
+                            and exc.code == "RESTORE.ALREADY_RUNNING"
+                            else "failed"
+                        ),
+                        "message": (
+                            _validation_message(exc)
+                            if isinstance(exc, ValidationError)
+                            else str(exc)
+                        ),
                     }
                 )
                 continue

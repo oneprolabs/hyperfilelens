@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from django.core.exceptions import ValidationError
 
+from common.errors import AppError
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
+from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.models import Task, TaskResource
 
 
@@ -71,6 +73,182 @@ def active_source_control_task(
     return tasks.order_by("created_at", "id").distinct().first()
 
 
+def active_source_backup_task(
+    *,
+    organization_id: int,
+    source_type: str,
+    source_ref_id: int,
+) -> Task | None:
+    """Return an active Backup task owning one Source.
+
+    The request-payload fallback preserves compatibility with historical tasks
+    created before backup-source TaskResource rows were consistently attached.
+    """
+    tasks = (
+        Task.objects.filter(
+            organization_id=organization_id,
+            task_type=Task.Type.BACKUP,
+            status__in=_ACTIVE_STATUSES,
+        )
+        .prefetch_related("resources")
+        .order_by("created_at", "id")
+    )
+    for task in tasks:
+        resources = list(task.resources.all())
+        if any(
+            resource.resource_type == TaskResource.Type.BACKUP_SOURCE
+            and int(resource.resource_id) == int(source_ref_id)
+            and (
+                resource.resource_subtype == source_type
+                or (source_type == "agent" and not resource.resource_subtype)
+            )
+            for resource in resources
+        ):
+            return task
+        payload = task.request_payload if isinstance(task.request_payload, dict) else {}
+        if (
+            str(payload.get("source_type") or "") == source_type
+            and int(payload.get("source_ref_id") or 0) == int(source_ref_id)
+        ):
+            return task
+    return None
+
+
+def active_source_restore_task(
+    *,
+    organization_id: int,
+    source_type: str,
+    source_ref_id: int,
+) -> Task | None:
+    """Return an active Restore task owning one Source."""
+    tasks = (
+        Task.objects.filter(
+            organization_id=organization_id,
+            task_type__in=RESTORE_TASK_TYPES,
+            status__in=_ACTIVE_STATUSES,
+        )
+        .prefetch_related("resources")
+        .order_by("created_at", "id")
+    )
+    for task in tasks:
+        if any(
+            resource.resource_type == TaskResource.Type.BACKUP_SOURCE
+            and int(resource.resource_id) == int(source_ref_id)
+            and (
+                resource.resource_subtype == source_type
+                or (source_type == "agent" and not resource.resource_subtype)
+            )
+            for resource in task.resources.all()
+        ):
+            return task
+    return None
+
+
+def assert_no_active_backup_for_sources(
+    *,
+    organization_id: int,
+    sources: list[tuple[str, int]],
+) -> None:
+    """Fence configuration and restore mutations against active backups."""
+    identities = sorted(
+        {
+            (str(source_type), int(source_ref_id))
+            for source_type, source_ref_id in sources
+        }
+    )
+    for source_type, source_ref_id in identities:
+        lock_source_identity(
+            organization_id=organization_id,
+            source_type=source_type,
+            source_ref_id=source_ref_id,
+        )
+    for source_type, source_ref_id in identities:
+        blocker = active_source_backup_task(
+            organization_id=organization_id,
+            source_type=source_type,
+            source_ref_id=source_ref_id,
+        )
+        if blocker is None:
+            continue
+        raise AppError(
+            code="BACKUP.ALREADY_RUNNING",
+            status=409,
+            title="Backup already running",
+            diagnostic=(
+                "A backup task is active for this source. Stop it or wait for "
+                "it to finish before restoring or changing backup configuration."
+            ),
+            retryable=False,
+            meta={
+                "task_uuid": str(blocker.task_uuid),
+                "task_id": blocker.id,
+                "task_type": blocker.task_type,
+                "display_name": blocker.display_name,
+                "status": blocker.status,
+                "source_type": source_type,
+                "source_ref_id": source_ref_id,
+                "created_at": blocker.created_at.isoformat()
+                if blocker.created_at
+                else "",
+            },
+        )
+
+
+def assert_no_active_backup_for_source(
+    *,
+    organization_id: int,
+    source_type: str,
+    source_ref_id: int,
+) -> None:
+    assert_no_active_backup_for_sources(
+        organization_id=organization_id,
+        sources=[(source_type, source_ref_id)],
+    )
+
+
+def assert_no_active_restore_for_source(
+    *,
+    organization_id: int,
+    source_type: str,
+    source_ref_id: int,
+) -> None:
+    """Fence backup creation against an active Restore task."""
+    lock_source_identity(
+        organization_id=organization_id,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+    )
+    blocker = active_source_restore_task(
+        organization_id=organization_id,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+    )
+    if blocker is None:
+        return
+    raise AppError(
+        code="RESTORE.ALREADY_RUNNING",
+        status=409,
+        title="Restore already running",
+        diagnostic=(
+            "A restore task is active for this source. Stop it or wait for it "
+            "to finish before starting a backup."
+        ),
+        retryable=False,
+        meta={
+            "task_uuid": str(blocker.task_uuid),
+            "task_id": blocker.id,
+            "task_type": blocker.task_type,
+            "display_name": blocker.display_name,
+            "status": blocker.status,
+            "source_type": source_type,
+            "source_ref_id": source_ref_id,
+            "created_at": blocker.created_at.isoformat()
+            if blocker.created_at
+            else "",
+        },
+    )
+
+
 def assert_source_product_operation_allowed(
     *,
     organization_id: int,
@@ -104,7 +282,12 @@ def assert_source_product_operation_allowed(
 
 
 __all__ = [
+    "active_source_backup_task",
     "active_source_control_task",
+    "active_source_restore_task",
+    "assert_no_active_backup_for_source",
+    "assert_no_active_backup_for_sources",
+    "assert_no_active_restore_for_source",
     "assert_source_product_operation_allowed",
     "lock_source_identity",
 ]

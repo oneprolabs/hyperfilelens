@@ -83,6 +83,17 @@ describe('FlowBackupSourceDetailDrawer source status', () => {
 })
 
 describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
+  it('blocks snapshot restore actions while the source backup is active', () => {
+    const restoreGuard = sourceBetween(
+      'function canRestoreSnapshot(row: BackupSourceSnapshot)',
+      'function onSnapshotExpandChange',
+    )
+
+    expect(drawer).toContain('restoreBlockedByBackup?: boolean')
+    expect(restoreGuard).toContain('!props.restoreBlockedByBackup && isSnapshotRestorable(row)')
+    expect(restoreGuard).toContain("t('protection.backupsPage.msgBackupActiveBlocksActions')")
+  })
+
   it('distinguishes viewing a snapshot from browsing a directory', () => {
     const snapshotTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',

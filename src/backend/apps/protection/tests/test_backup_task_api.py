@@ -715,6 +715,42 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(response.data["created_count"], 0)
         self.assertEqual(response.data["results"][0]["status"], "conflict")
 
+    def test_start_backup_task_api_rejects_active_restore(self):
+        restore_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Active restore",
+            status=Task.Status.WAITING,
+            trigger_type=Task.TriggerType.MANUAL,
+        )
+        TaskResource.objects.create(
+            task=restore_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        response = self.client.post(
+            "/api/v1/protection/backup-tasks/",
+            {"source_ids": [f"agent:{self.agent.id}"]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
+        self.assertEqual(response.data["created_count"], 0)
+        self.assertEqual(response.data["skipped_count"], 1)
+        result = response.data["results"][0]
+        self.assertEqual(result["status"], "conflict")
+        self.assertIn("restore task is active", result["message"].lower())
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.BACKUP).exists()
+        )
+        self.assertFalse(BackupSourceSnapshot.objects.exists())
+
     @patch(
         "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
     )
