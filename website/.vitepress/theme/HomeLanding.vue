@@ -235,7 +235,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <div class="open-source-grid">
           <div class="open-source-copy">
             <p class="section-kicker dark-kicker">Open Source</p>
-            <h2 id="open-source-title">Inspect it. Run it. Improve it.</h2>
+            <h2 id="open-source-title">Private deployment. Full control.</h2>
             <p>HyperFileLens and the AI engine behind it are both fully open source. Review the architecture, follow development, or contribute directly on GitHub.</p>
             <div class="open-source-callout">
               <svg aria-hidden="true"><use href="#icon-check" /></svg>
