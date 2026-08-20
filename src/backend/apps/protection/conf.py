@@ -37,8 +37,8 @@ PROTECTION_BACKUP_SUBSTANTIVE_STALL_WARN_SECONDS = env_int(
     "PROTECTION_BACKUP_SUBSTANTIVE_STALL_WARN_SECONDS",
     1800,
 )
-# Deprecated: substantive progress stalls are warning-only. Agent activity leases
-# and the Agent-side Kopia watchdog are responsible for terminating dead work.
+# Agent-side Kopia watchdog is the primary stall terminator. This longer control
+# plane deadline is a final safety net for old Agents or failed local watchdogs.
 PROTECTION_BACKUP_SUBSTANTIVE_STALL_FAIL_SECONDS = env_int(
     "PROTECTION_BACKUP_SUBSTANTIVE_STALL_FAIL_SECONDS",
     7200,
@@ -54,6 +54,10 @@ PROTECTION_BACKUP_LATE_SUCCESS_ADOPT_SECONDS = env_int(
 PROTECTION_BACKUP_REATTACH_GRACE_SECONDS = env_int(
     "PROTECTION_BACKUP_REATTACH_GRACE_SECONDS",
     900,
+)
+PROTECTION_BACKUP_CAPABILITY_SYNC_GRACE_SECONDS = env_int(
+    "PROTECTION_BACKUP_CAPABILITY_SYNC_GRACE_SECONDS",
+    120,
 )
 PROTECTION_BACKUP_DISABLE_SHORT_WATCHDOG = env_bool(
     "PROTECTION_BACKUP_DISABLE_SHORT_WATCHDOG",

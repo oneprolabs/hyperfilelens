@@ -1122,6 +1122,8 @@ def _agent_backup_payload(
     file_filter_payload: dict[str, Any] | None = None,
     backup_policy_payload: dict[str, Any] | None = None,
     compression_payload: dict[str, Any] | None = None,
+    operation_id: str = "",
+    operation_attempt: int = 0,
 ) -> dict[str, Any]:
     payload = {
         "source_path": source_path,
@@ -1136,6 +1138,10 @@ def _agent_backup_payload(
         payload["backup_policy"] = backup_policy_payload
     if compression_payload:
         payload["compression"] = compression_payload
+    if operation_id:
+        payload["operation_id"] = operation_id
+    if operation_attempt > 0:
+        payload["operation_attempt"] = operation_attempt
     return payload
 
 

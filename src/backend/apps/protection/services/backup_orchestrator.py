@@ -60,6 +60,7 @@ logger = logging.getLogger(__name__)
 _BACKUP_PROTOCOL_LEGACY = "legacy_parallel"
 _BACKUP_PROTOCOL_PREPARED = "prepared_snapshot_v1"
 _BACKUP_PREPARED_CAPABILITY = "backup_prepared_snapshot_v1"
+_BACKUP_OPERATION_RECONCILE_CAPABILITY = "backup_operation_reconcile_v1"
 
 _NODE_TASK_TERMINAL = frozenset(
     {
@@ -115,6 +116,8 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
             return "RESULT_ACK_TIMEOUT", last_error or "Agent result acknowledgement timed out."
         return "WATCHDOG_STALL", last_error or "Agent task watchdog timed out."
     if node_task.status == NodeTask.Status.CANCELED:
+        if "progress stall" in lower or "kopia_progress_stall" in lower:
+            return "KOPIA_PROGRESS_STALL", last_error
         return "USER_CANCELLED", last_error or "Backup canceled."
     if "agent restarted before task completed" in lower:
         return "AGENT_RESTARTED", last_error
@@ -124,10 +127,21 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
         return "KOPIA_SIGNAL_KILLED", last_error or "Kopia process was killed."
     if node_task.status == NodeTask.Status.FAILED:
         result = node_task.result if isinstance(node_task.result, dict) else {}
-        if str(result.get("error_code") or "") == "KOPIA_POLICY_NOT_FOUND":
+        structured_error = str(result.get("error_code") or "")
+        if structured_error == "KOPIA_SNAPSHOT_RECONCILE_FAILED":
+            return (
+                "KOPIA_SNAPSHOT_RECONCILE_FAILED",
+                "The existing backup result could not be verified safely. Retry after checking repository availability.",
+            )
+        if structured_error == "BACKUP_OPERATION_ID_INVALID":
+            return (
+                "BACKUP_OPERATION_ID_INVALID",
+                "The backup execution identity is invalid. Start a new backup task.",
+            )
+        if structured_error == "KOPIA_POLICY_NOT_FOUND":
             message = bt.extract_kopia_failure_message(result, last_error=last_error)
             return "KOPIA_POLICY_NOT_FOUND", (message or "Kopia policy not found.")[:2000]
-        if str(result.get("error_code") or "") == "POLICY_APPLY_FAILED":
+        if structured_error == "POLICY_APPLY_FAILED":
             phase = str(result.get("policy_phase") or "apply")
             message = bt.extract_kopia_failure_message(result, last_error=last_error)
             public_message = bt.public_repository_failure_message(message)
@@ -817,6 +831,8 @@ def _dispatch_directory_backup(
     task_kind: str = "backup.run",
 ) -> None:
     bt = _bt()
+    operation_id = f"{task.task_uuid}-{directory_row.backup_config_dir_id}"
+    operation_attempt = int(directory_row.retry_count or 0) + 1
     existing = _get_node_task_for_directory(
         directory=directory_row,
         organization_id=task.organization_id,
@@ -905,6 +921,8 @@ def _dispatch_directory_backup(
             file_filter_payload=file_filter_payload if task_kind == "backup.run" else None,
             backup_policy_payload=backup_policy_payload if task_kind == "backup.run" else None,
             compression_payload=compression_payload if task_kind == "backup.run" else None,
+            operation_id=operation_id,
+            operation_attempt=operation_attempt,
         ),
         correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
         correlation_id=str(task.task_uuid),
@@ -940,6 +958,8 @@ def _dispatch_directory_backup(
             "repository_type": repository.repo_type,
             "orchestrator": True,
             "task_kind": task_kind,
+            "operation_id": operation_id,
+            "operation_attempt": operation_attempt,
             "object_name": source_path,
         },
     )
@@ -1050,6 +1070,7 @@ def _handle_directory_stall(
         return False
     elapsed = (now - reference).total_seconds()
     warn_seconds = protection_conf.PROTECTION_BACKUP_SUBSTANTIVE_STALL_WARN_SECONDS
+    fail_seconds = protection_conf.PROTECTION_BACKUP_SUBSTANTIVE_STALL_FAIL_SECONDS
     if elapsed >= warn_seconds and directory_row.stall_warned_at is None:
         directory_row.stall_warned_at = now
         directory_row.save(update_fields=["stall_warned_at", "updated_at"])
@@ -1065,11 +1086,44 @@ def _handle_directory_stall(
                 "object_name": directory_row.source_path,
             },
         )
-    # A lack of changing Kopia counters is diagnostic, not proof that the
-    # process is dead (large small-file trees can spend a long time walking and
-    # reading metadata). The NodeTask activity lease and Agent-side Kopia
-    # watchdog own termination decisions.
-    return False
+    if elapsed < fail_seconds:
+        return False
+    if directory_row.cancel_requested_at is None:
+        directory_row.cancel_requested_at = now
+        directory_row.save(update_fields=["cancel_requested_at", "updated_at"])
+        cancel_agent_task(task_id=node_task.id, reason="kopia progress stall")
+        return False
+    grace = protection_conf.PROTECTION_BACKUP_CANCEL_GRACE_SECONDS
+    if (now - directory_row.cancel_requested_at).total_seconds() < grace:
+        return False
+    error_code = "KOPIA_PROGRESS_STALL"
+    error_message = f"No substantive backup progress for {int(elapsed)} seconds."
+    record_source_snapshot_directory_result(
+        source_snapshot=directory_row.source_snapshot,
+        backup_config_dir_id=directory_row.backup_config_dir_id,
+        source_path=directory_row.source_path,
+        path_type=directory_row.path_type,
+        display_name=directory_row.display_name,
+        repository_id=directory_row.repository_id,
+        status=BackupSourceSnapshotDirectory.Status.FAILED,
+        error_code=error_code,
+        error_message=error_message,
+    )
+    append_task_step_event(
+        task=task,
+        step_name="kopia_snapshot",
+        level=TaskEvent.Level.ERROR,
+        message="Directory backup failed",
+        metadata={
+            "backup_config_dir_id": directory_row.backup_config_dir_id,
+            "source_path": directory_row.source_path,
+            "node_task_id": str(node_task.id),
+            "error_code": error_code,
+            "error_message": error_message,
+            "object_name": directory_row.source_path,
+        },
+    )
+    return True
 
 
 _STALE_DIRECTORY_FAILURE_CODES = frozenset(
@@ -1391,10 +1445,103 @@ def _observe_running_directory(
                 and node_task.status != NodeTask.Status.CANCELED
                 and int(directory_row.retry_count or 0) < 1
             ):
+                retry_node = Node.objects.filter(pk=node_task.node_id).only("metadata").first()
+                supports_safe_retry = (
+                    retry_node is not None
+                    and _BACKUP_OPERATION_RECONCILE_CAPABILITY
+                    in _node_capabilities(retry_node)
+                )
+                if not supports_safe_retry:
+                    grace_seconds = max(
+                        0,
+                        protection_conf.PROTECTION_BACKUP_CAPABILITY_SYNC_GRACE_SECONDS,
+                    )
+                    terminal_age = (timezone.now() - node_task.updated_at).total_seconds()
+                    if terminal_age < grace_seconds:
+                        pending_code = "AGENT_RESTART_CAPABILITY_PENDING"
+                        if directory_row.error_code != pending_code:
+                            directory_row.error_code = pending_code
+                            directory_row.error_message = (
+                                "Waiting for the reconnected Agent to report backup retry capabilities."
+                            )
+                            directory_row.save(
+                                update_fields=[
+                                    "error_code",
+                                    "error_message",
+                                    "updated_at",
+                                ]
+                            )
+                            append_task_step_event(
+                                task=task,
+                                step_name="kopia_snapshot",
+                                level=TaskEvent.Level.WARN,
+                                message="Waiting for Agent capability sync",
+                                metadata={
+                                    "backup_config_dir_id": directory_row.backup_config_dir_id,
+                                    "previous_node_task_id": str(node_task.id),
+                                    "required_capability": _BACKUP_OPERATION_RECONCILE_CAPABILITY,
+                                    "source_path": directory_row.source_path,
+                                    "object_name": directory_row.source_path,
+                                },
+                            )
+                        return
+                    error_code = "AGENT_UPGRADE_REQUIRED"
+                    error_message = (
+                        "Upgrade the Agent before retrying this backup so an existing "
+                        "snapshot can be verified safely."
+                    )
+                else:
+                    directory_row.status = BackupSourceSnapshotDirectory.Status.PENDING
+                    directory_row.node_task_id = None
+                    directory_row.retry_count = int(directory_row.retry_count or 0) + 1
+                    directory_row.error_code = "AGENT_RESTART_RECOVERY_PENDING"
+                    directory_row.error_message = error_message
+                    directory_row.dispatched_at = None
+                    directory_row.last_substantive_progress_at = None
+                    directory_row.last_progress_snapshot = {}
+                    directory_row.last_progress_sample = {}
+                    directory_row.cancel_requested_at = None
+                    directory_row.stall_warned_at = None
+                    directory_row.save(
+                        update_fields=[
+                            "status",
+                            "node_task_id",
+                            "retry_count",
+                            "error_code",
+                            "error_message",
+                            "dispatched_at",
+                            "last_substantive_progress_at",
+                            "last_progress_snapshot",
+                            "last_progress_sample",
+                            "cancel_requested_at",
+                            "stall_warned_at",
+                            "updated_at",
+                        ]
+                    )
+                    append_task_step_event(
+                        task=task,
+                        step_name="kopia_snapshot",
+                        level=TaskEvent.Level.WARN,
+                        message="Backup execution retry queued after Agent restart",
+                        metadata={
+                            "backup_config_dir_id": directory_row.backup_config_dir_id,
+                            "previous_node_task_id": str(node_task.id),
+                            "retry_count": directory_row.retry_count,
+                            "error_code": error_code,
+                            "source_path": directory_row.source_path,
+                            "object_name": directory_row.source_path,
+                        },
+                    )
+                    return
+            if (
+                error_code == "KOPIA_POLICY_NOT_FOUND"
+                and node_task.status != NodeTask.Status.CANCELED
+                and int(directory_row.retry_count or 0) < 1
+            ):
                 directory_row.status = BackupSourceSnapshotDirectory.Status.PENDING
                 directory_row.node_task_id = None
                 directory_row.retry_count = int(directory_row.retry_count or 0) + 1
-                directory_row.error_code = "AGENT_RESTART_RECOVERY_PENDING"
+                directory_row.error_code = "KOPIA_POLICY_REPAIR_PENDING"
                 directory_row.error_message = error_message
                 directory_row.dispatched_at = None
                 directory_row.last_substantive_progress_at = None
@@ -1422,43 +1569,6 @@ def _observe_running_directory(
                     task=task,
                     step_name="kopia_snapshot",
                     level=TaskEvent.Level.WARN,
-                    message="Backup execution retry queued after Agent restart",
-                    metadata={
-                        "backup_config_dir_id": directory_row.backup_config_dir_id,
-                        "previous_node_task_id": str(node_task.id),
-                        "retry_count": directory_row.retry_count,
-                        "error_code": error_code,
-                        "source_path": directory_row.source_path,
-                        "object_name": directory_row.source_path,
-                    },
-                )
-                return
-            if (
-                error_code == "KOPIA_POLICY_NOT_FOUND"
-                and node_task.status != NodeTask.Status.CANCELED
-                and int(directory_row.retry_count or 0) < 1
-            ):
-                directory_row.status = BackupSourceSnapshotDirectory.Status.PENDING
-                directory_row.node_task_id = None
-                directory_row.retry_count = int(directory_row.retry_count or 0) + 1
-                directory_row.error_code = "KOPIA_POLICY_REPAIR_PENDING"
-                directory_row.error_message = error_message
-                directory_row.dispatched_at = None
-                directory_row.save(
-                    update_fields=[
-                        "status",
-                        "node_task_id",
-                        "retry_count",
-                        "error_code",
-                        "error_message",
-                        "dispatched_at",
-                        "updated_at",
-                    ]
-                )
-                append_task_step_event(
-                    task=task,
-                    step_name="kopia_snapshot",
-                    level=TaskEvent.Level.WARN,
                     message="Directory policy repair queued after parallel upload batch",
                     metadata={
                         "backup_config_dir_id": directory_row.backup_config_dir_id,
@@ -1469,6 +1579,11 @@ def _observe_running_directory(
                     },
                 )
                 return
+            directory_status = (
+                BackupSourceSnapshotDirectory.Status.CANCELLED
+                if error_code == "USER_CANCELLED"
+                else BackupSourceSnapshotDirectory.Status.FAILED
+            )
             record_source_snapshot_directory_result(
                 source_snapshot=source_snapshot,
                 backup_config_dir_id=directory_row.backup_config_dir_id,
@@ -1476,9 +1591,7 @@ def _observe_running_directory(
                 path_type=directory_row.path_type,
                 display_name=directory_row.display_name,
                 repository_id=directory_row.repository_id,
-                status=BackupSourceSnapshotDirectory.Status.FAILED
-                if node_task.status != NodeTask.Status.CANCELED
-                else BackupSourceSnapshotDirectory.Status.CANCELLED,
+                status=directory_status,
                 error_code=error_code,
                 error_message=error_message,
             )
@@ -2129,8 +2242,22 @@ def advance_backup(
                 dispatch_kind = "backup.run"
                 directory_row.error_code = ""
                 directory_row.error_message = ""
+                directory_row.last_substantive_progress_at = None
+                directory_row.last_progress_snapshot = {}
+                directory_row.last_progress_sample = {}
+                directory_row.cancel_requested_at = None
+                directory_row.stall_warned_at = None
                 directory_row.save(
-                    update_fields=["error_code", "error_message", "updated_at"]
+                    update_fields=[
+                        "error_code",
+                        "error_message",
+                        "last_substantive_progress_at",
+                        "last_progress_snapshot",
+                        "last_progress_sample",
+                        "cancel_requested_at",
+                        "stall_warned_at",
+                        "updated_at",
+                    ]
                 )
             _dispatch_directory_backup(
                 task=task,
@@ -2995,6 +3122,8 @@ def retry_backup_directory(
     directory_row.adopted_late_result = False
     directory_row.dispatched_at = None
     directory_row.last_substantive_progress_at = None
+    directory_row.last_progress_snapshot = {}
+    directory_row.last_progress_sample = {}
     directory_row.save()
     if task.status in _TASK_TERMINAL:
         from apps.task.services.interface import retry_task

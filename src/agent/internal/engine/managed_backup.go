@@ -38,6 +38,8 @@ const (
 	managedRepositoryFSOperationTimeout  = 30 * time.Second
 	managedRepositoryKopiaCommandTimeout = 2 * time.Minute
 	kopiaEstimatedUsageFactor            = 1.05
+	backupOperationTagKey                = "hfl-operation"
+	backupOperationIDMaxLength           = 128
 	repositoryAlreadyExistsCode          = "STORAGE.REPOSITORY_ALREADY_EXISTS"
 	repositoryAlreadyExistsMessage       = "A Kopia repository already exists at the selected location. Import is not supported in this version. Choose a different storage location."
 	nasRepositoryWriteDeniedCode         = "NAS_REPOSITORY_WRITE_DENIED"
@@ -90,6 +92,7 @@ type repositoryOwnership struct {
 
 var (
 	kopiaS3URLStyleCapabilities sync.Map
+	backupOperationIDPattern    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
 func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
@@ -1229,6 +1232,10 @@ func (e *Engine) runManagedBackup(
 	if prepErr != "" {
 		return "failed", result, prepErr
 	}
+	if operationErr := attachManagedBackupOperation(result, p); operationErr != nil {
+		result["error_code"] = "BACKUP_OPERATION_ID_INVALID"
+		return "failed", result, operationErr.Error()
+	}
 	return runPreparedManagedBackup(ctx, rep, taskID, bin, configFile, env, p.Path, policySpec, result)
 }
 
@@ -1278,6 +1285,49 @@ func (e *Engine) runManagedPolicyApply(
 
 var runManagedSnapshotCommand = process.RunStreaming
 
+var runManagedSnapshotReconcileCommand = func(
+	ctx context.Context,
+	bin string,
+	args []string,
+	env map[string]string,
+	stdin string,
+) (process.Result, error) {
+	return runProcessWithTimeout(
+		ctx,
+		managedRepositoryKopiaCommandTimeout,
+		bin,
+		args,
+		env,
+		stdin,
+	)
+}
+
+func managedBackupOperationID(p Payload) (string, error) {
+	operationID := payloadStringValue(p.Extra["operation_id"])
+	if operationID == "" {
+		return "", nil
+	}
+	if len(operationID) > backupOperationIDMaxLength || !backupOperationIDPattern.MatchString(operationID) {
+		return "", fmt.Errorf("invalid backup operation id")
+	}
+	return operationID, nil
+}
+
+func attachManagedBackupOperation(result map[string]any, p Payload) error {
+	operationID, err := managedBackupOperationID(p)
+	if err != nil {
+		return err
+	}
+	if operationID == "" {
+		return nil
+	}
+	result["operation_id"] = operationID
+	if attempt, ok := payloadIntValue(p.Extra["operation_attempt"]); ok && attempt > 0 {
+		result["operation_attempt"] = attempt
+	}
+	return nil
+}
+
 func (e *Engine) runManagedPreparedSnapshot(
 	ctx context.Context,
 	rep ReporterSink,
@@ -1303,6 +1353,10 @@ func (e *Engine) runManagedPreparedSnapshot(
 	)
 	if prepErr != "" {
 		return "failed", result, prepErr
+	}
+	if operationErr := attachManagedBackupOperation(result, p); operationErr != nil {
+		result["error_code"] = "BACKUP_OPERATION_ID_INVALID"
+		return "failed", result, operationErr.Error()
 	}
 	releaseSessionLock, sessionLockErr := repositorySessionLockFor(repository, configFile).acquireRead(ctx)
 	if sessionLockErr != nil {
@@ -1365,7 +1419,44 @@ func runPreparedManagedSnapshot(
 		map[string]any{"source_path": sourcePath},
 	))
 
-	snapshotArgs := managedBackupSnapshotArgs(configFile, sourcePath)
+	operationID := payloadStringValue(result["operation_id"])
+	operationAttempt, hasOperationAttempt := payloadIntValue(result["operation_attempt"])
+	shouldReconcileOperation := operationID != "" && (!hasOperationAttempt || operationAttempt > 1)
+	if shouldReconcileOperation {
+		reconcileResult, existingSnapshot, matchCount, reconcileErr := findManagedSnapshotByOperation(
+			ctx,
+			bin,
+			configFile,
+			env,
+			operationID,
+		)
+		result["snapshot_reconcile"] = commandResult(reconcileResult)
+		if reconcileErr != nil {
+			result["error_code"] = "KOPIA_SNAPSHOT_RECONCILE_FAILED"
+			return "failed", result, reconcileErr.Error()
+		}
+		if existingSnapshot != nil {
+			for key, value := range snapshotResultFromParsed(existingSnapshot) {
+				result[key] = value
+			}
+			result["snapshot_reconciled"] = true
+			result["snapshot_reconcile_match_count"] = matchCount
+			_ = sendProgress(ctx, rep, taskID, map[string]any{
+				"phase":             "kopia_transfer",
+				"kopia_phase":       "snapshot_created",
+				"kopia_percent":     100,
+				"percent":           100,
+				"bytes_done":        int64(1),
+				"bytes_total":       int64(1),
+				"bytes_total_known": true,
+				"kopia_snapshot_id": stringValue(result["kopia_snapshot_id"]),
+				"reconciled":        true,
+			})
+			return "success", result, ""
+		}
+	}
+
+	snapshotArgs := managedBackupSnapshotArgs(configFile, sourcePath, operationID)
 	progressState := newKopiaProgressReporter()
 	runCtx, cancelRun := context.WithCancel(ctx)
 	stallSeconds := kopiaProgressStallSeconds()
@@ -1390,6 +1481,7 @@ func runPreparedManagedSnapshot(
 	}
 	if runErr != nil {
 		if stalled {
+			result["error_code"] = "KOPIA_PROGRESS_STALL"
 			return "failed", result, "kopia progress stall"
 		}
 		if managedSnapshotPolicyNotFound(res) {
@@ -1418,16 +1510,82 @@ func managedSnapshotPolicyNotFound(res process.Result) bool {
 	return strings.Contains(output, "unable to get policy tree") || strings.Contains(output, "policy not found")
 }
 
-func managedBackupSnapshotArgs(configFile string, sourcePath string) []string {
-	return []string{
+func managedBackupSnapshotArgs(configFile string, sourcePath string, operationID string) []string {
+	args := []string{
 		"--config-file=" + configFile,
 		"--progress",
 		"--progress-estimation-type=classic",
 		"snapshot",
 		"create",
 		sourcePath,
+	}
+	if operationID != "" {
+		args = append(args, "--tags="+backupOperationTagKey+":"+operationID)
+	}
+	return append(args, "--json")
+}
+
+func managedSnapshotReconcileArgs(configFile string, operationID string) []string {
+	return []string{
+		"--config-file=" + configFile,
+		"snapshot",
+		"list",
+		"--all",
+		"--max-results=100",
+		"--tags=" + backupOperationTagKey + ":" + operationID,
 		"--json",
 	}
+}
+
+func findManagedSnapshotByOperation(
+	ctx context.Context,
+	bin string,
+	configFile string,
+	env map[string]string,
+	operationID string,
+) (process.Result, map[string]any, int, error) {
+	args := managedSnapshotReconcileArgs(configFile, operationID)
+	res, runErr := runManagedSnapshotReconcileCommand(ctx, bin, args, env, "")
+	if runErr != nil {
+		return res, nil, 0, fmt.Errorf("snapshot reconciliation failed: %w", runErr)
+	}
+	parsed, ok := decodeJSONLoose(strings.TrimSpace(res.Stdout))
+	if !ok {
+		return res, nil, 0, fmt.Errorf("snapshot reconciliation returned invalid JSON")
+	}
+	rows, ok := parsed.([]any)
+	if !ok {
+		return res, nil, 0, fmt.Errorf("snapshot reconciliation returned an invalid result")
+	}
+
+	var selected map[string]any
+	var selectedEnd time.Time
+	matchCount := 0
+	for _, raw := range rows {
+		row, rowOK := raw.(map[string]any)
+		if !rowOK || !managedSnapshotHasOperation(row, operationID) {
+			continue
+		}
+		if findStringKey(row, "id", "snapshot_id", "snapshotID", "kopia_snapshot_id") == "" {
+			return res, nil, matchCount, fmt.Errorf("snapshot reconciliation returned a snapshot without identity")
+		}
+		matchCount++
+		endTime, _ := time.Parse(time.RFC3339Nano, payloadStringValue(row["endTime"]))
+		if selected == nil || endTime.After(selectedEnd) {
+			selected = row
+			selectedEnd = endTime
+		}
+	}
+	return res, selected, matchCount, nil
+}
+
+func managedSnapshotHasOperation(snapshot map[string]any, operationID string) bool {
+	tags, ok := snapshot["tags"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return payloadStringValue(tags["tag:"+backupOperationTagKey]) == operationID ||
+		payloadStringValue(tags[backupOperationTagKey]) == operationID
 }
 
 func (e *Engine) runManagedSnapshotDelete(
@@ -3690,6 +3848,10 @@ func parseSnapshotOutput(stdout string) map[string]any {
 	if !ok {
 		return nil
 	}
+	return snapshotResultFromParsed(parsed)
+}
+
+func snapshotResultFromParsed(parsed any) map[string]any {
 	result := map[string]any{
 		"snapshot": parsed,
 	}
