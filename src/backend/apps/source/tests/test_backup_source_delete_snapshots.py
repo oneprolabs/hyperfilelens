@@ -34,9 +34,11 @@ from apps.source.services.internal.backup_source_delete import (
     _create_source_unregister_task,
     _enqueue_repository_purge_pending,
     _merge_unregister_checkpoint,
+    _prepare_delete_batch,
     _repository_purge_idempotency_key,
     _resolve_context,
     _snapshot_delete_for_unregister,
+    _snapshot_delete_owned_by_unregister_attempt,
     delete_backup_sources,
     run_source_unregister_task,
 )
@@ -47,6 +49,7 @@ from apps.storage.services.internal.repository_location import (
     reserve_repository_location,
 )
 from apps.task.models import Task
+from apps.task.services.interface import start_task
 
 
 MOUNTS_ROOT = agent_paths.agent_mounts_dir()
@@ -162,6 +165,47 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
             selectable_id=f"nas:{self.resource.id}",
             force=False,
         )
+
+    def _create_agent_unregister_with_snapshot_delete(
+        self,
+        *,
+        attempt_offset: int,
+        force: bool = True,
+    ) -> tuple[Node, Task, Task, NodeTask]:
+        agent = Node.objects.create(
+            organization=self.org,
+            name=f"agent-with-snapshot-delete-{attempt_offset}",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        parent = _create_source_unregister_task(
+            org=self.org,
+            selectable_id=f"agent:{agent.id}",
+            force=force,
+        )
+        child = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SNAPSHOT_DELETE,
+            display_name="Snapshot delete during source unregister",
+            status=Task.Status.RUNNING,
+            request_payload={
+                "source_unregister_task_id": parent.id,
+                "source_unregister_attempt": parent.retry_count + attempt_offset,
+            },
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=agent,
+            kind="snapshot.delete",
+            correlation_type="protection.snapshot_delete",
+            correlation_id=str(child.task_uuid),
+            parent_task=child,
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(minutes=5),
+        )
+        return agent, parent, child, node_task
 
     def test_checkpoint_uses_latest_snapshot_child_state(self):
         previous = {
@@ -318,6 +362,164 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
         self.assertEqual(
             child.request_payload["source_unregister_attempt"],
             1,
+        )
+
+    def test_unregister_preflight_ignores_snapshot_delete_owned_by_current_attempt(
+        self,
+    ):
+        agent, parent, _child, _node_task = (
+            self._create_agent_unregister_with_snapshot_delete(
+                attempt_offset=0,
+            )
+        )
+
+        prepared = _prepare_delete_batch(
+            org=self.org,
+            ids=[f"agent:{agent.id}"],
+            force=True,
+            executing_task_uuid=str(parent.task_uuid),
+        )
+
+        self.assertEqual([item[0].agent_node.id for item in prepared], [agent.id])
+
+    def test_unregister_preflight_keeps_snapshot_delete_from_other_attempt_blocking(
+        self,
+    ):
+        agent, parent, _child, _node_task = (
+            self._create_agent_unregister_with_snapshot_delete(
+                attempt_offset=1,
+            )
+        )
+
+        with self.assertRaises(BackupSourceDeleteFailed) as raised:
+            _prepare_delete_batch(
+                org=self.org,
+                ids=[f"agent:{agent.id}"],
+                force=True,
+                executing_task_uuid=str(parent.task_uuid),
+            )
+
+        self.assertEqual(raised.exception.reasons[0].code, "node_workload_active")
+
+    def test_strict_running_unregister_resumes_around_owned_snapshot_children(self):
+        agent, parent, running_child, running_node_task = (
+            self._create_agent_unregister_with_snapshot_delete(
+                attempt_offset=0,
+                force=False,
+            )
+        )
+        completed_child = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SNAPSHOT_DELETE,
+            display_name="Completed owned snapshot delete",
+            status=Task.Status.SUCCESS,
+            request_payload={
+                "source_unregister_task_id": parent.id,
+                "source_unregister_attempt": parent.retry_count,
+            },
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=agent,
+            kind="snapshot.delete",
+            correlation_type="protection.snapshot_delete",
+            correlation_id=str(completed_child.task_uuid),
+            parent_task=completed_child,
+            status=NodeTask.Status.SUCCESS,
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(minutes=5),
+        )
+        parent = start_task(
+            task_uuid=parent.task_uuid,
+            organization_id=self.org.id,
+        )
+        parent.result_payload = {
+            "result": "waiting",
+            "snapshot_cleanup_tasks": [],
+        }
+        parent.save(update_fields=["result_payload", "updated_at"])
+
+        with (
+            patch(
+                "apps.source.services.internal.backup_source_delete.agent_connection_status",
+                return_value="online",
+            ),
+            patch(
+                "apps.source.services.internal.backup_source_delete._execute_source_unregister_work",
+                return_value={"result": "waiting", "status": Task.Status.RUNNING},
+            ) as execute_unregister,
+        ):
+            waiting = run_source_unregister_task(
+                organization_id=self.org.id,
+                task_uuid=str(parent.task_uuid),
+            )
+
+            parent.refresh_from_db()
+            self.assertEqual(waiting["result"], "waiting")
+            self.assertEqual(parent.status, Task.Status.RUNNING)
+            self.assertEqual(parent.result_payload["result"], "waiting")
+            self.assertFalse(execute_unregister.call_args.kwargs["force"])
+
+            Task.objects.filter(id=running_child.id).update(
+                status=Task.Status.SUCCESS,
+                finished_at=timezone.now(),
+            )
+            NodeTask.objects.filter(id=running_node_task.id).update(
+                status=NodeTask.Status.SUCCESS,
+            )
+            execute_unregister.return_value = {
+                "result": "continued",
+                "status": Task.Status.RUNNING,
+            }
+
+            continued = run_source_unregister_task(
+                organization_id=self.org.id,
+                task_uuid=str(parent.task_uuid),
+            )
+
+        self.assertEqual(continued["result"], "continued")
+        self.assertEqual(execute_unregister.call_count, 2)
+
+    def test_unregister_snapshot_ownership_requires_both_exact_markers(self):
+        parent = self._create_unregister_parent()
+        child = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SNAPSHOT_DELETE,
+            display_name="Snapshot delete ownership check",
+            status=Task.Status.RUNNING,
+        )
+        incomplete_or_stale_payloads = [
+            {},
+            {"source_unregister_task_id": parent.id},
+            {"source_unregister_attempt": parent.retry_count},
+            {
+                "source_unregister_task_id": parent.id + 1,
+                "source_unregister_attempt": parent.retry_count,
+            },
+            {
+                "source_unregister_task_id": parent.id,
+                "source_unregister_attempt": parent.retry_count + 1,
+            },
+        ]
+
+        for payload in incomplete_or_stale_payloads:
+            child.request_payload = payload
+            self.assertFalse(
+                _snapshot_delete_owned_by_unregister_attempt(
+                    product_task=child,
+                    unregister_task=parent,
+                )
+            )
+
+        child.request_payload = {
+            "source_unregister_task_id": parent.id,
+            "source_unregister_attempt": parent.retry_count,
+        }
+        self.assertTrue(
+            _snapshot_delete_owned_by_unregister_attempt(
+                product_task=child,
+                unregister_task=parent,
+            )
         )
 
     @override_settings(
