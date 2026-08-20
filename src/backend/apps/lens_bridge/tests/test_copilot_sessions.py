@@ -14,6 +14,7 @@ from rest_framework.test import APIClient
 from apps.iam.services.registration_service import provision_registered_user_tenant
 from apps.lens_bridge.api.serializers import (
     LensRunCreateSerializer,
+    LensRunFeedbackSerializer,
     LensSessionCreateSerializer,
     LensSessionLinkSerializer,
 )
@@ -123,6 +124,34 @@ class LensSessionCreateSerializerTests(SimpleTestCase):
 
         self.assertFalse(serializer.is_valid())
         self.assertIn("attachment_uuids", serializer.errors)
+
+    def test_run_accepts_a_retry_reference(self):
+        retry_run_uuid = uuid.uuid4()
+        serializer = LensRunCreateSerializer(
+            data={
+                "question": "Try again",
+                "retry_of_run_uuid": str(retry_run_uuid),
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data["retry_of_run_uuid"],
+            retry_run_uuid,
+        )
+
+    def test_run_feedback_accepts_supported_values_and_clear(self):
+        for feedback in ("positive", "negative", ""):
+            serializer = LensRunFeedbackSerializer(data={"feedback": feedback})
+
+            self.assertTrue(serializer.is_valid(), serializer.errors)
+            self.assertEqual(serializer.validated_data["feedback"], feedback)
+
+    def test_run_feedback_rejects_unknown_value(self):
+        serializer = LensRunFeedbackSerializer(data={"feedback": "helpful"})
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("feedback", serializer.errors)
 
     @patch("apps.lens_bridge.api.views.sl_client.request_json")
     def test_session_metadata_follows_sourcelens_pagination(
@@ -259,6 +288,88 @@ class CopilotSessionApiTests(TestCase):
         payload = response.json().get("data", response.json())
         self.assertEqual(len(payload), 1)
         self.assertNotIn("pinned_at", payload[0])
+
+    @patch(
+        "apps.lens_bridge.api.views.copilot_service.list_copilot_assistants",
+        return_value=[],
+    )
+    @patch(
+        "apps.lens_bridge.api.views._source_lens_session_meta",
+        return_value={},
+    )
+    def test_list_stays_ordered_by_creation_when_an_older_chat_gets_an_answer(
+        self,
+        _session_meta,
+        _assistants,
+    ):
+        newer = LensSessionLink.objects.create(
+            organization=self.org,
+            hfl_user=self.user,
+            title="Newer Chat",
+            lifecycle_status=LensSessionLink.LifecycleStatus.READY,
+            sl_session_uuid=uuid.uuid4(),
+        )
+        older_created_at = datetime(2026, 8, 20, 7, 0, tzinfo=timezone.utc)
+        newer_created_at = datetime(2026, 8, 20, 8, 0, tzinfo=timezone.utc)
+        LensSessionLink.objects.filter(pk=self.session.pk).update(
+            created_at=older_created_at,
+            last_message_at=datetime(2026, 8, 20, 10, 0, tzinfo=timezone.utc),
+        )
+        LensSessionLink.objects.filter(pk=newer.pk).update(
+            created_at=newer_created_at,
+            last_message_at=datetime(2026, 8, 20, 8, 1, tzinfo=timezone.utc),
+        )
+
+        response = self.client.get(
+            reverse("lens-copilot-session-list"),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json().get("data", response.json())
+        self.assertEqual(
+            [row["id"] for row in payload],
+            [newer.id, self.session.id],
+        )
+
+    @patch(
+        "apps.lens_bridge.api.views.copilot_service.list_copilot_assistants",
+        return_value=[],
+    )
+    @patch("apps.lens_bridge.api.views._source_lens_session_meta")
+    def test_list_places_explicitly_pinned_chats_before_creation_order(
+        self,
+        session_meta,
+        _assistants,
+    ):
+        self._mark_session_ready()
+        newer = LensSessionLink.objects.create(
+            organization=self.org,
+            hfl_user=self.user,
+            title="Newer Chat",
+            lifecycle_status=LensSessionLink.LifecycleStatus.READY,
+            sl_session_uuid=uuid.uuid4(),
+        )
+        session_meta.return_value = {
+            str(self.session.sl_session_uuid): {
+                "uuid": str(self.session.sl_session_uuid),
+                "pinned_at": "2026-08-20T10:00:00Z",
+            },
+            str(newer.sl_session_uuid): {
+                "uuid": str(newer.sl_session_uuid),
+                "pinned_at": None,
+            },
+        }
+
+        response = self.client.get(
+            reverse("lens-copilot-session-list"),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json().get("data", response.json())
+        self.assertEqual(payload[0]["id"], self.session.id)
+        self.assertEqual(payload[0]["pinned_at"], "2026-08-20T10:00:00Z")
 
     @patch("apps.lens_bridge.api.views.sl_client.request_json")
     def test_pin_uses_sourcelens_as_the_authoritative_state(self, request_json):
@@ -527,6 +638,163 @@ class CopilotSessionApiTests(TestCase):
         self.assertIn("output-files/", output_file["url"])
         self.assertNotIn("sourcelens", output_file["url"])
 
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_feedback_persists_through_the_sourcelens_run(self, request_json):
+        self._mark_session_ready()
+        run_uuid = uuid.uuid4()
+        request_json.side_effect = [
+            [
+                {
+                    "uuid": str(uuid.uuid4()),
+                    "role": "assistant",
+                    "run": str(run_uuid),
+                    "content": "Answer",
+                }
+            ],
+            {
+                "feedback": "positive",
+                "feedback_updated_at": "2026-08-20T02:00:00Z",
+            },
+        ]
+
+        response = self.client.patch(
+            reverse(
+                "lens-copilot-session-feedback",
+                kwargs={"pk": self.session.pk, "run_uuid": run_uuid},
+            ),
+            {"feedback": "positive"},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json().get("data", response.json())
+        self.assertEqual(payload["feedback"], "positive")
+        self.assertEqual(
+            payload["feedback_updated_at"],
+            "2026-08-20T02:00:00Z",
+        )
+        self.assertEqual(
+            request_json.call_args_list[0].args,
+            (
+                "GET",
+                f"/api/lens/sessions/{self.session.sl_session_uuid}/messages/",
+            ),
+        )
+        self.assertEqual(
+            request_json.call_args_list[1].args,
+            ("PATCH", f"/api/lens/runs/{run_uuid}/feedback/"),
+        )
+        self.assertEqual(
+            request_json.call_args_list[1].kwargs["json_body"],
+            {"feedback": "positive"},
+        )
+        self.assertEqual(
+            request_json.call_args_list[1].kwargs["hfl_user"].pk,
+            self.user.pk,
+        )
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_feedback_rejects_a_run_outside_the_session(self, request_json):
+        self._mark_session_ready()
+        request_json.return_value = []
+
+        response = self.client.patch(
+            reverse(
+                "lens-copilot-session-feedback",
+                kwargs={"pk": self.session.pk, "run_uuid": uuid.uuid4()},
+            ),
+            {"feedback": "negative"},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(request_json.call_count, 1)
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_feedback_rejects_an_unknown_value_before_calling_sourcelens(
+        self,
+        request_json,
+    ):
+        self._mark_session_ready()
+
+        response = self.client.patch(
+            reverse(
+                "lens-copilot-session-feedback",
+                kwargs={"pk": self.session.pk, "run_uuid": uuid.uuid4()},
+            ),
+            {"feedback": "helpful"},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        request_json.assert_not_called()
+
+    @patch("apps.lens_bridge.api.views.sl_client.stream_binary")
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_answer_pdf_is_streamed_for_a_run_in_the_session(
+        self,
+        request_json,
+        stream_binary,
+    ):
+        self._mark_session_ready()
+        run_uuid = uuid.uuid4()
+        request_json.return_value = [
+            {
+                "uuid": str(uuid.uuid4()),
+                "role": "assistant",
+                "run": str(run_uuid),
+                "content": "Answer",
+            }
+        ]
+        stream_binary.return_value = sl_client.BinaryStreamResponse(
+            body=iter([b"pdf", b"-bytes"]),
+            content_type="application/pdf",
+            content_length="9",
+            content_disposition='attachment; filename="answer.pdf"',
+            cache_control="private, max-age=0, no-store",
+        )
+
+        response = self.client.get(
+            reverse(
+                "lens-copilot-session-run-pdf",
+                kwargs={"pk": self.session.pk, "run_uuid": run_uuid},
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"pdf-bytes")
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertEqual(response["Cache-Control"], "private, max-age=0, no-store")
+        stream_binary.assert_called_once_with(
+            f"/api/lens/runs/{run_uuid}/pdf/",
+            hfl_user=self.user,
+        )
+
+    @patch("apps.lens_bridge.api.views.sl_client.stream_binary")
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_answer_pdf_rejects_a_run_outside_the_session(
+        self,
+        request_json,
+        stream_binary,
+    ):
+        self._mark_session_ready()
+        request_json.return_value = []
+
+        response = self.client.get(
+            reverse(
+                "lens-copilot-session-run-pdf",
+                kwargs={"pk": self.session.pk, "run_uuid": uuid.uuid4()},
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 404)
+        stream_binary.assert_not_called()
+
     @patch("apps.lens_bridge.api.views.sl_client.stream_sse")
     def test_run_stream_requires_the_run_bound_to_the_session(self, stream_sse):
         run_uuid = uuid.uuid4()
@@ -607,6 +875,79 @@ class CopilotSessionApiTests(TestCase):
         )
         self.session.refresh_from_db()
         self.assertEqual(self.session.active_run_uuid, active_run_uuid)
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_create_run_persists_and_forwards_a_valid_retry(self, request_json):
+        self._mark_session_ready()
+        retry_run_uuid = uuid.uuid4()
+        new_run_uuid = uuid.uuid4()
+        request_json.side_effect = [
+            [
+                {
+                    "uuid": str(uuid.uuid4()),
+                    "role": "assistant",
+                    "run": str(retry_run_uuid),
+                    "content": "Original answer",
+                }
+            ],
+            {
+                "uuid": str(new_run_uuid),
+                "status": "queued",
+                "idempotency_key": "retry-request",
+            },
+        ]
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-create-run",
+                kwargs={"pk": self.session.pk},
+            ),
+            {
+                "question": "Original question",
+                "idempotency_key": "retry-request",
+                "retry_of_run_uuid": str(retry_run_uuid),
+            },
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 201)
+        submission = LensRunSubmission.objects.get(
+            session_link=self.session,
+            idempotency_key="retry-request",
+        )
+        self.assertEqual(submission.retry_of_run_uuid, retry_run_uuid)
+        self.assertEqual(
+            request_json.call_args_list[1].kwargs["json_body"]["retry_of_run_uuid"],
+            str(retry_run_uuid),
+        )
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_create_run_rejects_a_retry_outside_the_session(self, request_json):
+        self._mark_session_ready()
+        request_json.return_value = []
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-create-run",
+                kwargs={"pk": self.session.pk},
+            ),
+            {
+                "question": "Try another Run",
+                "idempotency_key": "invalid-retry",
+                "retry_of_run_uuid": str(uuid.uuid4()),
+            },
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(
+            LensRunSubmission.objects.filter(
+                session_link=self.session,
+                idempotency_key="invalid-retry",
+            ).exists()
+        )
 
     @patch("apps.lens_bridge.api.views.sl_client.request_json")
     def test_create_run_replays_the_same_idempotency_key(self, request_json):

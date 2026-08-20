@@ -89,25 +89,26 @@ async function downloadFile(file: LensRunOutputFile) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin: 10px 0;
+  width: 100%;
+  margin: 16px 0 4px;
 }
 
 .copilot-output-files__label {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
 }
 
 .copilot-output-file {
   display: inline-flex;
   min-width: 0;
-  max-width: min(360px, 70vw);
+  max-width: min(420px, 100%);
   min-height: 48px;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
   border: 1px solid var(--color-border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--color-card-bg);
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -133,5 +134,18 @@ async function downloadFile(file: LensRunOutputFile) {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copilot-output-file {
+    transition: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .copilot-output-file {
+    width: 100%;
+    min-height: 52px;
+  }
 }
 </style>

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../../locales/en'
 import InsightCopilot from './InsightCopilot.vue'
+import CopilotComposer from './copilot/CopilotComposer.vue'
 
 const mocks = vi.hoisted(() => ({
   createCopilotRun: vi.fn(),
@@ -78,13 +79,15 @@ const SimpleStub = defineComponent({ template: '<div />' })
 function sessionRow(
   activeRun: { uuid: string; status: string } | null = null,
   lifecycleStatus = 'ready',
+  id = 444,
+  createdAt = '2026-08-11T08:00:00Z',
 ) {
   return {
-    id: 444,
+    id,
     title: 'Chat',
     lifecycle_status: lifecycleStatus,
     status: 'active',
-    sl_session_uuid: 'session-1',
+    sl_session_uuid: `session-${id}`,
     sl_assistant_uuid: 'assistant-1',
     last_message_at: null,
     last_assistant_message_at: null,
@@ -92,20 +95,24 @@ function sessionRow(
     has_unread: false,
     active_run_uuid: activeRun?.uuid ?? null,
     active_run_status: activeRun?.status ?? '',
-    created_at: '2026-08-11T08:00:00Z',
-    updated_at: '2026-08-11T08:00:00Z',
+    created_at: createdAt,
+    updated_at: createdAt,
   }
 }
 
-function mountCopilot(i18n: ReturnType<typeof createI18n>) {
+function mountCopilot(
+  i18n: ReturnType<typeof createI18n>,
+  sessionSidebar = SimpleStub,
+) {
   return mount(InsightCopilot, {
     global: {
       plugins: [i18n],
       stubs: {
-        CopilotSessionSidebar: SimpleStub,
+        CopilotSessionSidebar: sessionSidebar,
         CopilotContextBar: SimpleStub,
         CopilotLifecycleState: SimpleStub,
         CopilotEmptyState: SimpleStub,
+        CopilotShareDialog: SimpleStub,
         DangerConfirmDialog: SimpleStub,
         ElDrawer: SimpleStub,
         ElImage: SimpleStub,
@@ -152,6 +159,26 @@ describe('InsightCopilot starter question submission', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('reserves the measured composer height below the conversation', async () => {
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+    const wrapper = mountCopilot(i18n)
+    await flushPromises()
+
+    wrapper.findComponent(CopilotComposer).vm.$emit('resize', 248)
+    await nextTick()
+
+    expect(wrapper.get('.copilot-chat-stage').attributes('style')).toContain(
+      '--copilot-composer-height: 248px',
+    )
+    wrapper.unmount()
   })
 
   it('keeps long lifecycle polling active and stops it after unmount', async () => {
@@ -204,18 +231,21 @@ describe('InsightCopilot starter question submission', () => {
       444,
       en.insight.copilot.chipQuerySopsPrompt,
       expect.stringMatching(/^copilot-444-/),
+      [],
+      undefined,
     )
     expect(wrapper.get('.copilot-input-field').element).toHaveProperty('value', '')
     expect(firstChip.attributes('aria-pressed')).toBe('true')
     expect(wrapper.find('.thinking-panel-live').exists()).toBe(true)
-    expect(wrapper.get('.copilot-input-field').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.copilot-input-field').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('.copilot-send-btn--stop').attributes('disabled')).toBeDefined()
 
     createRequest.resolve({ uuid: 'run-444', status: 'queued' })
     await flushPromises()
     wrapper.unmount()
   })
 
-  it('keeps the composer disabled while an active run is being synchronized', async () => {
+  it('keeps the composer unavailable while the initial synchronization is pending', async () => {
     const syncRequest = deferred<{
       session_id: number
       messages: never[]
@@ -238,6 +268,7 @@ describe('InsightCopilot starter question submission', () => {
     await flushPromises()
 
     expect(wrapper.get('.copilot-input-field').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.copilot-send-btn--stop').exists()).toBe(true)
     expect(mocks.createCopilotRun).not.toHaveBeenCalled()
 
     syncRequest.resolve({
@@ -275,8 +306,8 @@ describe('InsightCopilot starter question submission', () => {
 
     expect(wrapper.text()).toContain('Recover my pending question')
     expect(wrapper.find('.thinking-panel-live').exists()).toBe(true)
-    expect(wrapper.get('.copilot-input-field').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.copilot-send-btn--stop').exists()).toBe(false)
+    expect(wrapper.get('.copilot-input-field').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.copilot-send-btn--stop').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -298,6 +329,172 @@ describe('InsightCopilot starter question submission', () => {
     expect(mocks.createCopilotRun).toHaveBeenCalledTimes(1)
     expect(mocks.streamCopilotRun).not.toHaveBeenCalled()
     expect(mocks.syncCopilotSession).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('forwards the original SourceLens Run when regenerating an unchanged question', async () => {
+    const originalRunUuid = 'c42dfb76-3afd-4ad7-b896-472f71f38586'
+    mocks.syncCopilotSession.mockResolvedValue({
+      session_id: 444,
+      messages: [
+        {
+          uuid: '00000000-0000-4000-8000-000000000001',
+          role: 'user',
+          content: 'Original question',
+        },
+        {
+          uuid: '00000000-0000-4000-8000-000000000002',
+          role: 'assistant',
+          content: 'Original answer',
+          run: originalRunUuid,
+          completed_at: '2026-08-20T02:00:00Z',
+        },
+      ],
+      active_run: null,
+      run_outcomes: [],
+    })
+    mocks.createCopilotRun.mockResolvedValue({ uuid: 'retry-run', status: 'queued' })
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+    const wrapper = mountCopilot(i18n)
+    await flushPromises()
+
+    await wrapper.get('button[aria-label="Regenerate answer"]').trigger('click')
+    expect(wrapper.get('.copilot-input-field').element).toHaveProperty(
+      'value',
+      'Original question',
+    )
+    await wrapper.get('.copilot-send-btn').trigger('click')
+    await flushPromises()
+
+    expect(mocks.createCopilotRun).toHaveBeenCalledWith(
+      444,
+      'Original question',
+      expect.stringMatching(/^copilot-444-/),
+      [],
+      originalRunUuid,
+    )
+    wrapper.unmount()
+  })
+
+  it('does not reuse a retry Run after switching to another Chat', async () => {
+    const originalRunUuid = 'c42dfb76-3afd-4ad7-b896-472f71f38586'
+    mocks.listCopilotSessions.mockResolvedValue([
+      sessionRow(null, 'ready', 444, '2026-08-11T08:00:00Z'),
+      sessionRow(null, 'ready', 445, '2026-08-11T07:00:00Z'),
+    ])
+    mocks.syncCopilotSession.mockImplementation(async (sessionId: number) => ({
+      session_id: sessionId,
+      messages: sessionId === 444
+        ? [
+            {
+              uuid: '00000000-0000-4000-8000-000000000001',
+              role: 'user',
+              content: 'Original question',
+            },
+            {
+              uuid: '00000000-0000-4000-8000-000000000002',
+              role: 'assistant',
+              content: 'Original answer',
+              run: originalRunUuid,
+              completed_at: '2026-08-20T02:00:00Z',
+            },
+          ]
+        : [],
+      active_run: null,
+      run_outcomes: [],
+    }))
+    mocks.createCopilotRun.mockResolvedValue({ uuid: 'new-run', status: 'queued' })
+    const SessionSwitchStub = defineComponent({
+      emits: ['select'],
+      template: '<button class="switch-session" @click="$emit(\'select\', 445)">Switch</button>',
+    })
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+    const wrapper = mountCopilot(i18n, SessionSwitchStub)
+    await flushPromises()
+
+    await wrapper.get('button[aria-label="Regenerate answer"]').trigger('click')
+    await wrapper.find('.switch-session').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.copilot-input-field').element).toHaveProperty(
+      'value',
+      'Original question',
+    )
+    await wrapper.get('.copilot-send-btn').trigger('click')
+    await flushPromises()
+
+    expect(mocks.createCopilotRun).toHaveBeenCalledWith(
+      445,
+      'Original question',
+      expect.stringMatching(/^copilot-445-/),
+      [],
+      undefined,
+    )
+    wrapper.unmount()
+  })
+
+  it('starts a new Run when a regenerated question adds a new attachment', async () => {
+    const originalRunUuid = 'c42dfb76-3afd-4ad7-b896-472f71f38586'
+    mocks.syncCopilotSession.mockResolvedValue({
+      session_id: 444,
+      messages: [
+        {
+          uuid: '00000000-0000-4000-8000-000000000001',
+          role: 'user',
+          content: 'Original question',
+        },
+        {
+          uuid: '00000000-0000-4000-8000-000000000002',
+          role: 'assistant',
+          content: 'Original answer',
+          run: originalRunUuid,
+          completed_at: '2026-08-20T02:00:00Z',
+        },
+      ],
+      active_run: null,
+      run_outcomes: [],
+    })
+    mocks.createCopilotRun.mockResolvedValue({ uuid: 'new-run', status: 'queued' })
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+    const wrapper = mountCopilot(i18n)
+    await flushPromises()
+
+    await wrapper.get('button[aria-label="Regenerate answer"]').trigger('click')
+    const fileInput = wrapper.get('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      configurable: true,
+      value: [new File(['pdf'], 'report.pdf', { type: 'application/pdf' })],
+    })
+    await fileInput.trigger('change')
+    await flushPromises()
+    await wrapper.get('.copilot-send-btn').trigger('click')
+    await flushPromises()
+
+    expect(mocks.createCopilotRun).toHaveBeenCalledWith(
+      444,
+      'Original question',
+      expect.stringMatching(/^copilot-444-/),
+      ['00000000-0000-4000-8000-000000000001'],
+      undefined,
+    )
     wrapper.unmount()
   })
 
@@ -361,6 +558,7 @@ describe('InsightCopilot starter question submission', () => {
       'Summarize this report',
       expect.stringMatching(/^copilot-444-/),
       ['00000000-0000-4000-8000-000000000001'],
+      undefined,
     )
     expect(wrapper.get('.copilot-input-field').element).toHaveProperty(
       'value',
@@ -514,7 +712,8 @@ describe('InsightCopilot starter question submission', () => {
 
     expect(wrapper.findAll('.message-row-user')).toHaveLength(1)
     expect(wrapper.text()).toContain('Summarize this report')
-    expect(wrapper.get('.copilot-input-field').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.copilot-input-field').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.copilot-send-btn--stop').exists()).toBe(true)
     expect(mocks.deleteCopilotAttachment).not.toHaveBeenCalled()
     wrapper.unmount()
   })

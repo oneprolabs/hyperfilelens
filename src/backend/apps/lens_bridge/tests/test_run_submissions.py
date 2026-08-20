@@ -102,6 +102,37 @@ class RunSubmissionRecoveryTests(TestCase):
         )
 
     @patch("apps.lens_bridge.services.run_submissions.sl_client.request_json")
+    def test_recovery_replays_the_original_retry_reference(self, request_json):
+        run_uuid = uuid.uuid4()
+        retry_run_uuid = uuid.uuid4()
+        submission = LensRunSubmission.objects.create(
+            organization=self.org,
+            hfl_user=self.user,
+            session_link=self.session,
+            idempotency_key="recover-retry",
+            question="Try this answer again",
+            retry_of_run_uuid=retry_run_uuid,
+        )
+        request_json.return_value = {
+            "uuid": str(run_uuid),
+            "status": "queued",
+            "idempotency_key": "recover-retry",
+        }
+
+        run_submissions.execute_submission(submission.id)
+
+        request_json.assert_called_once_with(
+            "POST",
+            f"/api/lens/sessions/{self.session.sl_session_uuid}/runs/",
+            json_body={
+                "question": "Try this answer again",
+                "idempotency_key": "recover-retry",
+                "retry_of_run_uuid": str(retry_run_uuid),
+            },
+            hfl_user=self.user,
+        )
+
+    @patch("apps.lens_bridge.services.run_submissions.sl_client.request_json")
     def test_recovery_accepts_a_legacy_null_attachment_list(self, request_json):
         run_uuid = uuid.uuid4()
         submission = LensRunSubmission.objects.create(

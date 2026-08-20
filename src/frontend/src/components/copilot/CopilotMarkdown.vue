@@ -11,6 +11,7 @@ function escapeHtml(value: string) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 function safeLinkHref(value: string): boolean {
@@ -36,6 +37,10 @@ function inlineFormat(text: string): string {
     )
 }
 
+function formatTextLines(text: string): string {
+  return inlineFormat(escapeHtml(text).replace(/\n/g, '<br>'))
+}
+
 function parseTableCells(line: string): string[] {
   return line
     .trim()
@@ -52,11 +57,11 @@ function isTableBlock(lines: string[]): boolean {
 
 function renderTable(block: string): string {
   const lines = block.split('\n').filter((line) => line.trim())
-  if (lines.length < 2) return `<p>${inlineFormat(escapeHtml(block.replace(/\n/g, '<br>')))}</p>`
+  if (lines.length < 2) return `<p>${formatTextLines(block)}</p>`
 
   const separator = lines[1].replace(/\|/g, '').trim()
   if (!separator.match(/^[\s:-]+$/)) {
-    return `<p>${inlineFormat(escapeHtml(block.replace(/\n/g, '<br>')))}</p>`
+    return `<p>${formatTextLines(block)}</p>`
   }
 
   const headers = parseTableCells(lines[0])
@@ -64,7 +69,7 @@ function renderTable(block: string): string {
 
   const thead = `<thead><tr>${headers.map((h) => `<th>${inlineFormat(escapeHtml(h))}</th>`).join('')}</tr></thead>`
   const tbody = `<tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${inlineFormat(escapeHtml(cell))}</td>`).join('')}</tr>`).join('')}</tbody>`
-  return `<table class="copilot-md-table">${thead}${tbody}</table>`
+  return `<div class="copilot-md-table-wrap"><table class="copilot-md-table">${thead}${tbody}</table></div>`
 }
 
 function renderList(block: string, ordered: boolean): string {
@@ -103,17 +108,34 @@ function renderBlock(block: string): string {
     return '<hr class="copilot-md-hr">'
   }
 
-  return `<p>${inlineFormat(escapeHtml(block.replace(/\n/g, '<br>')))}</p>`
+  if (lines.every((line) => /^>\s?/.test(line))) {
+    const quote = lines.map((line) => line.replace(/^>\s?/, '')).join('\n')
+    return `<blockquote class="copilot-md-quote">${inlineFormat(escapeHtml(quote).replace(/\n/g, '<br>'))}</blockquote>`
+  }
+
+  return `<p>${formatTextLines(block)}</p>`
+}
+
+function normalizeCodeLanguage(value: string): string {
+  return value.trim().replace(/[^a-zA-Z0-9_+#.-]/g, '').slice(0, 24)
 }
 
 function renderMarkdown(text: string): string {
   if (!text.trim()) return ''
   const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const fenceCount = normalized.match(/^```/gm)?.length ?? 0
+  const renderable = fenceCount % 2 === 1 ? `${normalized}\n\`\`\`` : normalized
 
   const codeBlocks: string[] = []
-  const working = normalized.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, _lang, code) => {
+  const working = renderable.replace(/```([^\n`]*)\n([\s\S]*?)```/g, (_match, rawLang, code) => {
     const index = codeBlocks.length
-    codeBlocks.push(`<pre class="copilot-md-pre"><code>${escapeHtml(code.trim())}</code></pre>`)
+    const language = normalizeCodeLanguage(rawLang)
+    const languageLabel = language
+      ? `<span class="copilot-md-code-language">${escapeHtml(language)}</span>`
+      : ''
+    codeBlocks.push(
+      `<div class="copilot-md-code-block">${languageLabel}<pre class="copilot-md-pre"><code>${escapeHtml(code.replace(/^\n|\n$/g, ''))}</code></pre></div>`,
+    )
     return `\n\n<!--CODE_BLOCK_${index}-->\n\n`
   })
 
@@ -154,7 +176,7 @@ const rendered = computed(() => renderMarkdown(props.content))
   font-weight: 400;
   letter-spacing: normal;
   color: var(--color-text-primary);
-  word-break: break-word;
+  overflow-wrap: anywhere;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -168,35 +190,62 @@ const rendered = computed(() => renderMarkdown(props.content))
 }
 
 .copilot-markdown :deep(a) {
-  color: #2563eb;
+  color: var(--color-primary);
+  font-weight: 500;
   text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
 .copilot-markdown :deep(.copilot-md-code) {
   padding: 0.1em 0.35em;
   border-radius: 4px;
-  background: rgba(37, 99, 235, 0.1);
-  color: #1e40af;
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
   font-family: var(--font-mono);
   font-size: 0.92em;
 }
 
+.copilot-markdown :deep(.copilot-md-code-block) {
+  position: relative;
+  margin: 16px 0;
+  overflow: hidden;
+  border: 1px solid #263244;
+  border-radius: 12px;
+  background: #111827;
+}
+
+.copilot-markdown :deep(.copilot-md-code-language) {
+  display: block;
+  padding: 8px 14px 0;
+  color: #94a3b8;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-transform: lowercase;
+}
+
 .copilot-markdown :deep(.copilot-md-pre) {
-  margin: 0.75em 0;
-  padding: 12px 14px;
+  margin: 0;
+  padding: 14px 16px 16px;
   overflow-x: auto;
-  border-radius: var(--radius-card);
-  background: #1e293b;
+  border-radius: 0;
+  background: transparent;
   color: #e2e8f0;
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 13px;
+  line-height: 1.65;
+  tab-size: 2;
 }
 
 .copilot-markdown :deep(.copilot-md-pre code) {
+  display: block;
   background: transparent;
   padding: 0;
   color: inherit;
+  font: inherit;
+  white-space: pre;
 }
 
 .copilot-markdown :deep(h1),
@@ -208,7 +257,16 @@ const rendered = computed(() => renderMarkdown(props.content))
   margin: 1em 0 0.5em;
   font-weight: 600;
   line-height: 1.35;
-  color: #111827;
+  color: var(--color-text-title);
+}
+
+.copilot-markdown :deep(> h1:first-child),
+.copilot-markdown :deep(> h2:first-child),
+.copilot-markdown :deep(> h3:first-child),
+.copilot-markdown :deep(> h4:first-child),
+.copilot-markdown :deep(> h5:first-child),
+.copilot-markdown :deep(> h6:first-child) {
+  margin-top: 0;
 }
 
 .copilot-markdown :deep(h1) { font-size: 1.5em; }
@@ -236,31 +294,48 @@ const rendered = computed(() => renderMarkdown(props.content))
   margin: 0.35em 0;
 }
 
+.copilot-markdown :deep(li::marker) {
+  color: var(--color-text-secondary);
+}
+
+.copilot-markdown :deep(.copilot-md-table-wrap) {
+  width: 100%;
+  margin: 16px 0;
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  overscroll-behavior-inline: contain;
+}
+
 .copilot-markdown :deep(.copilot-md-table) {
   width: 100%;
+  min-width: 520px;
   border-collapse: collapse;
-  margin: 0.75em 0;
+  margin: 0;
   font-size: 14px;
-  border-radius: var(--radius-card);
-  overflow: hidden;
-  border: 1px solid #e5e7eb;
 }
 
 .copilot-markdown :deep(.copilot-md-table thead) {
-  background: #f9fafb;
+  background: var(--color-grey-1);
 }
 
 .copilot-markdown :deep(.copilot-md-table th),
 .copilot-markdown :deep(.copilot-md-table td) {
   padding: 10px 12px;
   text-align: left;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
   vertical-align: top;
+}
+
+.copilot-markdown :deep(.copilot-md-table th:last-child),
+.copilot-markdown :deep(.copilot-md-table td:last-child) {
+  border-right: none;
 }
 
 .copilot-markdown :deep(.copilot-md-table th) {
   font-weight: 600;
-  color: #374151;
+  color: var(--color-text-title);
 }
 
 .copilot-markdown :deep(.copilot-md-table tbody tr:last-child td) {
@@ -268,12 +343,35 @@ const rendered = computed(() => renderMarkdown(props.content))
 }
 
 .copilot-markdown :deep(.copilot-md-table tbody tr:hover) {
-  background: #f8fafc;
+  background: var(--color-grey-1);
 }
 
 .copilot-markdown :deep(.copilot-md-hr) {
   border: none;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--color-border);
   margin: 1em 0;
+}
+
+.copilot-markdown :deep(.copilot-md-quote) {
+  margin: 14px 0;
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid color-mix(in srgb, var(--color-primary) 42%, var(--color-border));
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 768px) {
+  .copilot-markdown {
+    font-size: 16px;
+    line-height: 1.65;
+  }
+
+  .copilot-markdown :deep(.copilot-md-code-block),
+  .copilot-markdown :deep(.copilot-md-table-wrap) {
+    margin: 14px 0;
+  }
+
+  .copilot-markdown :deep(.copilot-md-pre) {
+    font-size: 12px;
+  }
 }
 </style>

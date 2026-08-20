@@ -129,18 +129,11 @@ class DeploymentAiModelResult:
     applied: bool = True
 
 
-def _deployment_fingerprint(config: DeploymentAiModelConfig) -> str:
+def _deployment_fingerprint_from_values(values: Mapping[str, Any]) -> str:
     """Return a keyed fingerprint without persisting deployment secrets."""
 
     raw = json.dumps(
-        {
-            "provider": config.provider,
-            "model_id": config.model_id,
-            "display_name": config.display_name,
-            "api_base": config.api_base,
-            "api_key": config.api_key,
-            "supports_vision": config.supports_vision,
-        },
+        values,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
@@ -149,6 +142,35 @@ def _deployment_fingerprint(config: DeploymentAiModelConfig) -> str:
         raw,
         hashlib.sha256,
     ).hexdigest()
+
+
+def _deployment_fingerprint(config: DeploymentAiModelConfig) -> str:
+    """Return the current deployment configuration fingerprint."""
+
+    return _deployment_fingerprint_from_values(
+        {
+            "provider": config.provider,
+            "model_id": config.model_id,
+            "display_name": config.display_name,
+            "api_base": config.api_base,
+            "api_key": config.api_key,
+            "supports_vision": config.supports_vision,
+        }
+    )
+
+
+def _legacy_deployment_fingerprint(config: DeploymentAiModelConfig) -> str:
+    """Return the pre-vision fingerprint accepted during in-place upgrades."""
+
+    return _deployment_fingerprint_from_values(
+        {
+            "provider": config.provider,
+            "model_id": config.model_id,
+            "display_name": config.display_name,
+            "api_base": config.api_base,
+            "api_key": config.api_key,
+        }
+    )
 
 
 def _source_lens_payload(
@@ -386,7 +408,24 @@ def ensure_platform_ai_model(
     managed_ref = str(link.sl_config_uuid) if link is not None else ""
     first_adoption = link is None
     deployment_fingerprint = _deployment_fingerprint(config)
-    should_select_managed = first_adoption or not selected_ref or selected_ref == managed_ref
+    compatible_fingerprints = {
+        deployment_fingerprint,
+        _legacy_deployment_fingerprint(config),
+    }
+    link_needs_reconciliation = bool(
+        link
+        and (
+            link.management_key != management_key
+            or link.deployment_role != role
+            or link.display_name != config.display_name
+            or link.deployment_fingerprint != deployment_fingerprint
+            or link.is_deployment_history
+            or link.is_deleted
+        )
+    )
+    should_select_managed = (
+        first_adoption or not selected_ref or selected_ref == managed_ref
+    )
     if not should_select_managed:
         selected_owned = LensOrgModelLink.objects.filter(
             organization=org,
@@ -400,35 +439,47 @@ def ensure_platform_ai_model(
     if (
         current is not None
         and link is not None
-        and link.deployment_fingerprint == deployment_fingerprint
+        and link.deployment_fingerprint in compatible_fingerprints
     ):
+        # Capability declarations added by a newer HFL/SourceLens contract are
+        # mutable configuration, not a new model identity. Repair the existing
+        # UUID before promoting the current fingerprint so upgrades do not
+        # manufacture a duplicate deployment-history model.
+        if config.supports_vision and not _sl_model_supports_vision(current):
+            # Deliberately omit is_default from the patch payload: the PUT
+            # endpoint applies partial updates and would otherwise clear
+            # SourceLens's process-wide default if this model holds it.
+            sl_client.request_json(
+                "PUT",
+                f"/api/v1/admin/llm-config/{link.sl_config_uuid}/",
+                json_body=_source_lens_payload(config),
+            )
+            logger.info(
+                "Repaired SourceLens multimodal model %s vision-capability "
+                "declaration.",
+                link.sl_config_uuid,
+            )
+
         connectivity_ok = _test_connection(link.sl_config_uuid)
         if connectivity_ok:
-            # Upgrade repair: SourceLens >= 0.39 requires multimodal models to
-            # declare vision capability before assistant creation. Patch the
-            # installed model in place instead of recreating it, so the
-            # config_uuid and any administrator selections stay stable.
-            if config.supports_vision and not _sl_model_supports_vision(current):
-                # Deliberately omit is_default from the patch payload: the PUT
-                # endpoint applies partial updates and would otherwise clear
-                # SourceLens's process-wide default if this model holds it.
-                sl_client.request_json(
-                    "PUT",
-                    f"/api/v1/admin/llm-config/{link.sl_config_uuid}/",
-                    json_body=_source_lens_payload(config),
-                )
-                logger.info(
-                    "Repaired SourceLens multimodal model %s vision-capability "
-                    "declaration.",
-                    link.sl_config_uuid,
-                )
-            if should_select_managed:
+            if link_needs_reconciliation or should_select_managed:
                 with transaction.atomic():
-                    _set_role_default(
-                        defaults_id=platform_defaults.id,
-                        role=role,
-                        config_uuid=link.sl_config_uuid,
-                    )
+                    if link_needs_reconciliation:
+                        _persist_link(
+                            link=link,
+                            config_uuid=link.sl_config_uuid,
+                            display_name=config.display_name,
+                            management_key=management_key,
+                            role=role,
+                            preserve_existing=False,
+                            deployment_fingerprint=deployment_fingerprint,
+                        )
+                    if should_select_managed:
+                        _set_role_default(
+                            defaults_id=platform_defaults.id,
+                            role=role,
+                            config_uuid=link.sl_config_uuid,
+                        )
             return DeploymentAiModelResult(
                 action="updated",
                 connectivity_ok=True,

@@ -223,6 +223,46 @@ class CopilotChatTeardownTests(TestCase):
         )
         self.assertEqual(run_agent_task.call_args.kwargs["kind"], "lens.ks.cleanup")
 
+    @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")
+    @mock.patch(
+        "apps.lens_bridge.services.copilot_sharing.revoke_session_shares",
+        side_effect=sl_client.LensBridgeUnavailable(),
+    )
+    def test_share_revocation_failure_blocks_session_and_workspace_deletion(
+        self,
+        revoke_shares,
+        request_json,
+    ):
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.save(update_fields=["lifecycle_status", "updated_at"])
+
+        with self.assertRaises(chat_lifecycle.ChatTeardownIncompleteError):
+            chat_lifecycle.run_copilot_chat_teardown(
+                session_link_id=self.session.id
+            )
+
+        self.session.refresh_from_db()
+        self.workspace_binding.refresh_from_db()
+        revoke_shares.assert_called_once()
+        request_json.assert_not_called()
+        self.assertIsNotNone(self.session.sl_session_uuid)
+        self.assertEqual(
+            self.session.lifecycle_status,
+            LensSessionLink.LifecycleStatus.DELETING,
+        )
+        self.assertEqual(
+            self.session.teardown_state_json["revoke_shares"]["status"],
+            "retry",
+        )
+        self.assertEqual(
+            self.session.teardown_state_json["delete_session"]["status"],
+            "blocked",
+        )
+        self.assertEqual(
+            self.workspace_binding.state,
+            LensWorkspaceBinding.State.READY,
+        )
+
     @mock.patch("apps.lens_bridge.services.assistant_access.soft_delete_assistant_link")
     @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
     @mock.patch("apps.node.services.internal.agent_task.run_agent_task_sync")

@@ -48,9 +48,16 @@ import CopilotContextBar from './copilot/CopilotContextBar.vue'
 import CopilotEmptyState, { type CopilotEmptyPhase, type CopilotReadiness } from './copilot/CopilotEmptyState.vue'
 import CopilotLifecycleState from './copilot/CopilotLifecycleState.vue'
 import CopilotMessageList from './copilot/CopilotMessageList.vue'
-import CopilotSessionSidebar, { type SessionGroupKey, type SessionRow } from './copilot/CopilotSessionSidebar.vue'
+import CopilotSessionSidebar from './copilot/CopilotSessionSidebar.vue'
+import CopilotShareDialog from './copilot/CopilotShareDialog.vue'
+import { toSessionRows, type SessionRow } from './copilot/sessionOrdering'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
-import type { CopilotComposerAttachment, CopilotDisplayMessage } from './copilot/types'
+import type {
+  CopilotComposerAttachment,
+  CopilotDisplayMessage,
+  CopilotFeedbackUpdate,
+  CopilotRetryDraft,
+} from './copilot/types'
 import { appendRunOutcomeMessages } from './copilot/runOutcomes'
 import { Menu } from 'lucide-vue-next'
 import { useResponsiveLayout } from '../../composables/useResponsiveLayout'
@@ -75,10 +82,14 @@ const activeSessionId = ref<number | null>(null)
 const deleteOpen = ref(false)
 const deleteLoading = ref(false)
 const deleteTarget = ref<SessionRow | null>(null)
+const shareOpen = ref(false)
+const shareTarget = ref<SessionRow | null>(null)
 const messagesBySession = ref<Record<number, CopilotDisplayMessage[]>>({})
 const selectedStarterBySession = ref<Record<number, string>>({})
 const input = ref('')
 const composerAttachments = ref<CopilotComposerAttachment[]>([])
+const retryDraft = ref<CopilotRetryDraft | null>(null)
+const composerHeight = ref(176)
 const messageListRef = ref<{ scrollToBottom: () => void } | null>(null)
 const lifecyclePollingEpochs = new Map<number, number>()
 let componentUnmounted = false
@@ -97,35 +108,6 @@ function isAssistantChatReady(row: LensCopilotAssistant) {
   const status = row.knowledge_source_status
   if (!status) return true
   return status === 'ready' || status === 'degraded'
-}
-
-function groupForDate(iso: string | null | undefined): SessionGroupKey {
-  if (!iso) return 'earlier'
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return 'earlier'
-  const now = new Date()
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const startYesterday = new Date(startToday)
-  startYesterday.setDate(startYesterday.getDate() - 1)
-  if (date >= startToday) return 'today'
-  if (date >= startYesterday) return 'yesterday'
-  return 'earlier'
-}
-
-function toSessionRows(rows: LensSessionLink[]): SessionRow[] {
-  return rows.map((row) => ({
-    ...row,
-    group: row.pinned_at
-      ? 'pinned'
-      : groupForDate(row.last_message_at || row.created_at),
-  })).sort((left, right) => {
-    const leftPinned = left.pinned_at ? Date.parse(left.pinned_at) : 0
-    const rightPinned = right.pinned_at ? Date.parse(right.pinned_at) : 0
-    if (leftPinned !== rightPinned) return rightPinned - leftPinned
-    const leftRecent = Date.parse(left.last_message_at || left.created_at || '') || 0
-    const rightRecent = Date.parse(right.last_message_at || right.created_at || '') || 0
-    return rightRecent - leftRecent
-  })
 }
 
 function welcomeMessage(sessionId: number, createdAt?: string | null): CopilotDisplayMessage {
@@ -162,10 +144,28 @@ function mapApiMessage(row: LensChatMessage): CopilotDisplayMessage | null {
     role: row.role === 'user' ? 'user' : 'assistant',
     text,
     createdAt: row.created_at,
+    completedAt: row.completed_at,
     runId: row.run,
     thinking: row.thinking,
     attachments: row.attachments,
     outputFiles: row.output_files,
+    feedback: row.feedback ?? null,
+  }
+}
+
+function applyFeedbackUpdate(update: CopilotFeedbackUpdate) {
+  const messages = messagesBySession.value[update.sessionId]
+  if (!messages) return
+  messagesBySession.value = {
+    ...messagesBySession.value,
+    [update.sessionId]: messages.map((message) =>
+      message.id === update.messageId && message.runId === update.runId
+        ? {
+            ...message,
+            feedback: update.feedback,
+          }
+        : message,
+    ),
   }
 }
 
@@ -309,14 +309,16 @@ const runCanStop = computed(
   () => runInProgress.value && Boolean(activeStream.value?.runUuid),
 )
 
-const composerDisabled = computed(() => {
+const composerUnavailable = computed(() => {
   if (loading.value || !bridgeReady.value || activeSessionId.value == null) return true
   const session = sessions.value.find((row) => row.id === activeSessionId.value)
   if (session && session.lifecycle_status && session.lifecycle_status !== 'ready') return true
-  const stream = activeStream.value
-  if (!stream) return false
-  return runInProgress.value
+  return false
 })
+
+const submissionBlocked = computed(
+  () => composerUnavailable.value || runInProgress.value,
+)
 
 const bubbleTag = computed(() => activeAssistant.value?.name ?? '')
 
@@ -466,7 +468,10 @@ async function bootstrap() {
 
 async function selectSession(id: number) {
   const previousId = activeSessionId.value
-  if (previousId !== id) clearComposerAttachments({ deleteDocuments: true })
+  if (previousId !== id) {
+    clearComposerAttachments({ deleteDocuments: true })
+    retryDraft.value = null
+  }
   activeSessionId.value = id
   try {
     await copilotStore.selectSession(previousId, id, syncHandlers, id)
@@ -623,6 +628,12 @@ function deleteSession(row: SessionRow) {
   deleteOpen.value = true
 }
 
+function shareSession(row: SessionRow) {
+  shareTarget.value = row
+  shareOpen.value = true
+  mobileSessionsOpen.value = false
+}
+
 async function confirmDeleteSession() {
   const row = deleteTarget.value
   if (!row) return
@@ -663,9 +674,15 @@ function scrollToBottom() {
   messageListRef.value?.scrollToBottom()
 }
 
+function updateComposerHeight(height: number) {
+  if (Number.isFinite(height) && height > 0) {
+    composerHeight.value = Math.ceil(height)
+  }
+}
+
 async function applyStarterChip(key: string, text: string) {
   const sessionId = activeSessionId.value
-  if (sessionId == null || composerDisabled.value) return
+  if (sessionId == null || submissionBlocked.value) return
   selectedStarterBySession.value = {
     ...selectedStarterBySession.value,
     [sessionId]: key,
@@ -673,8 +690,10 @@ async function applyStarterChip(key: string, text: string) {
   await submitQuestion(text)
 }
 
-function retryQuestion(text: string) {
-  input.value = text
+function retryQuestion(draft: CopilotRetryDraft) {
+  if (draft.sessionId !== activeSessionId.value) return
+  retryDraft.value = draft
+  input.value = draft.question
 }
 
 function attachmentErrorMessage(error: unknown) {
@@ -784,7 +803,7 @@ function removeComposerAttachment(item: CopilotComposerAttachment) {
 
 async function addComposerAttachments(files: File[]) {
   const sessionId = activeSessionId.value
-  if (sessionId == null || composerDisabled.value) return
+  if (sessionId == null || composerUnavailable.value) return
   const available = Math.max(0, 4 - composerAttachments.value.length)
   const selected = files.slice(0, available)
   if (files.length > available) {
@@ -870,17 +889,20 @@ async function submitQuestion(
   {
     clearComposer = false,
     attachments = [],
+    retryOfRunUuid,
   }: {
     clearComposer?: boolean
     attachments?: CopilotComposerAttachment[]
+    retryOfRunUuid?: string
   } = {},
 ) {
   const text = question.trim()
   const sessionId = activeSessionId.value
   const readyAttachments = attachments.filter((item) => item.status === 'ready')
-  if ((!text && !readyAttachments.length) || sessionId == null || composerDisabled.value) return
+  if ((!text && !readyAttachments.length) || sessionId == null || submissionBlocked.value) return
 
   const submissionComposerGeneration = composerLifecycleGeneration
+  const submissionRetryDraft = retryDraft.value
   const optimisticMessageId = uid('m')
   beginSessionRunSubmission(sessionId)
   const list = [...(messagesBySession.value[sessionId] ?? [])]
@@ -892,7 +914,10 @@ async function submitQuestion(
     createdAt: new Date().toISOString(),
   })
   messagesBySession.value = { ...messagesBySession.value, [sessionId]: list }
-  if (clearComposer) input.value = ''
+  if (clearComposer) {
+    input.value = ''
+    retryDraft.value = null
+  }
   if (readyAttachments.length) {
     const submittedKeys = new Set(readyAttachments.map((item) => item.key))
     composerAttachments.value = composerAttachments.value.filter(
@@ -906,14 +931,13 @@ async function submitQuestion(
   try {
     const idempotencyKey = uid(`copilot-${sessionId}`)
     const attachmentUuids = readyAttachments.map((item) => item.uuid)
-    const run = attachmentUuids.length
-      ? await createCopilotRun(
-          sessionId,
-          text,
-          idempotencyKey,
-          attachmentUuids,
-        )
-      : await createCopilotRun(sessionId, text, idempotencyKey)
+    const run = await createCopilotRun(
+      sessionId,
+      text,
+      idempotencyKey,
+      attachmentUuids,
+      retryOfRunUuid,
+    )
     runAccepted = true
     revokeComposerAttachments(readyAttachments)
     attachmentPreviewsReleased = true
@@ -946,7 +970,16 @@ async function submitQuestion(
       }
     }
     refreshPollerSessions()
-    if (restoreRejectedRequest && clearComposer) input.value = question
+    if (restoreRejectedRequest && clearComposer) {
+      input.value = question
+      if (
+        retryOfRunUuid
+        && submissionRetryDraft?.runId === retryOfRunUuid
+        && submissionRetryDraft.question === text
+      ) {
+        retryDraft.value = submissionRetryDraft
+      }
+    }
     if (
       restoreRejectedRequest
       && readyAttachments.length
@@ -977,9 +1010,18 @@ async function submitQuestion(
 }
 
 async function sendMessage() {
+  const text = input.value.trim()
+  const retryOfRunUuid = (
+    retryDraft.value?.sessionId === activeSessionId.value
+    && retryDraft.value?.question === text
+    && composerAttachments.value.length === 0
+  )
+    ? retryDraft.value.runId
+    : undefined
   await submitQuestion(input.value, {
     clearComposer: true,
     attachments: [...composerAttachments.value],
+    retryOfRunUuid,
   })
 }
 
@@ -1014,6 +1056,10 @@ watch(
     if (bridgeReady.value) void bootstrap()
   },
 )
+
+watch(activeSessionId, () => {
+  retryDraft.value = null
+})
 
 onActivated(() => {
   componentUnmounted = false
@@ -1057,6 +1103,7 @@ onUnmounted(() => {
       :loading="loading"
       :pending-notifications="copilotStore.pendingNotifications.value"
       @select="selectSession"
+      @share="shareSession"
       @delete="deleteSession"
       @rename="renameSession"
       @retry="retryProvision"
@@ -1079,6 +1126,7 @@ onUnmounted(() => {
         :loading="loading"
         :pending-notifications="copilotStore.pendingNotifications.value"
         @select="selectSession($event); mobileSessionsOpen = false"
+        @share="shareSession"
         @delete="deleteSession"
         @rename="renameSession"
         @retry="retryProvision"
@@ -1116,7 +1164,8 @@ onUnmounted(() => {
 
         <div
           v-if="activeSession?.lifecycle_status === 'ready'"
-          class="flex min-h-0 flex-1 flex-col overflow-hidden"
+          class="copilot-chat-stage flex min-h-0 flex-1 flex-col overflow-hidden"
+          :style="{ '--copilot-composer-height': `${composerHeight}px` }"
         >
           <CopilotMessageList
             :key="activeSessionId"
@@ -1130,25 +1179,27 @@ onUnmounted(() => {
             :stream-error="activeStream?.streamError ?? ''"
             :bubble-tag="bubbleTag"
             :selected-starter-key="selectedStarterKey"
-            :starter-disabled="composerDisabled"
+            :starter-disabled="submissionBlocked"
             @starter-chip="applyStarterChip"
             @retry-question="retryQuestion"
+            @feedback-updated="applyFeedbackUpdate"
+          />
+
+          <CopilotComposer
+            v-model="input"
+            :attachments="composerAttachments"
+            :sending="runInProgress"
+            :can-stop="runCanStop"
+            :disabled="composerUnavailable"
+            :supports-images="supportsImageAttachments"
+            :supports-documents="supportsDocumentAttachments"
+            @send="sendMessage"
+            @stop="stopStreaming"
+            @attach="addComposerAttachments"
+            @remove-attachment="removeComposerAttachment"
+            @resize="updateComposerHeight"
           />
         </div>
-
-        <CopilotComposer
-          v-if="activeSession?.lifecycle_status === 'ready'"
-          v-model="input"
-          :attachments="composerAttachments"
-          :sending="runCanStop"
-          :disabled="composerDisabled"
-          :supports-images="supportsImageAttachments"
-          :supports-documents="supportsDocumentAttachments"
-          @send="sendMessage"
-          @stop="stopStreaming"
-          @attach="addComposerAttachments"
-          @remove-attachment="removeComposerAttachment"
-        />
       </template>
 
       <CopilotEmptyState
@@ -1170,6 +1221,11 @@ onUnmounted(() => {
       @confirm="confirmDeleteSession"
       @cancel="deleteTarget = null"
     />
+    <CopilotShareDialog
+      v-model="shareOpen"
+      :session="shareTarget"
+      @closed="shareTarget = null"
+    />
   </div>
 </template>
 
@@ -1188,11 +1244,28 @@ onUnmounted(() => {
   min-height: 0;
 }
 
+.copilot-chat-stage {
+  position: relative;
+  isolation: isolate;
+}
+
+.copilot-chat-stage :deep(.copilot-thread) {
+  padding-bottom: calc(var(--copilot-composer-height, 176px) + 24px);
+}
+
+.copilot-chat-stage :deep(.scroll-to-latest) {
+  bottom: calc(var(--copilot-composer-height, 176px) + 12px);
+}
+
 .copilot-mobile-navigation {
   display: none;
 }
 
 @media (max-width: 767.98px) {
+  .copilot-chat-stage :deep(.scroll-to-latest) {
+    bottom: calc(var(--copilot-composer-height, 160px) + 8px);
+  }
+
   .copilot-mobile-navigation {
     display: flex;
     min-height: 52px;

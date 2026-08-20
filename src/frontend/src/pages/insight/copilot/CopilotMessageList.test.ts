@@ -1,12 +1,24 @@
 // @vitest-environment jsdom
 
 import { nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../../../locales/en'
+import type { LensRunFeedbackResponse } from '../../../lib/lensApi'
 import CopilotMessageList from './CopilotMessageList.vue'
+
+const mocks = vi.hoisted(() => ({
+  fetchCopilotRunPdf: vi.fn(),
+  updateCopilotRunFeedback: vi.fn(),
+}))
+
+vi.mock('../../../lib/lensApi', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../lib/lensApi')>(),
+  fetchCopilotRunPdf: mocks.fetchCopilotRunPdf,
+  updateCopilotRunFeedback: mocks.updateCopilotRunFeedback,
+}))
 
 let resizeCallback: ResizeObserverCallback | null = null
 
@@ -45,6 +57,8 @@ function mountList(props: Record<string, unknown>) {
 describe('CopilotMessageList starter questions and live feedback', () => {
   beforeEach(() => {
     resizeCallback = null
+    mocks.fetchCopilotRunPdf.mockReset()
+    mocks.updateCopilotRunFeedback.mockReset()
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
   })
 
@@ -92,6 +106,185 @@ describe('CopilotMessageList starter questions and live feedback', () => {
     })
 
     expect(wrapper.get('.copilot-chip-box').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('persists answer feedback and emits the SourceLens result', async () => {
+    let resolveFeedback: (value: LensRunFeedbackResponse) => void = () => undefined
+    mocks.updateCopilotRunFeedback.mockImplementation(
+      () => new Promise<LensRunFeedbackResponse>((resolve) => {
+        resolveFeedback = resolve
+      }),
+    )
+    const wrapper = mountList({
+      sessionId: 17,
+      messages: [{
+        id: 'assistant-1',
+        role: 'assistant',
+        runId: 'c42dfb76-3afd-4ad7-b896-472f71f38586',
+        completedAt: '2026-08-20T01:59:00Z',
+        text: 'Answer',
+        feedback: null,
+      }],
+    })
+    const likeButton = wrapper.get('button[aria-label="Like"]')
+
+    expect(likeButton.attributes('aria-pressed')).toBe('false')
+    await likeButton.trigger('click')
+    expect(likeButton.attributes('disabled')).toBeDefined()
+    resolveFeedback({
+      feedback: 'positive',
+      feedback_updated_at: '2026-08-20T02:00:00Z',
+    })
+    await flushPromises()
+
+    expect(mocks.updateCopilotRunFeedback).toHaveBeenCalledOnce()
+    expect(mocks.updateCopilotRunFeedback).toHaveBeenCalledWith(
+      17,
+      'c42dfb76-3afd-4ad7-b896-472f71f38586',
+      'positive',
+    )
+    expect(wrapper.emitted('feedbackUpdated')?.[0]).toEqual([{
+      sessionId: 17,
+      messageId: 'assistant-1',
+      runId: 'c42dfb76-3afd-4ad7-b896-472f71f38586',
+      feedback: 'positive',
+    }])
+    expect(likeButton.attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('clears existing feedback through SourceLens', async () => {
+    mocks.updateCopilotRunFeedback.mockResolvedValue({
+      feedback: '',
+      feedback_updated_at: '2026-08-20T02:05:00Z',
+    })
+    const wrapper = mountList({
+      sessionId: 17,
+      messages: [{
+        id: 'assistant-1',
+        role: 'assistant',
+        runId: 'c42dfb76-3afd-4ad7-b896-472f71f38586',
+        completedAt: '2026-08-20T01:59:00Z',
+        text: 'Answer',
+        feedback: 'positive',
+      }],
+    })
+    const likeButton = wrapper.get('button[aria-label="Like"]')
+
+    expect(likeButton.attributes('aria-pressed')).toBe('true')
+    await likeButton.trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateCopilotRunFeedback).toHaveBeenCalledWith(
+      17,
+      'c42dfb76-3afd-4ad7-b896-472f71f38586',
+      '',
+    )
+    expect(wrapper.emitted('feedbackUpdated')?.[0]?.[0]).toMatchObject({
+      feedback: null,
+    })
+    wrapper.unmount()
+  })
+
+  it('keeps the persisted state when feedback saving fails', async () => {
+    mocks.updateCopilotRunFeedback.mockRejectedValue(new Error('unavailable'))
+    const wrapper = mountList({
+      sessionId: 17,
+      messages: [{
+        id: 'assistant-1',
+        role: 'assistant',
+        runId: 'c42dfb76-3afd-4ad7-b896-472f71f38586',
+        completedAt: '2026-08-20T01:59:00Z',
+        text: 'Answer',
+        feedback: 'negative',
+      }],
+    })
+    const dislikeButton = wrapper.get('button[aria-label="Dislike"]')
+
+    await dislikeButton.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('feedbackUpdated')).toBeUndefined()
+    expect(dislikeButton.attributes('aria-pressed')).toBe('true')
+    expect(dislikeButton.attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('does not offer feedback before an answer is complete', () => {
+    const wrapper = mountList({
+      messages: [{
+        id: 'assistant-1',
+        role: 'assistant',
+        runId: 'c42dfb76-3afd-4ad7-b896-472f71f38586',
+        text: 'Partial answer',
+        completedAt: null,
+      }],
+    })
+
+    expect(wrapper.find('button[aria-label="Like"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="Dislike"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('downloads the SourceLens PDF through the HFL session proxy', async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:answer-pdf'),
+      revokeObjectURL,
+    })
+    mocks.fetchCopilotRunPdf.mockResolvedValue({
+      blob: new Blob(['pdf'], { type: 'application/pdf' }),
+      filename: 'answer.pdf',
+    })
+    const runId = 'c42dfb76-3afd-4ad7-b896-472f71f38586'
+    const wrapper = mountList({
+      sessionId: 17,
+      messages: [
+        { id: 'user-1', role: 'user', text: 'Question' },
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          runId,
+          completedAt: '2026-08-20T01:59:00Z',
+          text: 'Answer',
+        },
+      ],
+    })
+
+    await wrapper.get('button[aria-label="Download PDF"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.fetchCopilotRunPdf).toHaveBeenCalledWith(17, runId)
+    expect(click).toHaveBeenCalledOnce()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:answer-pdf')
+    wrapper.unmount()
+  })
+
+  it('emits the SourceLens Run reference when regenerating an answer', async () => {
+    const runId = 'c42dfb76-3afd-4ad7-b896-472f71f38586'
+    const wrapper = mountList({
+      messages: [
+        { id: 'user-1', role: 'user', text: 'Original question' },
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          runId,
+          completedAt: '2026-08-20T01:59:00Z',
+          text: 'Original answer',
+        },
+      ],
+      starterDisabled: false,
+    })
+
+    await wrapper.get('button[aria-label="Regenerate answer"]').trigger('click')
+
+    expect(wrapper.emitted('retryQuestion')?.[0]).toEqual([{
+      sessionId: 1,
+      question: 'Original question',
+      runId,
+    }])
     wrapper.unmount()
   })
 

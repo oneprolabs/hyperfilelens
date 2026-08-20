@@ -553,6 +553,10 @@ grep -F 'HFL_AI_MODEL_CONNECTIVITY=failed' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F '"role": "multimodal"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F '"supports_vision": True' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'payload["supports_vision"] = True' \
+	"${ROOT}/.github/scripts/reconcile-saas-ai-model.sh" >/dev/null
 grep -F 'exit "$command_status"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 if grep -F '"AI_MODEL_API_KEY=$AI_MODEL_API_KEY"' \

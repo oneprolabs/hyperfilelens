@@ -772,6 +772,10 @@ class LensSessionLink(OrganizationScopedModel):
         default=CleanupStatus.NONE,
         db_index=True,
     )
+    # SourceLens remains authoritative for shared Q&A content. HFL only keeps
+    # the cross-system identity required to enforce organization access and to
+    # revoke links before the wider Chat teardown runs.
+    share_state_json = models.JSONField(default=dict, blank=True)
     teardown_state_json = models.JSONField(default=dict, blank=True)
     teardown_attempts = models.PositiveIntegerField(default=0)
     teardown_claim_token = models.UUIDField(null=True, blank=True, unique=True)
@@ -829,6 +833,10 @@ class LensRunSubmission(OrganizationScopedModel):
     )
     idempotency_key = models.CharField(max_length=128)
     question = models.TextField(blank=True, default="")
+    # Nullable for blue/green compatibility with the previous API version.
+    # SourceLens owns retry semantics; HFL persists the reference so recovery
+    # replays the exact accepted request after an uncertain process failure.
+    retry_of_run_uuid = models.UUIDField(null=True, blank=True)
     # Keep this nullable so the previous blue/green API can still insert
     # no-attachment submissions after this migration and before traffic cutover.
     attachment_uuids = models.JSONField(default=list, blank=True, null=True)
