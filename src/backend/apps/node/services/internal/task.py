@@ -862,6 +862,24 @@ def complete_task(
         )
         return task
 
+    incoming_result = dict(result or {})
+    incoming_terminal_status = _incoming_terminal_status(incoming)
+    if (
+        incoming_terminal_status is not None
+        and task.status == incoming_terminal_status
+        and dict(task.result or {}) == incoming_result
+        and _terminal_error_matches(
+            task=task,
+            incoming=incoming,
+            error=error,
+        )
+    ):
+        # This is a byte-semantically identical replay of a result already
+        # committed. Keep a transient marker for the WebSocket consumer so it
+        # can ACK durable receipt without repeating streams or domain follow-up.
+        task._result_retransmission_unchanged = True
+        return task
+
     if task.status in _TERMINAL_STATUSES:
         if isinstance(task.result, dict) and task.result.get("delivery_timeout_sealed"):
             return task
@@ -947,6 +965,28 @@ def complete_task(
             (task.last_error or error or terminal)[:500],
         )
     return task
+
+
+def _incoming_terminal_status(incoming: str) -> str | None:
+    if incoming == "running":
+        return None
+    if incoming in {"success", "succeeded", "ok"}:
+        return NodeTask.Status.SUCCESS
+    if incoming in {"canceled", "cancelled"}:
+        return NodeTask.Status.CANCELED
+    return NodeTask.Status.FAILED
+
+
+def _terminal_error_matches(*, task: NodeTask, incoming: str, error: str) -> bool:
+    existing = str(task.last_error or "")
+    if task.status == NodeTask.Status.SUCCESS:
+        return existing == "" and str(error or "") == ""
+    if task.status == NodeTask.Status.CANCELED:
+        candidate = str(error or "").strip().lower()
+        return candidate in {"", "canceled", "cancelled"} or existing == str(
+            error or ""
+        )[:2000]
+    return existing == str(error or incoming)[:2000]
 
 
 @transaction.atomic

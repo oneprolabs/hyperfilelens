@@ -23,6 +23,9 @@ from apps.storage.services.internal.repository_health import (
     is_repository_ownership_failure,
     probe_repository_health,
 )
+from apps.storage.services.internal.repository_errors import (
+    is_repository_health_transport_unconfirmed,
+)
 from apps.storage.services.internal.repository_usage import (
     sync_all_repositories,
     sync_organization_repositories,
@@ -204,6 +207,13 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                     retry_attempt=retry_attempt,
                     fail_immediately=True,
                 )
+            if is_repository_health_transport_unconfirmed(exc):
+                return {
+                    "repository_id": repository_id,
+                    "status": repository.health,
+                    "probe_status": "transport_unknown",
+                    "health_failures": repository.health_failures,
+                }
             return _record_repository_health_failure(
                 repository=repository,
                 retry_attempt=retry_attempt,

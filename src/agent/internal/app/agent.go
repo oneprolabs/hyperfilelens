@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"os"
 	"strings"
 	"sync"
@@ -363,33 +362,22 @@ func (a *Agent) gatewayObservabilityLoop(ctx context.Context) {
 	}
 }
 
-func taskResultOutboxRetryDelay(attempt int) time.Duration {
-	bases := []time.Duration{time.Second, 4 * time.Second, 16 * time.Second, 30 * time.Second}
-	base := 60 * time.Second
-	if attempt >= 0 && attempt < len(bases) {
-		base = bases[attempt]
-	}
-	jitter := time.Duration(rand.Int63n(int64(base/5 + 1)))
-	if rand.Intn(2) == 0 {
-		return base - jitter
-	}
-	return base + jitter
-}
-
 func (a *Agent) taskResultOutboxLoop(ctx context.Context) {
-	for attempt := 0; ; attempt++ {
-		timer := time.NewTimer(taskResultOutboxRetryDelay(attempt))
+	for {
+		timer := time.NewTimer(wire.ResultOutboxPollInterval())
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return
+		case <-a.wire.ResultOutboxWake():
+			timer.Stop()
 		case <-timer.C:
 		}
 		if a.wire == nil || a.connector == nil || !a.wire.TaskResultAckEnabled() {
 			return
 		}
 		if err := a.wire.FlushUnreportedResults(ctx, a.connector); err != nil {
-			slog.Warn("task.result outbox retry failed", "attempt", attempt+1, "err", err)
+			slog.Warn("task.result outbox flush failed", "err", err)
 		}
 	}
 }

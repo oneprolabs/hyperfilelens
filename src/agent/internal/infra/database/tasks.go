@@ -597,14 +597,54 @@ func isTerminal(s model.TaskStatus) bool {
 	}
 }
 
-// ListUnreported returns tasks whose terminal result has not been sent upstream.
-func (r *TaskRepo) ListUnreported(ctx context.Context) ([]model.Task, error) {
-	rows, err := r.db.conn.QueryContext(ctx, `
+// ListUnreported returns terminal results that still require upstream acknowledgement.
+// A positive limit mixes recent and oldest rows so live failures are not trapped
+// behind a historical backlog while the oldest backlog continues to drain.
+func (r *TaskRepo) ListUnreported(ctx context.Context, limit int) ([]model.Task, error) {
+	if limit <= 0 {
+		return r.listUnreportedOrdered(ctx, "ASC", 0)
+	}
+	recentLimit := max(1, limit/4)
+	oldestLimit := max(0, limit-recentLimit)
+	recent, err := r.listUnreportedOrdered(ctx, "DESC", recentLimit)
+	if err != nil {
+		return nil, err
+	}
+	oldest, err := r.listUnreportedOrdered(ctx, "ASC", oldestLimit)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, limit)
+	out := make([]model.Task, 0, limit)
+	for _, task := range append(recent, oldest...) {
+		if _, exists := seen[task.ID]; exists {
+			continue
+		}
+		seen[task.ID] = struct{}{}
+		out = append(out, task)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (r *TaskRepo) listUnreportedOrdered(ctx context.Context, order string, limit int) ([]model.Task, error) {
+	query := `
 SELECT id, job_id, kind, payload, status, result, error, started_at, finished_at
 FROM tasks
 WHERE result_reported=0 AND status IN (?, ?, ?)
-ORDER BY updated_at ASC
-`, string(model.TaskStatusFailed), string(model.TaskStatusCancelled), string(model.TaskStatusSucceeded))
+ORDER BY updated_at ` + order
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	rows, err := r.db.conn.QueryContext(
+		ctx,
+		query,
+		string(model.TaskStatusFailed),
+		string(model.TaskStatusCancelled),
+		string(model.TaskStatusSucceeded),
+	)
 	if err != nil {
 		return nil, err
 	}

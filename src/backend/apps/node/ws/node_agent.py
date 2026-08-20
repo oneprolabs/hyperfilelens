@@ -29,6 +29,7 @@ from apps.node.ws.uplink import (
     handle_uplink,
     on_agent_connected,
     on_agent_disconnected,
+    project_identical_task_result_recovery,
     trigger_task_result_followup,
 )
 from apps.node.ws.uplink_queue import enqueue_uplink, touch_heartbeat_fast
@@ -244,6 +245,18 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
                     task.id,
                     exc_info=True,
                 )
+        if bool(getattr(task, "_result_retransmission_unchanged", False)):
+            try:
+                await database_sync_to_async(project_identical_task_result_recovery)(
+                    node_task=task
+                )
+            except Exception:
+                logger.exception(
+                    "repository health retransmission projection failed node_id=%s task_id=%s",
+                    self.node_id,
+                    task.id,
+                )
+            return
         try:
             await database_sync_to_async(trigger_task_result_followup)(
                 node_task_id=task.id

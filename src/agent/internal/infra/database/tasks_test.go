@@ -1,8 +1,10 @@
 package database
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -254,7 +256,7 @@ func TestTaskRepoRepairAndFlush(t *testing.T) {
 		t.Fatalf("status = %q", repaired[0].Status)
 	}
 
-	unreported, err := repo.ListUnreported(ctx)
+	unreported, err := repo.ListUnreported(ctx, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +267,7 @@ func TestTaskRepoRepairAndFlush(t *testing.T) {
 	if err := repo.MarkResultReported(ctx, "task-1"); err != nil {
 		t.Fatal(err)
 	}
-	unreported, err = repo.ListUnreported(ctx)
+	unreported, err = repo.ListUnreported(ctx, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,12 +328,53 @@ func TestTaskRepoFinish(t *testing.T) {
 	if err := repo.Finish(ctx, "t2", model.TaskStatusSucceeded, map[string]any{"pong": true}, ""); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := repo.ListUnreported(ctx)
+	pending, err := repo.ListUnreported(ctx, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(pending) != 1 || pending[0].Status != model.TaskStatusSucceeded {
 		t.Fatalf("pending = %+v", pending)
+	}
+}
+
+func TestTaskRepoListUnreportedMixesRecentAndOldestWithinLimit(t *testing.T) {
+	ctx := t.Context()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewTaskRepo(db)
+	base := time.Date(2026, time.August, 20, 1, 0, 0, 0, time.UTC)
+	for i := 0; i < 12; i++ {
+		taskID := fmt.Sprintf("task-%02d", i)
+		if err := repo.RecordCommand(ctx, RecordInput{TaskID: taskID, Kind: "backup.run"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Finish(ctx, taskID, model.TaskStatusSucceeded, map[string]any{"index": i}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.conn.ExecContext(
+			ctx,
+			"UPDATE tasks SET updated_at=? WHERE id=?",
+			formatTime(base.Add(time.Duration(i)*time.Second)),
+			taskID,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pending, err := repo.ListUnreported(ctx, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(pending))
+	for _, task := range pending {
+		got = append(got, task.ID)
+	}
+	want := []string{"task-11", "task-10", "task-00", "task-01", "task-02", "task-03", "task-04", "task-05"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("mixed pending IDs = %v, want %v", got, want)
 	}
 }
 
