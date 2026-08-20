@@ -8,30 +8,30 @@ import (
 )
 
 var (
-	ansiEscapePattern    = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
-	hashedPattern        = regexp.MustCompile(`(?i)(\d+)\s+hashed\s+\(([^)]+)\)`)
-	cachedPattern        = regexp.MustCompile(`(?i)(\d+)\s+cached\s+\(([^)]+)\)`)
+	ansiEscapePattern      = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	hashedPattern          = regexp.MustCompile(`(?i)(\d+)\s+hashed\s+\(([^)]+)\)`)
+	cachedPattern          = regexp.MustCompile(`(?i)(\d+)\s+cached\s+\(([^)]+)\)`)
 	uploadedPattern        = regexp.MustCompile(`(?i)uploaded\s+(\d+)(?:\s+\(([^)]+)\))?`)
 	uploadedBytesPattern   = regexp.MustCompile(`(?i)uploaded\s+\(([^)]+)\)`)
-	uploadedDecimalPattern = regexp.MustCompile(`(?i)uploaded\s+([\d.]+\s*[KMGT]i?B)`)
-	hashingPattern       = regexp.MustCompile(`(?i)(\d+)\s+hashing`)
-	percentPattern       = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*%`)
-	estimatedPattern     = regexp.MustCompile(`(?i)estimated\s+([\d.]+\s*(?:[KMGT]i?B))\s*(?:\((\d+(?:\.\d+)?)\s*%\))?`)
-	etaLeftPattern       = regexp.MustCompile(`(?i)(?:^|\s)(\d+(?:\.\d+)?[hms])+\s+left`)
-	etaSecondsPattern    = regexp.MustCompile(`(?i)(\d+)s\s+left`)
+	uploadedDecimalPattern = regexp.MustCompile(`(?i)uploaded\s+([\d.]+\s*(?:[KMGT]i?B|B))`)
+	hashingPattern         = regexp.MustCompile(`(?i)(\d+)\s+hashing`)
+	percentPattern         = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*%`)
+	estimatedPattern       = regexp.MustCompile(`(?i)estimated\s+([\d.]+\s*(?:[KMGT]i?B))\s*(?:\((\d+(?:\.\d+)?)\s*%\))?`)
+	etaLeftPattern         = regexp.MustCompile(`(?i)(?:^|\s)(\d+(?:\.\d+)?[hms])+\s+left`)
+	etaSecondsPattern      = regexp.MustCompile(`(?i)(\d+)s\s+left`)
 )
 
 // ProgressSnapshot captures parsed Kopia snapshot progress counters.
 type ProgressSnapshot struct {
-	Phase           string
-	Percent         int
-	HashingCount    int64
-	HashedCount     int64
-	HashedBytes     int64
-	CachedCount     int64
-	CachedBytes     int64
-	UploadedCount   int64
-	UploadedBytes   int64
+	Phase            string
+	Percent          int
+	HashingCount     int64
+	HashedCount      int64
+	HashedBytes      int64
+	CachedCount      int64
+	CachedBytes      int64
+	UploadedCount    int64
+	UploadedBytes    int64
 	EstimatedBytes   int64
 	SpeedBytesPerSec int64
 	KopiaEtaSeconds  int64

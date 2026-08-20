@@ -29,13 +29,21 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 
+const taskProgressValue = computed(() => {
+  const taskProgress = Number(props.progress)
+  if (!Number.isFinite(taskProgress) || taskProgress <= 0) return null
+  return parseTaskProgressValue(taskProgress)
+})
 const displayPercent = computed(() => {
   const transfer = props.transferProgress
   const step3 = Number(transfer?.step3_display_percent)
+  const phase = String(transfer?.phase || '').toLowerCase()
+  if ((props.stopping || phase === 'transferring') && taskProgressValue.value != null) {
+    return taskProgressValue.value
+  }
   if (props.stopping && Number.isFinite(step3)) {
     return parseTaskProgressValue(step3)
   }
-  const phase = String(transfer?.phase || '').toLowerCase()
   if (phase === 'transferring') {
     return resolveStep3DisplayPercent(transfer, 0)
   }
@@ -43,7 +51,11 @@ const displayPercent = computed(() => {
 })
 const barPercent = computed(() => formatTaskProgressBarPercent(displayPercent.value))
 const progressText = computed(() => formatTaskProgressPercent(displayPercent.value))
-const showRightPercent = computed(() => shouldShowStep3Percent(props.transferProgress))
+const showRightPercent = computed(() => {
+  const phase = String(props.transferProgress?.phase || '').toLowerCase()
+  if ((props.stopping || phase === 'transferring') && taskProgressValue.value != null) return true
+  return shouldShowStep3Percent(props.transferProgress)
+})
 const orchestrationLabel = computed(() => {
   if (props.stopping) {
     const key = String(props.transferProgress?.label_key || '').trim()
@@ -63,6 +75,8 @@ const metricParts = computed(() => {
   if (!shouldShowTransferMetrics(props.transferProgress) && !props.failed) return []
   return transferMetricParts(t, props.transferProgress)
 })
+const metricLine = computed(() => metricParts.value.join(' · '))
+const overflowTitle = computed(() => [orchestrationLabel.value, ...metricParts.value].filter(Boolean).join('\n'))
 const labelTitle = computed(() => {
   const label = orchestrationLabel.value
   return label.length > 48 ? label : undefined
@@ -88,7 +102,10 @@ const labelTitle = computed(() => {
           class="task-progress-cell__spinner"
           aria-hidden="true"
         />
-        <span class="task-progress-cell__label-text">{{ orchestrationLabel }}</span>
+        <span
+          class="task-progress-cell__label-text"
+          :data-table-overflow-title="overflowTitle || undefined"
+        >{{ orchestrationLabel }}</span>
       </p>
       <span
         v-if="showRightPercent"
@@ -106,16 +123,11 @@ const labelTitle = computed(() => {
       class="task-progress-cell__metrics"
       :class="{ 'is-empty': !metricParts.length }"
     >
-      <template
-        v-for="(part, index) in metricParts"
-        :key="index"
-      >
-        <span
-          v-if="index > 0"
-          class="task-progress-cell__sep"
-        >·</span>
-        <span>{{ part }}</span>
-      </template>
+      <span
+        v-if="metricLine"
+        class="task-progress-cell__metric-line"
+        :data-table-overflow-title="overflowTitle || undefined"
+      >{{ metricLine }}</span>
     </p>
   </div>
 </template>
@@ -186,10 +198,7 @@ const labelTitle = computed(() => {
 }
 
 .task-progress-cell__metrics {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 6px;
+  display: block;
   margin: 4px 0 0;
   min-height: 18px;
   font-size: 12px;
@@ -203,8 +212,12 @@ const labelTitle = computed(() => {
   visibility: hidden;
 }
 
-.task-progress-cell__sep {
-  opacity: 0.55;
+.task-progress-cell__metric-line {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .task-progress-cell.is-compact {

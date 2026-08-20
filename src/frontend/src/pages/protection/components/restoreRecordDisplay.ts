@@ -94,6 +94,8 @@ export function restoreRecordRuntimeMetricParts(
       n: formatCount(processed),
     }))
   }
-  parts.push(...transferMetricParts(t, transfer as TransferProgress))
+  parts.push(...transferMetricParts(t, transfer as TransferProgress, {
+    allowUnclassifiedSpeed: true,
+  }))
   return parts
 }

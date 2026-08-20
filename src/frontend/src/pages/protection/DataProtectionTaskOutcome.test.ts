@@ -22,6 +22,13 @@ describe('Data Protection task outcome columns', () => {
     expect(page).toContain("sourceRestoreCellPhase(row.id) === 'stopping'")
   })
 
+  it('uses accessible task action labels without competing native tooltips', () => {
+    expect(page).toContain(':aria-label="t(\'protection.backupsPage.backupTaskStatusClickHint\')"')
+    expect(page).toContain(':aria-label="t(\'protection.backupsPage.restoreTaskStatusClickHint\')"')
+    expect(page).not.toContain(':title="t(\'protection.backupsPage.backupTaskStatusClickHint\')"')
+    expect(page).not.toContain(':title="t(\'protection.backupsPage.restoreTaskStatusClickHint\')"')
+  })
+
   it('keeps Insight workspace restores out of Protection task state', () => {
     expect(page).toContain("exclude_insight_workspace_restores: 'true'")
   })

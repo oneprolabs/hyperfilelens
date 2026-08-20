@@ -24,9 +24,9 @@ describe('operations result tag styles', () => {
     expect(auditPage).not.toContain('hfl-ops-result-tag__content')
     expect(auditPage).toContain('hfl-ops-result-tag__text')
     expect(auditPage).toContain(':data-table-overflow-title="displayValue(row.result)"')
-    expect(overflowTitleDirective).toContain("cell.querySelector<HTMLElement>('[data-table-overflow-title]')")
+    expect(overflowTitleDirective).toContain("cell.querySelectorAll<HTMLElement>('[data-table-overflow-title]')")
     expect(overflowTitleDirective).toContain(
-      'if (explicitTitle && explicitTarget && isOverflowing(explicitTarget)) return explicitTitle',
+      'Boolean(target.dataset.tableOverflowTitle?.trim()) && isOverflowing(target)',
     )
   })
 })
