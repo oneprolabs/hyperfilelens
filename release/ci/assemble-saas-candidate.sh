@@ -71,7 +71,8 @@ docker pull --platform linux/amd64 "${NGINX_IMAGE}"
 docker tag "${NGINX_IMAGE}" nginx:stable-alpine
 
 export SOURCELENS_HFL_VERSION="${version}"
-BUILD_SOURCELENS=1 "${ROOT}/release/build-sourcelens.sh" \
+SOURCELENS_DISTRIBUTION_TAG_OVERRIDE="${version}" \
+	BUILD_SOURCELENS=1 "${ROOT}/release/build-sourcelens.sh" \
 	--pkg-root "${pkg_root}" \
 	--images-dir "${images_dir}" \
 	--prebuilt \

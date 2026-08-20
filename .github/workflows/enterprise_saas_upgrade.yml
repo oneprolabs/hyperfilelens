@@ -1,5 +1,5 @@
-name: HFL - Enterprise SaaS Upgrade
-run-name: Enterprise · ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} · SaaS Upgrade
+name: HFL - Publish Images & Upgrade SaaS
+run-name: Publish · ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} · Images · Enterprise SaaS Upgrade
 
 on:
   push:
@@ -41,12 +41,11 @@ env:
 
 jobs:
   prepare:
-    name: Prepare · Enterprise candidate
+    name: Prepare · Images and Enterprise candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       version: ${{ steps.source.outputs.version }}
-      image_version: ${{ steps.source.outputs.image_version }}
       release_tag: ${{ steps.source.outputs.release_tag }}
       commit: ${{ steps.source.outputs.commit }}
       enterprise_commit: ${{ steps.enterprise.outputs.commit }}
@@ -112,7 +111,6 @@ jobs:
           done
           {
             echo "version=$version"
-            echo "image_version=${version}-ee"
             echo "release_tag=$RELEASE_TAG"
             echo "commit=$commit"
           } >>"$GITHUB_OUTPUT"
@@ -157,6 +155,8 @@ jobs:
       - name: Validate shell and release contracts
         run: |
           bash -n \
+            deploy/online/install.sh \
+            deploy/online/verify-public-images.sh \
             deploy/installer/install.sh \
             release/build-sourcelens.sh \
             release/ci/assemble-saas-candidate.sh \
@@ -167,6 +167,33 @@ jobs:
             .github/scripts/reconcile-saas-ai-model.sh
           ./tools/quality/check-release-contracts.sh
           ./tools/quality/test-saas-registry-delivery.sh
+          ./tools/quality/test-online-community-install.sh
+
+  verify-public-images:
+    name: Verify · Public Community images
+    needs:
+      - prepare
+      - build-hfl-images
+      - build-sourcelens-images
+      - publish-runtime-images
+      - publish-agent-assets
+      - publish-gateway-assets
+      - publish-language-assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: saas-metadata-*
+          path: build/saas-metadata
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Verify anonymous access and mirror identity
+        run: ./deploy/online/verify-public-images.sh build/saas-metadata
 
   build-hfl-images:
     name: Build · HFL · ${{ matrix.name }}
@@ -177,15 +204,45 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: backend
-            component: hfl-backend
+          - name: Community · Backend
+            edition: community
+            component: community-hfl-backend
+            metadata_component: community-hfl-backend
             repository: hyperfilelens-backend
             dockerfile: deploy/docker/backend.Dockerfile
+            tag_suffix: ""
+            role: community-hyperfilelens
+            with_extension: false
             needs_kopia: true
-          - name: frontend
-            component: hfl-frontend
+          - name: Community · Frontend
+            edition: community
+            component: community-hfl-frontend
+            metadata_component: community-hfl-frontend
             repository: hyperfilelens-frontend
             dockerfile: deploy/docker/frontend.Dockerfile
+            tag_suffix: ""
+            role: community-hyperfilelens
+            with_extension: false
+            needs_kopia: false
+          - name: Enterprise · Backend
+            edition: enterprise
+            component: hfl-backend
+            metadata_component: hfl-backend
+            repository: hyperfilelens-backend
+            dockerfile: deploy/docker/backend.Dockerfile
+            tag_suffix: -ee
+            role: hyperfilelens
+            with_extension: true
+            needs_kopia: true
+          - name: Enterprise · Frontend
+            edition: enterprise
+            component: hfl-frontend
+            metadata_component: hfl-frontend
+            repository: hyperfilelens-frontend
+            dockerfile: deploy/docker/frontend.Dockerfile
+            tag_suffix: -ee
+            role: hyperfilelens
+            with_extension: true
             needs_kopia: false
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -212,12 +269,15 @@ jobs:
         if: matrix.needs_kopia
         run: ./tools/kopia/prepare.sh --matrix linux:amd64
       - name: Prepare Website artifact
-        if: matrix.component == 'hfl-frontend'
+        if: matrix.repository == 'hyperfilelens-frontend'
         run: >-
           ./website/build.sh --output build/website
           --image-tag "hyperfilelens-website-builder:${GITHUB_RUN_ID}"
           --platform linux/amd64
+      - name: Prepare extension build context
+        run: mkdir -p build/release/extensions
       - name: Materialize Enterprise Extension
+        if: matrix.with_extension
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           ENTERPRISE_COMMIT: ${{ needs.prepare.outputs.enterprise_commit }}
@@ -243,41 +303,41 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
-          tags: ${{ env.REGISTRY_PREFIX }}/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}
+          tags: ${{ env.REGISTRY_PREFIX }}/${{ matrix.repository }}:${{ format('{0}{1}', needs.prepare.outputs.version, matrix.tag_suffix) }}
           build-args: |
             KOPIA_BINARY=build/kopia/dist/linux/amd64/kopia
-            IMAGE_VERSION=${{ needs.prepare.outputs.image_version }}
+            IMAGE_VERSION=${{ format('{0}{1}', needs.prepare.outputs.version, matrix.tag_suffix) }}
             IMAGE_REVISION=${{ needs.prepare.outputs.commit }}
             PIP_TIMEOUT=600
             SENTRY_URL=${{ vars.SENTRY_URL }}
             SENTRY_ORG=${{ vars.SENTRY_ORG }}
             SENTRY_FRONTEND_PROJECT=${{ vars.SENTRY_FRONTEND_PROJECT }}
-            SENTRY_RELEASE=hyperfilelens-frontend@${{ needs.prepare.outputs.image_version }}
+            SENTRY_RELEASE=hyperfilelens-frontend@${{ format('{0}{1}', needs.prepare.outputs.version, matrix.tag_suffix) }}
             VITE_SHOW_EULA=false
             HFL_EXTENSIONS=${{ env.HFL_EXTENSIONS }}
-          secrets: ${{ matrix.component == 'hfl-frontend' && secrets.SENTRY_AUTH_TOKEN != '' && format('sentry_auth_token={0}', secrets.SENTRY_AUTH_TOKEN) || '' }}
-          cache-from: type=gha,scope=saas-${{ matrix.component }}
-          cache-to: type=gha,scope=saas-${{ matrix.component }},mode=min
+          secrets: ${{ matrix.repository == 'hyperfilelens-frontend' && secrets.SENTRY_AUTH_TOKEN != '' && format('sentry_auth_token={0}', secrets.SENTRY_AUTH_TOKEN) || '' }}
+          cache-from: type=gha,scope=publish-${{ matrix.edition }}-${{ matrix.repository }}
+          cache-to: type=gha,scope=publish-${{ matrix.edition }}-${{ matrix.repository }},mode=min
       - name: Mirror immutable image to CN
         run: |
           ./release/ci/mirror-saas-image.sh \
-            "$REGISTRY_PREFIX/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}" \
+            "$REGISTRY_PREFIX/${{ matrix.repository }}:${{ format('{0}{1}', needs.prepare.outputs.version, matrix.tag_suffix) }}" \
             "${{ steps.build.outputs.digest }}" \
-            "$CN_REGISTRY_PREFIX/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}"
+            "$CN_REGISTRY_PREFIX/${{ matrix.repository }}:${{ format('{0}{1}', needs.prepare.outputs.version, matrix.tag_suffix) }}"
       - name: Record immutable metadata
         run: |
           ./release/ci/write-saas-image-metadata.sh \
-            "${{ matrix.component }}" \
-            "$REGISTRY_PREFIX/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}" \
-            "$CN_REGISTRY_PREFIX/${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}" \
+            "${{ matrix.metadata_component }}" \
+            "$REGISTRY_PREFIX/${{ matrix.repository }}:${{ format('{0}{1}', needs.prepare.outputs.version, matrix.tag_suffix) }}" \
+            "$CN_REGISTRY_PREFIX/${{ matrix.repository }}:${{ format('{0}{1}', needs.prepare.outputs.version, matrix.tag_suffix) }}" \
             "${{ steps.build.outputs.digest }}" \
-            "${{ matrix.repository }}:${{ needs.prepare.outputs.image_version }}" \
-            hyperfilelens \
-            "${{ matrix.component }}.json"
+            "${{ matrix.repository }}:${{ format('{0}{1}', needs.prepare.outputs.version, matrix.tag_suffix) }}" \
+            "${{ matrix.role }}" \
+            "${{ matrix.metadata_component }}.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: saas-metadata-${{ matrix.component }}
-          path: ${{ matrix.component }}.json
+          name: saas-metadata-${{ matrix.metadata_component }}
+          path: ${{ matrix.metadata_component }}.json
           retention-days: 3
 
   build-sourcelens-images:
@@ -308,6 +368,9 @@ jobs:
       - name: Build global image
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # Public online installs address the tested SourceLens bundle with the
+          # HFL tag. The existing Release workflow keeps its compound SL tag.
+          SOURCELENS_DISTRIBUTION_TAG_OVERRIDE: ${{ needs.prepare.outputs.version }}
           SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_FRONTEND_PROJECT: ${{ vars.SENTRY_FRONTEND_PROJECT }}
@@ -552,22 +615,22 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
-          tags: ${{ env.REGISTRY_PREFIX }}/hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}
+          tags: ${{ env.REGISTRY_PREFIX }}/hyperfilelens-agent-assets:${{ needs.prepare.outputs.version }}
       - name: Mirror immutable asset image to CN
         run: |
           ./release/ci/mirror-saas-image.sh \
-            "$REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}" \
+            "$REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.version }}" \
             "${{ steps.build.outputs.digest }}" \
-            "$CN_REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}"
+            "$CN_REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.version }}"
       - name: Record asset metadata
         shell: bash
         run: |
           ./release/ci/write-saas-image-metadata.sh \
             "agent-assets" \
-            "$REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}" \
-            "$CN_REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}" \
+            "$REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.version }}" \
+            "$CN_REGISTRY_PREFIX/hyperfilelens-agent-assets:${{ needs.prepare.outputs.version }}" \
             "${{ steps.build.outputs.digest }}" \
-            "hyperfilelens-agent-assets:${{ needs.prepare.outputs.image_version }}" \
+            "hyperfilelens-agent-assets:${{ needs.prepare.outputs.version }}" \
             "agent-assets" \
             "agent-assets.json"
           jq --arg kind agent '. + {asset_kind: $kind}' \
@@ -627,22 +690,22 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
-          tags: ${{ env.REGISTRY_PREFIX }}/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}
+          tags: ${{ env.REGISTRY_PREFIX }}/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.version }}
       - name: Mirror immutable asset image to CN
         run: |
           ./release/ci/mirror-saas-image.sh \
-            "$REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}" \
+            "$REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.version }}" \
             "${{ steps.build.outputs.digest }}" \
-            "$CN_REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}"
+            "$CN_REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.version }}"
       - name: Record asset metadata
         shell: bash
         run: |
           ./release/ci/write-saas-image-metadata.sh \
             "gateway-assets" \
-            "$REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}" \
-            "$CN_REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}" \
+            "$REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.version }}" \
+            "$CN_REGISTRY_PREFIX/hyperfilelens-gateway-assets:${{ needs.prepare.outputs.version }}" \
             "${{ steps.build.outputs.digest }}" \
-            "hyperfilelens-gateway-assets:${{ needs.prepare.outputs.image_version }}" \
+            "hyperfilelens-gateway-assets:${{ needs.prepare.outputs.version }}" \
             "gateway-assets" \
             "gateway-assets.json"
           jq --arg kind gateway '. + {asset_kind: $kind}' \
@@ -695,22 +758,22 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
-          tags: ${{ env.REGISTRY_PREFIX }}/hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}
+          tags: ${{ env.REGISTRY_PREFIX }}/hyperfilelens-language-assets:${{ needs.prepare.outputs.version }}
       - name: Mirror immutable asset image to CN
         run: |
           ./release/ci/mirror-saas-image.sh \
-            "$REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}" \
+            "$REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.version }}" \
             "${{ steps.build.outputs.digest }}" \
-            "$CN_REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}"
+            "$CN_REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.version }}"
       - name: Record asset metadata
         shell: bash
         run: |
           ./release/ci/write-saas-image-metadata.sh \
             "language-assets" \
-            "$REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}" \
-            "$CN_REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}" \
+            "$REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.version }}" \
+            "$CN_REGISTRY_PREFIX/hyperfilelens-language-assets:${{ needs.prepare.outputs.version }}" \
             "${{ steps.build.outputs.digest }}" \
-            "hyperfilelens-language-assets:${{ needs.prepare.outputs.image_version }}" \
+            "hyperfilelens-language-assets:${{ needs.prepare.outputs.version }}" \
             "language-assets" \
             "language-assets.json"
           jq --arg kind language '. + {asset_kind: $kind}' \
@@ -732,6 +795,7 @@ jobs:
       - publish-agent-assets
       - publish-gateway-assets
       - publish-language-assets
+      - verify-public-images
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

@@ -1,0 +1,5 @@
+-- The official PostgreSQL image already creates POSTGRES_DB and grants it
+-- to POSTGRES_USER during initial bootstrap.
+--
+-- Keep this file as a no-op so the initdb.d ordering stays stable without
+-- attempting CREATE DATABASE inside a transaction block.

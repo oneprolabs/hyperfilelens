@@ -976,7 +976,9 @@ if grep -F 'image already loaded' "${installer}" >/dev/null; then
 fi
 
 sourcelens_image_builder="${ROOT}/release/ci/build-sourcelens-image.sh"
-grep -F 'target_ref="${registry_prefix}/hyperfilelens-sourcelens-${component}:${hfl_version}-sl${SOURCELENS_VERSION}"' \
+grep -F 'SOURCELENS_HFL_VERSION="${hfl_version}"' \
+	"${sourcelens_image_builder}" >/dev/null
+grep -F 'target_ref="${registry_prefix}/hyperfilelens-sourcelens-${component}:${SOURCELENS_DISTRIBUTION_TAG}"' \
 	"${sourcelens_image_builder}" >/dev/null
 grep -F 'registry prefix must include host and namespace' \
 	"${sourcelens_image_builder}" >/dev/null
