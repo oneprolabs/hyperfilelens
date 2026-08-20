@@ -102,6 +102,50 @@ class EnglishSourceCheckerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("English source boundary check passed.", result.stdout)
 
+    def test_localized_website_content_is_allowed(self) -> None:
+        """Allow translated content inside an approved website locale root."""
+        translated_file = self.repository_root / "website/zh/docs/index.md"
+        translated_file.parent.mkdir(parents=True)
+        translated_file.write_text(f"# {cjk_sample()}\n", encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("English source boundary check passed.", result.stdout)
+
+    def test_localized_website_navigation_is_allowed(self) -> None:
+        """Allow locale labels in the explicit website navigation source."""
+        navigation_file = self.repository_root / "website/.vitepress/navigation/zh.ts"
+        navigation_file.parent.mkdir(parents=True)
+        navigation_file.write_text(f"export const label = '{cjk_sample()}'\n", encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("English source boundary check passed.", result.stdout)
+
+    def test_english_website_content_remains_english_only(self) -> None:
+        """Do not let the localized website exemption cover English pages."""
+        english_file = self.repository_root / "website/en/docs/index.md"
+        english_file.parent.mkdir(parents=True)
+        english_file.write_text(f"# {cjk_sample()}\n", encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("website/en/docs/index.md:1:3", result.stdout)
+
+    def test_website_tooling_remains_english_only(self) -> None:
+        """Do not let the localized website exemption hide general tooling."""
+        tooling_file = self.repository_root / "website/.vitepress/theme/index.ts"
+        tooling_file.parent.mkdir(parents=True)
+        tooling_file.write_text(f"// {cjk_sample()}\n", encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("website/.vitepress/theme/index.ts:1:4", result.stdout)
+
     def test_language_pack_tooling_remains_english_only(self) -> None:
         """Do not let the translation-data exemption hide tooling source."""
         tooling_file = self.repository_root / "language-packs/tooling/build.py"

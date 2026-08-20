@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress'
+import { zhThemeConfig } from './navigation/zh'
 
 export default defineConfig({
   lang: 'en-US',
@@ -18,6 +19,24 @@ export default defineConfig({
   themeConfig: {
     logo: '/logo-mark.svg',
     siteTitle: 'HyperFileLens',
+    i18nRouting: false,
+    search: {
+      provider: 'local',
+      options: {
+        locales: {
+          zh: {
+            translations: {
+              button: { buttonText: '搜索文档', buttonAriaLabel: '搜索文档' },
+              modal: {
+                noResultsText: '未找到相关内容',
+                resetButtonTitle: '清除查询',
+                footer: { selectText: '选择', navigateText: '切换', closeText: '关闭' },
+              },
+            },
+          },
+        },
+      },
+    },
   },
   locales: {
     en: {
@@ -37,6 +56,7 @@ export default defineConfig({
       link: '/zh/',
       title: 'HyperFileLens',
       description: '开源备份工具，内置 Agentic AI 洞察能力——在不影响生产环境的前提下保护你的文件，再对备份直接提问，无需预建索引。',
+      themeConfig: zhThemeConfig,
       head: [
         ['meta', { property: 'og:title', content: 'HyperFileLens — 你的备份，藏着意想不到的答案。' }],
         ['meta', { property: 'og:description', content: '开源备份工具，内置 Agentic AI 洞察能力——在不影响生产环境的前提下保护你的文件，再对备份直接提问，无需预建索引。' }],

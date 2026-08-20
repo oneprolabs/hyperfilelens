@@ -102,6 +102,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <nav aria-label="主导航">
           <a href="#use-cases">使用场景</a>
           <a href="#how-it-works">工作原理</a>
+          <a href="/zh/docs/">用户文档</a>
           <a href="#open-source">开源</a>
           <a href="#contact">联系我们</a>
         </nav>
@@ -299,7 +300,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <a class="footer-social" :href="githubUrl" aria-label="HyperFileLens GitHub 仓库"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
       </div>
       <div class="footer-links">
-        <div><strong>产品</strong><a href="#use-cases">使用场景</a><a href="#how-it-works">工作原理</a><a :href="loginUrl" @click="openApp($event, 'footer')">免费试用</a></div>
+        <div><strong>产品</strong><a href="#use-cases">使用场景</a><a href="#how-it-works">工作原理</a><a href="/zh/docs/">用户文档</a><a :href="loginUrl" @click="openApp($event, 'footer')">免费试用</a></div>
         <div><strong>开源</strong><a :href="githubUrl">HyperFileLens</a><a :href="sourceLensUrl">AI 引擎</a><a :href="`${githubUrl}/releases`">发布版本</a></div>
         <div><strong>联系我们</strong><a href="mailto:oneprolabs@oneprocloud.com">企业部署</a><a :href="`${githubUrl}/issues`">技术支持</a></div>
       </div>
