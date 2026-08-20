@@ -127,7 +127,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           </a>
           <h1 id="hero-title">你的备份<br /><span>藏着意想不到的答案</span></h1>
           <p class="hero-lead">
-            直接对你的文档备份进行问答——PDF、图片、PPT、Word、Excel，格式不限，
+            直接对你的文档备份进行问答——PDF、Word、Excel、PPT、图片、Markdown 等任意文本格式，
             且不影响生产环境。
           </p>
           <div class="hero-actions">
@@ -164,7 +164,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       <section id="use-cases" class="section-block use-cases" aria-labelledby="use-cases-title">
         <div class="section-heading centered">
           <p class="section-kicker">使用场景</p>
-          <h2 id="use-cases-title">不止是检索，更是答案。</h2>
+          <h2 id="use-cases-title">不止是检索 更是答案</h2>
         </div>
         <div class="use-case-grid">
           <article>
@@ -192,7 +192,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           <article>
             <div class="use-case-head">
               <div class="card-icon"><svg aria-hidden="true"><use href="#icon-server" /></svg></div>
-              <h3>任意主机，还有 NAS</h3>
+              <h3>任意主机与 NAS</h3>
             </div>
             <p>Windows、Linux、Mac——服务器还是工作站都一样——再加上 NAS 共享目录，统一策略保护，不用来回切换三套工具。</p>
           </article>
@@ -216,8 +216,8 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       <section id="how-it-works" class="section-block how-it-works" aria-labelledby="flow-title">
         <div class="section-heading centered">
           <p class="section-kicker">工作原理</p>
-          <h2 id="flow-title">文件不用动，引擎主动找上门。</h2>
-          <p>HyperFileLens 把你的文档和代码备份成一份安全、隔离的副本——然后由开源 AI agent 直接对这份副本进行推理，全程不碰生产环境。</p>
+          <h2 id="flow-title">备份掘金 治理无扰</h2>
+          <p>HyperFileLens 把你的文档和代码备份成一份安全、隔离的副本——然后由 SourceLens（我们的开源 Agentic RAG 引擎）直接对这份副本进行推理，全程不碰生产环境。</p>
         </div>
         <div class="engine-diagram-frame">
           <img
@@ -235,7 +235,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <div class="open-source-grid">
           <div class="open-source-copy">
             <p class="section-kicker dark-kicker">开源</p>
-            <h2 id="open-source-title">看得见，跑得起，改得动。</h2>
+            <h2 id="open-source-title">看得见 跑得起 改得动</h2>
             <p>HyperFileLens 和背后的 AI 引擎全部开源。你可以查看架构设计、跟进开发进度，或者直接在 GitHub 上参与贡献。</p>
             <div class="open-source-callout">
               <svg aria-hidden="true"><use href="#icon-check" /></svg>
