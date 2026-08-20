@@ -47,6 +47,16 @@ class KopiaExecutionLeaseLost(KopiaCliError):
     pass
 
 
+class KopiaProcessTerminatedError(KopiaCliError):
+    """Kopia exited because an external signal terminated the process."""
+
+    def __init__(self, *, signal_number: int):
+        self.signal_number = int(signal_number)
+        super().__init__(
+            f"Kopia process was terminated by signal {self.signal_number}."
+        )
+
+
 class KopiaControlDecision(StrEnum):
     CONTINUE = "continue"
     CANCEL = "cancel"
@@ -373,6 +383,10 @@ def _run_repository_command_unlocked(
             stdout,
             stderr,
         )
+        if result.returncode < 0:
+            raise KopiaProcessTerminatedError(
+                signal_number=abs(result.returncode),
+            )
         if result.returncode == 0 and args[:3] in (
             ["repository", "create", "s3"],
             ["repository", "connect", "s3"],

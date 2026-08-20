@@ -920,6 +920,7 @@ class RepositoryCleanupTests(TestCase):
             waiting=False,
             node_task_id=None,
             result={
+                "ownership_verified": True,
                 "physical_cleanup": "deleted",
                 "scope": "s3_prefix",
                 "cleanup_complete": True,
@@ -1008,6 +1009,12 @@ class RepositoryCleanupTests(TestCase):
         )
         repository_task.remote_task_id = node_task.id
         repository_task.save(update_fields=["remote_task_id", "updated_at"])
+        repository_task.task.status = Task.Status.RUNNING
+        repository_task.task.current_step = "delete_physical_repository"
+        repository_task.task.progress = 40
+        repository_task.task.save(
+            update_fields=["status", "current_step", "progress", "updated_at"]
+        )
 
         result = run_repository_cleanup_task(repository_task_id=repository_task.id)
 
@@ -1016,6 +1023,107 @@ class RepositoryCleanupTests(TestCase):
         repository.refresh_from_db()
         self.assertEqual(repository.status, Repository.Status.REMOVED)
         dispatch_agent.assert_not_called()
+        verify_owner.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership",
+        side_effect=AssertionError(
+            "must not inspect a marker while Agent cleanup runs"
+        ),
+    )
+    def test_s3_cleanup_waits_for_running_agent_before_reading_marker(
+        self,
+        verify_owner,
+    ):
+        repository = self._s3_repository("agent-running-window")
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="running-s3-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=node,
+            correlation_type="repository_cleanup",
+            correlation_id=str(repository_task.task.task_uuid),
+            kind="repository.operation",
+            status=NodeTask.Status.RUNNING,
+            payload={
+                "repository_id": repository.id,
+                "operation_type": repository_task.operation_type,
+            },
+            watchdog_deadline_at=timezone.now(),
+        )
+        repository_task.remote_task_id = node_task.id
+        repository_task.save(update_fields=["remote_task_id", "updated_at"])
+
+        repository_task.task.status = Task.Status.RUNNING
+        repository_task.task.current_step = "delete_physical_repository"
+        repository_task.task.progress = 40
+        repository_task.task.save(
+            update_fields=["status", "current_step", "progress", "updated_at"]
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(result["remote_task_id"], str(node_task.id))
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.REMOVING)
+        verify_owner.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership",
+        side_effect=AssertionError("malformed Agent proof must fail closed"),
+    )
+    def test_s3_cleanup_rejects_malformed_success_without_reading_marker(
+        self,
+        verify_owner,
+    ):
+        repository = self._s3_repository("agent-malformed-success")
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="malformed-s3-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=node,
+            correlation_type="repository_cleanup",
+            correlation_id=str(repository_task.task.task_uuid),
+            kind="repository.operation",
+            status=NodeTask.Status.SUCCESS,
+            payload={
+                "repository_id": repository.id,
+                "operation_type": repository_task.operation_type,
+            },
+            result={"cleanup_complete": True},
+            watchdog_deadline_at=timezone.now(),
+        )
+        repository_task.remote_task_id = node_task.id
+        repository_task.save(update_fields=["remote_task_id", "updated_at"])
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIsNotNone(result["replacement_task_uuid"])
+        repository.refresh_from_db()
+        # An untrusted terminal attestation cannot prove whether physical
+        # deletion happened. Keep the repository in its in-progress state and
+        # require recovery instead of authorizing another executor.
+        self.assertEqual(repository.status, Repository.Status.REMOVING)
         verify_owner.assert_not_called()
 
     @mock.patch(
@@ -1067,7 +1175,7 @@ class RepositoryCleanupTests(TestCase):
         self.assertEqual(result["status"], "failed")
         repository_task.refresh_from_db()
         self.assertIsNone(repository_task.remote_task_id)
-        verify_owner.assert_called_once()
+        verify_owner.assert_not_called()
         self.assertNotEqual(repository_task.remote_task_id, node_task.id)
 
     @mock.patch(

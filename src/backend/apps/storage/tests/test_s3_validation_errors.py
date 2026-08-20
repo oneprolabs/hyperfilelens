@@ -3,6 +3,7 @@ from django.test import SimpleTestCase
 from botocore.exceptions import ClientError, EndpointConnectionError, SSLError
 
 from apps.storage.services.internal.s3_client import S3ClientError
+from apps.storage.services.internal.kopia_cli import KopiaProcessTerminatedError
 from apps.storage.services.internal.s3_validation_errors import (
     classify_s3_validation_error,
     s3_validation_app_error,
@@ -104,3 +105,22 @@ class S3ValidationErrorTests(SimpleTestCase):
         self.assertNotIn("AKIA_SECRET", failure.message)
         self.assertNotIn("super-secret", failure.message)
         self.assertEqual(failure.diagnostic, "")
+
+    def test_sigkill_is_reported_as_retryable_resource_exhaustion(self):
+        failure = classify_s3_validation_error(
+            KopiaProcessTerminatedError(signal_number=9),
+            operation="bucket_access",
+        )
+
+        self.assertEqual(failure.code, "STORAGE.RUNTIME_RESOURCE_EXHAUSTED")
+        self.assertTrue(failure.retryable)
+        self.assertEqual(failure.diagnostic, "kopia_signal=9")
+
+    def test_other_signal_is_reported_as_retryable_interruption(self):
+        failure = classify_s3_validation_error(
+            KopiaProcessTerminatedError(signal_number=15),
+            operation="bucket_access",
+        )
+
+        self.assertEqual(failure.code, "STORAGE.OPERATION_INTERRUPTED")
+        self.assertTrue(failure.retryable)

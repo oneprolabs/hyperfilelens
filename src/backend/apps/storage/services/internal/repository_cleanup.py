@@ -31,6 +31,7 @@ from apps.storage.services.internal.repository_agent_operation import (
     RepositoryAgentOperationError,
     RepositoryAgentOperationResult,
     RepositoryAgentOperationStateUnknown,
+    resolve_existing_repository_agent_operation,
     resolve_or_dispatch_repository_agent_operation,
 )
 from apps.storage.services.internal.repository_secrets import (
@@ -1586,15 +1587,35 @@ def _execute_s3_repository_cleanup_locked(
     """Advance S3 cleanup while holding the cross-Controller execution fence."""
     repository = repository_task.repository
     task = repository_task.task
-    # A Controller restart may happen after the Agent has deleted the marker
-    # and all physical objects, but before the parent task persisted its
-    # terminal state.  Resolve the durable child result first so that this
-    # already-completed operation is not mistaken for an ownership failure.
-    completed_agent_result = _completed_s3_agent_cleanup_result(repository_task)
-    if completed_agent_result is not None:
-        _remove_controller_repository_state(repository.id)
-        completed_agent_result.setdefault("executor", "agent")
-        return completed_agent_result
+    # Resolve one durable child snapshot before reading ownership state. The
+    # Agent may legitimately delete the marker while its task is still
+    # running, so terminal and in-flight states must never be queried
+    # separately.
+    try:
+        existing_operation = resolve_existing_repository_agent_operation(
+            repository_task=repository_task,
+            correlation_type="repository_cleanup",
+            timeout_seconds=21600,
+        )
+    except RepositoryAgentOperationStateUnknown:
+        raise
+    except RepositoryAgentOperationError as exc:
+        result = exc.result
+        if result.get("failure_class") == "ownership":
+            raise ValidationError(
+                result.get("error")
+                or str(exc)
+                or "S3 repository ownership could not be verified."
+            ) from exc
+        _persist_s3_cleanup_agent_attempted(task, result=result)
+    else:
+        if existing_operation is not None:
+            if existing_operation.waiting:
+                return existing_operation
+            result = _validated_s3_agent_cleanup_result(existing_operation.result)
+            _remove_controller_repository_state(repository.id)
+            result.setdefault("executor", "agent")
+            return result
     # The ownership marker is the destructive-operation authority. A healthy
     # Kopia connection is needed only to adopt a legacy repository that has no
     # marker yet; a damaged but correctly owned repository must remain
@@ -1646,11 +1667,7 @@ def _execute_s3_repository_cleanup_locked(
         else:
             if operation.waiting:
                 return operation
-            result = dict(operation.result or {})
-            if not result.get("cleanup_complete", False):
-                raise ValidationError(
-                    "S3 Agent cleanup did not prove that the repository prefix is empty."
-                )
+            result = _validated_s3_agent_cleanup_result(operation.result)
             _remove_controller_repository_state(repository.id)
             result.setdefault("executor", "agent")
             return result
@@ -1697,51 +1714,22 @@ def _execute_s3_repository_cleanup_locked(
     }
 
 
-def _completed_s3_agent_cleanup_result(
-    repository_task: RepositoryTask,
-) -> dict[str, Any] | None:
-    """Return a durable successful Agent result for an interrupted parent.
-
-    The remote task is scoped to this repository operation and organization;
-    only the Agent's explicit, complete S3 cleanup attestation is accepted.
-    This is an idempotency/recovery path, not a new authorization path: a
-    fresh cleanup still performs the Controller ownership proof before dispatch.
-    """
-    remote_task_id = repository_task.remote_task_id
-    remote_query = NodeTask.objects.filter(
-        organization_id=repository_task.repository.organization_id,
-        kind="repository.operation",
-        correlation_type="repository_cleanup",
-        correlation_id=str(repository_task.task.task_uuid),
-        status=NodeTask.Status.SUCCESS,
-    )
-    if remote_task_id:
-        remote_query = remote_query.filter(pk=remote_task_id)
-    remote = remote_query.order_by("-created_at", "-id").first()
-    if (
-        remote is None
-        or not isinstance(remote.payload, dict)
-        or not isinstance(remote.result, dict)
-    ):
-        return None
-    persisted_repository_id = _positive_int(remote.payload.get("repository_id"))
-    if persisted_repository_id != repository_task.repository_id:
-        return None
-    if remote.payload.get("operation_type") != repository_task.operation_type:
-        return None
-    result = dict(remote.result)
+def _validated_s3_agent_cleanup_result(result_payload: object) -> dict[str, Any]:
+    """Validate the Agent's terminal attestation before finalizing cleanup."""
+    if not isinstance(result_payload, dict):
+        raise RepositoryAgentOperationStateUnknown(
+            "S3 Agent cleanup returned an invalid terminal result."
+        )
+    result = dict(result_payload)
     if not (
         result.get("ownership_verified") is True
         and result.get("cleanup_complete") is True
         and result.get("physical_cleanup") == "deleted"
         and result.get("scope") == "s3_prefix"
     ):
-        return None
-    if repository_task.remote_task_id != remote.id:
-        RepositoryTask.objects.filter(pk=repository_task.id).update(
-            remote_task_id=remote.id
+        raise RepositoryAgentOperationStateUnknown(
+            "S3 Agent cleanup did not provide a complete deletion attestation."
         )
-        repository_task.remote_task_id = remote.id
     return result
 
 

@@ -149,6 +149,11 @@ export type StorageRepositoryUpdatePayload = {
   }
 }
 
+export type StorageRepositoryUpdateResult = {
+  repository: StorageRepository
+  task: TaskRow | null
+}
+
 /**
  * PATCH payload for the NAS repair endpoint.
  *   - `name`                : rename the repository
@@ -403,15 +408,19 @@ export function storageRepositoryCreateErrorMessage(
 export async function updateStorageRepository(
   id: number,
   payload: StorageRepositoryUpdatePayload,
-) {
+): Promise<StorageRepositoryUpdateResult> {
   logger.info('storageRepositoryApi.ts', 173, 'storage repository update', { repository_id: id, fields: Object.keys(payload) })
-  return unwrapApiPayload<StorageRepository>(
+  const result = unwrapApiPayload<StorageRepository | { repository: StorageRepository, task: TaskRow }>(
     await api<unknown>(`${repositoryBase}/${id}/`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
       headers: orgHeaders(),
     }),
   )
+  if ('repository' in result) {
+    return { repository: result.repository, task: result.task }
+  }
+  return { repository: result, task: null }
 }
 
 /**

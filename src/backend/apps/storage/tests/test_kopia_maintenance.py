@@ -12,6 +12,7 @@ from apps.storage.services.internal.kopia_cli import (
     KopiaCliCancelled,
     KopiaCliError,
     KopiaControlDecision,
+    KopiaProcessTerminatedError,
     KopiaRepositoryAlreadyExistsError,
     _connection_fingerprint_file,
     _invalidate_changed_s3_connection,
@@ -333,6 +334,35 @@ class KopiaMaintenanceCommandTests(SimpleTestCase):
         popen.assert_called_once()
         self.assertTrue(popen.call_args.kwargs["start_new_session"])
         killpg.assert_called_once_with(4321, signal.SIGTERM)
+
+    @patch("apps.storage.services.internal.kopia_cli._environment", return_value={})
+    @patch("apps.storage.services.internal.kopia_cli._invalidate_changed_s3_connection")
+    @patch(
+        "apps.storage.services.internal.kopia_cli._kopia_path",
+        return_value="/usr/bin/kopia",
+    )
+    @patch("apps.storage.services.internal.kopia_cli.subprocess.Popen")
+    def test_signal_terminated_process_has_a_distinct_error(
+        self,
+        popen,
+        _kopia_path,
+        _invalidate,
+        _environment,
+    ):
+        process = popen.return_value
+        process.returncode = -signal.SIGKILL
+        process.communicate.return_value = ("", "")
+        process.poll.return_value = -signal.SIGKILL
+
+        with self.assertRaises(KopiaProcessTerminatedError) as raised:
+            _run_repository_command_unlocked(
+                Repository(id=52, repo_type=Repository.Type.S3),
+                ["repository", "status"],
+                timeout_seconds=300,
+                config_file=Path("/tmp/kopia-signal-test.config"),
+            )
+
+        self.assertEqual(raised.exception.signal_number, signal.SIGKILL)
 
     @patch("apps.storage.services.internal.kopia_cli.os.killpg")
     def test_process_group_escalates_to_sigkill(self, killpg):

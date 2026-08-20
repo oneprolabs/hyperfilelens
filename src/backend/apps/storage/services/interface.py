@@ -331,8 +331,27 @@ def update_repository(
     bind_node_type: str | None = None,
     bind_node_id: int | None = None,
     credential_payload: dict | None = None,
+    requested_by=None,
 ) -> Repository:
     _validate_repository_update_status(repository)
+    if repository.repo_type == Repository.Type.S3 and credential_payload is not None:
+        from apps.storage.services.internal.repository_credential_rotation import (
+            enqueue_repository_credential_rotation,
+        )
+
+        try:
+            repository_task = enqueue_repository_credential_rotation(
+                repository=repository,
+                name=name,
+                config=config,
+                credential_payload=credential_payload,
+                requested_by=requested_by,
+            )
+        except ValidationError as exc:
+            raise DRFValidationError({"detail": exc.messages}) from exc
+        repository.credential_rotation_task = repository_task
+        return repository
+
     with transaction.atomic():
         repository = Repository.objects.select_for_update().get(
             pk=repository.id,

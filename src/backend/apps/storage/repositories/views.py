@@ -42,7 +42,10 @@ from apps.storage.selectors.interface import (
     get_effective_storage_provider,
     list_repositories,
 )
-from apps.storage.services.interface import check_repository, retry_repository_create
+from apps.storage.services.interface import retry_repository_create
+from apps.storage.services.internal.repository_check import (
+    enqueue_repository_check_task,
+)
 from apps.storage.services.internal.nas_repair import (
     NASRepositoryBusyError,
     repair_nas_repository,
@@ -510,6 +513,19 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         repository = serializer.save()
         out = RepositorySerializer(repository, context=self.get_serializer_context())
+        credential_rotation = getattr(
+            repository,
+            "credential_rotation_task",
+            None,
+        )
+        if credential_rotation is not None:
+            return Response(
+                {
+                    "repository": out.data,
+                    "task": TaskSerializer(credential_rotation.task).data,
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
         return Response(out.data, status=status.HTTP_200_OK)
 
     def destroy(self, request, *args, **kwargs):
@@ -672,15 +688,20 @@ class RepositoryViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def check(self, request, pk=None):
-        repository = check_repository(repository=self.get_object())
+        repository = self.get_object()
+        try:
+            repository_task = enqueue_repository_check_task(
+                repository=repository,
+                requested_by=request.user,
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(_django_validation_detail(exc)) from exc
         return Response(
             {
                 "repository": RepositorySerializer(repository).data,
-                "health": repository.health,
-                "task_id": None,
-                "message": "",
+                "task": TaskSerializer(repository_task.task).data,
             },
-            status=status.HTTP_200_OK,
+            status=status.HTTP_202_ACCEPTED,
         )
 
     @action(detail=True, methods=["post"], url_path="retry-initialization")
