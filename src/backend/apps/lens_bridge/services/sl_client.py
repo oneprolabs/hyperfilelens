@@ -520,7 +520,7 @@ def _private_cache_control(value: str) -> str:
 def stream_binary(
     path: str,
     *,
-    hfl_user: AbstractBaseUser,
+    hfl_user: AbstractBaseUser | None = None,
     timeout: int = 120,
 ) -> BinaryStreamResponse:
     """Stream authenticated attachment bytes without persisting them in HFL."""

@@ -801,6 +801,7 @@ jobs:
               "display_name": os.environ["AI_MULTIMODAL_MODEL_DISPLAY_NAME"],
               "api_base": os.environ["AI_MODEL_API_BASE"],
               "api_key": os.environ["AI_MODEL_API_KEY"],
+              "supports_vision": True,
           }
           pathlib.Path(sys.argv[1]).write_text(json.dumps(payload), encoding="utf-8")
           PY

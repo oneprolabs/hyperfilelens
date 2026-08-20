@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, ChevronDown, ChevronUp, Copy, RefreshCw, Share2, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
+import { ArrowDown, ChevronDown, ChevronUp, Copy, Download, RefreshCw, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -10,8 +10,13 @@ import CopilotStreamingMarkdown from '../../../components/copilot/CopilotStreami
 import CopilotAttachmentList from './CopilotAttachmentList.vue'
 import CopilotOutputFileList from './CopilotOutputFileList.vue'
 import CopilotThinkingTimeline from './CopilotThinkingTimeline.vue'
-import type { CopilotDisplayMessage } from './types'
+import type { CopilotDisplayMessage, CopilotFeedbackUpdate, CopilotRetryDraft } from './types'
 import type { ThinkingStep } from '../../../composables/useLensRunStream'
+import {
+  fetchCopilotRunPdf,
+  updateCopilotRunFeedback,
+  type LensRunFeedback,
+} from '../../../lib/lensApi'
 
 const props = defineProps<{
   sessionId: number
@@ -28,13 +33,15 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   starterChip: [key: string, text: string]
-  retryQuestion: [text: string]
+  retryQuestion: [draft: CopilotRetryDraft]
+  feedbackUpdated: [update: CopilotFeedbackUpdate]
 }>()
 
 const { t } = useI18n()
 const expandedThinking = ref<Set<string>>(new Set())
 const liveThinkingOpen = ref(true)
-const messageFeedback = ref<Record<string, 'up' | 'down' | null>>({})
+const feedbackUpdating = ref<Set<string>>(new Set())
+const pdfDownloading = ref<Set<string>>(new Set())
 const chatScrollRef = ref<HTMLElement | null>(null)
 const copilotThreadRef = ref<HTMLElement | null>(null)
 const followsLatest = ref(true)
@@ -210,26 +217,84 @@ async function copyText(text: string) {
 
 function retryForMessage(message: CopilotDisplayMessage) {
   const question = questionForMessage(message)
-  if (!question) return
-  emit('retryQuestion', question)
+  if (!question || !message.runId) return
+  emit('retryQuestion', {
+    sessionId: props.sessionId,
+    question,
+    runId: message.runId,
+  })
 }
 
-function shareMessage() {
-  ElMessage.info({ message: t('insight.copilot.shareComingSoon'), grouping: true })
+async function downloadMessagePdf(message: CopilotDisplayMessage) {
+  const runId = message.runId
+  if (!runId || pdfDownloading.value.has(runId)) return
+  pdfDownloading.value = new Set(pdfDownloading.value).add(runId)
+  try {
+    const { blob, filename } = await fetchCopilotRunPdf(props.sessionId, runId)
+    const href = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = href
+    link.download = filename || 'answer.pdf'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(href)
+  } catch {
+    ElMessage.error({
+      message: t('insight.copilot.pdfDownloadFailed'),
+      grouping: true,
+    })
+  } finally {
+    const pending = new Set(pdfDownloading.value)
+    pending.delete(runId)
+    pdfDownloading.value = pending
+  }
 }
 
-function feedbackForMessage(message: CopilotDisplayMessage) {
-  return messageFeedback.value[message.id] ?? null
+function feedbackForMessage(message: CopilotDisplayMessage): LensRunFeedback | null {
+  return message.feedback ?? null
 }
 
-function likeMessage(message: CopilotDisplayMessage) {
-  messageFeedback.value[message.id] = feedbackForMessage(message) === 'up' ? null : 'up'
-  ElMessage.success({ message: t('insight.copilot.feedbackThanks'), grouping: true })
+function feedbackIsUpdating(message: CopilotDisplayMessage) {
+  return Boolean(message.runId && feedbackUpdating.value.has(message.runId))
 }
 
-function dislikeMessage(message: CopilotDisplayMessage) {
-  messageFeedback.value[message.id] = feedbackForMessage(message) === 'down' ? null : 'down'
-  ElMessage.info({ message: t('insight.copilot.feedbackReceived'), grouping: true })
+async function setMessageFeedback(
+  message: CopilotDisplayMessage,
+  requested: LensRunFeedback,
+) {
+  const runId = message.runId
+  if (!runId || feedbackUpdating.value.has(runId)) return
+  const nextFeedback = feedbackForMessage(message) === requested ? '' : requested
+  feedbackUpdating.value = new Set(feedbackUpdating.value).add(runId)
+  try {
+    const result = await updateCopilotRunFeedback(
+      props.sessionId,
+      runId,
+      nextFeedback,
+    )
+    emit('feedbackUpdated', {
+      sessionId: props.sessionId,
+      messageId: message.id,
+      runId,
+      feedback: result.feedback || null,
+    })
+    ElMessage.success({
+      message: nextFeedback
+        ? t('insight.copilot.feedbackThanks')
+        : t('insight.copilot.feedbackCleared'),
+      grouping: true,
+    })
+  } catch {
+    ElMessage.error({
+      message: t('insight.copilot.feedbackFailed'),
+      grouping: true,
+    })
+  } finally {
+    const pending = new Set(feedbackUpdating.value)
+    pending.delete(runId)
+    feedbackUpdating.value = pending
+  }
 }
 
 const showLiveRow = computed(() => props.streaming)
@@ -395,43 +460,55 @@ const showLiveRow = computed(() => props.streaming)
                   type="button"
                   class="message-action-btn"
                   :title="t('common.copy')"
+                  :aria-label="t('common.copy')"
                   @click="copyText(msg.text || '')"
                 >
                   <Copy :size="16" />
                 </button>
                 <button
+                  v-if="msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
-                  :class="{ 'is-active': feedbackForMessage(msg) === 'up' }"
+                  :title="t('insight.copilot.downloadPdf')"
+                  :aria-label="t('insight.copilot.downloadPdf')"
+                  :disabled="pdfDownloading.has(msg.runId)"
+                  @click="downloadMessagePdf(msg)"
+                >
+                  <Download :size="16" />
+                </button>
+                <button
+                  v-if="msg.runId && msg.completedAt"
+                  type="button"
+                  class="message-action-btn"
+                  :class="{ 'is-active': feedbackForMessage(msg) === 'positive' }"
                   :title="t('insight.copilot.likeAnswer')"
-                  @click="likeMessage(msg)"
+                  :aria-label="t('insight.copilot.likeAnswer')"
+                  :aria-pressed="feedbackForMessage(msg) === 'positive'"
+                  :disabled="feedbackIsUpdating(msg)"
+                  @click="setMessageFeedback(msg, 'positive')"
                 >
                   <ThumbsUp :size="16" />
                 </button>
                 <button
+                  v-if="msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
-                  :class="{ 'is-active': feedbackForMessage(msg) === 'down' }"
+                  :class="{ 'is-active': feedbackForMessage(msg) === 'negative' }"
                   :title="t('insight.copilot.dislikeAnswer')"
-                  @click="dislikeMessage(msg)"
+                  :aria-label="t('insight.copilot.dislikeAnswer')"
+                  :aria-pressed="feedbackForMessage(msg) === 'negative'"
+                  :disabled="feedbackIsUpdating(msg)"
+                  @click="setMessageFeedback(msg, 'negative')"
                 >
                   <ThumbsDown :size="16" />
                 </button>
-              </div>
-              <div class="message-actions-group">
                 <button
-                  type="button"
-                  class="message-action-btn"
-                  :title="t('insight.copilot.shareAnswer')"
-                  @click="shareMessage()"
-                >
-                  <Share2 :size="16" />
-                </button>
-                <button
+                  v-if="msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
                   :title="t('insight.copilot.regenerateAnswer')"
-                  :disabled="!questionForMessage(msg)"
+                  :aria-label="t('insight.copilot.regenerateAnswer')"
+                  :disabled="!questionForMessage(msg) || starterDisabled"
                   @click="retryForMessage(msg)"
                 >
                   <RefreshCw :size="16" />
@@ -516,6 +593,7 @@ const showLiveRow = computed(() => props.streaming)
             <div
               v-if="streamingContent || streamError"
               class="message-card assistant"
+              :class="{ 'message-card--error': streamError }"
             >
               <div
                 v-if="streamError"
@@ -682,11 +760,15 @@ const showLiveRow = computed(() => props.streaming)
 }
 
 .message-card.assistant {
-  padding: 16px 18px;
-  border-radius: 16px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  width: 100%;
+}
+
+.message-card.assistant:not(.message-card--welcome):not(.message-card--error) {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .message-card--error .message-text {
@@ -699,6 +781,10 @@ const showLiveRow = computed(() => props.streaming)
 }
 
 .message-card--welcome {
+  padding: 16px 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-card-bg);
   text-align: left;
 }
 
@@ -755,6 +841,8 @@ const showLiveRow = computed(() => props.streaming)
 }
 
 .message-markdown {
+  min-width: 0;
+  width: 100%;
   text-align: left;
 }
 
@@ -793,7 +881,7 @@ const showLiveRow = computed(() => props.streaming)
 .message-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   margin-top: 10px;
 }
@@ -831,8 +919,13 @@ const showLiveRow = computed(() => props.streaming)
 }
 
 .message-action-btn.is-active {
-  background: #eff6ff;
-  color: #2563eb;
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+}
+
+.message-action-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+  outline-offset: 2px;
 }
 
 .message-action-btn:disabled {
@@ -1092,7 +1185,25 @@ const showLiveRow = computed(() => props.streaming)
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .scroll-to-latest,
+  .message-action-btn {
+    transition: none;
+  }
+
+  .live-progress-dot,
+  .typing-dots span,
+  .live-markdown.is-streaming :deep(.copilot-markdown > *:last-child)::after {
+    animation: none;
+  }
+}
+
 @media (max-width: 768px) {
+  .message-action-btn {
+    width: 44px;
+    height: 44px;
+  }
+
   .scroll-to-latest {
     min-height: 44px;
   }
@@ -1104,6 +1215,22 @@ const showLiveRow = computed(() => props.streaming)
   .message-row {
     gap: 12px;
     margin-bottom: 28px;
+  }
+
+  .message-row-assistant .message-body {
+    max-width: calc(100% - 42px);
+  }
+
+  .message-row-user .message-body {
+    max-width: 86%;
+  }
+
+  .message-text {
+    font-size: 16px;
+  }
+
+  .message-card :deep(.copilot-markdown) {
+    font-size: 16px;
   }
 
   .copilot-chip-grid {

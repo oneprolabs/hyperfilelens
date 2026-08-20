@@ -2181,17 +2181,37 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         else:
             _teardown_step(teardown_state, "cancel_run", status="success")
 
-    session_recovery_failed = False
+    share_cleanup_complete = True
     try:
-        journal_session_uuid = _recover_journal_resource(
-            link,
-            _SESSION_CREATE_OPERATION,
-            hfl_user=user,
+        from apps.lens_bridge.services.copilot_sharing import (
+            revoke_session_shares,
         )
+
+        revoked_share_count = revoke_session_shares(link)
+        _teardown_step(teardown_state, "revoke_shares", status="success")
+        teardown_state["revoke_shares"]["count"] = revoked_share_count
     except Exception as exc:
-        journal_session_uuid = None
-        session_recovery_failed = True
-        critical_errors.append(f"recover_session_operation: {exc}")
+        share_cleanup_complete = False
+        critical_errors.append(f"revoke_shares: {exc}")
+        _teardown_step(
+            teardown_state,
+            "revoke_shares",
+            status="retry",
+            error=str(exc),
+        )
+
+    session_recovery_failed = False
+    journal_session_uuid = None
+    if share_cleanup_complete:
+        try:
+            journal_session_uuid = _recover_journal_resource(
+                link,
+                _SESSION_CREATE_OPERATION,
+                hfl_user=user,
+            )
+        except Exception as exc:
+            session_recovery_failed = True
+            critical_errors.append(f"recover_session_operation: {exc}")
     session_uuids = {
         item
         for item in (link.sl_session_uuid, journal_session_uuid)
@@ -2199,17 +2219,20 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     }
     session_uuids.update(_late_remote_uuids(link, "session"))
     failed_session_uuids: list[uuid_lib.UUID] = []
-    for session_uuid in sorted(session_uuids, key=str):
-        try:
-            sl_client.request_json(
-                "DELETE",
-                f"/api/lens/sessions/{session_uuid}/",
-                hfl_user=user,
-            )
-        except Exception as exc:
-            if not _source_lens_not_found(exc):
-                failed_session_uuids.append(session_uuid)
-                critical_errors.append(f"delete_session {session_uuid}: {exc}")
+    if share_cleanup_complete:
+        for session_uuid in sorted(session_uuids, key=str):
+            try:
+                sl_client.request_json(
+                    "DELETE",
+                    f"/api/lens/sessions/{session_uuid}/",
+                    hfl_user=user,
+                )
+            except Exception as exc:
+                if not _source_lens_not_found(exc):
+                    failed_session_uuids.append(session_uuid)
+                    critical_errors.append(f"delete_session {session_uuid}: {exc}")
+    else:
+        failed_session_uuids = sorted(session_uuids, key=str)
     link.sl_session_uuid = failed_session_uuids[0] if failed_session_uuids else None
     if journal_session_uuid and journal_session_uuid not in failed_session_uuids:
         _set_operation_status(
@@ -2222,7 +2245,14 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         "session",
         failed_session_uuids,
     )
-    if failed_session_uuids or session_recovery_failed:
+    if not share_cleanup_complete:
+        _teardown_step(
+            teardown_state,
+            "delete_session",
+            status="blocked",
+            error="Shared Q&A revocation must finish before session deletion.",
+        )
+    elif failed_session_uuids or session_recovery_failed:
         detail = "; ".join(
             error
             for error in critical_errors
@@ -2243,7 +2273,11 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         "provision_state_json",
     )
 
-    session_cleanup_complete = not failed_session_uuids and not session_recovery_failed
+    session_cleanup_complete = (
+        share_cleanup_complete
+        and not failed_session_uuids
+        and not session_recovery_failed
+    )
     assistant_recovery_failed = False
     journal_assistant_uuid: uuid_lib.UUID | None = None
     failed_assistant_uuids: list[uuid_lib.UUID] = []

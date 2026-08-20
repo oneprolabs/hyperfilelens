@@ -43,6 +43,10 @@ def _normalized_attachment_uuids(values) -> list[str]:
     return [str(value) for value in (values or [])]
 
 
+def _normalized_retry_run_uuid(value) -> str:
+    return str(value or "")
+
+
 def _submission_for_active_run(
     link: LensSessionLink,
 ) -> LensRunSubmission | None:
@@ -73,6 +77,7 @@ def prepare_submission(
     question: str,
     idempotency_key: str,
     attachment_uuids: list[str] | None = None,
+    retry_of_run_uuid: uuid.UUID | None = None,
 ) -> tuple[LensRunSubmission, dict[str, Any] | None]:
     """Persist one submission before SourceLens receives the request.
 
@@ -95,6 +100,10 @@ def prepare_submission(
         if active_key == idempotency_key:
             if active_submission is not None and (
                 active_submission.question != question
+                or _normalized_retry_run_uuid(
+                    active_submission.retry_of_run_uuid
+                )
+                != _normalized_retry_run_uuid(retry_of_run_uuid)
                 or _normalized_attachment_uuids(
                     active_submission.attachment_uuids
                 )
@@ -110,6 +119,7 @@ def prepare_submission(
                     session_link=link,
                     idempotency_key=idempotency_key,
                     question=question,
+                    retry_of_run_uuid=retry_of_run_uuid,
                     attachment_uuids=normalized_attachments,
                     status=LensRunSubmission.Status.BOUND,
                     sl_run_uuid=link.active_run_uuid,
@@ -125,6 +135,8 @@ def prepare_submission(
     if existing is not None:
         if (
             existing.question != question
+            or _normalized_retry_run_uuid(existing.retry_of_run_uuid)
+            != _normalized_retry_run_uuid(retry_of_run_uuid)
             or _normalized_attachment_uuids(existing.attachment_uuids)
             != normalized_attachments
         ):
@@ -158,6 +170,7 @@ def prepare_submission(
         session_link=link,
         idempotency_key=idempotency_key,
         question=question,
+        retry_of_run_uuid=retry_of_run_uuid,
         attachment_uuids=normalized_attachments,
         recovery_next_at=timezone.now(),
     )
@@ -216,6 +229,8 @@ def execute_submission(
         "question": submission.question,
         "idempotency_key": submission.idempotency_key,
     }
+    if submission.retry_of_run_uuid:
+        run_body["retry_of_run_uuid"] = str(submission.retry_of_run_uuid)
     attachment_uuids = _normalized_attachment_uuids(
         submission.attachment_uuids
     )

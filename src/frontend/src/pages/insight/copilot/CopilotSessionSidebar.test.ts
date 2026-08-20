@@ -6,7 +6,8 @@ import { createI18n } from 'vue-i18n'
 import { describe, expect, it } from 'vitest'
 
 import { en } from '../../../locales/en'
-import CopilotSessionSidebar, { type SessionRow } from './CopilotSessionSidebar.vue'
+import CopilotSessionSidebar from './CopilotSessionSidebar.vue'
+import type { SessionRow } from './sessionOrdering'
 
 const SlotStub = defineComponent({
   template: '<div><slot /><slot name="dropdown" /></div>',
@@ -75,7 +76,46 @@ describe('CopilotSessionSidebar pin actions', () => {
       cleanup_status: 'running',
     }))
 
-    expect(recovering.text()).toContain('Recovering Chat…')
+    expect(recovering.text()).toContain('Recovering chat…')
     expect(recovering.find('.copilot-session-menu__retry').exists()).toBe(false)
+  })
+
+  it('keeps SourceLens-aligned actions in a stable order', () => {
+    const wrapper = mountSidebar(session('ready', {
+      has_shareable_answer: true,
+    }))
+    const menuClasses = wrapper.findAll('.copilot-session-menu__share, .copilot-session-menu__rename, .copilot-session-menu__pin, .copilot-session-menu__delete')
+      .map((item) => item.classes().find((name) => name.startsWith('copilot-session-menu__')))
+
+    expect(menuClasses).toEqual([
+      'copilot-session-menu__share',
+      'copilot-session-menu__rename',
+      'copilot-session-menu__pin',
+      'copilot-session-menu__delete',
+    ])
+    expect(wrapper.text()).toContain('Share')
+    expect(wrapper.text()).toContain('Rename')
+    expect(wrapper.text()).toContain('Pin chat')
+    expect(wrapper.text()).toContain('Delete session')
+  })
+
+  it('disables sharing until a completed answer exists', () => {
+    const wrapper = mountSidebar(session('ready', {
+      has_shareable_answer: false,
+    }))
+    const share = wrapper.find('.copilot-session-menu__share')
+
+    expect(share.attributes('disabled')).toBe('true')
+    expect(share.attributes('title')).toBe(
+      'Share becomes available after the session has a completed answer.',
+    )
+  })
+
+  it('retains HFL retry for a failed chat', () => {
+    const wrapper = mountSidebar(session('failed'))
+
+    expect(wrapper.find('.copilot-session-menu__share').exists()).toBe(false)
+    expect(wrapper.find('.copilot-session-menu__retry').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Try again')
   })
 })

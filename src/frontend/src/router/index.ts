@@ -103,6 +103,11 @@ export const router = createRouter({
         { path: 'insight', redirect: '/insight/copilot' },
         { path: 'insight/copilot', component: InsightPage },
         {
+          path: 'insight/copilot/shared',
+          component: lazyRoute(() => import('../pages/insight/SharedCopilotQA.vue')),
+          meta: fullscreenRouteMeta,
+        },
+        {
           path: 'insight/copilot/new',
           component: lazyRoute(() => import('../pages/insight/NewCopilotChat.vue')),
           meta: fullscreenRouteMeta,

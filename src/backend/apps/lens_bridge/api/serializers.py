@@ -669,9 +669,19 @@ class LensSessionTitleSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=160, allow_blank=False, trim_whitespace=True)
 
 
+class LensShareTitleSerializer(serializers.Serializer):
+    title = serializers.CharField(
+        max_length=200,
+        allow_blank=True,
+        required=False,
+        default="",
+    )
+
+
 class LensRunCreateSerializer(serializers.Serializer):
     question = serializers.CharField(required=False, allow_blank=True)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
+    retry_of_run_uuid = serializers.UUIDField(required=False, allow_null=True)
     attachment_uuids = serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
@@ -690,6 +700,15 @@ class LensRunCreateSerializer(serializers.Serializer):
                 "Provide a question or at least one attachment."
             )
         return attrs
+
+
+class LensRunFeedbackSerializer(serializers.Serializer):
+    """Validate feedback values supported by the SourceLens Run API."""
+
+    feedback = serializers.ChoiceField(
+        choices=("positive", "negative"),
+        allow_blank=True,
+    )
 
 
 class LensOrgSettingsSerializer(serializers.Serializer):

@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 from urllib.parse import urlencode
 
 from django.core import signing
@@ -15,6 +16,7 @@ from rest_framework.views import APIView
 
 from apps.iam.permissions_org import (
     IsOrgOperator,
+    IsOrgReader,
     IsOrgStaffReader,
     IsOrgWriter,
     get_membership,
@@ -28,6 +30,8 @@ from apps.lens_bridge.api.serializers import (
     LensKnowledgeSourceUpdateSerializer,
     LensOrgSettingsSerializer,
     LensRunCreateSerializer,
+    LensRunFeedbackSerializer,
+    LensShareTitleSerializer,
     LensSessionCreateSerializer,
     LensSnapshotBrowseCreateSerializer,
     LensSessionLinkSerializer,
@@ -1047,6 +1051,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             "create",
             "destroy",
             "create_run",
+            "feedback",
             "set_model",
             "set_title",
             "mark_viewed",
@@ -1054,6 +1059,8 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             "retry",
             "pin",
             "unpin",
+            "share",
+            "share_detail",
             "upload_attachment",
         ):
             return [IsAuthenticated(), IsOrgOperator()]
@@ -1069,7 +1076,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         ).select_related("knowledge_source", "gateway_link__gateway")
 
     def list(self, request):
-        rows = list(self._user_sessions().order_by("-last_message_at", "-created_at"))
+        rows = list(self._user_sessions().order_by("-created_at", "-id"))
         membership = get_membership(request)
         assistant_meta: dict[str, dict[str, str]] = {}
         try:
@@ -1109,14 +1116,109 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                 row["pinned_at"] = (
                     pinned_at if isinstance(pinned_at, str) and pinned_at else None
                 )
+            if isinstance(source_row, dict) and "has_shareable_answer" in source_row:
+                row["has_shareable_answer"] = bool(
+                    source_row.get("has_shareable_answer")
+                )
         payload.sort(
             key=lambda row: (
+                bool(row.get("pinned_at")),
                 str(row.get("pinned_at") or ""),
-                str(row.get("last_message_at") or row.get("created_at") or ""),
+                str(row.get("created_at") or ""),
+                int(row.get("id") or 0),
             ),
             reverse=True,
         )
         return Response(payload)
+
+    def _share_response(
+        self,
+        link: LensSessionLink,
+        share: dict[str, Any],
+    ) -> dict[str, Any]:
+        from apps.lens_bridge.services import copilot_sharing
+
+        access = copilot_sharing.make_share_access_token(link, share)
+        payload = {
+            field: share[field]
+            for field in (
+                "uuid",
+                "run_uuid",
+                "title",
+                "question",
+                "answer",
+                "assistant_name",
+                "assistant_slug",
+                "published_at",
+                "view_count",
+            )
+            if field in share
+        }
+        payload["share_path"] = (
+            "/insight/copilot/shared?" + urlencode({"access": access})
+        )
+        return payload
+
+    @action(detail=True, methods=["get", "post"], url_path="share")
+    def share(self, request, pk=None):
+        """Inspect or publish the latest completed Q&A through SourceLens."""
+
+        from apps.lens_bridge.services import copilot_sharing
+
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        try:
+            if request.method == "GET":
+                payload = copilot_sharing.get_share_candidate(link)
+                if isinstance(payload.get("share"), dict):
+                    payload["share"] = self._share_response(
+                        link,
+                        payload["share"],
+                    )
+                return Response(payload)
+            body = LensShareTitleSerializer(data=request.data)
+            body.is_valid(raise_exception=True)
+            share = copilot_sharing.create_share(
+                link,
+                title=body.validated_data["title"],
+            )
+            return Response(
+                self._share_response(link, share),
+                status=status.HTTP_201_CREATED,
+            )
+        except copilot_sharing.CopilotShareNotFoundError as exc:
+            raise NotFound("No completed answer is available to share.") from exc
+        except sl_client.LensBridgeError as exc:
+            return _lens_error_response(exc)
+
+    @action(
+        detail=True,
+        methods=["patch", "delete"],
+        url_path=r"shares/(?P<share_uuid>[0-9a-fA-F-]+)",
+    )
+    def share_detail(self, request, pk=None, share_uuid=None):
+        """Rename or revoke a SourceLens Q&A owned by this HFL Chat."""
+
+        from apps.lens_bridge.services import copilot_sharing
+
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        try:
+            if request.method == "DELETE":
+                copilot_sharing.revoke_share(link, str(share_uuid))
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            body = LensShareTitleSerializer(data=request.data)
+            body.is_valid(raise_exception=True)
+            share = copilot_sharing.update_share_title(
+                link,
+                str(share_uuid),
+                title=body.validated_data["title"],
+            )
+            return Response(self._share_response(link, share))
+        except (ValueError, copilot_sharing.CopilotShareNotFoundError) as exc:
+            raise NotFound() from exc
+        except sl_client.LensBridgeError as exc:
+            return _lens_error_response(exc)
 
     def create(self, request):
         body = LensSessionCreateSerializer(data=request.data)
@@ -1396,11 +1498,15 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         body = LensRunCreateSerializer(data=request.data)
         body.is_valid(raise_exception=True)
         question = body.validated_data.get("question") or ""
+        retry_of_run_uuid = body.validated_data.get("retry_of_run_uuid")
         attachment_uuids = [
             str(value) for value in body.validated_data.get("attachment_uuids", [])
         ]
         idempotency_key = body.validated_data.get("idempotency_key") or uuid.uuid4().hex
         from apps.lens_bridge.services import run_submissions
+
+        if retry_of_run_uuid is not None:
+            copilot_service.require_assistant_run(link, retry_of_run_uuid)
 
         with sourcelens_run_creation_guard():
             if sourcelens_maintenance_active():
@@ -1411,6 +1517,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                     question=question,
                     idempotency_key=idempotency_key,
                     attachment_uuids=attachment_uuids,
+                    retry_of_run_uuid=retry_of_run_uuid,
                 )
             except run_submissions.RunSubmissionConflictError as exc:
                 raise CopilotRunConflict() from exc
@@ -1455,6 +1562,65 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             )
             raise CopilotRunConflict() from exc
         return Response(data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"runs/(?P<run_uuid>[0-9a-fA-F-]+)/pdf",
+    )
+    def run_pdf(self, request, pk=None, run_uuid=None):
+        """Stream SourceLens' PDF for an answer owned by this HFL chat."""
+
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        try:
+            answer_run_uuid = uuid.UUID(str(run_uuid))
+        except (TypeError, ValueError) as exc:
+            raise NotFound() from exc
+        copilot_service.require_assistant_run(link, answer_run_uuid)
+        upstream = sl_client.stream_binary(
+            f"/api/lens/runs/{answer_run_uuid}/pdf/",
+            hfl_user=request.user,
+        )
+        try:
+            response = StreamingHttpResponse(
+                upstream.body,
+                content_type=upstream.content_type or "application/pdf",
+            )
+            if upstream.content_length:
+                response["Content-Length"] = upstream.content_length
+            if upstream.content_disposition:
+                response["Content-Disposition"] = upstream.content_disposition
+            response["Cache-Control"] = "private, max-age=0, no-store"
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+        except Exception:
+            upstream.body.close()
+            raise
+
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path=r"runs/(?P<run_uuid>[0-9a-fA-F-]+)/feedback",
+    )
+    def feedback(self, request, pk=None, run_uuid=None):
+        """Persist answer feedback through the owning SourceLens Run."""
+
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        body = LensRunFeedbackSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        try:
+            data = copilot_service.update_run_feedback(
+                link,
+                uuid.UUID(str(run_uuid)),
+                body.validated_data["feedback"],
+            )
+        except (TypeError, ValueError) as exc:
+            raise NotFound() from exc
+        except sl_client.LensBridgeError as exc:
+            return _lens_error_response(exc)
+        return Response(data)
 
     @action(detail=True, methods=["get"], url_path="sync")
     def sync(self, request, pk=None):
@@ -1536,6 +1702,141 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                     )
                 }
             )
+
+
+class LensCopilotSharedQAView(OrgScopedMixin, APIView):
+    """Read a SourceLens-owned share through HFL organization authorization."""
+
+    permission_classes = [IsAuthenticated, IsOrgReader]
+
+    def get(self, request):
+        from apps.lens_bridge.services import copilot_sharing
+
+        raw_access = str(request.query_params.get("access") or "")
+        try:
+            _link, access = copilot_sharing.require_active_share_access(
+                organization_id=self.org.id,
+                raw_token=raw_access,
+            )
+            payload = sl_client.request_json(
+                "GET",
+                f"/api/lens/public/qa/{access['share_token']}/",
+            )
+        except copilot_sharing.CopilotShareNotFoundError as exc:
+            raise NotFound() from exc
+        except sl_client.LensBridgeError as exc:
+            return _lens_error_response(exc)
+        if not isinstance(payload, dict) or str(payload.get("token") or "") != access[
+            "share_token"
+        ]:
+            return _lens_error_response(
+                _source_lens_contract_error("shared Q&A")
+            )
+        result = {
+            field: payload[field]
+            for field in (
+                "title",
+                "question",
+                "answer",
+                "assistant_name",
+                "assistant_slug",
+                "view_count",
+                "published_at",
+            )
+            if field in payload
+        }
+        for field in ("input_attachments", "output_files"):
+            files = payload.get(field)
+            if not isinstance(files, list):
+                result[field] = []
+                continue
+            rewritten = []
+            for row in files:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    file_uuid = uuid.UUID(str(row.get("uuid")))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                item = {
+                    key: row[key]
+                    for key in (
+                        "uuid",
+                        "filename",
+                        "content_type",
+                        "byte_size",
+                        "order",
+                    )
+                    if key in row
+                }
+                item["url"] = (
+                    reverse(
+                        "lens-copilot-shared-qa-file",
+                        kwargs={"file_uuid": file_uuid},
+                    )
+                    + "?"
+                    + urlencode({"access": raw_access})
+                )
+                rewritten.append(item)
+            result[field] = rewritten
+        result["pdf_url"] = (
+            reverse("lens-copilot-shared-qa-pdf")
+            + "?"
+            + urlencode({"access": raw_access})
+        )
+        return Response(result)
+
+
+class _LensCopilotSharedQABinaryView(OrgScopedMixin, APIView):
+    permission_classes = [IsAuthenticated, IsOrgReader]
+    upstream_suffix = ""
+
+    def _upstream_path(self, share_token: str, **kwargs) -> str:
+        return f"/api/lens/public/qa/{share_token}/{self.upstream_suffix}"
+
+    def get(self, request, **kwargs):
+        from apps.lens_bridge.services import copilot_sharing
+
+        raw_access = str(request.query_params.get("access") or "")
+        try:
+            _link, access = copilot_sharing.require_active_share_access(
+                organization_id=self.org.id,
+                raw_token=raw_access,
+            )
+            upstream = sl_client.stream_binary(
+                self._upstream_path(access["share_token"], **kwargs),
+            )
+        except copilot_sharing.CopilotShareNotFoundError as exc:
+            raise NotFound() from exc
+        except sl_client.LensBridgeError as exc:
+            return _lens_error_response(exc)
+        try:
+            response = StreamingHttpResponse(
+                upstream.body,
+                content_type=upstream.content_type or "application/octet-stream",
+            )
+            if upstream.content_length:
+                response["Content-Length"] = upstream.content_length
+            if upstream.content_disposition:
+                response["Content-Disposition"] = upstream.content_disposition
+            response["Cache-Control"] = "private, max-age=0, no-store"
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+        except Exception:
+            upstream.body.close()
+            raise
+
+
+class LensCopilotSharedQAFileView(_LensCopilotSharedQABinaryView):
+    def _upstream_path(self, share_token: str, **kwargs) -> str:
+        return (
+            f"/api/lens/public/qa/{share_token}/files/"
+            f"{kwargs['file_uuid']}/"
+        )
+
+
+class LensCopilotSharedQAPdfView(_LensCopilotSharedQABinaryView):
+    upstream_suffix = "pdf/"
 
 
 class LensCopilotUsageView(OrgScopedMixin, APIView):

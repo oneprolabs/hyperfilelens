@@ -1,12 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, Ellipsis, Pencil, Pin, PinOff, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, Ellipsis, Pencil, Pin, PinOff, Plus, RotateCcw, Share2, Trash2 } from 'lucide-vue-next'
 import { isActiveRunStatus } from '../../../composables/useLensRunStream'
-import type { LensSessionLink } from '../../../lib/lensApi'
-
-export type SessionGroupKey = 'pinned' | 'today' | 'yesterday' | 'earlier'
-export type SessionRow = LensSessionLink & { group: SessionGroupKey }
+import type { SessionGroupKey, SessionRow } from './sessionOrdering'
 
 const props = defineProps<{
   sessions: SessionRow[]
@@ -17,6 +14,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [id: number]
+  share: [row: SessionRow]
   delete: [row: SessionRow]
   rename: [row: SessionRow, title: string]
   retry: [row: SessionRow]
@@ -49,21 +47,22 @@ function sessionTitle(row: SessionRow) {
 }
 
 function sessionMeta(row: SessionRow) {
-  if (sessionIsRecovering(row)) return 'Recovering Chat…'
-  if (sessionCleanupBlocked(row)) return 'Recovery Needs Attention'
-  if (row.lifecycle_status === 'provisioning') return 'Preparing Chat…'
-  if (row.lifecycle_status === 'failed') return 'Preparation Failed'
-  if (row.lifecycle_status === 'deleting') return 'Deleting…'
-  if (sessionIsRunning(row)) return 'Answering…'
-  const source = row.backup_source_name?.trim() || 'Backup Source'
+  if (sessionIsRecovering(row)) return t('insight.copilot.sessionRecovering')
+  if (sessionCleanupBlocked(row)) return t('insight.copilot.sessionRecoveryAttention')
+  if (row.lifecycle_status === 'provisioning') return t('insight.copilot.sessionPreparing')
+  if (row.lifecycle_status === 'failed') return t('insight.copilot.sessionPreparationFailed')
+  if (row.lifecycle_status === 'deleting') return t('insight.copilot.sessionDeleting')
+  if (sessionIsRunning(row)) return t('insight.copilot.sessionAnswering')
+  const source = row.backup_source_name?.trim() || t('insight.copilot.backupSourceFallback')
   const scopes = row.source_scopes_json || []
   if (!scopes.length) return source
   const types = scopes.map((scope) => scope.path_type || 'unknown')
   const allFiles = types.every((type) => type === 'file')
   const allFolders = types.every((type) => type === 'dir')
-  let scopeLabel = `${scopes.length} Item${scopes.length === 1 ? '' : 's'}`
-  if (allFiles) scopeLabel = `${scopes.length} File${scopes.length === 1 ? '' : 's'}`
-  if (allFolders) scopeLabel = `${scopes.length} Folder${scopes.length === 1 ? '' : 's'}`
+  const plurality = scopes.length === 1 ? 'One' : 'Many'
+  let scopeLabel = t(`insight.copilot.scopeItems${plurality}`, { count: scopes.length })
+  if (allFiles) scopeLabel = t(`insight.copilot.scopeFiles${plurality}`, { count: scopes.length })
+  if (allFolders) scopeLabel = t(`insight.copilot.scopeFolders${plurality}`, { count: scopes.length })
   return `${source} · ${scopeLabel}`
 }
 
@@ -90,6 +89,10 @@ function sessionIsRunning(row: SessionRow) {
 
 function sessionHasUnread(row: SessionRow) {
   return row.has_unread || (props.pendingNotifications?.has(row.id) ?? false)
+}
+
+function sessionHasShareableAnswer(row: SessionRow) {
+  return row.has_shareable_answer ?? Boolean(row.last_assistant_message_at)
 }
 
 function startRename(row: SessionRow) {
@@ -130,6 +133,7 @@ function onRenameKeydown(event: KeyboardEvent, row: SessionRow) {
 }
 
 function handleAction(command: string, row: SessionRow) {
+  if (command === 'share') emit('share', row)
   if (command === 'pin') emit('pin', row, true)
   if (command === 'unpin') emit('pin', row, false)
   if (command === 'rename') startRename(row)
@@ -210,27 +214,27 @@ function handleAction(command: string, row: SessionRow) {
               <span
                 v-if="sessionCleanupBlocked(row)"
                 class="copilot-session-item__state is-failed"
-                title="Recovery needs attention"
+                :title="t('insight.copilot.sessionRecoveryAttention')"
               ><AlertCircle :size="14" /></span>
               <span
                 v-else-if="row.lifecycle_status === 'provisioning' || sessionIsRecovering(row)"
                 class="copilot-session-item__state is-preparing"
-                :title="sessionIsRecovering(row) ? 'Recovering' : 'Preparing'"
+                :title="sessionIsRecovering(row) ? t('insight.copilot.sessionRecovering') : t('insight.copilot.sessionPreparing')"
               ><i /><i /><i /></span>
               <span
                 v-else-if="row.lifecycle_status === 'failed'"
                 class="copilot-session-item__state is-failed"
-                title="Preparation failed"
+                :title="t('insight.copilot.sessionPreparationFailed')"
               ><AlertCircle :size="14" /></span>
               <span
                 v-else-if="sessionIsRunning(row)"
                 class="copilot-session-item__state is-running"
-                title="Answering"
+                :title="t('insight.copilot.sessionAnswering')"
               />
               <span
                 v-else-if="sessionHasUnread(row)"
                 class="copilot-session-item__state is-unread"
-                title="New answer"
+                :title="t('insight.copilot.unreadAnswer')"
               />
             </span>
             <div class="copilot-session-item__actions">
@@ -241,13 +245,30 @@ function handleAction(command: string, row: SessionRow) {
                 <button
                   class="copilot-session-item__more"
                   type="button"
-                  aria-label="Chat actions"
+                  :aria-label="t('insight.copilot.sessionActions', { title: sessionTitle(row) })"
                   @click.stop
                 >
                   <Ellipsis :size="17" />
                 </button>
                 <template #dropdown>
                   <ElDropdownMenu>
+                    <ElDropdownItem
+                      v-if="row.lifecycle_status === 'ready'"
+                      class="copilot-session-menu__share"
+                      command="share"
+                      :icon="Share2"
+                      :disabled="!sessionHasShareableAnswer(row)"
+                      :title="!sessionHasShareableAnswer(row) ? t('insight.copilot.shareUnavailable') : ''"
+                    >
+                      {{ t('insight.copilot.share') }}
+                    </ElDropdownItem>
+                    <ElDropdownItem
+                      class="copilot-session-menu__rename"
+                      command="rename"
+                      :icon="Pencil"
+                    >
+                      {{ t('insight.copilot.renameSession') }}
+                    </ElDropdownItem>
                     <ElDropdownItem
                       v-if="row.lifecycle_status === 'ready'"
                       class="copilot-session-menu__pin"
@@ -257,19 +278,12 @@ function handleAction(command: string, row: SessionRow) {
                       {{ row.pinned_at ? t('insight.copilot.unpinSession') : t('insight.copilot.pinSession') }}
                     </ElDropdownItem>
                     <ElDropdownItem
-                      class="copilot-session-menu__rename"
-                      command="rename"
-                      :icon="Pencil"
-                    >
-                      Rename Chat
-                    </ElDropdownItem>
-                    <ElDropdownItem
                       v-if="sessionIsRetryable(row)"
                       class="copilot-session-menu__retry"
                       command="retry"
                       :icon="RotateCcw"
                     >
-                      Try Again
+                      {{ t('insight.copilot.tryAgain') }}
                     </ElDropdownItem>
                     <ElDropdownItem
                       class="copilot-session-menu__delete"
@@ -277,7 +291,7 @@ function handleAction(command: string, row: SessionRow) {
                       :icon="Trash2"
                       divided
                     >
-                      Delete Chat
+                      {{ t('insight.copilot.deleteSession') }}
                     </ElDropdownItem>
                   </ElDropdownMenu>
                 </template>
@@ -330,10 +344,11 @@ function handleAction(command: string, row: SessionRow) {
 .copilot-session-item:hover .copilot-session-item__actions,.copilot-session-item:focus-within .copilot-session-item__actions { opacity: 1; pointer-events: auto; }
 .copilot-session-item:hover .copilot-session-item__more,.copilot-session-item__more:focus-visible { opacity: 1; }
 .copilot-session-item__more:hover { background: color-mix(in srgb, var(--color-text-title) 8%, transparent); color: var(--color-text-title); }
-:global(.copilot-session-menu__pin),:global(.copilot-session-menu__rename),:global(.copilot-session-menu__retry),:global(.copilot-session-menu__delete) { min-height: 36px; padding: 0 14px; font-size: 13px; }
-:global(.copilot-session-menu__pin .el-icon),:global(.copilot-session-menu__rename .el-icon),:global(.copilot-session-menu__retry .el-icon),:global(.copilot-session-menu__delete .el-icon) { width: 15px; height: 15px; margin-right: 9px; font-size: 15px; }
-:global(.copilot-session-menu__pin:hover),
-:global(.copilot-session-menu__rename:hover) { color: var(--color-primary) !important; }
+:global(.copilot-session-menu__share),:global(.copilot-session-menu__pin),:global(.copilot-session-menu__rename),:global(.copilot-session-menu__retry),:global(.copilot-session-menu__delete) { min-height: 36px; padding: 0 14px; font-size: 13px; }
+:global(.copilot-session-menu__share .el-icon),:global(.copilot-session-menu__pin .el-icon),:global(.copilot-session-menu__rename .el-icon),:global(.copilot-session-menu__retry .el-icon),:global(.copilot-session-menu__delete .el-icon) { width: 15px; height: 15px; margin-right: 9px; font-size: 15px; }
+:global(.copilot-session-menu__share:not(.is-disabled):hover),
+:global(.copilot-session-menu__pin:not(.is-disabled):hover),
+:global(.copilot-session-menu__rename:not(.is-disabled):hover) { color: var(--color-primary) !important; }
 :global(.copilot-session-menu__delete) { color: #d92d20 !important; }
 :global(.copilot-session-menu__delete:hover) { background: #fef3f2 !important; color: #b42318 !important; }
 .copilot-session-empty { padding: 24px 8px; color: var(--color-text-tertiary); font-size: 12px; text-align: center; }
@@ -341,8 +356,9 @@ function handleAction(command: string, row: SessionRow) {
 @keyframes copilot-dot { 0%,60%,100% { opacity: .28; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
 @media (max-width: 900px) { .copilot-aside { width: 240px; } }
 @media (hover: none), (pointer: coarse) {
-  .copilot-session-item__actions { opacity: 1; pointer-events: auto; }
-  .copilot-session-item__more { opacity: 1; }
-  .copilot-session-item__state-slot { right: 30px; }
+  .copilot-session-item__actions { right: -8px; width: 44px; height: 44px; opacity: 1; pointer-events: auto; }
+  .copilot-session-item__more { width: 44px; height: 44px; opacity: 1; }
+  .copilot-session-item__state-slot { right: 36px; }
+  :global(.copilot-session-menu__share),:global(.copilot-session-menu__pin),:global(.copilot-session-menu__rename),:global(.copilot-session-menu__retry),:global(.copilot-session-menu__delete) { min-height: 44px; }
 }
 </style>

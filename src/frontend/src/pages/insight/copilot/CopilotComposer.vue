@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from 'lucide-vue-next'
 import type { CopilotComposerAttachment } from './types'
@@ -22,6 +22,7 @@ const props = defineProps<{
   modelValue: string
   attachments?: CopilotComposerAttachment[]
   sending?: boolean
+  canStop?: boolean
   disabled?: boolean
   supportsImages?: boolean
   supportsDocuments?: boolean
@@ -33,11 +34,14 @@ const emit = defineEmits<{
   stop: []
   attach: [files: File[]]
   removeAttachment: [attachment: CopilotComposerAttachment]
+  resize: [height: number]
 }>()
 
 const { t } = useI18n()
 const fieldRef = ref<HTMLTextAreaElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const composerRef = ref<HTMLElement | null>(null)
+let composerResizeObserver: ResizeObserver | null = null
 
 const hasUploadingAttachment = computed(() =>
   (props.attachments || []).some((item) => item.status === 'uploading'),
@@ -45,6 +49,7 @@ const hasUploadingAttachment = computed(() =>
 
 const canSend = computed(() =>
   !props.disabled
+  && !props.sending
   && !hasUploadingAttachment.value
   && (Boolean(props.modelValue.trim()) || Boolean(props.attachments?.length)),
 )
@@ -64,7 +69,7 @@ function resizeField() {
   const el = fieldRef.value
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  el.style.height = `${Math.min(el.scrollHeight, 200)}px`
 }
 
 function onInput(event: Event) {
@@ -109,10 +114,32 @@ watch(
   () => props.modelValue,
   () => nextTick(resizeField),
 )
+
+function reportComposerHeight() {
+  const height = Math.ceil(composerRef.value?.getBoundingClientRect().height || 0)
+  if (height > 0) emit('resize', height)
+}
+
+onMounted(() => {
+  void nextTick(() => {
+    reportComposerHeight()
+    if (typeof ResizeObserver === 'undefined' || !composerRef.value) return
+    composerResizeObserver = new ResizeObserver(reportComposerHeight)
+    composerResizeObserver.observe(composerRef.value)
+  })
+})
+
+onBeforeUnmount(() => {
+  composerResizeObserver?.disconnect()
+  composerResizeObserver = null
+})
 </script>
 
 <template>
-  <footer class="copilot-composer">
+  <footer
+    ref="composerRef"
+    class="copilot-composer"
+  >
     <input
       ref="fileInputRef"
       class="sr-only"
@@ -208,6 +235,7 @@ watch(
           v-if="sending"
           type="button"
           class="copilot-send-btn copilot-send-btn--stop"
+          :disabled="!canStop"
           :title="t('common.stop')"
           :aria-label="t('common.stop')"
           @click="emit('stop')"
@@ -240,19 +268,34 @@ watch(
 
 <style scoped>
 .copilot-composer {
-  padding: 12px 28px 14px;
-  background: var(--color-grey-1);
-  border-top: 1px solid var(--color-border-light);
+  position: absolute;
+  z-index: 5;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 44px 28px 14px;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--color-card-bg) 98%, transparent) 36%,
+    color-mix(in srgb, var(--color-card-bg) 78%, transparent) 72%,
+    transparent 100%
+  );
 }
 
 .copilot-input-shell {
   display: flex;
+  width: 100%;
+  max-width: 860px;
   flex-direction: column;
   min-height: 58px;
+  margin: 0 auto;
   padding: 8px;
+  pointer-events: auto;
   background: var(--color-card-bg, #fff);
   border: 1px solid var(--color-border, #e2e8f0);
   border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -374,7 +417,7 @@ watch(
   flex: 1;
   min-width: 0;
   min-height: 40px;
-  max-height: 160px;
+  max-height: 200px;
   padding: 9px 2px;
   margin: 0;
   border: none;
@@ -383,7 +426,7 @@ watch(
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.45;
 }
 
@@ -432,13 +475,13 @@ watch(
 }
 
 .copilot-send-btn.is-active {
-  background: #111827;
+  background: var(--color-primary, #6d5bd0);
   color: #ffffff;
   cursor: pointer;
 }
 
 .copilot-send-btn.is-active:hover {
-  background: #374151;
+  background: color-mix(in srgb, var(--color-primary, #6d5bd0) 84%, #000);
   color: #ffffff;
 }
 
@@ -448,13 +491,19 @@ watch(
 }
 
 .copilot-send-btn--stop {
-  background: color-mix(in srgb, var(--color-danger, #ef4444) 12%, transparent);
-  color: var(--color-danger, #ef4444);
+  background: var(--color-primary, #6d5bd0);
+  color: #ffffff;
   cursor: pointer;
 }
 
-.copilot-send-btn--stop:hover {
-  background: color-mix(in srgb, var(--color-danger, #ef4444) 18%, transparent);
+.copilot-send-btn--stop:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary, #6d5bd0) 84%, #000);
+}
+
+.copilot-send-btn--stop:disabled {
+  background: color-mix(in srgb, var(--color-primary, #6d5bd0) 52%, #ffffff);
+  color: rgba(255, 255, 255, 0.82);
+  cursor: wait;
 }
 
 .copilot-attach-btn:focus-visible,
@@ -465,9 +514,12 @@ watch(
 }
 
 .copilot-disclaimer {
-  margin: 8px 4px 0;
+  width: 100%;
+  max-width: 860px;
+  margin: 8px auto 0;
   color: var(--color-text-tertiary);
   font-size: 11px;
+  line-height: 16px;
   text-align: center;
 }
 
@@ -489,11 +541,8 @@ watch(
 
 @media (max-width: 767.98px) {
   .copilot-composer {
-    padding: 10px 12px 12px;
-  }
-
-  .copilot-input-field {
-    font-size: 16px;
+    padding: 28px 12px calc(12px + env(safe-area-inset-bottom));
+    background: transparent;
   }
 }
 </style>

@@ -336,6 +336,7 @@ export type LensSessionLink = {
   last_assistant_message_at: string | null
   last_viewed_at: string | null
   has_unread: boolean
+  has_shareable_answer?: boolean
   pinned_at?: string | null
   active_run_uuid?: string | null
   active_run_status?: string | null
@@ -421,6 +422,46 @@ export type LensRunOutputFile = {
   byte_size?: number
 }
 
+export type LensRunFeedback = 'positive' | 'negative'
+
+export type LensRunFeedbackResponse = {
+  feedback: LensRunFeedback | ''
+  feedback_updated_at: string | null
+}
+
+export type LensSharedQAFile = {
+  uuid: string
+  url: string
+  filename: string
+  content_type?: string
+  byte_size?: number
+  order?: number
+}
+
+export type LensSharedQA = {
+  uuid?: string
+  run_uuid?: string
+  title: string
+  question: string
+  answer: string
+  assistant_name?: string
+  assistant_slug?: string
+  input_attachments?: LensSharedQAFile[]
+  output_files?: LensSharedQAFile[]
+  published_at?: string
+  view_count?: number
+  share_path?: string
+  pdf_url?: string
+}
+
+export type LensCopilotShareCandidate = {
+  shareable: boolean
+  run_uuid?: string
+  question?: string
+  answer?: string
+  share?: LensSharedQA | null
+}
+
 export type LensChatMessage = {
   uuid?: string
   role: 'user' | 'assistant' | 'system'
@@ -428,12 +469,15 @@ export type LensChatMessage = {
   sequence?: number
   run?: string
   created_at?: string
+  completed_at?: string | null
   thinking?: {
     duration_seconds?: number | null
     steps?: LensChatThinkingStep[]
   }
   attachments?: LensChatAttachment[]
   output_files?: LensRunOutputFile[]
+  feedback?: LensRunFeedback | null
+  feedback_updated_at?: string | null
 }
 
 export async function fetchLensHealth(): Promise<LensHealth> {
@@ -1070,6 +1114,79 @@ export async function unpinCopilotSession(sessionId: number): Promise<LensSessio
   return lensPayload<LensSessionLink>(raw)
 }
 
+export async function fetchCopilotShareCandidate(
+  sessionId: number,
+): Promise<LensCopilotShareCandidate> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/share/`), {
+    headers: lensHeaders(),
+  })
+  return lensPayload<LensCopilotShareCandidate>(raw)
+}
+
+export async function createCopilotShare(
+  sessionId: number,
+  title: string,
+): Promise<LensSharedQA> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/share/`), {
+    method: 'POST',
+    headers: lensHeaders(),
+    body: JSON.stringify({ title }),
+  })
+  return lensPayload<LensSharedQA>(raw)
+}
+
+export async function updateCopilotShare(
+  sessionId: number,
+  shareUuid: string,
+  title: string,
+): Promise<LensSharedQA> {
+  const raw = await api(
+    lensUrl(`copilot/sessions/${sessionId}/shares/${shareUuid}/`),
+    {
+      method: 'PATCH',
+      headers: lensHeaders(),
+      body: JSON.stringify({ title }),
+    },
+  )
+  return lensPayload<LensSharedQA>(raw)
+}
+
+export async function revokeCopilotShare(
+  sessionId: number,
+  shareUuid: string,
+): Promise<void> {
+  await api(lensUrl(`copilot/sessions/${sessionId}/shares/${shareUuid}/`), {
+    method: 'DELETE',
+    headers: lensHeaders(),
+  })
+}
+
+export async function fetchSharedCopilotQA(access: string): Promise<LensSharedQA> {
+  const query = new URLSearchParams({ access })
+  const raw = await api(lensUrl(`copilot/shared-qa/?${query.toString()}`), {
+    headers: lensHeaders(),
+  })
+  return lensPayload<LensSharedQA>(raw)
+}
+
+export async function fetchSharedCopilotFile(
+  url: string,
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(`${API_BASE}${url}`, {
+    credentials: 'include',
+    signal,
+    headers: { Accept: '*/*', ...lensHeaders() },
+  })
+  if (!response.ok) {
+    throw new Error(response.statusText || 'Unable to download shared file.')
+  }
+  return {
+    blob: await response.blob(),
+    filename: attachmentFilename(response.headers.get('Content-Disposition')),
+  }
+}
+
 export async function markCopilotSessionViewed(sessionId: number): Promise<LensSessionLink> {
   const raw = await api(lensUrl(`copilot/sessions/${sessionId}/viewed/`), {
     method: 'POST',
@@ -1163,6 +1280,7 @@ export async function createCopilotRun(
   question: string,
   idempotencyKey?: string,
   attachmentUuids: string[] = [],
+  retryOfRunUuid?: string,
 ): Promise<LensRun> {
   const raw = await api(lensUrl(`copilot/sessions/${sessionId}/runs/`), {
     method: 'POST',
@@ -1171,9 +1289,51 @@ export async function createCopilotRun(
       question,
       ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
       ...(attachmentUuids.length ? { attachment_uuids: attachmentUuids } : {}),
+      ...(retryOfRunUuid ? { retry_of_run_uuid: retryOfRunUuid } : {}),
     }),
   })
   return lensPayload<LensRun>(raw)
+}
+
+export async function fetchCopilotRunPdf(
+  sessionId: number,
+  runUuid: string,
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(
+    `${API_BASE}${lensUrl(`copilot/sessions/${sessionId}/runs/${runUuid}/pdf/`)}`,
+    {
+      credentials: 'include',
+      signal,
+      headers: {
+        Accept: 'application/pdf',
+        ...lensHeaders(),
+      },
+    },
+  )
+  if (!response.ok) {
+    throw new Error(response.statusText || 'Unable to download answer PDF.')
+  }
+  return {
+    blob: await response.blob(),
+    filename: attachmentFilename(response.headers.get('Content-Disposition')),
+  }
+}
+
+export async function updateCopilotRunFeedback(
+  sessionId: number,
+  runUuid: string,
+  feedback: LensRunFeedback | '',
+): Promise<LensRunFeedbackResponse> {
+  const raw = await api(
+    lensUrl(`copilot/sessions/${sessionId}/runs/${runUuid}/feedback/`),
+    {
+      method: 'PATCH',
+      headers: lensHeaders(),
+      body: JSON.stringify({ feedback }),
+    },
+  )
+  return lensPayload<LensRunFeedbackResponse>(raw)
 }
 
 export async function syncCopilotSession(sessionId: number): Promise<LensCopilotSyncResponse> {

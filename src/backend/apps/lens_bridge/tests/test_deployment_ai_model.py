@@ -117,6 +117,10 @@ class DeploymentAiModelConfigTests(TestCase):
             deployment_ai_model._deployment_fingerprint(base),
             deployment_ai_model._deployment_fingerprint(vision),
         )
+        self.assertEqual(
+            deployment_ai_model._legacy_deployment_fingerprint(base),
+            deployment_ai_model._legacy_deployment_fingerprint(vision),
+        )
 
 
 class DeploymentAiModelServiceTests(TestCase):
@@ -283,6 +287,149 @@ class DeploymentAiModelServiceTests(TestCase):
         self.assertEqual(defaults.default_multimodal_model_ref, self.model_uuid)
 
     @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_agent_adopts_pre_vision_fingerprint_without_recreating_model(
+        self,
+        request_json,
+    ):
+        org = platform_lens.get_or_create_platform_org()
+        link = LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=deployment_ai_model.LEGACY_DEPLOYMENT_MODEL_MANAGEMENT_KEY,
+            deployment_fingerprint=(
+                deployment_ai_model._legacy_deployment_fingerprint(self.config)
+            ),
+        )
+        LensOrgLink.objects.create(
+            organization=org,
+            default_agent_model_ref=self.model_uuid,
+        )
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "provider": self.config.provider,
+                "is_active": True,
+                "config": {
+                    "model": self.config.model_id,
+                    "api_base": self.config.api_base,
+                },
+            },
+            {"ok": True},
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(self.config)
+
+        self.assertEqual(result.action, "updated")
+        self.assertTrue(result.connectivity_ok)
+        self.assertEqual(request_json.call_count, 2)
+        self.assertNotIn(
+            ("POST", "/api/v1/admin/llm-config/"),
+            [call.args[:2] for call in request_json.call_args_list],
+        )
+        link.refresh_from_db()
+        self.assertEqual(
+            link.management_key,
+            deployment_ai_model.DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY,
+        )
+        self.assertEqual(
+            link.deployment_fingerprint,
+            deployment_ai_model._deployment_fingerprint(self.config),
+        )
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_multimodal_upgrade_repairs_legacy_model_in_place(
+        self,
+        request_json,
+    ):
+        org = platform_lens.get_or_create_platform_org()
+        vision_config = deployment_ai_model.DeploymentAiModelConfig(
+            provider=self.config.provider,
+            model_id=self.config.model_id,
+            display_name=self.config.display_name,
+            api_base=self.config.api_base,
+            api_key=self.config.api_key,
+            supports_vision=True,
+        )
+        link = LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=(
+                deployment_ai_model.DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY
+            ),
+            deployment_role=LensOrgModelLink.DeploymentRole.MULTIMODAL,
+            deployment_fingerprint=(
+                deployment_ai_model._legacy_deployment_fingerprint(vision_config)
+            ),
+        )
+        LensOrgLink.objects.create(
+            organization=org,
+            default_multimodal_model_ref=self.model_uuid,
+        )
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "provider": vision_config.provider,
+                "is_active": True,
+                "config": {
+                    "model": vision_config.model_id,
+                    "api_base": vision_config.api_base,
+                },
+            },
+            {},
+            {"ok": True},
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(
+            vision_config,
+            role="multimodal",
+        )
+
+        self.assertEqual(result.action, "updated")
+        self.assertTrue(result.connectivity_ok)
+        self.assertNotIn(
+            ("POST", "/api/v1/admin/llm-config/"),
+            [call.args[:2] for call in request_json.call_args_list],
+        )
+        self.assertEqual(
+            request_json.call_args_list[1].args,
+            ("PUT", f"/api/v1/admin/llm-config/{self.model_uuid}/"),
+        )
+        link.refresh_from_db()
+        self.assertFalse(link.is_deployment_history)
+        self.assertEqual(link.sl_config_uuid, self.model_uuid)
+        self.assertEqual(
+            link.deployment_fingerprint,
+            deployment_ai_model._deployment_fingerprint(vision_config),
+        )
+
+        request_json.reset_mock()
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "provider": vision_config.provider,
+                "is_active": True,
+                "config": {
+                    "model": vision_config.model_id,
+                    "api_base": vision_config.api_base,
+                    "supports_vision": True,
+                },
+            },
+            {"ok": True},
+        ]
+
+        repeated = deployment_ai_model.ensure_platform_ai_model(
+            vision_config,
+            role="multimodal",
+        )
+
+        self.assertEqual(repeated.action, "updated")
+        self.assertEqual(request_json.call_count, 2)
+        self.assertEqual(
+            [call.args[0] for call in request_json.call_args_list],
+            ["GET", "POST"],
+        )
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
     def test_recheck_patches_vision_capability_without_touching_default(
         self,
         request_json,
@@ -321,8 +468,8 @@ class DeploymentAiModelServiceTests(TestCase):
                     "api_base": vision_config.api_base,
                 },
             },
-            {"ok": True},
             {},
+            {"ok": True},
         ]
 
         result = deployment_ai_model.ensure_platform_ai_model(
@@ -332,7 +479,7 @@ class DeploymentAiModelServiceTests(TestCase):
 
         self.assertEqual(result.action, "updated")
         self.assertTrue(result.connectivity_ok)
-        put_call = request_json.call_args_list[2]
+        put_call = request_json.call_args_list[1]
         self.assertEqual(
             put_call.args,
             ("PUT", f"/api/v1/admin/llm-config/{self.model_uuid}/"),

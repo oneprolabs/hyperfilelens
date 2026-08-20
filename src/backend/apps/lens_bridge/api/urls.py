@@ -9,6 +9,9 @@ from apps.lens_bridge.api.views import (
     LensCopilotKnowledgeSourceView,
     LensCopilotReadinessView,
     LensCopilotRunStreamView,
+    LensCopilotSharedQAFileView,
+    LensCopilotSharedQAPdfView,
+    LensCopilotSharedQAView,
     LensCopilotSessionViewSet,
     LensCopilotSnapshotBrowseTaskView,
     LensCopilotSnapshotBrowseView,
@@ -59,6 +62,21 @@ urlpatterns = [
         name="lens-copilot-snapshot-browse-task",
     ),
     path("copilot/usage/", LensCopilotUsageView.as_view(), name="lens-copilot-usage"),
+    path(
+        "copilot/shared-qa/",
+        LensCopilotSharedQAView.as_view(),
+        name="lens-copilot-shared-qa",
+    ),
+    path(
+        "copilot/shared-qa/pdf/",
+        LensCopilotSharedQAPdfView.as_view(),
+        name="lens-copilot-shared-qa-pdf",
+    ),
+    path(
+        "copilot/shared-qa/files/<uuid:file_uuid>/",
+        LensCopilotSharedQAFileView.as_view(),
+        name="lens-copilot-shared-qa-file",
+    ),
     path(
         "copilot/usage/<uuid:run_uuid>/",
         LensCopilotUsageView.as_view(),

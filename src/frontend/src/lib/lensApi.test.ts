@@ -5,7 +5,10 @@ import { api } from './api'
 import type { LensIngestPolicy } from './lensApi'
 import {
   browseCopilotSnapshotDirectory,
+  createCopilotShare,
   createKnowledgeSource,
+  fetchCopilotShareCandidate,
+  fetchSharedCopilotQA,
   patchKnowledgeSource,
   setLensApiScope,
   setLensDefaultAgentModel,
@@ -138,6 +141,57 @@ describe('saved AI model connectivity', () => {
         method: 'POST',
         body: '{}',
       }),
+    )
+  })
+})
+
+describe('Copilot shared Q&A adapter', () => {
+  it('loads and creates shares through the owning HFL session', async () => {
+    vi.mocked(api)
+      .mockResolvedValueOnce({
+        shareable: true,
+        question: 'Question',
+        answer: 'Answer',
+        share: null,
+      })
+      .mockResolvedValueOnce({
+        uuid: 'a05bce34-1199-4a5e-8917-d61e541ca71b',
+        token: 'share-token',
+        run_uuid: '56ed8b87-b754-45d1-aaaf-e9134d52b756',
+        title: 'Shared answer',
+        share_path: '/insight/copilot/shared?access=signed',
+      })
+
+    await fetchCopilotShareCandidate(7)
+    await createCopilotShare(7, 'Shared answer')
+
+    expect(api).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/lens/copilot/sessions/7/share/',
+      expect.objectContaining({ headers: expect.any(Object) }),
+    )
+    expect(api).toHaveBeenNthCalledWith(
+      2,
+      '/api/v1/lens/copilot/sessions/7/share/',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ title: 'Shared answer' }),
+      }),
+    )
+  })
+
+  it('keeps the signed organization access token on the HFL proxy', async () => {
+    vi.mocked(api).mockResolvedValue({
+      token: 'source-lens-token',
+      question: 'Question',
+      answer: 'Answer',
+    })
+
+    await fetchSharedCopilotQA('hfl-signed-access')
+
+    expect(api).toHaveBeenCalledWith(
+      '/api/v1/lens/copilot/shared-qa/?access=hfl-signed-access',
+      expect.objectContaining({ headers: expect.any(Object) }),
     )
   })
 })

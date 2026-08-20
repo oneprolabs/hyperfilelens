@@ -258,7 +258,7 @@ def _update_last_assistant_message_at(
         link.save(update_fields=["last_assistant_message_at", "updated_at"])
 
 
-def _assistant_message_for_run(
+def assistant_message_for_run(
     messages: list[dict[str, Any]],
     run_uuid: str,
 ) -> dict[str, Any] | None:
@@ -266,6 +266,53 @@ def _assistant_message_for_run(
         if str(row.get("run") or "") == run_uuid and row.get("role") == "assistant":
             return row
     return None
+
+
+def require_assistant_run(
+    link: LensSessionLink,
+    run_uuid: uuid_lib.UUID,
+) -> dict[str, Any]:
+    """Require a completed answer Run to belong to this HFL chat."""
+
+    messages = _fetch_session_messages(link)
+    message = assistant_message_for_run(messages, str(run_uuid))
+    if message is None:
+        raise NotFound("Answer not found.")
+    return message
+
+
+def update_run_feedback(
+    link: LensSessionLink,
+    run_uuid: uuid_lib.UUID,
+    feedback: str,
+) -> dict[str, str | None]:
+    """Persist one session answer's feedback through SourceLens.
+
+    The session message lookup keeps HFL organization scoping authoritative;
+    SourceLens remains authoritative for the feedback value itself.
+    """
+
+    require_assistant_run(link, run_uuid)
+
+    data = sl_client.request_json(
+        "PATCH",
+        f"/api/lens/runs/{run_uuid}/feedback/",
+        json_body={"feedback": feedback},
+        hfl_user=link.hfl_user,
+    )
+    if not isinstance(data, dict) or data.get("feedback") != feedback:
+        raise sl_client.LensBridgeError(
+            "SourceLens returned invalid run feedback."
+        )
+    updated_at = data.get("feedback_updated_at")
+    if updated_at is not None and not isinstance(updated_at, str):
+        raise sl_client.LensBridgeError(
+            "SourceLens returned invalid run feedback metadata."
+        )
+    return {
+        "feedback": feedback,
+        "feedback_updated_at": updated_at,
+    }
 
 
 def _build_active_run_payload(
@@ -280,7 +327,7 @@ def _build_active_run_payload(
         .values_list("created_at", flat=True)
         .first()
     )
-    assistant_msg = _assistant_message_for_run(messages, run_uuid)
+    assistant_msg = assistant_message_for_run(messages, run_uuid)
     thinking = {}
     if assistant_msg:
         thinking = assistant_msg.get("thinking") or {}
