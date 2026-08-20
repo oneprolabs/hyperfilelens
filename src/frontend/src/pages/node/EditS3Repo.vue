@@ -10,6 +10,7 @@ import {
   verifyStorageRepositoryAccess,
   type StorageRepository,
 } from '../../lib/storageRepositoryApi'
+import { getTask, type TaskRow } from '../../lib/taskApi'
 import {
   s3EndpointDisplay,
   s3PlatformLabelKey,
@@ -278,7 +279,20 @@ async function onSave() {
   busy.value = true
   savingPhase.value = 'saving'
   try {
-    await updateStorageRepository(repositoryId.value, buildPayload())
+    const result = await updateStorageRepository(repositoryId.value, buildPayload())
+    const task = rotationTaskFromUpdateResult(result)
+    if (task) {
+      savingPhase.value = 'verifying'
+      const completed = await waitForCredentialRotation(task)
+      if (!completed) {
+        ElMessage.warning({
+          message: t('repositoriesPage.editS3Repo.verificationContinues'),
+          grouping: true,
+        })
+        router.push({ path: '/node/repositories', query: { tab: 's3' } })
+        return
+      }
+    }
     ElMessage.success({ message: t('repositoriesPage.editS3Repo.msgUpdated'), grouping: true })
     router.push({ path: '/node/repositories', query: { tab: 's3' } })
   } catch (err) {
@@ -290,6 +304,31 @@ async function onSave() {
     busy.value = false
     savingPhase.value = null
   }
+}
+
+function rotationTaskFromUpdateResult(result: unknown): TaskRow | null {
+  if (!result || typeof result !== 'object' || !('task' in result)) return null
+  const task = (result as { task?: TaskRow | null }).task
+  return task && task.task_uuid ? task : null
+}
+
+async function waitForCredentialRotation(initialTask: TaskRow): Promise<boolean> {
+  let task = initialTask
+  for (let attempt = 0; attempt < 180; attempt += 1) {
+    if (task.status === 'success') return true
+    if (['failed', 'timeout', 'cancelled', 'canceled'].includes(task.status)) {
+      throw new Error(
+        task.error_message || t('repositoriesPage.editS3Repo.saveFailed'),
+      )
+    }
+    await new Promise(resolve => window.setTimeout(resolve, 1000))
+    try {
+      task = await getTask(task.task_uuid)
+    } catch {
+      return false
+    }
+  }
+  return false
 }
 
 function handleBack() {

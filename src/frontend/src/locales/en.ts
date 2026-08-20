@@ -2187,6 +2187,7 @@ export const en = {
     credentialMask: 'Saved credentials. Click Rewrite to replace them.',
     saving: 'Saving…',
     savingAndVerifying: 'Verifying and saving…',
+    verificationContinues: 'Credential verification is still running in the background. Check Tasks for the final result before editing this repository again.',
     verifyingAuth: 'Verifying access…',
     verifySuccess: 'Access verified for bucket {bucket}',
     verifyFailed: 'Access verification failed',

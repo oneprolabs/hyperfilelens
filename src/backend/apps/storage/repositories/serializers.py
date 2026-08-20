@@ -19,6 +19,7 @@ from apps.storage.services.internal.repository_access import (
     repository_uses_bound_proxy,
 )
 from apps.storage.services.internal.repository_secrets import (
+    SECRET_CONFIG_FIELDS,
     credential_hint,
     sanitize_repository_config,
 )
@@ -399,7 +400,17 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         instance = self.instance
-        incoming_config = attrs.get("config") or {}
+        incoming_config = dict(attrs.get("config") or {})
+        inline_secrets = {
+            key: incoming_config.pop(key)
+            for key in SECRET_CONFIG_FIELDS
+            if key in incoming_config
+        }
+        if inline_secrets:
+            credential_payload = dict(inline_secrets)
+            credential_payload.update(attrs.get("credential_payload") or {})
+            attrs["credential_payload"] = credential_payload
+            attrs["config"] = incoming_config
         if instance is not None and self.context.get("request_action") in {
             "update",
             "partial_update",
@@ -788,12 +799,21 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
         )
 
     def update(self, instance, validated_data):
+        request = self.context.get("request")
+        requested_by = getattr(request, "user", None) if request is not None else None
         credential_payload = validated_data.get("credential_payload")
         incoming_config = validated_data.get("config")
         if credential_payload is None and isinstance(incoming_config, dict):
             if any(
                 key in incoming_config
-                for key in ("secret_access_key", "smb_password", "kopia_password")
+                for key in (
+                    "access_key_id",
+                    "secret_access_key",
+                    "kopia_password",
+                    "s3_url_style",
+                    "use_tls",
+                    "smb_password",
+                )
             ):
                 credential_payload = {}
         return update_repository(
@@ -806,6 +826,7 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             bind_node_type=validated_data.get("bind_node_type"),
             bind_node_id=validated_data.get("bind_node_id"),
             credential_payload=credential_payload,
+            requested_by=requested_by,
         )
 
 

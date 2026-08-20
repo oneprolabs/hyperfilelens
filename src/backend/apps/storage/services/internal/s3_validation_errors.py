@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import signal
 from dataclasses import dataclass
 
 from botocore.exceptions import (
@@ -14,6 +15,8 @@ from botocore.exceptions import (
 )
 
 from common.errors import AppError
+
+from apps.storage.services.internal.kopia_cli import KopiaProcessTerminatedError
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +69,26 @@ def classify_s3_validation_error(
 ) -> S3ValidationFailure:
     chain = list(_exception_chain(exc))
     error_code = next((code for item in chain if (code := _client_error_code(item))), "")
+
+    terminated = next(
+        (item for item in chain if isinstance(item, KopiaProcessTerminatedError)),
+        None,
+    )
+    if terminated is not None:
+        signal_number = terminated.signal_number
+        if signal_number == signal.SIGKILL:
+            return S3ValidationFailure(
+                "STORAGE.RUNTIME_RESOURCE_EXHAUSTED",
+                "Repository initialization was interrupted by insufficient system resources. Try again, and contact the platform administrator if the problem continues.",
+                retryable=True,
+                diagnostic=f"kopia_signal={signal_number}",
+            )
+        return S3ValidationFailure(
+            "STORAGE.OPERATION_INTERRUPTED",
+            "Repository initialization was interrupted before it completed. Try again.",
+            retryable=True,
+            diagnostic=f"kopia_signal={signal_number}",
+        )
 
     if error_code in _CREDENTIAL_CODES or any(
         isinstance(item, (NoCredentialsError, PartialCredentialsError)) for item in chain

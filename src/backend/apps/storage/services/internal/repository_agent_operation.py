@@ -110,6 +110,69 @@ def _related_node_task(
     )
 
 
+def resolve_existing_repository_agent_operation(
+    *,
+    repository_task: RepositoryTask,
+    correlation_type: str,
+    timeout_seconds: int,
+) -> RepositoryAgentOperationResult | None:
+    """Resolve one already-dispatched Agent operation without dispatching.
+
+    A destructive parent must observe the durable child task through every
+    state transition. Querying terminal and in-flight states separately leaves
+    a race where the Agent can delete ownership evidence between queries.
+    """
+    remote_query = NodeTask.objects.filter(
+        organization_id=repository_task.repository.organization_id,
+        kind="repository.operation",
+        correlation_type=correlation_type,
+        correlation_id=str(repository_task.task.task_uuid),
+    )
+    if repository_task.remote_task_id:
+        remote_query = remote_query.filter(pk=repository_task.remote_task_id)
+    node_task = remote_query.order_by("-created_at", "-id").first()
+    if node_task is None:
+        if repository_task.remote_task_id:
+            raise RepositoryAgentOperationStateUnknown(
+                "The durable Agent task referenced by the repository operation "
+                "could not be found."
+            )
+        return None
+
+    payload = node_task.payload if isinstance(node_task.payload, dict) else {}
+    if (
+        str(payload.get("repository_id") or "") != str(repository_task.repository_id)
+        or payload.get("operation_type") != repository_task.operation_type
+    ):
+        raise RepositoryAgentOperationStateUnknown(
+            "The durable Agent task does not match this repository operation."
+        )
+
+    recovered = repository_task.remote_task_id is None
+    if repository_task.remote_task_id != node_task.id:
+        RepositoryTask.objects.filter(pk=repository_task.id).update(
+            remote_task_id=node_task.id
+        )
+        repository_task.remote_task_id = node_task.id
+    if recovered:
+        record_recovery_decision(
+            task=repository_task.task,
+            plan=RecoveryPlan(
+                decision=RecoveryDecision.RESUME,
+                reason="Recovered the durable Agent task after control-plane interruption.",
+                evidence={
+                    "node_task_id": str(node_task.id),
+                    "node_task_status": node_task.status,
+                    "correlation_type": correlation_type,
+                },
+            ),
+        )
+    return _resolve_node_task_result(
+        node_task=node_task,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def resolve_or_dispatch_repository_agent_operation(
     *,
     repository_task: RepositoryTask,
@@ -162,6 +225,17 @@ def resolve_or_dispatch_repository_agent_operation(
             ),
         )
 
+    return _resolve_node_task_result(
+        node_task=node_task,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _resolve_node_task_result(
+    *,
+    node_task: NodeTask,
+    timeout_seconds: int,
+) -> RepositoryAgentOperationResult:
     if node_task.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}:
         deadline = node_task.created_at + timedelta(
             seconds=max(1, int(timeout_seconds))

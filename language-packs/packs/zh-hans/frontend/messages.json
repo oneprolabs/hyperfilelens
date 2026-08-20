@@ -4181,6 +4181,7 @@
       "credentialMask": "已保存的密钥,如需更换请点击「重写」",
       "saving": "正在保存…",
       "savingAndVerifying": "验证鉴权并保存…",
+      "verificationContinues": "凭据验证仍在后台运行。再次编辑此仓库前，请在任务页面查看最终结果。",
       "verifyingAuth": "正在验证鉴权信息…",
       "verifySuccess": "鉴权验证通过,可访问 Bucket {bucket}",
       "verifyFailed": "鉴权验证失败,无法访问 Bucket",

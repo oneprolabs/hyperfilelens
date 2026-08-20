@@ -331,15 +331,17 @@ def execute_repository_operation(*, repository_task_id: int):
         RepositoryTask.OperationType.CLEANUP_TARGET,
         RepositoryTask.OperationType.CLEANUP_REPOSITORY,
     }
-    is_create = operation_type in {
+    uses_controller_workflow_lock = operation_type in {
         RepositoryTask.OperationType.CREATE_REPOSITORY,
         RepositoryTask.OperationType.REPAIR_BIND,
         RepositoryTask.OperationType.REPAIR_REMOUNT,
+        RepositoryTask.OperationType.CHECK,
+        RepositoryTask.OperationType.CREDENTIAL_ROTATE,
     }
     if (
         owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER
         and not is_cleanup
-        and not is_create
+        and not uses_controller_workflow_lock
     ):
         return _execute_repository_operation(repository_task_id=repository_task_id)
 
@@ -370,6 +372,20 @@ def _execute_repository_operation(*, repository_task_id: int):
     repository_task = RepositoryTask.objects.select_related(
         "task", "repository", "execution_target"
     ).get(pk=repository_task_id)
+    if repository_task.operation_type == RepositoryTask.OperationType.CHECK:
+        from apps.storage.services.internal.repository_check import (
+            run_repository_check_task,
+        )
+
+        return run_repository_check_task(repository_task_id=repository_task.id)
+    if repository_task.operation_type == RepositoryTask.OperationType.CREDENTIAL_ROTATE:
+        from apps.storage.services.internal.repository_credential_rotation import (
+            run_repository_credential_rotation_task,
+        )
+
+        return run_repository_credential_rotation_task(
+            repository_task_id=repository_task.id
+        )
     if repository_task.operation_type in {
         RepositoryTask.OperationType.CREATE_REPOSITORY,
         RepositoryTask.OperationType.REPAIR_BIND,

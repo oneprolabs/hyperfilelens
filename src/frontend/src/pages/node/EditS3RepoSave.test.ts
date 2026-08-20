@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   getStorageRepository: vi.fn(),
   updateStorageRepository: vi.fn(),
   verifyStorageRepositoryAccess: vi.fn(),
+  getTask: vi.fn(),
   routerPush: vi.fn(),
 }))
 
@@ -23,6 +24,10 @@ vi.mock('../../lib/storageRepositoryApi', () => ({
 
 vi.mock('../../lib/api', () => ({
   apiErrorMessage: (error: { message?: string }, fallback: string) => error?.message || fallback,
+}))
+
+vi.mock('../../lib/taskApi', () => ({
+  getTask: mocks.getTask,
 }))
 
 vi.mock('vue-router', async (importOriginal) => ({
@@ -80,6 +85,7 @@ function saveButton(wrapper: ReturnType<typeof mount>) {
 
 describe('EditS3Repo save behavior', () => {
   beforeEach(() => {
+    vi.useRealTimers()
     vi.clearAllMocks()
     mocks.getStorageRepository.mockResolvedValue(repository)
     mocks.updateStorageRepository.mockResolvedValue(repository)
@@ -119,5 +125,99 @@ describe('EditS3Repo save behavior', () => {
     })
     expect(wrapper.find('.edit-s3-verify-dialog').exists()).toBe(false)
     wrapper.unmount()
+  })
+
+  it('accepts a completed credential verification task before leaving the page', async () => {
+    mocks.updateStorageRepository.mockResolvedValue({
+      repository,
+      task: { task_uuid: 'credential-task', status: 'success' },
+    })
+    const successMessage = vi.spyOn(ElMessage, 'success').mockImplementation(() => undefined as never)
+    const wrapper = await mountForm()
+
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(mocks.getTask).not.toHaveBeenCalled()
+    expect(successMessage).toHaveBeenCalled()
+    expect(mocks.routerPush).toHaveBeenCalledWith({ path: '/node/repositories', query: { tab: 's3' } })
+    wrapper.unmount()
+  })
+
+  it('shows the worker verification error and stays on the edit page', async () => {
+    mocks.updateStorageRepository.mockResolvedValue({
+      repository,
+      task: {
+        task_uuid: 'credential-task',
+        status: 'failed',
+        error_message: 'The new credentials cannot open this repository.',
+      },
+    })
+    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
+    const wrapper = await mountForm()
+
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(errorMessage).toHaveBeenCalledWith({
+      message: 'The new credentials cannot open this repository.',
+      grouping: true,
+    })
+    expect(mocks.routerPush).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('reports a still-running verification task without claiming the save failed', async () => {
+    mocks.updateStorageRepository.mockResolvedValue({
+      repository,
+      task: { task_uuid: 'credential-task', status: 'pending' },
+    })
+    mocks.getTask.mockResolvedValue({
+      task_uuid: 'credential-task',
+      status: 'running',
+    })
+    const warningMessage = vi.spyOn(ElMessage, 'warning').mockImplementation(() => undefined as never)
+    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
+    const wrapper = await mountForm()
+    vi.useFakeTimers()
+
+    await saveButton(wrapper).trigger('click')
+    await vi.advanceTimersByTimeAsync(180_000)
+    await flushPromises()
+
+    expect(mocks.getTask).toHaveBeenCalledTimes(180)
+    expect(warningMessage).toHaveBeenCalledWith({
+      message: en.repositoriesPage.editS3Repo.verificationContinues,
+      grouping: true,
+    })
+    expect(errorMessage).not.toHaveBeenCalled()
+    expect(mocks.routerPush).toHaveBeenCalledWith({ path: '/node/repositories', query: { tab: 's3' } })
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('keeps a verification task pending when task polling is interrupted', async () => {
+    mocks.updateStorageRepository.mockResolvedValue({
+      repository,
+      task: { task_uuid: 'credential-task', status: 'pending' },
+    })
+    mocks.getTask.mockRejectedValue(new Error('Temporary network failure'))
+    const warningMessage = vi.spyOn(ElMessage, 'warning').mockImplementation(() => undefined as never)
+    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
+    const wrapper = await mountForm()
+    vi.useFakeTimers()
+
+    await saveButton(wrapper).trigger('click')
+    await vi.advanceTimersByTimeAsync(1_000)
+    await flushPromises()
+
+    expect(warningMessage).toHaveBeenCalledWith({
+      message: en.repositoriesPage.editS3Repo.verificationContinues,
+      grouping: true,
+    })
+    expect(errorMessage).not.toHaveBeenCalled()
+    expect(mocks.routerPush).toHaveBeenCalledWith({ path: '/node/repositories', query: { tab: 's3' } })
+    wrapper.unmount()
+    vi.useRealTimers()
   })
 })

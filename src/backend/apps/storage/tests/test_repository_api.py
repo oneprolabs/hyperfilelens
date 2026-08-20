@@ -28,6 +28,9 @@ from apps.storage.services.internal.nas_repository import (
     nas_repository_payload,
 )
 from apps.storage.services.internal.repository_access import repository_payload_for_node
+from apps.storage.services.internal.repository_credential_rotation import (
+    run_repository_credential_rotation_task,
+)
 from apps.storage.services.internal.repository_secrets import (
     build_repository_runtime_payload,
 )
@@ -972,7 +975,7 @@ class StorageRepositoryApiTests(TestCase):
         repository.refresh_from_db()
         self.assertEqual(repository.config["region"], "us-east-1")
 
-    def test_s3_repository_cannot_change_access_key_identity(self):
+    def test_s3_access_key_change_is_staged_without_changing_live_identity(self):
         repository = Repository.objects.create(
             organization_id=self.org.id,
             name="immutable-s3-account",
@@ -1002,9 +1005,16 @@ class StorageRepositoryApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         repository.refresh_from_db()
         self.assertEqual(repository.config["access_key_id"], "AKIA_ORIGINAL")
+        self.assertTrue(
+            RepositoryTask.objects.filter(
+                repository=repository,
+                operation_type=RepositoryTask.OperationType.CREDENTIAL_ROTATE,
+                task__status=Task.Status.PENDING,
+            ).exists()
+        )
 
     def test_repository_binding_can_only_change_through_repair_workflow(self):
         repository = Repository.objects.create(
@@ -1713,7 +1723,9 @@ class StorageRepositoryApiTests(TestCase):
                 "config": {"proxy_node_dir": "/data/repository"},
             }
         )
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(
+            response.status_code, status.HTTP_202_ACCEPTED, response.content
+        )
 
         repository = Repository.objects.get(name="local-disk-upgrade-required")
         result = self._run_create_task(repository)
@@ -2278,3 +2290,125 @@ class StorageRepositoryApiTests(TestCase):
             response.status_code, status.HTTP_409_CONFLICT, response.content
         )
         self.assertTrue(Repository.objects.filter(id=repo.id).exists())
+
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    def test_manual_repository_check_returns_a_worker_task(self, dispatch):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="manual-check",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.CUSTOM,
+            s3_bucket="manual-check-bucket",
+            config={
+                "endpoint": "s3.example.test",
+                "prefix": "hfl/",
+                "access_key_id": "manual-check-key",
+            },
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                f"/api/v1/storage/repositories/{repository.id}/check/",
+                {},
+                format="json",
+                **self._headers(),
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        repository_task = RepositoryTask.objects.get(
+            repository=repository,
+            operation_type=RepositoryTask.OperationType.CHECK,
+        )
+        self.assertEqual(
+            response.data["task"]["task_uuid"],
+            str(repository_task.task.task_uuid),
+        )
+        dispatch.assert_called_once_with(
+            kwargs={"repository_task_id": repository_task.id}
+        )
+
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    def test_s3_credential_update_stages_then_activates_new_secret(
+        self,
+        dispatch,
+    ):
+        credential = Credential(
+            organization_id=self.org.id,
+            credential_type=Credential.Type.S3,
+        )
+        credential.set_secret_payload(
+            {
+                "secret_access_key": "old-secret",
+                "kopia_password": "repository-password",
+            }
+        )
+        credential.save()
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="credential-update",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            credential_id=credential.id,
+            s3_platform=Repository.S3Platform.CUSTOM,
+            s3_bucket="credential-update-bucket",
+            config={
+                "endpoint": "s3.example.test",
+                "region": "us-east-1",
+                "prefix": "hfl/",
+                "access_key_id": "old-access-key",
+                "s3_url_style": "path",
+                "use_tls": True,
+            },
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.patch(
+                f"/api/v1/storage/repositories/{repository.id}/",
+                {
+                    "config": {
+                        "access_key_id": "new-access-key",
+                        "secret_access_key": "new-secret",
+                    }
+                },
+                format="json",
+                **self._headers(),
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        repository.refresh_from_db()
+        self.assertEqual(repository.credential_id, credential.id)
+        self.assertEqual(repository.config["access_key_id"], "old-access-key")
+        repository_task = RepositoryTask.objects.get(
+            repository=repository,
+            operation_type=RepositoryTask.OperationType.CREDENTIAL_ROTATE,
+        )
+        self.assertEqual(
+            response.data["task"]["task_uuid"],
+            str(repository_task.task.task_uuid),
+        )
+        self.assertNotIn("new-secret", str(response.data))
+        self.assertNotIn("new-secret", str(repository_task.task.request_payload))
+        dispatch.assert_called_once_with(
+            kwargs={"repository_task_id": repository_task.id}
+        )
+
+        with mock.patch(
+            "apps.storage.services.internal.repository_credential_rotation.check_s3_repository"
+        ), mock.patch(
+            "apps.storage.services.internal.repository_credential_rotation.enqueue_repository_usage_refresh"
+        ):
+            result = run_repository_credential_rotation_task(
+                repository_task_id=repository_task.id
+            )
+
+        self.assertEqual(result["status"], "success")
+        repository.refresh_from_db()
+        self.assertNotEqual(repository.credential_id, credential.id)
+        active_secret = Credential.objects.get(
+            id=repository.credential_id
+        ).get_secret_payload()
+        self.assertEqual(active_secret["secret_access_key"], "new-secret")
+        self.assertNotIn("secret_access_key", repository.config)
