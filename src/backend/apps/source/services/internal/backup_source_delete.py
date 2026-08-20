@@ -719,6 +719,63 @@ def _active_reset_task_for_source(
     return tasks.first()
 
 
+def _product_task_for_node_task(
+    *,
+    organization_id: int,
+    node_task: NodeTask,
+) -> Task | None:
+    """Resolve the product task that owns one active Node execution."""
+    if node_task.parent_task_id:
+        product_task = Task.objects.filter(
+            organization_id=organization_id,
+            id=node_task.parent_task_id,
+        ).first()
+        if product_task is not None:
+            return product_task
+    if not node_task.correlation_id:
+        return None
+    try:
+        product_task_uuid = UUID(node_task.correlation_id)
+    except (TypeError, ValueError):
+        return None
+    return Task.objects.filter(
+        organization_id=organization_id,
+        task_uuid=product_task_uuid,
+    ).first()
+
+
+def _snapshot_delete_owned_by_unregister_attempt(
+    *,
+    product_task: Task | None,
+    unregister_task: Task | None,
+) -> bool:
+    """Return whether a snapshot delete belongs to this unregister attempt."""
+    if (
+        product_task is None
+        or unregister_task is None
+        or product_task.task_type != Task.Type.SNAPSHOT_DELETE
+    ):
+        return False
+    payload = (
+        product_task.request_payload
+        if isinstance(product_task.request_payload, dict)
+        else {}
+    )
+    if (
+        "source_unregister_task_id" not in payload
+        or "source_unregister_attempt" not in payload
+    ):
+        return False
+    try:
+        parent_id = int(payload["source_unregister_task_id"])
+        parent_attempt = int(payload["source_unregister_attempt"])
+    except (TypeError, ValueError):
+        return False
+    return parent_id == int(unregister_task.id) and parent_attempt == int(
+        unregister_task.retry_count or 0
+    )
+
+
 def source_needs_reset_protection(
     *,
     organization_id: int,
@@ -1116,16 +1173,20 @@ def _prepare_delete_batch(
                         node_task = NodeTask.objects.filter(
                             pk=blocker.task_uuid
                         ).first()
-                        if node_task is not None and node_task.correlation_id:
-                            try:
-                                product_task_uuid = UUID(node_task.correlation_id)
-                            except (TypeError, ValueError):
-                                product_task_uuid = None
-                            if product_task_uuid is not None:
-                                product_task = Task.objects.filter(
-                                    organization_id=org.id,
-                                    task_uuid=product_task_uuid,
-                                ).first()
+                        if node_task is not None:
+                            product_task = _product_task_for_node_task(
+                                organization_id=org.id,
+                                node_task=node_task,
+                            )
+                    if (
+                        owns_unregister
+                        and blocker.task_type == "snapshot.delete"
+                        and _snapshot_delete_owned_by_unregister_attempt(
+                            product_task=product_task,
+                            unregister_task=active_unregister,
+                        )
+                    ):
+                        continue
                     blocker_reasons.append(
                         DeleteReason(
                             code="node_workload_active",
@@ -1150,10 +1211,11 @@ def _prepare_delete_batch(
                             ),
                         )
                     )
-                raise BackupSourceDeleteFailed(
-                    message="Backup source was not deleted.",
-                    reasons=blocker_reasons,
-                )
+                if blocker_reasons:
+                    raise BackupSourceDeleteFailed(
+                        message="Backup source was not deleted.",
+                        reasons=blocker_reasons,
+                    )
             latest_remove = (
                 NodeTask.objects.filter(
                     organization_id=org.id,
