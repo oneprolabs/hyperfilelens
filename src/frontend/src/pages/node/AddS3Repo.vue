@@ -160,8 +160,13 @@ function buildAutoRepoName(): string {
 function syncAutoRepoName() {
   if (repoNameManuallyEdited.value) return
   syncingRepoName = true
-  repoName.value = buildAutoRepoName()
-  syncingRepoName = false
+  try {
+    repoName.value = buildAutoRepoName()
+  } catch (err) {
+    console.error('Failed to sync auto repo name:', err)
+  } finally {
+    syncingRepoName = false
+  }
 }
 
 function onRepoNameInput() {
@@ -932,6 +937,7 @@ function handleBack() {
                           @focus="loadBucketsForSelect"
                           @visible-change="(open) => open && loadBucketsForSelect()"
                           @change="clearFieldError('bucket')"
+                          @clear="bucket = ''"
                         >
                           <ElOption
                             v-for="item in bucketSelectOptions"
