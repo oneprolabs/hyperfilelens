@@ -959,7 +959,6 @@
   margin-bottom: 0;
   padding-bottom: 12px;
   background: var(--el-bg-color) !important;
-  box-shadow: 0 1px 0 var(--el-border-color-lighter);
   transform: translateZ(0);
 }
 
