@@ -21,7 +21,10 @@ from apps.protection.models import (
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
 from apps.node.services.internal.agent_task import AgentTaskHandle
 from apps.protection.services.backup_orchestrator import (
+    _get_node_task_for_directory,
     _handle_directory_stall,
+    _node_task_error_code,
+    _observe_running_directory,
     _reconcile_pending_backup_queue,
     _repository_public_host,
     cancel_backup,
@@ -1113,7 +1116,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
 
     @patch("apps.protection.services.backup_orchestrator.cancel_agent_task")
-    def test_substantive_stall_warns_without_canceling_snapshot(self, mock_cancel):
+    def test_substantive_stall_warns_before_final_deadline(self, mock_cancel):
         task, snapshot = self._create_backup_task_and_snapshot(
             idempotency_key="test-stall-warning-only",
         )
@@ -1128,7 +1131,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             repository_id=self.repository.id,
         )
         directory.status = BackupSourceSnapshotDirectory.Status.RUNNING
-        directory.dispatched_at = timezone.now() - timezone.timedelta(hours=3)
+        directory.dispatched_at = timezone.now() - timezone.timedelta(hours=1)
         directory.save(update_fields=["status", "dispatched_at", "updated_at"])
         node_task = NodeTask.objects.create(
             organization=self.org,
@@ -1177,6 +1180,155 @@ class ProtectionBackupTaskApiTests(TestCase):
             ).count(),
             1,
         )
+
+    @patch("apps.protection.services.backup_orchestrator.cancel_agent_task")
+    def test_substantive_stall_requests_cancel_once_at_final_deadline(self, mock_cancel):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-stall-final-deadline",
+        )
+        directory_config = self.config.directories.first()
+        directory = BackupSourceSnapshotDirectory.objects.create(
+            source_snapshot=snapshot,
+            organization_id=self.org.id,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=directory_config.id,
+            source_path=directory_config.path,
+            display_name=directory_config.display_name,
+            repository_id=self.repository.id,
+            status=BackupSourceSnapshotDirectory.Status.RUNNING,
+            dispatched_at=timezone.now() - timezone.timedelta(hours=3),
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.snapshot.create",
+            correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+            correlation_id=str(task.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now()
+            + timezone.timedelta(
+                seconds=protection_conf.PROTECTION_BACKUP_ACTIVITY_LEASE_SECONDS
+            ),
+        )
+
+        for _ in range(2):
+            self.assertFalse(
+                _handle_directory_stall(
+                    task=task,
+                    directory_row=directory,
+                    node_task=node_task,
+                    node_online=True,
+                )
+            )
+
+        directory.refresh_from_db()
+        self.assertIsNotNone(directory.cancel_requested_at)
+        mock_cancel.assert_called_once_with(
+            task_id=node_task.id,
+            reason="kopia progress stall",
+        )
+
+    @patch("apps.protection.services.backup_orchestrator.cancel_agent_task")
+    def test_substantive_stall_fails_after_cancel_grace(self, mock_cancel):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-stall-cancel-grace",
+        )
+        directory_config = self.config.directories.first()
+        directory = BackupSourceSnapshotDirectory.objects.create(
+            source_snapshot=snapshot,
+            organization_id=self.org.id,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=directory_config.id,
+            source_path=directory_config.path,
+            display_name=directory_config.display_name,
+            repository_id=self.repository.id,
+            status=BackupSourceSnapshotDirectory.Status.RUNNING,
+            dispatched_at=timezone.now() - timezone.timedelta(hours=3),
+            cancel_requested_at=timezone.now()
+            - timezone.timedelta(
+                seconds=protection_conf.PROTECTION_BACKUP_CANCEL_GRACE_SECONDS + 1
+            ),
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.snapshot.create",
+            correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+            correlation_id=str(task.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now()
+            + timezone.timedelta(
+                seconds=protection_conf.PROTECTION_BACKUP_ACTIVITY_LEASE_SECONDS
+            ),
+        )
+
+        self.assertTrue(
+            _handle_directory_stall(
+                task=task,
+                directory_row=directory,
+                node_task=node_task,
+                node_online=True,
+            )
+        )
+
+        directory.refresh_from_db()
+        self.assertEqual(directory.status, BackupSourceSnapshotDirectory.Status.FAILED)
+        self.assertEqual(directory.error_code, "KOPIA_PROGRESS_STALL")
+        mock_cancel.assert_not_called()
+
+    def test_system_stall_cancel_is_not_reported_as_user_cancel(self):
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.snapshot.create",
+            status=NodeTask.Status.CANCELED,
+            last_error="kopia progress stall",
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        error_code, error_message = _node_task_error_code(node_task)
+
+        self.assertEqual(error_code, "KOPIA_PROGRESS_STALL")
+        self.assertEqual(error_message, "kopia progress stall")
+
+    def test_system_stall_cancel_projects_directory_as_failed(self):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-system-stall-cancel-projection",
+        )
+        directory_config = self.config.directories.first()
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.snapshot.create",
+            status=NodeTask.Status.CANCELED,
+            last_error="kopia progress stall",
+            watchdog_deadline_at=timezone.now(),
+        )
+        directory = BackupSourceSnapshotDirectory.objects.create(
+            source_snapshot=snapshot,
+            organization_id=self.org.id,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=directory_config.id,
+            source_path=directory_config.path,
+            display_name=directory_config.display_name,
+            repository_id=self.repository.id,
+            status=BackupSourceSnapshotDirectory.Status.RUNNING,
+            node_task_id=node_task.id,
+        )
+
+        _observe_running_directory(
+            task=task,
+            source_snapshot=snapshot,
+            directory_row=directory,
+            node_task=node_task,
+            directory_index=1,
+            total_dirs=1,
+            node_online=True,
+        )
+
+        directory.refresh_from_db()
+        self.assertEqual(directory.status, BackupSourceSnapshotDirectory.Status.FAILED)
+        self.assertEqual(directory.error_code, "KOPIA_PROGRESS_STALL")
 
     def test_file_count_progress_refreshes_substantive_activity_only_on_change(self):
         from apps.protection.services.progress.backup_runtime import (
@@ -1365,6 +1517,20 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
 
         result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+        waiting_directory = BackupSourceSnapshotDirectory.objects.get(
+            source_snapshot=snapshot
+        )
+        self.assertEqual(result["status"], Task.Status.RUNNING)
+        self.assertEqual(
+            waiting_directory.error_code,
+            "AGENT_RESTART_CAPABILITY_PENDING",
+        )
+
+        self.agent.metadata = {
+            "inventory": {"capabilities": ["backup_operation_reconcile_v1"]}
+        }
+        self.agent.save(update_fields=["metadata", "updated_at"])
+        result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
         if result["status"] == Task.Status.RUNNING:
             result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
 
@@ -1388,6 +1554,121 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertTrue(
             all(row.correlation_id == str(task.task_uuid) for row in attempts)
         )
+        expected_operation_id = f"{task.task_uuid}-{directory.backup_config_dir_id}"
+        self.assertEqual(
+            [row.payload.get("operation_id") for row in attempts],
+            [expected_operation_id, expected_operation_id],
+        )
+        self.assertEqual(
+            [row.payload.get("operation_attempt") for row in attempts],
+            [1, 2],
+        )
+
+    @patch(
+        "apps.protection.services.backup_orchestrator.effective_agent_node_status",
+        return_value=Node.Availability.ONLINE,
+    )
+    @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
+    def test_agent_restart_retry_requires_operation_reconcile_capability(
+        self, mock_run_agent_task_async, _online
+    ):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-agent-restart-upgrade-required",
+        )
+        mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
+            [
+                {
+                    "status": NodeTask.Status.FAILED,
+                    "result": {},
+                    "last_error": "agent restarted before task completed",
+                }
+            ]
+        )
+
+        result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+        directory = BackupSourceSnapshotDirectory.objects.get(source_snapshot=snapshot)
+        attempts = NodeTask.objects.filter(
+            correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+            correlation_id=str(task.task_uuid),
+            kind="backup.run",
+        )
+        self.assertEqual(result["status"], Task.Status.RUNNING)
+        self.assertEqual(
+            directory.error_code,
+            "AGENT_RESTART_CAPABILITY_PENDING",
+        )
+        failed_attempt = attempts.get()
+        NodeTask.objects.filter(pk=failed_attempt.pk).update(
+            updated_at=timezone.now()
+            - timezone.timedelta(
+                seconds=(
+                    protection_conf.PROTECTION_BACKUP_CAPABILITY_SYNC_GRACE_SECONDS
+                    + 1
+                )
+            )
+        )
+
+        result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+        directory.refresh_from_db()
+        self.assertEqual(result["status"], Task.Status.FAILED)
+        self.assertEqual(directory.status, BackupSourceSnapshotDirectory.Status.FAILED)
+        self.assertEqual(directory.error_code, "AGENT_UPGRADE_REQUIRED")
+        self.assertIn("Upgrade the Agent", directory.error_message)
+        self.assertEqual(attempts.count(), 1)
+
+    def test_current_attempt_fence_ignores_previous_attempt_late_success(self):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-late-success-attempt-fence",
+        )
+        directory_config = self.config.directories.first()
+        previous = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.run",
+            correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+            correlation_id=str(task.task_uuid),
+            payload={"backup_config_dir_id": directory_config.id, "operation_attempt": 1},
+            status=NodeTask.Status.SUCCESS,
+            result={"kopia_snapshot_id": "late-previous-snapshot"},
+            watchdog_deadline_at=timezone.now(),
+        )
+        current = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.run",
+            correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+            correlation_id=str(task.task_uuid),
+            payload={"backup_config_dir_id": directory_config.id, "operation_attempt": 2},
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now()
+            + timezone.timedelta(
+                seconds=protection_conf.PROTECTION_BACKUP_ACTIVITY_LEASE_SECONDS
+            ),
+        )
+        directory = BackupSourceSnapshotDirectory.objects.create(
+            source_snapshot=snapshot,
+            organization_id=self.org.id,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=directory_config.id,
+            source_path=directory_config.path,
+            display_name=directory_config.display_name,
+            repository_id=self.repository.id,
+            status=BackupSourceSnapshotDirectory.Status.RUNNING,
+            node_task_id=current.id,
+            retry_count=1,
+        )
+
+        selected = _get_node_task_for_directory(
+            directory=directory,
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            node_id=self.agent.id,
+        )
+
+        self.assertEqual(selected.id, current.id)
+        self.assertNotEqual(selected.id, previous.id)
+        directory.refresh_from_db()
+        self.assertIsNone(directory.kopia_snapshot_id)
 
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
@@ -1669,6 +1950,29 @@ class ProtectionBackupTaskApiTests(TestCase):
         self._run_orchestrated_backup(task=task, snapshot=snapshot)
         self._run_orchestrated_backup(task=task, snapshot=snapshot)
 
+        repair_pending = BackupSourceSnapshotDirectory.objects.get(
+            source_snapshot=snapshot,
+            backup_config_dir_id=self.config.directories.order_by("sort_order")
+            .first()
+            .id,
+        )
+        old_runtime_at = timezone.now() - timezone.timedelta(hours=3)
+        repair_pending.last_substantive_progress_at = old_runtime_at
+        repair_pending.last_progress_snapshot = {"percent": 60}
+        repair_pending.last_progress_sample = {"percent": 60}
+        repair_pending.cancel_requested_at = old_runtime_at
+        repair_pending.stall_warned_at = old_runtime_at
+        repair_pending.save(
+            update_fields=[
+                "last_substantive_progress_at",
+                "last_progress_snapshot",
+                "last_progress_sample",
+                "cancel_requested_at",
+                "stall_warned_at",
+                "updated_at",
+            ]
+        )
+
         sibling = NodeTask.objects.get(
             kind="backup.snapshot.create",
             payload__backup_config_dir_id=second_config_directory.id,
@@ -1693,6 +1997,11 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.AVAILABLE)
         self.assertEqual(repaired.kopia_snapshot_id, "repaired-snapshot")
         self.assertEqual(repaired.retry_count, 1)
+        self.assertIsNone(repaired.last_substantive_progress_at)
+        self.assertNotEqual(repaired.last_progress_snapshot, {"percent": 60})
+        self.assertNotEqual(repaired.last_progress_sample, {"percent": 60})
+        self.assertIsNone(repaired.cancel_requested_at)
+        self.assertIsNone(repaired.stall_warned_at)
         self.assertEqual(
             [call.kwargs["kind"] for call in mock_run_agent_task_async.call_args_list],
             [

@@ -966,7 +966,7 @@ func mustNASSpec(t *testing.T, raw map[string]any) *nassvc.Spec {
 }
 
 func TestManagedBackupSnapshotArgsAvoidUnsupportedProgressIntervalFlag(t *testing.T) {
-	args := managedBackupSnapshotArgs("/tmp/repo.config", "/tmp/source")
+	args := managedBackupSnapshotArgs("/tmp/repo.config", "/tmp/source", "operation-123")
 
 	if slices.Contains(args, "--progress-interval=3s") {
 		t.Fatalf("snapshot args must not include unsupported --progress-interval flag: %#v", args)
@@ -977,8 +977,11 @@ func TestManagedBackupSnapshotArgsAvoidUnsupportedProgressIntervalFlag(t *testin
 	if !slices.Contains(args, "--json") {
 		t.Fatalf("expected snapshot args to include --json: %#v", args)
 	}
-	if got := args[len(args)-2]; got != "/tmp/source" {
-		t.Fatalf("expected source path before --json, got %q in %#v", got, args)
+	if !slices.Contains(args, "--tags=hfl-operation:operation-123") {
+		t.Fatalf("expected snapshot args to include operation tag: %#v", args)
+	}
+	if got := args[len(args)-3]; got != "/tmp/source" {
+		t.Fatalf("expected source path before tag and --json, got %q in %#v", got, args)
 	}
 }
 
