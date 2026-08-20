@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject literal and escaped CJK outside the language-pack source boundary."""
+"""Reject literal and escaped CJK outside localized publication boundaries."""
 
 from __future__ import annotations
 
@@ -13,6 +13,15 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 LANGUAGE_PACK_DATA_ROOT = Path("language-packs/packs")
+LOCALIZED_WEBSITE_ROOTS = (Path("website/zh"),)
+LOCALIZED_WEBSITE_FILES = frozenset(
+    {
+        Path("website/.vitepress/config.mts"),
+        Path("website/.vitepress/navigation/zh.ts"),
+        Path("website/.vitepress/theme/HomeLandingZh.vue"),
+        Path("website/.vitepress/theme/languages.ts"),
+    },
+)
 CJK_CODE_POINT_RANGES = (
     (0x1100, 0x11FF),
     (0x3040, 0x30FF),
@@ -113,12 +122,27 @@ def is_language_pack_data_path(relative_path: Path) -> bool:
     )
 
 
+def is_localized_website_path(relative_path: Path) -> bool:
+    """Return whether a path is an approved localized website source."""
+    return relative_path in LOCALIZED_WEBSITE_FILES or any(
+        relative_path == root or root in relative_path.parents
+        for root in LOCALIZED_WEBSITE_ROOTS
+    )
+
+
+def is_localized_publication_path(relative_path: Path) -> bool:
+    """Return whether a path may contain localized publication content."""
+    return is_language_pack_data_path(relative_path) or is_localized_website_path(
+        relative_path,
+    )
+
+
 def main() -> int:
     """Scan public paths and contents and return a CI-friendly status code."""
     violations: list[str] = []
     for path in iter_public_files():
         relative_path = path.relative_to(REPOSITORY_ROOT)
-        if is_language_pack_data_path(relative_path):
+        if is_localized_publication_path(relative_path):
             continue
         for _offset, code_point, kind in iter_cjk_references(str(relative_path)):
             violations.append(
@@ -127,7 +151,7 @@ def main() -> int:
             )
         violations.extend(find_violations(path))
     if violations:
-        print("Literal and escaped CJK are only allowed below language-packs/packs/:")
+        print("Literal and escaped CJK are only allowed in localized publication sources:")
         print("\n".join(violations))
         return 1
 

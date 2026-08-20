@@ -36,4 +36,10 @@ if grep -R -F 'https://app.hyperfilelens.com/login' "${ROOT}/website" \
 	exit 1
 fi
 
+for nginx_config in \
+	"${ROOT}/deploy/nginx/web.conf" \
+	"${ROOT}/deploy/nginx/development-web.conf"; do
+	grep -F 'try_files $uri $uri/ $uri.html =404;' "${nginx_config}" >/dev/null
+done
+
 printf 'Website runtime URL configuration checks passed.\n'

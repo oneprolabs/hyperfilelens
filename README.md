@@ -434,6 +434,13 @@ extracted release package with:
 sudo ./install.sh --help
 ```
 
+## User Documentation
+
+The initial Simplified Chinese user guide is maintained in
+[`website/zh/docs/`](website/zh/docs/index.md). It covers installation, node
+deployment, backup and restore, Insights, supported boundaries, and common
+troubleshooting paths. The published website exposes the guide at `/zh/docs/`.
+
 ## Repository Layout
 
 ```text
