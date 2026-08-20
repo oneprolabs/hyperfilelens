@@ -5,6 +5,7 @@ type OverflowTitleState = {
   pending: HTMLElement | null
   pendingTimer: number | null
   hideTimer: number | null
+  contentObserver: MutationObserver | null
   tooltipHovered: boolean
   resolveTarget: (eventTarget: EventTarget | null) => HTMLElement | null
   titleForTarget: (target: HTMLElement) => string
@@ -133,9 +134,12 @@ function overflowCandidates(cell: HTMLElement) {
 }
 
 function titleTextForCell(cell: HTMLElement) {
-  const explicitTarget = cell.querySelector<HTMLElement>('[data-table-overflow-title]')
-  const explicitTitle = explicitTarget?.dataset.tableOverflowTitle?.trim()
-  if (explicitTitle && explicitTarget && isOverflowing(explicitTarget)) return explicitTitle
+  const explicitTargets = Array.from(cell.querySelectorAll<HTMLElement>('[data-table-overflow-title]'))
+  const overflowingExplicitTarget = explicitTargets.find((target) => {
+    return Boolean(target.dataset.tableOverflowTitle?.trim()) && isOverflowing(target)
+  })
+  const explicitTitle = overflowingExplicitTarget?.dataset.tableOverflowTitle?.trim()
+  if (explicitTitle) return explicitTitle
 
   const candidates = overflowCandidates(cell)
   const overflowingCandidates = candidates.filter(isOverflowing)
@@ -182,6 +186,31 @@ function positionTooltip(cell: HTMLElement) {
   tooltipElement.style.top = `${top}px`
 }
 
+function stopObservingTooltipContent(state: OverflowTitleState) {
+  state.contentObserver?.disconnect()
+  state.contentObserver = null
+}
+
+function observeTooltipContent(state: OverflowTitleState, cell: HTMLElement) {
+  stopObservingTooltipContent(state)
+  const observer = new MutationObserver(() => {
+    if (state.active !== cell) return
+    if (!cell.isConnected) {
+      clearTooltip(state)
+      return
+    }
+    applyTooltip(state, cell)
+  })
+  observer.observe(cell, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ['data-table-overflow-title'],
+  })
+  state.contentObserver = observer
+}
+
 function showTooltip(state: OverflowTitleState, cell: HTMLElement, text: string) {
   if (activeState && activeState !== state) {
     clearTooltip(activeState)
@@ -194,6 +223,7 @@ function showTooltip(state: OverflowTitleState, cell: HTMLElement, text: string)
   tooltip.style.display = 'block'
   cell.setAttribute('aria-describedby', TOOLTIP_ID)
   positionTooltip(cell)
+  observeTooltipContent(state, cell)
 }
 
 function applyTooltip(state: OverflowTitleState, cell: HTMLElement) {
@@ -256,6 +286,7 @@ function scheduleTooltip(state: OverflowTitleState, cell: HTMLElement) {
 
 function clearTooltip(state: OverflowTitleState) {
   clearPendingHide(state)
+  stopObservingTooltipContent(state)
   if (!state.active) return
   state.active.removeAttribute('aria-describedby')
   state.active = null
@@ -278,6 +309,7 @@ function installWithResolvers(
     pending: null,
     pendingTimer: null,
     hideTimer: null,
+    contentObserver: null,
     tooltipHovered: false,
     resolveTarget,
     titleForTarget,

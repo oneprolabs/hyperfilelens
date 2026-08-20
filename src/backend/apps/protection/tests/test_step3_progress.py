@@ -243,3 +243,21 @@ class Step3ProgressTests(SimpleTestCase):
         )
         self.assertIsNone(transfer.get("eta_seconds"))
         self.assertIsNone(transfer.get("eta_source"))
+
+    def test_backup_does_not_promote_hash_speed_to_upload_speed(self):
+        hash_speed = 393 * 1_000_000
+        transfer = enrich_step3_backup_transfer(
+            transfer={"phase": "transferring", "speed_bps": hash_speed, "hash_speed_bps": hash_speed},
+            previous={},
+            aggregate={
+                "uploaded_bytes": 0,
+                "speed_bps": hash_speed,
+                "hash_speed_bps": hash_speed,
+            },
+            du_total=72_600_000,
+        )
+
+        self.assertFalse(transfer.get("upload_speed_bps"))
+        self.assertEqual(transfer.get("hash_speed_bps"), hash_speed)
+        self.assertIsNone(transfer.get("eta_seconds"))
+        self.assertIsNone(transfer.get("eta_source"))

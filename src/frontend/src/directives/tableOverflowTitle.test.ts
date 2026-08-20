@@ -97,6 +97,22 @@ describe('tableOverflowTitle', () => {
     delete content.dataset.tableOverflowTitle
   })
 
+  it('uses the complete explicit title when any explicit target overflows', () => {
+    content.dataset.tableOverflowTitle = 'Backing up\nScanning: 393 MB/s'
+    secondaryContent.dataset.tableOverflowTitle = 'Backing up\nScanning: 393 MB/s'
+    Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 80 })
+    Object.defineProperty(secondaryContent, 'scrollWidth', { configurable: true, value: 200 })
+
+    secondaryContent.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    vi.advanceTimersByTime(300)
+
+    expect(document.querySelector<HTMLElement>('#hfl-table-overflow-tooltip')?.textContent).toBe(
+      'Backing up\nScanning: 393 MB/s',
+    )
+    delete content.dataset.tableOverflowTitle
+    delete secondaryContent.dataset.tableOverflowTitle
+  })
+
   it('shows the tooltip when content overflows by exactly one pixel', () => {
     Object.defineProperty(content, 'clientWidth', { configurable: true, value: 80 })
     Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 81 })
@@ -157,5 +173,35 @@ describe('tableOverflowTitle', () => {
     expect(styles).toMatch(/\.hfl-table-overflow-tooltip\s*{[^}]*pointer-events:\s*auto;/s)
     expect(styles).toMatch(/\.hfl-table-overflow-tooltip\s*{[^}]*user-select:\s*text;/s)
     expect(styles).toMatch(/\.hfl-table-overflow-tooltip\s*{[^}]*white-space:\s*pre-line;/s)
+  })
+
+  it('refreshes an open tooltip when its explicit content changes', async () => {
+    Object.defineProperty(content, 'clientWidth', { configurable: true, value: 80 })
+    Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 200 })
+    Object.defineProperty(secondaryContent, 'clientWidth', { configurable: true, value: 80 })
+    Object.defineProperty(secondaryContent, 'scrollWidth', { configurable: true, value: 80 })
+    content.dataset.tableOverflowTitle = 'Transferred: 899 MB'
+
+    content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    vi.advanceTimersByTime(300)
+    const tooltip = document.querySelector<HTMLElement>('#hfl-table-overflow-tooltip')
+    expect(tooltip?.textContent).toBe('Transferred: 899 MB')
+
+    content.dataset.tableOverflowTitle = 'Transferred: 900 MB'
+    await Promise.resolve()
+
+    expect(tooltip?.textContent).toBe('Transferred: 900 MB')
+  })
+
+  it('disconnects the active content observer when the directive is unmounted', () => {
+    content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    vi.advanceTimersByTime(300)
+    const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect')
+
+    directive.unmounted?.(table, {} as never, {} as never, {} as never)
+
+    expect(disconnect).toHaveBeenCalled()
+    expect(document.querySelector<HTMLElement>('#hfl-table-overflow-tooltip')?.style.display).toBe('none')
+    disconnect.mockRestore()
   })
 })

@@ -19,6 +19,28 @@ func TestParseProgressLineHandlesKopiaStatus(t *testing.T) {
 	}
 }
 
+func TestParseProgressLineTreatsPlainBytesAsUploadedBytes(t *testing.T) {
+	line := "| 0 hashing, 1093 hashed (53 KB), 0 cached (0 B), uploaded 204 B (8 fatal errors), estimating..."
+	snapshot, ok := ParseProgressLine(line)
+	if !ok {
+		t.Fatalf("expected progress line to parse")
+	}
+	if snapshot.Phase != "uploading" {
+		t.Fatalf("expected uploading phase, got %q", snapshot.Phase)
+	}
+	if snapshot.UploadedBytes != 204 {
+		t.Fatalf("expected 204 uploaded bytes, got %d", snapshot.UploadedBytes)
+	}
+	if snapshot.UploadedCount != 0 {
+		t.Fatalf("expected no uploaded object count, got %d", snapshot.UploadedCount)
+	}
+
+	payload := ProgressPayload(snapshot)
+	if payload["uploaded_bytes"] != int64(204) || payload["uploaded_count"] != int64(0) {
+		t.Fatalf("expected byte-based upload payload, got %#v", payload)
+	}
+}
+
 func TestParseProgressLineHandlesPercentAndCarriageReturn(t *testing.T) {
 	line := "\r\u001b[2K 37.5% hashing..."
 	snapshot, ok := ParseProgressLine(line)

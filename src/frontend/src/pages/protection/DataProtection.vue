@@ -10350,7 +10350,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           type="button"
                           class="backup-task-trigger"
                           :disabled="!latestBackupTaskUuidForSource(row.id)"
-                          :title="t('protection.backupsPage.backupTaskStatusClickHint')"
+                          :aria-label="t('protection.backupsPage.backupTaskStatusClickHint')"
                           @click.stop="openLatestBackupTask(row)"
                         >
                           <TaskProgressCell
@@ -10382,7 +10382,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           type="button"
                           class="backup-task-trigger"
                           :disabled="!latestRestoreTaskForSource(row.id)?.task_uuid && !latestRestoreRecordForSource(row.id)?.task_uuid"
-                          :title="t('protection.backupsPage.restoreTaskStatusClickHint')"
+                          :aria-label="t('protection.backupsPage.restoreTaskStatusClickHint')"
                           @click.stop="openLatestRestoreTask(row)"
                         >
                           <TaskProgressCell

@@ -228,19 +228,37 @@ export function shouldShowTransferMetrics(transfer?: TransferProgress | null): b
   )
 }
 
-export function transferSpeedParts(_t: TranslateFn, transfer?: TransferProgress | null): string[] {
+type TransferMetricOptions = {
+  allowUnclassifiedSpeed?: boolean
+}
+
+export function transferSpeedParts(
+  t: TranslateFn,
+  transfer?: TransferProgress | null,
+  options: TransferMetricOptions = {},
+): string[] {
   if (!transfer) return []
-  const uploadSpeed = formatSpeedBps(transfer.upload_speed_bps) || formatSpeedBps(transfer.speed_bps)
+  const uploadSpeed = formatSpeedBps(transfer.upload_speed_bps)
   if (uploadSpeed) return [uploadSpeed]
+  const hashSpeed = formatSpeedBps(transfer.hash_speed_bps)
+  if (hashSpeed) return [t('protection.taskProgress.hashSpeed', { speed: hashSpeed })]
+  const unclassifiedSpeed = options.allowUnclassifiedSpeed
+    ? formatSpeedBps(transfer.speed_bps)
+    : ''
+  if (unclassifiedSpeed) return [unclassifiedSpeed]
   return []
 }
 
-export function transferMetricParts(t: TranslateFn, transfer?: TransferProgress | null): string[] {
+export function transferMetricParts(
+  t: TranslateFn,
+  transfer?: TransferProgress | null,
+  options: TransferMetricOptions = {},
+): string[] {
   if (!transfer) return []
   const parts: string[] = []
   const capacity = transferCapacityText(t, transfer)
   if (capacity) parts.push(capacity)
-  parts.push(...transferSpeedParts(t, transfer))
+  parts.push(...transferSpeedParts(t, transfer, options))
   const eta = transferEtaText(t, transfer.eta_seconds)
   if (eta) parts.push(eta)
   return parts

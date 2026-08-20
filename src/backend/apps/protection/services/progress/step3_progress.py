@@ -224,10 +224,9 @@ _MIN_STEP3_SPEED_BPS = 100
 
 def _step3_upload_speed_bps(*, merged: dict[str, Any], aggregate: dict[str, Any]) -> int:
     for source in (aggregate, merged):
-        for key in ("upload_speed_bps", "speed_bps"):
-            speed = _int(source.get(key))
-            if speed >= _MIN_STEP3_SPEED_BPS:
-                return speed
+        speed = _int(source.get("upload_speed_bps"))
+        if speed >= _MIN_STEP3_SPEED_BPS:
+            return speed
     return 0
 
 
