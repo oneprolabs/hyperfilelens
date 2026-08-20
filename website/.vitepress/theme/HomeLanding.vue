@@ -127,8 +127,8 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           </a>
           <h1 id="hero-title">Your backups know<br /><span>more than you think.</span></h1>
           <p class="hero-lead">
-            Ask questions straight from your document backups — PDFs, images, slides, Word, Excel, any format —
-            without touching production.
+            Ask questions straight from your document backups — PDFs, Word, Excel, PowerPoint, images, Markdown,
+            or any other text format — without touching production.
           </p>
           <div class="hero-actions">
             <a class="button button-primary" :href="loginUrl" @click="openApp($event, 'hero')">
@@ -217,7 +217,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <div class="section-heading centered">
           <p class="section-kicker">How It Works</p>
           <h2 id="flow-title">Your files stay put. The engine comes to them.</h2>
-          <p>HyperFileLens backs up your documents and code into a safe, isolated copy — then an open source AI agent reasons directly over that copy, never touching production.</p>
+          <p>HyperFileLens backs up your documents and code into a safe, isolated copy — then SourceLens, our open source Agentic RAG engine, reasons directly over that copy, never touching production.</p>
         </div>
         <div class="engine-diagram-frame">
           <img
@@ -235,7 +235,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <div class="open-source-grid">
           <div class="open-source-copy">
             <p class="section-kicker dark-kicker">Open Source</p>
-            <h2 id="open-source-title">Inspect it. Run it. Improve it.</h2>
+            <h2 id="open-source-title">Private deployment. Full control.</h2>
             <p>HyperFileLens and the AI engine behind it are both fully open source. Review the architecture, follow development, or contribute directly on GitHub.</p>
             <div class="open-source-callout">
               <svg aria-hidden="true"><use href="#icon-check" /></svg>

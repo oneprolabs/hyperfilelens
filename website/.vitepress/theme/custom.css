@@ -55,6 +55,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .open-source-pill { min-height: 34px; margin-bottom: 27px; display: inline-flex; align-items: center; gap: 8px; padding: 0 13px; border: 1px solid #d7e3f3; border-radius: 999px; color: #3d5069; background: rgba(255, 255, 255, .82); box-shadow: 0 8px 25px rgba(34, 65, 112, .06); font-size: 12px; font-weight: 680; }
 .open-source-pill svg { width: 14px; height: 14px; }
 h1, h2, h3, p { margin-top: 0; }
+h1, h2, h3 { word-break: keep-all; overflow-wrap: break-word; }
 h1 { max-width: 1040px; margin-bottom: 24px; color: var(--hfl-navy); font-size: clamp(52px, 6.4vw, 82px); line-height: .99; letter-spacing: -.062em; }
 h1 span { color: var(--hfl-blue); }
 .hero-lead { max-width: 790px; margin-bottom: 33px; color: var(--hfl-muted); font-size: 19px; line-height: 1.68; }
