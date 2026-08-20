@@ -40,7 +40,13 @@ for file in \
 		printf 'ERROR: missing online runtime template: %s\n' "${file}" >&2
 		exit 1
 	}
-done
+	done
+
+grep -Fq 'NGINX_HTTPS_PORT=11445' "${online}/sourcelens/env.example"
+if grep -Eq '104(42|43|44|45|46)' "${online}/sourcelens/env.example"; then
+	printf 'ERROR: online SourceLens template references a legacy HFL public port\n' >&2
+	exit 1
+fi
 
 (
 	# shellcheck source=../../tools/sourcelens/common.sh
