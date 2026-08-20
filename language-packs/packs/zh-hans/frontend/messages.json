@@ -440,9 +440,10 @@
       "etaSeconds": "{n} 秒",
       "etaMinutes": "{n} 分钟",
       "etaHoursMinutes": "{h} 小时 {m} 分钟",
+      "hashSpeed": "扫描速度：{speed}",
       "transfer": {
-        "hashedOnly": "正在传输 · 已扫描 {hashed} 个",
-        "uploadedAndHashed": "正在传输 · 已上传 {uploaded} 个 · 已扫描 {hashed} 个"
+        "hashedOnly": "正在备份",
+        "uploadedAndHashed": "正在备份"
       },
       "backup": {
         "done": "备份已完成",
