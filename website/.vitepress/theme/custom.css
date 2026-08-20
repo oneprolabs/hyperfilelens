@@ -31,6 +31,17 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .site-header nav a, .github-link, footer a { transition: color .18s ease; }
 .site-header nav a:hover, .github-link:hover, footer a:hover { color: var(--hfl-blue); }
 .header-actions { display: flex; align-items: center; gap: 11px; }
+.lang-switcher { position: relative; }
+.lang-switcher-trigger { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 0; background: none; color: #4e6076; font-size: 14px; font-weight: 610; cursor: pointer; }
+.lang-switcher-trigger svg { width: 16px; height: 16px; }
+.lang-switcher-caret { width: 12px !important; height: 12px !important; transition: transform .18s ease; }
+.lang-switcher-trigger[aria-expanded="true"] .lang-switcher-caret { transform: rotate(180deg); }
+.lang-switcher-menu { position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; min-width: 140px; padding: 6px; border: 1px solid var(--hfl-line); border-radius: 12px; background: #fff; box-shadow: 0 16px 38px rgba(28, 57, 97, .16); }
+.lang-switcher-item { min-height: 38px; padding: 0 10px; display: flex; align-items: center; gap: 8px; border-radius: 8px; color: #33445b; font-size: 13px; font-weight: 600; }
+.lang-switcher-item:hover { background: #f3f6fb; color: var(--hfl-blue); }
+.lang-switcher-item.active { color: var(--hfl-blue); background: #edf4ff; }
+.lang-switcher-check { width: 14px; height: 14px; flex: 0 0 auto; visibility: hidden; }
+.lang-switcher-item.active .lang-switcher-check { visibility: visible; }
 .github-link { min-height: 44px; display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; color: #33445b; font-size: 14px; font-weight: 650; }
 .github-link svg { width: 18px; height: 18px; }
 .header-cta { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; padding: 0 18px; border-radius: 10px; color: #fff; background: var(--hfl-navy); font-size: 14px; font-weight: 720; transition: background .18s ease, transform .18s ease; }

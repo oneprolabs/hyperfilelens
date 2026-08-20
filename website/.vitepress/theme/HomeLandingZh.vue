@@ -95,23 +95,23 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
 
     <header class="site-header-wrap">
       <div class="site-header">
-        <a class="brand" href="/en/" aria-label="HyperFileLens home">
+        <a class="brand" href="/zh/" aria-label="HyperFileLens 首页">
           <img src="/logo-mark.svg" alt="" width="34" height="34" />
           <span>HyperFileLens</span>
         </a>
-        <nav aria-label="Main navigation">
-          <a href="#use-cases">Use Cases</a>
-          <a href="#how-it-works">How It Works</a>
-          <a href="#open-source">Open Source</a>
-          <a href="#contact">Contact</a>
+        <nav aria-label="主导航">
+          <a href="#use-cases">使用场景</a>
+          <a href="#how-it-works">工作原理</a>
+          <a href="#open-source">开源</a>
+          <a href="#contact">联系我们</a>
         </nav>
         <div class="header-actions">
-          <LanguageSwitcher current="en" />
-          <a class="github-link" :href="githubUrl" aria-label="HyperFileLens on GitHub">
+          <LanguageSwitcher current="zh" />
+          <a class="github-link" :href="githubUrl" aria-label="HyperFileLens GitHub 仓库">
             <svg aria-hidden="true"><use href="#icon-github" /></svg>
             <span>GitHub</span>
           </a>
-          <a class="header-cta" :href="loginUrl" @click="openApp($event, 'header')">Try free</a>
+          <a class="header-cta" :href="loginUrl" @click="openApp($event, 'header')">免费试用</a>
         </div>
       </div>
     </header>
@@ -125,99 +125,99 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             OneProLabs · Apache 2.0
             <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
           </a>
-          <h1 id="hero-title">Your backups know<br /><span>more than you think.</span></h1>
+          <h1 id="hero-title">你的备份<br /><span>藏着意想不到的答案</span></h1>
           <p class="hero-lead">
-            Ask questions straight from your document backups — PDFs, images, slides, Word, Excel, any format —
-            without touching production.
+            直接对你的文档备份进行问答——PDF、图片、PPT、Word、Excel，格式不限，
+            且不影响生产环境。
           </p>
           <div class="hero-actions">
             <a class="button button-primary" :href="loginUrl" @click="openApp($event, 'hero')">
               <img src="/logo-mark-white.svg" alt="" class="button-logo" />
-              Try HyperFileLens
+              试用 HyperFileLens
               <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
-              <span class="free-badge">Free</span>
+              <span class="free-badge">免费</span>
             </a>
             <a class="button button-secondary" :href="githubUrl">
               <svg aria-hidden="true"><use href="#icon-github" /></svg>
-              View on GitHub
+              查看 GitHub 仓库
             </a>
           </div>
-          <div class="hero-proof" aria-label="Key product qualities">
-            <span><svg aria-hidden="true"><use href="#icon-check" /></svg>Data Governance</span>
+          <div class="hero-proof" aria-label="核心特性">
+            <span><svg aria-hidden="true"><use href="#icon-check" /></svg>数据治理</span>
             <span><svg aria-hidden="true"><use href="#icon-check" /></svg>Agentic RAG</span>
             <span><svg aria-hidden="true"><use href="#icon-check" /></svg>Agent Harness</span>
-            <span><svg aria-hidden="true"><use href="#icon-check" /></svg>Never Disrupts Production</span>
+            <span><svg aria-hidden="true"><use href="#icon-check" /></svg>不影响生产环境</span>
           </div>
         </div>
 
-        <div class="product-stage" aria-label="HyperFileLens control plane preview">
+        <div class="product-stage" aria-label="HyperFileLens 控制台预览">
           <img
             class="product-shot"
             src="/product-overview.webp"
             width="1672"
             height="941"
-            alt="HyperFileLens Overview dashboard showing the data protection pipeline from production source to isolated target storage to recovery drill, with 452 sources and 428.7 TB protected, all systems healthy, and recovery verification ready."
+            alt="HyperFileLens 概览仪表盘：数据保护流水线从生产源到隔离的目标存储，再到恢复演练，已保护 452 个源、428.7 TB 数据，系统状态健康，恢复验证就绪。"
           />
         </div>
       </section>
 
       <section id="use-cases" class="section-block use-cases" aria-labelledby="use-cases-title">
         <div class="section-heading centered">
-          <p class="section-kicker">Use Cases</p>
-          <h2 id="use-cases-title">Answers, not just backup search results.</h2>
+          <p class="section-kicker">使用场景</p>
+          <h2 id="use-cases-title">不止是检索，更是答案。</h2>
         </div>
         <div class="use-case-grid">
           <article>
             <div class="use-case-head">
               <div class="card-icon violet"><svg aria-hidden="true"><use href="#icon-search" /></svg></div>
-              <h3>Customer support Q&A</h3>
+              <h3>智能客服问答</h3>
             </div>
-            <p>Answer customer questions straight from your product docs, PDFs, and slide decks — multimodal understanding reads across formats, so nothing needs to be reformatted first.</p>
+            <p>直接基于产品文档、PDF、PPT 回答客户问题——多模态识别跨格式读取，不用预先转换格式。</p>
           </article>
           <article>
             <div class="use-case-head">
               <div class="card-icon"><svg aria-hidden="true"><use href="#icon-network" /></svg></div>
-              <h3>Company knowledge base</h3>
+              <h3>企业知识库</h3>
             </div>
-            <p>Turn scattered specs, policies, and decisions — engineering or company-wide — into one knowledge base every team can actually query, not just search and summarize.</p>
+            <p>把分散的技术文档、管理制度、决策记录——不管是研发的还是全公司的——整合成一个团队真正能查询的知识库，而不只是搜索和摘要。</p>
           </article>
           <article>
             <div class="use-case-head">
               <div class="card-icon amber"><svg aria-hidden="true"><use href="#icon-code" /></svg></div>
-              <h3>Source-grounded root cause analysis</h3>
+              <h3>基于源码的根因分析</h3>
             </div>
-            <p>Not keyword matching, not log scraping — the agent reads and reasons through your real source code, the way a senior engineer would, until it can confirm the actual root cause.</p>
+            <p>不是关键词匹配，也不是扫日志——agent 会像资深工程师一样真正阅读、推理你的源代码，直到确认真正的根因。</p>
           </article>
-          <p class="use-case-divider">Still a rock-solid backup tool</p>
+          <p class="use-case-divider">同时，它还是一个靠谱的备份工具</p>
           <article>
             <div class="use-case-head">
               <div class="card-icon"><svg aria-hidden="true"><use href="#icon-server" /></svg></div>
-              <h3>Any host, plus NAS</h3>
+              <h3>任意主机，还有 NAS</h3>
             </div>
-            <p>Windows, Linux, and Mac — servers and workstations alike — plus NAS shares, all protected under one policy, not three different tools.</p>
+            <p>Windows、Linux、Mac——服务器还是工作站都一样——再加上 NAS 共享目录，统一策略保护，不用来回切换三套工具。</p>
           </article>
           <article>
             <div class="use-case-head">
               <div class="card-icon violet"><svg aria-hidden="true"><use href="#icon-network" /></svg></div>
-              <h3>No storage lock-in</h3>
+              <h3>存储不绑定</h3>
             </div>
-            <p>Object storage or local storage, any S3-compatible provider — your backups aren't tied to one storage vendor.</p>
+            <p>对象存储还是本地存储，任意 S3 兼容服务商都可以——你的备份不会被绑死在某一家存储厂商身上。</p>
           </article>
           <article>
             <div class="use-case-head">
               <div class="card-icon amber"><svg aria-hidden="true"><use href="#icon-restore" /></svg></div>
-              <h3>Single-file recovery</h3>
+              <h3>单文件秒级恢复</h3>
             </div>
-            <p>Need one file back right now? Browse any snapshot and restore just that file in seconds — no full-volume restore required.</p>
+            <p>只想找回一个文件？浏览任意快照，几秒钟恢复这一个文件就够了，不需要整卷恢复。</p>
           </article>
         </div>
       </section>
 
       <section id="how-it-works" class="section-block how-it-works" aria-labelledby="flow-title">
         <div class="section-heading centered">
-          <p class="section-kicker">How It Works</p>
-          <h2 id="flow-title">Your files stay put. The engine comes to them.</h2>
-          <p>HyperFileLens backs up your documents and code into a safe, isolated copy — then an open source AI agent reasons directly over that copy, never touching production.</p>
+          <p class="section-kicker">工作原理</p>
+          <h2 id="flow-title">文件不用动，引擎主动找上门。</h2>
+          <p>HyperFileLens 把你的文档和代码备份成一份安全、隔离的副本——然后由开源 AI agent 直接对这份副本进行推理，全程不碰生产环境。</p>
         </div>
         <div class="engine-diagram-frame">
           <img
@@ -226,7 +226,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             width="1600"
             height="878"
             loading="lazy"
-            alt="Your documents (Word, PDF, Excel, PowerPoint, images, code, markdown) flow into HyperFileLens for open source backup, protection, and flexible storage. HyperFileLens produces an isolated safe copy with no impact on production, which the SourceLens open source AI agent reasons over directly — reading, searching, navigating, and reasoning with no pre-built index — to produce AI insights: customer support Q&A, a company knowledge base, source-grounded root cause analysis, and actionable insights. The whole pipeline is governed and secure: access control, data stays in your control, audit and compliance, enterprise ready. Open source, Apache 2.0."
+            alt="你的文档（Word、PDF、Excel、PowerPoint、图片、代码、Markdown）流入 HyperFileLens，进行开源备份、保护和灵活存储。HyperFileLens 生成一份不影响生产环境的隔离安全副本，交给开源 AI agent SourceLens 直接推理——读取、搜索、导航、推理，无需预建索引——产出 AI 洞察：智能客服问答、企业知识库、基于源码的根因分析和可执行的洞察建议。整条链路都是可治理、安全的：访问控制、数据始终在你掌控之中、审计合规、企业级可用。开源，Apache 2.0 协议。"
           />
         </div>
       </section>
@@ -234,58 +234,58 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       <section id="open-source" class="open-source-section" aria-labelledby="open-source-title">
         <div class="open-source-grid">
           <div class="open-source-copy">
-            <p class="section-kicker dark-kicker">Open Source</p>
-            <h2 id="open-source-title">Inspect it. Run it. Improve it.</h2>
-            <p>HyperFileLens and the AI engine behind it are both fully open source. Review the architecture, follow development, or contribute directly on GitHub.</p>
+            <p class="section-kicker dark-kicker">开源</p>
+            <h2 id="open-source-title">看得见，跑得起，改得动。</h2>
+            <p>HyperFileLens 和背后的 AI 引擎全部开源。你可以查看架构设计、跟进开发进度，或者直接在 GitHub 上参与贡献。</p>
             <div class="open-source-callout">
               <svg aria-hidden="true"><use href="#icon-check" /></svg>
-              <p>No vendor lock-in — bring your own S3-compatible storage and your own AI model or API key, self-hosted or hosted. Switch anytime.</p>
+              <p>不绑定任何厂商——自带 S3 兼容存储，自带 AI 模型或 API Key，自托管或托管部署都行，随时可以换。</p>
             </div>
             <div class="open-source-actions">
-              <a class="button button-light" :href="githubUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>View on GitHub</a>
-              <a class="button button-dark-outline" :href="githubUrl">⭐ Star this project</a>
+              <a class="button button-light" :href="githubUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>查看 GitHub 仓库</a>
+              <a class="button button-dark-outline" :href="githubUrl">⭐ 点个 Star</a>
             </div>
             <div class="open-source-links">
-              <a class="source-link" :href="sourceLensUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>AI engine repo</a>
-              <a class="source-link" :href="`${githubUrl}/releases`">Browse releases <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
+              <a class="source-link" :href="sourceLensUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>AI 引擎仓库</a>
+              <a class="source-link" :href="`${githubUrl}/releases`">查看发布版本 <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
             </div>
-            <p class="beta-note">HyperFileLens is currently in public beta.</p>
+            <p class="beta-note">HyperFileLens 目前处于公测阶段。</p>
           </div>
-          <div class="terminal-card" aria-label="Example HyperFileLens deployment command">
-            <div class="terminal-bar"><span><i></i><i></i><i></i></span><b>deploy · bash</b></div>
-            <pre><code><span class="terminal-comment"># Complete offline release bundle</span>
+          <div class="terminal-card" aria-label="HyperFileLens 部署命令示例">
+            <div class="terminal-bar"><span><i></i><i></i><i></i></span><b>部署 · bash</b></div>
+            <pre><code><span class="terminal-comment"># 完整离线安装包</span>
 <span class="terminal-prompt">$</span> tar -xzf hyperfilelens-release.tar.gz
 <span class="terminal-prompt">$</span> cd hyperfilelens
 <span class="terminal-prompt">$</span> sudo ./install.sh install
 
-<span class="terminal-success">✓</span> Environment validated
-<span class="terminal-success">✓</span> Images loaded locally
-<span class="terminal-success">✓</span> HyperFileLens is ready</code></pre>
+<span class="terminal-success">✓</span> 环境校验通过
+<span class="terminal-success">✓</span> 镜像已加载到本地
+<span class="terminal-success">✓</span> HyperFileLens 已就绪</code></pre>
           </div>
         </div>
       </section>
 
       <section id="contact" class="section-block contact-section" aria-labelledby="contact-title">
         <div class="section-heading centered">
-          <p class="section-kicker">Contact</p>
-          <h2 id="contact-title">Contact us</h2>
+          <p class="section-kicker">联系我们</p>
+          <h2 id="contact-title">联系我们</h2>
         </div>
         <div class="contact-grid">
           <article>
             <div class="use-case-head">
               <div class="card-icon"><svg aria-hidden="true"><use href="#icon-building" /></svg></div>
-              <h3>Enterprise deployment</h3>
+              <h3>企业私有化部署</h3>
             </div>
-            <p>Planning a private, self-hosted deployment for your organization? We can help you scope it.</p>
-            <a class="text-link" href="mailto:oneprolabs@oneprocloud.com">Email us <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
+            <p>计划为企业做私有化部署？我们可以帮你评估方案。</p>
+            <a class="text-link" href="mailto:oneprolabs@oneprocloud.com">发邮件给我们 <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
           </article>
           <article>
             <div class="use-case-head">
               <div class="card-icon violet"><svg aria-hidden="true"><use href="#icon-github" /></svg></div>
-              <h3>Technical support</h3>
+              <h3>技术支持</h3>
             </div>
-            <p>Running into an issue or found a bug? File it on GitHub and we'll take it from there.</p>
-            <a class="text-link" :href="`${githubUrl}/issues`">Open an issue <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
+            <p>遇到问题或者发现 bug？在 GitHub 上提交一下，剩下的交给我们。</p>
+            <a class="text-link" :href="`${githubUrl}/issues`">提交 Issue <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
           </article>
         </div>
       </section>
@@ -294,16 +294,16 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
 
     <footer>
       <div class="footer-brand">
-        <a class="brand" href="/en/"><img src="/logo-mark.svg" alt="" width="32" height="32" /><span>HyperFileLens</span></a>
-        <p>Open source backup with agentic AI insight, by OneProLabs.</p>
-        <a class="footer-social" :href="githubUrl" aria-label="HyperFileLens on GitHub"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
+        <a class="brand" href="/zh/"><img src="/logo-mark.svg" alt="" width="32" height="32" /><span>HyperFileLens</span></a>
+        <p>开源备份工具，内置 Agentic AI 洞察能力，由 OneProLabs 出品。</p>
+        <a class="footer-social" :href="githubUrl" aria-label="HyperFileLens GitHub 仓库"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
       </div>
       <div class="footer-links">
-        <div><strong>Product</strong><a href="#use-cases">Use Cases</a><a href="#how-it-works">How It Works</a><a :href="loginUrl" @click="openApp($event, 'footer')">Try free</a></div>
-        <div><strong>Open Source</strong><a :href="githubUrl">HyperFileLens</a><a :href="sourceLensUrl">AI engine</a><a :href="`${githubUrl}/releases`">Releases</a></div>
-        <div><strong>Contact</strong><a href="mailto:oneprolabs@oneprocloud.com">Enterprise deployment</a><a :href="`${githubUrl}/issues`">Technical support</a></div>
+        <div><strong>产品</strong><a href="#use-cases">使用场景</a><a href="#how-it-works">工作原理</a><a :href="loginUrl" @click="openApp($event, 'footer')">免费试用</a></div>
+        <div><strong>开源</strong><a :href="githubUrl">HyperFileLens</a><a :href="sourceLensUrl">AI 引擎</a><a :href="`${githubUrl}/releases`">发布版本</a></div>
+        <div><strong>联系我们</strong><a href="mailto:oneprolabs@oneprocloud.com">企业部署</a><a :href="`${githubUrl}/issues`">技术支持</a></div>
       </div>
-      <div class="footer-bottom"><span>© 2026 OneProLabs</span><span>Public beta · Built in the open</span></div>
+      <div class="footer-bottom"><span>© 2026 OneProLabs</span><span>公测中 · 开放共建</span></div>
     </footer>
   </div>
 </template>
