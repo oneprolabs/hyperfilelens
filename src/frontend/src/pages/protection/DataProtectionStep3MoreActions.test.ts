@@ -20,6 +20,54 @@ function functionSource(name: string, nextName: string) {
 }
 
 describe('backup wizard step 3 More Actions refresh', () => {
+  it('blocks conflicting source actions while a selected backup is active', () => {
+    const gating = sourceBetween(
+      'const startBackupSubmitting',
+      'const step3CanStopBackup',
+    )
+    const startBackup = functionSource('startSelectedBackupTasks', 'flowRowsForSourceIds')
+    const openRecovery = functionSource('openRecovery', 'currentRecBackup')
+    const openRecoveryForSource = functionSource('openRecoveryForSource', 'openSnapshotRestore')
+    const editConfig = functionSource('openBackupConfigEditFromStep3', 'onBackupConfigEditPickSelected')
+    const resetConfig = functionSource('resetSelectedBackupConfigurations', 'confirmResetBackupConfiguration')
+    const runRecovery = sourceBetween('async function runRecovery', '</script>')
+
+    expect(gating).toContain("sourceBackupRuntime(sourceId).running || runtimeStopping(sourceId, 'backup')")
+    expect(gating).toContain('backupStartAwaitingRuntimeSourceIds')
+    expect(gating).toContain('backupStartAwaitingRuntimeSourceIds.value.has(sourceId)')
+    expect(gating).toContain('const step3SelectionHasActiveBackup = computed')
+    expect(gating).toContain('if (step3SelectionHasActiveBackup.value) return false')
+    expect(gating).toContain('step3LifecycleActionsEnabled.value && !step3SelectionHasActiveBackup.value')
+    expect(gating).toContain("|| runtimeStopping(sourceId, 'restore')")
+    expect(startBackup).toContain('sources.some((source) => sourceHasActiveBackup(source.id))')
+    expect(startBackup).toContain('sources.some((source) => sourceRuntimeHasActiveBackup(source.id))')
+    expect(openRecovery).toContain('if (step3SelectionHasActiveBackup.value)')
+    expect(openRecoveryForSource).toContain('if (sourceHasActiveBackup(sourceId))')
+    expect(editConfig).toContain('sources.some((source) => sourceHasActiveBackup(source.id))')
+    expect(resetConfig).toContain('sources.some((source) => sourceHasActiveBackup(source.id))')
+    expect(startBackup).toContain(".filter((item) => item.status === 'created')")
+    expect(startBackup).toContain('markBackupStartAwaitingRuntime')
+    expect(startBackup).toContain("t('protection.backupsPage.msgStartBackupAcceptedRefreshFailed')")
+    expect(runRecovery).toContain('await recoveryBlockedByActiveBackup()')
+    expect(page).toContain('async function refreshRecoverySourceRuntime(sourceIds: string[])')
+    expect(page).toContain('const recoveryHasActiveBackup = computed')
+    expect(page).toContain(':disabled="!selectedRecoveryPlans.length || recoveryHasActiveBackup"')
+    expect(page).toContain(':disabled="recoveryHasActiveBackup"')
+    expect(page).toContain('expand: STEP3_EXPAND')
+    expect(page).toContain("t('protection.backupsPage.msgBackupActiveBlocksActions')")
+    expect(protectionLocale).toContain("msgBackupActiveBlocksActions:")
+    expect(protectionLocale).toContain('A backup is starting or running for a selected source.')
+  })
+
+  it('keeps accepted backups fenced until refreshed runtime is available', () => {
+    const loader = sourceBetween('async function loadStep3Selectable', 'async function refreshStep3State')
+    const gating = sourceBetween('const startBackupSubmitting', 'const step3CanStopBackup')
+
+    expect(loader).toContain('reconcileBackupStartAwaitingRuntime(rows.map((row) => row.id))')
+    expect(gating).toContain('function markBackupStartAwaitingRuntime')
+    expect(gating).toContain('function reconcileBackupStartAwaitingRuntime')
+  })
+
   it('disables policy-step detail popovers while a configuration selector is open', () => {
     expect(wizard).toContain('const configSelectMenuOpen = ref(false)')
     expect(wizard).toContain('function handleConfigSelectVisibleChange(visible: boolean)')

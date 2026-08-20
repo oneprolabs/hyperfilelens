@@ -1491,6 +1491,7 @@ async function loadStep3Selectable(options: { signal?: AbortSignal } = {}) {
   step3SelectableRows.value = rows
   step3SelectableCount.value = list.count
   rememberSelectableRows(rows)
+  reconcileBackupStartAwaitingRuntime(rows.map((row) => row.id))
   const configs = syncExpandedStep3Rows(rows)
   await ensureRepositoryDetailsForConfigs(configs, signal)
 }
@@ -1790,10 +1791,19 @@ function openRecoveryForSource(sourceId: string) {
       ? activeFlowSource.value
       : flowSourceRowById(sourceId) ?? flowRowFromSourceId(sourceId)
   if (row) step3SourceSelection.value = [row]
+  if (sourceHasActiveBackup(sourceId)) {
+    ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
+    return
+  }
   openRecoveryWithBackupIds(backupIds)
 }
 
 async function openSnapshotRestore(payload: { snapshotId: number }) {
+  const sourceId = activeFlowSource.value?.id || ''
+  if (sourceId && sourceHasActiveBackup(sourceId)) {
+    ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
+    return
+  }
   await router.push({
     name: 'protection-snapshot-restore',
     params: { snapshotId: String(payload.snapshotId) },
@@ -2723,6 +2733,10 @@ function openBackupConfigEditFromStep3(section: BackupConfigEditSection) {
   const sources = step3SourceSelection.value
   if (!sources.length) {
     ElMessage.warning({ message: t('protection.backupsPage.msgSelectConfiguredSourceForStep3'), grouping: true })
+    return
+  }
+  if (sources.some((source) => sourceHasActiveBackup(source.id))) {
+    ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
     return
   }
   if (sources.some((source) => sourceResetRunning(source.id))) {
@@ -4368,9 +4382,42 @@ async function submitDisplayNameEdit() {
   }
 }
 
+const startBackupSubmitting = ref(false)
+const backupStartAwaitingRuntimeSourceIds = ref(new Set<string>())
+
+function markBackupStartAwaitingRuntime(sourceIds: string[]) {
+  if (!sourceIds.length) return
+  backupStartAwaitingRuntimeSourceIds.value = new Set([
+    ...backupStartAwaitingRuntimeSourceIds.value,
+    ...sourceIds,
+  ])
+}
+
+function reconcileBackupStartAwaitingRuntime(refreshedSourceIds: string[]) {
+  if (!refreshedSourceIds.length || backupStartAwaitingRuntimeSourceIds.value.size === 0) return
+  const next = new Set(backupStartAwaitingRuntimeSourceIds.value)
+  refreshedSourceIds.forEach((sourceId) => next.delete(sourceId))
+  backupStartAwaitingRuntimeSourceIds.value = next
+}
+
+function sourceRuntimeHasActiveBackup(sourceId: string) {
+  return sourceBackupRuntime(sourceId).running || runtimeStopping(sourceId, 'backup')
+}
+
+function sourceHasActiveBackup(sourceId: string) {
+  return startBackupSubmitting.value
+    || backupStartAwaitingRuntimeSourceIds.value.has(sourceId)
+    || sourceRuntimeHasActiveBackup(sourceId)
+}
+
+const step3SelectionHasActiveBackup = computed(() =>
+  step3SourceSelection.value.some((row) => sourceHasActiveBackup(row.id)),
+)
+
 const step3SourceActionsEnabled = computed(() => {
   if (!step3SourceSelection.value.length) return false
   if (step3SourceSelection.value.some((row) => sourceResetRunning(row.id))) return false
+  if (step3SelectionHasActiveBackup.value) return false
   return step3SourceSelection.value.some((row) => flowSourceCanOperate(row))
 })
 const step3LifecycleActionsEnabled = computed(() => {
@@ -4383,9 +4430,13 @@ const step3LifecycleActionsEnabled = computed(() => {
   })) return false
   return true
 })
-const step3SelectionEditable = step3LifecycleActionsEnabled
+const step3SelectionEditable = computed(() =>
+  step3LifecycleActionsEnabled.value && !step3SelectionHasActiveBackup.value,
+)
 function sourceHasRunningBackupOrRestore(sourceId: string) {
-  return sourceBackupRuntime(sourceId).running || sourceRestoreRuntime(sourceId).running
+  return sourceHasActiveBackup(sourceId)
+    || sourceRestoreRuntime(sourceId).running
+    || runtimeStopping(sourceId, 'restore')
 }
 
 function selectionHasRunningBackupOrRestore(sourceIds: string[]) {
@@ -4418,11 +4469,11 @@ const selectedRecoverableSourceRows = computed(() =>
 )
 const recoveryToolbarEnabled = computed(() => {
   if (selectedRecoverableSourceRows.value.length === 0) return false
+  if (step3SelectionHasActiveBackup.value) return false
   return !selectedRecoverableSourceRows.value.some((row) =>
     sourceRestoreRuntime(row.id).running || runtimeStopping(row.id, 'restore'),
   )
 })
-const startBackupSubmitting = ref(false)
 const recoveryOpening = ref(false)
 const stopConfirmOpen = ref(false)
 const stopConfirmKind = ref<'backup' | 'restore'>('backup')
@@ -4572,6 +4623,10 @@ async function startSelectedBackupTasks() {
     ElMessage.warning({ message: t('protection.backupsPage.msgSelectSourcesToStart'), grouping: true })
     return
   }
+  if (sources.some((source) => sourceHasActiveBackup(source.id))) {
+    ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
+    return
+  }
   const offlineRows = offlineFlowSourcesFromIds(sources.map((source) => source.id))
   if (offlineRows.length > 0) {
     ElMessage.warning(
@@ -4588,13 +4643,30 @@ async function startSelectedBackupTasks() {
   startBackupSubmitting.value = true
   try {
     await refreshStep3State()
+    if (sources.some((source) => sourceRuntimeHasActiveBackup(source.id))) {
+      ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
+      return
+    }
     const runnableSources = sources.filter((source) => sourceHasBackupConfig(source.id))
     if (!runnableSources.length) {
       ElMessage.warning({ message: t('protection.backupsPage.msgSourceNoBackupConfig'), grouping: true })
       return
     }
     const result = await startProtectionBackupTasks(startBackupTaskPayloadForSources(runnableSources))
-    await refreshStep3State()
+    markBackupStartAwaitingRuntime(
+      result.results
+        .filter((item) => item.status === 'created')
+        .map((item) => endpointUiId(item.source_type, item.source_ref_id)),
+    )
+    try {
+      await refreshStep3State()
+    } catch {
+      ElMessage.warning({
+        message: t('protection.backupsPage.msgStartBackupAcceptedRefreshFailed'),
+        grouping: true,
+      })
+      return
+    }
     if (result.created_count > 0) {
       ElMessage.success({
         message: t('protection.backupsPage.msgStartBackupIncrementalHint'),
@@ -5119,6 +5191,10 @@ function resetSelectedBackupConfigurations() {
   const sources = step3SourceSelection.value
   if (!sources.length) {
     ElMessage.warning({ message: t('protection.backupsPage.msgSelectSourcesToRevert'), grouping: true })
+    return
+  }
+  if (sources.some((source) => sourceHasActiveBackup(source.id))) {
+    ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
     return
   }
   if (sources.some((source) => sourceResetRunning(source.id))) {
@@ -5959,6 +6035,10 @@ async function openRecovery() {
   if (recoveryOpening.value) return
   if (!step3SourceSelection.value.length) {
     ElMessage.warning({ message: t('protection.backupsPage.msgSelectSourcesToRecover'), grouping: true })
+    return
+  }
+  if (step3SelectionHasActiveBackup.value) {
+    ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
     return
   }
   if (step3SourceSelection.value.some((row) => sourceRestoreRuntime(row.id).running || runtimeStopping(row.id, 'restore'))) {
@@ -8940,10 +9020,40 @@ function manualRecoveryDraftProblemNames(drafts: RecoveryTaskDraft[]) {
   return [...names.values()].slice(0, 5).join(', ') + (names.size > 5 ? `, +${names.size - 5}` : '')
 }
 
+function recoverySourceIds() {
+  return [...new Set(recBackupIds.value.map(backupSourceHostId).filter(Boolean))]
+}
+
+const recoveryHasActiveBackup = computed(() => recoverySourceIds().some(sourceHasActiveBackup))
+
+async function refreshRecoverySourceRuntime(sourceIds: string[]) {
+  if (!sourceIds.length) return
+  const list = await listBackupSelectableSources({
+    ids: sourceIds.join(','),
+    page: 1,
+    page_size: sourceIds.length,
+    expand: STEP3_EXPAND,
+  })
+  const rows = list.results.map(mapBackupSelectableToFlowRow)
+  rememberSelectableRows(rows)
+  reconcileBackupStartAwaitingRuntime(rows.map((row) => row.id))
+}
+
+async function recoveryBlockedByActiveBackup() {
+  const sourceIds = recoverySourceIds()
+  if (sourceIds.some(sourceHasActiveBackup)) return true
+  await refreshRecoverySourceRuntime(sourceIds)
+  return sourceIds.some(sourceRuntimeHasActiveBackup)
+}
+
 async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
   if (recSubmitting.value) return
   recSubmitting.value = true
   try {
+    if (await recoveryBlockedByActiveBackup()) {
+      ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
+      return
+    }
     if (mode === 'plan') {
       try {
         await ensureRecoveryPlanSnapshotDefaults()
@@ -9363,7 +9473,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 </template>
                 <template v-else>
                   <ElTooltip
-                    :content="t('protection.backupsPage.btnStartBackupCloudHint')"
+                    :content="step3SelectionHasActiveBackup
+                      ? t('protection.backupsPage.msgBackupActiveBlocksActions')
+                      : t('protection.backupsPage.btnStartBackupCloudHint')"
                     placement="bottom"
                     :show-after="300"
                     :hide-after="0"
@@ -9385,19 +9497,30 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       </ElButton>
                     </span>
                   </ElTooltip>
-                  <ElButton
-                    type="primary"
-                    class="hfl-btn-with-icon dp-flow-step3-action-btn shrink-0"
-                    :disabled="!recoveryToolbarEnabled || recoveryOpening || step3StopActionBusy"
-                    :loading="recoveryOpening"
-                    @click="openRecovery"
+                  <ElTooltip
+                    :content="step3SelectionHasActiveBackup
+                      ? t('protection.backupsPage.msgBackupActiveBlocksActions')
+                      : t('protection.backupsPage.btnRecover')"
+                    placement="bottom"
+                    :show-after="300"
+                    :hide-after="0"
                   >
-                    <ArchiveRestore
-                      :size="16"
-                      class="shrink-0"
-                    />
-                    {{ t('protection.backupsPage.btnRecover') }}
-                  </ElButton>
+                    <span class="dp-flow-step3-action-tooltip">
+                      <ElButton
+                        type="primary"
+                        class="hfl-btn-with-icon dp-flow-step3-action-btn shrink-0"
+                        :disabled="!recoveryToolbarEnabled || recoveryOpening || step3StopActionBusy"
+                        :loading="recoveryOpening"
+                        @click="openRecovery"
+                      >
+                        <ArchiveRestore
+                          :size="16"
+                          class="shrink-0"
+                        />
+                        {{ t('protection.backupsPage.btnRecover') }}
+                      </ElButton>
+                    </span>
+                  </ElTooltip>
                   <ElDropdown
                     trigger="click"
                     popper-class="hfl-actions-dropdown"
@@ -9427,6 +9550,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </ElDropdownItem>
                         <ElDropdownItem
                           divided
+                          :title="step3SelectionHasActiveBackup
+                            ? t('protection.backupsPage.msgBackupActiveBlocksActions')
+                            : undefined"
                           :disabled="!step3SelectionEditable"
                           @click="openBackupConfigEditFromStep3('paths')"
                         >
@@ -9439,6 +9565,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           </span>
                         </ElDropdownItem>
                         <ElDropdownItem
+                          :title="step3SelectionHasActiveBackup
+                            ? t('protection.backupsPage.msgBackupActiveBlocksActions')
+                            : undefined"
                           :disabled="!step3SelectionEditable"
                           @click="openBackupConfigEditFromStep3('policy')"
                         >
@@ -9451,6 +9580,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           </span>
                         </ElDropdownItem>
                         <ElDropdownItem
+                          :title="step3SelectionHasActiveBackup
+                            ? t('protection.backupsPage.msgBackupActiveBlocksActions')
+                            : undefined"
                           :disabled="!step3SelectionEditable"
                           @click="openBackupConfigEditFromStep3('recovery')"
                         >
@@ -9489,6 +9621,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </ElDropdownItem>
                         <ElDropdownItem
                           divided
+                          :title="step3SelectionHasActiveBackup
+                            ? t('protection.backupsPage.msgBackupActiveBlocksActions')
+                            : undefined"
                           :disabled="!step3SelectionEditable"
                           @click="revertSelectedSourcesFromStep3"
                         >
@@ -9502,6 +9637,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </ElDropdownItem>
                         <ElDropdownItem
                           class="el-dropdown-menu__item--danger"
+                          :title="step3SelectionHasActiveBackup
+                            ? t('protection.backupsPage.msgBackupActiveBlocksActions')
+                            : undefined"
                           :disabled="!step3UnregisterEnabled"
                           @click="deleteSelectedSourcesFromStep3"
                         >
@@ -11386,6 +11524,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           :file-filters="fileFilterById"
           :backup-snapshots="backupSnapshotRows"
           :backup-tasks="flowSourceDetailOpen ? sourceRelatedTaskRows : EMPTY_TASK_ROWS"
+          :restore-blocked-by-backup="activeFlowSource ? sourceHasActiveBackup(activeFlowSource.id) : false"
           @closed="onFlowSourceDetailClosed"
           @start-backup="startBackupForSource"
           @recover="openRecoveryForSource"
@@ -13400,7 +13539,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 <ElButton
                   type="primary"
                   class="hfl-btn-with-icon"
-                  :disabled="!selectedRecoveryPlans.length"
+                  :disabled="!selectedRecoveryPlans.length || recoveryHasActiveBackup"
                   :loading="recSubmitting"
                   @click="confirmRecoveryEntry"
                 >
@@ -13449,6 +13588,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   v-else
                   type="primary"
                   class="hfl-btn-with-icon"
+                  :disabled="recoveryHasActiveBackup"
                   :loading="recSubmitting"
                   @click="runRecovery"
                 >

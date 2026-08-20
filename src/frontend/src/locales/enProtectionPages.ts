@@ -854,7 +854,11 @@ export const enProtectionPages = {
     btnConfirmStopBackup: 'Stop Backup',
     btnConfirmStopRestore: 'Stop Restore',
     msgRestoreAlreadyRunning: 'A restore task is already running for a selected source. Stop it first.',
+    msgBackupActiveBlocksActions:
+      'A backup is starting or running for a selected source. Stop it or wait for it to finish before continuing.',
     msgStartBackupIncrementalHint: 'New backup started. Unchanged data will sync incrementally.',
+    msgStartBackupAcceptedRefreshFailed:
+      'Backup was accepted, but its latest status could not be refreshed. Conflicting actions remain disabled until the status is available.',
     btnStartBackup: 'Backup Now',
     btnStartBackupCloudHint: 'Run a one-time backup for the selected backup sources.',
     msgSelectSourcesToStart: 'Select backup source rows to back up first.',
