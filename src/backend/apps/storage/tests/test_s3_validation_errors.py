@@ -62,13 +62,33 @@ class S3ValidationErrorTests(SimpleTestCase):
         self.assertNotIn("certificate failed", tls.message)
 
     def test_legacy_gateway_codes_are_configuration_errors(self):
-        for code in ("InvalidLocationConstraint", "NotImplemented", "XMinioInvalidRequest", "InvalidBucketName"):
+        for code in ("InvalidLocationConstraint", "NotImplemented", "XMinioInvalidRequest"):
             failure = classify_s3_validation_error(
                 _wrapped_client_error(code),
                 operation="bucket_access",
             )
             self.assertEqual(failure.code, "STORAGE.S3_CONFIGURATION_INVALID", code)
             self.assertNotIn("provider detail", failure.message, code)
+
+    def test_bucket_name_failures_have_actionable_stable_codes(self):
+        invalid = classify_s3_validation_error(
+            _wrapped_client_error("InvalidBucketName", "unsafe provider detail"),
+            operation="bucket_access",
+        )
+        unavailable = classify_s3_validation_error(
+            _wrapped_client_error("BucketAlreadyExists", "unsafe provider detail"),
+            operation="bucket_access",
+        )
+        owned = classify_s3_validation_error(
+            _wrapped_client_error("BucketAlreadyOwnedByYou", "unsafe provider detail"),
+            operation="bucket_access",
+        )
+
+        self.assertEqual(invalid.code, "STORAGE.S3_BUCKET_NAME_INVALID")
+        self.assertEqual(unavailable.code, "STORAGE.S3_BUCKET_NAME_UNAVAILABLE")
+        self.assertEqual(owned.code, "STORAGE.S3_BUCKET_NAME_UNAVAILABLE")
+        self.assertIn("Existing Bucket", unavailable.message)
+        self.assertNotIn("unsafe provider detail", invalid.message)
 
     def test_clock_skew_is_distinct_and_retryable(self):
         failure = classify_s3_validation_error(

@@ -18,6 +18,7 @@ import {
   s3EndpointDisplay,
 } from '../../lib/s3PlatformDisplay'
 import { buildS3RepositoryName } from '../../lib/s3RepositoryName'
+import { s3BucketNameError } from '../../lib/s3BucketName'
 import {
   REPOSITORY_QUOTA_UNITS,
   repositoryQuotaToGb,
@@ -448,13 +449,23 @@ watch(
 watch([storagePlatform, platformLabel, bucket], syncAutoRepoName, { immediate: true })
 
 function validateForm(): boolean {
+  const bucketNameError = bucketMode.value === 'new' && bucket.value.trim()
+    ? s3BucketNameError(normalizeS3Platform(storagePlatform.value), bucket.value)
+    : null
+  const bucketNameMessage = bucketNameError
+    ? t(`addS3Repo.bucketNameErrors.${bucketNameError}`)
+    : t('repositoriesPage.errBucket')
   return validateInline([
     { field: 'platform', message: t('repositoriesPage.errPlatform'), valid: !!storagePlatform.value },
     { field: 'endpoint', message: t('addS3Repo.errEndpoint'), valid: !!endpoint.value.trim() },
     { field: 'accessKey', message: t('addS3Repo.errAccessKey'), valid: !!accessKeyId.value.trim() },
     { field: 'secretKey', message: t('addS3Repo.errSecretKey'), valid: !!accessKeySecret.value.trim() },
     { field: 'repoName', message: t('repositoriesPage.errName'), valid: !!repoName.value.trim() },
-    { field: 'bucket', message: t('repositoriesPage.errBucket'), valid: !!bucket.value.trim() },
+    {
+      field: 'bucket',
+      message: bucketNameMessage,
+      valid: !!bucket.value.trim() && !bucketNameError,
+    },
     { field: 'quotaThreshold', message: t('repositoriesPage.hintQuotaAlertThreshold'), valid: !enableQuotaAlert.value || validQuotaAlertThreshold.value },
   ])
 }

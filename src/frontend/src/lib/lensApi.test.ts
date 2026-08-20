@@ -106,11 +106,36 @@ describe('Insight snapshot browsing', () => {
       backupSourceSnapshotId: 71,
       gatewayLinkId: 17,
     })
-    const rejection = expect(request).rejects.toThrow('Snapshot browsing timed out')
+    const rejection = expect(request).rejects.toMatchObject({
+      errorCode: 'INSIGHT.SNAPSHOT_BROWSE_TIMEOUT',
+      retryable: true,
+    })
     await vi.runAllTimersAsync()
 
     await rejection
     expect(api).toHaveBeenCalledTimes(241)
+  })
+
+  it('preserves the terminal task error contract', async () => {
+    vi.mocked(api).mockResolvedValue({
+      task_id: 'browse-failed',
+      status: 'failed',
+      error_code: 'INSIGHT.REPOSITORY_READER_UNAVAILABLE',
+      retryable: true,
+      error: 'The Repository Reader is unavailable. Check its Proxy binding and Agent status, then try again.',
+    })
+
+    await expect(
+      browseCopilotSnapshotDirectory(31, {
+        backupSourceSnapshotId: 71,
+        gatewayLinkId: 17,
+      }),
+    ).rejects.toMatchObject({
+      status: 503,
+      errorCode: 'INSIGHT.REPOSITORY_READER_UNAVAILABLE',
+      retryable: true,
+      detail: { task_id: 'browse-failed', status: 'failed' },
+    })
   })
 
   it('honors a signal that is already aborted before polling', async () => {

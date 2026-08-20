@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from common.errors import AppError, FieldError
+
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.protection import conf as protection_conf
@@ -32,6 +34,7 @@ from apps.storage.services.internal.repository_endpoints import (
 from apps.storage.services.internal.nas_repair import (
     NAS_REPAIR_MUTABLE_CONFIG_FIELDS,
 )
+from apps.storage.services.internal.s3_bucket_name import s3_bucket_name_error
 from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 
 
@@ -495,6 +498,9 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
         credential_payload = attrs.get("credential_payload") or {}
         s3_platform = attrs.get("s3_platform", getattr(instance, "s3_platform", None))
         s3_bucket = attrs.get("s3_bucket", getattr(instance, "s3_bucket", None))
+        s3_bucket_mode = attrs.get(
+            "s3_bucket_mode", getattr(instance, "s3_bucket_mode", None)
+        )
         nas_protocol = attrs.get(
             "nas_protocol", getattr(instance, "nas_protocol", None)
         )
@@ -518,6 +524,28 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             s3_platform = str(s3_platform or "").strip().lower()
             if "s3_platform" in attrs:
                 attrs["s3_platform"] = s3_platform
+            if (
+                instance is None
+                and s3_bucket_mode == Repository.S3BucketMode.NEW
+                and str(s3_bucket or "").strip()
+            ):
+                bucket_error = s3_bucket_name_error(
+                    platform=s3_platform,
+                    bucket=s3_bucket,
+                )
+                if bucket_error:
+                    raise AppError(
+                        code="STORAGE.S3_BUCKET_NAME_INVALID",
+                        status=400,
+                        title=bucket_error,
+                        field_errors=[
+                            FieldError(
+                                field="s3_bucket",
+                                code="STORAGE.S3_BUCKET_NAME_INVALID",
+                                message=bucket_error,
+                            )
+                        ],
+                    )
             self._validate_s3(config, credential_payload, s3_platform, s3_bucket)
         elif repo_type == Repository.Type.NAS:
             self._validate_nas(

@@ -130,6 +130,8 @@ describe('object storage validation errors', () => {
     ['STORAGE.S3_PERMISSION_DENIED', 'errors.codes.storageS3PermissionDenied'],
     ['STORAGE.S3_BUCKET_ACCESS_DENIED', 'errors.codes.storageS3BucketAccessDenied'],
     ['STORAGE.S3_BUCKET_NOT_FOUND', 'errors.codes.storageS3BucketNotFound'],
+    ['STORAGE.S3_BUCKET_NAME_INVALID', 'errors.codes.storageS3BucketNameInvalid'],
+    ['STORAGE.S3_BUCKET_NAME_UNAVAILABLE', 'errors.codes.storageS3BucketNameUnavailable'],
     ['STORAGE.S3_CONFIGURATION_INVALID', 'errors.codes.storageS3ConfigurationInvalid'],
     ['STORAGE.S3_NETWORK_UNAVAILABLE', 'errors.codes.storageS3NetworkUnavailable'],
     ['STORAGE.S3_TIMEOUT', 'errors.codes.storageS3Timeout'],

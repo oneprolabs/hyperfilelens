@@ -190,8 +190,29 @@ class SnapshotBrowseApiTests(TestCase):
             payload["error"],
             "Unable to browse the selected snapshot. Try again.",
         )
+        self.assertEqual(payload["error_code"], "INSIGHT.SNAPSHOT_BROWSE_FAILED")
+        self.assertIs(payload["retryable"], False)
         self.assertNotIn("entries", payload)
         self.assertNotIn("private.config", str(payload))
+
+    def test_timeout_returns_structured_retryable_error(self):
+        task = self._create_task()
+        task.status = NodeTask.Status.TIMEOUT
+        task.result = {}
+        task.save(update_fields=["status", "result", "updated_at"])
+
+        response = self.client.get(
+            reverse(
+                "lens-copilot-snapshot-browse-task",
+                kwargs={"task_id": task.id},
+            ),
+            HTTP_X_ORG_KEY=self.organization.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = self._payload(response)
+        self.assertEqual(payload["error_code"], "INSIGHT.SNAPSHOT_BROWSE_TIMEOUT")
+        self.assertIs(payload["retryable"], True)
 
     def test_same_organization_peer_cannot_read_another_users_task(self):
         task = self._create_task()

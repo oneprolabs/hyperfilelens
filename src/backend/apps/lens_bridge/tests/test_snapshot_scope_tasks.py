@@ -1,11 +1,13 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from common.errors import AppError
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 
 from apps.lens_bridge.services import snapshot_scope_tasks
+from apps.node.models import NodeTask
 
 
 class SnapshotScopeTaskNormalizationTests(TestCase):
@@ -120,6 +122,28 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
 
         self.assertEqual(message, "generic failure")
 
+    def test_terminal_failure_contract_maps_timeout_and_known_agent_codes(self):
+        timeout = SimpleNamespace(status=NodeTask.Status.TIMEOUT, result={}, payload={})
+        missing_path = SimpleNamespace(
+            status=NodeTask.Status.FAILED,
+            result={"error_code": "INSIGHT_SNAPSHOT_PATH_NOT_FOUND"},
+            payload={},
+        )
+
+        timeout_failure = snapshot_scope_tasks.snapshot_task_failure(
+            timeout,
+            default="generic failure",
+        )
+        path_failure = snapshot_scope_tasks.snapshot_task_failure(
+            missing_path,
+            default="generic failure",
+        )
+
+        self.assertEqual(timeout_failure.code, "INSIGHT.SNAPSHOT_BROWSE_TIMEOUT")
+        self.assertTrue(timeout_failure.retryable)
+        self.assertEqual(path_failure.code, "INSIGHT.SNAPSHOT_PATH_NOT_FOUND")
+        self.assertFalse(path_failure.retryable)
+
     def test_rejects_preloaded_snapshot_directory_from_another_org(self):
         directory = SimpleNamespace(
             id=31,
@@ -224,7 +248,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
         )
         gateway_context.return_value = SimpleNamespace()
 
-        with self.assertRaises(ValidationError) as raised:
+        with self.assertRaises(AppError) as raised:
             snapshot_scope_tasks.dispatch_snapshot_browse(
                 organization_id=5,
                 directory_id=31,
@@ -236,7 +260,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
                 correlation_id="user:9:browse",
             )
 
-        self.assertIn("directory_id", raised.exception.detail)
+        self.assertEqual(raised.exception.code, "INSIGHT.REPOSITORY_UNAVAILABLE")
 
     @patch("apps.lens_bridge.services.snapshot_scope_tasks.run_agent_task_async")
     @patch(
@@ -298,6 +322,8 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
         self.assertEqual(kwargs["organization_id"], 20)
         self.assertEqual(kwargs["node_id"], 17)
         self.assertEqual(kwargs["requesting_organization_id"], 5)
+        self.assertEqual(kwargs["persisted_payload"]["reader_mode"], "fallback_node")
+        self.assertNotIn("repository", kwargs["persisted_payload"])
 
     @patch("apps.lens_bridge.services.snapshot_scope_tasks.run_agent_task_async")
     @patch(
@@ -398,7 +424,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
             mode="fallback_node",
         )
 
-        with self.assertRaises(ValidationError) as raised:
+        with self.assertRaises(AppError) as raised:
             snapshot_scope_tasks.dispatch_snapshot_browse(
                 organization_id=5,
                 directory_id=31,
@@ -410,7 +436,10 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
                 correlation_id="user:9:browse",
             )
 
-        self.assertIn("detail", raised.exception.detail)
+        self.assertEqual(
+            raised.exception.code,
+            "INSIGHT.REPOSITORY_READER_UPGRADE_REQUIRED",
+        )
         run_async.assert_not_called()
 
     @patch("apps.lens_bridge.services.snapshot_scope_tasks.run_agent_task_async")
