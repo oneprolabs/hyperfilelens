@@ -53,7 +53,10 @@ from apps.storage.services.internal.repository_location import (
     release_repository_location,
     repository_has_owned_location,
 )
-from apps.storage.services.internal.repository_initializer import check_s3_repository
+from apps.storage.services.internal.repository_initializer import (
+    RepositoryInitializationError,
+    check_s3_repository,
+)
 from apps.storage.services.internal.repository_ownership import (
     RepositoryOwnershipMarkerMissingError,
     ownership_payload_for_node,
@@ -1434,11 +1437,28 @@ def _execute_physical_cleanup(
         repository.repo_type == Repository.Type.PROXY_FS
         and not proxy_fs_uses_managed_subdir(repository)
     )
-    if not preserves_unmanaged_proxy_directory and not repository_has_owned_location(
+    has_owned_location = repository_has_owned_location(
         repository,
         owner_node_id=(target.owner_node_id if direct_nas_target else None),
         repository_subdir=(target.repository_subdir if direct_nas_target else None),
+    )
+    if (
+        not has_owned_location
+        and repository.repo_type == Repository.Type.S3
+        and target.owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER
+        and repository.location_claims.filter(
+            scope=RepositoryLocationClaim.Scope.REPOSITORY,
+            state=RepositoryLocationClaim.State.OWNED,
+            ownership_verified_at__isnull=True,
+            legacy_adoption_required=True,
+        ).exists()
     ):
+        # Migrated S3 repositories have a valid legacy Claim but no marker
+        # verification timestamp. Prove Kopia access and establish the marker
+        # before applying the same destructive ownership gate as new repos.
+        _prepare_s3_cleanup_ownership(repository)
+        has_owned_location = repository_has_owned_location(repository)
+    if not preserves_unmanaged_proxy_directory and not has_owned_location:
         claims = repository.location_claims.filter(
             state__in=[
                 RepositoryLocationClaim.State.RESERVED,
@@ -1742,7 +1762,10 @@ def _prepare_s3_cleanup_ownership(repository: Repository) -> None:
         # path proves Kopia access before writing and verifying that marker.
         # A repository that previously had a verified marker is rejected by
         # check_s3_repository and is never silently re-adopted.
-        check_s3_repository(repository)
+        try:
+            check_s3_repository(repository)
+        except RepositoryInitializationError as exc:
+            raise ValidationError(str(exc)) from exc
 
 
 def _s3_cleanup_repository_payload(repository: Repository) -> dict[str, Any]:

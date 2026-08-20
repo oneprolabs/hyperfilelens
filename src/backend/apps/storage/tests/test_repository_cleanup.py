@@ -39,6 +39,9 @@ from apps.storage.services.internal.repository_location import (
     reserve_direct_nas_location,
     reserve_repository_location,
 )
+from apps.storage.services.internal.repository_initializer import (
+    RepositoryInitializationError,
+)
 from apps.storage.services.internal.repository_ownership import (
     RepositoryOwnershipMarkerMissingError,
 )
@@ -104,6 +107,25 @@ class RepositoryCleanupTests(TestCase):
         reserve_repository_location(repository)
         mark_repository_location_owned(repository)
         mark_repository_location_ownership_verified(repository)
+
+    def _mark_s3_location_legacy(
+        self,
+        repository: Repository,
+    ) -> RepositoryLocationClaim:
+        claim = repository.location_claims.get(
+            scope=RepositoryLocationClaim.Scope.REPOSITORY,
+            state=RepositoryLocationClaim.State.OWNED,
+        )
+        claim.ownership_verified_at = None
+        claim.legacy_adoption_required = True
+        claim.save(
+            update_fields=[
+                "ownership_verified_at",
+                "legacy_adoption_required",
+                "updated_at",
+            ]
+        )
+        return claim
 
     def test_initialization_in_progress_is_never_treated_as_unused_storage(self):
         repository = Repository.objects.create(
@@ -803,7 +825,8 @@ class RepositoryCleanupTests(TestCase):
         execute_cleanup.assert_called_once()
 
     @mock.patch(
-        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership"
+        "apps.storage.services.internal.repository_cleanup."
+        "verify_s3_repository_deletion_ownership"
     )
     @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
     @mock.patch(
@@ -883,11 +906,7 @@ class RepositoryCleanupTests(TestCase):
         return_value={"bucket": "cleanup-bucket", "prefix": "managed/repository/"},
     )
     @mock.patch(
-        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership",
-        side_effect=[
-            RepositoryOwnershipMarkerMissingError("marker missing"),
-            None,
-        ],
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership"
     )
     @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
     def test_legacy_s3_cleanup_adopts_only_after_kopia_access_is_proven(
@@ -897,6 +916,17 @@ class RepositoryCleanupTests(TestCase):
         delete_prefix,
     ):
         repository = self._s3_repository("legacy-s3")
+        claim = self._mark_s3_location_legacy(repository)
+
+        def prove_legacy_repository(candidate: Repository) -> None:
+            mark_repository_location_ownership_verified(candidate)
+
+        check_repository.side_effect = prove_legacy_repository
+        verify_owner.side_effect = [
+            RepositoryOwnershipMarkerMissingError("marker missing"),
+            None,
+            None,
+        ]
         repository_task = create_repository_cleanup_task(
             repository=repository,
             dispatch=False,
@@ -904,10 +934,53 @@ class RepositoryCleanupTests(TestCase):
 
         result = run_repository_cleanup_task(repository_task_id=repository_task.id)
 
+        claim.refresh_from_db()
         self.assertEqual(result["status"], "success", result)
         check_repository.assert_called_once_with(repository)
-        self.assertEqual(verify_owner.call_count, 2)
+        self.assertIsNotNone(claim.ownership_verified_at)
+        self.assertFalse(claim.legacy_adoption_required)
+        self.assertEqual(verify_owner.call_count, 3)
         delete_prefix.assert_called_once()
+
+    @mock.patch("apps.storage.services.internal.repository_cleanup.delete_s3_prefix")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership",
+        side_effect=RepositoryOwnershipMarkerMissingError("marker missing"),
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.check_s3_repository",
+        side_effect=RepositoryInitializationError("Kopia ownership proof failed."),
+    )
+    def test_legacy_s3_cleanup_fails_closed_when_kopia_proof_fails(
+        self,
+        check_repository,
+        verify_owner,
+        delete_prefix,
+    ):
+        repository = self._s3_repository("unproven-legacy-s3")
+        claim = self._mark_s3_location_legacy(repository)
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        repository.refresh_from_db()
+        repository_task.task.refresh_from_db()
+        claim.refresh_from_db()
+        self.assertEqual(result["status"], "failed", result)
+        self.assertEqual(repository.status, Repository.Status.REMOVE_FAILED)
+        self.assertEqual(repository_task.task.status, Task.Status.FAILED)
+        self.assertEqual(
+            repository_task.task.error_code,
+            "REPOSITORY_CLEANUP_INVALID",
+        )
+        self.assertIsNone(claim.ownership_verified_at)
+        self.assertTrue(claim.legacy_adoption_required)
+        check_repository.assert_called_once_with(repository)
+        verify_owner.assert_called_once_with(repository)
+        delete_prefix.assert_not_called()
 
     @mock.patch("apps.storage.services.internal.repository_cleanup.delete_s3_prefix")
     @mock.patch(
