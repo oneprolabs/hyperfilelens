@@ -3891,19 +3891,35 @@ read_sourcelens_installed_fingerprint() {
 }
 
 sourcelens_runtime_matches_bundle() {
-	local bundle_root=$1 version service container_id image
-	version="$(sourcelens_bundle_version "${bundle_root}" 2>/dev/null || true)"
-	[[ -n "${version}" ]] || return 1
+	local bundle_root=$1 service container_id image expected_backend expected_frontend expected
+	read -r expected_backend expected_frontend < <(python3 - "${bundle_root}/BUILD_INFO.json" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    build = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+images = build.get("images") or {}
+backend = str((images.get("backend") or {}).get("ref") or "")
+frontend = str((images.get("frontend") or {}).get("ref") or "")
+if not backend or not frontend or any(character.isspace() for character in backend + frontend):
+    raise SystemExit(1)
+print(backend, frontend)
+PY
+	) || return 1
 	for service in api worker scheduler web; do
 		# Inspect stopped/restarting containers too. A transient process state is
 		# handled by health/recovery gates and is not itself an identity drift.
 		container_id="$(sourcelens_compose ps --all -q "${service}" 2>/dev/null | head -1)"
 		[[ -n "${container_id}" ]] || return 1
 		image="$(docker inspect --format '{{.Config.Image}}' "${container_id}" 2>/dev/null || true)"
-		case "${image}" in
-		*-sl"${version}" | *-sl"${version}"@*) ;;
-		*) return 1 ;;
+		case "${service}" in
+		api | worker | scheduler) expected="${expected_backend}" ;;
+		web) expected="${expected_frontend}" ;;
 		esac
+		[[ "${image}" == "${expected}" || "${image}" == "${expected}"@* ]] || return 1
 	done
 	return 0
 }

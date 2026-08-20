@@ -83,7 +83,11 @@ sourcelens_resolve_version() {
 	[[ "${SOURCELENS_GIT_REF}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] \
 		|| sourcelens_die "invalid SourceLens release ref: ${SOURCELENS_GIT_REF} (expected vX.Y.Z)" 2
 	SOURCELENS_VERSION="${BASH_REMATCH[1]}"
-	if [[ "${SOURCELENS_HFL_VERSION:-}" =~ ^([0-9]+\.[0-9]+\.[0-9]+|main-[0-9a-f]{7})$ ]]; then
+	if [[ -n "${SOURCELENS_DISTRIBUTION_TAG_OVERRIDE:-}" ]]; then
+		[[ "${SOURCELENS_DISTRIBUTION_TAG_OVERRIDE}" =~ ^([0-9]+\.[0-9]+\.[0-9]+|main-[0-9a-f]{7})$ ]] \
+			|| sourcelens_die "invalid SourceLens distribution tag override" 2
+		SOURCELENS_DISTRIBUTION_TAG="${SOURCELENS_DISTRIBUTION_TAG_OVERRIDE}"
+	elif [[ "${SOURCELENS_HFL_VERSION:-}" =~ ^([0-9]+\.[0-9]+\.[0-9]+|main-[0-9a-f]{7})$ ]]; then
 		SOURCELENS_DISTRIBUTION_TAG="${SOURCELENS_HFL_VERSION}-sl${SOURCELENS_VERSION}"
 	else
 		SOURCELENS_DISTRIBUTION_TAG="${SOURCELENS_VERSION}"

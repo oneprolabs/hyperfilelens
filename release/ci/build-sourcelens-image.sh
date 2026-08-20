@@ -43,13 +43,14 @@ registry_namespace=${registry_prefix#*/}
 hfl_version="$(normalize_artifact_id "${hfl_version}")"
 
 sourcelens_load_config
+SOURCELENS_HFL_VERSION="${hfl_version}"
 sourcelens_resolve_version
 hfl_logging_configure "ci-sourcelens-${component}"
 hfl_logging_start
 trap 'hfl_logging_finish "$?"' EXIT
 
 sourcelens_sync_source
-target_ref="${registry_prefix}/hyperfilelens-sourcelens-${component}:${hfl_version}-sl${SOURCELENS_VERSION}"
+target_ref="${registry_prefix}/hyperfilelens-sourcelens-${component}:${SOURCELENS_DISTRIBUTION_TAG}"
 source_commit="$(git -C "${SOURCELENS_SOURCE_CACHE}" rev-parse HEAD)"
 fingerprint="$({
 	sourcelens_component_build_identity "${component}" "${source_commit}"
@@ -86,7 +87,7 @@ fi
 if [[ "${component}" == "frontend" ]]; then
 	if ! SOURCELENS_BUILD_SOURCE_MAPS=1 \
 		"${ROOT}/release/ci/upload-sourcelens-sourcemaps.sh" \
-		"hyperfilelens-sourcelens-frontend@${hfl_version}-sl${SOURCELENS_VERSION}"; then
+		"hyperfilelens-sourcelens-frontend@${SOURCELENS_DISTRIBUTION_TAG}"; then
 		printf '::warning title=Sentry Source Maps::Bundled SourceLens symbol processing failed; the image build will continue.\n'
 	fi
 fi
