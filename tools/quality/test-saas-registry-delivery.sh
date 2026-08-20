@@ -69,6 +69,9 @@ package_root="${tmp}/candidate"
 fake_bin="${tmp}/bin"
 tag_marker="${tmp}/tagged"
 pull_marker="${tmp}/pulls"
+mirror_marker="${tmp}/mirror-attempts"
+mirror_sleep_marker="${tmp}/mirror-sleeps"
+mirror_inspect_marker="${tmp}/mirror-inspect-attempts"
 mkdir -p "${package_root}" "${fake_bin}"
 revision="$(printf 'b%.0s' {1..40})"
 python3 - "${package_root}/MANIFEST.json" "${digest}" "${revision}" <<'PY'
@@ -99,8 +102,50 @@ case "${1:-} ${2:-}" in
 	case "${3:-}" in
 	create)
 		[[ "$*" == *"${HFL_TEST_DIGEST}"* ]]
+		count=0
+		[[ ! -f "${HFL_TEST_MIRROR_MARKER}" ]] \
+			|| count="$(cat "${HFL_TEST_MIRROR_MARKER}")"
+		count=$((count + 1))
+		printf '%s\n' "${count}" >"${HFL_TEST_MIRROR_MARKER}"
+		case "${HFL_TEST_MIRROR_MODE:-success}" in
+		flaky429 | always429)
+			if [[ "${count}" -lt 3 ]]; then
+				printf 'unexpected status from HEAD request: 429 Too Many Requests\n' >&2
+				exit 1
+			fi
+			if [[ "${HFL_TEST_MIRROR_MODE}" == always429 ]]; then
+				printf 'unexpected status from HEAD request: 429 Too Many Requests\n' >&2
+				exit 1
+			fi
+			;;
+		fatal403)
+			printf 'unexpected status from HEAD request: 403 Forbidden\n' >&2
+			exit 1
+			;;
+		success) ;;
+		*) exit 2 ;;
+		esac
 		;;
 	inspect)
+		count=0
+		[[ ! -f "${HFL_TEST_MIRROR_INSPECT_MARKER}" ]] \
+			|| count="$(cat "${HFL_TEST_MIRROR_INSPECT_MARKER}")"
+		count=$((count + 1))
+		printf '%s\n' "${count}" >"${HFL_TEST_MIRROR_INSPECT_MARKER}"
+		case "${HFL_TEST_MIRROR_INSPECT_MODE:-success}" in
+		flaky429)
+			if [[ "${count}" -lt 3 ]]; then
+				printf 'unexpected status from HEAD request: 429 Too Many Requests\n' >&2
+				exit 1
+			fi
+			;;
+		fatal403)
+			printf 'unexpected status from HEAD request: 403 Forbidden\n' >&2
+			exit 1
+			;;
+		success) ;;
+		*) exit 2 ;;
+		esac
 		printf '{"digest":"%s"}\n' "${HFL_TEST_DIGEST}"
 		;;
 	*) exit 2 ;;
@@ -135,6 +180,20 @@ case "${1:-} ${2:-}" in
 esac
 SH
 chmod 755 "${fake_bin}/docker"
+cat >"${fake_bin}/sleep" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 1 ]]
+printf '%s\n' "$1" >>"${HFL_TEST_MIRROR_SLEEP_MARKER}"
+SH
+chmod 755 "${fake_bin}/sleep"
+cat >"${fake_bin}/tee" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+/usr/bin/tee "$@"
+[[ "${HFL_TEST_MIRROR_TEE_FAIL:-0}" != 1 ]] || exit 9
+SH
+chmod 755 "${fake_bin}/tee"
 cat >"${fake_bin}/ssh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -155,13 +214,87 @@ SH
 chmod 755 "${fake_bin}/ssh"
 export HFL_TEST_TAG_MARKER="${tag_marker}"
 export HFL_TEST_PULL_MARKER="${pull_marker}"
+export HFL_TEST_MIRROR_MARKER="${mirror_marker}"
+export HFL_TEST_MIRROR_SLEEP_MARKER="${mirror_sleep_marker}"
+export HFL_TEST_MIRROR_INSPECT_MARKER="${mirror_inspect_marker}"
 export HFL_TEST_REVISION="${revision}"
 export HFL_TEST_DIGEST="${digest}"
 export PATH="${fake_bin}:${PATH}"
-"${ROOT}/release/ci/mirror-saas-image.sh" \
+HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
 	docker.io/example/hyperfilelens-backend:1.0.0-ee \
 	"${digest}" \
 	registry.example.cn/example/hyperfilelens-backend:1.0.0-ee
+[[ "$(cat "${mirror_marker}")" -eq 1 ]]
+[[ "$(cat "${mirror_inspect_marker}")" -eq 1 ]]
+
+printf '0\n' >"${mirror_marker}"
+HFL_TEST_MIRROR_MODE=flaky429 \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/example/hyperfilelens-backend:1.0.0-ee \
+		"${digest}" \
+		registry.example.cn/example/hyperfilelens-backend:1.0.0-ee
+[[ "$(cat "${mirror_marker}")" -eq 3 ]]
+
+printf '0\n' >"${mirror_marker}"
+: >"${mirror_sleep_marker}"
+if HFL_TEST_MIRROR_MODE=always429 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/example/hyperfilelens-backend:1.0.0-ee \
+		"${digest}" \
+		registry.example.cn/example/hyperfilelens-backend:1.0.0-ee \
+		>/dev/null 2>&1; then
+	printf 'ERROR: registry mirror accepted five consecutive rate-limit failures\n' >&2
+	exit 1
+fi
+[[ "$(cat "${mirror_marker}")" -eq 5 ]]
+[[ "$(paste -sd, "${mirror_sleep_marker}")" == 5,10,20,40 ]]
+
+printf '0\n' >"${mirror_marker}"
+if HFL_TEST_MIRROR_MODE=fatal403 \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/example/hyperfilelens-backend:1.0.0-ee \
+		"${digest}" \
+		registry.example.cn/example/hyperfilelens-backend:1.0.0-ee \
+		>/dev/null 2>&1; then
+	printf 'ERROR: registry mirror retried a non-retryable authorization failure\n' >&2
+	exit 1
+fi
+[[ "$(cat "${mirror_marker}")" -eq 1 ]]
+
+printf '0\n' >"${mirror_marker}"
+printf '0\n' >"${mirror_inspect_marker}"
+HFL_TEST_MIRROR_INSPECT_MODE=flaky429 \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/example/hyperfilelens-backend:1.0.0-ee \
+		"${digest}" \
+		registry.example.cn/example/hyperfilelens-backend:1.0.0-ee
+[[ "$(cat "${mirror_marker}")" -eq 1 ]]
+[[ "$(cat "${mirror_inspect_marker}")" -eq 3 ]]
+
+printf '0\n' >"${mirror_marker}"
+printf '0\n' >"${mirror_inspect_marker}"
+if HFL_TEST_MIRROR_TEE_FAIL=1 \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/example/hyperfilelens-backend:1.0.0-ee \
+		"${digest}" \
+		registry.example.cn/example/hyperfilelens-backend:1.0.0-ee \
+		>/dev/null 2>&1; then
+	printf 'ERROR: registry mirror ignored a logging pipeline failure\n' >&2
+	exit 1
+fi
+[[ "$(cat "${mirror_marker}")" -eq 1 ]]
+[[ "$(cat "${mirror_inspect_marker}")" -eq 0 ]]
 source "${ROOT}/deploy/installer/install.sh"
 HFL_TEST_FAIL_REGION=cn HFL_REGISTRY_REGION=cn \
 	load_images_from_manifest 0 "${package_root}"
