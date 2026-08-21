@@ -8,6 +8,7 @@ import {
   type BackupSourceUnregisterDisplayRow,
 } from '../lib/backupSourceUnregisterDialog'
 import type { ErrorDetailsPayload } from '../lib/errors/details'
+import { toApiError } from '../lib/errors/normalizer'
 import {
   bulkDeleteBackupSources,
   parseBackupSourceDeleteError,
@@ -48,6 +49,7 @@ const emit = defineEmits<{
     rejected?: BackupSourceDeleteResult['rejected']
     accepted?: boolean
   }): void
+  (e: 'conflict', payload: { sourceIds: string[] }): void
 }>()
 
 const { t } = useI18n()
@@ -211,6 +213,9 @@ async function confirmDelete() {
       accepted: Boolean(result.accepted),
     })
   } catch (err: unknown) {
+    if (toApiError(err).errorCode === 'BACKUP.ALREADY_RUNNING') {
+      emit('conflict', { sourceIds })
+    }
     const parsed = parseBackupSourceDeleteError(err)
     submitErrorReasons.value = parsed.reasons
     const failuresBySourceMap = unregisterSyncFailuresBySource({

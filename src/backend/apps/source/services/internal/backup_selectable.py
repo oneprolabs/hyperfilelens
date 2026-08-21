@@ -15,8 +15,7 @@ from django.conf import settings
 from django.db.models import Exists, OuterRef, Q, QuerySet
 from django.utils import timezone
 
-from apps.node import conf as node_conf
-from apps.node.models import Node, NodeTask
+from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.protection.models import (
     BackupConfig,
@@ -52,6 +51,9 @@ from apps.source.services.internal.source_pipeline import (
     attach_pipeline_steps,
     filter_items_by_pipeline_step,
     load_pipeline_step_map,
+)
+from apps.source.services.internal.source_operation_fence import (
+    product_task_is_stopping,
 )
 from apps.storage.models import Repository
 from apps.task.models import Task, TaskResource
@@ -747,20 +749,6 @@ def _restore_record_status(record: RestoreRecord, task: Task | None) -> str:
     return "running"
 
 
-def _product_task_is_stopping(*, organization_id: int, task: Task | None) -> bool:
-    if task is None or task.status != Task.Status.CANCELLED:
-        return False
-    cutoff = timezone.now() - timedelta(
-        seconds=max(1, int(node_conf.TASK_CANCEL_GRACE_SECONDS))
-    )
-    return NodeTask.objects.filter(
-        organization_id=organization_id,
-        correlation_id=str(task.task_uuid),
-        status__in=(NodeTask.Status.PENDING, NodeTask.Status.RUNNING),
-        cancel_requested_at__gt=cutoff,
-    ).exists()
-
-
 def _attach_runtime_expansion(
     *, organization_id: int, items: list[dict[str, Any]]
 ) -> None:
@@ -901,7 +889,7 @@ def _attach_runtime_expansion(
         backup_stopping = (
             not running_backup
             and latest_backup_task is not None
-            and _product_task_is_stopping(
+            and product_task_is_stopping(
                 organization_id=organization_id, task=latest_backup_task
             )
         )
@@ -998,7 +986,7 @@ def _attach_runtime_expansion(
             not running_restore
             and latest_restore_pair is not None
             and latest_restore_pair[1] is not None
-            and _product_task_is_stopping(
+            and product_task_is_stopping(
                 organization_id=organization_id, task=latest_restore_pair[1]
             )
         )

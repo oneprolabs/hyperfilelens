@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+from uuid import UUID
+
 from django.core.exceptions import ValidationError
+from django.db.models import Q
+from django.utils import timezone
 
 from common.errors import AppError
-from apps.node.models import Node
+from apps.node import conf as node_conf
+from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
+from apps.protection import conf as protection_conf
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
 from apps.task.constants import RESTORE_TASK_TYPES
@@ -23,6 +30,29 @@ _SOURCE_CONTROL_TASK_TYPES = {
     Task.Type.BACKUP_CONFIG_RESET,
     Task.Type.SOURCE_UNREGISTER,
 }
+_BACKUP_NODE_TASK_CORRELATION_TYPES = {
+    protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+    protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_CORRELATION_TYPE,
+}
+
+
+def _stopping_backup_task_uuids(*, organization_id: int) -> list[UUID]:
+    cutoff = timezone.now() - timedelta(
+        seconds=max(1, int(node_conf.TASK_CANCEL_GRACE_SECONDS))
+    )
+    values = NodeTask.objects.filter(
+        organization_id=organization_id,
+        correlation_type__in=_BACKUP_NODE_TASK_CORRELATION_TYPES,
+        status__in=(NodeTask.Status.PENDING, NodeTask.Status.RUNNING),
+        cancel_requested_at__gt=cutoff,
+    ).values_list("correlation_id", flat=True)
+    task_uuids: list[UUID] = []
+    for value in values:
+        try:
+            task_uuids.append(UUID(str(value)))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return task_uuids
 
 
 def lock_source_identity(
@@ -79,16 +109,20 @@ def active_source_backup_task(
     source_type: str,
     source_ref_id: int,
 ) -> Task | None:
-    """Return an active Backup task owning one Source.
+    """Return an active or cancel-grace Backup task owning one Source.
 
     The request-payload fallback preserves compatibility with historical tasks
     created before backup-source TaskResource rows were consistently attached.
     """
+    stopping_task_uuids = _stopping_backup_task_uuids(
+        organization_id=organization_id
+    )
     tasks = (
         Task.objects.filter(
+            Q(status__in=_ACTIVE_STATUSES)
+            | Q(status=Task.Status.CANCELLED, task_uuid__in=stopping_task_uuids),
             organization_id=organization_id,
             task_type=Task.Type.BACKUP,
-            status__in=_ACTIVE_STATUSES,
         )
         .prefetch_related("resources")
         .order_by("created_at", "id")
@@ -112,6 +146,22 @@ def active_source_backup_task(
         ):
             return task
     return None
+
+
+def product_task_is_stopping(*, organization_id: int, task: Task | None) -> bool:
+    """Return whether a cancelled product task is still within cancel grace."""
+    if task is None or task.status != Task.Status.CANCELLED:
+        return False
+    cutoff = timezone.now() - timedelta(
+        seconds=max(1, int(node_conf.TASK_CANCEL_GRACE_SECONDS))
+    )
+    return NodeTask.objects.filter(
+        organization_id=organization_id,
+        correlation_type__in=_BACKUP_NODE_TASK_CORRELATION_TYPES,
+        correlation_id=str(task.task_uuid),
+        status__in=(NodeTask.Status.PENDING, NodeTask.Status.RUNNING),
+        cancel_requested_at__gt=cutoff,
+    ).exists()
 
 
 def active_source_restore_task(
@@ -149,7 +199,7 @@ def assert_no_active_backup_for_sources(
     organization_id: int,
     sources: list[tuple[str, int]],
 ) -> None:
-    """Fence configuration and restore mutations against active backups."""
+    """Fence conflicting source mutations against active or stopping backups."""
     identities = sorted(
         {
             (str(source_type), int(source_ref_id))
@@ -170,13 +220,21 @@ def assert_no_active_backup_for_sources(
         )
         if blocker is None:
             continue
+        blocker_status = (
+            "stopping"
+            if product_task_is_stopping(
+                organization_id=organization_id,
+                task=blocker,
+            )
+            else blocker.status
+        )
         raise AppError(
             code="BACKUP.ALREADY_RUNNING",
             status=409,
             title="Backup already running",
             diagnostic=(
                 "A backup task is active for this source. Stop it or wait for "
-                "it to finish before restoring or changing backup configuration."
+                "it to finish before continuing."
             ),
             retryable=False,
             meta={
@@ -184,7 +242,7 @@ def assert_no_active_backup_for_sources(
                 "task_id": blocker.id,
                 "task_type": blocker.task_type,
                 "display_name": blocker.display_name,
-                "status": blocker.status,
+                "status": blocker_status,
                 "source_type": source_type,
                 "source_ref_id": source_ref_id,
                 "created_at": blocker.created_at.isoformat()
@@ -290,4 +348,5 @@ __all__ = [
     "assert_no_active_restore_for_source",
     "assert_source_product_operation_allowed",
     "lock_source_identity",
+    "product_task_is_stopping",
 ]

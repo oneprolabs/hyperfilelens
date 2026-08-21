@@ -138,6 +138,43 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(row["bound_node_status"], Node.Status.ACTIVE)
         self.assertEqual(row["bound_node_availability"], Node.Availability.ONLINE)
 
+    def test_nas_display_name_can_change_while_backup_is_active(self):
+        resource = SourceResource.objects.create(
+            organization=self.org,
+            name="nas-before-rename",
+            resource_type="nas",
+            config={
+                "protocol": "nfs",
+                "server": "192.168.88.10",
+                "export_path": "/data",
+            },
+            bound_node=self.node,
+        )
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Active NAS backup",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=backup_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="nas",
+            resource_id=resource.id,
+            is_primary=True,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/source/resources/{resource.id}/",
+            {"name": "nas-after-rename"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        resource.refresh_from_db()
+        self.assertEqual(resource.name, "nas-after-rename")
+
     def test_list_search_matches_nas_fields(self):
         SourceResource.objects.create(
             organization=self.org,
@@ -2351,6 +2388,180 @@ class BackupSourceBulkDeleteTests(TestCase):
             1,
         )
 
+    def test_bulk_delete_rejects_active_backup_before_creating_task(self):
+        source_id = f"agent:{self.agent.id}"
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Active backup",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=backup_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {
+                "ids": [source_id],
+                "force": False,
+                "confirmation": "DEREGISTER",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        problem = response.data["data"]
+        self.assertEqual(problem["code"], "BACKUP.ALREADY_RUNNING")
+        self.assertEqual(problem["meta"]["task_uuid"], str(backup_task.task_uuid))
+        self.assertEqual(problem["meta"]["task_type"], Task.Type.BACKUP)
+        self.assertEqual(problem["meta"]["source_type"], "agent")
+        self.assertEqual(problem["meta"]["source_ref_id"], self.agent.id)
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).exists()
+        )
+
+    def test_bulk_delete_rejects_backup_during_cancel_grace(self):
+        source_id = f"agent:{self.agent.id}"
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Stopping backup",
+            status=Task.Status.CANCELLED,
+        )
+        TaskResource.objects.create(
+            task=backup_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.run",
+            correlation_type="protection.backup",
+            correlation_id=str(backup_task.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            cancel_requested_at=timezone.now(),
+            watchdog_deadline_at=timezone.now() + timedelta(hours=2),
+        )
+
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {
+                "ids": [source_id],
+                "force": False,
+                "confirmation": "DEREGISTER",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        problem = response.data["data"]
+        self.assertEqual(problem["code"], "BACKUP.ALREADY_RUNNING")
+        self.assertEqual(problem["meta"]["task_uuid"], str(backup_task.task_uuid))
+        self.assertEqual(problem["meta"]["status"], "stopping")
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).exists()
+        )
+
+    def test_bulk_delete_rejects_mixed_selection_before_creating_any_task(self):
+        second_agent = Node.objects.create(
+            organization=self.org,
+            name="agent-offline-mixed-backup-conflict",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Active backup",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=backup_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {
+                "ids": [
+                    f"agent:{self.agent.id}",
+                    f"agent:{second_agent.id}",
+                ],
+                "force": False,
+                "confirmation": "DEREGISTER",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data["data"]["code"], "BACKUP.ALREADY_RUNNING")
+        self.assertEqual(
+            response.data["data"]["meta"]["task_uuid"], str(backup_task.task_uuid)
+        )
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).exists()
+        )
+
+    def test_bulk_delete_idempotent_replay_precedes_new_backup_conflict(self):
+        source_id = f"agent:{self.agent.id}"
+        payload = {
+            "ids": [source_id],
+            "force": False,
+            "confirmation": "DEREGISTER",
+        }
+        headers = {
+            **self._headers(),
+            "HTTP_IDEMPOTENCY_KEY": "unregister-before-backup",
+        }
+        first = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            payload,
+            format="json",
+            **headers,
+        )
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Late active backup",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=backup_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        replay = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            payload,
+            format="json",
+            **headers,
+        )
+
+        self.assertEqual(first.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(replay.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(replay.data["task_uuid"], first.data["task_uuid"])
+        self.assertEqual(
+            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).count(), 1
+        )
+
     @override_settings(SOURCE_UNREGISTER_EAGER=False)
     def test_completed_idempotent_replay_returns_terminal_result(self):
         self.agent.availability = Node.Availability.ONLINE
@@ -2731,21 +2942,17 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
 
         self.assertEqual(
-            response.status_code, status.HTTP_202_ACCEPTED, response.content
+            response.status_code, status.HTTP_409_CONFLICT, response.content
         )
-        unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
-        self.assertEqual(unregister_task.status, Task.Status.FAILED)
-        self.assertEqual(
-            unregister_task.result_payload["reasons"][0]["code"], "running_tasks"
+        problem = response.data["data"]
+        self.assertEqual(problem["code"], "BACKUP.ALREADY_RUNNING")
+        self.assertEqual(problem["meta"]["task_uuid"], str(backup_task.task_uuid))
+        self.assertEqual(problem["meta"]["task_type"], Task.Type.BACKUP)
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).exists()
         )
-        self.assertEqual(response.data["task_uuid"], str(unregister_task.task_uuid))
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
-
-        complete_task(task_uuid=backup_task.task_uuid, organization_id=self.org.id)
-        reconcile_stuck_source_unregister_tasks()
-        unregister_task.refresh_from_db()
-        self.assertEqual(unregister_task.status, Task.Status.FAILED)
 
     def test_snapshot_delete_fails_unregister_without_deferred_task(self):
         snapshot_task = Task.objects.create(

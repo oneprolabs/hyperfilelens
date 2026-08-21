@@ -948,6 +948,42 @@ class RestoreApiTests(TestCase):
         self._assert_backup_already_running(manual_run, task)
         self.assertEqual(RestoreRecord.objects.count(), 0)
 
+    def test_restore_run_is_blocked_while_backup_is_stopping(self):
+        plan = RestorePlan.objects.create(
+            organization_id=self.org.id,
+            **self._plan_payload(),
+        )
+        task = self._active_backup_task(status_value=Task.Status.CANCELLED)
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.run",
+            correlation_type="protection.backup",
+            correlation_id=str(task.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            cancel_requested_at=timezone.now(),
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=2),
+        )
+
+        plan_run = self.client.post(
+            f"/api/v1/restore/plans/{plan.id}/run/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+        manual_run = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+
+        self._assert_backup_already_running(plan_run, task)
+        self._assert_backup_already_running(manual_run, task)
+        self.assertEqual(plan_run.data["data"]["meta"]["status"], "stopping")
+        self.assertEqual(manual_run.data["data"]["meta"]["status"], "stopping")
+        self.assertEqual(RestoreRecord.objects.count(), 0)
+
     def test_create_restore_plan_accepts_zero_sort_order_and_nested_source_path(self):
         payload = self._plan_payload()
         payload["source_path"] = "/data/subdir"

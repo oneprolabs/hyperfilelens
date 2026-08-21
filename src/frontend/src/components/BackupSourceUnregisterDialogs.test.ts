@@ -239,6 +239,34 @@ describe.each([
     wrapper.unmount()
   })
 
+  it('emits an active-backup conflict and refreshes preflight', async () => {
+    preflightDeleteBackupSources
+      .mockResolvedValueOnce(successfulPreflight)
+      .mockResolvedValueOnce({
+        risks: [],
+        blocking: [{ code: 'running_tasks', detail: 'Backup is running.' }],
+        strict_may_fail: true,
+        delete_disabled: true,
+      })
+    bulkDeleteBackupSources.mockRejectedValue({
+      status: 409,
+      message: 'Backup already running',
+      errorCode: 'BACKUP.ALREADY_RUNNING',
+      meta: { task_uuid: 'backup-task-uuid' },
+    })
+    const wrapper = mountDialog(component)
+    await flushPromises()
+
+    await wrapper.get('[data-test="strict-confirmation"]').trigger('click')
+    await wrapper.get('[data-test="confirm-delete"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('conflict')).toEqual([[{ sourceIds: ['agent:25'] }]])
+    expect(preflightDeleteBackupSources).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-test="preflight-disabled"]').text()).toBe('true')
+    wrapper.unmount()
+  })
+
   it('clears the Strict confirmation when switching to Force', async () => {
     preflightDeleteBackupSources.mockResolvedValue(successfulPreflight)
     const wrapper = mountDialog(component)
