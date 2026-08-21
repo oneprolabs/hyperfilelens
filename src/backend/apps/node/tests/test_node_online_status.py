@@ -30,8 +30,18 @@ class _FakeRedis:
     def ping(self) -> bool:
         return True
 
-    def set(self, key: str, value: str, ex: int | None = None) -> None:
+    def set(
+        self,
+        key: str,
+        value: str,
+        ex: int | None = None,
+        nx: bool = False,
+    ) -> bool:
+        del ex
+        if nx and key in self.data:
+            return False
         self.data[key] = value
+        return True
 
     def get(self, key: str) -> str | None:
         return self.data.get(key)
@@ -88,16 +98,16 @@ class AgentNodeOnlineStatusTests(TestCase):
         )
         self.redis = _FakeRedis()
         self._redis_patcher = self._patch_redis(self.redis)
-        self._redis_patcher.start()
+        self._get_redis = self._redis_patcher.start()
         self.addCleanup(self._redis_patcher.stop)
         redis_store._client = None
         from unittest.mock import patch
 
-        self._lifecycle_delay = patch(
-            "apps.node.tasks.lifecycle.advance_node_lifecycle_for_node.delay",
+        self._lifecycle_enqueue_patcher = patch(
+            "apps.node.tasks.lifecycle.advance_node_lifecycle_for_node.apply_async",
         )
-        self._lifecycle_delay.start()
-        self.addCleanup(self._lifecycle_delay.stop)
+        self._lifecycle_enqueue = self._lifecycle_enqueue_patcher.start()
+        self.addCleanup(self._lifecycle_enqueue_patcher.stop)
 
     @staticmethod
     def _patch_redis(fake: _FakeRedis):
@@ -163,6 +173,66 @@ class AgentNodeOnlineStatusTests(TestCase):
             effective_agent_node_status(self.node),
             Node.Availability.ONLINE,
         )
+
+    def test_flapping_agent_coalesces_lifecycle_wakeups(self):
+        """A connect/disconnect burst schedules one lifecycle wake-up per node."""
+        self._mark_ws_alive()
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+        on_agent_disconnected(node_id=self.node.id, session_id="session-a")
+
+        self._lifecycle_enqueue.assert_called_once_with(
+            kwargs={"node_id": self.node.id},
+            expires=node_conf.LIFECYCLE_ADVANCE_EXPIRE_SECONDS,
+        )
+        self.assertTrue(
+            self.redis.exists(
+                redis_store.lifecycle_advance_event_key(node_id=self.node.id)
+            )
+        )
+
+    def test_connect_reuses_one_redis_lookup_for_route_and_wakeup(self):
+        self._get_redis.reset_mock()
+
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+
+        self._get_redis.assert_called_once_with()
+
+    def test_redis_route_write_failure_does_not_break_connect_callback(self):
+        from redis.exceptions import ConnectionError as RedisConnectionError
+        from unittest.mock import patch
+
+        with patch.object(
+            self.redis,
+            "set",
+            side_effect=RedisConnectionError("redis unavailable"),
+        ):
+            on_agent_connected(node_id=self.node.id, session_id="session-a")
+
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
+        self._lifecycle_enqueue.assert_not_called()
+
+    def test_lifecycle_enqueue_failure_does_not_break_ws_callback(self):
+        self._lifecycle_enqueue.side_effect = RuntimeError("broker unavailable")
+
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
+        self.assertEqual(self._lifecycle_enqueue.call_count, 1)
+
+    def test_redis_outage_defers_lifecycle_wakeup_to_periodic_sweep(self):
+        from unittest.mock import patch
+
+        with patch(
+            "apps.node.services.internal.redis_store.get_redis",
+            return_value=None,
+        ):
+            claimed = redis_store.claim_lifecycle_advance_event(
+                node_id=self.node.id
+            )
+
+        self.assertFalse(claimed)
 
     def test_ws_disconnect_effective_offline_after_grace(self):
         self._mark_ws_alive()

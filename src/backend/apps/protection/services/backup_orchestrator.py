@@ -21,7 +21,6 @@ from apps.node.models import Node, NodeTask
 from apps.node.services.internal.node_registry import effective_agent_node_status
 from apps.node.services.interface import (
     cancel_agent_task,
-    deliver_agent_task,
     redeliver_pending_agent_task,
     run_agent_task_async,
 )
@@ -95,6 +94,24 @@ _DIRECTORY_IN_PROGRESS = frozenset(
     }
 )
 
+_DELIVERY_DIAGNOSTIC_MESSAGES = {
+    "AGENT_ACK_TIMEOUT": (
+        "The Agent did not acknowledge the backup command. Check Agent "
+        "connectivity and version, then retry."
+    ),
+    "AGENT_CONNECTION_UNSTABLE": (
+        "The Agent connection remained unstable. Check the Agent service, "
+        "host disk, and network, then retry."
+    ),
+    "AGENT_UNAVAILABLE": (
+        "The Agent is unavailable. Bring the Agent online, then retry."
+    ),
+    "AGENT_DELIVERY_FAILED": (
+        "The backup command could not be delivered. Check platform and Agent "
+        "connectivity, then retry."
+    ),
+}
+
 
 def _bt():
     from apps.protection.services import backup_task as backup_task_module
@@ -106,13 +123,29 @@ def _directory_in_progress(status: str) -> bool:
     return str(status or "").strip().lower() in _DIRECTORY_IN_PROGRESS
 
 
+def _redeliver_pending_node_task_after_commit(*, node_task: NodeTask) -> None:
+    """Resume persisted work only after the orchestration transaction commits."""
+    task_id = str(node_task.id)
+    transaction.on_commit(
+        lambda bound_task_id=task_id: redeliver_pending_agent_task(
+            task_id=bound_task_id
+        )
+    )
+
+
 def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
     bt = _bt()
     last_error = str(node_task.last_error or "").strip()
     lower = last_error.lower()
+    result = node_task.result if isinstance(node_task.result, dict) else {}
+    diagnostic_error = str(result.get("diagnostic_error_code") or "")
+    if (
+        node_task.status in {NodeTask.Status.FAILED, NodeTask.Status.TIMEOUT}
+        and diagnostic_error in _DELIVERY_DIAGNOSTIC_MESSAGES
+    ):
+        return diagnostic_error, _DELIVERY_DIAGNOSTIC_MESSAGES[diagnostic_error]
     if node_task.status == NodeTask.Status.TIMEOUT:
-        result = node_task.result if isinstance(node_task.result, dict) else {}
-        if str(result.get("diagnostic_error_code") or "") == "RESULT_ACK_TIMEOUT":
+        if diagnostic_error == "RESULT_ACK_TIMEOUT":
             return "RESULT_ACK_TIMEOUT", last_error or "Agent result acknowledgement timed out."
         return "WATCHDOG_STALL", last_error or "Agent task watchdog timed out."
     if node_task.status == NodeTask.Status.CANCELED:
@@ -126,7 +159,6 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
     if "signal" in lower or "sigkill" in lower or "exit 137" in lower or "exit 9" in lower:
         return "KOPIA_SIGNAL_KILLED", last_error or "Kopia process was killed."
     if node_task.status == NodeTask.Status.FAILED:
-        result = node_task.result if isinstance(node_task.result, dict) else {}
         structured_error = str(result.get("error_code") or "")
         if structured_error == "KOPIA_SNAPSHOT_RECONCILE_FAILED":
             return (
@@ -441,7 +473,7 @@ def _ensure_repository_server_payload(
                     }
                 )
             if node_task.status == NodeTask.Status.PENDING:
-                deliver_agent_task(task=node_task)
+                _redeliver_pending_node_task_after_commit(node_task=node_task)
             return None
 
     public_host, public_host_source = _repository_public_host(repository=repository, node=repository_node)
@@ -558,7 +590,7 @@ def _ensure_source_repository_probe(
                     }
                 )
             if node_task.status == NodeTask.Status.PENDING:
-                deliver_agent_task(task=node_task)
+                _redeliver_pending_node_task_after_commit(node_task=node_task)
             return False
 
     handle = run_agent_task_async(
@@ -605,7 +637,10 @@ def _mark_policy_prepare_failed(
     node_task: NodeTask,
 ) -> None:
     error_code, error_message = _node_task_error_code(node_task)
-    if error_code != "POLICY_APPLY_FAILED":
+    if (
+        error_code != "POLICY_APPLY_FAILED"
+        and error_code not in _DELIVERY_DIAGNOSTIC_MESSAGES
+    ):
         error_code = "POLICY_APPLY_FAILED"
     record_source_snapshot_directory_result(
         source_snapshot=source_snapshot,
@@ -667,7 +702,7 @@ def _ensure_directory_policy_prepared(
         return "prepared"
     if latest is not None and latest.status not in _NODE_TASK_TERMINAL:
         if latest.status == NodeTask.Status.PENDING:
-            deliver_agent_task(task=latest)
+            _redeliver_pending_node_task_after_commit(node_task=latest)
         return "waiting"
 
     max_attempts = 1 + max(0, protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_MAX_RETRIES)
@@ -901,7 +936,7 @@ def _dispatch_directory_backup(
             update_fields=["status", "node_task_id", "dispatched_at", "updated_at"]
         )
         if existing.status == NodeTask.Status.PENDING:
-            deliver_agent_task(task=existing)
+            _redeliver_pending_node_task_after_commit(node_task=existing)
         return
 
     ensure_snapshot_repository_locator(
@@ -1432,14 +1467,19 @@ def _observe_running_directory(
                     },
                 )
         else:
-            if not node_online and node_task.status in {
-                NodeTask.Status.FAILED,
-                NodeTask.Status.TIMEOUT,
-            }:
+            error_code, error_message = _node_task_error_code(node_task)
+            if (
+                error_code not in _DELIVERY_DIAGNOSTIC_MESSAGES
+                and not node_online
+                and node_task.status in {
+                    NodeTask.Status.FAILED,
+                    NodeTask.Status.TIMEOUT,
+                }
+            ):
                 error_code = "AGENT_OFFLINE"
-                error_message = str(node_task.last_error or "Agent went offline during backup.")
-            else:
-                error_code, error_message = _node_task_error_code(node_task)
+                error_message = str(
+                    node_task.last_error or "Agent went offline during backup."
+                )
             if (
                 error_code == "AGENT_RESTARTED"
                 and node_task.status != NodeTask.Status.CANCELED
@@ -1619,7 +1659,7 @@ def _observe_running_directory(
         pending_limit = protection_conf.PROTECTION_BACKUP_DISPATCH_PENDING_SECONDS
         if node_task.status == NodeTask.Status.PENDING and directory_row.dispatched_at:
             if (timezone.now() - directory_row.dispatched_at).total_seconds() > pending_limit:
-                redeliver_pending_agent_task(task_id=node_task.id)
+                _redeliver_pending_node_task_after_commit(node_task=node_task)
         if node_task.status == NodeTask.Status.RUNNING:
             _handle_directory_stall(
                 task=task,

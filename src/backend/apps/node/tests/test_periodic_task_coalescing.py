@@ -6,6 +6,7 @@ from unittest.mock import patch
 from unittest.mock import Mock
 
 from django.test import SimpleTestCase
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from apps.node import conf as node_conf
 from apps.node.services.internal import redis_store
@@ -144,7 +145,10 @@ class PeriodicTaskCoalescingTests(SimpleTestCase):
 
         self.assertGreaterEqual(redis.eval.call_count, 2)
 
-    @patch("apps.node.services.internal.redis_store._broker_url", return_value="redis://test")
+    @patch(
+        "apps.node.services.internal.redis_store._broker_url",
+        return_value="redis://test",
+    )
     @patch("apps.node.services.internal.redis_store.redis.Redis.from_url")
     def test_failed_ping_does_not_cache_unverified_client(
         self,
@@ -201,3 +205,16 @@ class PeriodicTaskCoalescingTests(SimpleTestCase):
         self.assertNotIn("two", result)
         redis.pipeline.assert_called_once_with(transaction=False)
         self.assertEqual(pipeline.get.call_count, 2)
+
+    @patch("apps.node.services.internal.redis_store.get_redis")
+    def test_task_info_projection_fails_open_during_redis_outage(
+        self, get_redis
+    ) -> None:
+        redis = Mock()
+        redis.set.side_effect = RedisConnectionError("redis unavailable")
+        redis.get.side_effect = RedisConnectionError("redis unavailable")
+        get_redis.return_value = redis
+
+        redis_store.set_task_info(task_id="task-1", data={"status": "running"})
+
+        self.assertIsNone(redis_store.get_task_info(task_id="task-1"))
