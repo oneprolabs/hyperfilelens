@@ -65,6 +65,7 @@ func runBundleInstallUnix(ctx context.Context, bundleRoot string, cfg Config) er
 	}
 	cmd := exec.CommandContext(ctx, script, args...)
 	cmd.Dir = bundleRoot
+	cmd.Env = append(os.Environ(), "HFL_INSTALLATION_MODE="+string(cfg.InstallationMode))
 	return runStreamingCommand(cmd, "Agent installation")
 }
 
@@ -85,6 +86,7 @@ func runBundleInstallWindows(ctx context.Context, bundleRoot string, cfg Config)
 	}
 	cmd := exec.CommandContext(ctx, "powershell.exe", args...)
 	cmd.Dir = bundleRoot
+	cmd.Env = append(os.Environ(), "HFL_INSTALLATION_MODE="+string(cfg.InstallationMode))
 	return runStreamingCommand(cmd, "Agent installation")
 }
 

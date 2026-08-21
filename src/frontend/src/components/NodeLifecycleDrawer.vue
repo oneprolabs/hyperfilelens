@@ -68,6 +68,7 @@ async function copyCommand(text: string) {
       :role="role"
       :os="os"
       :initial-tab="initialTab ?? 'upgrade'"
+      :installation-mode="node.installation_mode ?? 'system'"
       role-locked
       @update:os="os = $event"
       @copy="copyCommand"

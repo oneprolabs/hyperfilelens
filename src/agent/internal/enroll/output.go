@@ -14,6 +14,7 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 const (
@@ -439,16 +440,32 @@ func printEnrollmentSuccess(info SummaryInfo) {
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Useful commands")
 	if runtime.GOOS == "windows" {
-		fmt.Fprintln(os.Stdout, "  sc.exe query HyperFileLensAgent")
-		fmt.Fprintln(os.Stdout, "  Get-Service HyperFileLensAgent")
-		fmt.Fprintln(os.Stdout, `  & "$env:ProgramFiles\HyperFileLens\Agent\install.cmd" status`)
+		if vfs.UserInstallation() {
+			fmt.Fprintln(os.Stdout, "  Get-ScheduledTask -TaskName HyperFileLensAgent")
+			fmt.Fprintln(os.Stdout, `  & "$env:LOCALAPPDATA\Programs\HyperFileLens\Agent\install.cmd" status`)
+		} else {
+			fmt.Fprintln(os.Stdout, "  sc.exe query HyperFileLensAgent")
+			fmt.Fprintln(os.Stdout, "  Get-Service HyperFileLensAgent")
+			fmt.Fprintln(os.Stdout, `  & "$env:ProgramFiles\HyperFileLens\Agent\install.cmd" status`)
+		}
 	} else if runtime.GOOS == "darwin" {
-		fmt.Fprintln(os.Stdout, "  launchctl print system/com.hyperfilelens.agent")
-		fmt.Fprintln(os.Stdout, "  sudo /opt/hyperfilelens-agent/install.sh status")
+		if vfs.UserInstallation() {
+			fmt.Fprintln(os.Stdout, `  launchctl print "gui/$(id -u)/com.hyperfilelens.agent"`)
+			fmt.Fprintln(os.Stdout, `  "$HOME/Library/Application Support/HyperFileLens/Agent/bin/install.sh" status`)
+		} else {
+			fmt.Fprintln(os.Stdout, "  launchctl print system/com.hyperfilelens.agent")
+			fmt.Fprintln(os.Stdout, "  sudo /opt/hyperfilelens-agent/install.sh status")
+		}
 	} else {
-		fmt.Fprintln(os.Stdout, "  systemctl status hyperfilelens-agent")
-		fmt.Fprintln(os.Stdout, "  journalctl -u hyperfilelens-agent -f")
-		fmt.Fprintln(os.Stdout, "  sudo /opt/hyperfilelens-agent/install.sh status")
+		if vfs.UserInstallation() {
+			fmt.Fprintln(os.Stdout, "  systemctl --user status hyperfilelens-agent")
+			fmt.Fprintln(os.Stdout, "  journalctl --user -u hyperfilelens-agent -f")
+			fmt.Fprintln(os.Stdout, `  "$HOME/.local/lib/hyperfilelens-agent/install.sh" status`)
+		} else {
+			fmt.Fprintln(os.Stdout, "  systemctl status hyperfilelens-agent")
+			fmt.Fprintln(os.Stdout, "  journalctl -u hyperfilelens-agent -f")
+			fmt.Fprintln(os.Stdout, "  sudo /opt/hyperfilelens-agent/install.sh status")
+		}
 	}
 }
 

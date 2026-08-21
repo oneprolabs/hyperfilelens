@@ -8,7 +8,7 @@ from typing import Any
 from django.conf import settings
 from django.db import models
 
-from .base import NodeRole, OrganizationScopedModel
+from .base import NodeInstallationMode, NodeRole, OrganizationScopedModel
 
 
 class NodeToken(OrganizationScopedModel):
@@ -25,6 +25,13 @@ class NodeToken(OrganizationScopedModel):
     )
     token = models.CharField(max_length=64, unique=True, db_index=True)
     role = models.CharField(max_length=20, choices=NodeRole.choices)
+    installation_mode = models.CharField(
+        max_length=16,
+        choices=NodeInstallationMode.choices,
+        default=NodeInstallationMode.SYSTEM,
+        db_index=True,
+        help_text="Installation and runtime mode authorized by this token.",
+    )
     note = models.CharField(max_length=200, blank=True, default="")
     is_active = models.BooleanField(default=True, db_index=True)
     expires_at = models.DateTimeField(blank=True, null=True, db_index=True)
@@ -51,6 +58,15 @@ class NodeToken(OrganizationScopedModel):
             models.Index(
                 fields=["organization", "role", "is_active"],
                 name="node_tkn_org_role_act_idx",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(installation_mode=NodeInstallationMode.SYSTEM)
+                    | models.Q(role=NodeRole.AGENT)
+                ),
+                name="node_token_user_mode_agent_only",
             ),
         ]
 

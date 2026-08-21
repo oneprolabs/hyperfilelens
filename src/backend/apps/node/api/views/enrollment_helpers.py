@@ -138,10 +138,25 @@ def token_usable_for_bootstrap(
     NodeCredential is intentionally excluded: bootstrap is install-link scoped.
     """
     return (
-        _resolve_enrollment_artifact_authorization(
+        resolve_bootstrap_enrollment_token(
             org=org,
             token=token,
             role=role,
         )
         is not None
     )
+
+
+def resolve_bootstrap_enrollment_token(
+    *,
+    org: Organization,
+    token: str,
+    role: str,
+) -> NodeToken | None:
+    """Resolve the token that authoritatively defines bootstrap settings."""
+    authorization = _resolve_enrollment_artifact_authorization(
+        org=org,
+        token=token,
+        role=role,
+    )
+    return authorization.token if authorization is not None else None

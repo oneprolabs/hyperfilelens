@@ -66,6 +66,7 @@ func DumpText(cfg *model.AgentConfig) (string, error) {
 	fmt.Fprintf(&b, "org_key=%q\n", cfg.OrgKey)
 	fmt.Fprintf(&b, "node_id=%q\n", cfg.NodeID)
 	fmt.Fprintf(&b, "installation_id=%q\n", cfg.InstallationID)
+	fmt.Fprintf(&b, "installation_mode=%q\n", cfg.InstallationMode)
 	fmt.Fprintf(&b, "node_token=%q\n", tok)
 	return b.String(), nil
 }

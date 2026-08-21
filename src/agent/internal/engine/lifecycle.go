@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/install"
 	"hyperfilelens/agent/internal/platform/release"
 	"hyperfilelens/agent/internal/platform/tlsclient"
@@ -33,7 +34,7 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 	if logDir == "" {
 		logDir = vfs.AgentLogDir(dataDir)
 	}
-	installDir := vfs.DefaultInstallDir()
+	installDir := vfs.InstallDirForMode(cfg.InstallationMode)
 	upgradeLog := install.UpgradeLogPath(logDir)
 
 	stagedArchive, err := install.StageUpgradeArchive(dataDir, archivePath)
@@ -46,7 +47,12 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 		"mode":        "local_detached",
 		"upgrade_log": upgradeLog,
 	})
-	if err := install.ScheduleDetachedUpgrade(installDir, stagedArchive, logDir); err != nil {
+	if err := install.ScheduleDetachedUpgrade(
+		installDir,
+		stagedArchive,
+		logDir,
+		cfg.InstallationMode == model.InstallationModeUser,
+	); err != nil {
 		slog.Warn("detached upgrade schedule failed", "err", err, "upgrade_log", upgradeLog)
 		_ = os.RemoveAll(filepath.Dir(stagedArchive))
 		return "failed", nil, err.Error()
@@ -76,7 +82,7 @@ func (e *Engine) runAgentUninstall(ctx context.Context, rep ReporterSink, taskID
 	if dataDir == "" {
 		dataDir = vfs.DefaultAgentDataDir()
 	}
-	installDir := vfs.DefaultInstallDir()
+	installDir := vfs.InstallDirForMode(cfg.InstallationMode)
 	logDir := strings.TrimSpace(cfg.LogDir)
 	if logDir == "" {
 		logDir = vfs.AgentLogDir(dataDir)
@@ -109,6 +115,7 @@ func (e *Engine) runAgentUninstall(ctx context.Context, rep ReporterSink, taskID
 		dataDir,
 		logDir,
 		keepData,
+		cfg.InstallationMode == model.InstallationModeUser,
 		completion,
 	); err != nil {
 		slog.Warn("detached uninstall schedule failed", "err", err, "uninstall_log", uninstallLog)

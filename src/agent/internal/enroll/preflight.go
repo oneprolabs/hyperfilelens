@@ -35,14 +35,15 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 		ArchOK:   supportedRuntimeArch(),
 		Existing: DetectInstallState(),
 	}
+	conflictingInstallPath := ConflictingInstallPath()
 
-	if err := requireAdmin(); err != nil {
+	if err := privilegeConstraint(cfg.InstallationMode); err != nil {
 		report.PrivilegesOK = false
 	} else {
 		report.PrivilegesOK = true
 	}
 
-	report.ServiceMgr = detectServiceManager(ctx)
+	report.ServiceMgr = detectLifecycleManager(ctx, cfg.InstallationMode)
 	persistedInstallationID := readEnvKey(EnvFilePath(), "HFL_INSTALLATION_ID")
 	installationID, identityErr := installationID(ctx, cfg)
 	if identityErr == nil {
@@ -58,7 +59,13 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 	if err := roleConstraints(cfg.NodeRole); err != nil {
 		report.RoleOK = false
 		report.RoleError = err.Error()
-	} else if err := serviceManagerConstraint(report.ServiceMgr); err != nil {
+	} else if err := lifecycleManagerConstraint(
+		report.ServiceMgr,
+		cfg.InstallationMode,
+	); err != nil {
+		report.RoleOK = false
+		report.RoleError = err.Error()
+	} else if err := userSessionLifecycleConstraint(ctx, cfg.InstallationMode); err != nil {
 		report.RoleOK = false
 		report.RoleError = err.Error()
 	} else {
@@ -66,9 +73,28 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 	}
 
 	if report.PrivilegesOK {
-		logOKDetail("Running with administrator privileges", adminPrivilegeDetail())
+		if cfg.InstallationMode == model.InstallationModeUser {
+			logOKDetail("Running as the current user", currentUserPrivilegeDetail())
+		} else {
+			logOKDetail("Running with administrator privileges", adminPrivilegeDetail())
+		}
 	} else {
-		failures.add("Administrator privileges are required", "re-run with sudo or as Administrator", 1)
+		if cfg.InstallationMode == model.InstallationModeUser {
+			failures.add(
+				"User-level installation must not be elevated",
+				"re-run the command as the current user without sudo or UAC elevation",
+				1,
+			)
+		} else {
+			failures.add("Administrator privileges are required", "re-run with sudo or as Administrator", 1)
+		}
+	}
+	if conflictingInstallPath != "" {
+		failures.add(
+			"A different Agent installation mode already exists",
+			conflictingInstallPath+"; uninstall it before changing installation mode",
+			1,
+		)
 	}
 
 	if report.ArchOK {
@@ -84,7 +110,7 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 	}
 
 	switch report.ServiceMgr {
-	case "systemd", "launchd", "windows-service":
+	case "systemd", "launchd", "windows-service", "systemd-user", "launch-agent", "windows-task":
 		logOKDetail("Service manager is available", report.ServiceMgr)
 	case "none":
 		logWarnDetail("No service manager was detected", "the agent can install but auto-start may be unavailable")
@@ -199,6 +225,13 @@ func adminPrivilegeDetail() string {
 	return "root"
 }
 
+func currentUserPrivilegeDetail() string {
+	if user, err := os.UserHomeDir(); err == nil && user != "" {
+		return user
+	}
+	return "non-elevated session"
+}
+
 func formatExistingInstallDetail(state InstallState) string {
 	parts := []string{}
 	if state.NodeID != "" {
@@ -289,6 +322,32 @@ func detectServiceManager(ctx context.Context) string {
 }
 
 func serviceManagerConstraint(manager string) error {
+	return lifecycleManagerConstraint(manager, model.InstallationModeSystem)
+}
+
+func lifecycleManagerConstraint(
+	manager string,
+	mode model.InstallationMode,
+) error {
+	if mode == model.InstallationModeUser {
+		switch runtime.GOOS {
+		case "linux":
+			if manager != "systemd-user" {
+				return fmt.Errorf("a working systemd user service manager is required for user-level installation")
+			}
+		case "darwin":
+			if manager != "launch-agent" {
+				return fmt.Errorf("a launchd user session is required for user-level installation on macOS")
+			}
+		case "windows":
+			if manager != "windows-task" {
+				return fmt.Errorf("Windows Task Scheduler is required for user-level installation")
+			}
+		default:
+			return fmt.Errorf("operating system %s is not supported", runtime.GOOS)
+		}
+		return nil
+	}
 	switch runtime.GOOS {
 	case "linux":
 		if manager != "systemd" {
@@ -304,6 +363,90 @@ func serviceManagerConstraint(manager string) error {
 		}
 	default:
 		return fmt.Errorf("operating system %s is not supported", runtime.GOOS)
+	}
+	return nil
+}
+
+func detectLifecycleManager(
+	ctx context.Context,
+	mode model.InstallationMode,
+) string {
+	if mode != model.InstallationModeUser {
+		return detectServiceManager(ctx)
+	}
+	switch runtime.GOOS {
+	case "linux":
+		if _, err := exec.LookPath("systemctl"); err != nil {
+			return "none"
+		}
+		if exec.CommandContext(ctx, "systemctl", "--user", "show-environment").Run() == nil {
+			return "systemd-user"
+		}
+		return "none"
+	case "darwin":
+		if _, err := exec.LookPath("launchctl"); err == nil &&
+			exec.CommandContext(
+				ctx,
+				"launchctl",
+				"print",
+				fmt.Sprintf("gui/%d", os.Geteuid()),
+			).Run() == nil {
+			return "launch-agent"
+		}
+		return "none"
+	case "windows":
+		if _, err := exec.LookPath("schtasks.exe"); err == nil {
+			return "windows-task"
+		}
+		return "none"
+	default:
+		return "unknown"
+	}
+}
+
+func privilegeConstraint(mode model.InstallationMode) error {
+	if mode != model.InstallationModeUser {
+		return requireAdmin()
+	}
+	if runtime.GOOS == "windows" {
+		if requireWindowsAdmin() == nil {
+			return fmt.Errorf("user-level installation must run without UAC elevation")
+		}
+		return nil
+	}
+	if os.Geteuid() == 0 {
+		return fmt.Errorf("user-level installation must run without sudo")
+	}
+	return nil
+}
+
+func userSessionLifecycleConstraint(
+	ctx context.Context,
+	mode model.InstallationMode,
+) error {
+	if mode != model.InstallationModeUser || runtime.GOOS != "linux" {
+		return nil
+	}
+	if _, err := exec.LookPath("loginctl"); err != nil {
+		return fmt.Errorf(
+			"loginctl is required to verify that current-user mode stops after sign-out",
+		)
+	}
+	out, err := exec.CommandContext(
+		ctx,
+		"loginctl",
+		"show-user",
+		strconv.Itoa(os.Geteuid()),
+		"--property=Linger",
+		"--value",
+	).Output()
+	if err != nil {
+		return fmt.Errorf("unable to verify the current user's systemd sign-out behavior")
+	}
+	if strings.EqualFold(strings.TrimSpace(string(out)), "yes") {
+		return fmt.Errorf(
+			"current-user mode must pause after sign-out, but systemd user lingering is enabled; disable lingering or choose system mode",
+		)
 	}
 	return nil
 }

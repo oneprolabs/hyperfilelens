@@ -3,6 +3,7 @@ package enroll
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"hyperfilelens/agent/internal/model"
@@ -10,14 +11,15 @@ import (
 
 // Config holds enrollment credentials from HFL_* environment variables.
 type Config struct {
-	OrgKey         string
-	NodeRole       model.Role
-	NodeToken      string
-	InstallationID string
-	GatewayScope   string
-	APIBase        string
-	WSSURL         string
-	InsecureTLS    bool
+	OrgKey           string
+	NodeRole         model.Role
+	NodeToken        string
+	InstallationID   string
+	InstallationMode model.InstallationMode
+	GatewayScope     string
+	APIBase          string
+	WSSURL           string
+	InsecureTLS      bool
 }
 
 // LoadConfigFromEnv reads enrollment settings injected by bootstrap stubs.
@@ -30,15 +32,27 @@ func LoadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	installationModeRaw := strings.TrimSpace(os.Getenv("HFL_INSTALLATION_MODE"))
+	if installationModeRaw == "" {
+		installationModeRaw = string(model.InstallationModeSystem)
+	}
+	installationMode, err := model.ParseInstallationMode(installationModeRaw)
+	if err != nil {
+		return Config{}, err
+	}
+	if installationMode == model.InstallationModeUser && role != model.RoleAgent {
+		return Config{}, fmt.Errorf("user-level installation is only available for Source Agent")
+	}
 	cfg := Config{
-		OrgKey:         strings.TrimSpace(os.Getenv("HFL_ORG_KEY")),
-		NodeRole:       role,
-		NodeToken:      firstNonEmptyValue(os.Getenv("HFL_NODE_CREDENTIAL"), os.Getenv("HFL_NODE_TOKEN")),
-		InstallationID: strings.TrimSpace(os.Getenv("HFL_INSTALLATION_ID")),
-		GatewayScope:   strings.TrimSpace(os.Getenv("HFL_GATEWAY_SCOPE")),
-		APIBase:        strings.TrimRight(strings.TrimSpace(os.Getenv("HFL_API_BASE")), "/"),
-		WSSURL:         strings.TrimSpace(os.Getenv("HFL_WSS_URL")),
-		InsecureTLS:    os.Getenv("HFL_INSECURE_TLS") != "0",
+		OrgKey:           strings.TrimSpace(os.Getenv("HFL_ORG_KEY")),
+		NodeRole:         role,
+		NodeToken:        firstNonEmptyValue(os.Getenv("HFL_NODE_CREDENTIAL"), os.Getenv("HFL_NODE_TOKEN")),
+		InstallationID:   strings.TrimSpace(os.Getenv("HFL_INSTALLATION_ID")),
+		InstallationMode: installationMode,
+		GatewayScope:     strings.TrimSpace(os.Getenv("HFL_GATEWAY_SCOPE")),
+		APIBase:          strings.TrimRight(strings.TrimSpace(os.Getenv("HFL_API_BASE")), "/"),
+		WSSURL:           strings.TrimSpace(os.Getenv("HFL_WSS_URL")),
+		InsecureTLS:      os.Getenv("HFL_INSECURE_TLS") != "0",
 	}
 	if cfg.OrgKey == "" || cfg.NodeToken == "" || cfg.APIBase == "" {
 		return Config{}, fmt.Errorf("HFL_ORG_KEY, HFL_NODE_TOKEN, and HFL_API_BASE are required")
@@ -71,6 +85,7 @@ func LoadInstalledCommandEnv() {
 		"HFL_NODE_CREDENTIAL",
 		"HFL_NODE_TOKEN",
 		"HFL_INSTALLATION_ID",
+		"HFL_INSTALLATION_MODE",
 		"HFL_INSECURE_TLS",
 		"HFL_GATEWAY_SCOPE",
 	} {
@@ -87,25 +102,19 @@ func LoadInstalledCommandEnv() {
 func (c Config) AgentConfig() *model.AgentConfig {
 	envPath := EnvFilePath()
 	return &model.AgentConfig{
-		WSSURL:         c.WSSURL,
-		APIBaseURL:     c.APIBase,
-		OrgKey:         c.OrgKey,
-		NodeToken:      c.NodeToken,
-		InstallationID: c.InstallationID,
-		NodeID:         ReadNodeID(envPath),
-		Role:           c.NodeRole,
-		DataDir:        dataDirForAgent(),
+		WSSURL:           c.WSSURL,
+		APIBaseURL:       c.APIBase,
+		OrgKey:           c.OrgKey,
+		NodeToken:        c.NodeToken,
+		InstallationID:   c.InstallationID,
+		InstallationMode: c.InstallationMode,
+		NodeID:           ReadNodeID(envPath),
+		Role:             c.NodeRole,
+		DataDir:          dataDirForAgent(),
 	}
 }
 
 // EnvFilePath returns the platform default agent.env path.
 func EnvFilePath() string {
-	if os.Getenv("ProgramFiles") != "" || os.Getenv("OS") == "Windows_NT" {
-		pd := os.Getenv("ProgramData")
-		if pd == "" {
-			pd = `C:\ProgramData`
-		}
-		return pd + `\HyperFileLens\Agent\agent.env`
-	}
-	return dataDirForAgent() + "/agent.env"
+	return filepath.Join(dataDirForAgent(), "agent.env")
 }

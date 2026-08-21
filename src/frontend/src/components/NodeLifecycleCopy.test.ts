@@ -11,10 +11,27 @@ describe('Node lifecycle copy', () => {
     const locale = source('src/locales/en.ts')
 
     expect(locale).toContain("installCommandStep: 'Run the Install Command'")
+    expect(locale).toContain("installationModeStep: 'Choose Agent Run Mode'")
+    expect(locale).toContain("installationModeSystem: 'System Service'")
+    expect(locale).toContain("installationModeUser: 'Current User'")
     expect(locale).toContain("generateInstallCommand: 'Generate install command'")
     expect(locale).toContain('Copy the command and run it in a shell on the target host')
     expect(locale).toContain("installFlowDownload: 'Downloads the small installer and checks the target host'")
     expect(locale).toContain("installFlowInstall: 'Downloads the required components and installs the Agent'")
+  })
+
+  it('presents operating system, run mode, and command as separate install steps', () => {
+    const wizard = source('src/components/NodeLifecycleWizard.vue')
+    const locale = source('src/locales/en.ts')
+
+    expect(wizard).toMatch(
+      /fullscreen-form-card[\s\S]*?nodeLifecycle\.osStep[\s\S]*?<\/div>\s*\n\s*<div[\s\S]*?fullscreen-form-card[\s\S]*?nodeLifecycle\.installationModeStep[\s\S]*?<\/div>\s*\n\s*<div class="fullscreen-form-card">[\s\S]*?nodeLifecycle\.installCommandStep/,
+    )
+    expect(locale).toContain('Runs continuously after sign-out')
+    expect(locale).toContain('pauses after sign-out')
+    expect(locale).toContain('provides continuous monitoring')
+    expect(locale).toContain('provides monitoring while that user is signed in')
+    expect(locale).toContain('grant HyperFileLens Agent Full Disk Access in System Settings')
   })
 
   it('uses accurate role-specific platform and storage guidance', () => {

@@ -90,6 +90,7 @@ async function copyCommand(command: string) {
       :gateway-scope="gatewayScope"
       :initial-tab="initialTab"
       :initial-service-action="initialServiceAction"
+      :installation-mode="node.installation_mode ?? 'system'"
       @copy="copyCommand"
     />
   </div>

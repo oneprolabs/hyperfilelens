@@ -125,6 +125,7 @@ export type BackupSelectableSource = {
   protocol?: 'nfs' | 'smb'
   mount_options?: string
   platform?: 'linux' | 'windows' | 'macos'
+  installation_mode?: 'system' | 'user'
   connection_uri?: string
   bound_node_id?: number | null
   mount_status?: string

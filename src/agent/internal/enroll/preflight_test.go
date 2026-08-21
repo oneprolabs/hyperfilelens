@@ -1,6 +1,9 @@
 package enroll
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -30,6 +33,32 @@ func TestServiceManagerConstraint(t *testing.T) {
 		if err := serviceManagerConstraint("windows-service"); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestUserLifecycleManagerConstraint(t *testing.T) {
+	manager := map[string]string{
+		"linux":   "systemd-user",
+		"darwin":  "launch-agent",
+		"windows": "windows-task",
+	}[runtime.GOOS]
+	if manager == "" {
+		t.Skip("unsupported test platform")
+	}
+	if err := lifecycleManagerConstraint(manager, model.InstallationModeUser); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycleManagerConstraint("none", model.InstallationModeUser); err == nil {
+		t.Fatal("expected missing user lifecycle manager to be rejected")
+	}
+}
+
+func TestUserSessionLifecycleConstraintDoesNotAffectSystemMode(t *testing.T) {
+	if err := userSessionLifecycleConstraint(
+		context.Background(),
+		model.InstallationModeSystem,
+	); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -68,5 +97,26 @@ func TestDetectInstallStateNotInstalled(t *testing.T) {
 func TestReadEnvKeyMissing(t *testing.T) {
 	if got := readEnvKey("/nonexistent/agent.env", "HFL_ORG_KEY"); got != "" {
 		t.Fatalf("expected empty, got %q", got)
+	}
+}
+
+func TestInstallMarkersDetectPartialInstallation(t *testing.T) {
+	dir := t.TempDir()
+	if installMarkersPresent(dir) {
+		t.Fatal("empty installation directory should not be treated as installed")
+	}
+	for _, name := range []string{"install.sh", "install.ps1", "install.cmd", "MANIFEST.json"} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, name)
+			if err := os.WriteFile(path, []byte("partial install"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if !installMarkersPresent(dir) {
+				t.Fatalf("partial installation marker %s was not detected", name)
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

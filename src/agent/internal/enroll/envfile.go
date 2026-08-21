@@ -12,7 +12,6 @@ import (
 	agentconfig "hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/platform/atomicfile"
 	"hyperfilelens/agent/internal/platform/install"
-	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 var managedSentryEnvKeys = []string{
@@ -192,14 +191,7 @@ func (snapshot enrollmentEnvSnapshot) restore() error {
 // HFL_NODE_CREDENTIAL is never replaced while the Agent may still be running.
 func WriteEnrollmentEnv(cfg Config) error {
 	envPath := EnvFilePath()
-	dataDir := vfs.UnixDataDir()
-	if runtime.GOOS == "windows" {
-		pd := os.Getenv("ProgramData")
-		if pd == "" {
-			pd = `C:\ProgramData`
-		}
-		dataDir = filepath.Join(pd, "HyperFileLens", "Agent")
-	}
+	dataDir := dataDirForAgent()
 	kopiaPath := bundledKopiaPath()
 	insecure := "1"
 	if !cfg.InsecureTLS {
@@ -212,6 +204,7 @@ func WriteEnrollmentEnv(cfg Config) error {
 		"HFL_NODE_TOKEN=" + cfg.NodeToken,
 		"HFL_DATA_DIR=" + dataDir,
 		"HFL_NODE_ROLE=" + string(cfg.NodeRole),
+		"HFL_INSTALLATION_MODE=" + string(cfg.InstallationMode),
 		"HFL_KOPIA_PATH=" + kopiaPath,
 		"HFL_INSECURE_TLS=" + insecure,
 	}
@@ -239,27 +232,21 @@ func syncEnrollmentConsoleSettings(cfg Config) error {
 }
 
 func syncEnrollmentConsoleSettingsAt(envPath string, cfg Config) error {
-	dataDir := vfs.UnixDataDir()
-	if runtime.GOOS == "windows" {
-		pd := os.Getenv("ProgramData")
-		if pd == "" {
-			pd = `C:\ProgramData`
-		}
-		dataDir = filepath.Join(pd, "HyperFileLens", "Agent")
-	}
+	dataDir := dataDirForAgent()
 	kopiaPath := bundledKopiaPath()
 	insecure := "1"
 	if !cfg.InsecureTLS {
 		insecure = "0"
 	}
 	updates := map[string]string{
-		"HFL_WSS_URL":      cfg.WSSURL,
-		"HFL_API_BASE":     cfg.APIBase,
-		"HFL_ORG_KEY":      cfg.OrgKey,
-		"HFL_DATA_DIR":     dataDir,
-		"HFL_NODE_ROLE":    string(cfg.NodeRole),
-		"HFL_KOPIA_PATH":   kopiaPath,
-		"HFL_INSECURE_TLS": insecure,
+		"HFL_WSS_URL":           cfg.WSSURL,
+		"HFL_API_BASE":          cfg.APIBase,
+		"HFL_ORG_KEY":           cfg.OrgKey,
+		"HFL_DATA_DIR":          dataDir,
+		"HFL_NODE_ROLE":         string(cfg.NodeRole),
+		"HFL_INSTALLATION_MODE": string(cfg.InstallationMode),
+		"HFL_KOPIA_PATH":        kopiaPath,
+		"HFL_INSECURE_TLS":      insecure,
 	}
 	if cfg.InstallationID != "" {
 		updates["HFL_INSTALLATION_ID"] = cfg.InstallationID

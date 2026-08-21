@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
+from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory
@@ -20,8 +21,9 @@ from apps.node.api.views.artifact_release import (
     _load_release_token,
 )
 from apps.node.api.views.enrollment_helpers import token_usable_for_artifact_download
-from apps.node.models import Node, NodeToken
+from apps.node.models import Node, NodeInstallationMode, NodeToken
 from apps.node.models.base import NodeRole
+from apps.node.services.internal.enrollment_auth import validate_node_credential
 
 
 class EnrollmentTokenReuseTests(TestCase):
@@ -36,7 +38,13 @@ class EnrollmentTokenReuseTests(TestCase):
         self.factory = APIRequestFactory()
 
     def _heartbeat(
-        self, *, name: str, token: str | None = None, installation_id: str = ""
+        self,
+        *,
+        name: str,
+        token: str | None = None,
+        installation_id: str = "",
+        installation_mode: str = NodeInstallationMode.SYSTEM,
+        host_fingerprint: str = "",
     ):
         request = self.factory.post(
             "/api/v1/node/nodes/heartbeat/",
@@ -46,6 +54,8 @@ class EnrollmentTokenReuseTests(TestCase):
                 "version": "1.0.0",
                 "os_name": "linux",
                 "installation_id": installation_id,
+                "installation_mode": installation_mode,
+                "host_fingerprint": host_fingerprint,
             },
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
@@ -63,6 +73,74 @@ class EnrollmentTokenReuseTests(TestCase):
         self.assertTrue(self.token_row.is_active)
         self.assertIsNotNone(self.token_row.used_at)
         self.assertEqual(Node.objects.filter(organization=self.org).count(), 2)
+
+    def test_host_fingerprint_prevents_a_second_installation(self):
+        fingerprint = "a" * 64
+        first = self._heartbeat(
+            name="host-a",
+            installation_id="hfli_host_a",
+            host_fingerprint=fingerprint,
+        )
+        self.assertEqual(first.status_code, 200)
+
+        self.token_row.installation_mode = NodeInstallationMode.USER
+        self.token_row.save(update_fields=["installation_mode"])
+        second = self._heartbeat(
+            name="host-a-user",
+            installation_id="hfli_host_a_user",
+            installation_mode=NodeInstallationMode.USER,
+            host_fingerprint=fingerprint,
+        )
+
+        self.assertEqual(second.status_code, 409)
+        self.assertIn("remove its console record", second.data["error"])
+        self.assertEqual(Node.objects.filter(organization=self.org).count(), 1)
+
+    def test_offline_host_must_be_uninstalled_before_changing_mode(self):
+        fingerprint = "c" * 64
+        first = self._heartbeat(
+            name="host-a",
+            installation_id="hfli_host_a",
+            host_fingerprint=fingerprint,
+        )
+        self.assertEqual(first.status_code, 200)
+        first_credential = first.data["node_credential"]
+        node = Node.objects.get(organization=self.org)
+        node.availability = Node.Availability.OFFLINE
+        node.save(update_fields=["availability", "updated_at"])
+
+        self.token_row.installation_mode = NodeInstallationMode.USER
+        self.token_row.save(update_fields=["installation_mode"])
+        replacement = self._heartbeat(
+            name="host-a-user",
+            installation_id="hfli_host_a_user",
+            installation_mode=NodeInstallationMode.USER,
+            host_fingerprint=fingerprint,
+        )
+
+        self.assertEqual(replacement.status_code, 409)
+        self.assertEqual(Node.objects.filter(organization=self.org).count(), 1)
+        node.refresh_from_db()
+        self.assertEqual(node.installation_id, "hfli_host_a")
+        self.assertEqual(node.installation_mode, NodeInstallationMode.SYSTEM)
+        self.assertTrue(validate_node_credential(node, first_credential, touch=False))
+
+    def test_database_rejects_duplicate_active_host_fingerprint(self):
+        fingerprint = "b" * 64
+        Node.objects.create(
+            organization=self.org,
+            name="host-a",
+            role=NodeRole.AGENT,
+            host_fingerprint=fingerprint,
+        )
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Node.objects.create(
+                organization=self.org,
+                name="host-b",
+                role=NodeRole.AGENT,
+                host_fingerprint=fingerprint,
+            )
 
     @mock.patch(
         "apps.node.api.views.node.sync_agent_source_host",
@@ -121,6 +199,115 @@ class EnrollmentTokenReuseTests(TestCase):
         self.assertIsNotNone(row.expires_at)
         self.assertGreater(row.expires_at, timezone.now())
         self.assertEqual(row.enrollment_mode, NodeToken.EnrollmentMode.CURRENT)
+        self.assertEqual(row.installation_mode, NodeInstallationMode.SYSTEM)
+
+    def test_create_serializer_accepts_user_level_source_agent(self):
+        ser = NodeTokenCreateSerializer(
+            data={
+                "role": NodeRole.AGENT,
+                "installation_mode": NodeInstallationMode.USER,
+            }
+        )
+        self.assertTrue(ser.is_valid(), ser.errors)
+
+        row = ser.save(organization=self.org)
+
+        self.assertEqual(row.installation_mode, NodeInstallationMode.USER)
+
+    def test_create_serializer_rejects_user_level_infrastructure_role(self):
+        for role in (NodeRole.PROXY, NodeRole.GATEWAY):
+            with self.subTest(role=role):
+                ser = NodeTokenCreateSerializer(
+                    data={
+                        "role": role,
+                        "installation_mode": NodeInstallationMode.USER,
+                    }
+                )
+                self.assertFalse(ser.is_valid())
+                self.assertIn("installation_mode", ser.errors)
+
+    def test_database_rejects_user_level_infrastructure_role(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            NodeToken.objects.create(
+                organization=self.org,
+                role=NodeRole.PROXY,
+                installation_mode=NodeInstallationMode.USER,
+            )
+
+    def test_heartbeat_copies_installation_mode_from_token(self):
+        self.token_row.installation_mode = NodeInstallationMode.USER
+        self.token_row.save(update_fields=["installation_mode"])
+        request = self.factory.post(
+            "/api/v1/node/nodes/heartbeat/",
+            {
+                "role": "agent",
+                "installation_mode": "user",
+                "name": "user-host",
+                "installation_id": "hfli_user_host",
+            },
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+            HTTP_X_NODE_TOKEN=self.token_row.token,
+        )
+
+        response = NodeViewSet.as_view({"post": "heartbeat"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        node = Node.objects.get(organization=self.org)
+        self.assertEqual(node.installation_mode, NodeInstallationMode.USER)
+
+    def test_reenrollment_cannot_change_existing_installation_mode(self):
+        node = Node.objects.create(
+            organization=self.org,
+            name="fixed-system-host",
+            role=NodeRole.AGENT,
+            installation_mode=NodeInstallationMode.SYSTEM,
+            installation_id="hfli_fixed_mode",
+        )
+        self.token_row.installation_mode = NodeInstallationMode.USER
+        self.token_row.save(update_fields=["installation_mode"])
+        request = self.factory.post(
+            "/api/v1/node/nodes/heartbeat/",
+            {
+                "role": "agent",
+                "installation_mode": "user",
+                "name": "fixed-system-host",
+                "installation_id": node.installation_id,
+            },
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+            HTTP_X_NODE_TOKEN=self.token_row.token,
+        )
+
+        response = NodeViewSet.as_view({"post": "heartbeat"})(request)
+
+        self.assertEqual(response.status_code, 409)
+        node.refresh_from_db()
+        self.assertEqual(node.installation_mode, NodeInstallationMode.SYSTEM)
+
+    def test_existing_node_authentication_precedes_mode_conflict(self):
+        node = Node.objects.create(
+            organization=self.org,
+            name="authenticated-mode-check",
+            role=NodeRole.AGENT,
+            installation_mode=NodeInstallationMode.SYSTEM,
+        )
+        request = self.factory.post(
+            "/api/v1/node/nodes/heartbeat/",
+            {
+                "node_id": node.id,
+                "role": NodeRole.AGENT,
+                "installation_mode": NodeInstallationMode.USER,
+            },
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+            HTTP_X_NODE_TOKEN="invalid-node-credential",
+        )
+
+        response = NodeViewSet.as_view({"post": "heartbeat"})(request)
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.data["error"], "invalid node credential")
 
     def test_create_serializer_rejects_unbounded_expiry(self):
         ser = NodeTokenCreateSerializer(
@@ -374,4 +561,3 @@ class EnrollmentTokenReuseTests(TestCase):
         response = AgentReleaseView.as_view()(request)
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.data["error"], "invalid enrollment token")
-

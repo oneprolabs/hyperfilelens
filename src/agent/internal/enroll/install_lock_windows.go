@@ -7,10 +7,16 @@ import (
 	"errors"
 
 	"golang.org/x/sys/windows"
+
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 func acquireInstallLock(_ context.Context) (func(), error) {
-	name, err := windows.UTF16PtrFromString(`Global\HyperFileLensInstaller`)
+	mutexName := `Global\HyperFileLensInstaller`
+	if vfs.UserInstallation() {
+		mutexName = `Local\HyperFileLensInstaller`
+	}
+	name, err := windows.UTF16PtrFromString(mutexName)
 	if err != nil {
 		return nil, err
 	}

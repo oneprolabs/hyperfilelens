@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,20 +28,41 @@ func BootstrapAgentHome() error {
 }
 
 // RuntimeFromEnv builds a config snapshot from HFL_* environment variables.
-func RuntimeFromEnv() *model.AgentConfig {
+func RuntimeFromEnv() (*model.AgentConfig, error) {
+	installationMode, err := installationModeFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	role, err := roleFromEnv()
+	if err != nil {
+		return nil, err
+	}
 	return &model.AgentConfig{
 		WSSURL:                    strings.TrimSpace(os.Getenv("HFL_WSS_URL")),
 		APIBaseURL:                firstNonEmpty(strings.TrimSpace(os.Getenv("HFL_API_BASE")), strings.TrimSpace(os.Getenv("HFL_CONTROL_PLANE_API"))),
 		OrgKey:                    strings.TrimSpace(os.Getenv("HFL_ORG_KEY")),
 		NodeID:                    strings.TrimSpace(os.Getenv("HFL_NODE_ID")),
 		InstallationID:            strings.TrimSpace(os.Getenv("HFL_INSTALLATION_ID")),
+		InstallationMode:          installationMode,
 		NodeToken:                 firstNonEmpty(strings.TrimSpace(os.Getenv("HFL_NODE_CREDENTIAL")), strings.TrimSpace(os.Getenv("HFL_NODE_TOKEN"))),
 		DataDir:                   strings.TrimSpace(os.Getenv("HFL_DATA_DIR")),
 		LogDir:                    strings.TrimSpace(os.Getenv("HFL_LOG_DIR")),
 		KopiaPath:                 strings.TrimSpace(os.Getenv("HFL_KOPIA_PATH")),
 		BackupSnapshotConcurrency: positiveEnvInt("HFL_BACKUP_SNAPSHOT_CONCURRENCY"),
-		Role:                      roleFromEnv(),
+		Role:                      role,
+	}, nil
+}
+
+func installationModeFromEnv() (model.InstallationMode, error) {
+	s := strings.TrimSpace(os.Getenv("HFL_INSTALLATION_MODE"))
+	if s == "" {
+		return model.InstallationModeSystem, nil
 	}
+	mode, err := model.ParseInstallationMode(s)
+	if err != nil {
+		return "", fmt.Errorf("HFL_INSTALLATION_MODE: %w", err)
+	}
+	return mode, nil
 }
 
 func positiveEnvInt(key string) int {
@@ -51,16 +73,16 @@ func positiveEnvInt(key string) int {
 	return value
 }
 
-func roleFromEnv() model.Role {
+func roleFromEnv() (model.Role, error) {
 	s := strings.TrimSpace(os.Getenv("HFL_NODE_ROLE"))
 	if s == "" {
-		return ""
+		return "", nil
 	}
 	r, err := model.ParseRole(s)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("HFL_NODE_ROLE: %w", err)
 	}
-	return r
+	return r, nil
 }
 
 func firstNonEmpty(a, b string) string {

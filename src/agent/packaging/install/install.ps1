@@ -1,4 +1,3 @@
-#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
   HyperFileLens Agent bundle installer (Windows).
@@ -38,10 +37,51 @@ param(
 
 $ErrorActionPreference = "Stop"
 $BundleRoot = $PSScriptRoot
+$userInstallRoot = Join-Path $env:LOCALAPPDATA "Programs\HyperFileLens\Agent"
+$InstallationMode = if ($env:HFL_INSTALLATION_MODE) {
+  $env:HFL_INSTALLATION_MODE.Trim().ToLowerInvariant()
+}
+elseif ($BundleRoot.TrimEnd('\') -eq $userInstallRoot.TrimEnd('\')) {
+  "user"
+}
+else {
+  "system"
+}
+if ($InstallationMode -notin @("system", "user")) {
+  throw "HFL_INSTALLATION_MODE must be system or user."
+}
 $ServiceName = "HyperFileLensAgent"
-$InstallRoot = Join-Path $env:ProgramFiles "HyperFileLens\Agent"
-$DefaultDataRoot = Join-Path $env:ProgramData "HyperFileLens\Agent"
+if ($InstallationMode -eq "user") {
+  $InstallRoot = $userInstallRoot
+  $DefaultDataRoot = Join-Path $env:LOCALAPPDATA "HyperFileLens\AgentData"
+}
+else {
+  $InstallRoot = Join-Path $env:ProgramFiles "HyperFileLens\Agent"
+  $DefaultDataRoot = Join-Path $env:ProgramData "HyperFileLens\Agent"
+}
 $InstalledVersionFile = Join-Path $InstallRoot "INSTALLED_VERSION"
+$TaskName = "HyperFileLensAgent"
+$LifecycleLabel = if ($InstallationMode -eq "user") { "current-user task" } else { "Windows service" }
+$CurrentWindowsIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+
+function Test-HflAdministrator {
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+  return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Assert-HflInstallationIdentity {
+  $elevated = Test-HflAdministrator
+  if ($InstallationMode -eq "user" -and $Role -ne "agent") {
+    throw "User-level installation is only available for Source Agent."
+  }
+  if ($InstallationMode -eq "user" -and $elevated) {
+    throw "User-level installation must run without UAC elevation."
+  }
+  if ($InstallationMode -eq "system" -and -not $elevated) {
+    throw "Administrator privileges are required for system-level installation."
+  }
+}
 
 function Show-HflUsage {
   @"
@@ -51,12 +91,12 @@ When no command is given, equivalent to: install.cmd install
 
 Commands:
   install       Install agent binaries and configuration
-  start         Start HyperFileLensAgent service
-  stop          Stop HyperFileLensAgent service
-  restart       Stop then start HyperFileLensAgent service
-  status        Show installed version, paths, and service state
+  start         Start HyperFileLensAgent managed startup
+  stop          Stop HyperFileLensAgent managed startup
+  restart       Stop then start HyperFileLensAgent managed startup
+  status        Show installed version, paths, and lifecycle state
   upgrade       In-place upgrade from another release package directory or .zip
-  uninstall     Stop service and remove install dir (keeps data dir by default)
+  uninstall     Stop managed startup and remove install dir (keeps data dir by default)
 
 Options:
   install:
@@ -67,7 +107,7 @@ Options:
     -NodeId ID           Node ID (usually set after enrollment heartbeat)
     -DataDir PATH        Data directory (default: $DefaultDataRoot)
     -Role ROLE           Node role (default: agent)
-    -NoStart             Do not start any service after install
+    -NoStart             Do not start managed startup after install
 
   upgrade:
     -From PATH           Path to new package directory or hfl-agent-*.zip (required)
@@ -82,7 +122,7 @@ Install paths:
   $InstallRoot         Binaries and installer scripts
   $DefaultDataRoot     Runtime data, backup, and configuration
   $DefaultDataRoot\backup\state\  Pre-upgrade agent.env/agent.db snapshot (retained)
-  Windows service: $ServiceName   Service registration
+  ${LifecycleLabel}: $ServiceName   Managed startup registration
 
 Examples (cmd.exe):
   install.cmd
@@ -368,6 +408,13 @@ function Write-HflBundlePreflight {
 }
 
 function Get-HflServiceStatusLine {
+  if ($InstallationMode -eq "user") {
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -eq $task) { return "not installed" }
+    $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -eq $info) { return $task.State.ToString().ToLowerInvariant() }
+    return "$($task.State.ToString().ToLowerInvariant()) (current-user task)"
+  }
   $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
   if ($null -eq $svc) { return "not installed" }
   $startType = $svc.StartType.ToString().ToLower()
@@ -568,9 +615,10 @@ function Merge-AgentEnv {
   Ensure-HflLogsDir -DataRoot $DataRoot
   $kopiaPath = Join-Path $InstallRoot "kopia.exe"
   $template = [ordered]@{
-    HFL_DATA_DIR      = $DataRoot
-    HFL_KOPIA_PATH    = $kopiaPath
-    HFL_INSECURE_TLS  = "1"
+    HFL_DATA_DIR          = $DataRoot
+    HFL_INSTALLATION_MODE = $InstallationMode
+    HFL_KOPIA_PATH        = $kopiaPath
+    HFL_INSECURE_TLS      = "1"
   }
   $dir = Split-Path -Parent $EnvFile
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
@@ -660,12 +708,42 @@ function Get-ResolvedDataRoot {
 function Test-SafeDataPath([string]$path) {
   if ([string]::IsNullOrWhiteSpace($path)) { return $false }
   $full = try { [System.IO.Path]::GetFullPath($path) } catch { return $false }
-  $pd = [System.IO.Path]::GetFullPath($env:ProgramData)
-  $allowedRoot = Join-Path $pd "HyperFileLens"
+  if (Test-HflPathContainsReparsePoint -Path $full) { return $false }
+  if ($InstallationMode -eq "user") {
+    $expected = [System.IO.Path]::GetFullPath($DefaultDataRoot)
+    return $full.TrimEnd('\').Equals(
+      $expected.TrimEnd('\'),
+      [System.StringComparison]::OrdinalIgnoreCase
+    )
+  }
+  $base = $env:ProgramData
+  $allowedRoot = Join-Path ([System.IO.Path]::GetFullPath($base)) "HyperFileLens"
   return $full.TrimEnd('\').StartsWith(
     $allowedRoot.TrimEnd('\') + '\',
     [System.StringComparison]::OrdinalIgnoreCase
   )
+}
+
+function Test-HflPathContainsReparsePoint([string]$Path) {
+  try {
+    $current = [System.IO.Path]::GetFullPath($Path)
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+      if (Test-Path -LiteralPath $current) {
+        $item = Get-Item -Force -LiteralPath $current -ErrorAction Stop
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+          return $true
+        }
+      }
+      $parent = [System.IO.Directory]::GetParent($current)
+      if ($null -eq $parent) { break }
+      if ($parent.FullName.Equals($current, [System.StringComparison]::OrdinalIgnoreCase)) { break }
+      $current = $parent.FullName
+    }
+    return $false
+  }
+  catch {
+    return $true
+  }
 }
 
 function Wait-HflServiceStopped {
@@ -680,6 +758,16 @@ function Wait-HflServiceStopped {
 }
 
 function Stop-HflService {
+  if ($InstallationMode -eq "user") {
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -eq $task) {
+      Write-HflSkip "stop current-user task $TaskName (not installed)"
+      return
+    }
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    Write-HflOk "stopped current-user task $TaskName"
+    return
+  }
   $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
   if ($null -eq $svc) {
     Write-HflSkip "stop service $ServiceName (not installed)"
@@ -731,6 +819,17 @@ function Stop-AgentForUpgrade {
 }
 
 function Remove-HflService {
+  if ($InstallationMode -eq "user") {
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+      Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+      Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+      Write-HflOk "removed current-user task $TaskName"
+    }
+    else {
+      Write-HflSkip "remove current-user task $TaskName (not installed)"
+    }
+    return
+  }
   $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
   if ($null -ne $svc) {
     Stop-HflService
@@ -816,6 +915,39 @@ exit 0
 function Install-HflService {
   param([string]$ExePath, [string]$DataRoot, [switch]$NoStart)
   Remove-HflService
+  if ($InstallationMode -eq "user") {
+    $action = New-ScheduledTaskAction `
+      -Execute $ExePath `
+      -Argument "run -data-dir `"$DataRoot`""
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $CurrentWindowsIdentity
+    $principal = New-ScheduledTaskPrincipal `
+      -UserId $CurrentWindowsIdentity `
+      -LogonType Interactive `
+      -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet `
+      -StartWhenAvailable `
+      -AllowStartIfOnBatteries `
+      -DontStopIfGoingOnBatteries `
+      -RestartCount 3 `
+      -RestartInterval (New-TimeSpan -Minutes 1) `
+      -ExecutionTimeLimit ([TimeSpan]::Zero)
+    Register-ScheduledTask `
+      -TaskName $TaskName `
+      -Action $action `
+      -Trigger $trigger `
+      -Settings $settings `
+      -Principal $principal `
+      -Force | Out-Null
+    Write-HflOk "installed current-user task $TaskName"
+    if (-not $NoStart) {
+      Start-ScheduledTask -TaskName $TaskName
+      Write-HflOk "started current-user task $TaskName ($(Get-HflServiceStatusLine))"
+    }
+    else {
+      Write-HflSkip "start current-user task $TaskName (-NoStart)"
+    }
+    return
+  }
   $binPath = "`"$ExePath`" run -data-dir `"$DataRoot`""
   New-Service -Name $ServiceName `
     -BinaryPathName $binPath `
@@ -845,9 +977,23 @@ function Assert-HflInstalled {
 }
 
 function Start-HflServiceOnly {
+  if ($InstallationMode -eq "user") {
+    if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
+      Install-HflService `
+        -ExePath (Join-Path $InstallRoot "hfl-agent.exe") `
+        -DataRoot (Get-ResolvedDataRoot -Override "")
+      return
+    }
+    Start-ScheduledTask -TaskName $TaskName
+    Write-HflOk "started current-user task $TaskName ($(Get-HflServiceStatusLine))"
+    return
+  }
   $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
   if ($null -eq $svc) {
-    throw "Service $ServiceName is not installed. Use: install.cmd install"
+    Install-HflService `
+      -ExePath (Join-Path $InstallRoot "hfl-agent.exe") `
+      -DataRoot (Get-ResolvedDataRoot -Override "")
+    return
   }
   Start-Service -Name $ServiceName
   Write-HflOk "started service $ServiceName ($(Get-HflServiceStatusLine))"
@@ -1009,6 +1155,7 @@ function Write-AgentEnv {
     "HFL_DATA_DIR=$DataRoot",
     "HFL_KOPIA_PATH=$kopiaPath",
     "HFL_NODE_ROLE=$Role",
+    "HFL_INSTALLATION_MODE=$InstallationMode",
     "HFL_INSECURE_TLS=1"
   )
   if ($WssUrl) { $lines = @("HFL_WSS_URL=$WssUrl") + $lines }
@@ -1042,6 +1189,16 @@ function Invoke-Install {
   }
   $archRel = Get-HflSupportedArchitecture
   $dataRoot = if ($DataDir) { $DataDir } else { $DefaultDataRoot }
+  if ($InstallationMode -eq "user") {
+    $resolvedDataRoot = [System.IO.Path]::GetFullPath($dataRoot).TrimEnd('\')
+    $resolvedDefaultDataRoot = [System.IO.Path]::GetFullPath($DefaultDataRoot).TrimEnd('\')
+    if (-not $resolvedDataRoot.Equals(
+        $resolvedDefaultDataRoot,
+        [System.StringComparison]::OrdinalIgnoreCase
+      )) {
+      throw "User-level installation uses the fixed data directory $DefaultDataRoot; -DataDir is not supported."
+    }
+  }
   Start-HflInstallLog -DataRoot $dataRoot
   try {
     if (-not $QuietFooter) {
@@ -1063,11 +1220,11 @@ function Invoke-Install {
 
     if ($NoService) {
       if (-not $QuietFooter) {
-        Write-HflSkip "install Windows service (-NoService)"
+        Write-HflSkip "install managed startup (-NoService)"
         Write-HflSection "Verifying"
-        Write-HflSkip "Windows service was not installed by request"
+        Write-HflSkip "Managed startup was not installed by request"
         Write-HflSection "Installation summary"
-        Write-HflSummaryLine "Status" "installed (no service)"
+        Write-HflSummaryLine "Status" "installed (no managed startup)"
         Write-HflSummaryLine "Binary" (Join-Path $InstallRoot "hfl-agent.exe")
         Write-HflSummaryLine "Config" $envFile
         Write-HflSummaryLine "Uninstall" (Join-Path $InstallRoot "uninstall.cmd")
@@ -1086,21 +1243,27 @@ function Invoke-Install {
 
     Write-HflSection "Verifying"
     if ($NoStart) {
-      Write-HflSkip "Agent service was not started by request"
+      Write-HflSkip "Agent managed startup was not started by request"
     }
     else {
-      Write-HflOk "Agent service is $(Get-HflServiceStatusLine)"
+      Write-HflOk "Agent managed startup is $(Get-HflServiceStatusLine)"
     }
     Write-HflSection "Installation summary"
     Write-HflSummaryLine "Status" "installed"
     Write-HflSummaryLine "Binary" (Join-Path $InstallRoot "hfl-agent.exe")
     Write-HflSummaryLine "Config" $envFile
     if ($NoStart) {
-      Write-HflSummaryLine "Service" "$ServiceName (not started)"
-      Write-HflSummaryLine "Next" "Start-Service $ServiceName"
+      Write-HflSummaryLine "Lifecycle" "$ServiceName (not started)"
+      $nextCommand = if ($InstallationMode -eq "user") {
+        "& `"$(Join-Path $InstallRoot 'install.cmd')`" start"
+      }
+      else {
+        "Start-Service $ServiceName"
+      }
+      Write-HflSummaryLine "Next" $nextCommand
     }
     else {
-      Write-HflSummaryLine "Service" "$ServiceName ($(Get-HflServiceStatusLine))"
+      Write-HflSummaryLine "Lifecycle" "$ServiceName ($(Get-HflServiceStatusLine))"
     }
     Write-HflSummaryLine "Uninstall" (Join-Path $InstallRoot "uninstall.cmd")
     Write-HflFooter -Outcome install
@@ -1167,7 +1330,7 @@ function Invoke-Upgrade {
       Restore-RollbackBinaries
       if (-not $NoService) {
         try {
-          Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
+          Start-HflServiceOnly
         }
         catch { }
       }
@@ -1195,13 +1358,13 @@ function Invoke-Upgrade {
 
   Write-HflSection "Verifying"
   if (-not $NoService) {
-    Write-HflOk "Agent service is $(Get-HflServiceStatusLine)"
+    Write-HflOk "Agent managed startup is $(Get-HflServiceStatusLine)"
   }
   Write-HflSection "Upgrade summary"
   Write-HflSummaryLine "Status" "upgraded"
   Write-HflSummaryLine "Version" (Get-BundleVersionFrom -Root $InstallRoot)
   if (-not $NoService) {
-    Write-HflSummaryLine "Service" "$ServiceName ($(Get-HflServiceStatusLine))"
+    Write-HflSummaryLine "Lifecycle" "$ServiceName ($(Get-HflServiceStatusLine))"
   }
   Write-HflFooter -Outcome upgrade
   Stop-HflInstallLog -ExitCode 0
@@ -1209,6 +1372,9 @@ function Invoke-Upgrade {
 
 function Invoke-Uninstall {
   $dataRoot = Get-ResolvedDataRoot -Override $DataDir
+  if ($PurgeAll -and -not (Test-SafeDataPath $dataRoot)) {
+    throw "Refusing PurgeAll for unexpected data directory $dataRoot."
+  }
   $envFile = Join-Path $DefaultDataRoot "agent.env"
   $nodeId = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ID"
   $installedRole = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ROLE"
@@ -1257,7 +1423,7 @@ function Invoke-Uninstall {
     if ($LASTEXITCODE -ne 0) {
       throw "Failed to retire the local installation identity; Agent files and data were preserved for retry."
     }
-    Write-HflOk "Local installation identity retired; the next install will create a new console record."
+    Write-HflOk "Local installation identity retired; remove the old console record before reinstalling or changing run mode."
   }
   elseif ($KeepInstallationIdentity) {
     Write-HflSkip "installation identity preserved for install retry"
@@ -1290,7 +1456,7 @@ function Invoke-Uninstall {
     Write-HflOk "removed data directory $dataRoot"
   }
   elseif ($dataRoot) {
-    Write-HflWarn "HFL_DATA_DIR ($dataRoot) outside ProgramData\HyperFileLens; not deleted"
+    Write-HflWarn "HFL_DATA_DIR ($dataRoot) is outside the approved Agent data directory; not deleted"
   }
   else {
     Write-HflSkip "remove data directory (none resolved)"
@@ -1342,6 +1508,8 @@ function Invoke-Status {
   }
   Write-HflFooter -Outcome status
 }
+
+Assert-HflInstallationIdentity
 
 switch ($Command) {
   "install" { Invoke-Install }

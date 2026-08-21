@@ -66,6 +66,12 @@ func TestHTTPRegisterNodeIncludesPlatformInventory(t *testing.T) {
 	if result.NodeID != "42" {
 		t.Fatalf("nodeID=%q", result.NodeID)
 	}
+	if got := payload["installation_mode"]; got != "system" {
+		t.Errorf("installation_mode=%v", got)
+	}
+	if fingerprint, _ := payload["host_fingerprint"].(string); len(fingerprint) != 64 {
+		t.Errorf("host_fingerprint=%q", fingerprint)
+	}
 
 	metadata, ok := payload["metadata"].(map[string]any)
 	if !ok {
@@ -127,9 +133,22 @@ func TestEnsureNodeRegisteredMigratesLegacyCredentialForExistingNode(t *testing.
 	}
 }
 
-func TestEnsureNodeRegisteredSkipsDurableCredential(t *testing.T) {
+func TestEnsureNodeRegisteredRefreshesDurableCredentialNode(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Node-Token"); got != "hfln_durable-credential" {
+			t.Errorf("X-Node-Token=%q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"node_id":42,"credential_reused":true}`))
+	}))
+	defer server.Close()
+
 	provider := staticProvider{cfg: &model.AgentConfig{
-		APIBaseURL:     "http://127.0.0.1:1",
+		APIBaseURL:     server.URL,
 		OrgKey:         "test-org",
 		NodeID:         "42",
 		NodeToken:      "hfln_durable-credential",
@@ -142,7 +161,16 @@ func TestEnsureNodeRegisteredSkipsDurableCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	if registrar.nodeIDSetCalls != 0 || registrar.credential != "" {
-		t.Fatalf("durable credential unexpectedly triggered registration: %#v", registrar)
+		t.Fatalf("durable identity was unexpectedly rewritten: %#v", registrar)
+	}
+	if payload["node_id"] != float64(42) {
+		t.Fatalf("node_id=%v", payload["node_id"])
+	}
+	if payload["installation_id"] != "hfli_existing" {
+		t.Fatalf("installation_id=%v", payload["installation_id"])
+	}
+	if fingerprint, _ := payload["host_fingerprint"].(string); len(fingerprint) != 64 {
+		t.Fatalf("host_fingerprint=%q", fingerprint)
 	}
 }
 

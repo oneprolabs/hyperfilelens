@@ -3,7 +3,7 @@
 from django.db import models
 from django.utils import timezone
 
-from .base import NodeRole, OrganizationScopedModel
+from .base import NodeInstallationMode, NodeRole, OrganizationScopedModel
 
 
 class Node(OrganizationScopedModel):
@@ -26,6 +26,7 @@ class Node(OrganizationScopedModel):
         OFFLINE = "offline", "Offline"
 
     Role = NodeRole
+    InstallationMode = NodeInstallationMode
 
     id = models.BigAutoField(primary_key=True)
 
@@ -36,10 +37,24 @@ class Node(OrganizationScopedModel):
     )
     name = models.CharField(max_length=200)
     role = models.CharField(max_length=20, choices=Role.choices)
+    installation_mode = models.CharField(
+        max_length=16,
+        choices=InstallationMode.choices,
+        default=InstallationMode.SYSTEM,
+        db_index=True,
+        help_text="Immutable user-level or system-level installation mode.",
+    )
     version = models.CharField(max_length=50, blank=True, default="")
     os_name = models.CharField(max_length=80, blank=True, default="")
     installation_id = models.CharField(
         max_length=128, blank=True, default="", db_index=True
+    )
+    host_fingerprint = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Product-scoped digest used to prevent duplicate host installations.",
     )
     ip_address = models.GenericIPAddressField(
         blank=True,
@@ -101,10 +116,22 @@ class Node(OrganizationScopedModel):
             ),
         ]
         constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(installation_mode=NodeInstallationMode.SYSTEM)
+                    | models.Q(role=NodeRole.AGENT)
+                ),
+                name="node_user_mode_source_agent_only",
+            ),
             models.UniqueConstraint(
                 fields=["organization", "role", "installation_id"],
                 condition=models.Q(is_deleted=False) & ~models.Q(installation_id=""),
                 name="node_unique_installation_identity",
+            ),
+            models.UniqueConstraint(
+                fields=["host_fingerprint"],
+                condition=models.Q(is_deleted=False) & ~models.Q(host_fingerprint=""),
+                name="node_unique_active_host_fingerprint",
             ),
         ]
 

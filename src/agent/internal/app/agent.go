@@ -25,6 +25,7 @@ import (
 const controlPlanePollInterval = 5 * time.Second
 const gatewayObservabilityRefreshInterval = 10 * time.Minute
 const heartbeatCollectionInterval = 30 * time.Second
+const durableRegistrationRetryInterval = 5 * time.Minute
 
 // Agent is the runtime composition root coordinating module startup and shutdown.
 type Agent struct {
@@ -41,6 +42,7 @@ type Agent struct {
 	heartbeatMu      sync.RWMutex
 	storageInventory map[string]any
 	monitorMetrics   map[string]any
+	registrationOnce sync.Once
 
 	idleLogged bool
 }
@@ -135,7 +137,11 @@ func (a *Agent) Run(ctx context.Context) error {
 			})
 		}
 
-		if err := remote.EnsureNodeRegistered(ctx, a.store, a.store); err != nil {
+		if durableNodeIdentity(a.store.Current()) {
+			a.registrationOnce.Do(func() {
+				go a.refreshDurableRegistration(ctx)
+			})
+		} else if err := remote.EnsureNodeRegistered(ctx, a.store, a.store); err != nil {
 			slog.Warn("node registration before websocket failed", "err", err)
 		}
 
@@ -183,6 +189,31 @@ func (a *Agent) Run(ctx context.Context) error {
 
 		if strings.TrimSpace(a.store.Current().WSSURL) == "" {
 			a.connector = nil
+		}
+	}
+}
+
+func durableNodeIdentity(cfg *model.AgentConfig) bool {
+	return cfg != nil && strings.TrimSpace(cfg.NodeID) != "" &&
+		strings.HasPrefix(strings.TrimSpace(cfg.NodeToken), "hfln_")
+}
+
+func (a *Agent) refreshDurableRegistration(ctx context.Context) {
+	for {
+		if err := remote.EnsureNodeRegistered(ctx, a.store, a.store); err == nil {
+			return
+		} else {
+			if ctx.Err() != nil {
+				return
+			}
+			slog.Warn("durable node metadata refresh failed", "err", err)
+		}
+		timer := time.NewTimer(durableRegistrationRetryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
 	}
 }

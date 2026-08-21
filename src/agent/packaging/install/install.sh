@@ -2,19 +2,54 @@
 # HyperFileLens Agent bundle installer (Linux / macOS).
 # Usage: install.sh [command] [options]
 # When no command is given, equivalent to: install.sh install
-# After install, install.sh and MANIFEST.json are copied to /opt/hyperfilelens-agent/
-# for local uninstall/status. Upgrade extracts to DATA_DIR/runtime/workspace.
+# After install, lifecycle scripts are copied into the selected installation
+# directory for local upgrade, status, and uninstall operations.
 
 set -euo pipefail
 
 BUNDLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALLATION_MODE="${HFL_INSTALLATION_MODE:-}"
+if [[ -z "${INSTALLATION_MODE}" ]]; then
+	if [[ "${BUNDLE_ROOT}" == "/opt/hyperfilelens-agent" ]]; then
+		INSTALLATION_MODE="system"
+	else
+		case "${BUNDLE_ROOT}" in
+		"${HOME:-/nonexistent}"/.local/lib/hyperfilelens-agent | "${HOME:-/nonexistent}"/Library/Application\ Support/HyperFileLens/Agent/bin)
+			INSTALLATION_MODE="user"
+			;;
+		*) INSTALLATION_MODE="system" ;;
+		esac
+	fi
+fi
+[[ "${INSTALLATION_MODE}" == "system" || "${INSTALLATION_MODE}" == "user" ]] \
+	|| { echo "ERROR: HFL_INSTALLATION_MODE must be system or user" >&2; exit 2; }
+
 # Unix paths use product slug "hyperfilelens-agent" (see internal/platform/vfs/paths.go).
-INSTALL_DIR="/opt/hyperfilelens-agent"
-UNIT_DST="/etc/systemd/system/hyperfilelens-agent.service"
+if [[ "${INSTALLATION_MODE}" == "user" && "$(uname -s)" == "Darwin" ]]; then
+	INSTALL_DIR="${HOME}/Library/Application Support/HyperFileLens/Agent/bin"
+	DEFAULT_DATA="${HOME}/Library/Application Support/HyperFileLens/Agent"
+	UNIT_DST=""
+	LAUNCHD_PLIST="${HOME}/Library/LaunchAgents/com.hyperfilelens.agent.plist"
+	LAUNCHD_DOMAIN="gui/$(id -u)"
+elif [[ "${INSTALLATION_MODE}" == "user" ]]; then
+	USER_STATE_HOME="${XDG_STATE_HOME:-}"
+	[[ "${USER_STATE_HOME}" == /* ]] || USER_STATE_HOME="${HOME}/.local/state"
+	USER_CONFIG_HOME="${XDG_CONFIG_HOME:-}"
+	[[ "${USER_CONFIG_HOME}" == /* ]] || USER_CONFIG_HOME="${HOME}/.config"
+	INSTALL_DIR="${HOME}/.local/lib/hyperfilelens-agent"
+	DEFAULT_DATA="${USER_STATE_HOME}/hyperfilelens-agent"
+	UNIT_DST="${USER_CONFIG_HOME}/systemd/user/hyperfilelens-agent.service"
+	LAUNCHD_PLIST=""
+	LAUNCHD_DOMAIN=""
+else
+	INSTALL_DIR="/opt/hyperfilelens-agent"
+	DEFAULT_DATA="/var/lib/hyperfilelens-agent"
+	UNIT_DST="/etc/systemd/system/hyperfilelens-agent.service"
+	LAUNCHD_PLIST="/Library/LaunchDaemons/com.hyperfilelens.agent.plist"
+	LAUNCHD_DOMAIN="system"
+fi
 GATEWAY_RESOURCE_DROPIN="/etc/systemd/system/hyperfilelens-agent.service.d/20-gateway-resources.conf"
-DEFAULT_DATA="/var/lib/hyperfilelens-agent"
 INSTALLED_VERSION_FILE="${INSTALL_DIR}/INSTALLED_VERSION"
-LAUNCHD_PLIST="/Library/LaunchDaemons/com.hyperfilelens.agent.plist"
 LAUNCHD_LABEL="com.hyperfilelens.agent"
 RUN_AGENT_SCRIPT="${INSTALL_DIR}/run-agent.sh"
 GATEWAY_LIFECYCLE_SCRIPT="${INSTALL_DIR}/libexec/gateway-lifecycle.sh"
@@ -58,16 +93,23 @@ UPGRADE_YES=0
 exec 3>&1 4>&2
 
 usage() {
-	cat <<'USAGE'
+	local command_prefix="" lifecycle="hyperfilelens-agent.service"
+	if [[ "${INSTALLATION_MODE}" == "system" ]]; then
+		command_prefix="sudo "
+	fi
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		lifecycle="${LAUNCHD_LABEL}"
+	fi
+	cat <<USAGE
 Usage: install.sh [command] [options]
 
 When no command is given, equivalent to: install.sh install
 
 Commands:
-  install       Install agent binaries and configuration (install dir /opt/hyperfilelens-agent)
-  start         Start hyperfilelens-agent.service
-  stop          Stop hyperfilelens-agent.service
-  restart       Stop then start hyperfilelens-agent.service
+  install       Install agent binaries and configuration (${INSTALL_DIR})
+  start         Start ${lifecycle}
+  stop          Stop ${lifecycle}
+  restart       Stop then start ${lifecycle}
   status        Show installed version, paths, and service state
   upgrade       In-place upgrade from another release package directory or .tar.gz
   uninstall     Stop service and remove install dir (keeps data dir by default)
@@ -79,7 +121,7 @@ Options:
     --org-key KEY       Organization key
     --node-token TOKEN  Node enrollment token
     --node-id ID        Node ID (usually set after enrollment heartbeat)
-    --data-dir PATH     Data directory (default: /var/lib/hyperfilelens-agent)
+    --data-dir PATH     Data directory (default: ${DEFAULT_DATA})
     --role ROLE         Node role (default: agent)
     --no-start          Do not start any service after install
 
@@ -94,32 +136,26 @@ Options:
     --keep-installation-identity  Keep agent.env installation identity (incomplete-install rollback)
 
 Install paths:
-  /opt/hyperfilelens-agent                         Binaries and installer scripts
-  /opt/hyperfilelens-agent/libexec/gateway-lifecycle.sh
-                                                   Data Gateway AI engine lifecycle helper
-  /var/lib/hyperfilelens-agent                     Runtime data, backup, and configuration
-  /var/lib/hyperfilelens-agent/backup/state/       Pre-upgrade agent.env/agent.db snapshot (retained until uninstall --purge-all)
-  /opt/hyperfilelens-agent/backup/                 Legacy upgrade archives (removed on uninstall)
-  /etc/systemd/system/hyperfilelens-agent.service  systemd unit (Linux)
-  /etc/systemd/system/hyperfilelens-agent.service.d/20-gateway-resources.conf
-                                                   Soft resource policy for role=gateway
-  /Library/LaunchDaemons/com.hyperfilelens.agent.plist  LaunchDaemon (macOS)
+  ${INSTALL_DIR}  Binaries and installer scripts
+  ${DEFAULT_DATA}  Runtime data, backup, and configuration
+  ${lifecycle}  Managed startup lifecycle
 
 Examples:
-  sudo ./install.sh
-  sudo ./install.sh install --wss-url 'wss://console.example/ws/node/agent/' --api-base 'https://console.example' --org-key 'org_xxx' --node-token 'tok_xxx'
-  sudo ./install.sh start
-  sudo ./install.sh stop
-  sudo ./install.sh restart
-  sudo ./install.sh status
-  sudo ./install.sh upgrade --from /path/to/hfl-agent-0.1.0-linux-amd64.tar.gz
-  sudo ./install.sh uninstall
-  sudo ./install.sh uninstall --purge-all
+  ${command_prefix}./install.sh
+  ${command_prefix}./install.sh install --wss-url 'wss://console.example/ws/node/agent/' --api-base 'https://console.example' --org-key 'org_xxx' --node-token 'tok_xxx'
+  ${command_prefix}./install.sh start
+  ${command_prefix}./install.sh status
+  ${command_prefix}./install.sh upgrade --from /path/to/hfl-agent-0.1.0.tar.gz
+  ${command_prefix}./install.sh uninstall --purge-all
 USAGE
 }
 
 hfl_systemctl() {
-	PYTHONWARNINGS=ignore::SyntaxWarning systemctl "$@"
+	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+		PYTHONWARNINGS=ignore::SyntaxWarning systemctl --user "$@"
+	else
+		PYTHONWARNINGS=ignore::SyntaxWarning systemctl "$@"
+	fi
 }
 
 parse_install_flags() {
@@ -193,6 +229,12 @@ parse_uninstall_flags() {
 }
 
 require_root() {
+	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+		if [[ "$(id -u)" -eq 0 ]]; then
+			log_fail "User-level installation must run as the current user without sudo." 1
+		fi
+		return 0
+	fi
 	if [[ "$(id -u)" -ne 0 ]]; then
 		log_fail "Administrator privileges are required. Re-run with sudo." 1
 	fi
@@ -200,7 +242,9 @@ require_root() {
 
 require_agent_installed() {
 	if ! is_installed; then
-		log_fail "The agent is not installed. Run sudo ./install.sh install first." 2
+		local command_prefix=""
+		[[ "${INSTALLATION_MODE}" == "system" ]] && command_prefix="sudo "
+		log_fail "The agent is not installed. Run ${command_prefix}./install.sh install first." 2
 	fi
 }
 
@@ -224,6 +268,25 @@ require_service_manager() {
 	if is_darwin; then
 		command -v launchctl >/dev/null 2>&1 \
 			|| log_fail "launchd is required to install the agent service on macOS." 2
+		if [[ "${INSTALLATION_MODE}" == "user" ]] \
+			&& ! launchctl print "${LAUNCHD_DOMAIN}" >/dev/null 2>&1; then
+			log_fail "An active macOS user session is required for user-level installation." 2
+		fi
+		return 0
+	fi
+	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+		if ! command -v systemctl >/dev/null 2>&1 \
+		|| ! hfl_systemctl show-environment >/dev/null 2>&1; then
+			log_fail "A working systemd user service manager is required for user-level installation." 2
+		fi
+		command -v loginctl >/dev/null 2>&1 \
+			|| log_fail "loginctl is required to verify that current-user mode stops after sign-out." 2
+		local user_linger
+		user_linger="$(loginctl show-user "$(id -u)" --property=Linger --value 2>/dev/null)" \
+			|| log_fail "Unable to verify the current user's systemd sign-out behavior." 2
+		if [[ "${user_linger}" == "yes" ]]; then
+			log_fail "Current-user mode must pause after sign-out, but systemd user lingering is enabled. Disable lingering or choose System Service mode." 2
+		fi
 		return 0
 	fi
 	if ! command -v systemctl >/dev/null 2>&1 \
@@ -243,31 +306,44 @@ service_display_name() {
 
 write_run_agent_script() {
 	local env_file="$1"
-	local quoted_env_file
+	local quoted_env_file quoted_agent
 	quoted_env_file="$(printf '%q' "${env_file}")"
+	quoted_agent="$(printf '%q' "${INSTALL_DIR}/hfl-agent")"
 	cat >"${RUN_AGENT_SCRIPT}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 ENV_FILE=${quoted_env_file}
 if [[ -f "\$ENV_FILE" ]]; then
-	set -a
-	# shellcheck disable=SC1090
-	source "\$ENV_FILE"
-	set +a
+	while IFS='=' read -r key value; do
+		[[ "\$key" =~ ^[A-Za-z_][A-Za-z0-9_]*\$ ]] || continue
+		export "\$key=\$value"
+	done <"\$ENV_FILE"
 fi
-exec ${INSTALL_DIR}/hfl-agent run
+exec ${quoted_agent} run
 EOF
 	chmod 755 "${RUN_AGENT_SCRIPT}"
 	log_ok "wrote ${RUN_AGENT_SCRIPT}"
 }
 
+xml_escape() {
+	printf '%s' "$1" | sed \
+		-e 's/&/\&amp;/g' \
+		-e 's/</\&lt;/g' \
+		-e 's/>/\&gt;/g' \
+		-e 's/"/\&quot;/g'
+}
+
 install_launchd_plist() {
 	local env_file="$1"
-	local data_dir log_dir stdout stderr
+	local data_dir log_dir stdout stderr plist_script plist_install plist_stdout plist_stderr
 	data_dir="$(dirname "${env_file}")"
 	log_dir="${data_dir}/logs"
 	stdout="${log_dir}/launchd.stdout.log"
 	stderr="${log_dir}/launchd.stderr.log"
+	plist_script="$(xml_escape "${RUN_AGENT_SCRIPT}")"
+	plist_install="$(xml_escape "${INSTALL_DIR}")"
+	plist_stdout="$(xml_escape "${stdout}")"
+	plist_stderr="$(xml_escape "${stderr}")"
 	mkdir -p "${log_dir}"
 	mkdir -p "$(dirname "${LAUNCHD_PLIST}")"
 	cat >"${LAUNCHD_PLIST}" <<EOF
@@ -279,29 +355,33 @@ install_launchd_plist() {
 	<string>${LAUNCHD_LABEL}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>${RUN_AGENT_SCRIPT}</string>
+		<string>${plist_script}</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
 	<key>WorkingDirectory</key>
-	<string>${INSTALL_DIR}</string>
+	<string>${plist_install}</string>
 	<key>StandardOutPath</key>
-	<string>${stdout}</string>
+	<string>${plist_stdout}</string>
 	<key>StandardErrorPath</key>
-	<string>${stderr}</string>
+	<string>${plist_stderr}</string>
 </dict>
 </plist>
 EOF
-	chmod 644 "${LAUNCHD_PLIST}"
+	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+		chmod 600 "${LAUNCHD_PLIST}"
+	else
+		chmod 644 "${LAUNCHD_PLIST}"
+	fi
 	log_ok "installed launchd plist ${LAUNCHD_PLIST}"
 }
 
 launchd_service_status_line() {
-	if launchctl print "system/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
+	if launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
 		local state
-		state="$(launchctl print "system/${LAUNCHD_LABEL}" 2>/dev/null | awk -F'= ' '/state =/{print $2; exit}' | tr -d ' ;')"
+		state="$(launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" 2>/dev/null | awk -F'= ' '/state =/{print $2; exit}' | tr -d ' ;')"
 		echo "${state:-loaded}"
 	else
 		echo "not loaded"
@@ -309,9 +389,9 @@ launchd_service_status_line() {
 }
 
 stop_launchd_service() {
-	if launchctl print "system/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
-		launchctl bootout "system/${LAUNCHD_LABEL}" 2>/dev/null \
-			|| launchctl bootout system "${LAUNCHD_PLIST}" 2>/dev/null \
+	if launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
+		launchctl bootout "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" 2>/dev/null \
+			|| launchctl bootout "${LAUNCHD_DOMAIN}" "${LAUNCHD_PLIST}" 2>/dev/null \
 			|| true
 		log_ok "stopped launchd service ${LAUNCHD_LABEL}"
 	else
@@ -334,12 +414,12 @@ start_launchd_service() {
 	write_run_agent_script "${env_file}"
 	install_launchd_plist "${env_file}"
 	stop_launchd_service
-	if launchctl bootstrap system "${LAUNCHD_PLIST}" 2>/dev/null; then
+	if launchctl bootstrap "${LAUNCHD_DOMAIN}" "${LAUNCHD_PLIST}" 2>/dev/null; then
 		log_ok "bootstrapped launchd ${LAUNCHD_LABEL}"
 	else
 		log_skip "bootstrap launchd ${LAUNCHD_LABEL} (may already be loaded)"
 	fi
-	if launchctl kickstart -k "system/${LAUNCHD_LABEL}" 2>/dev/null; then
+	if launchctl kickstart -k "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" 2>/dev/null; then
 		log_ok "started launchd service ${LAUNCHD_LABEL} ($(launchd_service_status_line))"
 	else
 		log_warn "launchd ${LAUNCHD_LABEL} is not running after kickstart"
@@ -351,7 +431,7 @@ start_launchd_service_only() {
 		start_launchd_service "${DEFAULT_DATA}/agent.env"
 		return 0
 	fi
-	if launchctl kickstart -k "system/${LAUNCHD_LABEL}" 2>/dev/null; then
+	if launchctl kickstart -k "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" 2>/dev/null; then
 		log_ok "started launchd service ${LAUNCHD_LABEL} ($(launchd_service_status_line))"
 	else
 		start_launchd_service "${DEFAULT_DATA}/agent.env"
@@ -829,8 +909,8 @@ merge_agent_env() {
 	local env_file="$1"
 	local data_dir="$2"
 	local kopia_path="${INSTALL_DIR}/kopia"
-	local -a keys=(HFL_DATA_DIR HFL_KOPIA_PATH HFL_INSECURE_TLS)
-	local -a vals=("${data_dir}" "${kopia_path}" "1")
+	local -a keys=(HFL_DATA_DIR HFL_INSTALLATION_MODE HFL_KOPIA_PATH HFL_INSECURE_TLS)
+	local -a vals=("${data_dir}" "${INSTALLATION_MODE}" "${kopia_path}" "1")
 	local optional
 	for optional in SENTRY_ENABLED SENTRY_BACKEND_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE HFL_SENTRY_LENSNODE_RELEASE; do
 		if [[ -n "${!optional:-}" && "${!optional}" != *$'\n'* && "${!optional}" != *$'\r'* ]]; then
@@ -926,8 +1006,20 @@ resolve_data_dir() {
 }
 
 data_dir_allowed_for_removal() {
-	local p="$1"
-	[[ -z "$p" ]] && return 1
+	local p="$1" parent leaf
+	[[ -n "$p" && "$p" == /* ]] || return 1
+	p="${p%/}"
+	parent="$(dirname -- "$p")"
+	leaf="$(basename -- "$p")"
+	parent="$(cd -P -- "$parent" 2>/dev/null && pwd -P)" || return 1
+	p="${parent%/}/${leaf}"
+	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+		local install_root data_root
+		install_root="$(cd -P -- "$(dirname -- "${INSTALL_DIR}")" 2>/dev/null && pwd -P)/$(basename -- "${INSTALL_DIR}")" || return 1
+		data_root="$(cd -P -- "$(dirname -- "${DEFAULT_DATA}")" 2>/dev/null && pwd -P)/$(basename -- "${DEFAULT_DATA}")" || return 1
+		[[ "$p" == "$install_root" || "$p" == "$data_root" ]]
+		return
+	fi
 	case "$p" in
 		/var/lib/hyperfilelens-agent|/var/lib/hyperfilelens-agent/*) return 0 ;;
 		/opt/hyperfilelens-agent|/opt/hyperfilelens-agent/*) return 0 ;;
@@ -1140,6 +1232,7 @@ write_agent_env() {
 		[[ -n "${NODE_ID}" ]] && echo "HFL_NODE_ID=${NODE_ID}"
 		echo "HFL_DATA_DIR=${DATA_DIR}"
 		echo "HFL_NODE_ROLE=${NODE_ROLE}"
+		echo "HFL_INSTALLATION_MODE=${INSTALLATION_MODE}"
 		echo "HFL_KOPIA_PATH=${kopia_path}"
 		echo "HFL_INSECURE_TLS=${HFL_INSECURE_TLS:-1}"
 		for name in SENTRY_ENABLED SENTRY_BACKEND_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE HFL_SENTRY_LENSNODE_RELEASE; do
@@ -1150,10 +1243,42 @@ write_agent_env() {
 	log_ok "wrote ${env_file}"
 }
 
+systemd_escape_unit_value() {
+	printf '%s' "$1" | sed \
+		-e 's/\\/\\\\/g' \
+		-e 's/"/\\"/g' \
+		-e 's/%/%%/g'
+}
+
 install_systemd_unit() {
 	local env_file="$1"
 	local src_root="${2:-${BUNDLE_ROOT}}"
 	local unit_src="${src_root}/systemd/hyperfilelens-agent.service"
+	mkdir -p "$(dirname "${UNIT_DST}")"
+	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+		local unit_env_file unit_working_dir unit_agent
+		unit_env_file="$(systemd_escape_unit_value "${env_file}")"
+		unit_working_dir="$(systemd_escape_unit_value "${INSTALL_DIR}")"
+		unit_agent="$(systemd_escape_unit_value "${INSTALL_DIR}/hfl-agent")"
+		cat >"${UNIT_DST}" <<EOF
+[Unit]
+Description=HyperFileLens Agent (Current User)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile="${unit_env_file}"
+WorkingDirectory="${unit_working_dir}"
+ExecStart="${unit_agent}" run
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
+EOF
+		return 0
+	fi
 	if [[ -f "$unit_src" ]]; then
 		cp -f "$unit_src" "$UNIT_DST"
 	else
@@ -1190,6 +1315,7 @@ EOF
 
 configure_gateway_resource_policy() {
 	local env_file="$1" role=""
+	[[ "${INSTALLATION_MODE}" == "system" ]] || return 0
 	[[ "$(uname -s)" == "Linux" ]] || return 0
 	role="$(read_env_value "${env_file}" "HFL_NODE_ROLE" || true)"
 	if [[ "${role}" != "gateway" ]]; then
@@ -1295,7 +1421,7 @@ disable_service() {
 }
 
 remove_systemd_unit() {
-	if [[ -f "${GATEWAY_RESOURCE_DROPIN}" ]]; then
+	if [[ "${INSTALLATION_MODE}" == "system" && -f "${GATEWAY_RESOURCE_DROPIN}" ]]; then
 		rm -f "${GATEWAY_RESOURCE_DROPIN}"
 		rmdir "$(dirname "${GATEWAY_RESOURCE_DROPIN}")" 2>/dev/null || true
 		log_ok "removed Data Gateway resource policy ${GATEWAY_RESOURCE_DROPIN}"
@@ -1368,14 +1494,25 @@ start_service_only() {
 cmd_install() {
 	parse_install_flags "$@"
 	require_root
+	if [[ "${INSTALLATION_MODE}" == "user" && "${NODE_ROLE}" != "agent" ]]; then
+		log_fail "User-level installation is only available for Source Agent." 2
+	fi
 	require_service_manager
 	verify_bundle
 
 	if is_installed; then
-		log_fail "The agent is already installed. Run sudo ./install.sh upgrade --from <package.tar.gz> instead." 2
+		local command_prefix=""
+		[[ "${INSTALLATION_MODE}" == "system" ]] && command_prefix="sudo "
+		log_fail "The agent is already installed. Run ${command_prefix}./install.sh upgrade --from <package.tar.gz> instead." 2
 	fi
 
 	DATA_DIR="${DATA_DIR:-$DEFAULT_DATA}"
+	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+		[[ "${DATA_DIR}" == "${DEFAULT_DATA}" ]] \
+			|| log_fail "User-level installation uses the fixed data directory ${DEFAULT_DATA}; --data-dir is not supported." 2
+		mkdir -p "${DATA_DIR}"
+		chmod 700 "${DATA_DIR}"
+	fi
 	begin_install_log "${DATA_DIR}"
 	trap 'finish_install_log $?' RETURN
 
@@ -1385,12 +1522,17 @@ cmd_install() {
 		hfl_print_value "Console" "${API_BASE}"
 		hfl_print_value "Organization" "${ORG_KEY}"
 		hfl_print_value "Role" "$(hfl_role_display_name "${NODE_ROLE}" "${HFL_GATEWAY_SCOPE:-}")"
+		hfl_print_value "Installation mode" "${INSTALLATION_MODE}"
 		hfl_print_value "Agent version" "$(bundle_version)"
 		hfl_print_value "Platform" "$(uname -s | tr '[:upper:]' '[:lower:]')/$(bundle_arch)"
 		hfl_print_value "Install path" "${INSTALL_DIR}"
 		hfl_print_value "Data path" "${DATA_DIR}"
 		hfl_print_section "Preflight checks"
-		log_ok "Administrator privileges and service manager are available."
+		if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+			log_ok "Current-user privileges and user service manager are available."
+		else
+			log_ok "Administrator privileges and service manager are available."
+		fi
 		log_ok "Agent package layout is valid."
 		hfl_print_section "Installing Agent"
 	fi
@@ -1450,7 +1592,9 @@ cmd_upgrade() {
 	[[ -n "${UPGRADE_FROM}" ]] || log_fail "Upgrade requires --from <directory-or.tar.gz>." 2
 
 	if ! is_installed; then
-		log_fail "The agent is not installed. Run sudo ./install.sh install first." 2
+		local command_prefix=""
+		[[ "${INSTALLATION_MODE}" == "system" ]] && command_prefix="sudo "
+		log_fail "The agent is not installed. Run ${command_prefix}./install.sh install first." 2
 	fi
 
 	local data_dir prev_ver src_root new_ver env_file upgrade_ws
@@ -1675,7 +1819,7 @@ retire_installation_identity() {
 		"${agent_bin}" config retire-installation --data-dir "${data_dir}"; then
 		log_fail "Failed to retire the local installation identity; Agent files and data were preserved for retry." 1
 	fi
-	log_ok "Local installation identity retired; the next install will create a new console record."
+	log_ok "Local installation identity retired; remove the old console record before reinstalling or changing run mode."
 }
 
 uninstall_gateway_sidecar_if_needed() {
@@ -1701,6 +1845,10 @@ cmd_uninstall() {
 	local resolved_data env_file
 	resolved_data="$(resolve_data_dir)"
 	env_file="${resolved_data}/agent.env"
+	if [[ "${PURGE_ALL}" -eq 1 ]] \
+		&& ! data_dir_allowed_for_removal "${resolved_data}"; then
+		log_fail "Refusing purge-all for unexpected data directory ${resolved_data}." 2
+	fi
 	begin_uninstall_log "${resolved_data}"
 	trap 'hfl_finalize_active_log $?' EXIT
 

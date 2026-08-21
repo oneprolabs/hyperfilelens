@@ -1,6 +1,7 @@
 import type { NodeLifecycleInfo, NodeWorkloadInfo } from './nodeLifecycle'
 
 export type NodeRole = 'agent' | 'proxy' | 'gateway'
+export type NodeInstallationMode = 'system' | 'user'
 export type NodeStatus =
   | 'active'
   | 'upgrading'
@@ -40,6 +41,7 @@ export type ApiNode = {
   organization: number
   name: string
   role: NodeRole
+  installation_mode?: NodeInstallationMode
   version?: string
   os_name?: string
   ip_address?: string | null
@@ -65,6 +67,7 @@ export type ApiNodeToken = {
   organization: number
   token: string
   role: NodeRole
+  installation_mode: NodeInstallationMode
   note?: string
   is_active: boolean
   created_at?: string
@@ -76,6 +79,7 @@ export type ApiNodeToken = {
 
 export type CreateNodeTokenBody = {
   role: NodeRole
+  installation_mode?: NodeInstallationMode
   note?: string
   expires_at?: string | null
   is_active?: boolean

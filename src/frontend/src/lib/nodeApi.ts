@@ -8,7 +8,7 @@ import type {
   NodeOperationBatchStartResult,
   NodeOperationStartResult,
 } from '../types/nodeLifecycle'
-import type { ApiNode, ApiNodeToken, CreateNodeTokenBody, NodeRole, NodeStatus, UpdateNodeBody } from '../types/node'
+import type { ApiNode, ApiNodeToken, CreateNodeTokenBody, NodeInstallationMode, NodeRole, NodeStatus, UpdateNodeBody } from '../types/node'
 
 const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
 
@@ -454,11 +454,16 @@ function buildWindowsEnrollmentInstallCommand(url: string, tlsVerify: boolean): 
  * Moving to / avoids getcwd noise when the caller is sitting in a deleted install dir.
  * The outer curl stays silent; the installer owns all user-facing progress output.
  */
-function buildPosixEnrollmentInstallCommand(url: string, tlsVerify: boolean): string {
+function buildPosixEnrollmentInstallCommand(
+  url: string,
+  tlsVerify: boolean,
+  installationMode: NodeInstallationMode,
+): string {
   const tlsOptions = tlsVerify
     ? "--proto '=https' --tlsv1.2"
     : '-k'
-  return `cd / && curl ${tlsOptions} --fail --silent --show-error --location '${url}' | sudo bash -s`
+  const shell = installationMode === 'user' ? 'bash -s' : 'sudo bash -s'
+  return `cd / && curl ${tlsOptions} --fail --silent --show-error --location '${url}' | ${shell}`
 }
 
 /** Short copy-paste command for the target host. Shown on deploy pages only. */
@@ -468,6 +473,7 @@ export function buildEnrollmentInstallCommand(params: {
   token: string
   apiBase?: string
   os: EnrollmentOs
+  installationMode?: NodeInstallationMode
   tlsVerify?: boolean
 }): string {
   const url = buildEnrollmentDownloadUrl({ ...params, os: params.os })
@@ -475,7 +481,11 @@ export function buildEnrollmentInstallCommand(params: {
   if (params.os === 'windows') {
     return buildWindowsEnrollmentInstallCommand(url, tlsVerify)
   }
-  return buildPosixEnrollmentInstallCommand(url, tlsVerify)
+  return buildPosixEnrollmentInstallCommand(
+    url,
+    tlsVerify,
+    params.installationMode ?? 'system',
+  )
 }
 
 /** Short copy-paste command for Data Gateway hosts (Linux). */
@@ -486,7 +496,7 @@ export function buildGatewayEnrollmentInstallCommand(params: {
   tlsVerify?: boolean
 }): string {
   const url = buildGatewayEnrollmentDownloadUrl(params)
-  return buildPosixEnrollmentInstallCommand(url, params.tlsVerify !== false)
+  return buildPosixEnrollmentInstallCommand(url, params.tlsVerify !== false, 'system')
 }
 
 /** Create gateway token + build copy-paste install command. */
@@ -592,18 +602,25 @@ export async function auditPlatformGatewayEnrollmentCopy(tokenId: number): Promi
 export async function issueEnrollmentInstall(params: {
   role: NodeRole
   os: EnrollmentOs
+  installationMode?: NodeInstallationMode
   note?: string
 }): Promise<{ token: string; tokenId: number; command: string; tlsVerify: boolean; expiresAt: string | null }> {
   const org = orgKey()
   if (!org) {
     throw new Error('Missing organization key')
   }
-  const row = await createNodeToken({ role: params.role, note: params.note })
+  const installationMode = params.installationMode ?? 'system'
+  const row = await createNodeToken({
+    role: params.role,
+    installation_mode: installationMode,
+    note: params.note,
+  })
   const command = buildEnrollmentInstallCommand({
     org,
     role: params.role,
     token: row.token,
     os: params.os,
+    installationMode,
     tlsVerify: row.tls_verify,
   })
   return {

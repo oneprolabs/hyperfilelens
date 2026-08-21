@@ -21,6 +21,7 @@ const windowsUninstallRunnerName = "run-uninstall.ps1"
 func ScheduleDetachedUninstall(
 	installDir, dataDir, logDir string,
 	keepData bool,
+	userInstall bool,
 	completion UninstallCompletion,
 ) error {
 	installDir = strings.TrimSpace(installDir)
@@ -53,6 +54,7 @@ func ScheduleDetachedUninstall(
 		dataDir,
 		logDir,
 		keepData,
+		userInstall,
 		completion,
 		scriptPath,
 	); err != nil {
@@ -75,6 +77,7 @@ func ScheduleDetachedUninstall(
 func writeWindowsUninstallScript(
 	installDir, dataDir, logDir string,
 	keepData bool,
+	userInstall bool,
 	completion UninstallCompletion,
 	scriptPath string,
 ) error {
@@ -94,11 +97,16 @@ func writeWindowsUninstallScript(
 	if completion.ForceCleanup {
 		forceCleanupFlag = "$true"
 	}
+	userInstallFlag := "$false"
+	if userInstall {
+		userInstallFlag = "$true"
+	}
 	logFile := UninstallLogPath(logDir)
 	body := fmt.Sprintf(`$logFile = %q
 $install = %q
 $data = %q
 $keep = %s
+$userInstall = %s
 $SLEEP_SECONDS = %d
 $callbackUrl = %q
 $callbackToken = %q
@@ -181,8 +189,12 @@ function Start-DeferredRemove([string]$target) {
 }
 
 function Stop-HflProcessesForUninstall {
-  Log "stopping HyperFileLensAgent service and child processes (pre-uninstall)"
-  Stop-Service -Name HyperFileLensAgent -Force -ErrorAction SilentlyContinue
+  Log "stopping HyperFileLensAgent lifecycle and child processes (pre-uninstall)"
+  if ($userInstall) {
+    Stop-ScheduledTask -TaskName HyperFileLensAgent -ErrorAction SilentlyContinue
+  } else {
+    Stop-Service -Name HyperFileLensAgent -Force -ErrorAction SilentlyContinue
+  }
   foreach ($procName in @('hfl-agent', 'kopia')) {
     Stop-Process -Name $procName -Force -ErrorAction SilentlyContinue
   }
@@ -223,7 +235,11 @@ function Confirm-UninstallArtifacts {
   # Allow Schedule-InstallRootRemoval deferred cleanup to run first.
   Start-Sleep -Seconds 6
   $issues = @()
-  if ($null -ne (Get-Service -Name HyperFileLensAgent -ErrorAction SilentlyContinue)) {
+  if ($userInstall) {
+    if ($null -ne (Get-ScheduledTask -TaskName HyperFileLensAgent -ErrorAction SilentlyContinue)) {
+      $issues += "HyperFileLensAgent current-user task is still registered"
+    }
+  } elseif ($null -ne (Get-Service -Name HyperFileLensAgent -ErrorAction SilentlyContinue)) {
     $issues += "HyperFileLensAgent service is still registered"
   }
   if (Test-Path -LiteralPath $InstallDir) {
@@ -239,14 +255,45 @@ function Test-SafeAgentDataPath {
   }
   try {
     $full = [System.IO.Path]::GetFullPath($DataDir).TrimEnd('\')
-    $programData = [System.IO.Path]::GetFullPath($env:ProgramData).TrimEnd('\')
-    $allowedRoot = Join-Path $programData 'HyperFileLens'
+    if (Test-PathContainsReparsePoint -Path $full) {
+      return $false
+    }
+    if ($userInstall) {
+      $expected = [System.IO.Path]::GetFullPath(
+        (Join-Path $env:LOCALAPPDATA 'HyperFileLens\AgentData')
+      ).TrimEnd('\')
+      return $full.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)
+    }
+    $base = $env:ProgramData
+    $allowedRoot = Join-Path ([System.IO.Path]::GetFullPath($base).TrimEnd('\')) 'HyperFileLens'
     return $full.StartsWith(
       $allowedRoot.TrimEnd('\') + '\',
       [System.StringComparison]::OrdinalIgnoreCase
     )
   } catch {
     return $false
+  }
+}
+
+function Test-PathContainsReparsePoint {
+  param([string]$Path)
+  try {
+    $current = [System.IO.Path]::GetFullPath($Path)
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+      if (Test-Path -LiteralPath $current) {
+        $item = Get-Item -Force -LiteralPath $current -ErrorAction Stop
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+          return $true
+        }
+      }
+      $parent = [System.IO.Directory]::GetParent($current)
+      if ($null -eq $parent) { break }
+      if ($parent.FullName.Equals($current, [System.StringComparison]::OrdinalIgnoreCase)) { break }
+      $current = $parent.FullName
+    }
+    return $false
+  } catch {
+    return $true
   }
 }
 
@@ -258,7 +305,7 @@ function Remove-AgentDataDirectory {
     return
   }
   if (-not (Test-SafeAgentDataPath -DataDir $DataDir)) {
-    Add-CleanupFailure -code 'agent_data_cleanup_refused' -detail "refused to remove data directory outside ProgramData\HyperFileLens: $DataDir" -retained @($DataDir)
+    Add-CleanupFailure -code 'agent_data_cleanup_refused' -detail "refused to remove data directory outside the approved Agent data directory: $DataDir" -retained @($DataDir)
     return
   }
 
@@ -314,7 +361,7 @@ try {
       if ($LASTEXITCODE -ne 0) {
         throw "hfl-agent exited with code $LASTEXITCODE"
       }
-      Log "retired installation identity; the next install will create a new console record"
+      Log "retired installation identity; remove the old console record before reinstalling or changing run mode"
     } catch {
       Add-CleanupFailure -code 'installation_identity_retirement_failed' -detail $_.Exception.Message -retained @('installation_identity')
       throw
@@ -369,7 +416,11 @@ try {
       Remove-InstallDirectoryResidue -InstallDir $install
     } else {
       Log "install.cmd and install.ps1 missing; running fallback cleanup"
-      sc.exe delete HyperFileLensAgent 2>$null | Out-Null
+      if ($userInstall) {
+        Unregister-ScheduledTask -TaskName HyperFileLensAgent -Confirm:$false -ErrorAction SilentlyContinue
+      } else {
+        sc.exe delete HyperFileLensAgent 2>$null | Out-Null
+      }
       Start-DeferredRemove $install
     }
   } catch {
@@ -428,6 +479,7 @@ if ($forceCleanup) {
 		installDir,
 		dataDir,
 		keepFlag,
+		userInstallFlag,
 		uninstallDelaySecond,
 		callbackURL,
 		completion.Token,

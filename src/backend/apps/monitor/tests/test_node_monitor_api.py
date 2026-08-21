@@ -15,14 +15,18 @@ from common.extension_loader import extensions_enabled
 
 class NodeMonitorIngestTests(TestCase):
     def setUp(self):
-        self.org = Organization.objects.create(key="node-monitor-org", name="Node Monitor Org")
+        self.org = Organization.objects.create(
+            key="node-monitor-org", name="Node Monitor Org"
+        )
         self.node = Node.objects.create(
             organization=self.org,
             name="agent-01",
             role=NodeRole.AGENT,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
-            metadata={"inventory": {"hostname": "agent-host", "os": "linux", "arch": "amd64"}},
+            metadata={
+                "inventory": {"hostname": "agent-host", "os": "linux", "arch": "amd64"}
+            },
         )
 
     def test_ingest_persists_resource_metric(self):
@@ -61,6 +65,32 @@ class NodeMonitorIngestTests(TestCase):
             1,
         )
 
+    def test_ingest_preserves_partial_collection_status_without_fake_zeroes(self):
+        ingest_node_monitor_sample(
+            node=self.node,
+            sample={
+                "timestamp": "2026-08-12T10:00:00Z",
+                "cpu": {},
+                "memory": {"percent": 33.0},
+                "networks": [],
+                "metadata": {
+                    "collection_status": "partial",
+                    "unavailable_metrics": ["cpu_usage", "networks"],
+                },
+            },
+        )
+
+        row = ResourceMetric.objects.get(resource_id=str(self.node.id))
+        self.assertNotIn("cpu_usage", row.metrics)
+        self.assertNotIn("network_rx", row.metrics)
+        self.assertEqual(row.metrics["memory_usage"], 33.0)
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.metadata["monitor_collection_status"], "partial")
+        self.assertEqual(
+            self.node.metadata["monitor_unavailable_metrics"],
+            ["cpu_usage", "networks"],
+        )
+
     def test_ingest_skips_delayed_older_agent_sample(self):
         newer = {
             "timestamp": "2026-08-12T10:01:00Z",
@@ -79,7 +109,9 @@ class NodeMonitorIngestTests(TestCase):
             ResourceMetric.objects.filter(resource_id=str(self.node.id)).count(),
             1,
         )
-        self.assertEqual(self.node.metadata["monitor_sample_timestamp"], newer["timestamp"])
+        self.assertEqual(
+            self.node.metadata["monitor_sample_timestamp"], newer["timestamp"]
+        )
         self.assertEqual(self.node.metadata["metrics"]["cpu_usage"], 12.0)
         self.assertEqual(self.node.metadata["inventory"]["cpu_cores"], 4)
 
@@ -218,7 +250,9 @@ class NodeMonitorReadApiCommunityTests(TestCase):
 
     def setUp(self):
         if extensions_enabled():
-            self.skipTest("live URLconf has extension routes; see test_monitor_url_gating")
+            self.skipTest(
+                "live URLconf has extension routes; see test_monitor_url_gating"
+            )
         self.client = APIClient()
         user_model = get_user_model()
         self.user = user_model.objects.create_user(
@@ -226,7 +260,9 @@ class NodeMonitorReadApiCommunityTests(TestCase):
             email="node-monitor-community@test.local",
             password="test-pass",
         )
-        self.org = Organization.objects.create(key="node-monitor-community", name="Community Org")
+        self.org = Organization.objects.create(
+            key="node-monitor-community", name="Community Org"
+        )
         Membership.objects.create(
             user=self.user,
             organization=self.org,

@@ -70,6 +70,19 @@ def health(_request):
     return JsonResponse({"app": "node", "status": "ok"})
 
 
+def _host_install_conflict_response() -> Response:
+    return Response(
+        {
+            "error": (
+                "another Agent installation record already exists for this host; "
+                "uninstall the existing Agent and remove its console record before "
+                "installing again or changing run mode"
+            )
+        },
+        status=status.HTTP_409_CONFLICT,
+    )
+
+
 class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet):
     org_scoped_skip_actions = ("heartbeat",)
 
@@ -289,15 +302,12 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         node = self.get_object()
         from apps.audit.models.audit_log import AuditLog
 
-        logs = (
-            AuditLog.objects.filter(
-                organization=self.org,
-                target_type="node",
-                target_id=str(node.id),
-                action__startswith="node.lifecycle.",
-            )
-            .order_by("-created_at")[:20]
-        )
+        logs = AuditLog.objects.filter(
+            organization=self.org,
+            target_type="node",
+            target_id=str(node.id),
+            action__startswith="node.lifecycle.",
+        ).order_by("-created_at")[:20]
 
         return Response(
             {
@@ -306,9 +316,13 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     {
                         "id": log.id,
                         "action": log.action,
-                        "user_display": log.user_name or (log.user.email if log.user else None) or "—",
+                        "user_display": log.user_name
+                        or (log.user.email if log.user else None)
+                        or "—",
                         "result": log.result,
-                        "created_at": log.created_at.isoformat() if log.created_at else None,
+                        "created_at": log.created_at.isoformat()
+                        if log.created_at
+                        else None,
                         "ip_address": log.ip_address,
                         "error_message": log.error_message,
                         "correlation_id": log.correlation_id,
@@ -402,6 +416,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         payload = serializer.validated_data
         client_ip = resolve_agent_client_ip(request)
         installation_id = str(payload.get("installation_id") or "").strip()
+        host_fingerprint = str(payload.get("host_fingerprint") or "").strip()
         existing_node_credential = str(
             payload.get("existing_node_credential") or ""
         ).strip()
@@ -431,6 +446,11 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
             token_row = authorization.token
+            if payload["installation_mode"] != token_row.installation_mode:
+                return Response(
+                    {"error": "installation mode does not match enrollment token"},
+                    status=status.HTTP_409_CONFLICT,
+                )
             with transaction.atomic():
                 # Match the token -> session lock order used by session creation.
                 # A consistent order prevents open/register deadlocks under load.
@@ -486,9 +506,36 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                         )
                         .first()
                     )
+                if host_fingerprint:
+                    conflicting_host = (
+                        Node.objects.select_for_update()
+                        .filter(host_fingerprint=host_fingerprint)
+                        .exclude(pk=node.pk if node is not None else None)
+                        .first()
+                    )
+                    if conflicting_host is not None:
+                        return _host_install_conflict_response()
+                    if node is not None and node.host_fingerprint not in (
+                        "",
+                        host_fingerprint,
+                    ):
+                        return Response(
+                            {"error": "installation identity belongs to another host"},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                if (
+                    node is not None
+                    and node.installation_mode != token_row.installation_mode
+                ):
+                    return Response(
+                        {"error": "installation mode is fixed during enrollment"},
+                        status=status.HTTP_409_CONFLICT,
+                    )
                 created_node = node is None
                 if node is None:
-                    from apps.subscription.services.interface import enforce_node_role_quota
+                    from apps.subscription.services.interface import (
+                        enforce_node_role_quota,
+                    )
 
                     enforce_node_role_quota(organization=org, role=payload["role"])
                     try:
@@ -502,10 +549,12 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                                     ),
                                 ),
                                 role=payload["role"],
+                                installation_mode=token_row.installation_mode,
                                 version=payload.get("version", ""),
                                 os_name=payload.get("os_name", ""),
                                 availability_updated_at=observed_at,
                                 installation_id=installation_id,
+                                host_fingerprint=host_fingerprint,
                                 metadata=registration_metadata(
                                     metadata_payload,
                                     token_note=token_row.note,
@@ -517,6 +566,12 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                             )
                     except IntegrityError:
                         if not installation_id:
+                            if host_fingerprint and (
+                                Node.objects.select_for_update()
+                                .filter(host_fingerprint=host_fingerprint)
+                                .exists()
+                            ):
+                                return _host_install_conflict_response()
                             raise
                         node = (
                             Node.objects.select_for_update()
@@ -528,7 +583,42 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                             .first()
                         )
                         if node is None:
+                            if host_fingerprint and (
+                                Node.objects.select_for_update()
+                                .filter(host_fingerprint=host_fingerprint)
+                                .exists()
+                            ):
+                                return _host_install_conflict_response()
                             raise
+                        if node.installation_mode != token_row.installation_mode:
+                            return Response(
+                                {
+                                    "error": (
+                                        "installation mode is fixed during enrollment"
+                                    )
+                                },
+                                status=status.HTTP_409_CONFLICT,
+                            )
+                        if host_fingerprint and node.host_fingerprint not in (
+                            "",
+                            host_fingerprint,
+                        ):
+                            return Response(
+                                {
+                                    "error": (
+                                        "installation identity belongs to another host"
+                                    )
+                                },
+                                status=status.HTTP_409_CONFLICT,
+                            )
+                        if (
+                            host_fingerprint
+                            and Node.objects.select_for_update()
+                            .filter(host_fingerprint=host_fingerprint)
+                            .exclude(pk=node.pk)
+                            .exists()
+                        ):
+                            return _host_install_conflict_response()
                         created_node = False
                     else:
                         unique_name = uniquify_node_name(
@@ -539,6 +629,13 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                         if unique_name != node.name:
                             node.name = unique_name
                             node.save(update_fields=["name", "updated_at"])
+                if host_fingerprint and not node.host_fingerprint:
+                    try:
+                        with transaction.atomic():
+                            node.host_fingerprint = host_fingerprint
+                            node.save(update_fields=["host_fingerprint", "updated_at"])
+                    except IntegrityError:
+                        return _host_install_conflict_response()
                 credential_reused = bool(
                     not created_node
                     and existing_node_credential
@@ -564,7 +661,9 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     )
                 if created_node and node.role == NodeRole.AGENT:
                     record_node_available(node_id=node.id, observed_at=observed_at)
-                    node.refresh_from_db(fields=["availability", "availability_updated_at"])
+                    node.refresh_from_db(
+                        fields=["availability", "availability_updated_at"]
+                    )
                     sync_agent_source_host(node=node)
                     new_agent_registered = True
         elif node is not None:
@@ -581,6 +680,23 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     {"error": "invalid node credential"},
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
+            if payload["installation_mode"] != node.installation_mode:
+                return Response(
+                    {"error": "installation mode is fixed during enrollment"},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if host_fingerprint:
+                if node.host_fingerprint not in ("", host_fingerprint):
+                    return Response(
+                        {"error": "installation identity belongs to another host"},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if (
+                    Node.objects.filter(host_fingerprint=host_fingerprint)
+                    .exclude(pk=node.pk)
+                    .exists()
+                ):
+                    return _host_install_conflict_response()
             if legacy_token is not None:
                 token_row = legacy_token
                 node_credential = issue_node_credential(
@@ -628,7 +744,20 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     node.network_inventory = network_state.inventory
             if client_ip:
                 node.connection_ip_address = client_ip
-            node.save()
+            if host_fingerprint and not node.host_fingerprint:
+                node.host_fingerprint = host_fingerprint
+            try:
+                with transaction.atomic():
+                    node.save()
+            except IntegrityError:
+                if (
+                    host_fingerprint
+                    and Node.objects.filter(host_fingerprint=host_fingerprint)
+                    .exclude(pk=node.pk)
+                    .exists()
+                ):
+                    return _host_install_conflict_response()
+                raise
         else:
             return Response(
                 {"error": "node not found; enrollment token required"},

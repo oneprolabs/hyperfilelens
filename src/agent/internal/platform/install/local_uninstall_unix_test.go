@@ -3,10 +3,15 @@
 package install
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
@@ -16,6 +21,7 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 		"/opt/hyperfilelens-agent",
 		"/var/lib/hyperfilelens-agent",
 		"/var/lib/hyperfilelens-agent/logs",
+		false,
 		false,
 		UninstallCompletion{
 			APIBaseURL: "https://control.example",
@@ -92,7 +98,7 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 		t.Fatalf("script must retire installation identity when data is preserved:\n%s", body)
 	}
 	unmountAt := strings.Index(body, `unmount_agent_mounts "$DATA_DIR"`)
-	stopAt := strings.Index(body, `systemctl stop "$SERVICE_NAME"`)
+	stopAt := strings.Index(body, `hfl_systemctl stop "$SERVICE_NAME"`)
 	retireAt := strings.Index(body, `config retire-installation --data-dir "$DATA_DIR"`)
 	removeAt := strings.Index(body, `for target in "$INSTALL_DIR/hfl-agent"`)
 	if unmountAt < 0 || stopAt < 0 || retireAt < 0 || removeAt < 0 ||
@@ -113,5 +119,211 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 	}
 	if out, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
 		t.Fatalf("generated uninstall script is not valid bash: %v\n%s", err, out)
+	}
+}
+
+func TestWriteUnixUserUninstallScriptUsesUserLifecycle(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := home + "/run-uninstall.sh"
+	err := writeUnixUninstallScript(
+		filepath.Join(home, ".local", "lib", "hyperfilelens-agent"),
+		filepath.Join(home, ".local", "state", "hyperfilelens-agent"),
+		filepath.Join(home, ".local", "state", "hyperfilelens-agent", "logs"),
+		false,
+		true,
+		UninstallCompletion{
+			APIBaseURL: "https://control.example",
+			Path:       "/api/v1/node/agent-uninstall/completion/",
+			Token:      "signed-test-token",
+		},
+		path,
+	)
+	if err != nil {
+		t.Fatalf("writeUnixUninstallScript: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, expected := range []string{
+		"USER_INSTALL=1",
+		"systemctl --user",
+		filepath.Join(home, ".config", "systemd", "user", unixServiceUnit),
+		fmt.Sprintf("USER_INSTALL_ROOT=%q", filepath.Join(home, ".local", "lib", "hyperfilelens-agent")),
+		`is_managed_install_path()`,
+		`"$path" == "$USER_INSTALL_ROOT"`,
+		`is_managed_data_path()`,
+		`"$path" == "$DEFAULT_DATA_ROOT"`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("user uninstall script missing %q", expected)
+		}
+	}
+	for _, unexpected := range []string{
+		`"$path" == "$USER_HOME"/*`,
+		`"${path##*/}" == "hyperfilelens-agent"`,
+	} {
+		if strings.Contains(text, unexpected) {
+			t.Fatalf("user uninstall script must not trust broad path rule %q", unexpected)
+		}
+	}
+	if out, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
+		t.Fatalf("generated user uninstall script is not valid bash: %v\n%s", err, out)
+	}
+}
+
+func TestWriteUnixUserUninstallScriptDoesNotTrustConfiguredExternalDataDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	externalData := filepath.Join(t.TempDir(), "hyperfilelens-agent")
+	path := filepath.Join(home, "run-uninstall.sh")
+	err := writeUnixUninstallScript(
+		filepath.Join(home, ".local", "lib", "hyperfilelens-agent"),
+		externalData,
+		filepath.Join(externalData, "logs"),
+		false,
+		true,
+		UninstallCompletion{
+			APIBaseURL: "https://control.example",
+			Path:       "/api/v1/node/agent-uninstall/completion/",
+			Token:      "signed-test-token",
+		},
+		path,
+	)
+	if err != nil {
+		t.Fatalf("writeUnixUninstallScript: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	trustedDefault := filepath.Join(home, ".local", "state", "hyperfilelens-agent")
+	if !strings.Contains(text, fmt.Sprintf("DEFAULT_DATA_ROOT=%q", trustedDefault)) {
+		t.Fatalf("script must use trusted default data root %q", trustedDefault)
+	}
+	if strings.Contains(text, fmt.Sprintf("DEFAULT_DATA_ROOT=%q", externalData)) {
+		t.Fatalf("configured external data directory became a trusted deletion root")
+	}
+}
+
+func TestValidateUnixUninstallPaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+
+	systemInstall := filepath.Clean(vfs.InstallDirForMode(model.InstallationModeSystem))
+	systemData := filepath.Clean(vfs.AgentDataDirForMode(model.InstallationModeSystem))
+	userInstall := filepath.Clean(vfs.InstallDirForMode(model.InstallationModeUser))
+	userData := filepath.Clean(vfs.AgentDataDirForMode(model.InstallationModeUser))
+
+	tests := []struct {
+		name        string
+		installDir  string
+		dataDir     string
+		keepData    bool
+		userInstall bool
+		wantErr     bool
+	}{
+		{
+			name:       "system defaults with purge",
+			installDir: systemInstall,
+			dataDir:    systemData,
+		},
+		{
+			name:       "system managed child with purge",
+			installDir: systemInstall,
+			dataDir:    filepath.Join(systemData, "custom-state"),
+		},
+		{
+			name:        "user defaults with purge",
+			installDir:  userInstall,
+			dataDir:     userData,
+			userInstall: true,
+		},
+		{
+			name:       "relative traversal",
+			installDir: filepath.Join(systemInstall, "..", "..", "..", "etc"),
+			dataDir:    systemData,
+			wantErr:    true,
+		},
+		{
+			name:        "arbitrary user home data purge",
+			installDir:  userInstall,
+			dataDir:     filepath.Join(home, "Documents"),
+			userInstall: true,
+			wantErr:     true,
+		},
+		{
+			name:       "custom data retained",
+			installDir: systemInstall,
+			dataDir:    filepath.Join(t.TempDir(), "custom-data"),
+			keepData:   true,
+		},
+		{
+			name:       "external system data purge",
+			installDir: systemInstall,
+			dataDir:    filepath.Join(t.TempDir(), "custom-data"),
+			wantErr:    true,
+		},
+		{
+			name:       "unexpected install directory",
+			installDir: filepath.Join(t.TempDir(), "hyperfilelens-agent"),
+			dataDir:    systemData,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateUnixUninstallPaths(
+				filepath.Clean(tt.installDir),
+				filepath.Clean(tt.dataDir),
+				tt.keepData,
+				tt.userInstall,
+			)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateUnixUninstallPaths() error = %v, wantErr %t", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCanonicalRemovalPathResolvesIntermediateSymlinkOnly(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	inside := filepath.Join(root, "inside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(inside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	intermediate := filepath.Join(inside, "link")
+	if err := os.Symlink(outside, intermediate); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := canonicalRemovalPath(filepath.Join(intermediate, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(outside, "data"); resolved != want {
+		t.Fatalf("intermediate symlink resolved to %q, want %q", resolved, want)
+	}
+
+	finalLink := filepath.Join(inside, "final-link")
+	if err := os.Symlink(outside, finalLink); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err = canonicalRemovalPath(finalLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != finalLink {
+		t.Fatalf("final symlink resolved to %q, want link path %q", resolved, finalLink)
 	}
 }

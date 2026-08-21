@@ -14,7 +14,14 @@ func TestPathAllowedForRemoval(t *testing.T) {
 			t.Fatalf("expected allowed: %q", path)
 		}
 	}
-	denied := []string{"", "/opt/other-agent", "/tmp/hyperfilelens-agent"}
+	denied := []string{
+		"",
+		"/opt/other-agent",
+		"/tmp/hyperfilelens-agent",
+		"/var/lib/hyperfilelens-agent/../../../etc",
+		"/opt/hyperfilelens-agent/../../etc",
+		"var/lib/hyperfilelens-agent",
+	}
 	for _, path := range denied {
 		if PathAllowedForRemoval(path) {
 			t.Fatalf("expected denied: %q", path)

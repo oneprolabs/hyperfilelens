@@ -26,6 +26,7 @@ type Sample struct {
 	Networks    []any          `json:"networks"`
 	LoadAverage []float64      `json:"load_average"`
 	BootTime    float64        `json:"boot_time,omitempty"`
+	Unavailable []string       `json:"unavailable,omitempty"`
 }
 
 // Collector samples CPU, memory, disk, network, and load metrics.
@@ -39,79 +40,100 @@ func NewCollector() *Collector {
 // SampleOnce returns the latest resource snapshot.
 func (c *Collector) SampleOnce(ctx context.Context) (Sample, error) {
 	_ = c
-	_ = ctx
-	now := time.Now().UTC()
-
-	cpuPercent, _ := cpu.Percent(100*time.Millisecond, false)
-	perCPU, _ := cpu.Percent(0, true)
-	logical, _ := cpu.Counts(true)
-	physical, _ := cpu.Counts(false)
-	freq, _ := cpu.Info()
-
-	cpuPayload := map[string]any{
-		"usage_percent":   firstFloat(cpuPercent),
-		"per_cpu_percent": perCPU,
-		"logical_cores":   logical,
-		"physical_cores":  physical,
+	if err := ctx.Err(); err != nil {
+		return Sample{}, err
 	}
-	if len(freq) > 0 {
+	now := time.Now().UTC()
+	unavailable := make([]string, 0, 8)
+
+	cpuPayload := map[string]any{}
+	if cpuPercent, err := cpu.Percent(100*time.Millisecond, false); err == nil && len(cpuPercent) > 0 {
+		cpuPayload["usage_percent"] = cpuPercent[0]
+	} else {
+		unavailable = appendUnavailable(unavailable, "cpu_usage")
+	}
+	if perCPU, err := cpu.Percent(0, true); err == nil {
+		cpuPayload["per_cpu_percent"] = perCPU
+	}
+	if logical, err := cpu.Counts(true); err == nil {
+		cpuPayload["logical_cores"] = logical
+	}
+	if physical, err := cpu.Counts(false); err == nil {
+		cpuPayload["physical_cores"] = physical
+	}
+	if freq, err := cpu.Info(); err == nil && len(freq) > 0 {
 		cpuPayload["frequency_mhz"] = freq[0].Mhz
 	}
 
-	vm, _ := mem.VirtualMemory()
-	swap, _ := mem.SwapMemory()
-	memoryPayload := map[string]any{
-		"total":     vm.Total,
-		"used":      vm.Used,
-		"available": vm.Available,
-		"percent":   vm.UsedPercent,
+	memoryPayload := map[string]any{}
+	if vm, err := mem.VirtualMemory(); err == nil && vm != nil {
+		memoryPayload = map[string]any{
+			"total":     vm.Total,
+			"used":      vm.Used,
+			"available": vm.Available,
+			"percent":   vm.UsedPercent,
+		}
+	} else {
+		unavailable = appendUnavailable(unavailable, "memory")
 	}
-	swapPayload := map[string]any{
-		"total":   swap.Total,
-		"used":    swap.Used,
-		"free":    swap.Free,
-		"percent": swap.UsedPercent,
+	swapPayload := map[string]any{}
+	if swap, err := mem.SwapMemory(); err == nil && swap != nil {
+		swapPayload = map[string]any{
+			"total":   swap.Total,
+			"used":    swap.Used,
+			"free":    swap.Free,
+			"percent": swap.UsedPercent,
+		}
+	} else {
+		unavailable = appendUnavailable(unavailable, "swap")
 	}
 
 	disks := make([]any, 0)
-	partitions, _ := disk.Partitions(false)
-	for _, part := range partitions {
-		mountpoint := normalizeMonitorMountpoint(part.Mountpoint)
-		if mountpoint == "" {
-			continue
+	if partitions, err := disk.Partitions(false); err == nil {
+		for _, part := range partitions {
+			mountpoint := normalizeMonitorMountpoint(part.Mountpoint)
+			if mountpoint == "" {
+				continue
+			}
+			row := map[string]any{
+				"device":     part.Device,
+				"mountpoint": mountpoint,
+				"fstype":     part.Fstype,
+			}
+			if usage, usageErr := disk.Usage(mountpoint); usageErr == nil {
+				row["total"] = usage.Total
+				row["used"] = usage.Used
+				row["free"] = usage.Free
+				row["percent"] = usage.UsedPercent
+			} else {
+				unavailable = appendUnavailable(unavailable, "disk_usage")
+			}
+			disks = append(disks, row)
 		}
-		row := map[string]any{
-			"device":     part.Device,
-			"mountpoint": mountpoint,
-			"fstype":     part.Fstype,
-		}
-		if usage, err := disk.Usage(mountpoint); err == nil {
-			row["total"] = usage.Total
-			row["used"] = usage.Used
-			row["free"] = usage.Free
-			row["percent"] = usage.UsedPercent
-		}
-		disks = append(disks, row)
+	} else {
+		unavailable = appendUnavailable(unavailable, "disks")
 	}
 
 	diskIO := make([]any, 0)
 	if counters, err := disk.IOCounters(); err == nil {
 		for name, item := range counters {
 			diskIO = append(diskIO, map[string]any{
-				"name":         name,
-				"read_bytes":   item.ReadBytes,
-				"write_bytes":  item.WriteBytes,
-				"read_count":   item.ReadCount,
-				"write_count":  item.WriteCount,
-				"read_time":    item.ReadTime,
-				"write_time":   item.WriteTime,
+				"name":        name,
+				"read_bytes":  item.ReadBytes,
+				"write_bytes": item.WriteBytes,
+				"read_count":  item.ReadCount,
+				"write_count": item.WriteCount,
+				"read_time":   item.ReadTime,
+				"write_time":  item.WriteTime,
 			})
 		}
+	} else {
+		unavailable = appendUnavailable(unavailable, "disk_io")
 	}
 
 	networks := make([]any, 0)
+	addrByName := map[string][]string{}
 	if addrs, err := net.Interfaces(); err == nil {
-		addrByName := map[string][]string{}
 		for _, iface := range addrs {
 			ips := make([]string, 0, len(iface.Addrs))
 			for _, addr := range iface.Addrs {
@@ -119,36 +141,38 @@ func (c *Collector) SampleOnce(ctx context.Context) (Sample, error) {
 			}
 			addrByName[iface.Name] = ips
 		}
-		if counters, err := net.IOCounters(true); err == nil {
-			for _, item := range counters {
-				networks = append(networks, map[string]any{
-					"name":         item.Name,
-					"bytes_sent":   item.BytesSent,
-					"bytes_recv":   item.BytesRecv,
-					"packets_sent": item.PacketsSent,
-					"packets_recv": item.PacketsRecv,
-					"errin":        item.Errin,
-					"errout":       item.Errout,
-					"dropin":       item.Dropin,
-					"dropout":      item.Dropout,
-					"addresses":    addrByName[item.Name],
-				})
-			}
+	}
+	if counters, err := net.IOCounters(true); err == nil {
+		for _, item := range counters {
+			networks = append(networks, map[string]any{
+				"name":         item.Name,
+				"bytes_sent":   item.BytesSent,
+				"bytes_recv":   item.BytesRecv,
+				"packets_sent": item.PacketsSent,
+				"packets_recv": item.PacketsRecv,
+				"errin":        item.Errin,
+				"errout":       item.Errout,
+				"dropin":       item.Dropin,
+				"dropout":      item.Dropout,
+				"addresses":    addrByName[item.Name],
+			})
 		}
+	} else {
+		unavailable = appendUnavailable(unavailable, "networks")
 	}
 
 	loadAvg := make([]float64, 0, 3)
-	if runtime.GOOS != "windows" {
-		if avg, err := load.Avg(); err == nil && avg != nil {
-			loadAvg = []float64{avg.Load1, avg.Load5, avg.Load15}
-		}
-	} else if avg, err := load.Avg(); err == nil && avg != nil {
+	if avg, err := load.Avg(); err == nil && avg != nil {
 		loadAvg = []float64{avg.Load1, avg.Load5, avg.Load15}
+	} else {
+		unavailable = appendUnavailable(unavailable, "load_average")
 	}
 
 	var bootTime float64
 	if info, err := host.Info(); err == nil {
 		bootTime = float64(info.BootTime)
+	} else {
+		unavailable = appendUnavailable(unavailable, "boot_time")
 	}
 
 	return Sample{
@@ -161,6 +185,7 @@ func (c *Collector) SampleOnce(ctx context.Context) (Sample, error) {
 		Networks:    networks,
 		LoadAverage: loadAvg,
 		BootTime:    bootTime,
+		Unavailable: unavailable,
 	}, nil
 }
 
@@ -179,12 +204,24 @@ func (s Sample) ToPayload() map[string]any {
 	if s.BootTime > 0 {
 		payload["boot_time"] = s.BootTime
 	}
-	payload["cpu_usage"] = nestedFloat(s.CPU, "usage_percent")
-	payload["memory_usage"] = nestedFloat(s.Memory, "percent")
-	payload["swap_usage"] = nestedFloat(s.Swap, "percent")
-	payload["disk_usage"] = maxDiskPercent(s.Disks)
-	payload["network_rx"] = sumNetworkField(s.Networks, "bytes_recv")
-	payload["network_tx"] = sumNetworkField(s.Networks, "bytes_sent")
+	if value, ok := nestedFloat(s.CPU, "usage_percent"); ok {
+		payload["cpu_usage"] = value
+	}
+	if value, ok := nestedFloat(s.Memory, "percent"); ok {
+		payload["memory_usage"] = value
+	}
+	if value, ok := nestedFloat(s.Swap, "percent"); ok {
+		payload["swap_usage"] = value
+	}
+	if value, ok := maxDiskPercent(s.Disks); ok {
+		payload["disk_usage"] = value
+	}
+	if value, ok := sumNetworkField(s.Networks, "bytes_recv"); ok {
+		payload["network_rx"] = value
+	}
+	if value, ok := sumNetworkField(s.Networks, "bytes_sent"); ok {
+		payload["network_tx"] = value
+	}
 	if len(s.LoadAverage) > 0 {
 		payload["load_1m"] = s.LoadAverage[0]
 	}
@@ -194,52 +231,69 @@ func (s Sample) ToPayload() map[string]any {
 	if len(s.LoadAverage) > 2 {
 		payload["load_15m"] = s.LoadAverage[2]
 	}
-	payload["metadata"] = map[string]any{"collector": "gopsutil", "goos": runtime.GOOS}
+	collectionStatus := "ready"
+	if len(s.Unavailable) > 0 {
+		collectionStatus = "partial"
+	}
+	payload["metadata"] = map[string]any{
+		"collector":           "gopsutil",
+		"goos":                runtime.GOOS,
+		"collection_status":   collectionStatus,
+		"unavailable_metrics": s.Unavailable,
+	}
 	return payload
 }
 
-func firstFloat(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
+func appendUnavailable(values []string, name string) []string {
+	for _, value := range values {
+		if value == name {
+			return values
+		}
 	}
-	return values[0]
+	return append(values, name)
 }
 
-func nestedFloat(m map[string]any, key string) float64 {
+func nestedFloat(m map[string]any, key string) (float64, bool) {
 	if m == nil {
-		return 0
+		return 0, false
 	}
 	switch v := m[key].(type) {
 	case float64:
-		return v
+		return v, true
 	case float32:
-		return float64(v)
+		return float64(v), true
 	case int:
-		return float64(v)
+		return float64(v), true
 	case int64:
-		return float64(v)
+		return float64(v), true
 	default:
-		return 0
+		return 0, false
 	}
 }
 
-func maxDiskPercent(disks []any) float64 {
+func maxDiskPercent(disks []any) (float64, bool) {
 	max := 0.0
+	found := false
 	for _, row := range disks {
 		m, ok := row.(map[string]any)
 		if !ok {
 			continue
 		}
-		p := nestedFloat(m, "percent")
+		p, ok := nestedFloat(m, "percent")
+		if !ok {
+			continue
+		}
+		found = true
 		if p > max {
 			max = p
 		}
 	}
-	return max
+	return max, found
 }
 
-func sumNetworkField(networks []any, field string) float64 {
+func sumNetworkField(networks []any, field string) (float64, bool) {
 	total := 0.0
+	found := false
 	for _, row := range networks {
 		m, ok := row.(map[string]any)
 		if !ok {
@@ -248,13 +302,16 @@ func sumNetworkField(networks []any, field string) float64 {
 		switch v := m[field].(type) {
 		case float64:
 			total += v
+			found = true
 		case uint64:
 			total += float64(v)
+			found = true
 		case int64:
 			total += float64(v)
+			found = true
 		}
 	}
-	return total
+	return total, found
 }
 
 func normalizeMonitorMountpoint(mountpoint string) string {

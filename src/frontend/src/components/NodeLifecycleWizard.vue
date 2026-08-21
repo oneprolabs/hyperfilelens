@@ -25,7 +25,7 @@ import {
   type EnrollmentOs,
 } from '../lib/nodeApi'
 import { apiErrorMessage } from '../lib/api'
-import type { NodeRole } from '../types/node'
+import type { NodeInstallationMode, NodeRole } from '../types/node'
 
 const props = withDefaults(
   defineProps<{
@@ -44,6 +44,7 @@ const props = withDefaults(
     initialServiceAction?: 'status' | 'start' | 'stop' | 'restart'
     /** Require an explicit operator action before issuing an enrollment token. */
     generateOnDemand?: boolean
+    installationMode?: NodeInstallationMode
   }>(),
   {
     nodeId: null,
@@ -55,6 +56,7 @@ const props = withDefaults(
     maintenanceOnly: false,
     initialServiceAction: 'status',
     generateOnDemand: false,
+    installationMode: 'system',
   },
 )
 
@@ -81,6 +83,10 @@ const copied = ref(false)
 const installGenerated = ref(false)
 const purgeAll = ref(false)
 const serviceAction = ref<'status' | 'start' | 'stop' | 'restart'>(props.initialServiceAction)
+const selectedInstallationMode = ref<NodeInstallationMode>(props.installationMode)
+const effectiveInstallationMode = computed<NodeInstallationMode>(() => (
+  props.role === 'agent' ? selectedInstallationMode.value : 'system'
+))
 const supportOpen = ref(false)
 const enrollmentTokenId = ref<number | null>(null)
 const enrollmentTokenIsPlatform = ref(false)
@@ -197,7 +203,11 @@ const roleLabel = computed(() => {
   return t('nodesPage.roleAgent')
 })
 
-const paths = computed(() => installPathsSummary(props.os, props.role))
+const paths = computed(() => installPathsSummary(
+  props.os,
+  props.role,
+  effectiveInstallationMode.value,
+))
 
 const displayCommand = computed(() => {
   switch (activeTab.value) {
@@ -236,6 +246,7 @@ const osPickerOptions = computed(() => [
 ])
 
 const installLeadKey = computed(() => {
+  if (effectiveInstallationMode.value === 'user') return 'nodeLifecycle.installLeadUser'
   if (props.os === 'windows') return 'nodeLifecycle.installLeadWindows'
   if (props.os === 'macos') return 'nodeLifecycle.installLeadMacos'
   return 'nodeLifecycle.installLeadLinux'
@@ -306,6 +317,7 @@ async function refreshInstallCommand(gen: number) {
         : await issueEnrollmentInstall({
             role: props.role,
             os: props.os,
+            installationMode: effectiveInstallationMode.value,
             note: `deploy:${props.role}`,
           })
     if (gen !== generation) {
@@ -369,6 +381,7 @@ async function refreshUpgradeCommand(gen: number) {
       release.tls_verify !== false,
       '',
       release.arch === 'arm64' ? 'arm64' : 'amd64',
+      effectiveInstallationMode.value,
     )
     if (!upgradeCommand.value) throw new Error(t('nodeLifecycle.upgradeCommandUnavailable'))
   } catch (error) {
@@ -383,8 +396,18 @@ async function refreshUpgradeCommand(gen: number) {
 }
 
 function refreshStaticCommands() {
-  uninstallCommand.value = buildLocalUninstallCommand(props.os, purgeAll.value, props.role)
-  serviceCommand.value = buildLocalServiceCommand(props.os, serviceAction.value, props.role)
+  uninstallCommand.value = buildLocalUninstallCommand(
+    props.os,
+    purgeAll.value,
+    props.role,
+    effectiveInstallationMode.value,
+  )
+  serviceCommand.value = buildLocalServiceCommand(
+    props.os,
+    serviceAction.value,
+    props.role,
+    effectiveInstallationMode.value,
+  )
 }
 
 function refreshAll() {
@@ -413,6 +436,23 @@ watch(
   },
   { immediate: true },
 )
+
+watch(
+  () => props.installationMode,
+  (mode) => {
+    selectedInstallationMode.value = mode
+  },
+)
+
+watch(selectedInstallationMode, () => {
+  const staleTokenId = enrollmentTokenId.value
+  const staleTokenIsPlatform = enrollmentTokenIsPlatform.value
+  clearInstallCommand()
+  if (staleTokenId) {
+    void revokeIssuedEnrollment(staleTokenId, staleTokenIsPlatform)
+  }
+  refreshAll()
+})
 
 watch(
   () => props.initialTab,
@@ -794,6 +834,48 @@ defineExpose({ clearInstallCommand })
         </section>
       </div>
 
+      <div
+        v-if="!maintenanceOnly && role === 'agent' && activeTab === 'install'"
+        class="fullscreen-form-card"
+      >
+        <section class="fullscreen-form-section">
+          <h3 class="fullscreen-form-section__title">
+            <span class="fullscreen-form-section__indicator" />
+            {{ t('nodeLifecycle.installationModeStep') }}
+          </h3>
+          <div class="installation-mode-picker">
+            <ElRadioGroup
+              v-model="selectedInstallationMode"
+              class="source-radio-row"
+              :aria-label="t('nodeLifecycle.installationModeStep')"
+            >
+              <ElRadio
+                value="system"
+                border
+                class="source-radio-card !mr-0"
+              >
+                {{ t('nodeLifecycle.installationModeSystem') }}
+              </ElRadio>
+              <ElRadio
+                value="user"
+                border
+                class="source-radio-card !mr-0"
+              >
+                {{ t('nodeLifecycle.installationModeUser') }}
+              </ElRadio>
+            </ElRadioGroup>
+            <p
+              class="installation-mode-picker__hint"
+              aria-live="polite"
+            >
+              {{ selectedInstallationMode === 'user'
+                ? t('nodeLifecycle.installationModeUserHint')
+                : t('nodeLifecycle.installationModeSystemHint') }}
+            </p>
+          </div>
+        </section>
+      </div>
+
       <div class="fullscreen-form-card">
         <section class="fullscreen-form-section">
           <template v-if="installOnly">
@@ -1172,6 +1254,18 @@ defineExpose({ clearInstallCommand })
 
 .node-lifecycle-wizard__options {
   margin-bottom: 12px;
+}
+
+.installation-mode-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.installation-mode-picker__hint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .agent-install-wizard--maintenance {

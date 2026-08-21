@@ -6,7 +6,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from apps.node import conf as node_conf
-from apps.node.models import Node, NodeToken
+from apps.node.models import Node, NodeInstallationMode, NodeToken
 from common.deploy.site import enrollment_tls_verify
 
 
@@ -22,6 +22,7 @@ class NodeTokenSerializer(serializers.ModelSerializer):
             "organization",
             "token",
             "role",
+            "installation_mode",
             "note",
             "is_active",
             "created_at",
@@ -39,6 +40,7 @@ class NodeTokenSerializer(serializers.ModelSerializer):
             "organization",
             "token",
             "role",
+            "installation_mode",
             "created_at",
             "updated_at",
             "expires_at",
@@ -75,6 +77,7 @@ class NodeTokenCreateSerializer(serializers.ModelSerializer):
         fields = [
             "org",
             "role",
+            "installation_mode",
             "note",
             "expires_at",
             "is_active",
@@ -91,6 +94,23 @@ class NodeTokenCreateSerializer(serializers.ModelSerializer):
         if value not in dict(Node.Role.choices):
             raise serializers.ValidationError("invalid role")
         return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        role = attrs.get("role")
+        installation_mode = attrs.get(
+            "installation_mode",
+            NodeInstallationMode.SYSTEM,
+        )
+        if installation_mode == NodeInstallationMode.USER and role != Node.Role.AGENT:
+            raise serializers.ValidationError(
+                {
+                    "installation_mode": (
+                        "User-level installation is only available for Source Agent."
+                    )
+                }
+            )
+        return attrs
 
     def create(self, validated_data):
         ttl = max(1, node_conf.ENROLLMENT_TOKEN_TTL_SECONDS)
