@@ -20,6 +20,7 @@ import {
   Folder,
   FolderOpen,
   Globe,
+  Info,
   Link2,
   LoaderCircle,
   RefreshCw,
@@ -1669,6 +1670,24 @@ function fmtBytes(n: number) {
   return `${value.toFixed(i >= 2 ? 1 : 0)} ${units[i]}`
 }
 
+function fmtReferenceBytes(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—'
+  return fmtBytes(Math.max(0, Number(value)))
+}
+
+function fmtReferencePercent(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—'
+  return `${(Number(value) * 100).toFixed(1)}%`
+}
+
+function fmtCombinedReduction(snapshot: BackupSourceSnapshot) {
+  if (!snapshot.storage_stats_available) return '—'
+  if (snapshot.fully_reused) return t('protection.backupsPage.snapshotStorageFullyReused')
+  const value = Number(snapshot.combined_reduction_ratio)
+  if (!Number.isFinite(value) || value <= 0) return '—'
+  return `${value.toFixed(2)}:1`
+}
+
 function snapshotDisplayDirectories(snapshot: BackupSourceSnapshot) {
   const detail = snapshotDetails.value.get(snapshot.id)
   const directories = detail?.directories?.length ? detail.directories : snapshot.directories || []
@@ -1676,7 +1695,7 @@ function snapshotDisplayDirectories(snapshot: BackupSourceSnapshot) {
 }
 
 function snapshotDisplaySize(snapshot: BackupSourceSnapshot) {
-  const value = Number(snapshot.total_size_bytes || 0)
+  const value = Number(snapshot.recoverable_size_bytes || snapshot.total_size_bytes || 0)
   if (value > 0) return value
   return snapshotDisplayDirectories(snapshot).reduce((sum, dir) => sum + Number(dir.size_bytes || 0), 0)
 }
@@ -3278,147 +3297,197 @@ function onClosed() {
                       animated
                     />
                   </div>
-                  <el-table
-                    v-else-if="selectedSnapshotId === row.id && selectedSnapshotDirectories.length"
-                    v-table-column-resize="'protection.flowBackupSource.snapshotDirectories'"
-                    v-table-overflow-title
-                    :data="selectedSnapshotDirectories"
-                    :max-height="snapshotTableMaxHeight"
-                    :fit="false"
-                    stripe
-                    :header-cell-style="TABLE_HEADER_STYLE"
-                    class="hfl-list-table hfl-list-table--compact snapshot-directory-table"
-                  >
-                    <el-table-column
-                      :label="t('protection.backupDetail.colBackupDir')"
-                      width="240"
-                    >
-                      <template #default="{ row: dir }">
-                        <button
-                          v-if="canBrowseSnapshotDirectory(dir)"
-                          type="button"
-                          class="hfl-table-name-link snapshot-directory-path-cell"
-                          @click.stop="openSnapshotDirectory(dir)"
+                  <template v-else-if="selectedSnapshotId === row.id && selectedSnapshot">
+                    <section class="snapshot-efficiency-summary">
+                      <header class="snapshot-efficiency-summary__header">
+                        <div>
+                          <h4 class="snapshot-efficiency-summary__title">
+                            {{ t('protection.backupsPage.snapshotStorageEfficiencyTitle') }}
+                          </h4>
+                          <p class="snapshot-efficiency-summary__lead">
+                            {{ t('protection.backupsPage.snapshotStorageEfficiencyLead') }}
+                          </p>
+                        </div>
+                        <ElTooltip
+                          :content="t('protection.backupsPage.snapshotStorageReferenceHint')"
+                          placement="top"
                         >
-                          <span class="snapshot-directory-path-cell__parent">
-                            <component
-                              :is="snapshotDirectoryIcon(dir)"
-                              :size="15"
-                              class="snapshot-directory-path-cell__icon"
-                              :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
-                            />
-                            <span class="snapshot-directory-path-cell__path hfl-table-cell-mono">{{ dir.source_path }}</span>
-                          </span>
-                        </button>
-                        <span
-                          v-else
-                          class="snapshot-directory-path-cell snapshot-directory-path-cell--disabled"
-                        >
-                          <span class="snapshot-directory-path-cell__parent">
-                            <component
-                              :is="snapshotDirectoryIcon(dir)"
-                              :size="15"
-                              class="snapshot-directory-path-cell__icon"
-                              :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
-                            />
-                            <code class="snapshot-directory-path-cell__path flow-source-list-drawer-path hfl-table-cell-mono">{{ dir.source_path }}</code>
-                          </span>
-                        </span>
-                      </template>
-                    </el-table-column>
-                    <el-table-column
-                      :label="t('protection.backupsPage.snapshotBrowserDirectorySnapshotId')"
-                      width="180"
+                          <Info
+                            :size="16"
+                            class="snapshot-efficiency-summary__info"
+                            aria-hidden="true"
+                          />
+                        </ElTooltip>
+                      </header>
+                      <dl class="snapshot-efficiency-summary__metrics">
+                        <div class="snapshot-efficiency-summary__metric">
+                          <dt>{{ t('protection.backupsPage.snapshotRecoverableData') }}</dt>
+                          <dd>{{ fmtBytes(snapshotDisplaySize(selectedSnapshot)) }}</dd>
+                        </div>
+                        <div class="snapshot-efficiency-summary__metric">
+                          <dt>{{ t('protection.backupsPage.snapshotNewOriginalData') }}</dt>
+                          <dd>{{ fmtReferenceBytes(selectedSnapshot.new_original_content_bytes) }}</dd>
+                        </div>
+                        <div class="snapshot-efficiency-summary__metric">
+                          <dt>{{ t('protection.backupsPage.snapshotNewStorage') }}</dt>
+                          <dd>{{ fmtReferenceBytes(selectedSnapshot.new_packed_content_bytes) }}</dd>
+                        </div>
+                        <div class="snapshot-efficiency-summary__metric">
+                          <dt>{{ t('protection.backupsPage.snapshotDataReuse') }}</dt>
+                          <dd>{{ fmtReferencePercent(selectedSnapshot.data_reuse_ratio) }}</dd>
+                        </div>
+                        <div class="snapshot-efficiency-summary__metric">
+                          <dt>{{ t('protection.backupsPage.snapshotCompressionSavings') }}</dt>
+                          <dd>{{ fmtReferencePercent(selectedSnapshot.compression_savings_ratio) }}</dd>
+                        </div>
+                        <div class="snapshot-efficiency-summary__metric">
+                          <dt>{{ t('protection.backupsPage.snapshotCombinedReduction') }}</dt>
+                          <dd>{{ fmtCombinedReduction(selectedSnapshot) }}</dd>
+                        </div>
+                      </dl>
+                    </section>
+                    <el-table
+                      v-if="selectedSnapshotDirectories.length"
+                      v-table-column-resize="'protection.flowBackupSource.snapshotDirectories'"
+                      v-table-overflow-title
+                      :data="selectedSnapshotDirectories"
+                      :max-height="snapshotTableMaxHeight"
+                      :fit="false"
+                      stripe
+                      :header-cell-style="TABLE_HEADER_STYLE"
+                      class="hfl-list-table hfl-list-table--compact snapshot-directory-table"
                     >
-                      <template #default="{ row: dir }">
-                        <span
-                          class="hfl-table-cell-mono"
-                          :class="{ 'hfl-empty-mark': !dir.kopia_snapshot_id }"
-                        >{{ dir.kopia_snapshot_id || '—' }}</span>
-                      </template>
-                    </el-table-column>
-                    <el-table-column
-                      :label="t('protection.backupDetail.colSnapSize')"
-                      width="110"
-                      align="right"
-                    >
-                      <template #default="{ row: dir }">
-                        {{ fmtBytes(dir.size_bytes) }}
-                      </template>
-                    </el-table-column>
-                    <el-table-column
-                      :label="t('protection.backupsPage.snapshotBrowserFileDirCount')"
-                      width="110"
-                      align="right"
-                    >
-                      <template #default="{ row: dir }">
-                        {{ dir.file_count }}/{{ dir.dir_count }}
-                      </template>
-                    </el-table-column>
-                    <el-table-column
-                      :label="t('protection.backupDetail.labelStatus')"
-                      width="92"
-                    >
-                      <template #default="{ row: dir }">
-                        <el-tag
-                          :type="lifecycleStatusTagAttrs(dir.status).type"
-                          :class="lifecycleStatusTagAttrs(dir.status).class"
-                          size="small"
-                        >
-                          {{ snapshotStatusLabel(dir.status) }}
-                        </el-tag>
-                      </template>
-                    </el-table-column>
-                    <el-table-column
-                      :label="t('protection.backupDetail.colError')"
-                      width="220"
-                    >
-                      <template #default="{ row: dir }">
-                        <span
-                          v-if="dir.error_message"
-                          class="snapshot-directory-error"
-                        >
-                          {{ dir.error_code ? `[${dir.error_code}] ` : '' }}{{ dir.error_message }}
-                        </span>
-                        <span
-                          v-else
-                          class="hfl-empty-mark"
-                        >{{ t('protection.backupDetail.durationDash') }}</span>
-                      </template>
-                    </el-table-column>
-                    <el-table-column
-                      :label="t('protection.sourceResources.colActions')"
-                      width="120"
-                      fixed="right"
-                      align="center"
-                      class-name="hfl-table-actions-col"
-                      header-class-name="hfl-table-actions-col"
-                    >
-                      <template #default="{ row: dir }">
-                        <div class="snapshot-point-actions">
+                      <el-table-column
+                        :label="t('protection.backupDetail.colBackupDir')"
+                        width="240"
+                      >
+                        <template #default="{ row: dir }">
                           <button
+                            v-if="canBrowseSnapshotDirectory(dir)"
                             type="button"
-                            class="snapshot-point-actions__button snapshot-point-actions__button--browse"
-                            :title="t('protection.backupsPage.snapshotBrowserBrowse')"
-                            :disabled="!canBrowseSnapshotDirectory(dir)"
+                            class="hfl-table-name-link snapshot-directory-path-cell"
                             @click.stop="openSnapshotDirectory(dir)"
                           >
-                            <FolderOpen
-                              :size="14"
-                              class="snapshot-point-actions__icon"
-                              aria-hidden="true"
-                            />
-                            <span>{{ t('protection.backupsPage.snapshotBrowserBrowse') }}</span>
+                            <span class="snapshot-directory-path-cell__parent">
+                              <component
+                                :is="snapshotDirectoryIcon(dir)"
+                                :size="15"
+                                class="snapshot-directory-path-cell__icon"
+                                :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
+                              />
+                              <span class="snapshot-directory-path-cell__path hfl-table-cell-mono">{{ dir.source_path }}</span>
+                            </span>
                           </button>
-                        </div>
-                      </template>
-                    </el-table-column>
-                  </el-table>
-                  <el-empty
-                    v-else
-                    :description="t('protection.backupsPage.snapshotBrowserEmptyDirectories')"
-                    :image-size="56"
-                  />
+                          <span
+                            v-else
+                            class="snapshot-directory-path-cell snapshot-directory-path-cell--disabled"
+                          >
+                            <span class="snapshot-directory-path-cell__parent">
+                              <component
+                                :is="snapshotDirectoryIcon(dir)"
+                                :size="15"
+                                class="snapshot-directory-path-cell__icon"
+                                :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
+                              />
+                              <code class="snapshot-directory-path-cell__path flow-source-list-drawer-path hfl-table-cell-mono">{{ dir.source_path }}</code>
+                            </span>
+                          </span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column
+                        :label="t('protection.backupsPage.snapshotBrowserDirectorySnapshotId')"
+                        width="180"
+                      >
+                        <template #default="{ row: dir }">
+                          <span
+                            class="hfl-table-cell-mono"
+                            :class="{ 'hfl-empty-mark': !dir.kopia_snapshot_id }"
+                          >{{ dir.kopia_snapshot_id || '—' }}</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column
+                        :label="t('protection.backupsPage.snapshotRecoverableData')"
+                        width="140"
+                        align="right"
+                      >
+                        <template #default="{ row: dir }">
+                          {{ fmtBytes(dir.size_bytes) }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column
+                        :label="t('protection.backupsPage.snapshotBrowserFileDirCount')"
+                        width="110"
+                        align="right"
+                      >
+                        <template #default="{ row: dir }">
+                          {{ dir.file_count }}/{{ dir.dir_count }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column
+                        :label="t('protection.backupDetail.labelStatus')"
+                        width="92"
+                      >
+                        <template #default="{ row: dir }">
+                          <el-tag
+                            :type="lifecycleStatusTagAttrs(dir.status).type"
+                            :class="lifecycleStatusTagAttrs(dir.status).class"
+                            size="small"
+                          >
+                            {{ snapshotStatusLabel(dir.status) }}
+                          </el-tag>
+                        </template>
+                      </el-table-column>
+                      <el-table-column
+                        :label="t('protection.backupDetail.colError')"
+                        width="220"
+                      >
+                        <template #default="{ row: dir }">
+                          <span
+                            v-if="dir.error_message"
+                            class="snapshot-directory-error"
+                          >
+                            {{ dir.error_code ? `[${dir.error_code}] ` : '' }}{{ dir.error_message }}
+                          </span>
+                          <span
+                            v-else
+                            class="hfl-empty-mark"
+                          >{{ t('protection.backupDetail.durationDash') }}</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column
+                        :label="t('protection.sourceResources.colActions')"
+                        width="120"
+                        fixed="right"
+                        align="center"
+                        class-name="hfl-table-actions-col"
+                        header-class-name="hfl-table-actions-col"
+                      >
+                        <template #default="{ row: dir }">
+                          <div class="snapshot-point-actions">
+                            <button
+                              type="button"
+                              class="snapshot-point-actions__button snapshot-point-actions__button--browse"
+                              :title="t('protection.backupsPage.snapshotBrowserBrowse')"
+                              :disabled="!canBrowseSnapshotDirectory(dir)"
+                              @click.stop="openSnapshotDirectory(dir)"
+                            >
+                              <FolderOpen
+                                :size="14"
+                                class="snapshot-point-actions__icon"
+                                aria-hidden="true"
+                              />
+                              <span>{{ t('protection.backupsPage.snapshotBrowserBrowse') }}</span>
+                            </button>
+                          </div>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                    <el-empty
+                      v-else
+                      :description="t('protection.backupsPage.snapshotBrowserEmptyDirectories')"
+                      :image-size="56"
+                    />
+                  </template>
                 </div>
               </template>
             </el-table-column>
@@ -3466,8 +3535,17 @@ function onClosed() {
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('protection.backupDetail.colSnapSize')"
-              width="110"
+              :label="t('protection.backupsPage.snapshotNewStorage')"
+              width="130"
+              align="right"
+            >
+              <template #default="{ row }">
+                {{ fmtReferenceBytes(row.new_packed_content_bytes) }}
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupsPage.snapshotRecoverableData')"
+              width="140"
               align="right"
             >
               <template #default="{ row }">
@@ -5224,6 +5302,99 @@ function onClosed() {
 .snapshot-directory-table {
   width: 100%;
   min-width: 0;
+}
+
+.snapshot-efficiency-summary {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+}
+
+.snapshot-efficiency-summary__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.snapshot-efficiency-summary__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.snapshot-efficiency-summary__title::before {
+  width: 3px;
+  height: 14px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--color-primary);
+  content: '';
+}
+
+.snapshot-efficiency-summary__lead {
+  margin: 3px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.snapshot-efficiency-summary__info {
+  flex: 0 0 auto;
+  color: var(--el-text-color-secondary);
+  cursor: help;
+}
+
+.snapshot-efficiency-summary__metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(112px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.snapshot-efficiency-summary__metric {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-bg-color);
+}
+
+.snapshot-efficiency-summary__metric dt {
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-efficiency-summary__metric dd {
+  margin: 3px 0 0;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 20px;
+}
+
+@media (max-width: 1180px) {
+  .snapshot-efficiency-summary__metrics {
+    grid-template-columns: repeat(3, minmax(112px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .snapshot-efficiency-summary__metrics {
+    grid-template-columns: repeat(2, minmax(112px, 1fr));
+  }
 }
 
 .hfl-list-table .snapshot-point-time {

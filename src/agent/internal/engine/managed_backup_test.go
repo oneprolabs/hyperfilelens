@@ -985,6 +985,66 @@ func TestManagedBackupSnapshotArgsAvoidUnsupportedProgressIntervalFlag(t *testin
 	}
 }
 
+func TestManagedSnapshotStorageStatsArgsKeepCompleteChronologicalHistory(t *testing.T) {
+	args := managedSnapshotStorageStatsArgs("/tmp/repo.config", "/tmp/source")
+
+	for _, forbidden := range []string{"--reverse", "--max-results", "--tags"} {
+		if slices.Contains(args, forbidden) {
+			t.Fatalf("storage stats args must not include %s: %#v", forbidden, args)
+		}
+	}
+	for _, required := range []string{"snapshot", "list", "--storage-stats", "--no-retention", "--json"} {
+		if !slices.Contains(args, required) {
+			t.Fatalf("storage stats args must include %s: %#v", required, args)
+		}
+	}
+	if got := args[len(args)-1]; got != "/tmp/source" {
+		t.Fatalf("expected exact source path last, got %q in %#v", got, args)
+	}
+}
+
+func TestParseManagedSnapshotStorageStatsLineUsesRecoverableSummary(t *testing.T) {
+	line := ` {"id":"snapshot-2","stats":{"totalSize":999,"fileCount":12,"dirCount":9},"rootEntry":{"summ":{"size":2519861074,"files":82897,"symlinks":3,"dirs":8130}},"storageStats":{"newData":{"objectBytes":294628341,"originalContentBytes":294631395,"packedContentBytes":96054274,"fileObjects":11119,"dirObjects":1788,"contents":12948}}},`
+
+	metrics, ok := parseManagedSnapshotStorageStatsLine(line, "snapshot-2")
+	if !ok {
+		t.Fatal("expected matching storage statistics row")
+	}
+	want := map[string]int64{
+		"recoverable_size_bytes":     2519861074,
+		"size_bytes":                 2519861074,
+		"file_count":                 82897,
+		"dir_count":                  8130,
+		"symlink_count":              3,
+		"new_original_content_bytes": 294631395,
+		"new_packed_content_bytes":   96054274,
+	}
+	for key, expected := range want {
+		if got, _ := int64Value(metrics[key]); got != expected {
+			t.Fatalf("%s=%d, want %d in %#v", key, got, expected, metrics)
+		}
+	}
+	if _, ok := parseManagedSnapshotStorageStatsLine(line, "snapshot-other"); ok {
+		t.Fatal("must ignore a non-matching snapshot id")
+	}
+}
+
+func TestParseManagedSnapshotStorageStatsLinePreservesZeroAndRejectsIncompleteRows(t *testing.T) {
+	zeroLine := `{"id":"snapshot-zero","rootEntry":{"summ":{"size":42,"files":2,"dirs":1}},"storageStats":{"newData":{"originalContentBytes":0,"packedContentBytes":0}}}`
+	metrics, ok := parseManagedSnapshotStorageStatsLine(zeroLine, "snapshot-zero")
+	if !ok {
+		t.Fatal("expected a valid fully reused snapshot row")
+	}
+	if metrics["new_original_content_bytes"] != int64(0) || metrics["new_packed_content_bytes"] != int64(0) {
+		t.Fatalf("zero storage statistics must be preserved: %#v", metrics)
+	}
+
+	incompleteLine := `{"id":"snapshot-incomplete","rootEntry":{"summ":{"size":42,"files":2,"dirs":1}},"storageStats":{"newData":{"originalContentBytes":21}}}`
+	if _, ok := parseManagedSnapshotStorageStatsLine(incompleteLine, "snapshot-incomplete"); ok {
+		t.Fatal("expected an incomplete storage statistics row to be rejected")
+	}
+}
+
 func TestParseSnapshotBrowseOutputIncludesDirectoriesAndFiles(t *testing.T) {
 	stdout := `[
 		{"name":"docs","path":"docs","type":"dir","is_dir":true,"size_bytes":0},

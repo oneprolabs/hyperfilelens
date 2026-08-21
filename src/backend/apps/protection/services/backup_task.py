@@ -1227,6 +1227,30 @@ def _int_result_deep(data: dict[str, Any], *keys: str) -> int:
     return 0
 
 
+def _optional_nonnegative_int_result_deep(
+    data: dict[str, Any],
+    *keys: str,
+) -> int | None:
+    for key in keys:
+        if key not in data:
+            continue
+        value = data.get(key)
+        if isinstance(value, bool):
+            continue
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        return parsed if parsed >= 0 else None
+    for nested_key in _SNAPSHOT_STATS_KEYS:
+        nested = _nested_dict_result(data, nested_key)
+        if nested:
+            value = _optional_nonnegative_int_result_deep(nested, *keys)
+            if value is not None:
+                return value
+    return None
+
+
 def _extract_snapshot_metrics(
     result: dict[str, Any],
 ) -> tuple[str, int, int, int, dict[str, Any]]:
@@ -1240,13 +1264,27 @@ def _extract_snapshot_metrics(
     size_bytes = _int_result_deep(result, *_SNAPSHOT_SIZE_KEYS)
     file_count = _int_result_deep(result, *_SNAPSHOT_FILE_COUNT_KEYS)
     dir_count = _int_result_deep(result, *_SNAPSHOT_DIR_COUNT_KEYS)
-    if stats:
+    new_original_content_bytes = _optional_nonnegative_int_result_deep(
+        result,
+        "new_original_content_bytes",
+        "newOriginalContentBytes",
+    )
+    new_packed_content_bytes = _optional_nonnegative_int_result_deep(
+        result,
+        "new_packed_content_bytes",
+        "newPackedContentBytes",
+    )
+    if stats or new_original_content_bytes is not None or new_packed_content_bytes is not None:
         stats = {
             **stats,
             "size_bytes": size_bytes,
             "file_count": file_count,
             "dir_count": dir_count,
         }
+        if new_original_content_bytes is not None:
+            stats["new_original_content_bytes"] = new_original_content_bytes
+        if new_packed_content_bytes is not None:
+            stats["new_packed_content_bytes"] = new_packed_content_bytes
     return snapshot_id, size_bytes, file_count, dir_count, stats
 
 

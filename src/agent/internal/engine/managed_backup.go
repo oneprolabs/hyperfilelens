@@ -1283,7 +1283,10 @@ func (e *Engine) runManagedPolicyApply(
 	return "success", result, ""
 }
 
-var runManagedSnapshotCommand = process.RunStreaming
+var (
+	runManagedSnapshotCommand             = process.RunStreaming
+	runManagedSnapshotStorageStatsCommand = process.RunStreamingDiscardStdout
+)
 
 var runManagedSnapshotReconcileCommand = func(
 	ctx context.Context,
@@ -1491,6 +1494,7 @@ func runPreparedManagedSnapshot(
 		}
 		return "failed", result, runErr.Error()
 	}
+	collectManagedSnapshotStorageStats(ctx, bin, configFile, env, sourcePath, result)
 
 	_ = sendProgress(ctx, rep, taskID, map[string]any{
 		"phase":             "kopia_transfer",
@@ -1503,6 +1507,68 @@ func runPreparedManagedSnapshot(
 		"kopia_snapshot_id": stringValue(result["kopia_snapshot_id"]),
 	})
 	return "success", result, ""
+}
+
+func collectManagedSnapshotStorageStats(
+	ctx context.Context,
+	bin string,
+	configFile string,
+	env map[string]string,
+	sourcePath string,
+	result map[string]any,
+) {
+	result["storage_stats_available"] = false
+	snapshotID := strings.TrimSpace(stringValue(result["kopia_snapshot_id"]))
+	if snapshotID == "" {
+		result["storage_stats_error"] = "Kopia snapshot id is unavailable"
+		return
+	}
+
+	var selected map[string]any
+	onLine := func(line string, stderr bool) {
+		if stderr || selected != nil {
+			return
+		}
+		if metrics, ok := parseManagedSnapshotStorageStatsLine(line, snapshotID); ok {
+			selected = metrics
+		}
+	}
+	res, err := runManagedSnapshotStorageStatsCommand(
+		ctx,
+		bin,
+		managedSnapshotStorageStatsArgs(configFile, sourcePath),
+		env,
+		"",
+		onLine,
+	)
+	if err != nil {
+		message := strings.TrimSpace(res.Stderr)
+		if message == "" {
+			message = err.Error()
+		}
+		result["storage_stats_error"] = truncateSnapshotBrowseError(message, 500)
+		return
+	}
+	if selected == nil {
+		result["storage_stats_error"] = "Created snapshot was not found in Kopia storage statistics"
+		return
+	}
+
+	for key, value := range selected {
+		result[key] = value
+	}
+	result["storage_stats_available"] = true
+	result["storage_stats_captured_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	result["stats"] = map[string]any{
+		"size_bytes":                 selected["recoverable_size_bytes"],
+		"recoverable_size_bytes":     selected["recoverable_size_bytes"],
+		"file_count":                 selected["file_count"],
+		"dir_count":                  selected["dir_count"],
+		"symlink_count":              selected["symlink_count"],
+		"new_original_content_bytes": selected["new_original_content_bytes"],
+		"new_packed_content_bytes":   selected["new_packed_content_bytes"],
+		"storage_stats_available":    true,
+	}
 }
 
 func managedSnapshotPolicyNotFound(res process.Result) bool {
@@ -1586,6 +1652,76 @@ func managedSnapshotHasOperation(snapshot map[string]any, operationID string) bo
 	}
 	return payloadStringValue(tags["tag:"+backupOperationTagKey]) == operationID ||
 		payloadStringValue(tags[backupOperationTagKey]) == operationID
+}
+
+func managedSnapshotStorageStatsArgs(configFile string, sourcePath string) []string {
+	return []string{
+		"--config-file=" + configFile,
+		"snapshot",
+		"list",
+		"--storage-stats",
+		"--no-retention",
+		"--json",
+		sourcePath,
+	}
+}
+
+func parseManagedSnapshotStorageStatsLine(line string, snapshotID string) (map[string]any, bool) {
+	trimmed := strings.TrimSpace(line)
+	trimmed = strings.TrimSuffix(trimmed, ",")
+	if trimmed == "" || trimmed == "[" || trimmed == "]" {
+		return nil, false
+	}
+
+	var row map[string]any
+	if json.Unmarshal([]byte(trimmed), &row) != nil {
+		return nil, false
+	}
+	if strings.TrimSpace(stringValue(row["id"])) != strings.TrimSpace(snapshotID) {
+		return nil, false
+	}
+
+	rootEntry, ok := row["rootEntry"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	summary, ok := rootEntry["summ"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	storageStats, ok := row["storageStats"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	newData, ok := storageStats["newData"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+
+	recoverableSize, sizeOK := int64Value(summary["size"])
+	fileCount, fileOK := int64Value(summary["files"])
+	dirCount, dirOK := int64Value(summary["dirs"])
+	symlinkCount, symlinkOK := int64Value(summary["symlinks"])
+	newOriginalBytes, originalOK := int64Value(newData["originalContentBytes"])
+	newPackedBytes, packedOK := int64Value(newData["packedContentBytes"])
+	if !sizeOK || !fileOK || !dirOK || !originalOK || !packedOK ||
+		recoverableSize < 0 || fileCount < 0 || dirCount < 0 ||
+		newOriginalBytes < 0 || newPackedBytes < 0 {
+		return nil, false
+	}
+	if !symlinkOK || symlinkCount < 0 {
+		symlinkCount = 0
+	}
+
+	return map[string]any{
+		"recoverable_size_bytes":     recoverableSize,
+		"size_bytes":                 recoverableSize,
+		"file_count":                 fileCount,
+		"dir_count":                  dirCount,
+		"symlink_count":              symlinkCount,
+		"new_original_content_bytes": newOriginalBytes,
+		"new_packed_content_bytes":   newPackedBytes,
+	}, true
 }
 
 func (e *Engine) runManagedSnapshotDelete(

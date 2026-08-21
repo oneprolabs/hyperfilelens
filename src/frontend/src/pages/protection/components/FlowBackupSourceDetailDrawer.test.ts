@@ -94,6 +94,30 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(restoreGuard).toContain("t('protection.backupsPage.msgBackupActiveBlocksActions')")
   })
 
+  it('shows reference storage metrics in the list and expanded snapshot summary', () => {
+    const snapshotTab = sourceBetween(
+      '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',
+      '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',
+    )
+    const expandedSummary = sourceBetween(
+      '<section class="snapshot-efficiency-summary">',
+      '<el-table v-if="selectedSnapshotDirectories.length"',
+    )
+
+    expect(snapshotTab).toContain("t('protection.backupsPage.snapshotNewStorage')")
+    expect(snapshotTab).toContain("t('protection.backupsPage.snapshotRecoverableData')")
+    expect(snapshotTab).toContain('fmtReferenceBytes(row.new_packed_content_bytes)')
+    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotStorageEfficiencyTitle')")
+    expect(expandedSummary).toContain('selectedSnapshot.new_original_content_bytes')
+    expect(expandedSummary).toContain('selectedSnapshot.new_packed_content_bytes')
+    expect(expandedSummary).toContain('selectedSnapshot.data_reuse_ratio')
+    expect(expandedSummary).toContain('selectedSnapshot.compression_savings_ratio')
+    expect(expandedSummary).toContain('fmtCombinedReduction(selectedSnapshot)')
+    expect(enProtectionPages.backupsPage.snapshotNewStorage).toBe('New Storage')
+    expect(enProtectionPages.backupsPage.snapshotRecoverableData).toBe('Recoverable Data')
+    expect(enProtectionPages.backupsPage.snapshotStorageFullyReused).toBe('Fully reused')
+  })
+
   it('distinguishes viewing a snapshot from browsing a directory', () => {
     const snapshotTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',

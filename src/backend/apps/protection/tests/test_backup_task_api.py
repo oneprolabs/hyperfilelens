@@ -18,7 +18,10 @@ from apps.protection.models import (
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
 )
-from apps.protection.services.backup_source_snapshot import create_source_snapshot
+from apps.protection.services.backup_source_snapshot import (
+    create_source_snapshot,
+    record_source_snapshot_directory_result,
+)
 from apps.node.services.internal.agent_task import AgentTaskHandle
 from apps.protection.services.backup_orchestrator import (
     _get_node_task_for_directory,
@@ -161,6 +164,8 @@ class ProtectionBackupTaskApiTests(TestCase):
         kopia_snapshot_id: str = "kopia-snap-1",
         result: dict | None = None,
         last_error: str = "",
+        new_original_content_bytes: int | None = None,
+        new_packed_content_bytes: int | None = None,
     ) -> dict:
         payload = dict(result or {})
         if kopia_snapshot_id and "kopia_snapshot_id" not in payload:
@@ -175,6 +180,10 @@ class ProtectionBackupTaskApiTests(TestCase):
                     },
                 },
             }
+        if new_original_content_bytes is not None:
+            payload["new_original_content_bytes"] = new_original_content_bytes
+        if new_packed_content_bytes is not None:
+            payload["new_packed_content_bytes"] = new_packed_content_bytes
         return {
             "status": status,
             "result": payload,
@@ -821,6 +830,127 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(snapshot.dir_count, 4)
         self.assertEqual(result["total_size_bytes"], 2048)
         self.assertEqual(result["file_count"], 32)
+
+    @patch(
+        "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
+    )
+    @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
+    def test_snapshot_storage_efficiency_metrics_are_persisted_and_exposed(
+        self,
+        mock_run_agent_task_async,
+        mock_sync_repository_usage,
+    ):
+        mock_sync_repository_usage.return_value = {"queued": True}
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-storage-efficiency-metrics",
+        )
+        mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
+            [
+                self._async_outcome(
+                    kopia_snapshot_id="kopia-storage-reference",
+                    new_original_content_bytes=512,
+                    new_packed_content_bytes=128,
+                )
+            ]
+        )
+
+        self._run_orchestrated_backup(task=task, snapshot=snapshot)
+
+        directory = BackupSourceSnapshotDirectory.objects.get(source_snapshot=snapshot)
+        self.assertEqual(directory.size_bytes, 2048)
+        self.assertEqual(directory.new_original_content_bytes, 512)
+        self.assertEqual(directory.new_packed_content_bytes, 128)
+
+        list_response = self.client.get(
+            "/api/v1/protection/backup-source-snapshots/",
+            {"source_type": "agent", "source_ref_id": self.agent.id},
+            **self._headers(),
+        )
+        self.assertEqual(
+            list_response.status_code,
+            status.HTTP_200_OK,
+            list_response.content,
+        )
+        row = list_response.data["results"][0]
+        self.assertEqual(row["recoverable_size_bytes"], 2048)
+        self.assertEqual(row["new_original_content_bytes"], 512)
+        self.assertEqual(row["new_packed_content_bytes"], 128)
+        self.assertTrue(row["storage_stats_available"])
+        self.assertAlmostEqual(row["data_reuse_ratio"], 0.75)
+        self.assertAlmostEqual(row["compression_savings_ratio"], 0.75)
+        self.assertAlmostEqual(row["combined_reduction_ratio"], 16.0)
+        self.assertFalse(row["fully_reused"])
+
+        extra_config_directory = BackupConfigDirectory.objects.create(
+            organization_id=self.org.id,
+            backup_config=self.config,
+            path="/data/archive",
+            display_name="archive",
+            sort_order=1,
+        )
+        record_source_snapshot_directory_result(
+            source_snapshot=snapshot,
+            backup_config_dir_id=extra_config_directory.id,
+            source_path=extra_config_directory.path,
+            path_type=extra_config_directory.path_type,
+            display_name=extra_config_directory.display_name,
+            repository_id=self.repository.id,
+            status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
+            kopia_snapshot_id="kopia-storage-reference-2",
+            size_bytes=1024,
+            file_count=16,
+            dir_count=2,
+            stats={
+                "new_original_content_bytes": 256,
+                "new_packed_content_bytes": 64,
+            },
+        )
+        aggregate_response = self.client.get(
+            f"/api/v1/protection/backup-source-snapshots/{snapshot.id}/",
+            **self._headers(),
+        )
+        aggregate = aggregate_response.data
+        self.assertEqual(aggregate["recoverable_size_bytes"], 3072)
+        self.assertEqual(aggregate["new_original_content_bytes"], 768)
+        self.assertEqual(aggregate["new_packed_content_bytes"], 192)
+        self.assertAlmostEqual(aggregate["data_reuse_ratio"], 0.75)
+        self.assertAlmostEqual(aggregate["compression_savings_ratio"], 0.75)
+        self.assertAlmostEqual(aggregate["combined_reduction_ratio"], 16.0)
+
+        BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot=snapshot,
+        ).update(
+            new_packed_content_bytes=0,
+        )
+        fully_reused_response = self.client.get(
+            f"/api/v1/protection/backup-source-snapshots/{snapshot.id}/",
+            **self._headers(),
+        )
+        fully_reused = fully_reused_response.data
+        self.assertTrue(fully_reused["storage_stats_available"])
+        self.assertTrue(fully_reused["fully_reused"])
+        self.assertEqual(fully_reused["data_reuse_ratio"], 0.75)
+        self.assertEqual(fully_reused["compression_savings_ratio"], 1.0)
+        self.assertIsNone(fully_reused["combined_reduction_ratio"])
+
+        BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot=snapshot,
+            backup_config_dir_id=extra_config_directory.id,
+        ).update(
+            new_original_content_bytes=None,
+            new_packed_content_bytes=None,
+        )
+        legacy_response = self.client.get(
+            f"/api/v1/protection/backup-source-snapshots/{snapshot.id}/",
+            **self._headers(),
+        )
+        legacy = legacy_response.data
+        self.assertFalse(legacy["storage_stats_available"])
+        self.assertIsNone(legacy["new_original_content_bytes"])
+        self.assertIsNone(legacy["new_packed_content_bytes"])
+        self.assertIsNone(legacy["data_reuse_ratio"])
+        self.assertIsNone(legacy["compression_savings_ratio"])
+        self.assertIsNone(legacy["combined_reduction_ratio"])
 
     @patch(
         "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"

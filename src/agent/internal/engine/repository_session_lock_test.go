@@ -125,7 +125,11 @@ func TestPreparedSnapshotReturnsPolicyNotFoundToBackendWithoutRetry(t *testing.T
 
 func TestPreparedSnapshotKeepsSingleBoundedCommandSummary(t *testing.T) {
 	originalRunner := runManagedSnapshotCommand
-	t.Cleanup(func() { runManagedSnapshotCommand = originalRunner })
+	originalStatsRunner := runManagedSnapshotStorageStatsCommand
+	t.Cleanup(func() {
+		runManagedSnapshotCommand = originalRunner
+		runManagedSnapshotStorageStatsCommand = originalStatsRunner
+	})
 	runManagedSnapshotCommand = func(
 		context.Context,
 		string,
@@ -142,6 +146,17 @@ func TestPreparedSnapshotKeepsSingleBoundedCommandSummary(t *testing.T) {
 			StdoutTruncated:  true,
 			StderrTruncated:  true,
 		}, nil
+	}
+	runManagedSnapshotStorageStatsCommand = func(
+		_ context.Context,
+		_ string,
+		_ []string,
+		_ map[string]string,
+		_ string,
+		onLine process.OutputLineHandler,
+	) (process.Result, error) {
+		onLine(` {"id":"snapshot-bounded","rootEntry":{"summ":{"size":42,"files":2,"dirs":1,"symlinks":0}},"storageStats":{"newData":{"originalContentBytes":21,"packedContentBytes":7}}}`, false)
+		return process.Result{}, nil
 	}
 
 	status, result, message := runPreparedManagedSnapshot(
@@ -163,6 +178,55 @@ func TestPreparedSnapshotKeepsSingleBoundedCommandSummary(t *testing.T) {
 	}
 	if command["stdout_total_bytes"] != int64(512*1024) || command["stderr_truncated"] != true {
 		t.Fatalf("output bounds metadata missing: %#v", command)
+	}
+	if result["storage_stats_available"] != true || result["recoverable_size_bytes"] != int64(42) {
+		t.Fatalf("storage statistics missing: %#v", result)
+	}
+	if result["new_original_content_bytes"] != int64(21) || result["new_packed_content_bytes"] != int64(7) {
+		t.Fatalf("storage byte counters missing: %#v", result)
+	}
+}
+
+func TestPreparedSnapshotKeepsSuccessWhenStorageStatsFail(t *testing.T) {
+	originalRunner := runManagedSnapshotCommand
+	originalStatsRunner := runManagedSnapshotStorageStatsCommand
+	t.Cleanup(func() {
+		runManagedSnapshotCommand = originalRunner
+		runManagedSnapshotStorageStatsCommand = originalStatsRunner
+	})
+	runManagedSnapshotCommand = func(
+		context.Context,
+		string,
+		[]string,
+		map[string]string,
+		string,
+		process.OutputLineHandler,
+	) (process.Result, error) {
+		return process.Result{Stdout: `{"id":"snapshot-created","rootEntry":{"summ":{"size":42}}}`}, nil
+	}
+	runManagedSnapshotStorageStatsCommand = func(
+		context.Context,
+		string,
+		[]string,
+		map[string]string,
+		string,
+		process.OutputLineHandler,
+	) (process.Result, error) {
+		return process.Result{Stderr: "storage statistics unavailable"}, errors.New("exit status 1")
+	}
+
+	status, result, message := runPreparedManagedSnapshot(
+		t.Context(), ReporterSink{}, "prepared-reference-failure", "kopia", "/tmp/reference.config",
+		nil, "/data", map[string]any{},
+	)
+	if status != "success" || message != "" {
+		t.Fatalf("status=%q message=%q result=%#v", status, message, result)
+	}
+	if result["storage_stats_available"] != false {
+		t.Fatalf("expected unavailable reference metrics: %#v", result)
+	}
+	if result["storage_stats_error"] != "storage statistics unavailable" {
+		t.Fatalf("expected bounded diagnostic: %#v", result)
 	}
 }
 
