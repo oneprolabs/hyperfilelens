@@ -1561,8 +1561,9 @@ class SourceResourceApiTests(TestCase):
         )
 
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(resp.data["error_code"], "AGENT.PATH_PERMISSION_DENIED")
-        self.assertEqual(resp.data["meta"]["path"], "/restricted")
+        problem = resp.data["data"]
+        self.assertEqual(problem["code"], "AGENT.PATH_PERMISSION_DENIED")
+        self.assertEqual(problem["meta"]["path"], "/restricted")
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_agent_directory_normalizes_type_fields(
@@ -1730,8 +1731,9 @@ class SourceResourceApiTests(TestCase):
         )
 
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(resp.data["error_code"], "AGENT.PATH_PERMISSION_DENIED")
-        self.assertEqual(resp.data["meta"]["path"], "/restricted/file.txt")
+        problem = resp.data["data"]
+        self.assertEqual(problem["code"], "AGENT.PATH_PERMISSION_DENIED")
+        self.assertEqual(problem["meta"]["path"], "/restricted/file.txt")
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_agent_directory_root_uses_mount_listing(

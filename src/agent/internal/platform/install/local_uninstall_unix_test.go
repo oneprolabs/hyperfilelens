@@ -125,6 +125,8 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 func TestWriteUnixUserUninstallScriptUsesUserLifecycle(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
 	path := home + "/run-uninstall.sh"
 	err := writeUnixUninstallScript(
 		filepath.Join(home, ".local", "lib", "hyperfilelens-agent"),
