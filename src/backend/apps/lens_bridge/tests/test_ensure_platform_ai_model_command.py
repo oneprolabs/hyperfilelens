@@ -114,3 +114,24 @@ class EnsurePlatformAiModelCommandTests(SimpleTestCase):
 
         self.assertIn("HFL_AI_MODEL_APPLIED=false", stdout.getvalue())
         self.assertIn("installed default was preserved", stderr.getvalue())
+
+    @patch(
+        "apps.lens_bridge.management.commands.ensure_platform_ai_model."
+        "repair_existing_platform_ai_model",
+        return_value=True,
+    )
+    def test_repairs_existing_model_without_requiring_credentials(self, repair_model):
+        stdout = io.StringIO()
+
+        with patch(
+            "sys.stdin",
+            io.StringIO(json.dumps({"role": "multimodal", "repair_existing": True})),
+        ):
+            call_command(
+                "ensure_platform_ai_model",
+                stdout=stdout,
+                stderr=io.StringIO(),
+            )
+
+        repair_model.assert_called_once_with(role="multimodal")
+        self.assertIn("HFL_AI_MODEL_REPAIRED=true", stdout.getvalue())

@@ -756,8 +756,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          repair_historical_multimodal() {
+            payload="$RUNNER_TEMP/hyperfilelens-multimodal-model-repair.json"
+            trap 'rm -f -- "$payload"' RETURN
+            umask 077
+            printf '{"role":"multimodal","repair_existing":true}\n' > "$payload"
+            set +e
+            output="$(ssh -i ~/.ssh/hyperfilelens_deploy \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=20 \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=20 \
+              -o TCPKeepAlive=yes \
+              -p "$DEPLOY_SSH_PORT" \
+              "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+              '/opt/hyperfilelens/install.sh manage ensure_platform_ai_model' \
+              < "$payload" 2>&1)"
+            command_status=$?
+            set -e
+            printf '%s\n' "$output"
+            if (( command_status != 0 )); then
+              echo '::warning title=Multimodal model compatibility::Historical model repair could not be completed; the installed model was preserved.'
+              printf '### Multimodal model deployment\n\nWarning: historical model compatibility repair could not be completed.\n' >> "$GITHUB_STEP_SUMMARY"
+            else
+              printf '### Multimodal model deployment\n\nPassed: historical model compatibility was checked.\n' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
           if [[ -z "$AI_MULTIMODAL_MODEL_PROVIDER" ]]; then
-            printf '### Multimodal model deployment\n\nSkipped: deployment-managed multimodal model is not configured. Text Chat remains available.\n' >> "$GITHUB_STEP_SUMMARY"
+            repair_historical_multimodal
             exit 0
           fi
           multimodal_values=(
@@ -770,7 +797,7 @@ jobs:
           for value in "${multimodal_values[@]}"; do
             if [[ -z "$value" ]]; then
               echo '::warning title=Multimodal model configuration::Configuration is incomplete; the installed multimodal default will be preserved.'
-              printf '### Multimodal model deployment\n\nWarning: incomplete configuration was ignored. Text Chat remains available.\n' >> "$GITHUB_STEP_SUMMARY"
+              repair_historical_multimodal
               exit 0
             fi
           done
@@ -781,7 +808,7 @@ jobs:
             || [[ "$AI_MODEL_API_BASE" == *$'\n'* || "$AI_MODEL_API_BASE" == *$'\r'* ]] \
             || [[ "$AI_MODEL_API_KEY" == *$'\n'* || "$AI_MODEL_API_KEY" == *$'\r'* ]]; then
             echo '::warning title=Multimodal model configuration::Configuration is malformed; the installed multimodal default will be preserved.'
-            printf '### Multimodal model deployment\n\nWarning: malformed configuration was ignored. Text Chat remains available.\n' >> "$GITHUB_STEP_SUMMARY"
+            repair_historical_multimodal
             exit 0
           fi
 

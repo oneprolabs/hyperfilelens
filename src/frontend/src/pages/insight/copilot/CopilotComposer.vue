@@ -273,14 +273,9 @@ onBeforeUnmount(() => {
   right: 0;
   bottom: 0;
   left: 0;
-  padding: 44px 28px 14px;
+  padding: 24px 28px 14px;
   pointer-events: none;
-  background: linear-gradient(
-    to top,
-    color-mix(in srgb, var(--color-card-bg) 98%, transparent) 36%,
-    color-mix(in srgb, var(--color-card-bg) 78%, transparent) 72%,
-    transparent 100%
-  );
+  background: transparent;
 }
 
 .copilot-input-shell {
@@ -295,7 +290,7 @@ onBeforeUnmount(() => {
   background: var(--color-card-bg, #fff);
   border: 1px solid var(--color-border, #e2e8f0);
   border-radius: 16px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 

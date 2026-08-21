@@ -36,8 +36,48 @@ warn_and_preserve() {
 	exit 0
 }
 
+repair_historical_multimodal() {
+	# This path repairs capability metadata only; no deployment credentials are
+	# needed and no SourceLens model is replaced.
+	payload="$(mktemp "${RUNNER_TEMP:-/tmp}/hyperfilelens-multimodal-repair.XXXXXX.json")"
+	trap 'rm -f -- "${payload}"' EXIT
+	chmod 0600 "${payload}"
+	ROLE="multimodal" python3 - "${payload}" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+pathlib.Path(sys.argv[1]).write_text(
+	json.dumps({"role": os.environ["ROLE"], "repair_existing": True}),
+	encoding="utf-8",
+)
+PY
+	set +e
+	output="$(ssh -i ~/.ssh/hyperfilelens_saas \
+		-o BatchMode=yes -o StrictHostKeyChecking=yes \
+		-o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+		-o TCPKeepAlive=yes -p "${DEPLOY_SSH_PORT}" \
+		"${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" \
+		'/opt/hyperfilelens/install.sh manage ensure_platform_ai_model' \
+		<"${payload}" 2>&1)"
+	command_status=$?
+	set -e
+	printf '%s\n' "${output}"
+	if ((command_status != 0)); then
+		warn_and_preserve "Historical multimodal model repair could not be completed"
+	fi
+	summary "Passed: historical multimodal model compatibility was checked."
+}
+
 if [[ -z "${provider}" ]]; then
-	summary "Skipped: no deployment-managed ${label,,} is configured."
+	if [[ "${role}" != "multimodal" ]]; then
+		summary "Skipped: no deployment-managed ${label,,} is configured."
+		exit 0
+	fi
+	# Always reconcile a historical multimodal model after an upgrade, even
+	# when new optional deployment variables are absent.
+	repair_historical_multimodal
 	exit 0
 fi
 
@@ -59,7 +99,8 @@ if ((valid == 0)); then
 		summary "Failed: required configuration is incomplete or malformed."
 		exit 1
 	fi
-	warn_and_preserve "Configuration is incomplete or malformed"
+	repair_historical_multimodal
+	exit 0
 fi
 
 payload="$(mktemp "${RUNNER_TEMP:-/tmp}/hyperfilelens-${role}-model.XXXXXX.json")"

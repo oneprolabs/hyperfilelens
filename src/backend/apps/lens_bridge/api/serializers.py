@@ -11,6 +11,9 @@ from apps.lens_bridge.services import (
     ingest_policy,
     provisioning,
 )
+from apps.lens_bridge.services.chat_lifecycle_errors import (
+    classify_chat_lifecycle_error,
+)
 from apps.protection.models import BackupConfig, BackupSourceSnapshot
 from apps.protection.services.source_identity import resolve_source_display_name
 
@@ -485,6 +488,9 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
     has_unread = serializers.SerializerMethodField()
     document_conversion = serializers.SerializerMethodField()
     data_context = serializers.SerializerMethodField()
+    lifecycle_error_code = serializers.SerializerMethodField()
+    lifecycle_error_message = serializers.SerializerMethodField()
+    lifecycle_error_retryable = serializers.SerializerMethodField()
 
     class Meta:
         model = LensSessionLink
@@ -518,6 +524,9 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             "document_conversion",
             "data_context",
             "lifecycle_error",
+            "lifecycle_error_code",
+            "lifecycle_error_message",
+            "lifecycle_error_retryable",
             "last_message_at",
             "last_assistant_message_at",
             "last_viewed_at",
@@ -533,6 +542,18 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
         cache = self.context.get("assistant_names") or {}
         uuid_str = str(obj.sl_assistant_uuid) if obj.sl_assistant_uuid else ""
         return cache.get(uuid_str)
+
+    def _lifecycle_error(self, obj: LensSessionLink):
+        return classify_chat_lifecycle_error(obj.lifecycle_error)
+
+    def get_lifecycle_error_code(self, obj: LensSessionLink) -> str:
+        return self._lifecycle_error(obj).code if obj.lifecycle_error else ""
+
+    def get_lifecycle_error_message(self, obj: LensSessionLink) -> str:
+        return self._lifecycle_error(obj).message if obj.lifecycle_error else ""
+
+    def get_lifecycle_error_retryable(self, obj: LensSessionLink) -> bool:
+        return self._lifecycle_error(obj).retryable if obj.lifecycle_error else False
 
     def get_selected_task(self, obj: LensSessionLink) -> str | None:
         cache = self.context.get("assistant_tasks") or {}

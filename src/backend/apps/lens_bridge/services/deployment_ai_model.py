@@ -216,6 +216,33 @@ def _source_lens_model_is_active(config_ref: str) -> bool:
     return status not in {"inactive", "disabled"}
 
 
+def _model_matches_config(
+    data: dict[str, Any] | None,
+    config: DeploymentAiModelConfig,
+) -> bool:
+    """Match model identity without comparing or exposing API credentials."""
+
+    if not isinstance(data, dict):
+        return False
+    model_config = data.get("config")
+    if not isinstance(model_config, dict):
+        return False
+    provider = str(data.get("provider") or "").strip().lower()
+    model_id = str(model_config.get("model") or "").strip()
+    api_base = str(model_config.get("api_base") or "").strip().rstrip("/")
+    return (
+        provider == config.provider
+        and model_id == config.model_id
+        and api_base == config.api_base.rstrip("/")
+    )
+
+
+def _vision_capability_patch() -> dict[str, Any]:
+    """Return a credential-free in-place capability repair payload."""
+
+    return {"config": {"supports_vision": True}}
+
+
 def _sl_model_supports_vision(data: dict[str, Any] | None) -> bool:
     """Return whether the installed SourceLens model declares vision support."""
     if not isinstance(data, dict):
@@ -355,6 +382,90 @@ def _management_key_for_role(role: AiModelRole) -> str:
     return DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY
 
 
+def _deployment_link(
+    org: Any,
+    role: AiModelRole,
+) -> LensOrgModelLink | None:
+    return (
+        LensOrgModelLink.all_objects.filter(
+            organization=org,
+            management_key__in=_management_keys_for_role(role),
+        )
+        .order_by("id")
+        .first()
+    )
+
+
+def repair_existing_platform_ai_model(*, role: AiModelRole) -> bool:
+    """Repair an already-installed model when deployment config is absent.
+
+    Older releases may have a multimodal model but no current deployment
+    variables.  The upgrade path must still repair its SourceLens capability
+    declaration without requiring or replacing its credentials.
+    """
+
+    if role != "multimodal":
+        return False
+    org = platform_lens.get_or_create_platform_org()
+    link = _deployment_link(org, role)
+    defaults = provisioning.get_or_create_org_link(org)
+    config_uuid = (
+        link.sl_config_uuid
+        if link is not None
+        else defaults.default_multimodal_model_ref
+    )
+    if config_uuid is None:
+        return False
+    current = _source_lens_model(config_uuid)
+    if current is None:
+        return False
+
+    # A previous upgrade could leave the HFL link missing while retaining the
+    # platform default pointer. Recreate that local ownership record before
+    # repairing the SourceLens capability so normal model resolution can use
+    # the existing model without creating another one.
+    if link is None:
+        display_name = str(
+            current.get("display_name") or current.get("name") or "Multimodal model"
+        ).strip()[:160]
+        link = LensOrgModelLink.all_objects.filter(
+            organization=org,
+            sl_config_uuid=config_uuid,
+        ).first()
+        if link is None:
+            link = LensOrgModelLink.all_objects.create(
+                organization=org,
+                sl_config_uuid=config_uuid,
+                display_name=display_name,
+                management_key=_management_key_for_role(role),
+                deployment_role=role,
+                deployment_fingerprint="",
+            )
+        else:
+            _persist_link(
+                link=link,
+                config_uuid=config_uuid,
+                display_name=display_name,
+                management_key=_management_key_for_role(role),
+                role=role,
+                preserve_existing=False,
+                deployment_fingerprint="",
+            )
+
+    if _sl_model_supports_vision(current):
+        return True
+    sl_client.request_json(
+        "PUT",
+        f"/api/v1/admin/llm-config/{config_uuid}/",
+        json_body=_vision_capability_patch(),
+    )
+    logger.info(
+        "Repaired existing SourceLens multimodal model %s vision capability.",
+        config_uuid,
+    )
+    return True
+
+
 def _set_role_default(
     *,
     defaults_id: int,
@@ -390,14 +501,7 @@ def ensure_platform_ai_model(
     org = platform_lens.get_or_create_platform_org()
     platform_defaults = provisioning.get_or_create_org_link(org)
     management_key = _management_key_for_role(role)
-    link = (
-        LensOrgModelLink.all_objects.filter(
-            organization=org,
-            management_key__in=_management_keys_for_role(role),
-        )
-        .order_by("id")
-        .first()
-    )
+    link = _deployment_link(org, role)
     current = _source_lens_model(link.sl_config_uuid) if link is not None else None
     selected_model_ref = (
         platform_defaults.default_agent_model_ref
@@ -406,6 +510,25 @@ def ensure_platform_ai_model(
     )
     selected_ref = str(selected_model_ref) if selected_model_ref else ""
     managed_ref = str(link.sl_config_uuid) if link is not None else ""
+    # If the deployment link was lost during an older upgrade, adopt the
+    # selected matching SourceLens model instead of creating a duplicate.
+    if link is None and selected_model_ref:
+        selected_model = _source_lens_model(selected_model_ref)
+        if _model_matches_config(selected_model, config):
+            current = selected_model
+            link = LensOrgModelLink.all_objects.filter(
+                organization=org,
+                sl_config_uuid=selected_model_ref,
+            ).first()
+            if link is None:
+                link = LensOrgModelLink.all_objects.create(
+                    organization=org,
+                    sl_config_uuid=selected_model_ref,
+                    display_name=config.display_name,
+                    management_key=management_key,
+                    deployment_role=role,
+                    deployment_fingerprint="",
+                )
     first_adoption = link is None
     deployment_fingerprint = _deployment_fingerprint(config)
     compatible_fingerprints = {
@@ -436,10 +559,14 @@ def ensure_platform_ai_model(
         if not selected_owned or not _source_lens_model_is_active(selected_ref):
             should_select_managed = True
 
+    current_identity_matches = _model_matches_config(current, config)
     if (
         current is not None
         and link is not None
-        and link.deployment_fingerprint in compatible_fingerprints
+        and (
+            link.deployment_fingerprint in compatible_fingerprints
+            or (not link.deployment_fingerprint and current_identity_matches)
+        )
     ):
         # Capability declarations added by a newer HFL/SourceLens contract are
         # mutable configuration, not a new model identity. Repair the existing
@@ -452,7 +579,11 @@ def ensure_platform_ai_model(
             sl_client.request_json(
                 "PUT",
                 f"/api/v1/admin/llm-config/{link.sl_config_uuid}/",
-                json_body=_source_lens_payload(config),
+                json_body=(
+                    _vision_capability_patch()
+                    if not config.api_key
+                    else _source_lens_payload(config)
+                ),
             )
             logger.info(
                 "Repaired SourceLens multimodal model %s vision-capability "
