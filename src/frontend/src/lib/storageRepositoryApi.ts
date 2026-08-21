@@ -111,6 +111,25 @@ export type StorageRepositoryAssociatedSource = {
   last_error?: string | null
 }
 
+export type StorageRepositoryUsageHistoryRange = '24h' | '7d' | '14d' | '15d' | '30d'
+
+export type StorageRepositoryUsageHistoryPoint = {
+  recorded_at: string
+  sampled_at: string | null
+  usage_bytes: number | null
+  usage_source: 'estimated' | 'provider' | null
+  coverage: 'complete' | 'partial' | 'missing'
+}
+
+export type StorageRepositoryUsageHistory = {
+  range: StorageRepositoryUsageHistoryRange
+  start_at: string
+  end_at: string
+  interval: '15m' | '30m' | '60m' | string
+  data_until: string
+  points: StorageRepositoryUsageHistoryPoint[]
+}
+
 export type StorageRepositoryCreatePayload = {
   name: string
   repo_type: StorageRepositoryType
@@ -360,6 +379,19 @@ export async function listStorageRepositoryAssociatedSources(
     count: Number(raw.count ?? raw.results?.length ?? 0),
     results: Array.isArray(raw.results) ? raw.results : [],
   }
+}
+
+export async function getStorageRepositoryUsageHistory(
+  id: number,
+  range: StorageRepositoryUsageHistoryRange,
+  init?: RequestInit,
+) {
+  return unwrapApiPayload<StorageRepositoryUsageHistory>(
+    await api<unknown>(`${repositoryBase}/${id}/usage-history/?range=${range}`, {
+      ...init,
+      headers: orgHeaders(),
+    }),
+  )
 }
 
 export async function listStorageRepositoryTasks(

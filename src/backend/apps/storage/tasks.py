@@ -103,6 +103,7 @@ def reconcile_storage_repositories(
     stale_after_seconds: int | None = 900,
 ):
     """Refresh repository capacity and usage metrics for dashboards and alerts."""
+    recorded_at = timezone.now()
     if organization_id is not None:
         result = sync_organization_repositories(
             organization_id=int(organization_id),
@@ -111,6 +112,7 @@ def reconcile_storage_repositories(
             limit=limit,
             force=force,
             stale_after_seconds=stale_after_seconds,
+            recorded_at=recorded_at,
         )
     else:
         result = sync_all_repositories(
@@ -118,10 +120,11 @@ def reconcile_storage_repositories(
             limit=limit,
             force=force,
             stale_after_seconds=stale_after_seconds,
+            recorded_at=recorded_at,
         )
     return {
         "repositories_scanned": result.get("repositories_synced", 0),
-        "snapshots_upserted": 0,
+        "snapshots_upserted": result.get("snapshots_upserted", 0),
         "snapshots_marked_deleted": 0,
     }
 

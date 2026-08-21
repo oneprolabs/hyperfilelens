@@ -42,3 +42,12 @@ def register_periodic_tasks():
         queue=None,
         enabled=True,
     )
+    TASK_REGISTRY.add(
+        name="monitor_cleanup_repository_usage_history",
+        task="apps.monitor.tasks.metrics.cleanup_repository_usage_history",
+        schedule=crontab(hour=4, minute=5),
+        args=(),
+        kwargs={"days_to_keep": 30, "batch_size": 2000},
+        queue=None,
+        enabled=True,
+    )

@@ -9,6 +9,9 @@ from apps.monitor.services.internal.resource_metrics import (
     cleanup_old_resource_metrics,
     snapshot_repository_metrics,
 )
+from apps.monitor.services.internal.repository_usage_history import (
+    cleanup_repository_usage_history,
+)
 
 
 @shared_task(name="apps.monitor.tasks.metrics.collect_system_metrics")
@@ -39,4 +42,20 @@ def snapshot_repository_metrics_task():
 )
 def cleanup_old_resource_metrics_task(days_to_keep: int = 14):
     deleted = cleanup_old_resource_metrics(days_to_keep=days_to_keep)
+    return {"deleted": deleted}
+
+
+@shared_task(name="apps.monitor.tasks.metrics.cleanup_repository_usage_history")
+@logged_celery_task(
+    name="apps.monitor.tasks.metrics.cleanup_repository_usage_history",
+    trace_keys=("days_to_keep", "batch_size"),
+)
+def cleanup_repository_usage_history_task(
+    days_to_keep: int = 30,
+    batch_size: int = 2000,
+):
+    deleted = cleanup_repository_usage_history(
+        days_to_keep=days_to_keep,
+        batch_size=batch_size,
+    )
     return {"deleted": deleted}

@@ -1,6 +1,11 @@
 from django.contrib import admin
 
-from apps.monitor.models import DeploymentHost, ResourceMetric, SystemMetric
+from apps.monitor.models import (
+    DeploymentHost,
+    RepositoryUsageMetric,
+    ResourceMetric,
+    SystemMetric,
+)
 
 
 @admin.register(DeploymentHost)
@@ -32,3 +37,11 @@ class ResourceMetricAdmin(admin.ModelAdmin):
     list_display = ("timestamp", "organization", "resource_type", "resource_id", "source")
     list_filter = ("resource_type", "source")
     ordering = ("-timestamp",)
+
+
+@admin.register(RepositoryUsageMetric)
+class RepositoryUsageMetricAdmin(admin.ModelAdmin):
+    list_display = ("recorded_at", "repository", "usage_bytes", "usage_source")
+    list_filter = ("usage_source",)
+    ordering = ("-recorded_at",)
+    readonly_fields = ("repository", "recorded_at", "usage_bytes", "usage_source", "object_count")
