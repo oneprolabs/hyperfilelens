@@ -33,6 +33,7 @@ const loginUrl = computed(() => `${appOrigin.value || '#'}${appOrigin.value ? '/
 
 const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
 const sourceLensUrl = 'https://github.com/HyperBDR/sourcelens'
+const communityVersion = 'v0.2.8'
 
 function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
   const target = loginUrl.value
@@ -235,12 +236,12 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       <section id="open-source" class="open-source-section" aria-labelledby="open-source-title">
         <div class="open-source-grid">
           <div class="open-source-copy">
-            <p class="section-kicker dark-kicker">开源</p>
-            <h2 id="open-source-title">私有部署 自主可控</h2>
-            <p>HyperFileLens 和背后的 AI 引擎全部开源。你可以查看架构设计、跟进开发进度，或者直接在 GitHub 上参与贡献。</p>
+            <p class="section-kicker dark-kicker">社区版</p>
+            <h2 id="open-source-title">开源社区版 一条命令部署</h2>
+            <p>在安装了 Docker 的 Ubuntu 主机上一条命令运行 Community。海外使用 GitHub 和 Docker Hub，中国大陆使用 Gitee 和阿里云。</p>
             <div class="open-source-callout">
               <svg aria-hidden="true"><use href="#icon-check" /></svg>
-              <p>不绑定任何厂商——自带 S3 兼容存储，自带 AI 模型或 API Key，自托管或托管部署都行，随时可以换。</p>
+              <p>社区版免费开源——自带 S3 兼容存储和 AI 模型或 API Key；需要企业治理能力时，再升级到企业版。</p>
             </div>
             <div class="open-source-actions">
               <a class="button button-light" :href="githubUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>查看 GitHub 仓库</a>
@@ -248,19 +249,18 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             </div>
             <div class="open-source-links">
               <a class="source-link" :href="sourceLensUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>AI 引擎仓库</a>
-              <a class="source-link" :href="`${githubUrl}/releases`">查看发布版本 <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
+              <a class="source-link" href="/zh/docs/getting-started/install">安装指南 <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
             </div>
             <p class="beta-note">HyperFileLens 目前处于公测阶段。</p>
           </div>
-          <div class="terminal-card" aria-label="HyperFileLens 部署命令示例">
-            <div class="terminal-bar"><span><i></i><i></i><i></i></span><b>部署 · bash</b></div>
-            <pre><code><span class="terminal-comment"># 完整离线安装包</span>
-<span class="terminal-prompt">$</span> tar -xzf hyperfilelens-release.tar.gz
-<span class="terminal-prompt">$</span> cd hyperfilelens
-<span class="terminal-prompt">$</span> sudo ./install.sh install
+          <div class="terminal-card" aria-label="Community 在线安装命令示例">
+            <div class="terminal-bar"><span><i></i><i></i><i></i></span><b>安装 · bash</b></div>
+            <pre><code><span class="terminal-comment"># Community 在线安装 · {{ communityVersion }}</span>
+<span class="terminal-prompt">$</span> curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/{{ communityVersion }}/deploy/online/install.sh \
+  | sudo bash -s -- {{ communityVersion }} --region cn --download-source gitee --yes
 
 <span class="terminal-success">✓</span> 环境校验通过
-<span class="terminal-success">✓</span> 镜像已加载到本地
+<span class="terminal-success">✓</span> 已拉取公开镜像
 <span class="terminal-success">✓</span> HyperFileLens 已就绪</code></pre>
           </div>
         </div>

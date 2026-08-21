@@ -133,7 +133,7 @@ h1 span { color: var(--hfl-blue); }
 .terminal-bar i:nth-child(2) { background: #dcb65d; }
 .terminal-bar i:last-child { background: #56b78f; }
 .terminal-bar b { color: #71829b; font-size: 9px; font-weight: 600; }
-.terminal-card pre { min-height: 315px; margin: 0; padding: 39px 42px; color: #c8d4e5; font: 13px/1.9 "SFMono-Regular", Consolas, "Liberation Mono", monospace; white-space: pre-wrap; }
+.terminal-card pre { min-height: 315px; margin: 0; padding: 39px 42px; color: #c8d4e5; font: 13px/1.9 "SFMono-Regular", Consolas, "Liberation Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .terminal-comment { color: #8190a6; }
 .terminal-prompt { color: #5da1ff; }
 .terminal-success { color: #49d5b9; }

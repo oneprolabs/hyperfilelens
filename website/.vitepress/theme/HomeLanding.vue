@@ -33,6 +33,8 @@ const loginUrl = computed(() => `${appOrigin.value || '#'}${appOrigin.value ? '/
 
 const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
 const sourceLensUrl = 'https://github.com/HyperBDR/sourcelens'
+const communityInstallGuideUrl = 'https://github.com/oneprolabs/hyperfilelens#community-online-installation'
+const communityVersion = 'v0.2.8'
 
 function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
   const target = loginUrl.value
@@ -234,12 +236,12 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       <section id="open-source" class="open-source-section" aria-labelledby="open-source-title">
         <div class="open-source-grid">
           <div class="open-source-copy">
-            <p class="section-kicker dark-kicker">Open Source</p>
-            <h2 id="open-source-title">Private deployment. Full control.</h2>
-            <p>HyperFileLens and the AI engine behind it are both fully open source. Review the architecture, follow development, or contribute directly on GitHub.</p>
+            <p class="section-kicker dark-kicker">Community</p>
+            <h2 id="open-source-title">Open source. One-command install.</h2>
+            <p>Run the Community edition on Ubuntu with Docker in one command. Global users use GitHub and Docker Hub; users in mainland China use Gitee and Alibaba Cloud.</p>
             <div class="open-source-callout">
               <svg aria-hidden="true"><use href="#icon-check" /></svg>
-              <p>No vendor lock-in — bring your own S3-compatible storage and your own AI model or API key, self-hosted or hosted. Switch anytime.</p>
+              <p>Community is free and open source — bring your own S3-compatible storage and AI model or API key, then move to Enterprise when you need commercial governance.</p>
             </div>
             <div class="open-source-actions">
               <a class="button button-light" :href="githubUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>View on GitHub</a>
@@ -247,19 +249,18 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             </div>
             <div class="open-source-links">
               <a class="source-link" :href="sourceLensUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>AI engine repo</a>
-              <a class="source-link" :href="`${githubUrl}/releases`">Browse releases <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
+              <a class="source-link" :href="communityInstallGuideUrl">Installation guide <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
             </div>
             <p class="beta-note">HyperFileLens is currently in public beta.</p>
           </div>
-          <div class="terminal-card" aria-label="Example HyperFileLens deployment command">
-            <div class="terminal-bar"><span><i></i><i></i><i></i></span><b>deploy · bash</b></div>
-            <pre><code><span class="terminal-comment"># Complete offline release bundle</span>
-<span class="terminal-prompt">$</span> tar -xzf hyperfilelens-release.tar.gz
-<span class="terminal-prompt">$</span> cd hyperfilelens
-<span class="terminal-prompt">$</span> sudo ./install.sh install
+          <div class="terminal-card" aria-label="Example Community online installation command">
+            <div class="terminal-bar"><span><i></i><i></i><i></i></span><b>install · bash</b></div>
+            <pre><code><span class="terminal-comment"># Community online install · {{ communityVersion }}</span>
+<span class="terminal-prompt">$</span> curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/{{ communityVersion }}/deploy/online/install.sh \
+  | sudo bash -s -- {{ communityVersion }} --region global --download-source github --yes
 
 <span class="terminal-success">✓</span> Environment validated
-<span class="terminal-success">✓</span> Images loaded locally
+<span class="terminal-success">✓</span> Public images pulled
 <span class="terminal-success">✓</span> HyperFileLens is ready</code></pre>
           </div>
         </div>
