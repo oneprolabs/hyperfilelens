@@ -74,7 +74,9 @@ def normalize_chat_workload_settings(
     return concurrency, queue_capacity
 
 
-def _queued_sessions(gateway_link_id: int):
+def _admitted_sessions_without_slot(gateway_link_id: int):
+    """Return accepted Chat preparations that still consume queue capacity."""
+
     return LensSessionLink.objects.filter(
         gateway_link_id=gateway_link_id,
         lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
@@ -84,8 +86,18 @@ def _queued_sessions(gateway_link_id: int):
     )
 
 
-def _ordered_queued_sessions(gateway_link_id: int):
-    return _queued_sessions(gateway_link_id).order_by("queue_order_at", "id")
+def _schedulable_sessions(gateway_link_id: int):
+    """Return Chat preparations ready to compete for a heavy-work slot."""
+
+    return _admitted_sessions_without_slot(gateway_link_id).filter(
+        capacity_reservation_status=(
+            LensSessionLink.CapacityReservationStatus.RESERVED
+        ),
+    )
+
+
+def _ordered_schedulable_sessions(gateway_link_id: int):
+    return _schedulable_sessions(gateway_link_id).order_by("queue_order_at", "id")
 
 
 def _occupied_slots(gateway_link_id: int):
@@ -108,7 +120,7 @@ def active_chat_prepare_count(*, gateway_link_id: int) -> int:
 def chat_queue_positions(*, gateway_link_id: int) -> dict[int, int]:
     """Return one privacy-safe FIFO position map with a single queue query."""
 
-    session_ids = _ordered_queued_sessions(gateway_link_id).values_list(
+    session_ids = _ordered_schedulable_sessions(gateway_link_id).values_list(
         "id",
         flat=True,
     )
@@ -122,11 +134,13 @@ def chat_queue_position(*, session: LensSessionLink) -> int:
     if (
         session.gateway_link_id is None
         or session.lifecycle_status != LensSessionLink.LifecycleStatus.PROVISIONING
+        or session.capacity_reservation_status
+        != LensSessionLink.CapacityReservationStatus.RESERVED
         or LensGatewayChatSlot.objects.filter(session_link_id=session.id).exists()
     ):
         return 0
     entered_at = session.gateway_queue_entered_at or session.created_at
-    return _queued_sessions(session.gateway_link_id).filter(
+    return _schedulable_sessions(session.gateway_link_id).filter(
         Q(queue_order_at__lt=entered_at)
         | Q(queue_order_at=entered_at, id__lt=session.id)
     ).count() + 1
@@ -155,9 +169,9 @@ def chat_queue_ahead(
 
 def chat_workload_payload(*, gateway_link: LensGatewayLink) -> dict[str, Any]:
     active_count = active_chat_prepare_count(gateway_link_id=gateway_link.id)
-    queued = _queued_sessions(gateway_link.id)
+    admitted = _admitted_sessions_without_slot(gateway_link.id)
     oldest_at = (
-        _ordered_queued_sessions(gateway_link.id)
+        admitted.order_by("queue_order_at", "id")
         .values_list("queue_order_at", flat=True)
         .first()
     )
@@ -169,7 +183,7 @@ def chat_workload_payload(*, gateway_link: LensGatewayLink) -> dict[str, Any]:
         "chat_prepare_concurrency": int(gateway_link.chat_prepare_concurrency),
         "chat_queue_capacity": int(gateway_link.chat_queue_capacity),
         "active_chat_preparations": active_count,
-        "queued_chat_preparations": queued.count(),
+        "queued_chat_preparations": admitted.count(),
         "oldest_queued_at": oldest_at,
     }
 
@@ -215,7 +229,7 @@ def assert_chat_queue_admission(*, gateway_link: LensGatewayLink) -> LensGateway
     _cleanup_releasable_slots(gateway_link_id=locked.id)
     active = active_chat_prepare_count(gateway_link_id=locked.id)
     free_slots = max(0, int(locked.chat_prepare_concurrency) - active)
-    pending_without_slot = _queued_sessions(locked.id).count()
+    pending_without_slot = _admitted_sessions_without_slot(locked.id).count()
     projected_waiting = max(0, pending_without_slot + 1 - free_slots)
     if projected_waiting > int(locked.chat_queue_capacity):
         raise AppError(
@@ -304,18 +318,21 @@ def try_acquire_chat_prepare_slot(
         existing.save(update_fields=["heartbeat_at", "updated_at"])
         return ChatSlotResult(acquired=True, position=0)
 
-    head = _ordered_queued_sessions(gateway.id).first()
-    position = chat_queue_position(session=session)
-    if head is None or head.id != session.id:
-        return ChatSlotResult(acquired=False, position=position)
-
     active_slots = list(
         LensGatewayChatSlot.objects.select_for_update()
         .filter(gateway_link_id=gateway.id)
         .order_by("slot_number")
     )
     concurrency = int(gateway.chat_prepare_concurrency)
-    if len(active_slots) >= concurrency:
+    available = max(0, concurrency - len(active_slots))
+    position = chat_queue_position(session=session)
+    if available <= 0:
+        return ChatSlotResult(acquired=False, position=position)
+    eligible_ids = set(
+        _ordered_schedulable_sessions(gateway.id)
+        .values_list("id", flat=True)[:available]
+    )
+    if session.id not in eligible_ids:
         return ChatSlotResult(acquired=False, position=position)
     occupied = {slot.slot_number for slot in active_slots}
     slot_number = next(
@@ -375,7 +392,7 @@ def wake_gateway_queue(gateway_link_id: int) -> None:
     if available <= 0:
         return
     candidates = list(
-        _ordered_queued_sessions(gateway.id)
+        _ordered_schedulable_sessions(gateway.id)
         .values_list("id", flat=True)[:available]
     )
     if not candidates:

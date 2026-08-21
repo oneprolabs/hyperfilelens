@@ -48,6 +48,9 @@ class GatewayChatQueueTests(TestCase):
             gateway_link=gateway_link or self.gateway_link,
             lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
             provision_phase=LensSessionLink.ProvisionPhase.QUEUED,
+            capacity_reservation_status=(
+                LensSessionLink.CapacityReservationStatus.RESERVED
+            ),
             gateway_queue_entered_at=timezone.now(),
         )
 
@@ -117,7 +120,7 @@ class GatewayChatQueueTests(TestCase):
         self.assertTrue(second_result.acquired)
         self.assertEqual(LensGatewayChatSlot.objects.count(), 2)
 
-    def test_higher_concurrency_preserves_fifo_while_filling_slots(self):
+    def test_higher_concurrency_allows_fifo_window_to_fill_slots(self):
         self.gateway_link.chat_prepare_concurrency = 2
         self.gateway_link.save(
             update_fields=["chat_prepare_concurrency", "updated_at"]
@@ -126,28 +129,89 @@ class GatewayChatQueueTests(TestCase):
         second = self._session()
         third = self._session()
 
-        out_of_order = gateway_chat_queue.try_acquire_chat_prepare_slot(
+        second_result = gateway_chat_queue.try_acquire_chat_prepare_slot(
             session_link_id=second.id,
             expected_generation=second.provision_generation,
+        )
+        outside_window = gateway_chat_queue.try_acquire_chat_prepare_slot(
+            session_link_id=third.id,
+            expected_generation=third.provision_generation,
         )
         first_result = gateway_chat_queue.try_acquire_chat_prepare_slot(
             session_link_id=first.id,
             expected_generation=first.provision_generation,
-        )
-        second_result = gateway_chat_queue.try_acquire_chat_prepare_slot(
-            session_link_id=second.id,
-            expected_generation=second.provision_generation,
         )
         third_result = gateway_chat_queue.try_acquire_chat_prepare_slot(
             session_link_id=third.id,
             expected_generation=third.provision_generation,
         )
 
-        self.assertFalse(out_of_order.acquired)
-        self.assertTrue(first_result.acquired)
         self.assertTrue(second_result.acquired)
+        self.assertFalse(outside_window.acquired)
+        self.assertTrue(first_result.acquired)
         self.assertFalse(third_result.acquired)
         self.assertEqual(gateway_chat_queue.chat_queue_ahead(session=third), 2)
+
+    def test_unready_fifo_head_does_not_block_ready_chat(self):
+        unready = self._session()
+        unready.capacity_reservation_status = (
+            LensSessionLink.CapacityReservationStatus.PENDING
+        )
+        unready.save(
+            update_fields=["capacity_reservation_status", "updated_at"]
+        )
+        ready = self._session()
+
+        acquired = gateway_chat_queue.try_acquire_chat_prepare_slot(
+            session_link_id=ready.id,
+            expected_generation=ready.provision_generation,
+        )
+
+        self.assertTrue(acquired.acquired)
+        self.assertEqual(
+            gateway_chat_queue.chat_queue_position(session=unready),
+            0,
+        )
+        self.assertTrue(
+            LensGatewayChatSlot.objects.filter(session_link_id=ready.id).exists()
+        )
+
+    def test_unready_chat_still_consumes_admission_capacity(self):
+        unready = self._session()
+        unready.capacity_reservation_status = (
+            LensSessionLink.CapacityReservationStatus.PENDING
+        )
+        unready.save(
+            update_fields=["capacity_reservation_status", "updated_at"]
+        )
+        self.gateway_link.chat_queue_capacity = 0
+        self.gateway_link.save(
+            update_fields=["chat_queue_capacity", "updated_at"]
+        )
+
+        with self.assertRaises(AppError):
+            gateway_chat_queue.assert_chat_queue_admission(
+                gateway_link=self.gateway_link,
+            )
+
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed"
+    )
+    def test_wake_skips_unready_chat_and_dispatches_ready_chat(self, queue_provision):
+        unready = self._session()
+        unready.capacity_reservation_status = (
+            LensSessionLink.CapacityReservationStatus.PENDING
+        )
+        unready.save(
+            update_fields=["capacity_reservation_status", "updated_at"]
+        )
+        ready = self._session()
+
+        gateway_chat_queue.wake_gateway_queue(self.gateway_link.id)
+
+        queue_provision.assert_called_once_with(ready.id)
+        ready.refresh_from_db()
+        self.assertIsNotNone(ready.provision_next_retry_at)
 
     def test_zero_queue_capacity_still_allows_an_immediate_slot(self):
         self.gateway_link.chat_queue_capacity = 0
