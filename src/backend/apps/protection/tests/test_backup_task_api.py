@@ -377,12 +377,18 @@ class ProtectionBackupTaskApiTests(TestCase):
         "apps.protection.tasks.directory_size_estimate."
         "refresh_backup_config_directory_estimates_task.delay"
     )
-    def test_start_backup_task_does_not_sync_directory_size_estimate(
+    def test_start_backup_task_prioritizes_execution_before_size_estimate(
         self,
         mock_size_refresh,
         mock_queue,
         mock_path_size,
     ):
+        queued_operations = []
+        mock_queue.side_effect = lambda **_kwargs: queued_operations.append("backup")
+        mock_size_refresh.side_effect = lambda **_kwargs: queued_operations.append(
+            "size_estimate"
+        )
+
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.post(
                 "/api/v1/protection/backup-tasks/",
@@ -401,6 +407,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         mock_queue.assert_called_once()
         mock_size_refresh.assert_called_once()
         mock_path_size.assert_not_called()
+        self.assertEqual(queued_operations, ["backup", "size_estimate"])
 
     @patch("apps.protection.services.backup_task._queue_backup_execution")
     def test_start_backup_task_api_accepts_backup_config_ids_without_source_ids(

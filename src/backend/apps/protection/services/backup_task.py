@@ -923,6 +923,22 @@ def start_backup_tasks(
                             metadata={"task_display_name": task.display_name},
                         )
 
+                        # Queue the latency-sensitive backup orchestration before
+                        # the optional directory-size refresh. Both tasks share
+                        # the default Celery worker pool, while a size refresh
+                        # may legitimately run for several minutes. Registering
+                        # it first can occupy the worker pool and leave the
+                        # newly-created backup pending even though no backup is
+                        # running.
+                        transaction.on_commit(
+                            lambda org_id=organization_id,
+                            task_uuid=str(task.task_uuid),
+                            snapshot_id=snapshot.id: _queue_backup_execution(
+                                organization_id=org_id,
+                                task_uuid=task_uuid,
+                                source_snapshot_id=snapshot_id,
+                            )
+                        )
                         from apps.protection.tasks.directory_size_estimate import (
                             refresh_backup_config_directory_estimates_task,
                         )
@@ -935,15 +951,6 @@ def start_backup_tasks(
                                 config_id=config_id,
                                 force_refresh=True,
                                 task_uuid=task_uuid,
-                            )
-                        )
-                        transaction.on_commit(
-                            lambda org_id=organization_id,
-                            task_uuid=str(task.task_uuid),
-                            snapshot_id=snapshot.id: _queue_backup_execution(
-                                organization_id=org_id,
-                                task_uuid=task_uuid,
-                                source_snapshot_id=snapshot_id,
                             )
                         )
             except IntegrityError:
