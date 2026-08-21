@@ -9,14 +9,25 @@ HyperFileLens Community 支持在线安装和完整离线 Release 包安装。�
 
 ## 在线安装
 
-在线安装适合可以访问 GitHub 和公开镜像仓库的 Ubuntu amd64 主机。将示例中的 `vX.Y.Z` 替换为准备安装的正式 Release 标签：
+在线安装适合已安装 Docker Engine 和 Compose V2 的 Ubuntu 20.04、22.04 或 24.04 amd64 主机。将示例中的 `vX.Y.Z` 替换为准备安装的正式 Release 标签。
+
+海外环境使用 GitHub 和 Docker Hub：
 
 ```bash
-curl -fLO https://raw.githubusercontent.com/oneprolabs/hyperfilelens/vX.Y.Z/deploy/online/install.sh
-sudo bash install.sh vX.Y.Z --region auto
+curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/vX.Y.Z/deploy/online/install.sh \
+  | sudo bash -s -- vX.Y.Z --region global --download-source github --yes
 ```
 
-安装程序会检查系统、Docker 和 Compose，准备与该标签一致的安装内容，并将运行目录写入 `/opt/hyperfilelens`。中国大陆网络环境可显式使用 `--region cn`，其他地区可使用 `--region global`。
+中国大陆环境使用 Gitee 和阿里云镜像：
+
+```bash
+curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/vX.Y.Z/deploy/online/install.sh \
+  | sudo bash -s -- vX.Y.Z --region cn --download-source gitee --yes
+```
+
+`--region` 选择 Docker 镜像区域；`--download-source` 选择安装文件来源。使用 `auto` 时，中国区优先 Gitee，其他地区优先 GitHub，失败后自动尝试另一个公开源。Gitee 仓库和镜像均为公开资源，不需要账号或 Token。`--yes` 表示非交互执行，适合脚本和自动升级。
+
+安装程序会检查系统、Docker 和 Compose，准备与该标签一致的安装内容，并将运行目录写入 `/opt/hyperfilelens`。它只安装或升级 Community，不会把 Enterprise 安装转换为 Community。
 
 ## 离线安装
 
@@ -61,4 +72,3 @@ sudo /opt/hyperfilelens/install.sh lang-pack list
 ::: warning 不要跳过
 不要把安装终端输出、`.env`、访问令牌或客户环境地址复制到公开 Issue 和截图中。提交问题时仅提供已脱敏的错误编号、版本和必要日志片段。
 :::
-

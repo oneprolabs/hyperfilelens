@@ -77,6 +77,7 @@ Options:
   install:
     --with-sourcelens       Install bundled SourceLens (default when sourcelens/ is present)
     --hfl-only              Skip bundled SourceLens even when sourcelens/ is present
+    --yes                   Non-interactive compatibility flag (install has no confirmation prompt)
     --direct-host HOST      Direct listener host or IP used for local access URLs
     --public-url URL        Optional canonical browser origin; invalid values only warn
     --admin-public-url URL  Optional Admin Console browser origin; invalid values only warn
@@ -4488,6 +4489,7 @@ cmd_install() {
 		case "$1" in
 		--with-sourcelens) sourcelens_mode=1 ;;
 		--hfl-only) sourcelens_mode=0 ;;
+		--yes) ;; # Fresh installation has no confirmation prompt; accept automation parity with upgrade.
 		--direct-host) [[ $# -ge 2 && -n "${2:-}" ]] || die "--direct-host requires a value" 2; PUBLIC_HOST="$2"; shift ;;
 		--public-url) [[ $# -ge 2 ]] || die "--public-url requires a value" 2; PUBLIC_URL="$2"; shift ;;
 		--admin-public-url) [[ $# -ge 2 ]] || die "--admin-public-url requires a value" 2; ADMIN_PUBLIC_URL="$2"; shift ;;
