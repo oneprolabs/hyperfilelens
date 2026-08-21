@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { siteLanguages } from './languages'
 
 const props = defineProps<{
@@ -7,6 +7,8 @@ const props = defineProps<{
 }>()
 
 const open = ref(false)
+const switcherRef = ref<HTMLElement | null>(null)
+const triggerRef = ref<HTMLButtonElement | null>(null)
 
 function toggle() {
   open.value = !open.value
@@ -16,12 +18,41 @@ function close() {
   open.value = false
 }
 
+function closeAndFocus() {
+  close()
+  triggerRef.value?.focus()
+}
+
+function handleFocusOut(event: FocusEvent) {
+  const nextTarget = event.relatedTarget
+  if (!(nextTarget instanceof Node) || !switcherRef.value?.contains(nextTarget)) close()
+}
+
+function handleDocumentPointerDown(event: PointerEvent) {
+  const target = event.target
+  if (!(target instanceof Node) || !switcherRef.value?.contains(target)) close()
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
+})
+
 const currentLabel = siteLanguages.find((lang) => lang.code === props.current)?.label ?? props.current
 </script>
 
 <template>
-  <div class="lang-switcher" @mouseleave="close">
+  <div
+    ref="switcherRef"
+    class="lang-switcher"
+    @focusout="handleFocusOut"
+    @keydown.esc.prevent="closeAndFocus"
+  >
     <button
+      ref="triggerRef"
       class="lang-switcher-trigger"
       type="button"
       :aria-expanded="open"
