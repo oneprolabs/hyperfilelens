@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
 import {
   deleteStorageRepository,
+  preflightStorageRepositoryBinding,
   preflightStorageRepositoryCleanup,
+  repairStorageRepository,
   storageRepositoryS3BucketMode,
   storageRepositoryCreateErrorMessage,
 } from './storageRepositoryApi'
@@ -107,6 +109,47 @@ describe('repository cleanup requests', () => {
     expect(api).toHaveBeenCalledWith('/api/v1/storage/repositories/31/cleanup/preflight/', {
       method: 'POST',
       body: JSON.stringify({ force: true }),
+      headers: { 'X-Org-Key': '' },
+    })
+  })
+})
+
+describe('NAS binding recovery requests', () => {
+  it('preflights the selected Proxy before binding', async () => {
+    vi.mocked(api).mockResolvedValue({
+      allowed: false,
+      recovery_eligible: true,
+      required_action: 'cleanup_and_bind',
+    })
+
+    await preflightStorageRepositoryBinding(31, 24)
+
+    expect(api).toHaveBeenCalledWith(
+      '/api/v1/storage/repositories/31/repair/binding-preflight/',
+      {
+        method: 'POST',
+        body: JSON.stringify({ bind_node_id: 24 }),
+        headers: { 'X-Org-Key': '' },
+      },
+    )
+  })
+
+  it('sends explicit cleanup confirmation only for the recovery request', async () => {
+    vi.mocked(api).mockResolvedValue({ id: 31, status: 'creating' })
+
+    await repairStorageRepository(31, {
+      bind_node_id: 24,
+      cleanup_failed_provisioning_targets: true,
+      cleanup_confirmation: 'CLEAN UP AND BIND',
+    })
+
+    expect(api).toHaveBeenCalledWith('/api/v1/storage/repositories/31/repair/', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        bind_node_id: 24,
+        cleanup_failed_provisioning_targets: true,
+        cleanup_confirmation: 'CLEAN UP AND BIND',
+      }),
       headers: { 'X-Org-Key': '' },
     })
   })

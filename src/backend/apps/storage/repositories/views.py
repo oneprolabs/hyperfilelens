@@ -28,6 +28,7 @@ from apps.source.services.internal.nas_display import nas_mount_source_uri
 from apps.storage.repositories.models import Repository
 from apps.storage.repositories.models import RepositoryUsageShard
 from apps.storage.repositories.serializers import (
+    NASRepositoryBindingPreflightSerializer,
     NASRepositoryRepairSerializer,
     RepositoryCleanupPreflightSerializer,
     RepositoryCleanupSerializer,
@@ -48,6 +49,7 @@ from apps.storage.services.internal.repository_check import (
 )
 from apps.storage.services.internal.nas_repair import (
     NASRepositoryBusyError,
+    nas_proxy_binding_preflight,
     repair_nas_repository,
 )
 from apps.storage.services.internal.nas_repair import _UNSET as _UNSET_SENTINEL
@@ -913,6 +915,11 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                 name=payload.get("name"),
                 config_updates=payload.get("config") or {},
                 bind_node_id=payload.get("bind_node_id", _UNSET_SENTINEL),
+                cleanup_failed_provisioning_targets=payload.get(
+                    "cleanup_failed_provisioning_targets", False
+                ),
+                cleanup_confirmation=payload.get("cleanup_confirmation", ""),
+                requested_by=request.user,
             )
         except NASRepositoryBusyError as exc:
             # Busy errors include structured task detail; surface them as 409.
@@ -921,3 +928,28 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         if repository.status == Repository.Status.CREATING:
             return Response(out.data, status=status.HTTP_202_ACCEPTED)
         return Response(out.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="repair/binding-preflight")
+    def repair_binding_preflight(self, request, pk=None):
+        repository = self.get_object()
+        if repository.repo_type != Repository.Type.NAS:
+            raise ValidationError(
+                {"detail": "Repair is only supported for NAS repositories."}
+            )
+        if repository.bind_node_id:
+            raise ValidationError(
+                {
+                    "bind_node_id": (
+                        "Binding preflight is only available for unbound "
+                        "NAS repositories."
+                    )
+                }
+            )
+        serializer = NASRepositoryBindingPreflightSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        preflight = nas_proxy_binding_preflight(
+            repository=repository,
+            bind_node_id=serializer.validated_data["bind_node_id"],
+        )
+        preflight.pop("recovery_claim_ids", None)
+        return Response(preflight, status=status.HTTP_200_OK)

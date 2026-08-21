@@ -1192,6 +1192,101 @@ class ProtectionBackupConfigApiTests(TestCase):
         "apps.storage.services.internal.repository_usage.enqueue_repository_usage_refresh"
     )
     @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
+    def test_issue_637_late_proxy_result_activates_direct_nas_once(
+        self,
+        run_agent_task_sync,
+        enqueue_usage,
+    ):
+        from apps.protection.services.backup_config_provision import (
+            run_backup_config_provision_task,
+        )
+
+        proxy = self._proxy(name="issue-637-late-result-proxy")
+        source = self._nas_source(proxy=proxy, name="issue-637-late-result-source")
+        repository = self._direct_nas_repository(name="issue-637-late-result-repo")
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(source=source, repository=repository),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_202_ACCEPTED, create.content)
+        config = BackupConfig.objects.get(id=create.data["id"])
+        task = Task.objects.get(task_uuid=config.provisioning_task_uuid)
+
+        def timeout_after_dispatch(**kwargs):
+            NodeTask.objects.create(
+                organization=self.org,
+                requesting_organization_id=self.org.id,
+                node=proxy,
+                parent_task=kwargs["parent_task"],
+                kind=kwargs["kind"],
+                correlation_type=kwargs["correlation_type"],
+                correlation_id=kwargs["correlation_id"],
+                status=NodeTask.Status.RUNNING,
+                watchdog_deadline_at=timezone.now() + timedelta(minutes=5),
+                payload=kwargs["payload"],
+            )
+            raise TimeoutError("Controller wait expired")
+
+        run_agent_task_sync.side_effect = timeout_after_dispatch
+        first = run_backup_config_provision_task(task_id=task.id)
+
+        task.refresh_from_db()
+        config.refresh_from_db()
+        self.assertEqual(first["status"], "waiting")
+        self.assertEqual(task.status, Task.Status.WAITING)
+        self.assertEqual(config.status, BackupConfig.Status.PROVISIONING)
+        claim = RepositoryLocationClaim.objects.get(
+            repository=repository,
+            owner_node_id=proxy.id,
+        )
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+
+        node_task = NodeTask.objects.get(parent_task=task)
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.result = {
+            "ownership_verified": True,
+            "mount_point": "/mnt/hfl/issue-637-late-result",
+        }
+        node_task.save(update_fields=["status", "result", "updated_at"])
+        with (
+            mock.patch(
+                "apps.protection.tasks.repository_policy.sync_backup_config_repository_policy_task.delay"
+            ) as policy_delay,
+            mock.patch(
+                "apps.protection.tasks.directory_size_estimate.refresh_backup_config_directory_estimates_task.delay"
+            ) as estimate_delay,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            second = run_backup_config_provision_task(task_id=task.id)
+            third = run_backup_config_provision_task(task_id=task.id)
+
+        config.refresh_from_db()
+        task.refresh_from_db()
+        claim.refresh_from_db()
+        self.assertEqual(second["status"], "success")
+        self.assertEqual(third["status"], "success")
+        self.assertEqual(config.status, BackupConfig.Status.ACTIVE)
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.OWNED)
+        self.assertIsNotNone(claim.ownership_verified_at)
+        self.assertEqual(
+            RepositoryUsageShard.objects.filter(
+                repository_id=repository.id,
+                node_id=proxy.id,
+                is_active=True,
+            ).count(),
+            1,
+        )
+        policy_delay.assert_called_once_with(config_id=config.id)
+        estimate_delay.assert_called_once_with(config_id=config.id)
+        enqueue_usage.assert_called_once()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage.enqueue_repository_usage_refresh"
+    )
+    @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
     def test_create_backup_config_rejects_existing_direct_nas_repository(
         self,
         run_agent_task_sync,

@@ -25,7 +25,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.interface import run_agent_task_sync
 from apps.protection.models import BackupConfig
@@ -46,6 +46,9 @@ from apps.storage.services.internal.nas_repository import (
 from apps.storage.services.internal.repository_create import (
     enqueue_repository_create_task,
 )
+from apps.storage.services.internal.repository_cleanup import (
+    repository_cleanup_preflight,
+)
 from apps.storage.services.internal.repository_location import (
     ACTIVE_CLAIM_STATES,
     RepositoryLocationConflict,
@@ -63,6 +66,7 @@ from apps.storage.services.internal.repository_secrets import (
     sanitize_repository_config,
 )
 from apps.task.models import Task
+from common.errors import AppError, FieldError
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +89,22 @@ NAS_REPAIR_MUTABLE_CONFIG_FIELDS = frozenset(
 )
 
 _ACTIVE_BACKUP_STATUSES = (Task.Status.PENDING, Task.Status.RUNNING)
+
+NAS_BIND_BLOCKED_CODE = "STORAGE.NAS_BIND_BLOCKED"
+NAS_BIND_RECOVERY_CONFIRMATION = "CLEAN UP AND BIND"
+_RECOVERY_CAPABILITIES = frozenset(
+    {
+        "repository_cleanup_v1",
+        "repository_cleanup_ownership_v1",
+    }
+)
+_FAILED_PROVISION_STATUSES = frozenset(
+    {
+        Task.Status.FAILED,
+        Task.Status.CANCELLED,
+        Task.Status.TIMEOUT,
+    }
+)
 
 
 def _enqueue_usage_refresh(repository: Repository, *, trigger: str) -> None:
@@ -180,9 +200,10 @@ def _check_associated_backups_idle(*, organization_id: int, repository_id: int) 
     )
 
 
-def _check_unbound_nas_can_bind_proxy(
+def _check_unbound_nas_has_no_associated_sources(
     *, organization_id: int, repository_id: int
 ) -> None:
+    """Preserve the existing first-bind guard for associated backup sources."""
     if BackupConfig.objects.filter(
         organization_id=organization_id,
         repository_id=repository_id,
@@ -195,20 +216,254 @@ def _check_unbound_nas_can_bind_proxy(
                 )
             }
         )
-    if RepositoryLocationClaim.objects.filter(
-        organization_id=organization_id,
-        repository_id=repository_id,
-        scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
-        state__in=ACTIVE_CLAIM_STATES,
-    ).exists():
-        raise DRFValidationError(
+
+
+def _node_capabilities(node: Node) -> set[str]:
+    metadata = node.metadata if isinstance(node.metadata, dict) else {}
+    inventory = metadata.get("inventory")
+    inventory = inventory if isinstance(inventory, dict) else {}
+    values = inventory.get("capabilities", metadata.get("capabilities", []))
+    return {str(value) for value in values} if isinstance(values, list) else set()
+
+
+def _claim_failed_provisioning_evidence(
+    *, repository: Repository, claim: RepositoryLocationClaim
+) -> bool:
+    """Return whether a residual Claim came from a failed durable provision.
+
+    The physical path is intentionally never returned to an API caller.  The
+    parent product task and the Agent payload must both point at this exact
+    repository generation and Direct NAS subrepository before destructive
+    recovery is offered.
+    """
+    if not claim.owner_node_id:
+        return False
+    node_tasks = (
+        NodeTask.objects.filter(
+            organization_id=repository.organization_id,
+            node_id=claim.owner_node_id,
+            parent_task__task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+            parent_task__status__in=_FAILED_PROVISION_STATUSES,
+            kind__in=["repo.initialize", "repo.status"],
+        )
+        .select_related("parent_task")
+        .order_by("-created_at", "-id")[:50]
+    )
+    expected_root = str(claim.root_path or "").strip("/")
+    for node_task in node_tasks:
+        parent_payload = (
+            node_task.parent_task.request_payload
+            if isinstance(node_task.parent_task.request_payload, dict)
+            else {}
+        )
+        if str(parent_payload.get("repository_id") or "") != str(repository.id):
+            continue
+        payload = node_task.payload if isinstance(node_task.payload, dict) else {}
+        repository_payload = payload.get("repository")
+        repository_payload = (
+            repository_payload if isinstance(repository_payload, dict) else {}
+        )
+        payload_repository_id = (
+            payload.get("repository_id") or repository_payload.get("id")
+        )
+        if payload_repository_id not in (None, "") and str(payload_repository_id) != str(
+            repository.id
+        ):
+            continue
+        if str(repository_payload.get("subdir") or "").strip("/") != expected_root:
+            continue
+        return True
+    return False
+
+
+def nas_proxy_binding_preflight(
+    *, repository: Repository, bind_node_id: int
+) -> dict[str, Any]:
+    """Describe whether an unbound NAS repository can bind a Proxy safely."""
+    selected_proxy = _validate_proxy_node(
+        organization_id=repository.organization_id,
+        node_id=int(bind_node_id),
+    )
+    direct_claims = list(
+        RepositoryLocationClaim.objects.filter(
+            organization_id=repository.organization_id,
+            repository_id=repository.id,
+            scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+            state__in=ACTIVE_CLAIM_STATES,
+        ).order_by("id")
+    )
+    dependency_preflight = repository_cleanup_preflight(repository=repository)
+    dependency_blockers = [
+        item
+        for item in dependency_preflight["blockers"]
+        if item.get("code") != "repository_ownership_unverified"
+    ]
+    owners = {
+        node.id: node
+        for node in Node.objects.filter(
+            organization_id=repository.organization_id,
+            id__in=[claim.owner_node_id for claim in direct_claims if claim.owner_node_id],
+            is_deleted=False,
+        )
+    }
+    owner_details = []
+    for claim in direct_claims:
+        owner = owners.get(claim.owner_node_id)
+        owner_details.append(
             {
-                "bind_node_id": (
-                    "Cannot bind a proxy node while this Direct NAS repository "
-                    "still has physical Agent targets. Clean up those targets first."
-                )
+                "node_id": claim.owner_node_id,
+                "node_name": owner.name if owner is not None else "",
+                "node_role": owner.role if owner is not None else "unknown",
+                "node_online": bool(
+                    owner is not None
+                    and owner.availability == Node.Availability.ONLINE
+                ),
+                "claim_state": claim.state,
             }
         )
+
+    if not direct_claims and not dependency_blockers:
+        return {
+            "allowed": True,
+            "recovery_eligible": False,
+            "blocker_code": "",
+            "required_action": "bind",
+            "claim_count": 0,
+            "claim_states": [],
+            "owners": [],
+            "selected_proxy": {
+                "node_id": selected_proxy.id,
+                "node_name": selected_proxy.name,
+                "node_role": selected_proxy.role,
+            },
+            "confirmation_required": False,
+            "message": "The selected Proxy can be bound to this NAS repository.",
+        }
+
+    residual_claims = [
+        claim
+        for claim in direct_claims
+        if claim.state == RepositoryLocationClaim.State.RESIDUAL
+    ]
+    failed_provisioning_claims = [
+        claim
+        for claim in residual_claims
+        if _claim_failed_provisioning_evidence(repository=repository, claim=claim)
+    ]
+    missing_capability = []
+    unavailable_owners = []
+    for claim in residual_claims:
+        owner = owners.get(claim.owner_node_id)
+        if owner is None or owner.availability != Node.Availability.ONLINE:
+            unavailable_owners.append(claim.id)
+            continue
+        capabilities = _node_capabilities(owner)
+        required = sorted(_RECOVERY_CAPABILITIES - capabilities)
+        if required:
+            missing_capability.append(
+                {
+                    "node_id": owner.id,
+                    "node_name": owner.name,
+                    "node_role": owner.role,
+                    "missing_capabilities": required,
+                }
+            )
+
+    recovery_eligible = bool(
+        residual_claims
+        and len(residual_claims) == len(direct_claims)
+        and len(failed_provisioning_claims) == len(residual_claims)
+        and not dependency_blockers
+        and not missing_capability
+        and not unavailable_owners
+    )
+    if dependency_blockers:
+        blocker_code = "DIRECT_NAS_BIND_DEPENDENCIES"
+        required_action = "remove_dependencies"
+        message = (
+            "This NAS repository still has dependent sources, snapshots, restores, "
+            "or active operations. Remove those dependencies before binding a Proxy."
+        )
+    elif missing_capability:
+        blocker_code = "DIRECT_NAS_OWNER_UPGRADE_REQUIRED"
+        required_action = "upgrade_owner_node"
+        first = missing_capability[0]
+        role = str(first["node_role"] or "node").title()
+        message = (
+            f'{role} "{first["node_name"]}" cannot verify and clean the retained '
+            "repository target. Upgrade that node, then retry."
+        )
+    elif unavailable_owners:
+        blocker_code = "DIRECT_NAS_OWNER_UNAVAILABLE"
+        required_action = "bring_owner_online"
+        message = (
+            "The node that owns a retained Direct NAS target is unavailable. "
+            "Bring that node online, then retry."
+        )
+    elif len(residual_claims) != len(direct_claims):
+        blocker_code = "DIRECT_NAS_ACTIVE_TARGETS"
+        required_action = "retry_or_remove_sources"
+        message = (
+            "This Direct NAS repository still has active physical targets. Retry or "
+            "remove the related backup sources before binding a Proxy."
+        )
+    elif len(failed_provisioning_claims) != len(residual_claims):
+        blocker_code = "DIRECT_NAS_RESIDUAL_UNVERIFIED"
+        required_action = "recreate_repository"
+        message = (
+            "The retained physical target cannot be tied to a failed provisioning "
+            "attempt. Recreate the NAS repository or contact support for review."
+        )
+    else:
+        blocker_code = "DIRECT_NAS_FAILED_PROVISIONING_RESIDUAL"
+        required_action = "cleanup_and_bind"
+        message = (
+            f"{len(residual_claims)} retained Direct NAS target(s) from a failed "
+            "provisioning attempt must be ownership-verified and cleaned before "
+            "the selected Proxy can be bound."
+        )
+    return {
+        "allowed": False,
+        "recovery_eligible": recovery_eligible,
+        "blocker_code": blocker_code,
+        "required_action": required_action,
+        "claim_count": len(direct_claims),
+        "claim_states": sorted({claim.state for claim in direct_claims}),
+        "owners": owner_details,
+        "selected_proxy": {
+            "node_id": selected_proxy.id,
+            "node_name": selected_proxy.name,
+            "node_role": selected_proxy.role,
+        },
+        "confirmation_required": recovery_eligible,
+        "message": message,
+        "dependency_blockers": dependency_blockers,
+        "missing_capability": missing_capability,
+        "recovery_claim_ids": (
+            [claim.id for claim in residual_claims] if recovery_eligible else []
+        ),
+    }
+
+
+def _raise_bind_blocked(preflight: dict[str, Any]) -> None:
+    public_preflight = {
+        key: value for key, value in preflight.items() if key != "recovery_claim_ids"
+    }
+    raise AppError(
+        code=NAS_BIND_BLOCKED_CODE,
+        status=409,
+        retryable=False,
+        title="NAS Proxy binding blocked",
+        diagnostic=str(preflight.get("message") or "NAS Proxy binding is blocked."),
+        meta={"binding_blocker": public_preflight},
+        field_errors=[
+            FieldError(
+                field="bind_node_id",
+                code=str(preflight.get("blocker_code") or NAS_BIND_BLOCKED_CODE),
+                message=str(preflight.get("message") or "NAS Proxy binding is blocked."),
+            )
+        ],
+    )
 
 
 def _unmount_on_old_proxy(
@@ -446,6 +701,9 @@ def repair_nas_repository(
     name: str | None = None,
     config_updates: dict[str, Any] | None = None,
     bind_node_id: Any = _UNSET,
+    cleanup_failed_provisioning_targets: bool = False,
+    cleanup_confirmation: str = "",
+    requested_by=None,
 ) -> Repository:
     """Repair a NAS storage repository.
 
@@ -519,11 +777,22 @@ def repair_nas_repository(
         raise DRFValidationError(
             {"bind_node_id": "The selected proxy node is the same as the current one."}
         )
+    binding_preflight = None
     if not currently_bound and bind_node_changed and new_bind_node_id:
-        _check_unbound_nas_can_bind_proxy(
+        _check_unbound_nas_has_no_associated_sources(
             organization_id=organization_id,
             repository_id=repository.id,
         )
+        binding_preflight = nas_proxy_binding_preflight(
+            repository=repository,
+            bind_node_id=int(new_bind_node_id),
+        )
+        if not binding_preflight["allowed"] and not (
+            cleanup_failed_provisioning_targets
+            and cleanup_confirmation == NAS_BIND_RECOVERY_CONFIRMATION
+            and binding_preflight["recovery_eligible"]
+        ):
+            _raise_bind_blocked(binding_preflight)
 
     # No binding intent and not currently bound: pure config save.
     if not currently_bound and not bind_node_changed:
@@ -545,13 +814,41 @@ def repair_nas_repository(
         new_node = _validate_proxy_node(
             organization_id=organization_id, node_id=int(new_bind_node_id)
         )
+        if binding_preflight and binding_preflight["recovery_eligible"]:
+            with transaction.atomic():
+                repository = _lock_repository_for_repair(repository)
+                locked_preflight = nas_proxy_binding_preflight(
+                    repository=repository,
+                    bind_node_id=new_node.id,
+                )
+                if not locked_preflight["recovery_eligible"]:
+                    _raise_bind_blocked(locked_preflight)
+                _apply_mutable_updates(
+                    repository,
+                    name=name,
+                    config_updates=config_updates,
+                )
+                repository.save()
+                enqueue_repository_create_task(
+                    repository=repository,
+                    operation_type=RepositoryTask.OperationType.REPAIR_BIND,
+                    requested_by=requested_by,
+                    residual_recovery_claim_ids=locked_preflight[
+                        "recovery_claim_ids"
+                    ],
+                    intended_bind_node_id=new_node.id,
+                )
+            repository.refresh_from_db()
+            return repository
         try:
             with transaction.atomic():
                 repository = _lock_repository_for_repair(repository)
-                _check_unbound_nas_can_bind_proxy(
-                    organization_id=organization_id,
-                    repository_id=repository.id,
+                locked_preflight = nas_proxy_binding_preflight(
+                    repository=repository,
+                    bind_node_id=new_node.id,
                 )
+                if not locked_preflight["allowed"]:
+                    _raise_bind_blocked(locked_preflight)
                 _apply_mutable_updates(
                     repository,
                     name=name,
