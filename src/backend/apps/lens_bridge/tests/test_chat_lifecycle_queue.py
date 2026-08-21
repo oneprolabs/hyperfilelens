@@ -14,6 +14,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.iam.models import Organization
 from apps.lens_bridge.models import (
+    LensChatBinding,
     LensGatewayLink,
     LensKnowledgeSource,
     LensSessionLink,
@@ -368,6 +369,43 @@ class CopilotRetryTests(TestCase):
         self.assertEqual(
             updated.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING
         )
+        queue_provision.assert_called_once_with(session.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    def test_legacy_chat_binding_backfills_gateway_before_retry(
+        self,
+        queue_provision,
+    ):
+        gateway = Node.objects.create(
+            organization=self.organization,
+            name="legacy-chat-gateway",
+            role=Node.Role.GATEWAY,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.organization,
+            gateway=gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+            origin=LensGatewayLink.Origin.USER,
+        )
+        binding = LensChatBinding.objects.create(
+            organization=self.organization,
+            hfl_user=self.user,
+            backup_config_id=10,
+            backup_source_snapshot_id=20,
+            source_path="/legacy",
+            gateway_link=gateway_link,
+        )
+        session = self.create_session(LensSessionLink.LifecycleStatus.FAILED)
+        session.chat_binding = binding
+        session.save(update_fields=["chat_binding", "updated_at"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            updated = chat_lifecycle.retry_copilot_chat_provision(session)
+
+        self.assertEqual(updated.gateway_link_id, gateway_link.id)
+        session.refresh_from_db()
+        self.assertEqual(session.gateway_link_id, gateway_link.id)
         queue_provision.assert_called_once_with(session.id)
 
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")

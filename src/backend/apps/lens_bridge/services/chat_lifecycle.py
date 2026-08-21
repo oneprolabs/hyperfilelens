@@ -779,6 +779,13 @@ def _run_copilot_chat_provision(
     gateway_link = link.gateway_link or (binding.gateway_link if binding else None)
     if gateway_link is None:
         raise ValidationError({"gateway_link": "Data gateway is missing."})
+    if link.gateway_link_id is None:
+        # Sessions created before the direct Gateway binding was introduced
+        # may still resolve it through their durable Chat binding. Persist the
+        # canonical link before queue admission so they cannot wait forever
+        # outside the per-Gateway scheduler.
+        link.gateway_link = gateway_link
+        _update_provision_claim(link, claim_token, "gateway_link")
     scopes = list(link.source_scopes_json or [])
     if not scopes and binding is not None:
         scopes = [
@@ -2787,7 +2794,11 @@ def _assert_retry_public_gateway_capacity(*, session: LensSessionLink) -> None:
 def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     locked = (
         LensSessionLink.objects.select_for_update(of=("self",))
-        .select_related("gateway_link", "organization")
+        .select_related(
+            "gateway_link",
+            "organization",
+            "chat_binding__gateway_link",
+        )
         .get(pk=link.pk)
     )
     if locked.lifecycle_status == LensSessionLink.LifecycleStatus.READY:
@@ -2815,10 +2826,19 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             }
         )
 
-    _assert_retry_public_gateway_capacity(session=locked)
-    gateway_chat_queue.assert_chat_queue_admission(
-        gateway_link=locked.gateway_link,
+    gateway_link = locked.gateway_link or (
+        locked.chat_binding.gateway_link if locked.chat_binding_id else None
     )
+    if gateway_link is not None:
+        # Backfill the canonical binding for sessions created by an older
+        # release. Invalid historical rows without any Gateway keep the prior
+        # retry behavior and fail with the existing explicit validation when
+        # provisioning runs.
+        locked.gateway_link = gateway_link
+        _assert_retry_public_gateway_capacity(session=locked)
+        gateway_chat_queue.assert_chat_queue_admission(
+            gateway_link=gateway_link,
+        )
 
     locked.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
     locked.provision_phase = LensSessionLink.ProvisionPhase.QUEUED
@@ -2854,6 +2874,7 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             "provision_claim_token",
             "provision_claimed_at",
             "provision_next_retry_at",
+            "gateway_link",
             "gateway_queue_entered_at",
             "provision_generation",
             "provision_poll_sequence",

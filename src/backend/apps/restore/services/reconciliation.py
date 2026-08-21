@@ -70,10 +70,17 @@ def _resume_stranded_insight_restore_items(*, limit: int) -> None:
 
     from apps.restore.services.interface import _dispatch_restore_items
 
+    active_task_ids = (
+        Task.objects.filter(
+            status__in=(Task.Status.PENDING, Task.Status.RUNNING),
+        )
+        .order_by()
+        .values("id")
+    )
     record_ids = list(
         RestoreRecord.objects.filter(
             purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
-            task__status__in=(Task.Status.PENDING, Task.Status.RUNNING),
+            task_id__in=Subquery(active_task_ids),
             items__status__in=_ACTIVE_ITEM_STATUSES,
             items__node_task_id__isnull=True,
         )

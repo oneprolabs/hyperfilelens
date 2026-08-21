@@ -265,7 +265,6 @@ def try_acquire_chat_prepare_slot(
 ) -> ChatSlotResult:
     session = (
         LensSessionLink.objects.select_for_update()
-        .select_related("gateway_link")
         .filter(pk=session_link_id)
         .first()
     )
