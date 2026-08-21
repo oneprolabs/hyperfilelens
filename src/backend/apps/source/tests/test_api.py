@@ -2942,21 +2942,17 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
 
         self.assertEqual(
-            response.status_code, status.HTTP_202_ACCEPTED, response.content
+            response.status_code, status.HTTP_409_CONFLICT, response.content
         )
-        unregister_task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
-        self.assertEqual(unregister_task.status, Task.Status.FAILED)
-        self.assertEqual(
-            unregister_task.result_payload["reasons"][0]["code"], "running_tasks"
+        problem = response.data["data"]
+        self.assertEqual(problem["code"], "BACKUP.ALREADY_RUNNING")
+        self.assertEqual(problem["meta"]["task_uuid"], str(backup_task.task_uuid))
+        self.assertEqual(problem["meta"]["task_type"], Task.Type.BACKUP)
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).exists()
         )
-        self.assertEqual(response.data["task_uuid"], str(unregister_task.task_uuid))
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
-
-        complete_task(task_uuid=backup_task.task_uuid, organization_id=self.org.id)
-        reconcile_stuck_source_unregister_tasks()
-        unregister_task.refresh_from_db()
-        self.assertEqual(unregister_task.status, Task.Status.FAILED)
 
     def test_snapshot_delete_fails_unregister_without_deferred_task(self):
         snapshot_task = Task.objects.create(
