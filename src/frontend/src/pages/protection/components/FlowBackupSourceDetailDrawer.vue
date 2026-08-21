@@ -1108,7 +1108,11 @@ function restoreRecordRuntimeLoading(record: RestoreRecord) {
 }
 
 function restoreRecordMetrics(record: RestoreRecord) {
-  return restoreRecordRuntimeMetricParts(t, restoreRecordRuntime(record))
+  return restoreRecordRuntimeMetricParts(
+    t,
+    restoreRecordRuntime(record),
+    restoreRecordTaskStatus(record),
+  )
 }
 
 async function loadRestoreRecordRuntime(record: RestoreRecord) {

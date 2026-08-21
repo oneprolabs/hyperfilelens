@@ -1,6 +1,7 @@
 import type { RestoreRecord, RestoreRecordItem } from '../../../lib/restoreApi'
 import {
   formatCount,
+  transferCapacityText,
   transferMetricParts,
   type TaskRuntimePayload,
   type TransferProgress,
@@ -77,6 +78,7 @@ function positiveCount(value: number | null | undefined) {
 export function restoreRecordRuntimeMetricParts(
   t: TranslateFn,
   runtime?: TaskRuntimePayload | null,
+  taskStatus = '',
 ): string[] {
   const transfer = runtime?.transfer_progress
   if (!transfer) return []
@@ -84,6 +86,26 @@ export function restoreRecordRuntimeMetricParts(
   const parts: string[] = []
   const processed = positiveCount(transfer.processed_count)
   const total = positiveCount(transfer.total_count)
+  const status = String(taskStatus).trim().toLowerCase()
+  const completed = ['success', 'succeeded', 'completed'].includes(status)
+  if (completed) {
+    if (processed > 0) {
+      parts.push(total > 0
+        ? t('protection.backupsPage.flowRestoreRecordItemsProgress', {
+            done: formatCount(processed),
+            total: formatCount(total),
+          })
+        : t('protection.backupsPage.flowRestoreRecordItemsProcessed', {
+            n: formatCount(processed),
+          }))
+    }
+    const processedBytes = Number(transfer.processed_bytes ?? transfer.bytes_done ?? 0)
+    if (Number.isFinite(processedBytes) && processedBytes > 0) {
+      const capacity = transferCapacityText(t, transfer as TransferProgress)
+      if (capacity) parts.push(capacity)
+    }
+    return parts
+  }
   if (total > 0) {
     parts.push(t('protection.backupsPage.flowRestoreRecordItemsProgress', {
       done: formatCount(processed),
