@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../styles/fullscreen-form-styles'
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensModelsPath } from '../../lib/lensEngineRoutes'
@@ -310,8 +311,6 @@ onMounted(() => {
   </div>
 </template>
 
-<style src="../../styles/fullscreen-form-shell.css"></style>
-<style src="../../styles/resource-add.css"></style>
 <style scoped>
 .ai-model-form-fullscreen .fullscreen-form-page {
   min-height: calc(var(--app-viewport-height) - var(--app-header-height));

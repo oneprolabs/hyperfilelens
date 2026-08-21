@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../styles/fullscreen-form-styles'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -727,8 +728,6 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
   </div>
 </template>
 
-<style src="../../styles/fullscreen-form-shell.css"></style>
-<style src="../../styles/resource-add.css"></style>
 <style scoped>
 .new-copilot-chat-page { padding-bottom: 104px; }
 .new-copilot-chat-page .fullscreen-form-main { scroll-padding: 16px 0 32px; }

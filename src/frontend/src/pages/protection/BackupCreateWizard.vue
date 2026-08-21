@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../styles/fullscreen-form-styles'
 import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, reactive, ref, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -10419,8 +10420,6 @@ function preserveShallowestPathOrder(paths: string[]) {
   </component>
 </template>
 
-<style src="../../styles/fullscreen-form-shell.css"></style>
-<style src="../../styles/resource-add.css"></style>
 <style src="../../styles/source-deploy-ui.css"></style>
 <style src="../../styles/agent-install-wizard.css"></style>
 <style scoped>

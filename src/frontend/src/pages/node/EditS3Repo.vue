@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../styles/fullscreen-form-styles'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -901,8 +902,6 @@ watch(repositoryId, (id) => {
   </div>
 </template>
 
-<style src="../../styles/fullscreen-form-shell.css"></style>
-<style src="../../styles/resource-add.css"></style>
 <style scoped>
 /* Override add-s3 layout paddings to suit edit page; reuse add-s3-platform-btn styling */
 .edit-s3-page .fullscreen-form-main { padding-bottom: 0; }
