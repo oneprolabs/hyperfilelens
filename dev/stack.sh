@@ -1280,6 +1280,35 @@ sync_optional_identity_settings() {
 	fi
 }
 
+repair_existing_multimodal_model() {
+	local output command_status
+	if [[ "${WITH_SOURCELENS}" -ne 1 ]]; then
+		hfl_log_skip "Existing multimodal model repair is not needed without insight services"
+		return 0
+	fi
+	if ! wait_for_api_healthy; then
+		warn "Skipping existing multimodal model repair because the API is not healthy yet"
+		return 0
+	fi
+
+	log "Reconciling the existing multimodal model capability"
+	set +e
+	output="$(
+		printf '%s\n' '{"role":"multimodal","repair_existing":true}' \
+			| compose exec -T api python manage.py ensure_platform_ai_model 2>&1
+	)"
+	command_status=$?
+	set -e
+	if [[ -n "${output}" ]]; then
+		printf '%s\n' "${output}"
+	fi
+	if [[ "${command_status}" -ne 0 ]]; then
+		warn "Existing multimodal model capability could not be reconciled; the dev stack remains available"
+		return 0
+	fi
+	log "Existing multimodal model capability reconciled"
+}
+
 run_dev_migration_gate() {
 	log "Stopping backend services before database migration"
 	compose stop api worker scheduler
@@ -1320,6 +1349,7 @@ cmd_up() {
 	hfl_log_ok "Hot-reload HyperFileLens services started"
 	hfl_print_section "[6/8] Applying identity and email configuration"
 	sync_optional_identity_settings
+	repair_existing_multimodal_model
 	hfl_print_section "[7/8] Preparing Platform Data Gateway"
 	ensure_local_platform_gateway_dev
 	hfl_print_section "[8/8] Development environment summary"
@@ -1374,6 +1404,7 @@ cmd_restart() {
 	hfl_log_ok "HyperFileLens development services restarted"
 	hfl_print_section "[6/8] Applying identity and email configuration"
 	sync_optional_identity_settings
+	repair_existing_multimodal_model
 	hfl_print_section "[7/8] Preparing Platform Data Gateway"
 	ensure_local_platform_gateway_dev
 	hfl_print_section "[8/8] Development environment summary"
