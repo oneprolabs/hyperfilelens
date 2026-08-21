@@ -60,6 +60,9 @@ from apps.storage.services.internal.nas_repository import (
 from apps.storage.services.internal.repository_usage import (
     enqueue_repository_usage_refresh,
 )
+from apps.monitor.services.internal.repository_usage_history import (
+    repository_usage_history_payload,
+)
 from apps.storage.services.internal.repository_secrets import resolve_repository_secrets
 from apps.storage.services.internal.repository_endpoints import (
     normalize_s3_endpoint_host,
@@ -777,6 +780,19 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             repository, page=page, page_size=page_size
         )
         return Response({"count": count, "results": rows}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get"], url_path="usage-history")
+    def usage_history(self, request, pk=None):
+        repository = self.get_object()
+        range_name = str(request.query_params.get("range") or "7d").strip().lower()
+        try:
+            payload = repository_usage_history_payload(
+                repository,
+                range_name=range_name,
+            )
+        except ValueError as exc:
+            raise ValidationError({"range": str(exc)}) from exc
+        return Response(payload, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["get"], url_path="tasks")
     def repository_tasks(self, request, pk=None):

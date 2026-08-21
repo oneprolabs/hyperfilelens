@@ -27,6 +27,7 @@ import RepositoryUsageCell from '../../components/RepositoryUsageCell.vue'
 import RepositoryBackingStorageTooltip from '../../components/RepositoryBackingStorageTooltip.vue'
 import RepositoryCapacityConflictAlert from '../../components/RepositoryCapacityConflictAlert.vue'
 import RepositoryLifecycleStatus from '../../components/RepositoryLifecycleStatus.vue'
+import RepositoryCapacityTrend from '../../components/RepositoryCapacityTrend.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import { remainingLimitExceedsAvailableStorage, repositoryCapacityParts, repositoryStorageParts } from '../../lib/repositoryCapacityDisplay'
 import { repositoryQuotaDisplay } from '../../lib/repositoryQuota'
@@ -3919,6 +3920,15 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 />
               </div>
             </div>
+          </ElTabPane>
+          <ElTabPane
+            :label="t('repositoriesPage.detailTabMonitor')"
+            name="monitor"
+          >
+            <RepositoryCapacityTrend
+              :repository-id="detailRow.id"
+              :active="drawerDetailOpen && detailActiveTab === 'monitor'"
+            />
           </ElTabPane>
           <ElTabPane
             :label="t('repositoriesPage.detailTabTasks')"

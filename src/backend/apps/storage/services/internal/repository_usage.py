@@ -836,7 +836,12 @@ def _repository_storage_pool_key(
     return ""
 
 
-def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Repository:
+def sync_repository_usage(
+    repository: Repository,
+    *,
+    persist: bool = True,
+    recorded_at=None,
+) -> Repository:
     config_capacity = capacity_bytes_from_config(repository.config)
     capacity_changed = False
     if config_capacity > 0 and int(repository.capacity_bytes or 0) != config_capacity:
@@ -914,6 +919,15 @@ def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Re
     update_fields.append("updated_at")
     if persist:
         repository.save(update_fields=update_fields)
+        from apps.monitor.services.internal.repository_usage_history import (
+            record_repository_usage_result,
+        )
+
+        record_repository_usage_result(
+            repository,
+            recorded_at=recorded_at or checked_at,
+            usage_bytes=estimated_usage_bytes,
+        )
     return repository
 
 
@@ -976,6 +990,7 @@ def sync_organization_repositories(
     repo_type: str | None = None,
     force: bool = False,
     stale_after_seconds: int | None = None,
+    recorded_at=None,
 ) -> dict[str, Any]:
     ids = _normalize_repository_ids(repository_ids)
     logger.info(
@@ -996,15 +1011,21 @@ def sync_organization_repositories(
         stale_after_seconds=stale_after_seconds,
     )
     synced = 0
+    snapshots_upserted = 0
     for repository in qs:
-        sync_repository_usage(repository)
+        sync_repository_usage(repository, recorded_at=recorded_at)
         synced += 1
+        snapshots_upserted += 1
     logger.info(
         "repository usage sync org finished org_id=%s repositories_synced=%s",
         organization_id,
         synced,
     )
-    return {"organization_id": organization_id, "repositories_synced": synced}
+    return {
+        "organization_id": organization_id,
+        "repositories_synced": synced,
+        "snapshots_upserted": snapshots_upserted,
+    }
 
 
 def sync_all_repositories(
@@ -1013,6 +1034,7 @@ def sync_all_repositories(
     repo_type: str | None = None,
     force: bool = False,
     stale_after_seconds: int | None = None,
+    recorded_at=None,
 ) -> dict[str, Any]:
     logger.info(
         "repository usage sync all started limit=%s repo_type=%s force=%s stale_after_seconds=%s",
@@ -1028,11 +1050,16 @@ def sync_all_repositories(
         stale_after_seconds=stale_after_seconds,
     )
     synced = 0
+    snapshots_upserted = 0
     for repository in qs:
-        sync_repository_usage(repository)
+        sync_repository_usage(repository, recorded_at=recorded_at)
         synced += 1
+        snapshots_upserted += 1
     logger.info("repository usage sync all finished repositories_synced=%s", synced)
-    return {"repositories_synced": synced}
+    return {
+        "repositories_synced": synced,
+        "snapshots_upserted": snapshots_upserted,
+    }
 
 
 def _usage_refresh_lock_key(
