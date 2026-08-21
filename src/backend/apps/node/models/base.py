@@ -15,6 +15,13 @@ class NodeRole(models.TextChoices):
     GATEWAY = "gateway", "Gateway"
 
 
+class NodeInstallationMode(models.TextChoices):
+    """Privilege and lifecycle boundary selected for one Agent installation."""
+
+    SYSTEM = "system", "System Service"
+    USER = "user", "Current User"
+
+
 class TimeStampedModel(models.Model):
     """``created_at`` / ``updated_at`` for auditable rows."""
 

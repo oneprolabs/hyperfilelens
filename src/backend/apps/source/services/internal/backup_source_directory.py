@@ -38,6 +38,10 @@ logger = logging.getLogger(__name__)
 class BackupSourceDirectoryError(ValueError):
     """Invalid directory browse request."""
 
+    def __init__(self, message: str, *, agent_error_code: str = "") -> None:
+        super().__init__(message)
+        self.agent_error_code = str(agent_error_code or "").strip()
+
 
 class BackupSourceDirectoryInvalid(BackupSourceDirectoryError):
     """The source selection or local source configuration is invalid."""
@@ -68,6 +72,17 @@ class BrowseTarget:
     user_path: str = ""
 
 
+def _agent_task_error_code(outcome: Any) -> str:
+    """Return a stable Agent error code when the task supplied one."""
+    try:
+        result = outcome.result
+    except (AttributeError, TypeError, ValueError):
+        return ""
+    if not isinstance(result, dict):
+        return ""
+    return str(result.get("error_code") or "").strip()
+
+
 def _is_windows_path(path: str) -> bool:
     return "\\" in path or (len(path) >= 2 and path[1] == ":")
 
@@ -88,11 +103,20 @@ def _clean_path(path: str) -> str:
 
 def _agent_default_path(node: Node) -> str:
     metadata = node.metadata if isinstance(node.metadata, dict) else {}
-    inventory = metadata.get("inventory") if isinstance(metadata.get("inventory"), dict) else {}
+    inventory = (
+        metadata.get("inventory") if isinstance(metadata.get("inventory"), dict) else {}
+    )
     os_name = str(inventory.get("os") or node.os_name or "").strip().lower()
     if "windows" in os_name:
         return "C:\\"
     return "/"
+
+
+def _is_current_user_agent(node: Node) -> bool:
+    return (
+        node.role == NodeRole.AGENT
+        and node.installation_mode == Node.InstallationMode.USER
+    )
 
 
 def _is_subpath(root: str, path: str) -> bool:
@@ -125,19 +149,23 @@ def _nas_payload_for_log(payload: dict[str, Any] | None) -> dict[str, Any]:
     return safe
 
 
-def _resolve_agent_target(*, organization_id: int, ref_id: int, path: str) -> BrowseTarget:
-    node = (
-        Node.objects.filter(
-            organization_id=organization_id,
-            id=ref_id,
-            role=NodeRole.AGENT,
-            is_deleted=False,
-        )
-        .first()
-    )
+def _resolve_agent_target(
+    *, organization_id: int, ref_id: int, path: str
+) -> BrowseTarget:
+    node = Node.objects.filter(
+        organization_id=organization_id,
+        id=ref_id,
+        role=NodeRole.AGENT,
+        is_deleted=False,
+    ).first()
     if node is None:
         raise BackupSourceDirectoryNotFound("Agent source not found.")
-    resolved_path = _clean_path(path) or _agent_default_path(node)
+    path_clean = _clean_path(path)
+    resolved_path = (
+        path_clean
+        if path_clean or _is_current_user_agent(node)
+        else _agent_default_path(node)
+    )
     return BrowseTarget(
         source_kind="agent",
         source_ref_id=ref_id,
@@ -147,16 +175,15 @@ def _resolve_agent_target(*, organization_id: int, ref_id: int, path: str) -> Br
     )
 
 
-def _resolve_proxy_target(*, organization_id: int, ref_id: int, path: str) -> BrowseTarget:
-    node = (
-        Node.objects.filter(
-            organization_id=organization_id,
-            id=ref_id,
-            role=NodeRole.PROXY,
-            is_deleted=False,
-        )
-        .first()
-    )
+def _resolve_proxy_target(
+    *, organization_id: int, ref_id: int, path: str
+) -> BrowseTarget:
+    node = Node.objects.filter(
+        organization_id=organization_id,
+        id=ref_id,
+        role=NodeRole.PROXY,
+        is_deleted=False,
+    ).first()
     if node is None:
         raise BackupSourceDirectoryNotFound("Proxy node not found.")
     resolved_path = _clean_path(path) or _agent_default_path(node)
@@ -169,7 +196,9 @@ def _resolve_proxy_target(*, organization_id: int, ref_id: int, path: str) -> Br
     )
 
 
-def _resolve_nas_target(*, organization_id: int, ref_id: int, path: str) -> BrowseTarget:
+def _resolve_nas_target(
+    *, organization_id: int, ref_id: int, path: str
+) -> BrowseTarget:
     resource = (
         SourceResource.objects.filter(
             organization_id=organization_id,
@@ -183,13 +212,9 @@ def _resolve_nas_target(*, organization_id: int, ref_id: int, path: str) -> Brow
     if resource is None:
         raise BackupSourceDirectoryNotFound("NAS source not found.")
     if resource.bound_node is None:
-        raise BackupSourceDirectoryInvalid(
-            "NAS source is not bound to a proxy node."
-        )
+        raise BackupSourceDirectoryInvalid("NAS source is not bound to a proxy node.")
     if resource.bound_node.role != NodeRole.PROXY:
-        raise BackupSourceDirectoryInvalid(
-            "NAS source must be bound to a proxy node."
-        )
+        raise BackupSourceDirectoryInvalid("NAS source must be bound to a proxy node.")
 
     root_path = _clean_path(resource.effective_mount_point())
     if not root_path:
@@ -209,7 +234,9 @@ def _resolve_nas_target(*, organization_id: int, ref_id: int, path: str) -> Brow
         )
         resolved_path = to_mount_path(root_path, user_path)
     if not _is_subpath(root_path, resolved_path):
-        raise BackupSourceDirectoryForbidden("Path is outside the mounted NAS directory.")
+        raise BackupSourceDirectoryForbidden(
+            "Path is outside the mounted NAS directory."
+        )
 
     return BrowseTarget(
         source_kind="nas",
@@ -218,7 +245,9 @@ def _resolve_nas_target(*, organization_id: int, ref_id: int, path: str) -> Brow
         path=resolved_path,
         root_path=root_path,
         nas_payload=nas_payload_for_resource(resource),
-        share_root_label=share_root_label(resource_type=resource.resource_type, config=config),
+        share_root_label=share_root_label(
+            resource_type=resource.resource_type, config=config
+        ),
         share_export_path=export_path,
         user_path=user_path,
     )
@@ -232,11 +261,17 @@ def _resolve_target(*, organization_id: int, source_id: str, path: str) -> Brows
         )
     kind, ref_id = parsed
     if kind == "agent":
-        return _resolve_agent_target(organization_id=organization_id, ref_id=ref_id, path=path)
+        return _resolve_agent_target(
+            organization_id=organization_id, ref_id=ref_id, path=path
+        )
     if kind == "nas":
-        return _resolve_nas_target(organization_id=organization_id, ref_id=ref_id, path=path)
+        return _resolve_nas_target(
+            organization_id=organization_id, ref_id=ref_id, path=path
+        )
     if kind == "proxy":
-        return _resolve_proxy_target(organization_id=organization_id, ref_id=ref_id, path=path)
+        return _resolve_proxy_target(
+            organization_id=organization_id, ref_id=ref_id, path=path
+        )
     raise BackupSourceDirectoryInvalid("Unsupported backup source kind.")
 
 
@@ -333,8 +368,12 @@ def _normalize_mount_path(path: str) -> str:
     return _clean_path(path)
 
 
-def _is_top_level_mount_request(*, target: BrowseTarget, path_clean: str, include_files: bool, cursor: str) -> bool:
+def _is_top_level_mount_request(
+    *, target: BrowseTarget, path_clean: str, include_files: bool, cursor: str
+) -> bool:
     if target.source_kind not in ("agent", "proxy"):
+        return False
+    if _is_current_user_agent(target.node):
         return False
     if cursor:
         return False
@@ -367,7 +406,9 @@ def _entries_from_cached_disks(disks: Any) -> list[dict[str, Any]]:
                 "mod_time": "",
             }
         )
-    return sorted(rows, key=lambda row: (str(row["label"]).lower(), str(row["path"]).lower()))
+    return sorted(
+        rows, key=lambda row: (str(row["label"]).lower(), str(row["path"]).lower())
+    )
 
 
 def _try_cached_mount_listing(
@@ -434,7 +475,9 @@ def _root_entry(target: BrowseTarget) -> dict[str, Any]:
         }
     path = target.root_path or target.path
     return {
-        "label": _basename(path),
+        "label": "Home"
+        if _is_current_user_agent(target.node) and target.root_path
+        else _basename(path),
         "path": path,
         "isLeaf": False,
         "is_dir": True,
@@ -444,7 +487,9 @@ def _root_entry(target: BrowseTarget) -> dict[str, Any]:
     }
 
 
-def _nas_directory_response_base(*, target: BrowseTarget, source_id: str) -> dict[str, Any]:
+def _nas_directory_response_base(
+    *, target: BrowseTarget, source_id: str
+) -> dict[str, Any]:
     return {
         "source_id": source_id,
         "source_kind": target.source_kind,
@@ -508,7 +553,9 @@ def list_backup_source_directories(
         )
         if cached is not None:
             return cached
-    collect_metadata = bool(include_files) if include_metadata is None else bool(include_metadata)
+    collect_metadata = (
+        bool(include_files) if include_metadata is None else bool(include_metadata)
+    )
 
     payload: dict[str, Any] = {
         "path": "" if use_mount_listing else target.path,
@@ -559,7 +606,11 @@ def list_backup_source_directories(
     if not outcome.ok:
         error = last_error
         if not error and isinstance(outcome.stream_message, dict):
-            error = str(outcome.stream_message.get("error") or outcome.stream_message.get("message") or "")
+            error = str(
+                outcome.stream_message.get("error")
+                or outcome.stream_message.get("message")
+                or ""
+            )
         if not error:
             error = f"Directory listing failed (task status: {task_status})."
         logger.warning(
@@ -570,7 +621,10 @@ def list_backup_source_directories(
             task_status,
             error,
         )
-        raise BackupSourceDirectoryError(error)
+        raise BackupSourceDirectoryError(
+            error,
+            agent_error_code=_agent_task_error_code(outcome),
+        )
 
     try:
         result = outcome.result
@@ -600,19 +654,46 @@ def list_backup_source_directories(
             "next_cursor": str(result.get("next_cursor") or ""),
             "entries": entries,
         }
+    response_path = target.path
+    response_root_path = target.root_path
+    response_target = target
+    response_entries = entries
+    response_has_more = _safe_bool(result.get("has_more"))
+    response_next_cursor = str(result.get("next_cursor") or "")
+    if request_root and _is_current_user_agent(target.node):
+        home_path = _normalize_mount_path(str(result.get("path") or ""))
+        if not home_path:
+            raise BackupSourceDirectoryError(
+                "Current User Agent did not return its Home directory path."
+            )
+        response_path = home_path
+        response_root_path = home_path
+        response_target = BrowseTarget(
+            source_kind=target.source_kind,
+            source_ref_id=target.source_ref_id,
+            node=target.node,
+            path=home_path,
+            root_path=home_path,
+        )
+        # The top-level item is a virtual Home root. Its children are loaded
+        # only after that root is expanded, so Agent-side pagination here must
+        # not create a sibling "load more" item in the tree.
+        response_entries = []
+        response_has_more = False
+        response_next_cursor = ""
     return {
         "source_id": source_id,
         "source_kind": target.source_kind,
         "source_ref_id": target.source_ref_id,
         "node_id": target.node.id,
-        "path": target.path,
-        "root_path": target.root_path,
-        "root": _root_entry(target),
+        "path": response_path,
+        "root_path": response_root_path,
+        "root": _root_entry(response_target),
         "task_id": outcome.task_id,
-        "count": len(entries),
-        "has_more": _safe_bool(result.get("has_more")),
-        "next_cursor": str(result.get("next_cursor") or ""),
-        "entries": entries,
+        "count": len(response_entries),
+        "has_more": response_has_more,
+        "next_cursor": response_next_cursor,
+        "entries": response_entries,
     }
 
 
@@ -680,7 +761,11 @@ def get_backup_source_path_info(
     if not outcome.ok:
         error = last_error
         if not error and isinstance(outcome.stream_message, dict):
-            error = str(outcome.stream_message.get("error") or outcome.stream_message.get("message") or "")
+            error = str(
+                outcome.stream_message.get("error")
+                or outcome.stream_message.get("message")
+                or ""
+            )
         if not error and isinstance(raw_result, dict):
             error = str(raw_result.get("error") or raw_result.get("stderr") or "")
         if not error:
@@ -693,13 +778,18 @@ def get_backup_source_path_info(
             target.path,
             error[:500],
         )
-        raise BackupSourceDirectoryError(error)
+        raise BackupSourceDirectoryError(
+            error,
+            agent_error_code=_agent_task_error_code(outcome),
+        )
 
     result = raw_result if isinstance(raw_result, dict) else {}
     path_value = _normalize_mount_path(str(result.get("path") or target.path))
     if target.source_kind == "nas":
         if not _is_subpath(target.root_path, path_value):
-            raise BackupSourceDirectoryForbidden("Path is outside the mounted NAS directory.")
+            raise BackupSourceDirectoryForbidden(
+                "Path is outside the mounted NAS directory."
+            )
         user_path = to_share_relative(target.root_path, path_value)
         is_dir = _entry_is_dir(result)
         path_type = "directory" if is_dir else "file"

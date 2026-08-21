@@ -2,8 +2,10 @@ package enroll
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -44,6 +46,51 @@ func DetectInstallState() InstallState {
 	return state
 }
 
+// ConflictingInstallPath returns the other lifecycle mode installed for the
+// current host account. System installers also inspect the invoking sudo user.
+func ConflictingInstallPath() string {
+	var candidate string
+	if vfs.UserInstallation() {
+		candidate = vfs.SystemInstallDir()
+	} else {
+		home := ""
+		if sudoUser := strings.TrimSpace(os.Getenv("SUDO_USER")); sudoUser != "" {
+			if account, err := user.Lookup(sudoUser); err == nil {
+				home = account.HomeDir
+			}
+		}
+		if home == "" {
+			home, _ = os.UserHomeDir()
+		}
+		if home != "" {
+			candidate = vfs.UserInstallDirForHome(home)
+		}
+	}
+	if candidate == "" {
+		return ""
+	}
+	if installMarkersPresent(candidate) {
+		return candidate
+	}
+	return ""
+}
+
+func installMarkersPresent(installDir string) bool {
+	for _, name := range []string{
+		agentBinaryName(),
+		"install.sh",
+		"install.ps1",
+		"install.cmd",
+		"MANIFEST.json",
+	} {
+		info, err := os.Stat(filepath.Join(installDir, name))
+		if err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 // ServiceHealthy reports whether the platform service appears to be running.
 func (s InstallState) ServiceHealthy() bool {
 	return isServiceHealthy(s.Service)
@@ -79,10 +126,18 @@ func serviceState(ctx context.Context) string {
 		if _, err := exec.LookPath("systemctl"); err != nil {
 			return "unavailable"
 		}
-		active, _ := exec.CommandContext(ctx, "systemctl", "is-active", "hyperfilelens-agent.service").Output()
+		args := []string{"is-active", "hyperfilelens-agent.service"}
+		if vfs.UserInstallation() {
+			args = append([]string{"--user"}, args...)
+		}
+		active, _ := exec.CommandContext(ctx, "systemctl", args...).Output()
 		return strings.TrimSpace(string(active))
 	case "darwin":
-		out, err := exec.CommandContext(ctx, "launchctl", "print", "system/com.hyperfilelens.agent").CombinedOutput()
+		domain := "system"
+		if vfs.UserInstallation() {
+			domain = fmt.Sprintf("gui/%d", os.Geteuid())
+		}
+		out, err := exec.CommandContext(ctx, "launchctl", "print", domain+"/com.hyperfilelens.agent").CombinedOutput()
 		if err != nil {
 			return "not loaded"
 		}
@@ -94,6 +149,19 @@ func serviceState(ctx context.Context) string {
 		}
 		return "loaded"
 	case "windows":
+		if vfs.UserInstallation() {
+			out, err := exec.CommandContext(
+				ctx,
+				"powershell.exe",
+				"-NoProfile",
+				"-Command",
+				"$task = Get-ScheduledTask -TaskName HyperFileLensAgent -ErrorAction SilentlyContinue; if ($null -eq $task) { exit 1 }; $task.State.ToString()",
+			).CombinedOutput()
+			if err != nil {
+				return "not installed"
+			}
+			return strings.TrimSpace(string(out))
+		}
 		out, err := exec.CommandContext(ctx, "sc.exe", "query", "HyperFileLensAgent").CombinedOutput()
 		if err != nil {
 			return "not installed"
@@ -114,12 +182,8 @@ func serviceState(ctx context.Context) string {
 }
 
 func dataDirForAgent() string {
-	if runtime.GOOS == "windows" {
-		pd := os.Getenv("ProgramData")
-		if pd == "" {
-			pd = `C:\ProgramData`
-		}
-		return filepath.Join(pd, "HyperFileLens", "Agent")
+	if configured := strings.TrimSpace(os.Getenv("HFL_DATA_DIR")); configured != "" {
+		return filepath.Clean(configured)
 	}
-	return vfs.UnixDataDir()
+	return vfs.DefaultAgentDataDir()
 }

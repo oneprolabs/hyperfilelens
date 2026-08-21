@@ -9,6 +9,7 @@ cd / || cd /tmp || true
 export HFL_ORG_KEY="__HFL_ORG_KEY__"
 export HFL_NODE_ROLE="__HFL_NODE_ROLE__"
 export HFL_NODE_TOKEN="__HFL_NODE_TOKEN__"
+export HFL_INSTALLATION_MODE="__HFL_INSTALLATION_MODE__"
 export HFL_API_BASE="__HFL_API_BASE__"
 export HFL_WSS_URL="__HFL_WSS_URL__"
 export HFL_INSECURE_TLS="__HFL_INSECURE_TLS__"
@@ -102,14 +103,30 @@ aarch64 | arm64) HFL_ARCH=arm64 ;;
 	;;
 esac
 
-if [[ "$(id -u)" -ne 0 ]]; then
-	hfl_fail "Administrator privileges are required. Re-run with sudo." 1
-fi
-
-if ! command -v systemctl >/dev/null 2>&1 \
-	|| [[ ! -d /run/systemd/system ]] \
-	|| ! systemctl show-environment >/dev/null 2>&1; then
-	hfl_fail "This release requires a systemd-based Linux distribution. OpenRC, non-systemd, and container deployments are not supported." 2
+if [[ "${HFL_INSTALLATION_MODE}" == "user" ]]; then
+	if [[ "$(id -u)" -eq 0 ]]; then
+		hfl_fail "User-level installation must run as the current user without sudo." 1
+	fi
+	if ! command -v systemctl >/dev/null 2>&1 \
+		|| ! systemctl --user show-environment >/dev/null 2>&1; then
+		hfl_fail "A working systemd user service manager is required for user-level installation." 2
+	fi
+	command -v loginctl >/dev/null 2>&1 \
+		|| hfl_fail "loginctl is required to verify that current-user mode stops after sign-out." 2
+	HFL_USER_LINGER="$(loginctl show-user "$(id -u)" --property=Linger --value 2>/dev/null)" \
+		|| hfl_fail "Unable to verify the current user's systemd sign-out behavior." 2
+	if [[ "${HFL_USER_LINGER}" == "yes" ]]; then
+		hfl_fail "Current-user mode must pause after sign-out, but systemd user lingering is enabled. Disable lingering or choose System Service mode." 2
+	fi
+else
+	if [[ "$(id -u)" -ne 0 ]]; then
+		hfl_fail "Administrator privileges are required. Re-run with sudo." 1
+	fi
+	if ! command -v systemctl >/dev/null 2>&1 \
+		|| [[ ! -d /run/systemd/system ]] \
+		|| ! systemctl show-environment >/dev/null 2>&1; then
+		hfl_fail "This release requires a systemd-based Linux distribution. OpenRC, non-systemd, and container deployments are not supported." 2
+	fi
 fi
 
 BIN="${TMPDIR:-/tmp}/hfl-enroll-$$"

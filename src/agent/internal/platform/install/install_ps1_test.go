@@ -38,8 +38,10 @@ func TestInstallPs1DoesNotRemoveInstallParent(t *testing.T) {
 func TestInstallPs1SafeDataPathRequiresHyperFileLensDescendant(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	for _, want := range []string{
-		`$allowedRoot = Join-Path $pd "HyperFileLens"`,
+		`$allowedRoot = Join-Path ([System.IO.Path]::GetFullPath($base)) "HyperFileLens"`,
 		`$allowedRoot.TrimEnd('\') + '\'`,
+		`Test-HflPathContainsReparsePoint -Path $full`,
+		`[System.IO.FileAttributes]::ReparsePoint`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("install.ps1 safe data path check missing %q", want)
@@ -47,6 +49,76 @@ func TestInstallPs1SafeDataPathRequiresHyperFileLensDescendant(t *testing.T) {
 	}
 	if strings.Contains(source, `StartsWith($pd.TrimEnd('\') + '\HyperFileLens'`) {
 		t.Fatal("safe data path check must enforce a path-component boundary")
+	}
+}
+
+func TestInstallPs1UsesFixedUserDataDirectory(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	for _, want := range []string{
+		`$expected = [System.IO.Path]::GetFullPath($DefaultDataRoot)`,
+		`User-level installation uses the fixed data directory $DefaultDataRoot; -DataDir is not supported.`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("install.ps1 missing fixed user data rule %q", want)
+		}
+	}
+}
+
+func TestInstallPs1RestrictsUserModeToSourceAgent(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	if !strings.Contains(source, `$InstallationMode -eq "user" -and $Role -ne "agent"`) {
+		t.Fatal("install.ps1 must reject user-level Proxy and Data Gateway installs")
+	}
+}
+
+func TestInstallPs1UsesFullWindowsIdentityForCurrentUserTask(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	for _, want := range []string{
+		`$CurrentWindowsIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name`,
+		`New-ScheduledTaskTrigger -AtLogOn -User $CurrentWindowsIdentity`,
+		`New-ScheduledTaskPrincipal`,
+		`-LogonType Interactive`,
+		`-RunLevel Limited`,
+		`-AllowStartIfOnBatteries`,
+		`-DontStopIfGoingOnBatteries`,
+		`-Principal $principal`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("install.ps1 current-user task is missing %q", want)
+		}
+	}
+	if strings.Contains(source, `New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME`) {
+		t.Fatal("current-user task must not use an ambiguous short account name")
+	}
+}
+
+func TestInstallPs1UpgradePersistsMissingInstallationMode(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	mergeStart := strings.Index(source, "function Merge-AgentEnv")
+	if mergeStart < 0 {
+		t.Fatal("install.ps1 missing Merge-AgentEnv")
+	}
+	mergeEnd := strings.Index(source[mergeStart:], "function Ensure-HflLogsDir")
+	if mergeEnd < 0 {
+		t.Fatal("install.ps1 missing Merge-AgentEnv end marker")
+	}
+	merge := source[mergeStart : mergeStart+mergeEnd]
+	if !strings.Contains(merge, "HFL_INSTALLATION_MODE = $InstallationMode") {
+		t.Fatal("Windows upgrade must persist a missing installation mode")
+	}
+}
+
+func TestInstallPs1ValidatesPurgePathBeforeUninstallLogging(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	uninstallStart := strings.Index(source, "function Invoke-Uninstall")
+	if uninstallStart < 0 {
+		t.Fatal("install.ps1 missing Invoke-Uninstall")
+	}
+	uninstall := source[uninstallStart:]
+	validateAt := strings.Index(uninstall, "$PurgeAll -and -not (Test-SafeDataPath $dataRoot)")
+	logAt := strings.Index(uninstall, "Start-HflUninstallLog -DataRoot $dataRoot")
+	if validateAt < 0 || logAt < 0 || validateAt > logAt {
+		t.Fatal("PurgeAll path must be validated before uninstall logging or removal")
 	}
 }
 
@@ -60,14 +132,33 @@ func TestInstallPs1RetiresIdentityBeforeRemovingAgent(t *testing.T) {
 	if strings.Index(source, retire) > strings.Index(source, remove) {
 		t.Fatal("install.ps1 removes hfl-agent before retiring installation identity")
 	}
-	if !strings.Contains(source, "the next install will create a new console record") {
-		t.Fatal("install.ps1 does not explain the new-record uninstall behavior")
+	if !strings.Contains(source, "remove the old console record before reinstalling or changing run mode") {
+		t.Fatal("install.ps1 does not explain the retired installation identity")
 	}
 	if !strings.Contains(source, "-KeepInstallationIdentity") {
 		t.Fatal("install.ps1 missing incomplete-install rollback flag")
 	}
 	if !strings.Contains(source, `(-not $PurgeAll) -and (-not $KeepInstallationIdentity)`) {
 		t.Fatal("install.ps1 must skip identity retirement during incomplete-install rollback")
+	}
+}
+
+func TestInstallPs1UpgradeRollbackUsesModeAwareLifecycle(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	rollbackStart := strings.LastIndex(source, "Restore-RollbackBinaries")
+	if rollbackStart < 0 {
+		t.Fatal("install.ps1 missing upgrade rollback")
+	}
+	rollbackEnd := strings.Index(source[rollbackStart:], "Remove-UpgradeRollback")
+	if rollbackEnd < 0 {
+		t.Fatal("install.ps1 rollback block has no end marker")
+	}
+	rollback := source[rollbackStart : rollbackStart+rollbackEnd]
+	if !strings.Contains(rollback, "Start-HflServiceOnly") {
+		t.Fatal("upgrade rollback must restart the persisted system service or user task")
+	}
+	if strings.Contains(rollback, "Start-Service -Name $ServiceName") {
+		t.Fatal("upgrade rollback must not hard-code the Windows service lifecycle")
 	}
 }
 

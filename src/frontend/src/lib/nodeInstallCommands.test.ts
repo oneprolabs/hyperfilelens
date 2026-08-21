@@ -54,6 +54,9 @@ describe('manual node maintenance commands', () => {
   it('uses the node architecture in the downloaded package path', () => {
     expect(defaultPackagePath('linux', '1.0.1', 'arm64')).toContain('linux-arm64')
     expect(defaultPackagePath('macos', '1.0.1', 'amd64')).toContain('darwin-amd64')
+    expect(defaultPackagePath('windows', '1.0.1', 'amd64')).toBe(
+      '$env:TEMP\\hfl-agent-1.0.1-windows-amd64.zip',
+    )
   })
 
   it('restarts both Data Gateway services', () => {
@@ -93,5 +96,59 @@ describe('manual node maintenance commands', () => {
     expect(buildLocalUninstallCommand('linux', false, 'gateway')).toBe(
       'sudo /opt/hyperfilelens-agent/install.sh uninstall',
     )
+  })
+
+  it.each([
+    {
+      os: 'linux' as const,
+      installScript: '"$HOME/.local/lib/hyperfilelens-agent/install.sh"',
+    },
+    {
+      os: 'macos' as const,
+      installScript: '"$HOME/Library/Application Support/HyperFileLens/Agent/bin/install.sh"',
+    },
+  ])('keeps $os user-level maintenance inside the user install', ({ os, installScript }) => {
+    const upgrade = buildLocalUpgradeCommand(
+      os,
+      `/tmp/hfl-agent-${os}.tar.gz`,
+      true,
+      `https://console.example/hfl-agent-${os}.tar.gz`,
+      'agent',
+      true,
+      '',
+      'amd64',
+      'user',
+    )
+    const uninstall = buildLocalUninstallCommand(os, true, 'agent', 'user')
+    const service = buildLocalServiceCommand(os, 'restart', 'agent', 'user')
+
+    expect(upgrade).toContain(`${installScript} upgrade`)
+    expect(uninstall).toContain(`${installScript} uninstall --purge-all`)
+    expect(service).toBe(`${installScript} restart`)
+    expect(`${upgrade}\n${uninstall}\n${service}`).not.toContain('sudo')
+  })
+
+  it('uses the current-user Windows install without elevation', () => {
+    const upgrade = buildLocalUpgradeCommand(
+      'windows',
+      '$env:TEMP\\hfl-agent.zip',
+      true,
+      'https://console.example/hfl-agent.zip',
+      'agent',
+      true,
+      '',
+      'amd64',
+      'user',
+    )
+    const uninstall = buildLocalUninstallCommand('windows', true, 'agent', 'user')
+    const service = buildLocalServiceCommand('windows', 'restart', 'agent', 'user')
+
+    for (const command of [upgrade, uninstall, service]) {
+      expect(command).toContain('$env:LOCALAPPDATA\\Programs\\HyperFileLens\\Agent\\install.cmd')
+      expect(command).not.toContain('$env:ProgramFiles')
+      expect(command).not.toContain('Start-Service')
+      expect(command).not.toContain('Restart-Service')
+    }
+    expect(upgrade).toContain('-o "$env:TEMP\\hfl-agent.zip"')
   })
 })

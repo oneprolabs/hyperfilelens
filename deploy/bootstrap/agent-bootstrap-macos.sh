@@ -9,6 +9,7 @@ cd / || cd /tmp || true
 export HFL_ORG_KEY="__HFL_ORG_KEY__"
 export HFL_NODE_ROLE="__HFL_NODE_ROLE__"
 export HFL_NODE_TOKEN="__HFL_NODE_TOKEN__"
+export HFL_INSTALLATION_MODE="__HFL_INSTALLATION_MODE__"
 export HFL_API_BASE="__HFL_API_BASE__"
 export HFL_WSS_URL="__HFL_WSS_URL__"
 export HFL_INSECURE_TLS="__HFL_INSECURE_TLS__"
@@ -78,7 +79,14 @@ if ! command -v curl >/dev/null 2>&1; then
 	hfl_fail "curl is required but not installed." 2
 fi
 
-if [[ "$(id -u)" -ne 0 ]]; then
+if [[ "${HFL_INSTALLATION_MODE}" == "user" ]]; then
+	if [[ "$(id -u)" -eq 0 ]]; then
+		hfl_fail "User-level installation must run as the current user without sudo." 1
+	fi
+	if ! launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
+		hfl_fail "An active macOS user session is required for user-level installation." 2
+	fi
+elif [[ "$(id -u)" -ne 0 ]]; then
 	hfl_fail "Administrator privileges are required. Re-run with sudo." 1
 fi
 

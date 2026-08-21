@@ -20,6 +20,7 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 		dataDir,
 		logDir,
 		false,
+		false,
 		UninstallCompletion{
 			APIBaseURL: "https://control.example",
 			Path:       "/api/v1/node/agent-uninstall/completion/",
@@ -62,9 +63,11 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 		`$logEnabled = $true`,
 		`if (-not $script:logEnabled)`,
 		`Test-SafeAgentDataPath`,
+		`Test-PathContainsReparsePoint -Path $full`,
+		`[System.IO.FileAttributes]::ReparsePoint`,
 		`$allowedRoot.TrimEnd('\') + '\'`,
 		`agent_data_cleanup_refused`,
-		`outside ProgramData\HyperFileLens`,
+		`outside the approved Agent data directory`,
 		`Remove-AgentDataDirectory`,
 		`physical cleanup finished; removing data directory`,
 		`$script:logEnabled = $false`,
@@ -115,6 +118,7 @@ func TestWriteWindowsForceCleanupScriptContinuesAfterInstallerFailure(t *testing
 		dir+`/data`,
 		dir+`/data/logs`,
 		false,
+		false,
 		UninstallCompletion{
 			APIBaseURL:   "https://control.example",
 			Path:         "/api/v1/node/agent-uninstall/completion/",
@@ -154,6 +158,7 @@ func TestWriteWindowsUninstallScriptKeepDataSkipsPurgeAll(t *testing.T) {
 		dir+`/data`,
 		dir+`/data/logs`,
 		true,
+		false,
 		UninstallCompletion{
 			APIBaseURL: "https://control.example",
 			Path:       "/api/v1/node/agent-uninstall/completion/",
@@ -184,6 +189,75 @@ func TestWriteWindowsUninstallScriptKeepDataSkipsPurgeAll(t *testing.T) {
 		`Remove-AgentDataDirectory -DataDir $data`,
 		`keep_data=1; preserved data directory`,
 	)
+}
+
+func TestWriteWindowsUserUninstallScriptUsesCurrentUserLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/run-uninstall.ps1"
+	err := writeWindowsUninstallScript(
+		`C:\Users\agent\AppData\Local\Programs\HyperFileLens\Agent`,
+		dir+`/data`,
+		dir+`/data/logs`,
+		false,
+		true,
+		UninstallCompletion{
+			APIBaseURL: "https://control.example",
+			Path:       "/api/v1/node/agent-uninstall/completion/",
+			Token:      "signed-test-token",
+		},
+		path,
+	)
+	if err != nil {
+		t.Fatalf("writeWindowsUninstallScript: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		`$userInstall = $true`,
+		`Stop-ScheduledTask -TaskName HyperFileLensAgent`,
+		`Get-ScheduledTask -TaskName HyperFileLensAgent`,
+		`Unregister-ScheduledTask -TaskName HyperFileLensAgent`,
+		`Join-Path $env:LOCALAPPDATA 'HyperFileLens\AgentData'`,
+		`return $full.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("user uninstall script missing %q:\n%s", want, body)
+		}
+	}
+	assertPowerShellParses(t, path)
+}
+
+func TestWriteWindowsUserUpgradeScriptStopsScheduledTask(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + `/run-upgrade.ps1`
+	err := writeWindowsUpgradeScript(
+		dir+`\install`,
+		dir+`\package.zip`,
+		dir+`\logs`,
+		true,
+		path,
+	)
+	if err != nil {
+		t.Fatalf("writeWindowsUpgradeScript: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, expected := range []string{
+		"$userInstall = $true",
+		"Stop-ScheduledTask -TaskName HyperFileLensAgent",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("user upgrade script missing %q", expected)
+		}
+	}
+	assertPowerShellParses(t, path)
 }
 
 func assertOrdered(t *testing.T, body string, values ...string) {

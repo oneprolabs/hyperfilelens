@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,13 +21,17 @@ const defaultReloadInterval = 5 * time.Second
 type Store struct {
 	snapshot atomic.Pointer[model.AgentConfig]
 
-	mu          sync.Mutex
-	base        *model.AgentConfig
-	overrides   Overrides
-	envPath     string
-	jsonPath    string
-	lastEnvMod  time.Time
-	lastJSONMod time.Time
+	mu               sync.Mutex
+	base             *model.AgentConfig
+	overrides        Overrides
+	envPath          string
+	jsonPath         string
+	installationMode model.InstallationMode
+	dataDir          string
+	role             model.Role
+	identityLocked   bool
+	lastEnvMod       time.Time
+	lastJSONMod      time.Time
 }
 
 // NewStore builds the initial snapshot and persists agent.env when missing.
@@ -41,8 +46,12 @@ func NewStore(ctx context.Context, opts LoadOptions) (*Store, error) {
 		return nil, err
 	}
 
+	base, err := RuntimeFromEnv()
+	if err != nil {
+		return nil, err
+	}
 	s := &Store{
-		base:      RuntimeFromEnv(),
+		base:      base,
 		overrides: opts.Overrides,
 		envPath:   agentEnvPath(dataDir),
 		jsonPath:  jsonConfigPath(dataDir),
@@ -75,7 +84,9 @@ func (s *Store) reloadLocked() error {
 	if values, err := ParseEnvFile(s.envPath); err != nil {
 		return err
 	} else {
-		applyEnvMap(cfg, values)
+		if err := applyEnvMap(cfg, values); err != nil {
+			return err
+		}
 	}
 	if fi, err := os.Stat(s.envPath); err == nil {
 		s.lastEnvMod = fi.ModTime()
@@ -84,7 +95,9 @@ func (s *Store) reloadLocked() error {
 	if overlay, err := readJSONOverlay(s.jsonPath); err != nil {
 		return err
 	} else {
-		applyEnvMap(cfg, overlayToEnvMap(overlay))
+		if err := applyEnvMap(cfg, overlayToEnvMap(overlay)); err != nil {
+			return err
+		}
 	}
 	if fi, err := os.Stat(s.jsonPath); err == nil {
 		s.lastJSONMod = fi.ModTime()
@@ -93,6 +106,19 @@ func (s *Store) reloadLocked() error {
 	}
 
 	applyOverrides(cfg, s.overrides)
+	if !s.identityLocked {
+		s.installationMode = installationModeForExecutable(cfg.InstallationMode)
+		s.dataDir = strings.TrimSpace(cfg.DataDir)
+		s.role = cfg.Role
+		s.identityLocked = true
+	}
+	if s.installationMode == model.InstallationModeUser &&
+		s.role != "" && s.role != model.RoleAgent {
+		return fmt.Errorf("user-level installation is only available for Source Agent")
+	}
+	cfg.InstallationMode = s.installationMode
+	cfg.DataDir = s.dataDir
+	cfg.Role = s.role
 	s.snapshot.Store(cfg)
 	return nil
 }
@@ -127,6 +153,9 @@ func (s *Store) SetEnv(ctx context.Context, envKey, value string) error {
 	f, ok := fieldByEnv(envKey)
 	if !ok || !f.Persistent {
 		return os.ErrInvalid
+	}
+	if f.ReadOnly {
+		return fmt.Errorf("%s is installer-owned and cannot be changed at runtime", envKey)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

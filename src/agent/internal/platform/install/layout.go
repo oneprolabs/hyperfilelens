@@ -65,7 +65,10 @@ func StagedUpgradePackagePath(dataDir, archivePath string) string {
 
 // PathAllowedForRemoval reports whether an install or data directory may be rm -rf'd by uninstall.
 func PathAllowedForRemoval(path string) bool {
-	path = strings.TrimSpace(path)
+	path = filepath.Clean(strings.TrimSpace(path))
+	if !filepath.IsAbs(path) {
+		return false
+	}
 	switch path {
 	case "/opt/hyperfilelens-agent", "/var/lib/hyperfilelens-agent":
 		return true

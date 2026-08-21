@@ -4,7 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
+
+	"hyperfilelens/agent/internal/model"
 )
 
 // ResolvePath normalizes long paths and platform-specific path quirks.
@@ -24,16 +25,11 @@ func EnsureSpace(ctx context.Context, path string, minBytes uint64) error {
 // DefaultAgentDataDir is the state directory when HFL_DATA_DIR (and HFL_AGENT_HOME) are unset.
 // Matches install.sh / install.ps1 defaults so bare `hfl-agent` runs use the same layout as systemd.
 func DefaultAgentDataDir() string {
-	switch runtime.GOOS {
-	case "windows":
-		pd := os.Getenv("ProgramData")
-		if pd == "" {
-			pd = `C:\ProgramData`
-		}
-		return filepath.Join(pd, WindowsVendorDir, WindowsProductDir)
-	default:
-		return UnixDataDir()
+	mode := model.InstallationModeSystem
+	if UserInstallation() {
+		mode = model.InstallationModeUser
 	}
+	return AgentDataDirForMode(mode)
 }
 
 // AgentDataDir returns the default agent state directory (execPath ignored; kept for call-site stability).

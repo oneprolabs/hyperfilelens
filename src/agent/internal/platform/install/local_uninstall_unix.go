@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 const (
@@ -24,6 +27,7 @@ const (
 func ScheduleDetachedUninstall(
 	installDir, dataDir, logDir string,
 	keepData bool,
+	userInstall bool,
 	completion UninstallCompletion,
 ) error {
 	installDir = strings.TrimSpace(installDir)
@@ -33,6 +37,11 @@ func ScheduleDetachedUninstall(
 	dataDir = strings.TrimSpace(dataDir)
 	if dataDir == "" {
 		dataDir = unixDefaultDataRoot
+	}
+	installDir = filepath.Clean(installDir)
+	dataDir = filepath.Clean(dataDir)
+	if err := validateUnixUninstallPaths(installDir, dataDir, keepData, userInstall); err != nil {
+		return err
 	}
 	logDir = resolveUninstallLogDir(dataDir, logDir)
 	if logDir != "" {
@@ -46,12 +55,97 @@ func ScheduleDetachedUninstall(
 			),
 		)
 	}
-	return scheduleDetachedUninstallUnix(installDir, dataDir, logDir, keepData, completion)
+	return scheduleDetachedUninstallUnix(
+		installDir,
+		dataDir,
+		logDir,
+		keepData,
+		userInstall,
+		completion,
+	)
+}
+
+func validateUnixUninstallPaths(
+	installDir, dataDir string,
+	keepData, userInstall bool,
+) error {
+	if !filepath.IsAbs(installDir) || !filepath.IsAbs(dataDir) {
+		return fmt.Errorf("uninstall install and data directories must be absolute")
+	}
+	canonicalInstall, err := canonicalRemovalPath(installDir)
+	if err != nil {
+		return fmt.Errorf("resolve uninstall directory %s: %w", installDir, err)
+	}
+	canonicalData, err := canonicalRemovalPath(dataDir)
+	if err != nil {
+		return fmt.Errorf("resolve data directory %s: %w", dataDir, err)
+	}
+	mode := model.InstallationModeSystem
+	if userInstall {
+		mode = model.InstallationModeUser
+	}
+	expectedInstall, err := canonicalRemovalPath(vfs.InstallDirForMode(mode))
+	if err != nil {
+		return fmt.Errorf("resolve expected install directory: %w", err)
+	}
+	if canonicalInstall != expectedInstall {
+		return fmt.Errorf("refuse uninstall from unexpected install directory %s", installDir)
+	}
+	if keepData {
+		return nil
+	}
+	if !userInstall {
+		if !PathAllowedForRemoval(canonicalData) {
+			return fmt.Errorf("refuse purge of unexpected data directory %s", dataDir)
+		}
+		return nil
+	}
+	expectedData, err := canonicalRemovalPath(
+		vfs.AgentDataDirForMode(model.InstallationModeUser),
+	)
+	if err != nil {
+		return fmt.Errorf("resolve expected data directory: %w", err)
+	}
+	if canonicalData != expectedData {
+		return fmt.Errorf("refuse purge of unexpected data directory %s", dataDir)
+	}
+	return nil
+}
+
+// canonicalRemovalPath resolves symlinks in parent components but deliberately
+// leaves the final component unresolved: rm -rf removes a final symlink rather
+// than following it, while an intermediate symlink changes the deletion root.
+func canonicalRemovalPath(path string) (string, error) {
+	path, err := filepath.Abs(filepath.Clean(strings.TrimSpace(path)))
+	if err != nil {
+		return "", err
+	}
+	parent := filepath.Dir(path)
+	missing := make([]string, 0, 4)
+	for {
+		resolved, resolveErr := filepath.EvalSymlinks(parent)
+		if resolveErr == nil {
+			for index := len(missing) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, missing[index])
+			}
+			return filepath.Join(resolved, filepath.Base(path)), nil
+		}
+		if !os.IsNotExist(resolveErr) {
+			return "", resolveErr
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			return "", resolveErr
+		}
+		missing = append(missing, filepath.Base(parent))
+		parent = next
+	}
 }
 
 func scheduleDetachedUninstallUnix(
 	installDir, dataDir, logDir string,
 	keepData bool,
+	userInstall bool,
 	completion UninstallCompletion,
 ) error {
 	pendingDir := LifecycleUninstallDir(dataDir)
@@ -64,6 +158,7 @@ func scheduleDetachedUninstallUnix(
 		dataDir,
 		logDir,
 		keepData,
+		userInstall,
 		completion,
 		scriptPath,
 	); err != nil {
@@ -77,7 +172,12 @@ func scheduleDetachedUninstallUnix(
 			_ = AppendUninstallLog(logDir, msg)
 		}
 	}
-	if err := startDetachedShellScript("hfl-agent-uninstall", scriptPath, logFn); err != nil {
+	if err := startDetachedShellScript(
+		"hfl-agent-uninstall",
+		scriptPath,
+		userInstall,
+		logFn,
+	); err != nil {
 		return fmt.Errorf("start detached uninstall: %w", err)
 	}
 	return nil
@@ -86,6 +186,7 @@ func scheduleDetachedUninstallUnix(
 func writeUnixUninstallScript(
 	installDir, dataDir, logDir string,
 	keepData bool,
+	userInstall bool,
 	completion UninstallCompletion,
 	scriptPath string,
 ) error {
@@ -105,6 +206,58 @@ func writeUnixUninstallScript(
 	if completion.ForceCleanup {
 		forceCleanupFlag = "1"
 	}
+	userInstallFlag := "0"
+	userInstallRoot := ""
+	unitFile := unixUnitPath
+	resourceDropIn := unixResourceDropIn
+	launchdPlist := unixLaunchdPlist
+	launchdDomain := "system"
+	defaultDataRoot := unixDefaultDataRoot
+	userHome := ""
+	if userInstall {
+		userInstallFlag = "1"
+		var homeErr error
+		userHome, homeErr = os.UserHomeDir()
+		if homeErr != nil || strings.TrimSpace(userHome) == "" {
+			return fmt.Errorf("resolve current user home for uninstall")
+		}
+		trustedInstallRoot, installErr := vfs.UserInstallDir()
+		if installErr != nil || strings.TrimSpace(trustedInstallRoot) == "" {
+			return fmt.Errorf("resolve default current-user install directory")
+		}
+		userInstallRoot, installErr = filepath.Abs(trustedInstallRoot)
+		if installErr != nil {
+			return fmt.Errorf("resolve default current-user install directory: %w", installErr)
+		}
+		userInstallRoot = filepath.Clean(userInstallRoot)
+		configHome := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+		if configHome == "" || !filepath.IsAbs(configHome) {
+			configHome = filepath.Join(userHome, ".config")
+		}
+		unitFile = filepath.Join(
+			configHome,
+			"systemd",
+			"user",
+			unixServiceUnit,
+		)
+		resourceDropIn = ""
+		launchdPlist = filepath.Join(
+			userHome,
+			"Library",
+			"LaunchAgents",
+			unixLaunchdLabel+".plist",
+		)
+		launchdDomain = fmt.Sprintf("gui/%d", os.Geteuid())
+		trustedDataRoot, dataErr := vfs.UserDataDir()
+		if dataErr != nil || strings.TrimSpace(trustedDataRoot) == "" {
+			return fmt.Errorf("resolve default current-user data directory")
+		}
+		defaultDataRoot, dataErr = filepath.Abs(trustedDataRoot)
+		if dataErr != nil {
+			return fmt.Errorf("resolve default current-user data directory: %w", dataErr)
+		}
+		defaultDataRoot = filepath.Clean(defaultDataRoot)
+	}
 	logFile := UninstallLogPath(logDir)
 	body := fmt.Sprintf(`#!/usr/bin/env bash
 set -u
@@ -112,11 +265,14 @@ INSTALL_DIR=%q
 DATA_DIR=%q
 LOG_FILE=%q
 KEEP_DATA=%s
+USER_INSTALL=%s
+USER_INSTALL_ROOT=%q
 UNIT_FILE=%q
 RESOURCE_DROPIN=%q
 SERVICE_NAME=%q
 LAUNCHD_PLIST=%q
 LAUNCHD_LABEL=%q
+LAUNCHD_DOMAIN=%q
 DEFAULT_DATA_ROOT=%q
 SLEEP_SECONDS=%d
 CALLBACK_URL=%q
@@ -190,19 +346,37 @@ finish_detached_uninstall() {
 trap finish_detached_uninstall EXIT
 %s
 
+hfl_systemctl() {
+  if [[ "$USER_INSTALL" == "1" ]]; then
+    systemctl --user "$@"
+  else
+    systemctl "$@"
+  fi
+}
+
+is_managed_install_path() {
+  local path="$1"
+  [[ "$USER_INSTALL" == "1" && "$path" == "$USER_INSTALL_ROOT" ]]
+}
+
+is_managed_data_path() {
+  local path="$1"
+  [[ "$USER_INSTALL" == "1" && "$path" == "$DEFAULT_DATA_ROOT" ]]
+}
+
 verify_uninstall_artifacts() {
   local failed=0 target
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    if launchctl print "system/$LAUNCHD_LABEL" >/dev/null 2>&1; then
+    if launchctl print "$LAUNCHD_DOMAIN/$LAUNCHD_LABEL" >/dev/null 2>&1; then
       log "launchd service remains loaded: $LAUNCHD_LABEL"
       failed=1
     fi
   elif command -v systemctl >/dev/null 2>&1; then
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
+    if hfl_systemctl is-active --quiet "$SERVICE_NAME"; then
       log "systemd service remains active: $SERVICE_NAME"
       failed=1
     fi
-    if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+    if hfl_systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
       log "systemd service remains enabled: $SERVICE_NAME"
       failed=1
     fi
@@ -259,8 +433,8 @@ fi
 log "delay elapsed; stopping service"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  if launchctl print "system/$LAUNCHD_LABEL" >/dev/null 2>&1; then
-    if launchctl bootout "system/$LAUNCHD_LABEL" 2>/dev/null; then
+  if launchctl print "$LAUNCHD_DOMAIN/$LAUNCHD_LABEL" >/dev/null 2>&1; then
+    if launchctl bootout "$LAUNCHD_DOMAIN/$LAUNCHD_LABEL" 2>/dev/null; then
       log "launchctl bootout $LAUNCHD_LABEL succeeded"
     else
       log "launchctl bootout $LAUNCHD_LABEL failed (exit=$?)"
@@ -278,12 +452,12 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     log "launchd plist $LAUNCHD_PLIST not present"
   fi
 elif command -v systemctl >/dev/null 2>&1; then
-  if systemctl stop "$SERVICE_NAME" 2>/dev/null; then
+  if hfl_systemctl stop "$SERVICE_NAME" 2>/dev/null; then
     log "systemctl stop $SERVICE_NAME succeeded"
   else
     log "systemctl stop $SERVICE_NAME failed (exit=$?)"
   fi
-  if systemctl disable "$SERVICE_NAME" 2>/dev/null; then
+  if hfl_systemctl disable "$SERVICE_NAME" 2>/dev/null; then
     log "systemctl disable $SERVICE_NAME succeeded"
   else
     log "systemctl disable $SERVICE_NAME failed (exit=$?)"
@@ -308,7 +482,7 @@ if [[ "$(uname -s)" != "Darwin" && -f "$UNIT_FILE" ]]; then
     log "failed to remove unit file $UNIT_FILE (exit=$?)"
   fi
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload 2>/dev/null || log "systemctl daemon-reload failed (exit=$?)"
+    hfl_systemctl daemon-reload 2>/dev/null || log "systemctl daemon-reload failed (exit=$?)"
   fi
 else
   if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -328,7 +502,7 @@ if [[ "$KEEP_DATA" == "1" ]]; then
     AGENT_ARTIFACTS_FAILED=1
     exit 1
   fi
-  log "retired installation identity; the next install will create a new console record"
+	log "retired installation identity; remove the old console record before reinstalling or changing run mode"
 fi
 
 for target in "$INSTALL_DIR/hfl-agent" "$INSTALL_DIR/kopia" "$INSTALL_DIR/run-agent.sh" "$INSTALL_DIR/INSTALLED_VERSION" "$INSTALL_DIR/install.sh" "$INSTALL_DIR/MANIFEST.json"; do
@@ -343,8 +517,11 @@ for target in "$INSTALL_DIR/hfl-agent" "$INSTALL_DIR/kopia" "$INSTALL_DIR/run-ag
   fi
 done
 
-case "$INSTALL_DIR" in
-  /opt/hyperfilelens-agent|/opt/hyperfilelens-agent/*|/var/lib/hyperfilelens-agent|/var/lib/hyperfilelens-agent/*)
+if [[ "$INSTALL_DIR" == "/opt/hyperfilelens-agent" \
+  || "$INSTALL_DIR" == /opt/hyperfilelens-agent/* \
+  || "$INSTALL_DIR" == "/var/lib/hyperfilelens-agent" \
+  || "$INSTALL_DIR" == /var/lib/hyperfilelens-agent/* ]] \
+  || is_managed_install_path "$INSTALL_DIR"; then
     if [[ -e "$INSTALL_DIR" ]]; then
       if rm -rf "$INSTALL_DIR"; then
         log "removed install directory tree $INSTALL_DIR (including backup artifacts)"
@@ -354,8 +531,7 @@ case "$INSTALL_DIR" in
     else
       log "install directory $INSTALL_DIR not present"
     fi
-    ;;
-  *)
+else
     if [[ -d "$INSTALL_DIR/backup" ]]; then
       if rm -rf "$INSTALL_DIR/backup"; then
         log "removed install backup directory $INSTALL_DIR/backup"
@@ -368,12 +544,14 @@ case "$INSTALL_DIR" in
     else
       log "install directory $INSTALL_DIR not removed (may be non-empty or missing)"
     fi
-    ;;
-esac
+fi
 
 if [[ "$KEEP_DATA" == "0" ]]; then
-  case "$DATA_DIR" in
-    /var/lib/hyperfilelens-agent|/var/lib/hyperfilelens-agent/*|/opt/hyperfilelens-agent|/opt/hyperfilelens-agent/*)
+  if [[ "$DATA_DIR" == "/var/lib/hyperfilelens-agent" \
+    || "$DATA_DIR" == /var/lib/hyperfilelens-agent/* \
+    || "$DATA_DIR" == "/opt/hyperfilelens-agent" \
+    || "$DATA_DIR" == /opt/hyperfilelens-agent/* ]] \
+    || is_managed_data_path "$DATA_DIR"; then
       if [[ -e "$DATA_DIR" ]]; then
         if rm -rf "$DATA_DIR"; then
           if [[ -e "$DATA_DIR" ]]; then
@@ -390,11 +568,10 @@ if [[ "$KEEP_DATA" == "0" ]]; then
       else
         log "data directory $DATA_DIR not present"
       fi
-      ;;
-    *)
+  else
       log "data directory $DATA_DIR outside allowed prefixes; skipped removal"
-      ;;
-  esac
+      AGENT_ARTIFACTS_FAILED=1
+  fi
   if [[ -f "$DEFAULT_DATA_ROOT/agent.env" ]]; then
     if rm -f "$DEFAULT_DATA_ROOT/agent.env"; then
       log "removed $DEFAULT_DATA_ROOT/agent.env"
@@ -423,12 +600,15 @@ log "detached uninstall script finished"
 		dataDir,
 		logFile,
 		keepFlag,
-		unixUnitPath,
-		unixResourceDropIn,
+		userInstallFlag,
+		userInstallRoot,
+		unitFile,
+		resourceDropIn,
 		unixServiceUnit,
-		unixLaunchdPlist,
+		launchdPlist,
 		unixLaunchdLabel,
-		unixDefaultDataRoot,
+		launchdDomain,
+		defaultDataRoot,
 		uninstallDelaySecond,
 		callbackURL,
 		completion.Token,

@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"hyperfilelens/agent/internal/platform/install"
 )
 
 // StartInstalledService registers and starts HyperFileLensAgent after enrollment.
@@ -22,44 +24,30 @@ func RestartInstalledService(ctx context.Context) error {
 }
 
 func startWindowsService(ctx context.Context) error {
-	installRoot := filepath.Join(os.Getenv("ProgramFiles"), "HyperFileLens", "Agent")
+	installRoot := install.DefaultInstallDir()
 	agentBin := filepath.Join(installRoot, "hfl-agent.exe")
-	dataRoot := filepath.Join(os.Getenv("ProgramData"), "HyperFileLens", "Agent")
-	envFile := filepath.Join(dataRoot, "agent.env")
+	installScript := filepath.Join(installRoot, "install.ps1")
 
 	if _, err := os.Stat(agentBin); err != nil {
 		return fmt.Errorf("agent binary missing at %s", agentBin)
 	}
-
-	if data, err := os.ReadFile(envFile); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "HFL_DATA_DIR=") {
-				dataRoot = strings.Trim(strings.TrimPrefix(line, "HFL_DATA_DIR="), `"`)
-				break
-			}
-		}
+	if _, err := os.Stat(installScript); err != nil {
+		return fmt.Errorf("agent installer missing at %s", installScript)
 	}
-
-	// Remove stale service if present.
-	_ = exec.CommandContext(ctx, "sc.exe", "query", "HyperFileLensAgent").Run()
-	_ = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command",
-		"Stop-Service -Name HyperFileLensAgent -Force -ErrorAction SilentlyContinue").Run()
-	_ = exec.CommandContext(ctx, "sc.exe", "delete", "HyperFileLensAgent").Run()
-
-	binPath := fmt.Sprintf(`"%s" run -data-dir "%s"`, agentBin, dataRoot)
-	psScript := fmt.Sprintf(`
-$bin = '%s'
-$data = '%s'
-New-Service -Name HyperFileLensAgent -BinaryPathName $bin -DisplayName 'HyperFileLens Agent' -Description 'HyperFileLens backup agent' -StartupType Automatic | Out-Null
-sc.exe failure HyperFileLensAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000 | Out-Null
-Start-Service -Name HyperFileLensAgent
-`, binPath, dataRoot)
-
-	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", psScript)
+	cmd := exec.CommandContext(
+		ctx,
+		"powershell.exe",
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		installScript,
+		"start",
+		"-QuietFooter",
+	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("Windows service start failed: %w (%s)", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("Windows Agent lifecycle start failed: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

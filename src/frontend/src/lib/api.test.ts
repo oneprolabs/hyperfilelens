@@ -137,6 +137,7 @@ describe('object storage validation errors', () => {
     ['STORAGE.S3_TIMEOUT', 'errors.codes.storageS3Timeout'],
     ['STORAGE.S3_TLS_FAILED', 'errors.codes.storageS3TlsFailed'],
     ['STORAGE.S3_VALIDATION_FAILED', 'errors.codes.storageS3ValidationFailed'],
+    ['AGENT.PATH_PERMISSION_DENIED', 'errors.codes.agentPathPermissionDenied'],
   ])('maps %s without exposing the backend diagnostic', (errorCode, expectedKey) => {
     const message = apiErrorMessageI18n(
       { status: 400, message: 'secret upstream diagnostic', errorCode },

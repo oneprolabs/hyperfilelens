@@ -6,14 +6,35 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/sys/unix"
+
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
-const fullInstallLockPath = "/run/lock/hyperfilelens-install.lock"
+const systemInstallLockPath = "/run/lock/hyperfilelens-install.lock"
+
+func installLockPath() (string, error) {
+	if !vfs.UserInstallation() {
+		return systemInstallLockPath, nil
+	}
+	dataDir, err := vfs.UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, "install.lock"), nil
+}
 
 func acquireInstallLock(_ context.Context) (func(), error) {
-	file, err := os.OpenFile(fullInstallLockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	lockPath, err := installLockPath()
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}

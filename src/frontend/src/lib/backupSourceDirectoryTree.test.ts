@@ -108,6 +108,15 @@ describe('selectBackupSourceDirectoryTreeEntries', () => {
     })).toEqual(windowsDrives)
   })
 
+  it('uses the Home root for a Current User Windows Agent', () => {
+    const home = { ...root, label: 'Home', path: 'C:\\Users\\alice' }
+    expect(selectBackupSourceDirectoryTreeEntries({
+      source: { type: 'host', platform: 'windows', installation_mode: 'user' },
+      parentPath: '',
+      result: { root: home, entries: windowsDrives },
+    })).toEqual([home])
+  })
+
   it('returns directory children after a POSIX root is expanded', () => {
     expect(selectBackupSourceDirectoryTreeEntries({
       source: { type: 'host', platform: 'linux' },

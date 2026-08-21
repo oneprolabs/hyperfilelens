@@ -53,7 +53,15 @@ function Write-HflDownloadProgress {
       (Format-HflBytes $Downloaded))
 }
 
-if (-not (Test-HflAdmin)) {
+$env:HFL_ORG_KEY = "__HFL_ORG_KEY__"
+$env:HFL_NODE_ROLE = "__HFL_NODE_ROLE__"
+$env:HFL_NODE_TOKEN = "__HFL_NODE_TOKEN__"
+$env:HFL_INSTALLATION_MODE = "__HFL_INSTALLATION_MODE__"
+$env:HFL_API_BASE = "__HFL_API_BASE__"
+$env:HFL_WSS_URL = "__HFL_WSS_URL__"
+$env:HFL_INSECURE_TLS = "__HFL_INSECURE_TLS__"
+
+if ($env:HFL_INSTALLATION_MODE -eq "system" -and -not (Test-HflAdmin)) {
   Write-HflBootstrapLog "INFO " "Administrator privileges are required. Approve the UAC prompt to continue."
   $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
   $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -Verb RunAs -PassThru -Wait
@@ -63,13 +71,10 @@ if (-not (Test-HflAdmin)) {
   }
   exit $proc.ExitCode
 }
-
-$env:HFL_ORG_KEY = "__HFL_ORG_KEY__"
-$env:HFL_NODE_ROLE = "__HFL_NODE_ROLE__"
-$env:HFL_NODE_TOKEN = "__HFL_NODE_TOKEN__"
-$env:HFL_API_BASE = "__HFL_API_BASE__"
-$env:HFL_WSS_URL = "__HFL_WSS_URL__"
-$env:HFL_INSECURE_TLS = "__HFL_INSECURE_TLS__"
+if ($env:HFL_INSTALLATION_MODE -eq "user" -and (Test-HflAdmin)) {
+  Write-HflBootstrapLog "FAIL " "User-level installation must run without UAC elevation."
+  exit 1
+}
 
 function Get-HflEnrollmentBinary {
   param(

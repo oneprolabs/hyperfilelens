@@ -270,6 +270,21 @@ describe('Data Gateway enrollment', () => {
     expect(command.split('\n')).toHaveLength(1)
   })
 
+  it('does not elevate a user-level Linux installation command', () => {
+    const command = buildEnrollmentInstallCommand({
+      org: 'tenant-a',
+      role: 'agent',
+      token: 'token-a',
+      apiBase: 'https://console.example.com',
+      os: 'linux',
+      installationMode: 'user',
+      tlsVerify: true,
+    })
+
+    expect(command).toContain('| bash -s')
+    expect(command).not.toContain('sudo')
+  })
+
   it('retains the explicit Windows bypass for self-hosted deployments', () => {
     const command = buildEnrollmentInstallCommand({
       org: 'tenant-a',

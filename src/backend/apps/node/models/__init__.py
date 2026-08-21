@@ -2,6 +2,7 @@
 
 from .base import (
     AllObjectsManager,
+    NodeInstallationMode,
     NodeRole,
     OrganizationScopedModel,
     SoftDeleteManager,
@@ -19,6 +20,7 @@ __all__ = [
     "Node",
     "NodeCredential",
     "NodeInstallationSession",
+    "NodeInstallationMode",
     "NodeRole",
     "NodeTask",
     "NodeToken",

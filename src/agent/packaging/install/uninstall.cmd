@@ -2,8 +2,14 @@
 REM HyperFileLens Agent - double-click uninstall (UAC + confirmation dialog).
 setlocal EnableExtensions
 set "INSTALL_DIR=%~dp0"
+set "USER_INSTALL_DIR=%LOCALAPPDATA%\Programs\HyperFileLens\Agent\"
+set "HFL_USER_MODE=0"
+if /I "%INSTALL_DIR%"=="%USER_INSTALL_DIR%" (
+  set "HFL_USER_MODE=1"
+  set "HFL_INSTALLATION_MODE=user"
+)
 
-if /I not "%~1"=="__elevated__" (
+if "%HFL_USER_MODE%"=="0" if /I not "%~1"=="__elevated__" (
   net session >nul 2>&1
   if errorlevel 1 (
     powershell.exe -NoProfile -Command "Start-Process -FilePath '%~f0' -ArgumentList '__elevated__' -Verb RunAs -Wait"
@@ -11,13 +17,13 @@ if /I not "%~1"=="__elevated__" (
   )
 )
 
-call :AppendUninstallLog "uninstall.cmd started (elevated)"
+call :AppendUninstallLog "uninstall.cmd started (user_mode=%HFL_USER_MODE%)"
 if errorlevel 1 (
   echo.
   echo WARNING: could not write uninstall.log under ProgramData.
 )
 
-powershell.exe -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $msg = 'This will remove HyperFileLens Agent, its Windows service, and local agent data from this computer.' + [char]10 + [char]10 + 'Continue?'; $ans = [System.Windows.Forms.MessageBox]::Show($msg, 'Uninstall HyperFileLens Agent', 'YesNo', 'Warning', 'Button2'); if ($ans -ne 'Yes') { exit 2 }"
+powershell.exe -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $msg = 'This will remove HyperFileLens Agent, its managed startup entry, and local agent data from this computer.' + [char]10 + [char]10 + 'Continue?'; $ans = [System.Windows.Forms.MessageBox]::Show($msg, 'Uninstall HyperFileLens Agent', 'YesNo', 'Warning', 'Button2'); if ($ans -ne 'Yes') { exit 2 }"
 set "CONFIRM_EC=%ERRORLEVEL%"
 if %CONFIRM_EC% equ 2 (
   call :AppendUninstallLog "uninstall cancelled by user (confirmation dialog)"
@@ -41,7 +47,7 @@ echo.
 if %EC% equ 0 (
   echo Uninstall finished. Return to the HyperFileLens console if the node still appears.
 ) else (
-  echo Uninstall failed (exit code %EC%). See %%ProgramData%%\HyperFileLens\Agent\logs\uninstall.log
+  echo Uninstall failed (exit code %EC%). Check the Agent data directory logs\uninstall.log
 )
 pause
 exit /b %EC%
@@ -49,7 +55,7 @@ exit /b %EC%
 :AppendUninstallLog
 set "LOG_MSG=%~1"
 powershell.exe -NoProfile -Command ^
-  "$data=$env:ProgramData + '\HyperFileLens\Agent';" ^
+  "$data=if ($env:HFL_INSTALLATION_MODE -eq 'user') { $env:LOCALAPPDATA + '\HyperFileLens\AgentData' } else { $env:ProgramData + '\HyperFileLens\Agent' };" ^
   "$envFile=Join-Path $data 'agent.env';" ^
   "if (Test-Path -LiteralPath $envFile) { Get-Content -LiteralPath $envFile | ForEach-Object { if ($_ -match '^\s*HFL_DATA_DIR=(.+)$') { $data=$Matches[1].Trim() } } };" ^
   "$logDir=Join-Path $data 'logs';" ^

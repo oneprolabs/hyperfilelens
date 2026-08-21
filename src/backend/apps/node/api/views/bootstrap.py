@@ -20,6 +20,7 @@ from apps.node.api.views.bootstrap_templates import (
 )
 from apps.node.api.views.enrollment_helpers import (
     agent_control_plane_ws_url,
+    resolve_bootstrap_enrollment_token,
     token_usable_for_bootstrap,
 )
 from apps.node.models import Node
@@ -32,9 +33,7 @@ def _strict_api_base_valid(api_base: str) -> bool:
         return True
     canonical = tenant_public_url()
     return bool(
-        api_base
-        and api_base == canonical
-        and urlsplit(api_base).scheme == "https"
+        api_base and api_base == canonical and urlsplit(api_base).scheme == "https"
     )
 
 
@@ -45,8 +44,8 @@ def _bootstrap_error_response(script_type: str, message: str) -> HttpResponse:
         body = (
             "# HyperFileLens enrollment bootstrap error\n"
             "$ts = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')\n"
-            f'Write-Host \"[$ts] [FAIL ] {fail_msg}\" -ForegroundColor Red\n'
-            'Write-Host \"[$ts] [INFO ] Open the console to generate a new enrollment link.\" -ForegroundColor Yellow\n'
+            f'Write-Host "[$ts] [FAIL ] {fail_msg}" -ForegroundColor Red\n'
+            'Write-Host "[$ts] [INFO ] Open the console to generate a new enrollment link." -ForegroundColor Yellow\n'
             "exit 1\n"
         )
         content_type = "text/plain; charset=utf-8"
@@ -56,13 +55,15 @@ def _bootstrap_error_response(script_type: str, message: str) -> HttpResponse:
             "#!/usr/bin/env bash\n"
             "set -euo pipefail\n"
             "hfl_now() { date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ; }\n"
-            f'echo \"[$(hfl_now)] [FAIL ] {fail_msg}\" >&2\n'
-            'echo \"[$(hfl_now)] [INFO ] Open the console to generate a new enrollment link.\" >&2\n'
-            'echo \"[$(hfl_now)] [INFO ] If the agent is already installed, check the node in the console.\" >&2\n'
+            f'echo "[$(hfl_now)] [FAIL ] {fail_msg}" >&2\n'
+            'echo "[$(hfl_now)] [INFO ] Open the console to generate a new enrollment link." >&2\n'
+            'echo "[$(hfl_now)] [INFO ] If the agent is already installed, check the node in the console." >&2\n'
             "exit 1\n"
         )
         content_type = "text/x-shellscript; charset=utf-8"
-        filename = BOOTSTRAP_LINUX if script_type in ("linux", "sh") else BOOTSTRAP_MACOS
+        filename = (
+            BOOTSTRAP_LINUX if script_type in ("linux", "sh") else BOOTSTRAP_MACOS
+        )
     resp = HttpResponse(body, content_type=content_type, status=200)
     resp["Content-Disposition"] = f'attachment; filename="{filename}"'
     return resp
@@ -71,18 +72,24 @@ def _bootstrap_error_response(script_type: str, message: str) -> HttpResponse:
 def _parse_enrollment_query(
     request: Request,
     script_type: str,
-) -> tuple[str, str, str, str] | HttpResponse | Response:
+) -> tuple[str, str, str, str, str] | HttpResponse | Response:
     org_key = str(request.query_params.get("org") or "").strip()
     role = str(request.query_params.get("role") or "agent").strip()
     token = str(
-        request.query_params.get("token")
-        or request.query_params.get("id")
-        or "",
+        request.query_params.get("token") or request.query_params.get("id") or "",
     ).strip()
     api_base = str(request.query_params.get("api_base") or "").strip().rstrip("/")
 
     if not org_key or role not in dict(Node.Role.choices) or not token:
-        if script_type in ("linux", "sh", "darwin", "macos", "windows", "windows_ps1", "ps1"):
+        if script_type in (
+            "linux",
+            "sh",
+            "darwin",
+            "macos",
+            "windows",
+            "windows_ps1",
+            "ps1",
+        ):
             return _bootstrap_error_response(
                 script_type,
                 "org, role, and token are required in the enrollment link",
@@ -97,39 +104,75 @@ def _parse_enrollment_query(
 
     org = Organization.objects.filter(key=org_key, is_active=True).first()
     if org is None:
-        if script_type in ("linux", "sh", "darwin", "macos", "windows", "windows_ps1", "ps1"):
+        if script_type in (
+            "linux",
+            "sh",
+            "darwin",
+            "macos",
+            "windows",
+            "windows_ps1",
+            "ps1",
+        ):
             return _bootstrap_error_response(script_type, "organization not found")
         return Response({"error": "organization not found"}, status=404)
 
-    if not token_usable_for_bootstrap(org=org, token=token, role=role):
-        if script_type in ("linux", "sh", "darwin", "macos", "windows", "windows_ps1", "ps1"):
+    token_row = resolve_bootstrap_enrollment_token(
+        org=org,
+        token=token,
+        role=role,
+    )
+    if token_row is None:
+        if script_type in (
+            "linux",
+            "sh",
+            "darwin",
+            "macos",
+            "windows",
+            "windows_ps1",
+            "ps1",
+        ):
             return _bootstrap_error_response(
                 script_type,
                 "invalid or expired enrollment link",
             )
         return Response({"error": "invalid enrollment token"}, status=401)
 
-    return org_key, role, token, api_base
+    return org_key, role, token, api_base, token_row.installation_mode
 
 
-def _template_values(org_key: str, role: str, token: str, api_base: str) -> dict[str, str]:
+def _template_values(
+    org_key: str,
+    role: str,
+    token: str,
+    api_base: str,
+    installation_mode: str = "system",
+) -> dict[str, str]:
     insecure_tls = "0" if enrollment_tls_verify() else "1"
     return {
         "HFL_ORG_KEY": org_key,
         "HFL_NODE_ROLE": role,
         "HFL_NODE_TOKEN": token,
+        "HFL_INSTALLATION_MODE": installation_mode,
         "HFL_API_BASE": api_base,
         "HFL_WSS_URL": agent_control_plane_ws_url(api_base),
         "HFL_INSECURE_TLS": insecure_tls,
     }
 
 
-def serve_enrollment_bootstrap(request: Request, script_type: str) -> HttpResponse | Response:
+def serve_enrollment_bootstrap(
+    request: Request, script_type: str
+) -> HttpResponse | Response:
     parsed = _parse_enrollment_query(request, script_type)
     if not isinstance(parsed, tuple):
         return parsed
-    org_key, role, token, api_base = parsed
-    values = _template_values(org_key, role, token, api_base)
+    org_key, role, token, api_base, installation_mode = parsed
+    values = _template_values(
+        org_key,
+        role,
+        token,
+        api_base,
+        installation_mode,
+    )
 
     try:
         if script_type in ("linux", "sh"):
@@ -152,7 +195,9 @@ def serve_enrollment_bootstrap(request: Request, script_type: str) -> HttpRespon
     except FileNotFoundError as exc:
         return Response({"error": str(exc)}, status=500)
 
-    return Response({"error": "unsupported type (use linux, macos, or windows)"}, status=400)
+    return Response(
+        {"error": "unsupported type (use linux, macos, or windows)"}, status=400
+    )
 
 
 def _parse_gateway_bootstrap_query(
@@ -160,9 +205,7 @@ def _parse_gateway_bootstrap_query(
 ) -> tuple[str, str, str] | HttpResponse | Response:
     org_key = str(request.query_params.get("org") or "").strip()
     token = str(
-        request.query_params.get("token")
-        or request.query_params.get("id")
-        or "",
+        request.query_params.get("token") or request.query_params.get("id") or "",
     ).strip()
     api_base = str(request.query_params.get("api_base") or "").strip().rstrip("/")
     role = Node.Role.GATEWAY

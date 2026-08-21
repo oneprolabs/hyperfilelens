@@ -40,6 +40,21 @@ def _query_bool(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _agent_path_permission_denied(exc: Exception) -> bool:
+    if getattr(exc, "agent_error_code", "") == "PATH_PERMISSION_DENIED":
+        return True
+    # Compatibility for older Agents that only returned a human-readable error.
+    message = str(exc).strip().lower()
+    return any(
+        marker in message
+        for marker in (
+            "permission denied",
+            "access denied",
+            "access is denied",
+        )
+    )
+
+
 def _optional_query_bool(params, name: str) -> bool | None:
     if name not in params or str(params.get(name) or "").strip() == "":
         return None
@@ -91,7 +106,9 @@ class BackupSelectableListView(APIView):
         expand = (request.query_params.get("expand") or "").strip() or None
         if ids_param:
             ids = [value.strip() for value in ids_param.split(",") if value.strip()]
-            results = fetch_backup_selectable_by_ids(organization_id=org.id, ids=ids, expand=expand)
+            results = fetch_backup_selectable_by_ids(
+                organization_id=org.id, ids=ids, expand=expand
+            )
             return Response({"count": len(results), "results": results})
 
         page_raw = (request.query_params.get("page") or "1").strip()
@@ -109,20 +126,47 @@ class BackupSelectableListView(APIView):
         source_status = _optional_choice(
             request.query_params,
             "source_status",
-            {"active", "error", "inactive", "offline", "online", "reconnecting", "remove_failed", "removing"},
+            {
+                "active",
+                "error",
+                "inactive",
+                "offline",
+                "online",
+                "reconnecting",
+                "remove_failed",
+                "removing",
+            },
         )
-        availability = _optional_choice(request.query_params, "availability", {"online", "offline"})
-        running_task = _optional_choice(request.query_params, "running_task", {"backup", "restore"})
+        availability = _optional_choice(
+            request.query_params, "availability", {"online", "offline"}
+        )
+        running_task = _optional_choice(
+            request.query_params, "running_task", {"backup", "restore"}
+        )
         backup_running = _optional_query_bool(request.query_params, "backup_running")
         restore_running = _optional_query_bool(request.query_params, "restore_running")
-        backup_task_status = _optional_choice(request.query_params, "backup_task_status", {"success", "failed", "running", "none"})
-        restore_task_status = _optional_choice(request.query_params, "restore_task_status", {"success", "failed", "running", "none"})
-        backup_policy_id = _optional_positive_int(request.query_params, "backup_policy_id")
-        file_filter_rule_id = _optional_positive_int(request.query_params, "file_filter_rule_id")
+        backup_task_status = _optional_choice(
+            request.query_params,
+            "backup_task_status",
+            {"success", "failed", "running", "none"},
+        )
+        restore_task_status = _optional_choice(
+            request.query_params,
+            "restore_task_status",
+            {"success", "failed", "running", "none"},
+        )
+        backup_policy_id = _optional_positive_int(
+            request.query_params, "backup_policy_id"
+        )
+        file_filter_rule_id = _optional_positive_int(
+            request.query_params, "file_filter_rule_id"
+        )
         repository_id = _optional_positive_int(request.query_params, "repository_id")
         source_type = _optional_choice(request.query_params, "type", {"host", "nas"})
         exclude_param = (request.query_params.get("exclude") or "").strip()
-        exclude_ids = [value.strip() for value in exclude_param.split(",") if value.strip()]
+        exclude_ids = [
+            value.strip() for value in exclude_param.split(",") if value.strip()
+        ]
         step_raw = (request.query_params.get("step") or "").strip()
         pipeline_step: int | None = None
         if step_raw:
@@ -168,7 +212,9 @@ class BackupSelectableListView(APIView):
             repository_id=repository_id,
             expand=expand,
         )
-        return Response({"page": page, "page_size": page_size, "count": total, "results": results})
+        return Response(
+            {"page": page, "page_size": page_size, "count": total, "results": results}
+        )
 
 
 class BackupSelectablePipelineView(APIView):
@@ -180,18 +226,29 @@ class BackupSelectablePipelineView(APIView):
         org = require_org(request)
         ids_raw = request.data.get("ids")
         if not isinstance(ids_raw, list):
-            return Response({"detail": "ids must be a list of agent:/nas: keys."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "ids must be a list of agent:/nas: keys."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         ids = [str(value).strip() for value in ids_raw if str(value).strip()]
         if not ids:
-            return Response({"detail": "ids must not be empty."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "ids must not be empty."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             step = int(request.data.get("step"))
         except (TypeError, ValueError):
-            return Response({"detail": "step must be 1, 2, or 3."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "step must be 1, 2, or 3."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if step not in PipelineStep.VALID:
-            return Response({"detail": "step must be 1, 2, or 3."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "step must be 1, 2, or 3."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             updated = set_pipeline_steps(organization_id=org.id, ids=ids, step=step)
@@ -210,18 +267,29 @@ class BackupSelectablePipelineRevertView(APIView):
         org = require_org(request)
         ids_raw = request.data.get("ids")
         if not isinstance(ids_raw, list):
-            return Response({"detail": "ids must be a list of agent:/nas: keys."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "ids must be a list of agent:/nas: keys."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         ids = [str(value).strip() for value in ids_raw if str(value).strip()]
         if not ids:
-            return Response({"detail": "ids must not be empty."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "ids must not be empty."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             target_step = int(request.data.get("target_step"))
         except (TypeError, ValueError):
-            return Response({"detail": "target_step must be 1 or 2."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "target_step must be 1 or 2."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if target_step not in (PipelineStep.SOURCE_POOL, PipelineStep.CONFIG):
-            return Response({"detail": "target_step must be 1 or 2."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "target_step must be 1 or 2."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             force = _query_bool(request.data.get("force"))
@@ -254,7 +322,10 @@ class BackupSelectableDeletePreflightView(APIView):
         org = require_org(request)
         ids = _parse_id_list(request.data.get("ids"))
         if ids is None:
-            return Response({"detail": "ids must be a list of agent:/nas: keys."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "ids must be a list of agent:/nas: keys."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response(
             preflight_delete_backup_sources(
                 organization_id=org.id,
@@ -271,7 +342,10 @@ class BackupSelectableBulkDeleteView(APIView):
         org = require_org(request)
         ids = _parse_id_list(request.data.get("ids"))
         if ids is None:
-            return Response({"detail": "ids must be a list of agent:/nas: keys."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "ids must be a list of agent:/nas: keys."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         force = _query_bool(request.data.get("force"))
         confirmation_keyword = "FORCE DEREGISTER" if force else "DEREGISTER"
         if request.data.get("confirmation") != confirmation_keyword:
@@ -314,13 +388,22 @@ class BackupSelectableRevertPreflightView(APIView):
         org = require_org(request)
         ids = _parse_id_list(request.data.get("ids"))
         if ids is None:
-            return Response({"detail": "ids must be a list of agent:/nas: keys."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "ids must be a list of agent:/nas: keys."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             target_step = int(request.data.get("target_step"))
         except (TypeError, ValueError):
-            return Response({"detail": "target_step must be 1 or 2."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "target_step must be 1 or 2."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if target_step not in (PipelineStep.SOURCE_POOL, PipelineStep.CONFIG):
-            return Response({"detail": "target_step must be 1 or 2."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "target_step must be 1 or 2."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response(
             preflight_revert_backup_sources(
                 organization_id=org.id,
@@ -344,9 +427,15 @@ class BackupSelectableDirectoryView(APIView):
 
     def get(self, request):
         org = require_org(request)
-        source_id = (request.query_params.get("source_id") or request.query_params.get("id") or "").strip()
+        source_id = (
+            request.query_params.get("source_id")
+            or request.query_params.get("id")
+            or ""
+        ).strip()
         if not source_id:
-            return Response({"detail": "source_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "source_id is required."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         path = (request.query_params.get("path") or "").strip()
         try:
@@ -362,7 +451,11 @@ class BackupSelectableDirectoryView(APIView):
         limit = max(1, min(limit, 1000))
         cursor = str(request.query_params.get("cursor") or "").strip()
         include_metadata_param = request.query_params.get("include_metadata")
-        include_metadata = None if include_metadata_param is None else _query_bool(include_metadata_param)
+        include_metadata = (
+            None
+            if include_metadata_param is None
+            else _query_bool(include_metadata_param)
+        )
 
         try:
             result = list_backup_source_directories(
@@ -398,6 +491,13 @@ class BackupSelectableDirectoryView(APIView):
                 meta={"source_id": source_id},
             ) from exc
         except BackupSourceDirectoryError as exc:
+            if _agent_path_permission_denied(exc):
+                raise AppError(
+                    code="AGENT.PATH_PERMISSION_DENIED",
+                    status=status.HTTP_403_FORBIDDEN,
+                    diagnostic=str(exc),
+                    meta={"source_id": source_id, "path": path},
+                ) from exc
             raise AppError(
                 code="AGENT.EXPLORER_LIST_FAILED",
                 status=status.HTTP_502_BAD_GATEWAY,
@@ -416,13 +516,21 @@ class BackupSelectablePathInfoView(APIView):
 
     def get(self, request):
         org = require_org(request)
-        source_id = (request.query_params.get("source_id") or request.query_params.get("id") or "").strip()
+        source_id = (
+            request.query_params.get("source_id")
+            or request.query_params.get("id")
+            or ""
+        ).strip()
         if not source_id:
-            return Response({"detail": "source_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "source_id is required."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         path = (request.query_params.get("path") or "").strip()
         if not path:
-            return Response({"detail": "path is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "path is required."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             timeout = int(request.query_params.get("timeout", "30"))
@@ -430,7 +538,11 @@ class BackupSelectablePathInfoView(APIView):
             timeout = 30
         timeout = max(3, min(timeout, 60))
         include_metadata_param = request.query_params.get("include_metadata")
-        include_metadata = None if include_metadata_param is None else _query_bool(include_metadata_param)
+        include_metadata = (
+            None
+            if include_metadata_param is None
+            else _query_bool(include_metadata_param)
+        )
 
         try:
             result = get_backup_source_path_info(
@@ -463,6 +575,13 @@ class BackupSelectablePathInfoView(APIView):
                 meta={"source_id": source_id, "path": path},
             ) from exc
         except BackupSourceDirectoryError as exc:
+            if _agent_path_permission_denied(exc):
+                raise AppError(
+                    code="AGENT.PATH_PERMISSION_DENIED",
+                    status=status.HTTP_403_FORBIDDEN,
+                    diagnostic=str(exc),
+                    meta={"source_id": source_id, "path": path},
+                ) from exc
             raise AppError(
                 code="AGENT.PATH_VALIDATE_FAILED",
                 status=status.HTTP_502_BAD_GATEWAY,

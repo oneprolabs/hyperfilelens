@@ -8,7 +8,7 @@ import { usesUtf8Iocharset } from './nasMountOptions'
 
 export type BackupSourceDirectoryTreeSource = Pick<
   BackupSelectableSource,
-  'type' | 'platform' | 'protocol' | 'mount_options'
+  'type' | 'platform' | 'installation_mode' | 'protocol' | 'mount_options'
 >
 
 function pathBasename(path: string) {
@@ -51,6 +51,7 @@ export function shouldUseSingleDirectoryRoot(
 ) {
   if (parentPath || !source) return false
   if (source.type === 'nas') return true
+  if (source.type === 'host' && source.installation_mode === 'user') return true
   return source.type === 'host' && (source.platform === 'linux' || source.platform === 'macos')
 }
 

@@ -829,6 +829,7 @@ class SourceResourceApiTests(TestCase):
         agent_row = rows_by_id[f"agent:{agent.id}"]
         nas_row = rows_by_id[f"nas:{nas.data['id']}"]
         self.assertEqual(agent_row["platform"], "macos")
+        self.assertEqual(agent_row["installation_mode"], "system")
         self.assertEqual(agent_row["cpu_cores"], 8)
         self.assertEqual(agent_row["memory_total_bytes"], 16_000_000_000)
         self.assertEqual(agent_row["disk_count"], 2)
@@ -1532,6 +1533,39 @@ class SourceResourceApiTests(TestCase):
         )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_backup_selectable_directory_reports_agent_path_permission(
+        self, mock_run_task
+    ):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-denied-dir",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        mock_run_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=False,
+            result={"error_code": "PATH_PERMISSION_DENIED"},
+            stream_message=None,
+            task=SimpleNamespace(
+                id="task-denied-dir",
+                last_error="Acceso denegado",
+                status="failed",
+            ),
+        )
+
+        resp = self.client.get(
+            f"/api/v1/source/backup-selectable/directories/?source_id=agent:{agent.id}&path=/restricted",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        problem = resp.data["data"]
+        self.assertEqual(problem["code"], "AGENT.PATH_PERMISSION_DENIED")
+        self.assertEqual(problem["meta"]["path"], "/restricted")
+
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_agent_directory_normalizes_type_fields(
         self, mock_run_task
     ):
@@ -1665,6 +1699,43 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(kwargs["payload"], {"path": "/tmp", "include_metadata": False})
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_backup_selectable_path_info_reports_agent_path_permission(
+        self, mock_run_task
+    ):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-denied-path",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        mock_run_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=False,
+            result={
+                "path": "/restricted/file.txt",
+                "exists": False,
+                "error_code": "PATH_PERMISSION_DENIED",
+            },
+            stream_message=None,
+            task=SimpleNamespace(
+                id="task-denied-path",
+                last_error="Acceso denegado",
+                status="failed",
+            ),
+        )
+
+        resp = self.client.get(
+            f"/api/v1/source/backup-selectable/path-info/?source_id=agent:{agent.id}&path=/restricted/file.txt",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        problem = resp.data["data"]
+        self.assertEqual(problem["code"], "AGENT.PATH_PERMISSION_DENIED")
+        self.assertEqual(problem["meta"]["path"], "/restricted/file.txt")
+
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_agent_directory_root_uses_mount_listing(
         self, mock_run_task
     ):
@@ -1743,6 +1814,122 @@ class SourceResourceApiTests(TestCase):
                 "dirs_only": True,
                 "include_metadata": False,
                 "limit": 500,
+            },
+        )
+
+    @patch(
+        "apps.source.services.internal.backup_source_directory._try_cached_mount_listing"
+    )
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_current_user_agent_directory_root_uses_home_not_mounts(
+        self, mock_run_task, mock_cached_mounts
+    ):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="current-user-agent-root",
+            role=Node.Role.AGENT,
+            installation_mode=Node.InstallationMode.USER,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            os_name="windows",
+        )
+        home_path = r"C:\Users\alice"
+        mock_run_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=True,
+            task_id="task-current-user-root",
+            result={
+                "path": home_path,
+                "entries": [
+                    {
+                        "name": "Documents",
+                        "path": rf"{home_path}\Documents",
+                        "is_dir": True,
+                    }
+                ],
+            },
+            task=SimpleNamespace(last_error=""),
+        )
+
+        resp = self.client.get(
+            f"/api/v1/source/backup-selectable/directories/?source_id=agent:{agent.id}",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["path"], home_path)
+        self.assertEqual(resp.data["root_path"], home_path)
+        self.assertEqual(resp.data["root"]["label"], "Home")
+        self.assertEqual(resp.data["root"]["path"], home_path)
+        self.assertEqual(resp.data["entries"], [])
+        self.assertEqual(resp.data["count"], 0)
+        self.assertFalse(resp.data["has_more"])
+        self.assertEqual(resp.data["next_cursor"], "")
+        mock_cached_mounts.assert_not_called()
+        _, kwargs = mock_run_task.call_args
+        self.assertEqual(
+            kwargs["payload"],
+            {
+                "path": "",
+                "list_mounts": False,
+                "dirs_only": True,
+                "include_metadata": False,
+                "limit": 200,
+            },
+        )
+
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_current_user_agent_home_directory_forwards_pagination(self, mock_run_task):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="current-user-agent-page",
+            role=Node.Role.AGENT,
+            installation_mode=Node.InstallationMode.USER,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            os_name="linux",
+        )
+        home_path = "/home/alice"
+        mock_run_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=True,
+            task_id="task-current-user-page",
+            result={
+                "path": home_path,
+                "has_more": True,
+                "next_cursor": "40",
+                "entries": [
+                    {
+                        "name": "projects",
+                        "path": f"{home_path}/projects",
+                        "is_dir": True,
+                    }
+                ],
+            },
+            task=SimpleNamespace(last_error=""),
+        )
+
+        resp = self.client.get(
+            f"/api/v1/source/backup-selectable/directories/?source_id=agent:{agent.id}&path={home_path}&cursor=20&limit=20",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["path"], home_path)
+        self.assertEqual(resp.data["root_path"], "")
+        self.assertEqual(resp.data["entries"][0]["path"], f"{home_path}/projects")
+        self.assertTrue(resp.data["has_more"])
+        self.assertEqual(resp.data["next_cursor"], "40")
+        _, kwargs = mock_run_task.call_args
+        self.assertEqual(
+            kwargs["payload"],
+            {
+                "path": home_path,
+                "list_mounts": False,
+                "dirs_only": True,
+                "include_metadata": False,
+                "limit": 20,
+                "cursor": "20",
             },
         )
 

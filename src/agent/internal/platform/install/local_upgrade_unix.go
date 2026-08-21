@@ -13,7 +13,10 @@ const upgradeDelaySecond = 5
 
 // ScheduleDetachedUpgrade runs install.sh upgrade after a short delay so the agent
 // can report task.result before stop_service terminates the process.
-func ScheduleDetachedUpgrade(installDir, archivePath, logDir string) error {
+func ScheduleDetachedUpgrade(
+	installDir, archivePath, logDir string,
+	userInstall bool,
+) error {
 	installDir = strings.TrimSpace(installDir)
 	if archivePath = strings.TrimSpace(archivePath); archivePath == "" {
 		return fmt.Errorf("upgrade archive path required")
@@ -27,7 +30,13 @@ func ScheduleDetachedUpgrade(installDir, archivePath, logDir string) error {
 	}
 	pendingDir := filepath.Dir(archivePath)
 	scriptPath := filepath.Join(pendingDir, pendingUpgradeRunnerName)
-	if err := writeUnixUpgradeScript(installDir, archivePath, logDir, scriptPath); err != nil {
+	if err := writeUnixUpgradeScript(
+		installDir,
+		archivePath,
+		logDir,
+		userInstall,
+		scriptPath,
+	); err != nil {
 		if logDir != "" {
 			_ = AppendUpgradeLog(logDir, fmt.Sprintf("Failed to write upgrade script: %v.", err))
 		}
@@ -38,22 +47,36 @@ func ScheduleDetachedUpgrade(installDir, archivePath, logDir string) error {
 			_ = AppendUpgradeLog(logDir, msg)
 		}
 	}
-	if err := startDetachedShellScript("hfl-agent-upgrade", scriptPath, logFn); err != nil {
+	if err := startDetachedShellScript(
+		"hfl-agent-upgrade",
+		scriptPath,
+		userInstall,
+		logFn,
+	); err != nil {
 		return fmt.Errorf("start detached upgrade: %w", err)
 	}
 	return nil
 }
 
-func writeUnixUpgradeScript(installDir, archivePath, logDir, scriptPath string) error {
+func writeUnixUpgradeScript(
+	installDir, archivePath, logDir string,
+	userInstall bool,
+	scriptPath string,
+) error {
 	installScript := filepath.Join(installDir, "install.sh")
 	logFile := UpgradeLogPath(logDir)
 	pendingDir := filepath.Dir(archivePath)
+	userInstallFlag := "0"
+	if userInstall {
+		userInstallFlag = "1"
+	}
 	body := fmt.Sprintf(`#!/usr/bin/env bash
 set -u
 ARCHIVE=%q
 INSTALL_SH=%q
 LOG_FILE=%q
 PENDING_DIR=%q
+USER_INSTALL=%s
 SLEEP_SECONDS=%d
 
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
@@ -69,6 +92,14 @@ log() {
   *) msg="${msg}." ;;
   esac
   printf '[%%s] [%%s] %%s\n' "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%S.000Z 2>/dev/null || date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)" "${level}" "${msg}"
+}
+
+hfl_systemctl() {
+  if [[ "$USER_INSTALL" == "1" ]]; then
+    systemctl --user "$@"
+  else
+    systemctl "$@"
+  fi
 }
 
 log "INFO " "Detached upgrade script started (archive=${ARCHIVE})."
@@ -101,8 +132,8 @@ if [[ "$rc" -eq 0 ]]; then
 fi
 log "FAIL " "Upgrade failed (exit=${rc}). Attempting service recovery."
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl start hyperfilelens-agent.service 2>/dev/null || true
-  if systemctl is-active hyperfilelens-agent.service >/dev/null 2>&1; then
+  hfl_systemctl start hyperfilelens-agent.service 2>/dev/null || true
+  if hfl_systemctl is-active hyperfilelens-agent.service >/dev/null 2>&1; then
     log " OK  " "Agent service recovered after the failed upgrade."
   else
     log "WARN " "Agent service is still inactive after the failed upgrade."
@@ -115,6 +146,7 @@ exit "$rc"
 		installScript,
 		logFile,
 		pendingDir,
+		userInstallFlag,
 		upgradeDelaySecond,
 		unixGatewaySidecarUpgradeHook,
 	)

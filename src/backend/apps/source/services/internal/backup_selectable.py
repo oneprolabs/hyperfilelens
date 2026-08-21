@@ -159,6 +159,9 @@ def _agent_item(node: Node) -> dict[str, Any]:
         "node_ip": str(node.ip_address or "").strip(),
         "status": str(node.status or Node.Status.ACTIVE),
         "availability": str(node.availability or Node.Availability.OFFLINE),
+        "installation_mode": str(
+            node.installation_mode or Node.InstallationMode.SYSTEM
+        ),
         "registered_at": node.created_at.isoformat() if node.created_at else None,
     }
     platform = _agent_platform(node)

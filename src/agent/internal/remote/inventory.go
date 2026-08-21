@@ -9,9 +9,9 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 
 	"hyperfilelens/agent/internal/infra/config"
+	"hyperfilelens/agent/internal/model"
 	agentdisk "hyperfilelens/agent/internal/platform/disk"
 	"hyperfilelens/agent/internal/platform/hostinfo"
-	"hyperfilelens/agent/internal/platform/install"
 	"hyperfilelens/agent/internal/platform/kopia"
 	"hyperfilelens/agent/internal/platform/networkinventory"
 	"hyperfilelens/agent/internal/platform/vfs"
@@ -36,16 +36,21 @@ func SendInventory(
 		dataDir = vfs.DefaultAgentDataDir()
 	}
 	payload := platform.Inventory()
+	installationMode := cfg.InstallationMode
+	if installationMode == "" {
+		installationMode = model.InstallationModeSystem
+	}
 	for key, value := range map[string]any{
-		"agent_version": selfupdate.Version,
-		"agent_commit":  selfupdate.Commit,
-		"role":          string(cfg.Role),
-		"os":            runtime.GOOS,
-		"arch":          runtime.GOARCH,
-		"hostname":      hostname(),
-		"kopia_path":    cfg.KopiaPath,
-		"root_path":     dataDir,
-		"install_path":  install.DefaultInstallDir(),
+		"agent_version":     selfupdate.Version,
+		"agent_commit":      selfupdate.Commit,
+		"role":              string(cfg.Role),
+		"installation_mode": string(installationMode),
+		"os":                runtime.GOOS,
+		"arch":              runtime.GOARCH,
+		"hostname":          hostname(),
+		"kopia_path":        cfg.KopiaPath,
+		"root_path":         dataDir,
+		"install_path":      vfs.InstallDirForMode(installationMode),
 		"capabilities": []string{
 			"task_command_ack_v1",
 			"repository_operation_v1",

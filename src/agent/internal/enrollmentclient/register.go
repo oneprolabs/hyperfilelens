@@ -40,16 +40,14 @@ type RegistrationResult struct {
 	CredentialReused bool
 }
 
-// EnsureNodeRegistered registers missing identities and migrates legacy credentials.
+// EnsureNodeRegistered registers missing identities, migrates legacy credentials,
+// and refreshes durable nodes so newly introduced host identity fields are backfilled.
 func EnsureNodeRegistered(ctx context.Context, provider config.Provider, reg NodeRegistrar) error {
 	if provider == nil {
 		return nil
 	}
 	cfg := provider.Current()
 	existingNodeID := strings.TrimSpace(cfg.NodeID)
-	if existingNodeID != "" && strings.HasPrefix(strings.TrimSpace(cfg.NodeToken), "hfln_") {
-		return nil
-	}
 	if strings.TrimSpace(cfg.InstallationID) == "" {
 		generatedID, err := identity.NewInstallationID()
 		if err != nil {
@@ -155,6 +153,18 @@ func httpRegisterNode(
 			"arch":          platform.Arch,
 		},
 	}
+	machineFingerprint, err := identity.MachineFingerprint(ctx)
+	if err != nil {
+		return RegistrationResult{}, fmt.Errorf("derive host fingerprint: %w", err)
+	}
+	if machineFingerprint != "" {
+		body["host_fingerprint"] = machineFingerprint
+	}
+	installationMode := cfg.InstallationMode
+	if installationMode == "" {
+		installationMode = model.InstallationModeSystem
+	}
+	body["installation_mode"] = string(installationMode)
 	installationID := strings.TrimSpace(cfg.InstallationID)
 	if installationID == "" {
 		generatedID, identityErr := identity.NewInstallationID()

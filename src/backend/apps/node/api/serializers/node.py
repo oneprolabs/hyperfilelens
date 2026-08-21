@@ -20,9 +20,7 @@ class NodeSerializer(serializers.ModelSerializer):
     effective_repository_server_address = serializers.SerializerMethodField(
         read_only=True
     )
-    repository_server_address_source = serializers.SerializerMethodField(
-        read_only=True
-    )
+    repository_server_address_source = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Node
@@ -31,6 +29,7 @@ class NodeSerializer(serializers.ModelSerializer):
             "organization",
             "name",
             "role",
+            "installation_mode",
             "version",
             "os_name",
             "ip_address",
@@ -54,6 +53,7 @@ class NodeSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "installation_mode",
             "ip_address",
             "effective_repository_server_address",
             "repository_server_address_source",
@@ -161,6 +161,13 @@ class NodeHeartbeatSerializer(serializers.Serializer):
         allow_blank=True,
         max_length=128,
     )
+    host_fingerprint = serializers.RegexField(
+        regex=r"^[0-9a-f]{64}$",
+        required=False,
+        allow_blank=True,
+        max_length=64,
+        write_only=True,
+    )
     existing_node_credential = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -169,6 +176,10 @@ class NodeHeartbeatSerializer(serializers.Serializer):
     )
     name = serializers.CharField(required=False, allow_blank=True)
     role = serializers.ChoiceField(choices=Node.Role.choices)
+    installation_mode = serializers.ChoiceField(
+        choices=Node.InstallationMode.choices,
+        default=Node.InstallationMode.SYSTEM,
+    )
     version = serializers.CharField(required=False, allow_blank=True)
     os_name = serializers.CharField(required=False, allow_blank=True)
     metadata = serializers.JSONField(required=False)

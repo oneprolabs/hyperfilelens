@@ -12,9 +12,18 @@ import (
 )
 
 // startDetachedShellScript runs scriptPath outside the agent service cgroup when possible.
-func startDetachedShellScript(unitPrefix, scriptPath string, log func(string)) error {
+func startDetachedShellScript(
+	unitPrefix, scriptPath string,
+	userInstall bool,
+	log func(string),
+) error {
 	if runtime.GOOS == "linux" {
-		if err := startLinuxTransientScript(unitPrefix, scriptPath, log); err == nil {
+		if err := startLinuxTransientScript(
+			unitPrefix,
+			scriptPath,
+			userInstall,
+			log,
+		); err == nil {
 			return nil
 		} else if log != nil {
 			log(fmt.Sprintf("systemd-run unavailable, falling back to setsid: %v", err))
@@ -55,12 +64,19 @@ func startDarwinDetachedScript(scriptPath string, log func(string)) error {
 	return nil
 }
 
-func startLinuxTransientScript(unitPrefix, scriptPath string, log func(string)) error {
+func startLinuxTransientScript(
+	unitPrefix, scriptPath string,
+	userInstall bool,
+	log func(string),
+) error {
 	if _, err := exec.LookPath("systemd-run"); err != nil {
 		return fmt.Errorf("systemd-run not found: %w", err)
 	}
 	unit := fmt.Sprintf("%s-%d", unitPrefix, time.Now().Unix())
-	cmd := exec.Command("systemd-run", systemdRunArgs(unit, scriptPath)...)
+	cmd := exec.Command(
+		"systemd-run",
+		systemdRunArgs(unit, scriptPath, userInstall)...,
+	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if log != nil {
@@ -78,12 +94,15 @@ func startLinuxTransientScript(unitPrefix, scriptPath string, log func(string)) 
 // rejected by the systemd 219 systemd-run shipped with CentOS 7. A transient
 // unit is required here, since a setsid child remains in the agent service
 // cgroup and is killed when the upgrade stops that service.
-func systemdRunArgs(unit, scriptPath string) []string {
-	return []string{
+func systemdRunArgs(unit, scriptPath string, userInstall bool) []string {
+	args := []string{
 		"--unit=" + unit,
 		"--property=KillMode=process",
-		"/bin/bash", scriptPath,
 	}
+	if userInstall {
+		args = append([]string{"--user"}, args...)
+	}
+	return append(args, "/bin/bash", scriptPath)
 }
 
 func startSetsidScript(scriptPath string, log func(string)) error {

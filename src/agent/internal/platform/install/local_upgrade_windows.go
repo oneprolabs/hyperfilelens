@@ -16,7 +16,10 @@ const (
 
 // ScheduleDetachedUpgrade runs install.ps1 upgrade after a short delay so the agent
 // can report task.result before the service stops.
-func ScheduleDetachedUpgrade(installDir, archivePath, logDir string) error {
+func ScheduleDetachedUpgrade(
+	installDir, archivePath, logDir string,
+	userInstall bool,
+) error {
 	installDir = strings.TrimSpace(installDir)
 	if installDir == "" {
 		installDir = DefaultInstallDir()
@@ -31,7 +34,13 @@ func ScheduleDetachedUpgrade(installDir, archivePath, logDir string) error {
 	}
 	pendingDir := filepath.Dir(archivePath)
 	scriptPath := filepath.Join(pendingDir, windowsUpgradeRunnerName)
-	if err := writeWindowsUpgradeScript(installDir, archivePath, logDir, scriptPath); err != nil {
+	if err := writeWindowsUpgradeScript(
+		installDir,
+		archivePath,
+		logDir,
+		userInstall,
+		scriptPath,
+	); err != nil {
 		if logDir != "" {
 			_ = AppendUpgradeLog(logDir, fmt.Sprintf("failed to write upgrade script: %v", err))
 		}
@@ -49,14 +58,23 @@ func ScheduleDetachedUpgrade(installDir, archivePath, logDir string) error {
 	return nil
 }
 
-func writeWindowsUpgradeScript(installDir, archivePath, logDir, scriptPath string) error {
+func writeWindowsUpgradeScript(
+	installDir, archivePath, logDir string,
+	userInstall bool,
+	scriptPath string,
+) error {
 	installScript := filepath.Join(installDir, "install.ps1")
 	logFile := UpgradeLogPath(logDir)
 	pendingDir := filepath.Dir(archivePath)
+	userInstallFlag := "$false"
+	if userInstall {
+		userInstallFlag = "$true"
+	}
 	body := fmt.Sprintf(`$logFile = %q
 $install = %q
 $archive = %q
 $pending = %q
+$userInstall = %s
 $SLEEP_SECONDS = %d
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $logFile) | Out-Null
@@ -81,7 +99,11 @@ try {
   }
 
   Log "stopping HyperFileLensAgent before install.ps1 upgrade"
-  Stop-Service -Name HyperFileLensAgent -Force -ErrorAction SilentlyContinue
+  if ($userInstall) {
+    Stop-ScheduledTask -TaskName HyperFileLensAgent -ErrorAction SilentlyContinue
+  } else {
+    Stop-Service -Name HyperFileLensAgent -Force -ErrorAction SilentlyContinue
+  }
   Stop-Process -Name hfl-agent -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
 
@@ -109,6 +131,7 @@ try {
 		installScript,
 		archivePath,
 		pendingDir,
+		userInstallFlag,
 		upgradeDelaySecond,
 	)
 	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o750); err != nil {

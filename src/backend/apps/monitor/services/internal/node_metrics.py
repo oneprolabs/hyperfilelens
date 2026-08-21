@@ -108,8 +108,14 @@ def _scalar_metrics(sample: dict) -> dict:
     memory = sample.get("memory") if isinstance(sample.get("memory"), dict) else {}
     swap = sample.get("swap") if isinstance(sample.get("swap"), dict) else {}
     disks = sample.get("disks") if isinstance(sample.get("disks"), list) else []
-    networks = sample.get("networks") if isinstance(sample.get("networks"), list) else []
-    load = sample.get("load_average") if isinstance(sample.get("load_average"), list) else []
+    networks = (
+        sample.get("networks") if isinstance(sample.get("networks"), list) else []
+    )
+    load = (
+        sample.get("load_average")
+        if isinstance(sample.get("load_average"), list)
+        else []
+    )
 
     scalars: dict[str, float] = {}
     if cpu.get("usage_percent") is not None:
@@ -119,14 +125,19 @@ def _scalar_metrics(sample: dict) -> dict:
     if swap.get("percent") is not None:
         scalars["swap_usage"] = float(swap["percent"])
 
-    percents = [float(d.get("percent")) for d in disks if isinstance(d, dict) and d.get("percent") is not None]
+    percents = [
+        float(d.get("percent"))
+        for d in disks
+        if isinstance(d, dict) and d.get("percent") is not None
+    ]
     if percents:
         scalars["disk_usage"] = max(percents)
 
-    rx = sum(int(n.get("bytes_recv") or 0) for n in networks if isinstance(n, dict))
-    tx = sum(int(n.get("bytes_sent") or 0) for n in networks if isinstance(n, dict))
-    scalars["network_rx"] = float(rx)
-    scalars["network_tx"] = float(tx)
+    if networks:
+        rx = sum(int(n.get("bytes_recv") or 0) for n in networks if isinstance(n, dict))
+        tx = sum(int(n.get("bytes_sent") or 0) for n in networks if isinstance(n, dict))
+        scalars["network_rx"] = float(rx)
+        scalars["network_tx"] = float(tx)
 
     if len(load) > 0:
         scalars["load_1m"] = float(load[0])
@@ -187,6 +198,17 @@ def ingest_node_monitor_sample(*, node: Node, sample: dict) -> None:
     )
 
     meta["metrics"] = {k: payload[k] for k in _scalar_metrics(sample)}
+    sample_metadata = (
+        sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+    )
+    collection_status = str(sample_metadata.get("collection_status") or "").strip()
+    unavailable_metrics = sample_metadata.get("unavailable_metrics")
+    if collection_status:
+        meta["monitor_collection_status"] = collection_status
+    if isinstance(unavailable_metrics, list):
+        meta["monitor_unavailable_metrics"] = [
+            str(value)[:64] for value in unavailable_metrics if str(value).strip()
+        ][:32]
     if sample_timestamp:
         meta["monitor_sample_timestamp"] = sample_timestamp
     if sample.get("boot_time") is not None:
@@ -194,8 +216,7 @@ def ingest_node_monitor_sample(*, node: Node, sample: dict) -> None:
     inv = dict(meta.get("inventory") or {})
     capabilities = inv.get("capabilities")
     preserve_storage_inventory = (
-        isinstance(capabilities, list)
-        and "storage_inventory_v1" in capabilities
+        isinstance(capabilities, list) and "storage_inventory_v1" in capabilities
     )
     hw = _hardware_inventory_summary(
         sample,

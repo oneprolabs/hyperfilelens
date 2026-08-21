@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -15,9 +16,9 @@ func cloneConfig(src *model.AgentConfig) *model.AgentConfig {
 	return &cp
 }
 
-func applyEnvMap(cfg *model.AgentConfig, values map[string]string) {
+func applyEnvMap(cfg *model.AgentConfig, values map[string]string) error {
 	if cfg == nil || len(values) == 0 {
-		return
+		return nil
 	}
 	for env, val := range values {
 		val = strings.TrimSpace(val)
@@ -39,6 +40,12 @@ func applyEnvMap(cfg *model.AgentConfig, values map[string]string) {
 			cfg.NodeID = val
 		case "installation_id":
 			cfg.InstallationID = val
+		case "installation_mode":
+			mode, err := model.ParseInstallationMode(val)
+			if err != nil {
+				return fmt.Errorf("%s: %w", env, err)
+			}
+			cfg.InstallationMode = mode
 		case "node_token":
 			cfg.NodeToken = val
 		case "data_dir":
@@ -52,11 +59,14 @@ func applyEnvMap(cfg *model.AgentConfig, values map[string]string) {
 				cfg.BackupSnapshotConcurrency = parsed
 			}
 		case "role":
-			if r, err := model.ParseRole(val); err == nil {
-				cfg.Role = r
+			r, err := model.ParseRole(val)
+			if err != nil {
+				return fmt.Errorf("%s: %w", env, err)
 			}
+			cfg.Role = r
 		}
 	}
+	return nil
 }
 
 func applyOverrides(cfg *model.AgentConfig, o Overrides) {
@@ -111,6 +121,7 @@ func configToEnvMap(cfg *model.AgentConfig) map[string]string {
 	set("org_key", cfg.OrgKey)
 	set("node_id", cfg.NodeID)
 	set("installation_id", cfg.InstallationID)
+	set("installation_mode", string(cfg.InstallationMode))
 	set("node_token", cfg.NodeToken)
 	set("data_dir", cfg.DataDir)
 	set("log_dir", cfg.LogDir)

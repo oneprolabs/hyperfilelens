@@ -5,8 +5,8 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 
 from apps.iam.models import Organization
-from apps.node.api.views.bootstrap import BootstrapView
-from apps.node.models import NodeToken
+from apps.node.api.views.bootstrap import BootstrapView, _template_values
+from apps.node.models import NodeInstallationMode, NodeToken
 from apps.node.models.base import NodeRole
 
 
@@ -46,6 +46,20 @@ class BootstrapViewTests(TestCase):
         self.assertIn("https://console.example", body)
         self.assertIn('HFL_INSECURE_TLS="1"', body)
         self.assertIn('HFL_ENROLL_ARGS=(--yes "$@")', body)
+
+    def test_bootstrap_uses_mode_bound_to_token(self):
+        self.token_row.installation_mode = NodeInstallationMode.USER
+        self.token_row.save(update_fields=["installation_mode"])
+
+        values = _template_values(
+            self.org.key,
+            NodeRole.AGENT,
+            self.token_row.token,
+            "https://console.example",
+            self.token_row.installation_mode,
+        )
+
+        self.assertEqual(values["HFL_INSTALLATION_MODE"], "user")
 
     @override_settings(
         HFL_INSECURE_TLS=False,

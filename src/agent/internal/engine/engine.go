@@ -16,10 +16,13 @@ import (
 	"hyperfilelens/agent/internal/platform/kopia"
 	"hyperfilelens/agent/internal/platform/pathsize"
 	"hyperfilelens/agent/internal/platform/process"
+	"hyperfilelens/agent/internal/platform/vfs"
 	"hyperfilelens/agent/internal/selfupdate"
 	"hyperfilelens/agent/internal/service/explorer"
 	"hyperfilelens/agent/internal/service/nas"
 )
+
+const pathPermissionDeniedErrorCode = "PATH_PERMISSION_DENIED"
 
 // Engine runs backup, browse, and maintenance workloads for WebSocket and CLI entrypoints.
 type Engine struct {
@@ -64,6 +67,15 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 
 	kind := NormalizeKind(cmd.Kind)
 	p := ParsePayload(cmd.Payload)
+	var scopeErr error
+	p, scopeErr = e.applyUserInstallationScope(kind, p)
+	if scopeErr != nil {
+		return Result{
+			Status: "failed",
+			Result: pathPermissionDeniedResult(scopeErr, p.Path),
+			Error:  scopeErr.Error(),
+		}
+	}
 	leasePaths := nasLeasePaths(p)
 	if len(leasePaths) > 0 {
 		release, leaseErr := e.nasLeases().acquire(
@@ -258,6 +270,99 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 	return Result{Status: status, Result: result, Error: errMsg}
 }
 
+func (e *Engine) applyUserInstallationScope(kind string, payload Payload) (Payload, error) {
+	if e.current().InstallationMode != model.InstallationModeUser {
+		return payload, nil
+	}
+	repositoryType := ""
+	repositoryConfigFile := ""
+	repository, managedRepository := payload.Extra["repository"].(map[string]any)
+	managedRepository = managedRepository && len(repository) > 0
+	if managedRepository {
+		repositoryType = strings.ToLower(
+			strings.TrimSpace(payloadStringValue(repository["type"])),
+		)
+		repositoryConfigFile = strings.TrimSpace(
+			payloadStringValue(repository["config_file"]),
+		)
+	}
+	if strings.HasPrefix(kind, "nas.") || payload.Extra["nas"] != nil ||
+		repositoryType == "nas" ||
+		repositoryType == "proxy_fs" ||
+		strings.HasPrefix(kind, "lens.") ||
+		strings.HasPrefix(kind, "repository.server.") {
+		return payload, fmt.Errorf("user-level Agent supports only local Home protection")
+	}
+	if strings.TrimSpace(payload.ConfigFile) != "" || repositoryConfigFile != "" {
+		return payload, fmt.Errorf("user-level Agent requires Agent-managed repository configuration")
+	}
+	if len(payload.Args) > 0 {
+		return payload, fmt.Errorf("raw Kopia commands are not available in user-level mode")
+	}
+	if len(payload.Env) > 0 {
+		return payload, fmt.Errorf("custom process environment is not available in user-level mode")
+	}
+
+	allowMissing := false
+	path := payload.Path
+	switch kind {
+	case "browse":
+		payload.ListMounts = false
+	case "backup", "backup.snapshot.create", "repository.policy.apply",
+		"path.usage", "path.info", "path.size", "path.estimate", "source.path.size":
+		if path == "" {
+			return payload, fmt.Errorf("a path under the current user Home directory is required")
+		}
+		if (kind == "backup" || kind == "backup.snapshot.create" ||
+			kind == "repository.policy.apply") && !managedRepository {
+			return payload, fmt.Errorf("user-level Agent requires an Agent-managed repository")
+		}
+	case "restore":
+		if target := payloadStringValue(payload.Extra["target_path"]); target != "" {
+			path = target
+		}
+		if path == "" {
+			return payload, fmt.Errorf("a restore path under the current user Home directory is required")
+		}
+		if !managedRepository {
+			return payload, fmt.Errorf("user-level Agent requires an Agent-managed repository")
+		}
+		allowMissing = true
+	case "repo.status", "repo.initialize", "repository.operation":
+		if !managedRepository {
+			return payload, fmt.Errorf("user-level Agent requires an Agent-managed repository")
+		}
+		return payload, nil
+	case "snapshot.browse", "snapshot.download", "snapshot.delete":
+		if !managedRepository {
+			return payload, fmt.Errorf("user-level Agent requires an Agent-managed repository")
+		}
+		return payload, nil
+	case "agent.ping", "agent.version", "agent.upgrade", "agent.uninstall",
+		"task.cancel", "cancel":
+		return payload, nil
+	case "snapshot.list", "maintenance.gc":
+		return payload, fmt.Errorf("unmanaged Kopia operations are not available in user-level mode")
+	default:
+		return payload, fmt.Errorf("task kind %q is not available in user-level mode", kind)
+	}
+
+	resolved, err := vfs.ResolveUserScopedPath(path, allowMissing)
+	if err != nil {
+		return payload, err
+	}
+	payload.Path = resolved
+	if kind == "restore" && payloadStringValue(payload.Extra["target_path"]) != "" {
+		extra := make(map[string]any, len(payload.Extra))
+		for key, value := range payload.Extra {
+			extra[key] = value
+		}
+		extra["target_path"] = resolved
+		payload.Extra = extra
+	}
+	return payload, nil
+}
+
 func (e *Engine) nasLeases() *nasLeaseRegistry {
 	e.nasLeaseOnce.Do(func() {
 		if e.nasLeaseCoordinator == nil {
@@ -332,7 +437,7 @@ func (e *Engine) runBrowse(
 		}
 		if errors.Is(err, fs.ErrPermission) {
 			slog.Info("browse", "event", "browse_list_failed", "task_id", taskID, "path", root, "err", "permission denied")
-			return "failed", nil, "permission denied"
+			return "failed", pathPermissionDeniedResult(err, root), "permission denied"
 		}
 		slog.Info("browse", "event", "browse_list_failed", "task_id", taskID, "path", root, "err", err.Error())
 		return "failed", nil, err.Error()
@@ -466,8 +571,9 @@ func (e *Engine) runPathInfo(ctx context.Context, p Payload) (string, map[string
 		}
 		if errors.Is(statErr, fs.ErrPermission) {
 			return "failed", map[string]any{
-				"path":   path,
-				"exists": false,
+				"path":       path,
+				"exists":     false,
+				"error_code": pathPermissionDeniedErrorCode,
 			}, "permission denied"
 		}
 		return "failed", map[string]any{
@@ -515,7 +621,11 @@ func (e *Engine) runPathSize(ctx context.Context, p Payload) (string, map[string
 			return "failed", map[string]any{"path": path, "exists": false}, "path not found"
 		}
 		if errors.Is(sizeErr, fs.ErrPermission) {
-			return "failed", map[string]any{"path": path, "exists": false}, "permission denied"
+			return "failed", map[string]any{
+				"path":       path,
+				"exists":     false,
+				"error_code": pathPermissionDeniedErrorCode,
+			}, "permission denied"
 		}
 		return "failed", map[string]any{"path": path}, sizeErr.Error()
 	}
@@ -524,6 +634,16 @@ func (e *Engine) runPathSize(ctx context.Context, p Payload) (string, map[string
 		"path_type":  pathType,
 		"size_bytes": sizeBytes,
 	}, ""
+}
+
+func pathPermissionDeniedResult(err error, path string) map[string]any {
+	if !errors.Is(err, fs.ErrPermission) {
+		return nil
+	}
+	return map[string]any{
+		"error_code": pathPermissionDeniedErrorCode,
+		"path":       strings.TrimSpace(path),
+	}
 }
 
 func (e *Engine) runPing(ctx context.Context) (string, map[string]any, string) {

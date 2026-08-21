@@ -17,11 +17,9 @@ type JSONOverlay struct {
 	NodeID                    string `json:"node_id,omitempty"`
 	InstallationID            string `json:"installation_id,omitempty"`
 	NodeToken                 string `json:"node_token,omitempty"`
-	DataDir                   string `json:"data_dir,omitempty"`
 	LogDir                    string `json:"log_dir,omitempty"`
 	KopiaPath                 string `json:"kopia_path,omitempty"`
 	BackupSnapshotConcurrency int    `json:"backup_snapshot_concurrency,omitempty"`
-	Role                      string `json:"role,omitempty"`
 }
 
 func jsonConfigPath(dataDir string) string {
@@ -69,13 +67,11 @@ func overlayToEnvMap(o JSONOverlay) map[string]string {
 	put("HFL_NODE_ID", o.NodeID)
 	put("HFL_INSTALLATION_ID", o.InstallationID)
 	put("HFL_NODE_TOKEN", o.NodeToken)
-	put("HFL_DATA_DIR", o.DataDir)
 	put("HFL_LOG_DIR", o.LogDir)
 	put("HFL_KOPIA_PATH", o.KopiaPath)
 	if o.BackupSnapshotConcurrency > 0 {
 		put("HFL_BACKUP_SNAPSHOT_CONCURRENCY", strconv.Itoa(o.BackupSnapshotConcurrency))
 	}
-	put("HFL_NODE_ROLE", o.Role)
 	return out
 }
 
@@ -90,12 +86,10 @@ func envMapToOverlay(values map[string]string) JSONOverlay {
 	o.NodeID = values["HFL_NODE_ID"]
 	o.InstallationID = values["HFL_INSTALLATION_ID"]
 	o.NodeToken = values["HFL_NODE_TOKEN"]
-	o.DataDir = values["HFL_DATA_DIR"]
 	o.LogDir = values["HFL_LOG_DIR"]
 	o.KopiaPath = values["HFL_KOPIA_PATH"]
 	if parsed, err := strconv.Atoi(values["HFL_BACKUP_SNAPSHOT_CONCURRENCY"]); err == nil && parsed > 0 {
 		o.BackupSnapshotConcurrency = parsed
 	}
-	o.Role = values["HFL_NODE_ROLE"]
 	return o
 }

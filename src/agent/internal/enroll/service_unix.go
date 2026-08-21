@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"hyperfilelens/agent/internal/platform/install"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 // StartInstalledService enables and starts the platform service after enrollment.
@@ -45,14 +46,25 @@ func startSystemd(ctx context.Context) error {
 		{"enable", "hyperfilelens-agent.service"},
 		{"start", "hyperfilelens-agent.service"},
 	} {
+		if installIsUserLevel() {
+			args = append([]string{"--user"}, args...)
+		}
 		cmd := exec.CommandContext(ctx, "systemctl", args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("systemctl %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
 	}
-	active, _ := exec.CommandContext(ctx, "systemctl", "is-active", "hyperfilelens-agent.service").Output()
+	activeArgs := []string{"is-active", "hyperfilelens-agent.service"}
+	if installIsUserLevel() {
+		activeArgs = append([]string{"--user"}, activeArgs...)
+	}
+	active, _ := exec.CommandContext(ctx, "systemctl", activeArgs...).Output()
 	if strings.TrimSpace(string(active)) != "active" {
 		return fmt.Errorf("service not active after start")
 	}
 	return nil
+}
+
+func installIsUserLevel() bool {
+	return vfs.UserInstallation()
 }
