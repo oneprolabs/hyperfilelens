@@ -10,8 +10,22 @@ func TestSpeedTrackerObserveRequiresGap(t *testing.T) {
 		t.Fatalf("expected no speed on first sample, got %d %q", speed, source)
 	}
 	speed, source := tracker.Observe(3_000_000, now.Add(3*time.Second))
-	if speed <= 0 || source != "ema" {
-		t.Fatalf("expected ema speed after gap, got %d %q", speed, source)
+	if speed <= 0 || source != speedWindowSource {
+		t.Fatalf("expected window speed after gap, got %d %q", speed, source)
+	}
+}
+
+func TestSpeedTrackerExpiresPlateauToKnownZero(t *testing.T) {
+	tracker := SpeedTracker{}
+	now := time.Now()
+	if speed, source := tracker.Observe(0, now); speed != 0 || source != "" {
+		t.Fatalf("expected first sample to be unavailable, got %d %q", speed, source)
+	}
+	if speed, source := tracker.Observe(4_000_000, now.Add(2*time.Second)); speed != 2_000_000 || source != speedWindowSource {
+		t.Fatalf("expected measured upload speed, got %d %q", speed, source)
+	}
+	if speed, source := tracker.Observe(4_000_000, now.Add(7*time.Second)); speed != 0 || source != speedWindowSource {
+		t.Fatalf("expected fresh known zero after plateau, got %d %q", speed, source)
 	}
 }
 
@@ -37,6 +51,7 @@ func TestTransferBytesRejectsBadEstimatedTotal(t *testing.T) {
 	done, total, known := transferBytes(ProgressSnapshot{
 		Phase:          "uploading",
 		UploadedBytes:  6_400_000_000,
+		HashedBytes:    6_400_000_000,
 		EstimatedBytes: 3,
 	})
 	if known || total > 0 {

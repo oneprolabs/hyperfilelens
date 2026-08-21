@@ -10,7 +10,9 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
     if not lanes:
         return {
             "percent": None,
+            "progress_schema_version": 1,
             "bytes_done": 0,
+            "processed_bytes": 0,
             "bytes_total": None,
             "bytes_total_known": False,
             "bytes_total_reference": False,
@@ -23,6 +25,7 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
             "path_index": None,
             "path_total": None,
             "speed_bps": None,
+            "processing_speed_bps": None,
             "hash_speed_bps": None,
             "upload_speed_bps": None,
             "eta_seconds": None,
@@ -43,11 +46,12 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
     total_count = 0
     path_index: int | None = None
     path_total: int | None = None
-    hash_speeds: list[int] = []
+    processing_speeds: list[int] = []
     upload_speeds: list[int] = []
     eta_candidates: list[tuple[dict[str, Any], int]] = []
     lanes_done = 0
     lanes_total = len(lanes)
+    schema_version = 1
 
     for lane in lanes:
         status = str(lane.get("status") or "").lower()
@@ -56,6 +60,7 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         normalized = lane.get("progress") or {}
         if not isinstance(normalized, dict):
             normalized = {}
+        schema_version = max(schema_version, int(normalized.get("progress_schema_version") or 1))
         done = int(normalized.get("bytes_done") or 0)
         total = normalized.get("bytes_total")
         total_known_lane = bool(normalized.get("bytes_total_known"))
@@ -67,17 +72,15 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         lane_processed = int(normalized.get("processed_count") or 0)
         lane_total_count = int(normalized.get("total_count") or 0)
         if status in _ACTIVE_STATUSES and normalized.get("is_transfer"):
-            if lane_processed >= processed_count:
-                processed_count = lane_processed
-            if lane_total_count >= total_count:
-                total_count = lane_total_count
-        lane_path_index = normalized.get("path_index")
-        lane_path_total = normalized.get("path_total")
-        if status in _ACTIVE_STATUSES and normalized.get("is_transfer"):
+            processed_count = max(processed_count, lane_processed)
+            total_count = max(total_count, lane_total_count)
+            lane_path_index = normalized.get("path_index")
+            lane_path_total = normalized.get("path_total")
             if lane_path_index is not None:
                 path_index = int(lane_path_index)
             if lane_path_total is not None:
                 path_total = int(lane_path_total)
+
         if total_known_lane and total is not None:
             bytes_total += int(total)
             if normalized.get("bytes_total_reference"):
@@ -87,19 +90,21 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
 
         if status in _ACTIVE_STATUSES and normalized.get("is_transfer"):
             phase = str(normalized.get("kopia_phase") or "").lower()
-            lane_hash = normalized.get("hash_speed_bps")
+            lane_processing = normalized.get("processing_speed_bps")
+            if lane_processing is None:
+                lane_processing = normalized.get("hash_speed_bps")
             lane_upload = normalized.get("upload_speed_bps")
             lane_speed = normalized.get("speed_bps")
-            if lane_hash:
-                hash_speeds.append(int(lane_hash))
-            elif lane_speed and phase == "hashing":
-                hash_speeds.append(int(lane_speed))
-            if lane_upload:
+            if lane_processing is not None:
+                processing_speeds.append(int(lane_processing))
+            elif lane_speed is not None and phase == "hashing":
+                processing_speeds.append(int(lane_speed))
+            if lane_upload is not None:
                 upload_speeds.append(int(lane_upload))
-            elif lane_speed and phase in {"uploading", "restoring"}:
+            elif lane_speed is not None and phase in {"uploading", "restoring"}:
                 upload_speeds.append(int(lane_speed))
             lane_eta = normalized.get("eta_seconds")
-            if lane_eta:
+            if lane_eta is not None:
                 eta_candidates.append((lane, int(lane_eta)))
 
     percent = None
@@ -138,13 +143,14 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
             "eta_seconds": eta_seconds,
         }
 
-    hash_speed_bps = max(hash_speeds) if hash_speeds else None
-    upload_speed_bps = min(upload_speeds) if upload_speeds else None
-    speed_bps = upload_speed_bps or hash_speed_bps
+    processing_speed_bps = sum(processing_speeds) if processing_speeds else None
+    upload_speed_bps = sum(upload_speeds) if upload_speeds else None
 
     return {
         "percent": percent,
+        "progress_schema_version": schema_version,
         "bytes_done": bytes_done,
+        "processed_bytes": bytes_done,
         "bytes_total": bytes_total if total_known else None,
         "bytes_total_known": total_known,
         "bytes_total_reference": reference_total and total_known,
@@ -156,8 +162,9 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         "total_count": total_count,
         "path_index": path_index,
         "path_total": path_total,
-        "speed_bps": speed_bps,
-        "hash_speed_bps": hash_speed_bps,
+        "speed_bps": upload_speed_bps,
+        "processing_speed_bps": processing_speed_bps,
+        "hash_speed_bps": processing_speed_bps,
         "upload_speed_bps": upload_speed_bps,
         "eta_seconds": eta_seconds,
         "lanes_done": lanes_done,

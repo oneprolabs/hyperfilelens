@@ -23,7 +23,8 @@ class KopiaProgressAggregatorTests(SimpleTestCase):
                         "bytes_done": 2,
                         "bytes_total": 3,
                         "bytes_total_known": True,
-                        "speed_bps": 1_000_000,
+                        "processing_speed_bps": 4_000_000,
+                        "upload_speed_bps": 1_000_000,
                         "kopia_eta_seconds": 1000,
                     },
                     status="running",
@@ -40,7 +41,8 @@ class KopiaProgressAggregatorTests(SimpleTestCase):
                         "bytes_done": 1,
                         "bytes_total": 4,
                         "bytes_total_known": True,
-                        "speed_bps": 2_000_000,
+                        "processing_speed_bps": 6_000_000,
+                        "upload_speed_bps": 2_000_000,
                         "kopia_eta_seconds": 1500,
                     },
                     status="running",
@@ -51,9 +53,58 @@ class KopiaProgressAggregatorTests(SimpleTestCase):
         self.assertAlmostEqual(aggregate["percent"], 100 * 3 / 7, places=1)
         self.assertEqual(aggregate["bytes_done"], 3)
         self.assertEqual(aggregate["bytes_total"], 7)
-        self.assertEqual(aggregate["speed_bps"], 1_000_000)
-        self.assertEqual(aggregate["upload_speed_bps"], 1_000_000)
+        self.assertEqual(aggregate["processing_speed_bps"], 10_000_000)
+        self.assertEqual(aggregate["speed_bps"], 3_000_000)
+        self.assertEqual(aggregate["upload_speed_bps"], 3_000_000)
         self.assertEqual(aggregate["eta_seconds"], 1500)
+
+    def test_schema_v2_3ec_uses_processed_bytes_for_progress(self):
+        processed = 3_478_373_863
+        estimated = 4_130_621_356
+        uploaded = 270_077_614
+        lane = normalize_lane_progress(
+            progress={
+                "progress_schema_version": 2,
+                "phase": "kopia_transfer",
+                "kopia_phase": "processing",
+                "processed_bytes": processed,
+                "uploaded_bytes": uploaded,
+                "estimated_bytes": estimated,
+                "bytes_total": estimated,
+                "bytes_total_known": True,
+                "processing_speed_bps": 200_000_000,
+                "upload_speed_bps": 20_000_000,
+                "kopia_eta_seconds": 4,
+            },
+            status="running",
+        )
+
+        self.assertEqual(lane["bytes_done"], processed)
+        self.assertEqual(lane["processed_bytes"], processed)
+        self.assertEqual(lane["uploaded_bytes"], uploaded)
+        self.assertAlmostEqual(lane["percent"], 84.21, places=2)
+
+    def test_schema_v2_3ed_deduplicated_snapshot_does_not_use_upload_as_progress(self):
+        processed = 3_157_346_250
+        lane = normalize_lane_progress(
+            progress={
+                "progress_schema_version": 2,
+                "phase": "kopia_transfer",
+                "kopia_phase": "processing",
+                "processed_bytes": processed,
+                "uploaded_bytes": 192,
+                "estimated_bytes": processed + 1_000_000,
+                "bytes_total": processed + 1_000_000,
+                "bytes_total_known": True,
+                "upload_speed_bps": 0,
+            },
+            status="running",
+        )
+
+        self.assertEqual(lane["bytes_done"], processed)
+        self.assertEqual(lane["uploaded_bytes"], 192)
+        self.assertGreater(lane["percent"], 99.0)
+        self.assertEqual(lane["upload_speed_bps"], 0)
 
     def test_orchestration_progress_not_counted_as_transfer(self):
         lane = normalize_lane_progress(

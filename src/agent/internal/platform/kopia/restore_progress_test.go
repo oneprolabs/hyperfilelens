@@ -37,8 +37,8 @@ func TestParseProgressLineEstimatedAndEta(t *testing.T) {
 	if snapshot.Percent < 29 || snapshot.Percent > 30 {
 		t.Fatalf("expected percent from estimated clause, got %d", snapshot.Percent)
 	}
-	if snapshot.KopiaEtaSeconds <= 0 {
-		t.Fatalf("expected eta seconds, got %d", snapshot.KopiaEtaSeconds)
+	if snapshot.KopiaEtaSeconds != 750 {
+		t.Fatalf("expected 750 eta seconds, got %d", snapshot.KopiaEtaSeconds)
 	}
 	payload := ProgressPayload(snapshot)
 	if payload["phase"] != "kopia_transfer" {

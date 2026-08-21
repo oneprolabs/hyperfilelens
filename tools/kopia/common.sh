@@ -14,7 +14,10 @@ KOPIA_BUILD_DIR="${KOPIA_ROOT}/build/kopia"
 KOPIA_SOURCE_DIR="${KOPIA_BUILD_DIR}/source"
 KOPIA_DIST_DIR="${KOPIA_BUILD_DIR}/dist"
 KOPIA_INFO_FILE="${KOPIA_BUILD_DIR}/KOPIA_INFO.json"
-KOPIA_PATCH_FILE="${KOPIA_TOOLS_DIR}/patches/0001-add-s3-url-style.patch"
+KOPIA_PATCH_FILES=(
+	"${KOPIA_TOOLS_DIR}/patches/0001-add-s3-url-style.patch"
+	"${KOPIA_TOOLS_DIR}/patches/0002-add-structured-progress.patch"
+)
 KOPIA_DEFAULT_MATRIX="linux:amd64 linux:arm64 darwin:amd64 darwin:arm64 windows:amd64"
 
 kopia_load_config() {

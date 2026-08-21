@@ -1,11 +1,14 @@
 export type KopiaProgressAggregate = {
+  progress_schema_version?: number
   percent: number | null
   bytes_done: number
+  processed_bytes?: number
   bytes_total: number | null
   bytes_total_known: boolean
   bytes_total_reference?: boolean
   bytes_total_estimated?: boolean
   speed_bps: number | null
+  processing_speed_bps?: number | null
   hash_speed_bps?: number | null
   upload_speed_bps?: number | null
   eta_seconds: number | null
@@ -19,12 +22,17 @@ export type KopiaProgressLane = {
   name?: string
   status?: string
   kopia_phase?: string
+  progress_schema_version?: number
   bytes_done?: number
+  processed_bytes?: number
   bytes_total?: number | null
   bytes_total_known?: boolean
   bytes_total_reference?: boolean
   percent?: number | null
   speed_bps?: number | null
+  processing_speed_bps?: number | null
+  hash_speed_bps?: number | null
+  upload_speed_bps?: number | null
   eta_seconds?: number | null
   progress_text?: string
   path_index?: number | null
@@ -38,7 +46,9 @@ export type TransferProgress = {
   label_args?: Record<string, string | number> | null
   label?: string
   execution_state?: string | null
+  progress_schema_version?: number
   bytes_done?: number
+  processed_bytes?: number
   bytes_total?: number | null
   bytes_total_known?: boolean
   bytes_total_reference?: boolean
@@ -55,9 +65,12 @@ export type TransferProgress = {
   switch_latched?: boolean
   kopia_total_locked?: number
   speed_bps?: number | null
+  processing_speed_bps?: number | null
   hash_speed_bps?: number | null
   upload_speed_bps?: number | null
   speed_source?: string | null
+  processing_speed_source?: string | null
+  upload_speed_source?: string | null
   display_percent?: number | null
   step3_display_percent?: number | null
   eta_seconds?: number | null
@@ -122,7 +135,7 @@ export function resolveStep3DisplayPercent(
 export function shouldShowStep3Percent(transfer?: TransferProgress | null): boolean {
   if (!transfer) return false
   const phase = String(transfer.phase || '').toLowerCase()
-  if (phase !== 'transferring') return false
+  if (!['transferring', 'finalizing', 'done'].includes(phase)) return false
   return Boolean(transfer.bytes_total_known && (transfer.bytes_total || 0) > 0)
 }
 
@@ -140,8 +153,9 @@ export function formatBytes(value: number | null | undefined): string {
 }
 
 export function formatSpeedBps(value: number | null | undefined): string | null {
-  const bps = Number(value || 0)
-  if (!Number.isFinite(bps) || bps <= 0) return null
+  if (value == null) return null
+  const bps = Number(value)
+  if (!Number.isFinite(bps) || bps < 0) return null
   return `${formatBytes(bps)}/s`
 }
 
@@ -159,9 +173,16 @@ export function transferEtaText(t: TranslateFn, value: number | null | undefined
 
 export function transferCapacityText(t: TranslateFn, transfer?: TransferProgress | null): string | null {
   if (!transfer) return null
-  const done = formatBytes(transfer.bytes_done)
+  const schemaV2 = Number(transfer.progress_schema_version || 1) >= 2
+  const processedBytes = schemaV2
+    ? Number(transfer.processed_bytes ?? transfer.bytes_done ?? 0)
+    : Number(transfer.bytes_done || 0)
+  const done = formatBytes(processedBytes)
   if (transfer.bytes_total_known && transfer.bytes_total != null) {
     const total = formatBytes(transfer.bytes_total)
+    if (schemaV2) {
+      return t('protection.taskProgress.bytesProcessedCapacity', { done, total })
+    }
     if (transfer.bytes_total_reference) {
       return t('protection.taskProgress.bytesCapacityRef', { done, total })
     }
@@ -170,7 +191,10 @@ export function transferCapacityText(t: TranslateFn, transfer?: TransferProgress
     }
     return t('protection.taskProgress.bytesCapacity', { done, total })
   }
-  if ((transfer.bytes_done || 0) > 0) {
+  if (schemaV2 && processedBytes > 0) {
+    return t('protection.taskProgress.bytesProcessed', { size: done })
+  }
+  if (processedBytes > 0) {
     return t('protection.taskProgress.bytesTransferred', { size: done })
   }
   return null
@@ -214,9 +238,9 @@ export function shouldShowTransferMetrics(transfer?: TransferProgress | null): b
   if (phase === 'transferring' || phase === 'done') {
     return Boolean(
       (transfer.bytes_done || 0) > 0
-      || transfer.speed_bps
-      || transfer.hash_speed_bps
-      || transfer.upload_speed_bps
+      || transfer.speed_bps != null
+      || transfer.hash_speed_bps != null
+      || transfer.upload_speed_bps != null
       || transfer.eta_seconds
       || (transfer.bytes_total_known && transfer.bytes_total),
     )
@@ -239,7 +263,13 @@ export function transferSpeedParts(
 ): string[] {
   if (!transfer) return []
   const uploadSpeed = formatSpeedBps(transfer.upload_speed_bps)
-  if (uploadSpeed) return [uploadSpeed]
+  if (uploadSpeed) {
+    const isRestore = String(transfer.label_key || '').includes('taskProgress.restore.')
+    return isRestore
+      ? [uploadSpeed]
+      : [t('protection.taskProgress.uploadSpeed', { speed: uploadSpeed })]
+  }
+  if (Number(transfer.progress_schema_version || 1) >= 2) return []
   const hashSpeed = formatSpeedBps(transfer.hash_speed_bps)
   if (hashSpeed) return [t('protection.taskProgress.hashSpeed', { speed: hashSpeed })]
   const unclassifiedSpeed = options.allowUnclassifiedSpeed
@@ -259,7 +289,10 @@ export function transferMetricParts(
   const capacity = transferCapacityText(t, transfer)
   if (capacity) parts.push(capacity)
   parts.push(...transferSpeedParts(t, transfer, options))
-  const eta = transferEtaText(t, transfer.eta_seconds)
+  const phase = String(transfer.phase || '').toLowerCase()
+  const eta = phase === 'finalizing' || !transfer.bytes_total_known
+    ? null
+    : transferEtaText(t, transfer.eta_seconds)
   if (eta) parts.push(eta)
   return parts
 }

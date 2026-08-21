@@ -451,10 +451,12 @@
     },
     "taskProgress": {
       "bytesTransferred": "已传输 {size}",
+      "bytesProcessed": "已处理：{size}",
       "etaSeconds": "{n} 秒",
       "etaMinutes": "{n} 分钟",
       "etaHoursMinutes": "{h} 小时 {m} 分钟",
       "hashSpeed": "扫描速度：{speed}",
+      "uploadSpeed": "上传速度：{speed}",
       "transfer": {
         "hashedOnly": "正在备份",
         "uploadedAndHashed": "正在备份"
@@ -493,6 +495,7 @@
         "restore": "正在停止恢复…"
       },
       "bytesCapacity": "{done} / {total}",
+      "bytesProcessedCapacity": "已处理：{done} / {total}",
       "bytesCapacityEst": "增量转账：{done} / est. {total}",
       "bytesCapacityRef": "传输：{done} / 源数据：{total}",
       "etaHours": "{n} 剩余时间"

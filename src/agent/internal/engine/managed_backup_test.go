@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/platform/kopia"
 	"hyperfilelens/agent/internal/platform/process"
 	"hyperfilelens/agent/internal/platform/vfs"
 	nassvc "hyperfilelens/agent/internal/service/nas"
@@ -974,6 +975,9 @@ func TestManagedBackupSnapshotArgsAvoidUnsupportedProgressIntervalFlag(t *testin
 	if !slices.Contains(args, "--progress") {
 		t.Fatalf("expected snapshot args to include --progress: %#v", args)
 	}
+	if !slices.Contains(args, "--progress-format=hfl-json") {
+		t.Fatalf("expected snapshot args to request structured progress: %#v", args)
+	}
 	if !slices.Contains(args, "--json") {
 		t.Fatalf("expected snapshot args to include --json: %#v", args)
 	}
@@ -1042,6 +1046,51 @@ func TestParseManagedSnapshotStorageStatsLinePreservesZeroAndRejectsIncompleteRo
 	incompleteLine := `{"id":"snapshot-incomplete","rootEntry":{"summ":{"size":42,"files":2,"dirs":1}},"storageStats":{"newData":{"originalContentBytes":21}}}`
 	if _, ok := parseManagedSnapshotStorageStatsLine(incompleteLine, "snapshot-incomplete"); ok {
 		t.Fatal("expected an incomplete storage statistics row to be rejected")
+	}
+}
+
+func TestManagedBackupLegacySnapshotArgsRemoveStructuredProgress(t *testing.T) {
+	args := managedBackupLegacySnapshotArgs("/tmp/repo.config", "/tmp/source")
+	if slices.Contains(args, "--progress-format=hfl-json") {
+		t.Fatalf("legacy args must omit structured progress: %#v", args)
+	}
+	if !slices.Contains(args, "--progress") || !slices.Contains(args, "--json") {
+		t.Fatalf("legacy args must preserve progress and final JSON: %#v", args)
+	}
+}
+
+func TestStructuredProgressUnsupportedRequiresMatchingUnknownFlag(t *testing.T) {
+	if !managedSnapshotStructuredProgressUnsupported(process.Result{Stderr: "unknown long flag '--progress-format'"}) {
+		t.Fatal("expected progress-format unknown flag to enable legacy fallback")
+	}
+	if managedSnapshotStructuredProgressUnsupported(process.Result{Stderr: "repository unavailable"}) {
+		t.Fatal("unrelated failures must not enable legacy fallback")
+	}
+}
+
+func TestKopiaCompletionPayloadPreservesLogicalCounters(t *testing.T) {
+	reporter := &kopiaProgressReporter{
+		hasSnapshot: true,
+		lastSnapshot: kopia.ProgressSnapshot{
+			SchemaVersion:  2,
+			Phase:          "done",
+			PercentKnown:   true,
+			PercentValue:   100,
+			ProcessedBytes: 4_130_621_386,
+			UploadedBytes:  270_077_614,
+			EstimatedBytes: 4_130_621_356,
+			EstimatedKnown: true,
+		},
+	}
+	payload := reporter.completionPayload("snapshot-3ec")
+	if payload["bytes_done"] != int64(4_130_621_386) || payload["uploaded_bytes"] != int64(270_077_614) {
+		t.Fatalf("completion reset byte domains: %#v", payload)
+	}
+	if payload["bytes_done"] == int64(1) || payload["bytes_total"] == int64(1) {
+		t.Fatalf("completion must not use synthetic 1/1 counters: %#v", payload)
+	}
+	if payload["upload_speed_bps"] != int64(0) || payload["upload_speed_source"] != "completed" {
+		t.Fatalf("completion must expire upload speed: %#v", payload)
 	}
 }
 

@@ -2,7 +2,9 @@
 export const enProtectionPages = {
   taskProgress: {
     bytesTransferred: '{size} transferred',
+    bytesProcessed: 'Processed: {size}',
     bytesCapacity: '{done} / {total}',
+    bytesProcessedCapacity: 'Processed: {done} / {total}',
     bytesCapacityEst: 'Incremental transfer: {done} / est. {total}',
     bytesCapacityRef: 'Transferred: {done} / source data: {total}',
     etaSeconds: '{n}s left',
@@ -10,6 +12,7 @@ export const enProtectionPages = {
     etaHours: '{n}h left',
     etaHoursMinutes: '{h}h {m}m left',
     hashSpeed: 'Scanning: {speed}',
+    uploadSpeed: 'Upload: {speed}',
     transfer: {
       hashedOnly: 'Backing up',
       uploadedAndHashed: 'Backing up',

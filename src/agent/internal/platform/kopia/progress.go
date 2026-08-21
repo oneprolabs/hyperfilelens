@@ -1,6 +1,7 @@
 package kopia
 
 import (
+	"encoding/json"
 	"math"
 	"regexp"
 	"strconv"
@@ -17,14 +18,19 @@ var (
 	hashingPattern         = regexp.MustCompile(`(?i)(\d+)\s+hashing`)
 	percentPattern         = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*%`)
 	estimatedPattern       = regexp.MustCompile(`(?i)estimated\s+([\d.]+\s*(?:[KMGT]i?B))\s*(?:\((\d+(?:\.\d+)?)\s*%\))?`)
-	etaLeftPattern         = regexp.MustCompile(`(?i)(?:^|\s)(\d+(?:\.\d+)?[hms])+\s+left`)
-	etaSecondsPattern      = regexp.MustCompile(`(?i)(\d+)s\s+left`)
+	etaLeftPattern         = regexp.MustCompile(`(?i)(?:^|\s)((?:\d+(?:\.\d+)?[hms])+)\s+left`)
 )
 
 // ProgressSnapshot captures parsed Kopia snapshot progress counters.
 type ProgressSnapshot struct {
+	SchemaVersion    int
+	Sequence         int64
+	SampledAt        string
 	Phase            string
 	Percent          int
+	PercentValue     float64
+	PercentKnown     bool
+	ProcessedBytes   int64
 	HashingCount     int64
 	HashedCount      int64
 	HashedBytes      int64
@@ -33,8 +39,10 @@ type ProgressSnapshot struct {
 	UploadedCount    int64
 	UploadedBytes    int64
 	EstimatedBytes   int64
+	EstimatedKnown   bool
 	SpeedBytesPerSec int64
 	KopiaEtaSeconds  int64
+	KopiaEtaKnown    bool
 	Line             string
 }
 
@@ -49,6 +57,10 @@ func NormalizeProgressLine(raw string) string {
 
 // ParseProgressLine extracts progress counters from one Kopia stderr/stdout line.
 func ParseProgressLine(raw string) (ProgressSnapshot, bool) {
+	if snapshot, ok := parseStructuredProgressLine(raw); ok {
+		return snapshot, true
+	}
+
 	line := NormalizeProgressLine(raw)
 	if line == "" {
 		return ProgressSnapshot{}, false
@@ -58,6 +70,8 @@ func ParseProgressLine(raw string) (ProgressSnapshot, bool) {
 	if match := percentPattern.FindStringSubmatch(line); len(match) == 2 {
 		if value, err := strconv.ParseFloat(match[1], 64); err == nil {
 			snapshot.Percent = clampPercent(int(math.Round(value)))
+			snapshot.PercentValue = value
+			snapshot.PercentKnown = true
 		}
 	}
 	if match := hashingPattern.FindStringSubmatch(line); len(match) == 2 {
@@ -85,23 +99,23 @@ func ParseProgressLine(raw string) (ProgressSnapshot, bool) {
 		estimatedRaw := strings.TrimSpace(match[1])
 		if humanSizeHasUnit(estimatedRaw) {
 			snapshot.EstimatedBytes = parseHumanSize(estimatedRaw)
+			snapshot.EstimatedKnown = true
 		}
 		if len(match) >= 3 && match[2] != "" {
 			if value, err := strconv.ParseFloat(match[2], 64); err == nil {
 				snapshot.Percent = clampPercent(int(math.Round(value)))
+				snapshot.PercentValue = value
+				snapshot.PercentKnown = true
 			}
 		}
 	}
 	if speedMatch := restoreSpeedPattern.FindStringSubmatch(line); len(speedMatch) == 3 {
 		snapshot.SpeedBytesPerSec = speedFromRate(speedMatch[1], speedMatch[2])
 	}
-	if snapshot.KopiaEtaSeconds == 0 {
-		if match := etaSecondsPattern.FindStringSubmatch(line); len(match) == 2 {
-			if value, err := strconv.ParseInt(match[1], 10, 64); err == nil && value >= 0 {
-				snapshot.KopiaEtaSeconds = value
-			}
-		} else if match := etaLeftPattern.FindStringSubmatch(line); len(match) >= 2 {
-			snapshot.KopiaEtaSeconds = parseDurationToken(strings.TrimSpace(match[1]))
+	if match := etaLeftPattern.FindStringSubmatch(line); len(match) >= 2 {
+		if value := parseDurationToken(strings.TrimSpace(match[1])); value >= 0 {
+			snapshot.KopiaEtaSeconds = value
+			snapshot.KopiaEtaKnown = true
 		}
 	}
 
@@ -123,6 +137,10 @@ func ParseProgressLine(raw string) (ProgressSnapshot, bool) {
 
 	if snapshot.Percent == 0 {
 		snapshot.Percent = estimatePercent(snapshot)
+		if snapshot.Percent > 0 {
+			snapshot.PercentValue = float64(snapshot.Percent)
+			snapshot.PercentKnown = true
+		}
 	}
 	if snapshot.Percent <= 0 &&
 		snapshot.HashingCount == 0 &&
@@ -140,6 +158,68 @@ func ParseProgressLine(raw string) (ProgressSnapshot, bool) {
 		snapshot.Phase = "hashing"
 	default:
 		snapshot.Phase = "running"
+	}
+	snapshot.SchemaVersion = 1
+	snapshot.ProcessedBytes = snapshot.CachedBytes + snapshot.HashedBytes
+	return snapshot, true
+}
+
+func parseStructuredProgressLine(raw string) (ProgressSnapshot, bool) {
+	var event struct {
+		Type             string   `json:"type"`
+		SchemaVersion    int      `json:"schema_version"`
+		Sequence         int64    `json:"sequence"`
+		SampledAt        string   `json:"sampled_at"`
+		Phase            string   `json:"phase"`
+		ProcessedBytes   int64    `json:"processed_bytes"`
+		EstimatedBytes   *int64   `json:"estimated_bytes"`
+		UploadedBytes    int64    `json:"uploaded_bytes"`
+		PercentComplete  *float64 `json:"percent_complete"`
+		RemainingSeconds *int64   `json:"remaining_seconds"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &event); err != nil {
+		return ProgressSnapshot{}, false
+	}
+	if event.Type != "hfl_snapshot_progress" || event.SchemaVersion != 2 || event.Sequence <= 0 ||
+		event.ProcessedBytes < 0 || event.UploadedBytes < 0 {
+		return ProgressSnapshot{}, false
+	}
+	switch event.Phase {
+	case "estimating", "processing", "finalizing", "done":
+	default:
+		return ProgressSnapshot{}, false
+	}
+
+	snapshot := ProgressSnapshot{
+		SchemaVersion:  event.SchemaVersion,
+		Sequence:       event.Sequence,
+		SampledAt:      event.SampledAt,
+		Phase:          event.Phase,
+		ProcessedBytes: event.ProcessedBytes,
+		UploadedBytes:  event.UploadedBytes,
+	}
+	if event.EstimatedBytes != nil {
+		if *event.EstimatedBytes < 0 {
+			return ProgressSnapshot{}, false
+		}
+		snapshot.EstimatedBytes = *event.EstimatedBytes
+		snapshot.EstimatedKnown = true
+	}
+	if event.PercentComplete != nil {
+		if math.IsNaN(*event.PercentComplete) || math.IsInf(*event.PercentComplete, 0) ||
+			*event.PercentComplete < 0 || *event.PercentComplete > 100 {
+			return ProgressSnapshot{}, false
+		}
+		snapshot.PercentValue = *event.PercentComplete
+		snapshot.Percent = int(math.Round(*event.PercentComplete))
+		snapshot.PercentKnown = true
+	}
+	if event.RemainingSeconds != nil {
+		if *event.RemainingSeconds < 0 {
+			return ProgressSnapshot{}, false
+		}
+		snapshot.KopiaEtaSeconds = *event.RemainingSeconds
+		snapshot.KopiaEtaKnown = true
 	}
 	return snapshot, true
 }
@@ -163,42 +243,58 @@ func ProgressPayloadWithDualSpeed(
 	uploadSpeedSource string,
 ) map[string]any {
 	bytesDone, bytesTotal, totalKnown := transferBytes(snapshot)
+	schemaVersion := snapshot.SchemaVersion
+	if schemaVersion <= 0 {
+		schemaVersion = 1
+	}
 	payload := map[string]any{
-		"phase":             "kopia_transfer",
-		"kopia_phase":       snapshot.Phase,
-		"kopia_percent":     snapshot.Percent,
-		"percent":           snapshot.Percent,
-		"hashing_count":     snapshot.HashingCount,
-		"hashed_count":      snapshot.HashedCount,
-		"hashed_bytes":      snapshot.HashedBytes,
-		"cached_count":      snapshot.CachedCount,
-		"cached_bytes":      snapshot.CachedBytes,
-		"uploaded_count":    snapshot.UploadedCount,
-		"uploaded_bytes":    snapshot.UploadedBytes,
-		"estimated_bytes":   snapshot.EstimatedBytes,
-		"bytes_done":        bytesDone,
-		"bytes_total":       bytesTotal,
-		"bytes_total_known": totalKnown,
+		"progress_schema_version": schemaVersion,
+		"phase":                   "kopia_transfer",
+		"kopia_phase":             snapshot.Phase,
+		"processed_bytes":         bytesDone,
+		"hashing_count":           snapshot.HashingCount,
+		"hashed_count":            snapshot.HashedCount,
+		"hashed_bytes":            snapshot.HashedBytes,
+		"cached_count":            snapshot.CachedCount,
+		"cached_bytes":            snapshot.CachedBytes,
+		"uploaded_count":          snapshot.UploadedCount,
+		"uploaded_bytes":          snapshot.UploadedBytes,
+		"estimated_bytes":         snapshot.EstimatedBytes,
+		"bytes_done":              bytesDone,
+		"bytes_total":             bytesTotal,
+		"bytes_total_known":       totalKnown,
 	}
-	if hashSpeedBps > 0 {
+	if snapshot.PercentKnown {
+		payload["kopia_percent"] = snapshot.PercentValue
+		payload["percent"] = snapshot.PercentValue
+	} else if schemaVersion == 1 {
+		payload["kopia_percent"] = snapshot.Percent
+		payload["percent"] = snapshot.Percent
+	}
+	if snapshot.SampledAt != "" {
+		payload["sampled_at"] = snapshot.SampledAt
+	}
+	if snapshot.Sequence > 0 {
+		payload["progress_sequence"] = snapshot.Sequence
+	}
+	if hashSpeedSource != "" {
+		payload["processing_speed_bps"] = hashSpeedBps
+		payload["processing_speed_source"] = hashSpeedSource
+		// Keep the v1 field while mixed Backend versions are supported.
 		payload["hash_speed_bps"] = hashSpeedBps
-		if hashSpeedSource != "" {
-			payload["hash_speed_source"] = hashSpeedSource
-		}
+		payload["hash_speed_source"] = hashSpeedSource
 	}
-	if uploadSpeedBps > 0 {
+	if uploadSpeedSource != "" {
 		payload["upload_speed_bps"] = uploadSpeedBps
-		if uploadSpeedSource != "" {
-			payload["upload_speed_source"] = uploadSpeedSource
-		}
+		payload["upload_speed_source"] = uploadSpeedSource
 	}
 	legacySpeed := uploadSpeedBps
 	legacySource := uploadSpeedSource
-	if legacySpeed <= 0 && hashSpeedBps > 0 {
+	if legacySpeed <= 0 && schemaVersion == 1 && hashSpeedBps > 0 {
 		legacySpeed = hashSpeedBps
 		legacySource = hashSpeedSource
 	}
-	if legacySpeed > 0 {
+	if legacySource != "" {
 		payload["speed_bps"] = legacySpeed
 		if legacySource != "" {
 			payload["speed_source"] = legacySource
@@ -207,7 +303,7 @@ func ProgressPayloadWithDualSpeed(
 		payload["speed_bps"] = snapshot.SpeedBytesPerSec
 		payload["speed_source"] = "kopia"
 	}
-	if snapshot.KopiaEtaSeconds > 0 {
+	if snapshot.KopiaEtaKnown || snapshot.KopiaEtaSeconds > 0 {
 		payload["kopia_eta_seconds"] = snapshot.KopiaEtaSeconds
 	}
 	if snapshot.Line != "" {
@@ -217,34 +313,17 @@ func ProgressPayloadWithDualSpeed(
 }
 
 func transferBytes(snapshot ProgressSnapshot) (done int64, total int64, totalKnown bool) {
-	switch snapshot.Phase {
-	case "uploading":
-		done = snapshot.UploadedBytes
-		if snapshot.EstimatedBytes > 0 && credibleBytesTotal(done, snapshot.EstimatedBytes) {
-			return done, snapshot.EstimatedBytes, true
-		}
-		// Hashed bytes are only a running batch size; once upload catches up, more data may still be processed.
-		if snapshot.HashedBytes > done && credibleBytesTotal(done, snapshot.HashedBytes) {
-			return done, snapshot.HashedBytes, true
-		}
-		return done, 0, false
-	case "hashing":
-		done = snapshot.HashedBytes
-		if snapshot.EstimatedBytes > 0 && credibleBytesTotal(done, snapshot.EstimatedBytes) {
-			return done, snapshot.EstimatedBytes, true
-		}
-		return done, 0, false
-	default:
-		if snapshot.UploadedBytes > 0 {
-			done = snapshot.UploadedBytes
-		} else {
-			done = snapshot.HashedBytes
-		}
-		if snapshot.EstimatedBytes > 0 && credibleBytesTotal(done, snapshot.EstimatedBytes) {
-			return done, snapshot.EstimatedBytes, true
-		}
-		return done, 0, false
+	done = snapshot.ProcessedBytes
+	if done == 0 {
+		done = snapshot.CachedBytes + snapshot.HashedBytes
 	}
+	if snapshot.EstimatedKnown {
+		return done, snapshot.EstimatedBytes, true
+	}
+	if snapshot.EstimatedBytes > 0 && credibleBytesTotal(done, snapshot.EstimatedBytes) {
+		return done, snapshot.EstimatedBytes, true
+	}
+	return done, 0, false
 }
 
 func parseDurationToken(raw string) int64 {

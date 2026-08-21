@@ -142,5 +142,16 @@ grep -F 'URLStyleVirtualHosted = "virtual-hosted"' \
 	"${ROOT}/tools/kopia/patches/0001-add-s3-url-style.patch" >/dev/null
 grep -F 'BucketLookup: bucketLookup' \
 	"${ROOT}/tools/kopia/patches/0001-add-s3-url-style.patch" >/dev/null
+grep -F 'progressFormatHFLJSON = "hfl-json"' \
+	"${ROOT}/tools/kopia/patches/0002-add-structured-progress.patch" >/dev/null
+grep -F 'ProcessedBytes   int64' \
+	"${ROOT}/tools/kopia/patches/0002-add-structured-progress.patch" >/dev/null
+grep -F 'c.svc.getProgress().Complete()' \
+	"${ROOT}/tools/kopia/patches/0002-add-structured-progress.patch" >/dev/null
+
+[[ "${#KOPIA_PATCH_FILES[@]}" -eq 2 ]]
+patch_set_digest="$(patch_set_sha256)"
+[[ "${patch_set_digest}" =~ ^[0-9a-f]{64}$ ]]
+[[ "$(patch_names)" == '0001-add-s3-url-style.patch 0002-add-structured-progress.patch ' ]]
 
 printf 'Kopia build configuration checks passed.\n'
