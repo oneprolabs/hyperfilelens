@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import json
 from datetime import timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
@@ -486,12 +486,54 @@ class ProviderBucketOwnershipTests(SimpleTestCase):
             region=region,
             credentials=ProviderCredentials("access", "secret"),
         )
-        with patch("apps.storage.provider_catalog.cloud_validation.boto3.client") as client:
-            cloud_validation._s3_client(context)
+        built_client = Mock()
+        with (
+            patch(
+                "apps.storage.provider_catalog.cloud_validation.boto3.client",
+                return_value=built_client,
+            ) as client_factory,
+            patch(
+                "apps.storage.provider_catalog.cloud_validation."
+                "register_s3_delete_objects_compatibility"
+            ) as register_compatibility,
+        ):
+            result = cloud_validation._s3_client(context)
+
+        self.assertIs(result, built_client)
+        self.assertEqual(
+            client_factory.call_args.kwargs["endpoint_url"],
+            f"https://{region['external_endpoint']}",
+        )
+        register_compatibility.assert_called_once_with(built_client)
+
+    def test_validation_cleanup_falls_back_to_exact_object_deletion(self):
+        client = Mock()
+        client.delete_objects.side_effect = cloud_validation.ClientError(
+            {
+                "Error": {
+                    "Code": "MissingArgument",
+                    "Message": "Missing Some Required Arguments.",
+                }
+            },
+            "DeleteObjects",
+        )
+        entries = [
+            {"Key": "validation/object"},
+            {"Key": "validation/versioned", "VersionId": "version-1"},
+        ]
+
+        cloud_validation._delete_entries(client, "validation-bucket", entries)
 
         self.assertEqual(
-            client.call_args.kwargs["endpoint_url"],
-            f"https://{region['external_endpoint']}",
+            client.delete_object.call_args_list,
+            [
+                call(Bucket="validation-bucket", Key="validation/object"),
+                call(
+                    Bucket="validation-bucket",
+                    Key="validation/versioned",
+                    VersionId="version-1",
+                ),
+            ],
         )
 
     def test_bucket_is_not_deleted_when_cryptographic_proof_does_not_match(self):

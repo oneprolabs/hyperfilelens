@@ -13,6 +13,10 @@ from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
 from botocore.regions import EndpointResolverBuiltins
 
+from apps.storage.s3_compat import (
+    is_s3_batch_delete_compatibility_error,
+    register_s3_delete_objects_compatibility,
+)
 from apps.storage.services.internal.s3_url_style import boto3_s3_addressing_style
 
 
@@ -1148,7 +1152,7 @@ def _delete_s3_entries(*, client, bucket: str, entries: list[dict]) -> None:
             Delete={"Objects": entries, "Quiet": True},
         )
     except ClientError as exc:
-        if not _should_fallback_from_batch_delete(exc):
+        if not is_s3_batch_delete_compatibility_error(exc):
             raise
         for entry in entries:
             client.delete_object(Bucket=bucket, **entry)
@@ -1300,13 +1304,6 @@ def _s3_list_object_version_pages(*, client, bucket: str, prefix: str):
             )
             return
         raise
-
-
-def _should_fallback_from_batch_delete(exc: ClientError) -> bool:
-    return (
-        _is_unsupported_s3_header_error(exc)
-        or _client_error_code(exc) == "MissingContentMD5"
-    )
 
 
 def _verify_s3_prefix_empty(*, client, bucket: str, prefix: str) -> None:
@@ -1697,7 +1694,7 @@ def _client(
         request_checksum_calculation="when_required",
         response_checksum_validation="when_required",
     )
-    return boto3.client(
+    client = boto3.client(
         "s3",
         endpoint_url=endpoint_url,
         region_name=normalized_region,
@@ -1707,6 +1704,12 @@ def _client(
         verify=endpoint_url.startswith("https://"),
         config=config,
     )
+    # DeleteObjects requires Content-MD5 across the common S3 compatibility
+    # baseline. Newer Botocore versions send CRC32 instead, which AWS accepts
+    # but Alibaba OSS reports as MissingArgument. Add MD5 before SigV4 signing
+    # while retaining Botocore's checksum for providers that support it.
+    register_s3_delete_objects_compatibility(client)
+    return client
 
 
 def _create_bucket_configuration(region: str | None) -> dict[str, str] | None:

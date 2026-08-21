@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 const (
@@ -29,6 +32,7 @@ type s3CleanupClient interface {
 	AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput, ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error)
 	ListObjectVersions(context.Context, *s3.ListObjectVersionsInput, ...func(*s3.Options)) (*s3.ListObjectVersionsOutput, error)
 	DeleteObjects(context.Context, *s3.DeleteObjectsInput, ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
+	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 	DeleteBucket(context.Context, *s3.DeleteBucketInput, ...func(*s3.Options)) (*s3.DeleteBucketOutput, error)
 }
 
@@ -727,12 +731,71 @@ func deleteS3ObjectIdentifiers(ctx context.Context, client s3CleanupClient, buck
 		output, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 			Bucket: aws.String(bucket),
 			Delete: &types.Delete{Objects: entries[start:end], Quiet: aws.Bool(true)},
-		})
+		}, addS3DeleteObjectsContentMD5)
 		if err != nil {
+			if isS3BatchDeleteCompatibilityError(err) {
+				if fallbackErr := deleteS3ObjectIdentifiersIndividually(
+					ctx,
+					client,
+					bucket,
+					entries[start:end],
+				); fallbackErr != nil {
+					return fallbackErr
+				}
+				continue
+			}
 			return fmt.Errorf("unable to delete S3 objects: %w", err)
 		}
 		if len(output.Errors) > 0 {
 			return fmt.Errorf("unable to delete S3 objects: %s", aws.ToString(output.Errors[0].Code))
+		}
+	}
+	return nil
+}
+
+func addS3DeleteObjectsContentMD5(options *s3.Options) {
+	// AWS accepts its newer flexible checksum, while Alibaba OSS requires the
+	// original S3 Content-MD5 header for multi-object deletion. Send both so
+	// the same request remains portable across S3-compatible providers.
+	options.APIOptions = append(
+		options.APIOptions,
+		smithyhttp.AddContentChecksumMiddleware,
+	)
+}
+
+func isS3BatchDeleteCompatibilityError(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch strings.TrimSpace(apiErr.ErrorCode()) {
+	case "MissingArgument", "MissingContentMD5", "NotImplemented", "UnsupportedArgument", "UnsupportedOperation":
+		return true
+	default:
+		return false
+	}
+}
+
+func deleteS3ObjectIdentifiersIndividually(
+	ctx context.Context,
+	client s3CleanupClient,
+	bucket string,
+	entries []types.ObjectIdentifier,
+) error {
+	for _, entry := range entries {
+		key := strings.TrimSpace(aws.ToString(entry.Key))
+		if key == "" {
+			return fmt.Errorf("unable to delete S3 object: object key is missing")
+		}
+		input := &s3.DeleteObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		}
+		if versionID := strings.TrimSpace(aws.ToString(entry.VersionId)); versionID != "" {
+			input.VersionId = aws.String(versionID)
+		}
+		if _, err := client.DeleteObject(ctx, input); err != nil {
+			return fmt.Errorf("unable to delete S3 object %q: %w", key, err)
 		}
 	}
 	return nil
