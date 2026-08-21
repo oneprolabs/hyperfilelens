@@ -327,6 +327,9 @@ export type LensSessionLink = {
   status: string
   lifecycle_status?: 'provisioning' | 'ready' | 'failed' | 'deleting' | 'deleted' | string
   lifecycle_error?: string
+  lifecycle_error_code?: string
+  lifecycle_error_message?: string
+  lifecycle_error_retryable?: boolean
   provision_phase?: string
   provision_detail?: string
   cleanup_intent?: 'none' | 'reset_for_retry' | 'delete_session' | string
@@ -367,6 +370,11 @@ export type LensCopilotSyncResponse = {
   active_run: LensCopilotActiveRun | null
   response_state?: LensCopilotResponseState
   run_outcomes: LensCopilotRunOutcome[]
+  lifecycle_status?: string
+  lifecycle_error?: string
+  lifecycle_error_code?: string
+  lifecycle_error_message?: string
+  lifecycle_error_retryable?: boolean
   last_assistant_message_at?: string | null
   has_unread?: boolean
 }

@@ -14,6 +14,7 @@ from apps.lens_bridge.services.deployment_ai_model import (
     DeploymentAiModelConfig,
     DeploymentAiModelConfigurationError,
     ensure_platform_ai_model,
+    repair_existing_platform_ai_model,
 )
 
 MAX_INPUT_BYTES = 16 * 1024
@@ -41,6 +42,12 @@ class Command(BaseCommand):
                 raise DeploymentAiModelConfigurationError(
                     "role must be agent or multimodal"
                 )
+            if payload.get("repair_existing") is True:
+                repaired = repair_existing_platform_ai_model(role=role)
+                self.stdout.write(
+                    f"HFL_AI_MODEL_REPAIRED={'true' if repaired else 'false'}"
+                )
+                return
             config = DeploymentAiModelConfig.from_mapping(payload)
             result = ensure_platform_ai_model(config, role=role)
         except DeploymentAiModelConfigurationError as exc:

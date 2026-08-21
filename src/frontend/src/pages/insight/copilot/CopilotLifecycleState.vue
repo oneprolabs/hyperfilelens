@@ -8,6 +8,7 @@ import {
   conversionProblemItems,
   conversionWarningsForDisplay,
 } from '../../../lib/conversionSummary'
+import { apiErrorMessageI18n } from '../../../lib/api'
 import type { LensSessionLink } from '../../../lib/lensApi'
 
 const props = defineProps<{
@@ -76,6 +77,27 @@ const showFailedConversionPanel = computed(() => Boolean(
   conversion.value
   && (countsLabel.value || problemItems.value.length || conversion.value.error || conversionWarnings.value.length),
 ))
+const genericLifecycleError = 'Something went wrong while preparing the selected data. Try again, or delete this chat and create a new one.'
+const lifecycleErrorMessage = computed(() => {
+  const message = props.session.lifecycle_error_message?.trim() || genericLifecycleError
+  const errorCode = props.session.lifecycle_error_code?.trim()
+  if (!errorCode) return message
+  return apiErrorMessageI18n(
+    {
+      status: 500,
+      message,
+      code: errorCode,
+      errorCode,
+      retryable: props.session.lifecycle_error_retryable,
+    },
+    t,
+    genericLifecycleError,
+  )
+})
+const lifecycleErrorRetryable = computed(() => (
+  !props.session.lifecycle_error_code?.trim()
+  || props.session.lifecycle_error_retryable !== false
+))
 const isRecoveryCleanup = computed(() => (
   props.session.lifecycle_status === 'failed'
   && props.session.cleanup_intent === 'reset_for_retry'
@@ -133,7 +155,7 @@ function stepState(index: number) {
     >
       <span class="copilot-lifecycle-icon is-failed"><AlertCircle :size="30" /></span>
       <h2>We Couldn't Prepare This Chat</h2>
-      <p>Something went wrong while preparing the selected data. Try again, or delete this chat and create a new one.</p>
+      <p>{{ lifecycleErrorMessage }}</p>
       <div
         v-if="showFailedConversionPanel"
         class="copilot-conversion copilot-conversion--failed"
@@ -179,6 +201,7 @@ function stepState(index: number) {
           Delete Chat
         </ElButton>
         <ElButton
+          v-if="lifecycleErrorRetryable"
           type="primary"
           @click="emit('retry')"
         >

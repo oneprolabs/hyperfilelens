@@ -609,15 +609,16 @@ class DeploymentAiModelServiceTests(TestCase):
                 "is_default": False,
             },
             {"uuid": str(other_uuid), "is_active": True, "is_default": True},
-            {"uuid": str(self.replacement_uuid), "is_default": False},
-            {"success": True},
+            {"ok": True},
         ]
 
         result = deployment_ai_model.ensure_platform_ai_model(self.config)
 
-        self.assertEqual(result.action, "recreated")
-        create_payload = request_json.call_args_list[2].kwargs["json_body"]
-        self.assertFalse(create_payload["is_default"])
+        self.assertEqual(result.action, "updated")
+        self.assertNotIn(
+            ("POST", "/api/v1/admin/llm-config/"),
+            [call.args[:2] for call in request_json.call_args_list],
+        )
         defaults = LensOrgLink.objects.get(organization=org)
         self.assertEqual(defaults.default_agent_model_ref, other_uuid)
 
@@ -871,4 +872,162 @@ class DeploymentAiModelServiceTests(TestCase):
         request_json.assert_any_call(
             "DELETE",
             f"/api/v1/admin/llm-config/{self.model_uuid}/",
+        )
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_empty_legacy_fingerprint_repairs_matching_model_in_place(
+        self,
+        request_json,
+    ):
+        org = platform_lens.get_or_create_platform_org()
+        vision_config = deployment_ai_model.DeploymentAiModelConfig(
+            provider=self.config.provider,
+            model_id=self.config.model_id,
+            display_name=self.config.display_name,
+            api_base=self.config.api_base,
+            api_key=self.config.api_key,
+            supports_vision=True,
+        )
+        link = LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=deployment_ai_model.DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY,
+            deployment_role=LensOrgModelLink.DeploymentRole.MULTIMODAL,
+            deployment_fingerprint="",
+        )
+        LensOrgLink.objects.create(
+            organization=org,
+            default_multimodal_model_ref=self.model_uuid,
+        )
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "provider": vision_config.provider,
+                "is_active": True,
+                "config": {
+                    "model": vision_config.model_id,
+                    "api_base": vision_config.api_base,
+                },
+            },
+            {},
+            {"ok": True},
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(
+            vision_config,
+            role="multimodal",
+        )
+
+        self.assertEqual(result.action, "updated")
+        self.assertTrue(result.connectivity_ok)
+        self.assertNotIn(
+            ("POST", "/api/v1/admin/llm-config/"),
+            [call.args[:2] for call in request_json.call_args_list],
+        )
+        self.assertEqual(
+            request_json.call_args_list[1].args,
+            ("PUT", f"/api/v1/admin/llm-config/{self.model_uuid}/"),
+        )
+        link.refresh_from_db()
+        self.assertFalse(link.is_deployment_history)
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_repair_existing_multimodal_model_without_deployment_credentials(
+        self,
+        request_json,
+    ):
+        org = platform_lens.get_or_create_platform_org()
+        LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=deployment_ai_model.DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY,
+            deployment_role=LensOrgModelLink.DeploymentRole.MULTIMODAL,
+        )
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "config": {"supports_vision": False},
+            },
+            {},
+        ]
+
+        self.assertTrue(
+            deployment_ai_model.repair_existing_platform_ai_model(
+                role="multimodal",
+            )
+        )
+        request_json.assert_any_call(
+            "PUT",
+            f"/api/v1/admin/llm-config/{self.model_uuid}/",
+            json_body={"config": {"supports_vision": True}},
+        )
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_repair_existing_recreates_missing_hfl_link(self, request_json):
+        org = platform_lens.get_or_create_platform_org()
+        LensOrgLink.objects.create(
+            organization=org,
+            default_multimodal_model_ref=self.model_uuid,
+        )
+        request_json.return_value = {
+            "uuid": str(self.model_uuid),
+            "display_name": "Existing vision model",
+            "config": {"supports_vision": True},
+        }
+
+        self.assertTrue(
+            deployment_ai_model.repair_existing_platform_ai_model(
+                role="multimodal",
+            )
+        )
+        link = LensOrgModelLink.objects.get(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+        )
+        self.assertEqual(
+            link.management_key,
+            deployment_ai_model.DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY,
+        )
+        self.assertEqual(link.display_name, "Existing vision model")
+        request_json.assert_called_once_with(
+            "GET",
+            f"/api/v1/admin/llm-config/{self.model_uuid}/",
+        )
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_adopts_selected_matching_model_when_hfl_link_is_missing(
+        self,
+        request_json,
+    ):
+        org = platform_lens.get_or_create_platform_org()
+        LensOrgLink.objects.create(
+            organization=org,
+            default_agent_model_ref=self.model_uuid,
+        )
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "provider": self.config.provider,
+                "is_active": True,
+                "config": {
+                    "model": self.config.model_id,
+                    "api_base": self.config.api_base,
+                },
+            },
+            {"ok": True},
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(self.config)
+
+        self.assertEqual(result.action, "updated")
+        self.assertTrue(result.connectivity_ok)
+        self.assertNotIn(
+            ("POST", "/api/v1/admin/llm-config/"),
+            [call.args[:2] for call in request_json.call_args_list],
+        )
+        self.assertTrue(
+            LensOrgModelLink.objects.filter(
+                sl_config_uuid=self.model_uuid,
+                management_key=deployment_ai_model.DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY,
+            ).exists()
         )

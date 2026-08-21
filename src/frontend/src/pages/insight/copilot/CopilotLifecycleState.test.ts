@@ -126,4 +126,41 @@ describe('CopilotLifecycleState', () => {
     expect(wrapper.text()).toContain('Temporary data is being retained')
     expect(wrapper.text()).not.toContain('Deleting Chat')
   })
+
+  it('shows a safe lifecycle error and hides retry for configuration failures', () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'failed',
+      lifecycle_error_code: 'INSIGHT.CHAT_MODEL_NOT_VISION_CAPABLE',
+      lifecycle_error_message: 'The configured AI model is not compatible with this Chat.',
+      lifecycle_error_retryable: false,
+    }))
+
+    expect(wrapper.text()).toContain('The configured AI model is not compatible with this Chat.')
+    expect(wrapper.text()).not.toContain('Try Again')
+  })
+
+  it('resolves established lifecycle error codes through the product registry', () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'failed',
+      lifecycle_error_code: 'INSIGHT.DATA_GATEWAY_UNAVAILABLE',
+      lifecycle_error_message: 'internal gateway diagnostic',
+      lifecycle_error_retryable: true,
+    }))
+
+    expect(wrapper.text()).toContain('Bring its Agent and LensNode online')
+    expect(wrapper.text()).not.toContain('internal gateway diagnostic')
+    expect(wrapper.text()).toContain('Try Again')
+  })
+
+  it('keeps retry available for legacy failures without a structured code', () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'failed',
+      lifecycle_error_code: '',
+      lifecycle_error_message: '',
+      lifecycle_error_retryable: false,
+    }))
+
+    expect(wrapper.text()).toContain('Something went wrong while preparing')
+    expect(wrapper.text()).toContain('Try Again')
+  })
 })

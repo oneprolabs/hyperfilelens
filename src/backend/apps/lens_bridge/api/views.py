@@ -78,6 +78,9 @@ from apps.lens_bridge.services.org_skills import (
     list_org_skills,
     update_org_skill,
 )
+from apps.lens_bridge.services.chat_lifecycle_errors import (
+    classify_chat_lifecycle_error,
+)
 from common.drf.org_scoped import OrgScopedMixin
 from common.drf.renderers import ServerSentEventsRenderer
 
@@ -1629,6 +1632,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
     @action(detail=True, methods=["get"], url_path="sync")
     def sync(self, request, pk=None):
         link = self._get_user_link(pk)
+        lifecycle_error = classify_chat_lifecycle_error(link.lifecycle_error)
         if (
             link.lifecycle_status != LensSessionLink.LifecycleStatus.READY
             or not link.sl_session_uuid
@@ -1642,6 +1646,15 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                     "run_outcomes": [],
                     "lifecycle_status": link.lifecycle_status,
                     "lifecycle_error": link.lifecycle_error,
+                    "lifecycle_error_code": (
+                        lifecycle_error.code if link.lifecycle_error else ""
+                    ),
+                    "lifecycle_error_message": (
+                        lifecycle_error.message if link.lifecycle_error else ""
+                    ),
+                    "lifecycle_error_retryable": (
+                        lifecycle_error.retryable if link.lifecycle_error else False
+                    ),
                 }
             )
         try:
@@ -1650,6 +1663,15 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             return _lens_error_response(exc)
         data["lifecycle_status"] = link.lifecycle_status
         data["lifecycle_error"] = link.lifecycle_error
+        data["lifecycle_error_code"] = (
+            lifecycle_error.code if link.lifecycle_error else ""
+        )
+        data["lifecycle_error_message"] = (
+            lifecycle_error.message if link.lifecycle_error else ""
+        )
+        data["lifecycle_error_retryable"] = (
+            lifecycle_error.retryable if link.lifecycle_error else False
+        )
         data["last_assistant_message_at"] = link.last_assistant_message_at
         data["has_unread"] = bool(
             link.last_assistant_message_at
