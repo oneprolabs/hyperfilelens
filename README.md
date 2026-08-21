@@ -93,6 +93,30 @@ logical PostgreSQL dumps, Redis persistence, configuration, and deployment
 metadata. It retains the latest three valid sets. A backup can also be created
 manually with `sudo ./install.sh backup`.
 
+### Community online installation
+
+For a supported Ubuntu 20.04/22.04/24.04 amd64 host with Docker Engine and
+Compose V2 already installed, install a pinned Community release with one
+command. Global users should use GitHub and Docker Hub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/vX.Y.Z/deploy/online/install.sh \
+  | sudo bash -s -- vX.Y.Z --region global --download-source github --yes
+```
+
+Users in mainland China can use the public Gitee source and Alibaba Cloud
+image mirror:
+
+```bash
+curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/vX.Y.Z/deploy/online/install.sh \
+  | sudo bash -s -- vX.Y.Z --region cn --download-source gitee --yes
+```
+
+With `--download-source auto`, the installer prefers Gitee in China and
+GitHub elsewhere, then falls back to the other public source. `--yes` enables
+non-interactive execution. The online installer is Community-only; Enterprise
+continues to use the existing Enterprise delivery workflow.
+
 ## Quick Start
 
 Start the complete hot-reload development environment from the repository

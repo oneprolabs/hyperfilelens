@@ -11,6 +11,18 @@ export PYTHONDONTWRITEBYTECODE=1
 bash -n "${online}/install.sh"
 PYTHONPYCACHEPREFIX="${tmp}/pycache" python3 -m py_compile "${online}/prepare.py"
 
+help_output="$("${online}/install.sh" --help)"
+grep -Fq -- '--download-source auto|github|gitee' <<<"${help_output}"
+grep -Fq -- '--yes' <<<"${help_output}"
+grep -Fq 'https://codeload.github.com/oneprolabs/hyperfilelens/tar.gz/refs/tags/${TAG}' \
+	"${online}/install.sh"
+grep -Fq 'https://gitee.com/oneprolabs/hyperfilelens/repository/archive/${TAG}.tar.gz' \
+	"${online}/install.sh"
+grep -Fq 'sources=(gitee github)' "${online}/install.sh"
+grep -Fq 'sources=(github gitee)' "${online}/install.sh"
+grep -Fq -- '--yes                   Non-interactive compatibility flag' \
+	"${ROOT}/deploy/installer/install.sh"
+
 grep -Fq 'name: HFL - Publish Images & Upgrade SaaS' "${workflow}"
 grep -Fq 'Publish · ${{ github.event_name == '\''push'\'' && github.ref_name || inputs.tag }} · Images · Enterprise SaaS Upgrade' "${workflow}"
 grep -Fq 'name: Community · Backend' "${workflow}"

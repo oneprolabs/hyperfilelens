@@ -5,15 +5,22 @@ set -euo pipefail
 GLOBAL_REGISTRY_PREFIX="${HFL_GLOBAL_REGISTRY_PREFIX:-docker.io/oneprolabs}"
 CN_REGISTRY_PREFIX="${HFL_CN_REGISTRY_PREFIX:-registry.cn-beijing.aliyuncs.com/oneprolabs}"
 REGION="${HFL_REGISTRY_REGION:-auto}"
+DOWNLOAD_SOURCE="${HFL_DOWNLOAD_SOURCE:-auto}"
+ASSUME_YES=0
 TAG=""
 SESSION_DIR=""
 
 usage() {
 	cat <<'USAGE'
-Usage: install.sh vX.Y.Z [--region auto|cn|global]
+Usage: install.sh vX.Y.Z [--region auto|cn|global] [--download-source auto|github|gitee] [--yes]
 
 Installs HyperFileLens Community on a new host. Running the command again with
 a newer tag performs the normal managed backup and blue/green upgrade.
+
+--region selects the preferred public image registry. --download-source selects
+the GitHub or Gitee source archive; auto uses Gitee first in China and GitHub
+first elsewhere, with the other source as a fallback. --yes enables
+non-interactive installation and upgrade.
 USAGE
 }
 
@@ -76,6 +83,15 @@ while (($#)); do
 		REGION=$2
 		shift 2
 		;;
+	--download-source)
+		[[ $# -ge 2 ]] || fail "--download-source requires auto, github, or gitee"
+		DOWNLOAD_SOURCE=$2
+		shift 2
+		;;
+	--yes)
+		ASSUME_YES=1
+		shift
+		;;
 	-h | --help)
 		usage
 		exit 0
@@ -98,6 +114,10 @@ auto) REGION="$(detect_region)" ;;
 cn | global) ;;
 *) fail "--region must be auto, cn, or global" ;;
 esac
+case "${DOWNLOAD_SOURCE}" in
+auto | github | gitee) ;;
+*) fail "--download-source must be auto, github, or gitee" ;;
+esac
 
 ensure_prerequisites
 export HFL_GLOBAL_REGISTRY_PREFIX="${GLOBAL_REGISTRY_PREFIX}"
@@ -113,15 +133,53 @@ archive="${SESSION_DIR}/source.tar.gz"
 source_dir="${SESSION_DIR}/source"
 candidate="${SESSION_DIR}/hyperfilelens-${TAG#v}-online"
 
-printf '[....] Downloading HyperFileLens %s installation contract\n' "${TAG}"
-curl --fail --show-error --location --retry 3 --retry-all-errors \
-	"https://codeload.github.com/oneprolabs/hyperfilelens/tar.gz/refs/tags/${TAG}" \
-	-o "${archive}"
-mkdir -p "${source_dir}"
-tar -xzf "${archive}" -C "${source_dir}" --strip-components=1
-[[ -x "${source_dir}/deploy/online/install.sh" \
-	&& -f "${source_dir}/deploy/online/prepare.py" ]] \
-	|| fail "${TAG} does not provide the online installation contract"
+download_source_archive() {
+	local source url
+	local -a sources=()
+	case "${DOWNLOAD_SOURCE}" in
+	auto)
+		if [[ "${REGION}" == cn ]]; then
+			sources=(gitee github)
+		else
+			sources=(github gitee)
+		fi
+		;;
+	github | gitee) sources=("${DOWNLOAD_SOURCE}") ;;
+	esac
+
+	for source in "${sources[@]}"; do
+		case "${source}" in
+		github)
+			url="https://codeload.github.com/oneprolabs/hyperfilelens/tar.gz/refs/tags/${TAG}"
+			;;
+		gitee)
+			url="https://gitee.com/oneprolabs/hyperfilelens/repository/archive/${TAG}.tar.gz"
+			;;
+		esac
+		printf '[....] Downloading %s installation contract from %s\n' "${TAG}" "${source}"
+		rm -rf -- "${source_dir}"
+		rm -f -- "${archive}"
+		if ! curl --fail --show-error --location --retry 3 --retry-all-errors \
+			--connect-timeout 15 --max-time 300 "${url}" -o "${archive}"; then
+			printf '[WARN] %s installation contract download failed; trying the next source\n' \
+				"${source}" >&2
+			continue
+		fi
+		mkdir -p "${source_dir}"
+		if ! tar -xzf "${archive}" -C "${source_dir}" --strip-components=1 \
+			|| [[ ! -x "${source_dir}/deploy/online/install.sh" ]] \
+			|| [[ ! -f "${source_dir}/deploy/online/prepare.py" ]]; then
+			printf '[WARN] %s archive does not provide the online installation contract; trying the next source\n' \
+				"${source}" >&2
+			continue
+		fi
+		printf '[ OK ] Downloaded installation contract from %s\n' "${source}"
+		return 0
+	done
+	fail "could not download ${TAG} installation contract from the selected source(s)"
+}
+
+download_source_archive
 
 python3 "${source_dir}/deploy/online/prepare.py" \
 	--source-root "${source_dir}" \
@@ -152,6 +210,7 @@ PY
 		upgrade --from "${candidate}" --yes --with-sourcelens
 else
 	printf '[....] Installing HyperFileLens Community %s\n' "${TAG}"
-	HFL_REGISTRY_REGION="${REGION}" bash "${candidate}/install.sh" \
-		install --with-sourcelens
+	install_args=(install --with-sourcelens)
+	((ASSUME_YES == 1)) && install_args+=(--yes)
+	HFL_REGISTRY_REGION="${REGION}" bash "${candidate}/install.sh" "${install_args[@]}"
 fi
