@@ -21,19 +21,28 @@
   border-radius: 10px !important;
 }
 
-.el-popper:not(.is-pure),
-.el-select__popper.el-popper,
-.el-dropdown__popper.el-popper,
-.el-picker__popper.el-popper,
-.el-popover.el-popper,
-.el-tooltip__popper.el-popper,
-.el-cascader__dropdown.el-popper,
-.el-table-filter,
-.kb-filter-popover.el-popper,
-.create-recovery-path-popover.el-popper,
-.dp-source-task-select-popper.el-popper,
-.nav-dropdown-popover.el-popper {
-  overflow: hidden;
+/* Element Plus positions .el-popper__arrow just outside the popper boundary.
+   Keep the root visible so the arrow is neither clipped nor visually offset. */
+.el-popper {
+  overflow: visible;
+}
+
+/* Keep Element Plus' bordered arrow geometry, but clip the rotated square to
+   the half that belongs outside the popper. Negative insets preserve its tip. */
+.el-popper[data-popper-placement^='bottom'] > .el-popper__arrow {
+  clip-path: inset(-3px 0 5px 0);
+}
+
+.el-popper[data-popper-placement^='top'] > .el-popper__arrow {
+  clip-path: inset(5px 0 -3px 0);
+}
+
+.el-popper[data-popper-placement^='left'] > .el-popper__arrow {
+  clip-path: inset(0 -3px 0 5px);
+}
+
+.el-popper[data-popper-placement^='right'] > .el-popper__arrow {
+  clip-path: inset(0 5px 0 -3px);
 }
 
 .el-select-dropdown,
@@ -45,6 +54,7 @@
 .el-time-panel,
 .el-table-filter__content {
   border-radius: inherit !important;
+  overflow: hidden;
 }
 
 .el-dropdown__popper.el-popper .el-dropdown-menu,

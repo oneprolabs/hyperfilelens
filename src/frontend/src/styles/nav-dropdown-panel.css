@@ -3,7 +3,6 @@
 .nav-dropdown-popover.el-popper {
   max-width: calc(100vw - 24px);
   padding: 0 !important;
-  overflow: hidden;
   border: 1px solid var(--color-border-light, #e4e7ed) !important;
   border-radius: 10px !important;
   background: #fff !important;

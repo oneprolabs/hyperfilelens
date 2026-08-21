@@ -268,7 +268,6 @@ function handleVisibleChange(visible: boolean) {
 .hfl-language-switcher-popper.el-popper {
   min-width: 180px;
   padding: 6px !important;
-  overflow: hidden;
   background: #272633 !important;
   border: 1px solid rgba(255, 255, 255, 0.14) !important;
   border-radius: 10px !important;

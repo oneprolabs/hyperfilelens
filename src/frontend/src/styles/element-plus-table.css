@@ -126,7 +126,6 @@
 .el-popover.el-popper,
 .el-tooltip__popper.el-popper {
   border-radius: 10px !important;
-  overflow: hidden;
 }
 
 .el-select-dropdown,
@@ -800,7 +799,6 @@
 .el-popper:not(.hfl-pagination-size-popper) {
   min-width: 140px !important;
   border-radius: 10px !important;
-  overflow: hidden;
   box-shadow: 0px 5px 5px -3px rgba(0, 0, 0, .2), 0px 3px 14px 2px rgba(0, 0, 0, .12), 0px 8px 10px 1px rgba(0, 0, 0, .14) !important;
 }
 
@@ -809,7 +807,6 @@
   min-width: unset !important;
   font-size: 12px;
   border-radius: var(--el-border-radius-base, 8px) !important;
-  overflow: hidden;
   box-shadow: 0px 5px 5px -3px rgba(0, 0, 0, .2), 0px 3px 14px 2px rgba(0, 0, 0, .12), 0px 8px 10px 1px rgba(0, 0, 0, .14) !important;
 }
 
