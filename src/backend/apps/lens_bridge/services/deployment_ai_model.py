@@ -529,6 +529,7 @@ def ensure_platform_ai_model(
                     deployment_role=role,
                     deployment_fingerprint="",
                 )
+            managed_ref = str(link.sl_config_uuid)
     first_adoption = link is None
     deployment_fingerprint = _deployment_fingerprint(config)
     compatible_fingerprints = {

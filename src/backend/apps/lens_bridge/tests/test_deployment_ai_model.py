@@ -609,15 +609,16 @@ class DeploymentAiModelServiceTests(TestCase):
                 "is_default": False,
             },
             {"uuid": str(other_uuid), "is_active": True, "is_default": True},
-            {"uuid": str(self.replacement_uuid), "is_default": False},
-            {"success": True},
+            {"ok": True},
         ]
 
         result = deployment_ai_model.ensure_platform_ai_model(self.config)
 
-        self.assertEqual(result.action, "recreated")
-        create_payload = request_json.call_args_list[2].kwargs["json_body"]
-        self.assertFalse(create_payload["is_default"])
+        self.assertEqual(result.action, "updated")
+        self.assertNotIn(
+            ("POST", "/api/v1/admin/llm-config/"),
+            [call.args[:2] for call in request_json.call_args_list],
+        )
         defaults = LensOrgLink.objects.get(organization=org)
         self.assertEqual(defaults.default_agent_model_ref, other_uuid)
 
