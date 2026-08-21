@@ -26,9 +26,11 @@ import S3PlatformBrandIcon from '../../components/S3PlatformBrandIcon.vue'
 import RepositoryUsageCell from '../../components/RepositoryUsageCell.vue'
 import RepositoryBackingStorageTooltip from '../../components/RepositoryBackingStorageTooltip.vue'
 import RepositoryCapacityConflictAlert from '../../components/RepositoryCapacityConflictAlert.vue'
+import RepositoryLifecycleStatus from '../../components/RepositoryLifecycleStatus.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import { remainingLimitExceedsAvailableStorage, repositoryCapacityParts, repositoryStorageParts } from '../../lib/repositoryCapacityDisplay'
 import { repositoryQuotaDisplay } from '../../lib/repositoryQuota'
+import { isRemovedRepositoryWithResidualLocation } from '../../lib/repositoryResidualState'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
@@ -792,6 +794,7 @@ function repoLifecycleLabel(s: RepoLifecycleStatus | string) {
 }
 
 function repoHealthLabel(row: RepositoryRow) {
+  if (isRemovedRepositoryWithResidualLocation(row)) return t('repositoriesPage.connectivityNotApplicable')
   if (row.initialization_state === 'not_initialized') return t('repositoriesPage.healthNotInitialized')
   if (row.initialization_state === 'attention_required') return t('repositoriesPage.healthAttentionRequired')
   const k = normalizeHealth(String(row.health))
@@ -2324,11 +2327,21 @@ async function retrySelectedInitialization() {
   }
 }
 
-function openReleaseResidualDialog() {
-  const row = selectedResidualRow.value
+function openReleaseResidualDialogFor(row: RepositoryRow | null) {
   if (!row || busy.value) return
   pendingResidualRepository.value = row
   releaseResidualDialogOpen.value = true
+}
+
+function openReleaseResidualDialog() {
+  openReleaseResidualDialogFor(selectedResidualRow.value)
+}
+
+function openDetailReleaseResidualDialog() {
+  const row = detailRow.value
+  openReleaseResidualDialogFor(
+    row && isRemovedRepositoryWithResidualLocation(row) ? row : null,
+  )
 }
 
 function closeReleaseResidualDialog() {
@@ -2345,6 +2358,7 @@ async function confirmReleaseResidualLocation() {
     await releaseStorageRepositoryResidualLocation(row.id)
     releaseResidualDialogOpen.value = false
     pendingResidualRepository.value = null
+    if (detailRow.value?.id === row.id) drawerDetailOpen.value = false
     tableRef.value?.clearSelection()
     ElMessage.success({
       message: t('repositoriesPage.releaseResidualSuccess'),
@@ -2467,6 +2481,7 @@ function lifecycleTagType(s: RepoLifecycleStatus | string) {
 }
 
 function healthTagType(row: RepositoryRow) {
+  if (isRemovedRepositoryWithResidualLocation(row)) return 'info'
   if (row.initialization_state === 'attention_required') return 'danger'
   const k = normalizeHealth(String(row.health))
   if (k === 'online') return 'success'
@@ -2668,17 +2683,18 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             </el-table-column>
             <el-table-column
               :label="t('repositoriesPage.colStatus')"
-              :width="activeTab === 'proxy_fs' ? 148 : activeTab === 's3' || activeTab === 'nas' ? 134 : 112"
+              min-width="190"
             >
               <template #default="{ row }">
-                <div class="hfl-table-no-tooltip">
-                  <ElTag
-                    :type="lifecycleTagType(row.status)"
-                    size="small"
-                  >
-                    {{ repoLifecycleLabel(row.status) }}
-                  </ElTag>
-                </div>
+                <RepositoryLifecycleStatus
+                  class="hfl-table-no-tooltip"
+                  :status="row.status"
+                  :initialization-state="row.initialization_state"
+                  :label="repoLifecycleLabel(row.status)"
+                  :tag-type="lifecycleTagType(row.status)"
+                  :actionable="isRemovedRepositoryWithResidualLocation(row)"
+                  @open="openDetail(row)"
+                />
               </template>
             </el-table-column>
             <el-table-column
@@ -3008,6 +3024,31 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
         v-if="detailRow"
         class="hfl-detail-drawer__body"
       >
+        <ElAlert
+          v-if="isRemovedRepositoryWithResidualLocation(detailRow)"
+          type="warning"
+          :title="t('repositoriesPage.residualAttentionTitle')"
+          :closable="false"
+          show-icon
+          class="repo-residual-attention"
+        >
+          <div class="repo-residual-attention__body">
+            <p class="repo-residual-attention__description">
+              {{ t('repositoriesPage.residualAttentionDescription') }}
+            </p>
+            <div class="repo-residual-attention__actions">
+              <ElButton
+                type="warning"
+                plain
+                size="small"
+                class="repo-residual-attention__action"
+                @click="openDetailReleaseResidualDialog"
+              >
+                {{ t('repositoriesPage.releaseResidualLocation') }}
+              </ElButton>
+            </div>
+          </div>
+        </ElAlert>
         <ElTabs
           v-model="detailActiveTab"
           class="hfl-detail-tabs"
@@ -3037,12 +3078,12 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colStatus') }}</span>
                     <span class="hfl-detail-row__value">
-                      <ElTag
-                        :type="lifecycleTagType(detailRow.status)"
-                        size="small"
-                      >
-                        {{ repoLifecycleLabel(detailRow.status) }}
-                      </ElTag>
+                      <RepositoryLifecycleStatus
+                        :status="detailRow.status"
+                        :initialization-state="detailRow.initialization_state"
+                        :label="repoLifecycleLabel(detailRow.status)"
+                        :tag-type="lifecycleTagType(detailRow.status)"
+                      />
                     </span>
                   </div>
                   <div class="hfl-detail-row">
@@ -3280,12 +3321,12 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colStatus') }}</span>
                     <span class="hfl-detail-row__value">
-                      <ElTag
-                        :type="lifecycleTagType(detailRow.status)"
-                        size="small"
-                      >
-                        {{ repoLifecycleLabel(detailRow.status) }}
-                      </ElTag>
+                      <RepositoryLifecycleStatus
+                        :status="detailRow.status"
+                        :initialization-state="detailRow.initialization_state"
+                        :label="repoLifecycleLabel(detailRow.status)"
+                        :tag-type="lifecycleTagType(detailRow.status)"
+                      />
                     </span>
                   </div>
                   <div class="hfl-detail-row">
@@ -3540,12 +3581,12 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colStatus') }}</span>
                     <span class="hfl-detail-row__value">
-                      <ElTag
-                        :type="lifecycleTagType(detailRow.status)"
-                        size="small"
-                      >
-                        {{ repoLifecycleLabel(detailRow.status) }}
-                      </ElTag>
+                      <RepositoryLifecycleStatus
+                        :status="detailRow.status"
+                        :initialization-state="detailRow.initialization_state"
+                        :label="repoLifecycleLabel(detailRow.status)"
+                        :tag-type="lifecycleTagType(detailRow.status)"
+                      />
                     </span>
                   </div>
                   <div class="hfl-detail-row">
@@ -4418,6 +4459,45 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
 </template>
 
 <style scoped>
+.repo-residual-attention {
+  --el-alert-padding: 20px 16px;
+  margin-bottom: 16px;
+}
+
+.repo-residual-attention :deep(.el-alert__icon) {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.repo-residual-attention :deep(.el-alert__content) {
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+}
+
+.repo-residual-attention :deep(.el-alert__title) {
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.repo-residual-attention__body {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.repo-residual-attention__description {
+  min-width: 0;
+  margin: 0;
+  color: var(--el-text-color-regular);
+  line-height: 1.6;
+}
+
+.repo-residual-attention__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .repo-cleanup-blocked-list {
   display: grid;
   gap: 12px;
