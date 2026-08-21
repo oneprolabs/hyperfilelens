@@ -74,7 +74,12 @@ RESTORABLE_SNAPSHOT_STATUSES = (
     BackupSourceSnapshot.Status.AVAILABLE,
     BackupSourceSnapshot.Status.PARTIAL,
 )
-ACTIVE_RESTORE_TASK_STATUSES = (Task.Status.PENDING, Task.Status.RUNNING)
+ACTIVE_RESTORE_TASK_STATUSES = (
+    Task.Status.PENDING,
+    Task.Status.WAITING,
+    Task.Status.BLOCKED,
+    Task.Status.RUNNING,
+)
 INSIGHT_SAFE_RESTORE_CAPABILITY = "insight_safe_restore_v1"
 INSIGHT_SAFE_CONTENT_POLICY = "regular_files_only_v1"
 
@@ -89,52 +94,6 @@ _TASK_TERMINAL = frozenset(
     }
 )
 _ACTIVE_NODE_STATUSES = frozenset({NodeTask.Status.PENDING, NodeTask.Status.RUNNING})
-
-
-def _has_active_restore_task(
-    *,
-    organization_id: int,
-    source_type: str,
-    source_ref_id: int,
-) -> Task | None:
-    active_tasks = Task.objects.filter(
-        organization_id=organization_id,
-        task_type__in=RESTORE_TASK_TYPES,
-        status__in=[Task.Status.PENDING, Task.Status.RUNNING],
-    ).order_by("-created_at", "-id")
-    for task in active_tasks:
-        record = RestoreRecord.objects.filter(
-            organization_id=organization_id,
-            task_uuid=task.task_uuid,
-            source_type=source_type,
-            source_ref_id=int(source_ref_id),
-        ).first()
-        if record is not None:
-            return task
-    return None
-
-
-def _ensure_no_active_restore_for_source(
-    *,
-    organization_id: int,
-    source_type: str,
-    source_ref_id: int,
-) -> None:
-    active = _has_active_restore_task(
-        organization_id=organization_id,
-        source_type=source_type,
-        source_ref_id=source_ref_id,
-    )
-    if active is not None:
-        raise ValidationError(
-            {
-                "source_ref_id": (
-                    "A restore task is already running for this backup source. "
-                    "Stop it before starting a new restore."
-                ),
-                "task_uuid": str(active.task_uuid),
-            }
-        )
 
 
 @transaction.atomic
@@ -593,6 +552,7 @@ def _create_manual_restore_record(
         organization_id=organization_id,
         source_type=source_type,
         source_ref_id=source_ref_id,
+        purpose=purpose,
     )
     items = data.get("items")
     if not isinstance(items, list) or not items:
@@ -815,6 +775,7 @@ def _create_restore_record(
         organization_id=organization_id,
         source_type=source_type,
         source_ref_id=source_ref_id,
+        purpose=purpose,
     )
     directories = _expanded_directories(
         organization_id=organization_id,
@@ -1511,22 +1472,33 @@ def _lock_restore_source_endpoint(
 def _active_restore_task_for_source(
     *, organization_id: int, source_type: str, source_ref_id: int
 ) -> Task | None:
+    insight_restore_task_ids = RestoreRecord.objects.filter(
+        organization_id=organization_id,
+        purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+    ).order_by().values("task_id")
     return (
         Task.objects.filter(
             organization_id=organization_id,
-            task_type__in=RESTORE_TASK_TYPES,
+            task_type=Task.Type.RESTORE,
             status__in=ACTIVE_RESTORE_TASK_STATUSES,
             resources__resource_type=TaskResource.Type.BACKUP_SOURCE,
             resources__resource_subtype=source_type,
             resources__resource_id=source_ref_id,
         )
+        .exclude(id__in=insight_restore_task_ids)
         .order_by("created_at", "id")
         .first()
     )
 
 
 def _ensure_no_active_restore_for_source(
-    *, organization_id: int, source_type: str, source_ref_id: int
+    *,
+    organization_id: int,
+    source_type: str,
+    source_ref_id: int,
+    purpose: str = RestoreRecord.Purpose.USER_DATA,
 ) -> None:
     from apps.source.services.internal.source_operation_fence import (
         assert_no_active_backup_for_source,
@@ -1543,6 +1515,8 @@ def _ensure_no_active_restore_for_source(
         source_type=source_type,
         source_ref_id=source_ref_id,
     )
+    if purpose == RestoreRecord.Purpose.LENS_WORKSPACE:
+        return
     active_task = _active_restore_task_for_source(
         organization_id=organization_id,
         source_type=source_type,
@@ -1746,6 +1720,22 @@ def _dispatch_restore_items(
 
         target_nas_payload = {"nas": nas_payload_for_resource(target_nas)}
     all_items = list(record.items.all())
+    if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE and any(
+        item.node_task_id is not None
+        and item.status
+        in {RestoreRecordItem.Status.PENDING, RestoreRecordItem.Status.RUNNING}
+        for item in all_items
+    ):
+        # The completion callback and periodic reconciler can both request a
+        # continuation.  Keep this guard at the shared dispatch boundary so a
+        # second caller cannot start the next directory while one is active.
+        logger.info(
+            "restore dispatch skipped restore_record_id=%s task_uuid=%s "
+            "reason=insight_item_active",
+            record.id,
+            record.task_uuid,
+        )
+        return
     items = [
         item
         for item in all_items
@@ -1753,6 +1743,10 @@ def _dispatch_restore_items(
         and item.status
         in {RestoreRecordItem.Status.PENDING, RestoreRecordItem.Status.RUNNING}
     ]
+    if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE:
+        # One Chat is one Gateway scheduling unit. Dispatching every selected
+        # directory at once would let a single Chat bypass the Gateway limit.
+        items = items[:1]
     if not items:
         logger.info(
             "restore dispatch skipped restore_record_id=%s task_uuid=%s reason=no_pending_items",
@@ -1968,6 +1962,19 @@ def _dispatch_restore_items(
             error_message=error_message,
             terminal_projection_at=timezone.now(),
         )
+        if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE:
+            RestoreRecordItem.objects.filter(
+                restore_record=record,
+                node_task_id__isnull=True,
+                status=RestoreRecordItem.Status.PENDING,
+            ).update(
+                status=RestoreRecordItem.Status.SKIPPED,
+                error_code="RESTORE_PREVIOUS_ITEM_FAILED",
+                error_message=(
+                    "A previous Chat workspace restore item did not complete."
+                ),
+                terminal_projection_at=timezone.now(),
+            )
         append_task_step_event(
             task=task,
             step_name="dispatch_agent",

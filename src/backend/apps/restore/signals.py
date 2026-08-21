@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from django.db import transaction
@@ -35,6 +36,35 @@ _TERMINAL_RESTORE_ITEM_STATUSES = {
     RestoreRecordItem.Status.SKIPPED,
     RestoreRecordItem.Status.CANCELLED,
 }
+logger = logging.getLogger(__name__)
+
+
+def _continue_lens_workspace_restore(record_id: int) -> None:
+    """Best-effort fast path; periodic reconciliation is the durable fallback."""
+
+    from apps.restore.services.interface import _dispatch_restore_items
+
+    try:
+        with transaction.atomic():
+            record = RestoreRecord.objects.filter(pk=record_id).first()
+            if record is None:
+                return
+            task = Task.objects.select_for_update().filter(
+                pk=record.task_id,
+                status__in=(Task.Status.PENDING, Task.Status.RUNNING),
+            ).first()
+            if task is None:
+                return
+            _dispatch_restore_items(
+                organization_id=record.organization_id,
+                record=record,
+                task=task,
+            )
+    except Exception:
+        logger.exception(
+            "insight restore continuation dispatch failed record_id=%s",
+            record_id,
+        )
 
 
 @receiver(post_save, sender=NodeTask)
@@ -116,6 +146,28 @@ def sync_restore_record_from_node_task(
             node_task=instance,
             product_task=product_task,
         )
+    if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE:
+        remaining = RestoreRecordItem.objects.filter(
+            restore_record=record,
+            node_task_id__isnull=True,
+            status=RestoreRecordItem.Status.PENDING,
+        )
+        if remaining.exists():
+            if instance.status == NodeTask.Status.SUCCESS:
+                transaction.on_commit(
+                    lambda record_id=record.id: _continue_lens_workspace_restore(
+                        record_id
+                    )
+                )
+            else:
+                remaining.update(
+                    status=RestoreRecordItem.Status.SKIPPED,
+                    error_code="RESTORE_PREVIOUS_ITEM_FAILED",
+                    error_message=(
+                        "A previous Chat workspace restore item did not complete."
+                    ),
+                    terminal_projection_at=timezone.now(),
+                )
     from apps.restore.services.restore_progress import sync_restore_record_progress
 
     sync_restore_record_progress(record=record)

@@ -1,5 +1,6 @@
 import { api } from '../../lib/api'
 import { unwrapApiPayload } from '../../lib/parse'
+import type { GatewayChatWorkload } from '../../lib/lensApi'
 
 async function get<T>(path: string, init?: RequestInit): Promise<T> {
   return unwrapApiPayload<T>(await api<unknown>(path, init))
@@ -119,6 +120,29 @@ export async function patchPublicGatewayCapacity(gatewayId: number, capacity_byt
     {
       method: 'PATCH',
       body: JSON.stringify({ capacity_bytes }),
+    },
+  )
+}
+
+export async function fetchPublicGatewayChatWorkload(
+  gatewayId: number,
+  options?: { signal?: AbortSignal },
+) {
+  return get<GatewayChatWorkload>(
+    `/api/v1/platform-ops/lens/gateways/${gatewayId}/chat-workload`,
+    { signal: options?.signal },
+  )
+}
+
+export async function patchPublicGatewayChatWorkload(
+  gatewayId: number,
+  settings: Pick<GatewayChatWorkload, 'chat_prepare_concurrency' | 'chat_queue_capacity'>,
+) {
+  return send<GatewayChatWorkload>(
+    `/api/v1/platform-ops/lens/gateways/${gatewayId}/chat-workload`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(settings),
     },
   )
 }

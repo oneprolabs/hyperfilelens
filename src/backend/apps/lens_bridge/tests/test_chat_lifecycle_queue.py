@@ -147,6 +147,7 @@ class CopilotLifecycleQueueTests(SimpleTestCase):
             42,
             "claim-token",
             "database schema mismatch",
+            expected_generation=0,
         )
 
     @patch(
@@ -883,7 +884,7 @@ class CopilotChatModelBindingTests(TestCase):
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
 
-    def _create_chat(self):
+    def _create_chat(self, *, idempotency_key: str = "copilot-model-binding-create"):
         return chat_lifecycle.create_copilot_chat(
             self.organization,
             user=self.user,
@@ -898,7 +899,7 @@ class CopilotChatModelBindingTests(TestCase):
             ],
             gateway_mode=LensSessionLink.GatewaySelectionMode.MANUAL,
             gateway_link_id=self.gateway_link.id,
-            idempotency_key="copilot-model-binding-create",
+            idempotency_key=idempotency_key,
         )
 
     @patch(
@@ -958,6 +959,7 @@ class CopilotChatModelBindingTests(TestCase):
 
         self.assertEqual(str(session.agent_model_ref), str(agent_uuid))
         self.assertIsNone(session.multimodal_model_ref)
+        self.assertIsNotNone(session.gateway_queue_entered_at)
         queue_provision.assert_called_once_with(session.id)
 
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
@@ -979,9 +981,46 @@ class CopilotChatModelBindingTests(TestCase):
 
         with self.captureOnCommitCallbacks(execute=True):
             first = self._create_chat()
+        self.gateway_link.chat_queue_capacity = 0
+        self.gateway_link.save(update_fields=["chat_queue_capacity", "updated_at"])
         second = self._create_chat()
 
         self.assertEqual(second.id, first.id)
+        self.assertEqual(
+            LensSessionLink.objects.filter(organization=self.organization).count(),
+            1,
+        )
+        queue_provision.assert_called_once_with(first.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "provisioning.configured_default_model_refs_for_org",
+    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._configured_gateway_link_for_chat")
+    @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
+    def test_new_chat_is_rejected_when_gateway_waiting_capacity_is_full(
+        self,
+        _context,
+        resolve_gateway,
+        default_models,
+        queue_provision,
+    ):
+        resolve_gateway.return_value = self.gateway_link
+        default_models.return_value = (str(uuid.uuid4()), None)
+        self.gateway_link.chat_queue_capacity = 0
+        self.gateway_link.save(update_fields=["chat_queue_capacity", "updated_at"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            first = self._create_chat()
+
+        with self.assertRaises(AppError) as raised:
+            self._create_chat(idempotency_key="second-chat-on-full-gateway")
+
+        self.assertEqual(
+            raised.exception.code,
+            "INSIGHT.GATEWAY_CHAT_QUEUE_FULL",
+        )
         self.assertEqual(
             LensSessionLink.objects.filter(organization=self.organization).count(),
             1,

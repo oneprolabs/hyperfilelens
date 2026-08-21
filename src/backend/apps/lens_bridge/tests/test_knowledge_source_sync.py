@@ -84,6 +84,28 @@ class KnowledgeSourceSyncLeaseTests(TransactionTestCase):
         self.assertGreater(self.knowledge_source.sync_next_poll_at, before)
 
     @patch(
+        "apps.lens_bridge.services.knowledge_source_sync._run_sync_pipeline",
+        side_effect=knowledge_source_sync.KnowledgeSourceSyncPending(
+            "restore pending",
+            retry_after_seconds=7,
+        ),
+    )
+    def test_pending_restore_releases_claim_with_durable_poll(self, _run):
+        before = timezone.now()
+
+        result = knowledge_source_sync.run_knowledge_source_sync(
+            organization_id=self.organization.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(result["retry_after_seconds"], 7)
+        self.assertIsNone(self.knowledge_source.sync_claim_token)
+        self.assertIsNone(self.knowledge_source.sync_claimed_at)
+        self.assertGreater(self.knowledge_source.sync_next_poll_at, before)
+
+    @patch(
         "apps.lens_bridge.services.knowledge_source_sync._run_sync_pipeline"
     )
     def test_success_releases_claim_and_poll_marker(self, run_pipeline):
@@ -253,6 +275,97 @@ class MapScopeToWorkspaceTests(SimpleTestCase):
                 scope_path="/data",
             ),
             [],
+        )
+
+
+class RestoreSnapshotPollingTests(SimpleTestCase):
+    def test_failed_restore_ends_current_sync_without_automatic_recreation(self):
+        org = MagicMock(id=11)
+        knowledge_source = MagicMock()
+        sync_state = {
+            "restore_record_id": 31,
+            "restore_generation": 2,
+            "snapshot_id_used": 17,
+        }
+        record = MagicMock(task_uuid="restore-task")
+        task = MagicMock(error_message="Agent restore failed.")
+
+        with (
+            patch.object(knowledge_source_sync, "_update_sync_phase"),
+            patch.object(
+                knowledge_source_sync,
+                "_restore_record_failed",
+                return_value=True,
+            ),
+            patch.object(
+                knowledge_source_sync.RestoreRecord.objects,
+                "filter",
+            ) as filter_records,
+            patch.object(
+                knowledge_source_sync.Task.objects,
+                "filter",
+            ) as filter_tasks,
+            patch.object(
+                knowledge_source_sync.restore_services,
+                "create_lens_workspace_restore_record",
+            ) as create_restore,
+        ):
+            filter_records.return_value.first.return_value = record
+            filter_tasks.return_value.first.return_value = task
+            with self.assertRaisesRegex(
+                knowledge_source_sync.KnowledgeSourceSyncError,
+                "Agent restore failed",
+            ):
+                knowledge_source_sync._run_phase_restore_snapshot(
+                    org=org,
+                    ks=knowledge_source,
+                    sync_state=sync_state,
+                )
+
+        create_restore.assert_not_called()
+        self.assertEqual(sync_state["restore_generation"], 2)
+
+    def test_active_restore_keeps_the_snapshot_selected_for_its_sync_cycle(self):
+        org = MagicMock(id=11)
+        knowledge_source = MagicMock()
+        sync_state = {
+            "restore_record_id": 31,
+            "restore_generation": 2,
+            "snapshot_id_used": 17,
+        }
+
+        with (
+            patch.object(knowledge_source_sync, "_update_sync_phase"),
+            patch.object(
+                knowledge_source_sync,
+                "_restore_record_failed",
+                return_value=False,
+            ),
+            patch.object(
+                knowledge_source_sync,
+                "resolve_snapshot_id_for_sync",
+            ) as resolve_snapshot,
+            patch.object(
+                knowledge_source_sync.BackupSourceSnapshot.objects,
+                "filter",
+            ) as filter_snapshots,
+        ):
+            filter_snapshots.return_value.first.return_value = None
+            with self.assertRaisesRegex(
+                knowledge_source_sync.KnowledgeSourceSyncError,
+                "No restorable snapshot",
+            ):
+                knowledge_source_sync._run_phase_restore_snapshot(
+                    org=org,
+                    ks=knowledge_source,
+                    sync_state=sync_state,
+                )
+
+        resolve_snapshot.assert_not_called()
+        filter_snapshots.assert_called_once_with(
+            organization_id=org.id,
+            pk=17,
+            status__in=knowledge_source_sync.restore_services.RESTORABLE_SNAPSHOT_STATUSES,
         )
 
 
@@ -709,6 +822,77 @@ class ManagedRestorePipelineOrderTests(TestCase):
             organization_id=self.organization.id,
             knowledge_source_id=self.knowledge_source.id,
             mode="full",
+        )
+
+    @patch(
+        "apps.lens_bridge.services.knowledge_source_sync."
+        "enqueue_knowledge_source_sync"
+    )
+    @patch(
+        "apps.lens_bridge.services.knowledge_source_sync."
+        "_restore_record_failed",
+        return_value=True,
+    )
+    @patch(
+        "apps.lens_bridge.services.knowledge_source_sync."
+        "gateway_readiness.require_hfl_usable_gateway"
+    )
+    @patch(
+        "apps.node.services.internal.node_lifecycle."
+        "_active_lifecycle_task",
+        return_value=None,
+    )
+    @patch(
+        "apps.lens_bridge.services.knowledge_source_sync."
+        "get_node_workload_blockers",
+        return_value=[],
+    )
+    @patch(
+        "apps.lens_bridge.services.knowledge_source_sync."
+        "context_for_knowledge_source"
+    )
+    def test_manual_retry_starts_one_new_restore_generation(
+        self,
+        execution_context,
+        _blockers,
+        _active_lifecycle,
+        _require_gateway,
+        _restore_failed,
+        enqueue_sync,
+    ):
+        execution_context.return_value = MagicMock(
+            gateway=self.gateway,
+            gateway_link=self.gateway_link,
+            execution_organization=self.gateway.organization,
+        )
+        self.knowledge_source.status = LensKnowledgeSource.Status.ERROR
+        self.knowledge_source.sync_state_json = {
+            "completed_phases": ["prepare_workspace"],
+            "restore_record_id": 31,
+            "restore_generation": 4,
+            "snapshot_id_used": 11,
+            "restore_scope_status": {"0": "pending"},
+            "last_error": "Agent restore failed.",
+        }
+        self.knowledge_source.save(
+            update_fields=["status", "sync_state_json", "updated_at"]
+        )
+
+        updated = knowledge_source_sync.request_knowledge_source_sync(
+            org=self.organization,
+            ks=self.knowledge_source,
+            mode="resume",
+        )
+
+        self.assertEqual(updated.sync_state_json["restore_generation"], 5)
+        self.assertEqual(updated.sync_state_json["restore_scope_status"], {})
+        self.assertNotIn("restore_record_id", updated.sync_state_json)
+        self.assertNotIn("snapshot_id_used", updated.sync_state_json)
+        self.assertEqual(updated.sync_state_json["phase"], "restore_snapshot")
+        enqueue_sync.assert_called_once_with(
+            organization_id=self.organization.id,
+            knowledge_source_id=self.knowledge_source.id,
+            mode="resume",
         )
 
     @patch(

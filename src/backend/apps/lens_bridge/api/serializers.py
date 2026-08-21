@@ -7,6 +7,7 @@ from apps.lens_bridge.models import (
 )
 from apps.lens_bridge.services import (
     conversion_display,
+    gateway_chat_queue,
     gateway_readiness,
     ingest_policy,
     provisioning,
@@ -472,6 +473,17 @@ class LensGatewayEnableAiSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, allow_blank=True, max_length=160)
 
 
+class LensGatewayChatWorkloadSerializer(serializers.Serializer):
+    chat_prepare_concurrency = serializers.IntegerField(
+        min_value=1,
+        max_value=gateway_chat_queue.MAX_CHAT_PREPARE_CONCURRENCY,
+    )
+    chat_queue_capacity = serializers.IntegerField(
+        min_value=0,
+        max_value=gateway_chat_queue.MAX_CHAT_QUEUE_CAPACITY,
+    )
+
+
 class LensSessionLinkSerializer(serializers.ModelSerializer):
     knowledge_source_name = serializers.CharField(
         source="knowledge_source.name",
@@ -491,6 +503,8 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
     lifecycle_error_code = serializers.SerializerMethodField()
     lifecycle_error_message = serializers.SerializerMethodField()
     lifecycle_error_retryable = serializers.SerializerMethodField()
+    queue_position = serializers.SerializerMethodField()
+    queue_ahead = serializers.SerializerMethodField()
 
     class Meta:
         model = LensSessionLink
@@ -519,6 +533,8 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             "lifecycle_status",
             "provision_phase",
             "provision_detail",
+            "queue_position",
+            "queue_ahead",
             "cleanup_intent",
             "cleanup_status",
             "document_conversion",
@@ -537,6 +553,38 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = fields
+
+    def _queue_position(self, obj: LensSessionLink) -> int:
+        if obj.gateway_link_id is None:
+            return 0
+        gateway_cache = self.context.setdefault("gateway_session_queue_positions", {})
+        if obj.gateway_link_id not in gateway_cache:
+            gateway_cache[obj.gateway_link_id] = gateway_chat_queue.chat_queue_positions(
+                gateway_link_id=obj.gateway_link_id,
+            )
+        return int(gateway_cache[obj.gateway_link_id].get(obj.id, 0))
+
+    def get_queue_position(self, obj: LensSessionLink) -> int:
+        return self._queue_position(obj)
+
+    def get_queue_ahead(self, obj: LensSessionLink) -> int:
+        cache = self.context.setdefault("session_queue_ahead", {})
+        if obj.id not in cache:
+            active_cache = self.context.setdefault("gateway_active_chat_slots", {})
+            if obj.gateway_link_id not in active_cache:
+                active_cache[obj.gateway_link_id] = (
+                    gateway_chat_queue.active_chat_prepare_count(
+                        gateway_link_id=obj.gateway_link_id,
+                    )
+                    if obj.gateway_link_id is not None
+                    else 0
+                )
+            cache[obj.id] = gateway_chat_queue.chat_queue_ahead(
+                session=obj,
+                queue_position=self._queue_position(obj),
+                active_count=active_cache[obj.gateway_link_id],
+            )
+        return int(cache[obj.id])
 
     def get_assistant_name(self, obj: LensSessionLink) -> str | None:
         cache = self.context.get("assistant_names") or {}

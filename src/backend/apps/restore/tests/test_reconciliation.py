@@ -140,6 +140,7 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
             update_fields=["terminal_projection_at", "updated_at"]
         )
 
+    @patch("apps.restore.services.reconciliation._resume_stranded_insight_restore_items")
     @patch("apps.restore.services.reconciliation.sync_restore_record_from_node_task")
     @patch(
         "apps.restore.services.reconciliation._classify_terminal_legacy_insight_tasks",
@@ -148,7 +149,7 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
     @patch("apps.restore.services.reconciliation._projection_needs_replay")
     @patch("apps.restore.services.reconciliation._candidate_terminal_node_tasks")
     def test_replays_only_incomplete_durable_projections(
-        self, candidates, needs_replay, classify, projector
+        self, candidates, needs_replay, classify, projector, resume_insight
     ):
         first = SimpleNamespace(id="first")
         second = SimpleNamespace(id="second")
@@ -168,8 +169,10 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
             },
         )
         classify.assert_called_once_with(limit=20)
+        resume_insight.assert_called_once_with(limit=20)
         self.assertEqual(projector.call_args_list, [call(NodeTask, first)])
 
+    @patch("apps.restore.services.reconciliation._resume_stranded_insight_restore_items")
     @patch("apps.restore.services.reconciliation.logger.exception")
     @patch(
         "apps.restore.services.reconciliation._classify_terminal_legacy_insight_tasks",
@@ -188,6 +191,7 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
         _needs_replay,
         classify,
         log_exception,
+        resume_insight,
     ):
         first = SimpleNamespace(id="first")
         second = SimpleNamespace(id="second")
@@ -211,8 +215,10 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
             [call(NodeTask, first), call(NodeTask, second)],
         )
         classify.assert_called_once_with(limit=20)
+        resume_insight.assert_called_once_with(limit=20)
         log_exception.assert_called_once()
 
+    @patch("apps.restore.services.reconciliation._resume_stranded_insight_restore_items")
     @patch("apps.restore.services.reconciliation.logger.exception")
     @patch(
         "apps.restore.services.reconciliation._classify_terminal_legacy_insight_tasks",
@@ -228,6 +234,7 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
         needs_replay,
         _classify,
         log_exception,
+        resume_insight,
     ):
         first = SimpleNamespace(id="first")
         second = SimpleNamespace(id="second")
@@ -239,6 +246,7 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
         self.assertEqual(result["replayed"], 1)
         self.assertEqual(result["replay_failed"], 1)
         projector.assert_called_once_with(NodeTask, second)
+        resume_insight.assert_called_once_with(limit=20)
         log_exception.assert_called_once()
 
     @patch("apps.restore.services.reconciliation.NodeTask.objects")

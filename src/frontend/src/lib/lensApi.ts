@@ -332,6 +332,8 @@ export type LensSessionLink = {
   lifecycle_error_retryable?: boolean
   provision_phase?: string
   provision_detail?: string
+  queue_position?: number
+  queue_ahead?: number
   cleanup_intent?: 'none' | 'reset_for_retry' | 'delete_session' | string
   cleanup_status?: 'none' | 'pending' | 'running' | 'blocked' | 'complete' | string
   document_conversion?: DocumentConversion | null
@@ -711,9 +713,44 @@ export type GatewayAiStatus = {
   lensnode_token?: string | null
 }
 
+export type GatewayChatWorkload = {
+  gateway_link_id: number
+  gateway_id: number
+  gateway_name: string
+  gateway_scope: 'platform' | 'user' | string
+  chat_prepare_concurrency: number
+  chat_queue_capacity: number
+  active_chat_preparations: number
+  queued_chat_preparations: number
+  oldest_queued_at: string | null
+}
+
 export async function fetchGatewayAiStatus(gatewayId: number): Promise<GatewayAiStatus> {
   const raw = await api(lensUrl(`gateways/${gatewayId}/ai/`), { headers: lensHeaders() })
   return lensPayload<GatewayAiStatus>(raw)
+}
+
+export async function fetchGatewayChatWorkload(
+  gatewayId: number,
+  options?: { signal?: AbortSignal },
+): Promise<GatewayChatWorkload> {
+  const raw = await api(lensUrl(`gateways/${gatewayId}/chat-workload/`), {
+    headers: lensHeaders(),
+    signal: options?.signal,
+  })
+  return lensPayload<GatewayChatWorkload>(raw)
+}
+
+export async function patchGatewayChatWorkload(
+  gatewayId: number,
+  settings: Pick<GatewayChatWorkload, 'chat_prepare_concurrency' | 'chat_queue_capacity'>,
+): Promise<GatewayChatWorkload> {
+  const raw = await api(lensUrl(`gateways/${gatewayId}/chat-workload/`), {
+    method: 'PATCH',
+    headers: lensHeaders(),
+    body: JSON.stringify(settings),
+  })
+  return lensPayload<GatewayChatWorkload>(raw)
 }
 
 export type GatewayDirectoryBrowserEntry = {
