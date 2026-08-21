@@ -357,6 +357,99 @@ class RestoreApiTests(TestCase):
     @patch(
         "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
     )
+    def test_lens_workspace_restore_dispatches_directories_sequentially(self, _ready):
+        gateway = Node.objects.create(
+            organization=self.org,
+            name="sequential-lens-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.org,
+            gateway=gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+        )
+        workspace_binding = self._workspace_binding(gateway_link)
+        second_config_dir = BackupConfigDirectory.objects.create(
+            organization_id=self.org.id,
+            backup_config=self.config,
+            path="/data-two",
+            path_type=BackupConfigDirectory.PathType.DIRECTORY,
+            sort_order=1,
+        )
+        second_snapshot_dir = BackupSourceSnapshotDirectory.objects.create(
+            organization_id=self.org.id,
+            source_snapshot=self.snapshot,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=second_config_dir.id,
+            source_path="/data-two",
+            path_type=BackupSourceSnapshotDirectory.PathType.DIRECTORY,
+            repository_id=self.repository.id,
+            kopia_snapshot_id="kopia-snapshot-2",
+            status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
+        )
+        payload = self._manual_restore_payload()
+        payload.update(
+            {
+                "target_ref_id": gateway.id,
+                "target_path": workspace_binding.resolved_path(),
+                "idempotency_key": "lens-workspace:sequential:1",
+                "items": [
+                    {
+                        "source_snapshot_directory_id": self.snapshot_dir.id,
+                        "selected_paths": ["first.txt"],
+                    },
+                    {
+                        "source_snapshot_directory_id": second_snapshot_dir.id,
+                        "selected_paths": ["second.txt"],
+                    },
+                ],
+            }
+        )
+
+        record = restore_service.create_lens_workspace_restore_record(
+            organization_id=self.org.id,
+            workspace_binding_id=workspace_binding.id,
+            data=payload,
+        )
+        product_task = Task.objects.get(pk=record.task_id)
+        dispatched = NodeTask.objects.filter(
+            kind="restore.run",
+            correlation_id=str(record.task_uuid),
+        )
+        self.assertEqual(dispatched.count(), 1)
+
+        # A duplicate continuation request must not bypass the one-at-a-time
+        # boundary while the first directory is still active.
+        restore_service._dispatch_restore_items(
+            organization_id=self.org.id,
+            record=record,
+            task=product_task,
+        )
+        self.assertEqual(dispatched.count(), 1)
+
+        first_task = dispatched.get()
+        first_task.status = NodeTask.Status.SUCCESS
+        first_task.result = {"restored": True}
+        with self.captureOnCommitCallbacks(execute=True):
+            first_task.save(update_fields=["status", "result", "updated_at"])
+
+        self.assertEqual(dispatched.count(), 2)
+        self.assertEqual(
+            list(
+                dispatched.order_by("created_at", "id").values_list(
+                    "payload__kopia_snapshot_id",
+                    flat=True,
+                )
+            ),
+            ["kopia-snapshot-1", "kopia-snapshot-2"],
+        )
+
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
     def test_lens_workspace_restore_requires_safe_content_capability(self, _ready):
         private_gateway = Node.objects.create(
             organization=self.org,
@@ -870,6 +963,60 @@ class RestoreApiTests(TestCase):
         self.assertEqual(problem["meta"]["task_type"], Task.Type.BACKUP)
         self.assertEqual(problem["meta"]["source_type"], "agent")
         self.assertEqual(problem["meta"]["source_ref_id"], self.agent.id)
+
+    def test_user_restore_does_not_conflict_with_insight_restore(self):
+        task = self._active_restore_task()
+        task.task_type = Task.Type.INSIGHT_WORKSPACE_RESTORE
+        task.save(update_fields=["task_type", "updated_at"])
+
+        restore_service._ensure_no_active_restore_for_source(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            purpose=RestoreRecord.Purpose.USER_DATA,
+        )
+
+    def test_user_restore_ignores_legacy_insight_restore_task_type(self):
+        task = self._active_restore_task()
+        RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=self.target.id,
+            purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+            idempotency_key="legacy-insight-restore",
+            workspace_binding_id=999,
+            restore_uid="rst-legacy-insight",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=task.id,
+            task_uuid=task.task_uuid,
+            source_type=RestoreRecord.EndpointType.AGENT,
+            source_ref_id=self.agent.id,
+            backup_config_id=self.config.id,
+            source_snapshot_id=self.snapshot.id,
+            target_type=RestoreRecord.EndpointType.AGENT,
+            target_ref_id=self.target.id,
+            target_path="/legacy-insight",
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.SKIP,
+        )
+
+        restore_service._ensure_no_active_restore_for_source(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            purpose=RestoreRecord.Purpose.USER_DATA,
+        )
+
+    def test_insight_restore_does_not_conflict_with_user_restore(self):
+        self._active_restore_task()
+
+        restore_service._ensure_no_active_restore_for_source(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+        )
 
     def test_create_restore_plan_persists_and_lists_after_refresh(self):
         create = self.client.post(

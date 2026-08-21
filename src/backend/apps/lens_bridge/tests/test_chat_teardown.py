@@ -378,7 +378,15 @@ class CopilotChatTeardownTests(TestCase):
         "apps.lens_bridge.services.chat_lifecycle."
         "_queue_teardown_or_record_error"
     )
-    def test_failed_provision_records_reset_for_retry_intent(self, queue_teardown):
+    @mock.patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "gateway_chat_queue.wake_gateway_queue"
+    )
+    def test_failed_provision_records_reset_for_retry_intent(
+        self,
+        wake_gateway_queue,
+        queue_teardown,
+    ):
         claim_token = uuid.uuid4()
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
         self.session.provision_claim_token = claim_token
@@ -417,6 +425,7 @@ class CopilotChatTeardownTests(TestCase):
         )
         self.assertEqual(self.session.status, LensSessionLink.Status.ACTIVE)
         queue_teardown.assert_called_once_with(self.session.id)
+        wake_gateway_queue.assert_called_once_with(self.gateway_link.id)
 
     @mock.patch(
         "apps.lens_bridge.services.chat_lifecycle."

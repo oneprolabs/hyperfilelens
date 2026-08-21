@@ -10,6 +10,7 @@ import CopilotLifecycleState from './CopilotLifecycleState.vue'
 
 function session(overrides: Partial<LensSessionLink> = {}): LensSessionLink {
   return {
+    id: 1,
     title: 'Quarterly reports',
     knowledge_source: null,
     knowledge_source_name: null,
@@ -101,6 +102,21 @@ describe('CopilotLifecycleState', () => {
     const steps = wrapper.findAll('.copilot-lifecycle-steps li')
     expect(steps[0].classes()).toContain('is-active')
     expect(steps[1].classes()).toContain('is-pending')
+  })
+
+  it('shows a privacy-safe Data Gateway queue position', () => {
+    const wrapper = mountState(session({
+      provision_phase: 'queued',
+      provision_detail: 'Waiting for Data Gateway.',
+      queue_position: 2,
+      queue_ahead: 3,
+      document_conversion: null,
+    }))
+
+    expect(wrapper.text()).toContain('Waiting for Data Gateway')
+    expect(wrapper.text()).toContain('3 Chat(s) are ahead')
+    expect(wrapper.text()).not.toContain('public-dg-01')
+    expect(wrapper.get('[role="status"]').attributes('aria-live')).toBe('polite')
   })
 
   it('shows automatic compensation as recovery instead of chat deletion', () => {

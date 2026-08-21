@@ -24,6 +24,7 @@ from apps.iam.permissions_org import (
 from apps.lens_bridge.api.serializers import (
     LensChatBindingEnsureSerializer,
     LensCopilotGatewayOptionSerializer,
+    LensGatewayChatWorkloadSerializer,
     LensGatewayEnableAiSerializer,
     LensKnowledgeSourceCreateSerializer,
     LensKnowledgeSourceSerializer,
@@ -44,6 +45,7 @@ from apps.lens_bridge.models import (
     LensSessionLink,
 )
 from apps.lens_bridge.services import (
+    gateway_chat_queue,
     knowledge_source_sync,
     org_models,
     provisioning,
@@ -683,7 +685,7 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
     def get_permissions(self):
-        if self.action in ("enable_ai", "ai_status"):
+        if self.action in ("enable_ai", "ai_status", "chat_workload"):
             return [IsAuthenticated(), IsOrgWriter()]
         return super().get_permissions()
 
@@ -743,6 +745,45 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
                 include_token=False,
             )
         )
+
+    @action(detail=True, methods=["get", "patch"], url_path="chat-workload")
+    def chat_workload(self, request, pk=None):
+        gateway = provisioning.require_gateway_node(self.org, int(pk))
+        from apps.lens_bridge.services.gateway_execution import (
+            require_user_gateway_link,
+        )
+
+        link = require_user_gateway_link(
+            tenant_organization=self.org,
+            gateway_id=gateway.id,
+            owner_user_id=request.user.id,
+            require_ready=False,
+        )
+        if request.method == "PATCH":
+            body = LensGatewayChatWorkloadSerializer(data=request.data)
+            body.is_valid(raise_exception=True)
+            from apps.audit.services.interface import write_audit_log_from_request
+
+            with transaction.atomic():
+                link = gateway_chat_queue.set_chat_workload_settings(
+                    gateway_link=link,
+                    **body.validated_data,
+                )
+                write_audit_log_from_request(
+                    request,
+                    organization=self.org,
+                    action="lens.gateway.chat_workload.update",
+                    resource_type="lens_gateway_link",
+                    resource_id=str(link.id),
+                    resource_name=gateway.name,
+                    changes={
+                        "chat_prepare_concurrency": int(
+                            link.chat_prepare_concurrency
+                        ),
+                        "chat_queue_capacity": int(link.chat_queue_capacity),
+                    },
+                )
+        return Response(gateway_chat_queue.chat_workload_payload(gateway_link=link))
 
     @action(detail=True, methods=["get"], url_path="browse")
     def browse(self, request, pk=None):

@@ -21,12 +21,15 @@ from apps.iam.models import Organization
 from apps.lens_bridge.models import (
     LensAssistantLink,
     LensChatBinding,
+    LensGatewayChatSlot,
+    LensGatewayLink,
     LensKnowledgeSource,
     LensSessionLink,
 )
 from apps.lens_bridge.services import (
     assistant_access,
     chat_user_provisioning,
+    gateway_chat_queue,
     ingest_policy,
     knowledge_source_sync,
     platform_lens,
@@ -481,7 +484,29 @@ def create_copilot_chat(
 
     try:
         with transaction.atomic():
+            gateway_link = (
+                LensGatewayLink.objects.select_for_update()
+                .select_related("gateway", "organization")
+                .get(pk=gateway_link.pk)
+            )
+            existing = LensSessionLink.objects.filter(
+                organization=org,
+                hfl_user=user,
+                create_idempotency_key=request_key,
+                is_deleted=False,
+            ).first()
+            if existing is not None:
+                if existing.create_request_hash != request_hash:
+                    raise ChatCreateIdempotencyConflict()
+                return existing
+            gateway_link = gateway_chat_queue.assert_chat_queue_admission(
+                gateway_link=gateway_link,
+            )
             link = _create_session_link()
+            link.gateway_queue_entered_at = timezone.now()
+            link.save(
+                update_fields=["gateway_queue_entered_at", "updated_at"]
+            )
     except IntegrityError:
         link = LensSessionLink.objects.filter(
             organization=org,
@@ -566,6 +591,10 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
             ]
         )
     transaction.on_commit(lambda: _queue_teardown_or_record_error(locked.id))
+    if locked.gateway_link_id is not None:
+        transaction.on_commit(
+            lambda: gateway_chat_queue.wake_gateway_queue(locked.gateway_link_id)
+        )
     return locked
 
 
@@ -715,7 +744,12 @@ def run_copilot_chat_provision(
                 message=f"{exc}; {'; '.join(cleanup_errors)}",
             )
         else:
-            _mark_provision_failed_by_id(session_link_id, claim_token, str(exc))
+            _mark_provision_failed_by_id(
+                session_link_id,
+                claim_token,
+                str(exc),
+                expected_generation=link.provision_generation if link else 0,
+            )
         raise
 
 
@@ -745,6 +779,13 @@ def _run_copilot_chat_provision(
     gateway_link = link.gateway_link or (binding.gateway_link if binding else None)
     if gateway_link is None:
         raise ValidationError({"gateway_link": "Data gateway is missing."})
+    if link.gateway_link_id is None:
+        # Sessions created before the direct Gateway binding was introduced
+        # may still resolve it through their durable Chat binding. Persist the
+        # canonical link before queue admission so they cannot wait forever
+        # outside the per-Gateway scheduler.
+        link.gateway_link = gateway_link
+        _update_provision_claim(link, claim_token, "gateway_link")
     scopes = list(link.source_scopes_json or [])
     if not scopes and binding is not None:
         scopes = [
@@ -788,6 +829,32 @@ def _run_copilot_chat_provision(
     _reserve_chat_capacity(link=link, claim_token=claim_token)
     link.refresh_from_db()
     scopes = list(link.source_scopes_json or [])
+
+    slot = gateway_chat_queue.try_acquire_chat_prepare_slot(
+        session_link_id=link.id,
+        expected_generation=link.provision_generation,
+    )
+    if not slot.acquired:
+        ahead = gateway_chat_queue.chat_queue_ahead(session=link)
+        detail = "Waiting for Data Gateway."
+        if ahead:
+            detail = f"Waiting for Data Gateway. {ahead} Chat(s) ahead."
+        _set_phase(
+            link,
+            claim_token,
+            LensSessionLink.ProvisionPhase.QUEUED,
+            detail,
+        )
+        return {
+            "session_link_id": link.id,
+            "status": "waiting",
+            "queue_position": slot.position,
+            "retry_after_seconds": slot.retry_after_seconds,
+        }
+    gateway_chat_queue.heartbeat_chat_prepare_slot(
+        session_link_id=link.id,
+        generation=link.provision_generation,
+    )
 
     _set_phase(
         link,
@@ -840,7 +907,8 @@ def _run_copilot_chat_provision(
             _cleanup_orphan_knowledge_source(ks, owner_session_link_id=link.id)
             raise
 
-    # 2) Restore + convert synchronously inside this worker (DG unchanged).
+    # 2) Advance the durable restore + conversion state machine. External
+    # restore work returns ``waiting`` so this worker never blocks on polling.
     def sync_progress(phase: str, detail: str) -> None:
         provision_phase = (
             LensSessionLink.ProvisionPhase.CONVERTING
@@ -1790,6 +1858,12 @@ def _complete_copilot_chat_provision(
             "updated_at",
         ]
     )
+    transaction.on_commit(
+        lambda: gateway_chat_queue.release_chat_prepare_slot(
+            session_link_id=link.id,
+            expected_generation=link.provision_generation,
+        )
+    )
 
 
 def _orphan_knowledge_source_needs_enqueue(knowledge_source_id: int) -> bool:
@@ -2483,6 +2557,11 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         link.teardown_next_retry_at = timezone.now() + timedelta(minutes=5)
     elif not critical_errors:
         link.teardown_next_retry_at = None
+    slot_generation = (
+        LensGatewayChatSlot.objects.filter(session_link_id=link.id)
+        .values_list("session_generation", flat=True)
+        .first()
+    )
     final_query = LensSessionLink.objects.filter(
         pk=link.id,
         teardown_claim_token=claim_token,
@@ -2518,6 +2597,11 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         raise ChatTeardownIncompleteError("Chat teardown lease was lost.")
     if critical_errors:
         raise ChatTeardownIncompleteError("; ".join(critical_errors))
+    if slot_generation is not None:
+        gateway_chat_queue.release_chat_prepare_slot(
+            session_link_id=link.id,
+            expected_generation=int(slot_generation),
+        )
     return {
         "session_link_id": link.id,
         "status": "retryable" if reset_for_retry else "deleted",
@@ -2530,8 +2614,10 @@ def _mark_provision_failed_by_id(
     session_link_id: int,
     claim_token: str,
     message: str,
+    *,
+    expected_generation: int,
 ) -> None:
-    LensSessionLink.objects.filter(
+    updated = LensSessionLink.objects.filter(
         pk=session_link_id,
         lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
         provision_claim_token=claim_token,
@@ -2548,6 +2634,22 @@ def _mark_provision_failed_by_id(
         capacity_reservation_status=LensSessionLink.CapacityReservationStatus.RELEASED,
         updated_at=timezone.now(),
     )
+    if updated:
+        released_gateway_id = gateway_chat_queue.release_chat_prepare_slot(
+            session_link_id=session_link_id,
+            expected_generation=expected_generation,
+        )
+        if released_gateway_id is None:
+            gateway_link_id = (
+                LensSessionLink.objects.filter(pk=session_link_id)
+                .values_list("gateway_link_id", flat=True)
+                .first()
+            )
+            if gateway_link_id is not None:
+                # The failed session may have been the FIFO head without ever
+                # acquiring a heavy-work slot (for example, scope validation
+                # failed). There is no slot-release callback in that case.
+                gateway_chat_queue.wake_gateway_queue(int(gateway_link_id))
 
 
 @transaction.atomic
@@ -2612,6 +2714,14 @@ def _transition_failed_provision_to_teardown(
         ]
     )
     transaction.on_commit(lambda: _queue_teardown_or_record_error(link.id))
+    if link.gateway_link_id is not None:
+        # A failure before slot acquisition removes this session from the FIFO
+        # head without releasing a slot. Wake the next waiter immediately; if
+        # this session does own a slot, the occupied-slot count keeps the
+        # Gateway fenced until teardown confirms cleanup.
+        transaction.on_commit(
+            lambda: gateway_chat_queue.wake_gateway_queue(link.gateway_link_id)
+        )
     return True
 
 
@@ -2684,7 +2794,11 @@ def _assert_retry_public_gateway_capacity(*, session: LensSessionLink) -> None:
 def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     locked = (
         LensSessionLink.objects.select_for_update(of=("self",))
-        .select_related("gateway_link", "organization")
+        .select_related(
+            "gateway_link",
+            "organization",
+            "chat_binding__gateway_link",
+        )
         .get(pk=link.pk)
     )
     if locked.lifecycle_status == LensSessionLink.LifecycleStatus.READY:
@@ -2712,7 +2826,19 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             }
         )
 
-    _assert_retry_public_gateway_capacity(session=locked)
+    gateway_link = locked.gateway_link or (
+        locked.chat_binding.gateway_link if locked.chat_binding_id else None
+    )
+    if gateway_link is not None:
+        # Backfill the canonical binding for sessions created by an older
+        # release. Invalid historical rows without any Gateway keep the prior
+        # retry behavior and fail with the existing explicit validation when
+        # provisioning runs.
+        locked.gateway_link = gateway_link
+        _assert_retry_public_gateway_capacity(session=locked)
+        gateway_chat_queue.assert_chat_queue_admission(
+            gateway_link=gateway_link,
+        )
 
     locked.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
     locked.provision_phase = LensSessionLink.ProvisionPhase.QUEUED
@@ -2721,6 +2847,7 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     locked.provision_claim_token = None
     locked.provision_claimed_at = None
     locked.provision_next_retry_at = None
+    locked.gateway_queue_entered_at = timezone.now()
     locked.provision_generation += 1
     locked.provision_poll_sequence = 0
     locked.cleanup_intent = LensSessionLink.CleanupIntent.NONE
@@ -2747,6 +2874,8 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             "provision_claim_token",
             "provision_claimed_at",
             "provision_next_retry_at",
+            "gateway_link",
+            "gateway_queue_entered_at",
             "provision_generation",
             "provision_poll_sequence",
             "cleanup_intent",

@@ -71,6 +71,37 @@ class PrivateGatewayApiAuthorizationTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_other_admin_cannot_read_private_gateway_chat_workload(self):
+        response = self.client.get(
+            reverse(
+                "lens-gateway-chat-workload",
+                kwargs={"pk": self.gateway.id},
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_owner_can_update_private_gateway_chat_workload(self):
+        self.client.force_authenticate(user=self.owner)
+        response = self.client.patch(
+            reverse(
+                "lens-gateway-chat-workload",
+                kwargs={"pk": self.gateway.id},
+            ),
+            {
+                "chat_prepare_concurrency": 2,
+                "chat_queue_capacity": 20,
+            },
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.link.refresh_from_db()
+        self.assertEqual(self.link.chat_prepare_concurrency, 2)
+        self.assertEqual(self.link.chat_queue_capacity, 20)
+
     @mock.patch("apps.node.services.interface.run_agent_task_sync")
     def test_other_admin_cannot_browse_private_gateway(self, run_agent_task):
         response = self.client.get(

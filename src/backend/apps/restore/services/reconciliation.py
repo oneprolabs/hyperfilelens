@@ -55,6 +55,7 @@ def reconcile_restore_node_task_projections(*, limit: int = 200) -> dict[str, in
     classified, classification_failed = _classify_terminal_legacy_insight_tasks(
         limit=batch_size
     )
+    _resume_stranded_insight_restore_items(limit=batch_size)
     return {
         "candidates": len(candidates),
         "replayed": replayed,
@@ -62,6 +63,72 @@ def reconcile_restore_node_task_projections(*, limit: int = 200) -> dict[str, in
         "classified": classified,
         "classification_failed": classification_failed,
     }
+
+
+def _resume_stranded_insight_restore_items(*, limit: int) -> None:
+    """Durably continue sequential Chat restores after callback/broker failure."""
+
+    from apps.restore.services.interface import _dispatch_restore_items
+
+    active_task_ids = (
+        Task.objects.filter(
+            status__in=(Task.Status.PENDING, Task.Status.RUNNING),
+        )
+        .order_by()
+        .values("id")
+    )
+    record_ids = list(
+        RestoreRecord.objects.filter(
+            purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+            task_id__in=Subquery(active_task_ids),
+            items__status__in=_ACTIVE_ITEM_STATUSES,
+            items__node_task_id__isnull=True,
+        )
+        .order_by("updated_at", "id")
+        .values_list("id", flat=True)
+        .distinct()[:limit]
+    )
+    for record_id in record_ids:
+        try:
+            with transaction.atomic():
+                record = RestoreRecord.objects.get(pk=record_id)
+                task = Task.objects.select_for_update().filter(
+                    pk=record.task_id,
+                    status__in=(Task.Status.PENDING, Task.Status.RUNNING),
+                ).first()
+                if task is None:
+                    continue
+                items = list(record.items.all())
+                if any(
+                    item.node_task_id is not None
+                    and item.status
+                    in (
+                        RestoreRecordItem.Status.PENDING,
+                        RestoreRecordItem.Status.RUNNING,
+                    )
+                    for item in items
+                ):
+                    continue
+                if any(
+                    item.status
+                    in (
+                        RestoreRecordItem.Status.FAILED,
+                        RestoreRecordItem.Status.CANCELLED,
+                        RestoreRecordItem.Status.SKIPPED,
+                    )
+                    for item in items
+                ):
+                    continue
+                _dispatch_restore_items(
+                    organization_id=record.organization_id,
+                    record=record,
+                    task=task,
+                )
+        except Exception:
+            logger.exception(
+                "insight restore continuation reconciliation failed record_id=%s",
+                record_id,
+            )
 
 
 def _classify_terminal_legacy_insight_tasks(*, limit: int) -> tuple[int, int]:

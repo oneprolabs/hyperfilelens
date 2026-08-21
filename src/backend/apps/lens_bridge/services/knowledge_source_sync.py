@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Callable
@@ -54,8 +53,7 @@ _PHASE_LABELS = {
     "finalize": "Finalizing…",
 }
 
-_RESTORE_WAIT_SECONDS = 6 * 3600
-_RESTORE_POLL_SECONDS = 2.0
+_RESTORE_POLL_SECONDS = 5
 SYNC_CLAIM_TTL_SECONDS = int(
     getattr(settings, "LENS_KS_SYNC_TIME_LIMIT", 7200)
 ) + 300
@@ -71,6 +69,14 @@ _TERMINAL_TASK_STATUSES = frozenset(
 
 class KnowledgeSourceSyncError(Exception):
     """Non-validation failure during knowledge source sync."""
+
+
+class KnowledgeSourceSyncPending(Exception):
+    """External restore work is active; persist state and resume later."""
+
+    def __init__(self, detail: str, *, retry_after_seconds: int = _RESTORE_POLL_SECONDS):
+        super().__init__(detail)
+        self.retry_after_seconds = max(1, int(retry_after_seconds))
 
 
 @transaction.atomic
@@ -358,6 +364,33 @@ def request_knowledge_source_sync(
 
     sync_state = dict(ks.sync_state_json or {})
     completed = set(sync_state.get("completed_phases") or [])
+    previous_restore_record_id = sync_state.get("restore_record_id")
+    if (
+        mode != "full"
+        and previous_restore_record_id
+        and _restore_record_failed(
+            record_id=int(previous_restore_record_id),
+            organization_id=org.id,
+        )
+    ):
+        sync_state["restore_generation"] = max(
+            1,
+            int(sync_state.get("restore_generation") or 0) + 1,
+        )
+        sync_state["restore_scope_status"] = {}
+        sync_state.pop("restore_record_id", None)
+        sync_state.pop("snapshot_id_used", None)
+        sync_state.pop("conversion", None)
+        completed.difference_update(
+            {
+                "restore_snapshot",
+                "ensure_managed_datasource",
+                "convert_documents",
+                "push_assistant",
+                "finalize",
+            }
+        )
+        sync_state["completed_phases"] = list(completed)
     conversion_state = sync_state.get("conversion")
     if (
         isinstance(conversion_state, dict)
@@ -484,6 +517,19 @@ def run_knowledge_source_sync(
             claim_token=claim_token,
         )
         return result
+    except KnowledgeSourceSyncPending as exc:
+        retry_after_seconds = exc.retry_after_seconds
+        _release_sync_claim(
+            knowledge_source_id=knowledge_source_id,
+            claim_token=claim_token,
+            next_poll_at=timezone.now() + timedelta(seconds=retry_after_seconds),
+        )
+        return {
+            "knowledge_source_id": ks.id,
+            "status": "waiting",
+            "detail": str(exc),
+            "retry_after_seconds": retry_after_seconds,
+        }
     except managed_datasource.ManagedDatasourcePending as exc:
         retry_after_seconds = exc.retry_after_seconds
         _clear_source_lens_transient_state(ks)
@@ -790,25 +836,30 @@ def _run_phase_restore_snapshot(
     _update_sync_phase(ks=ks, sync_state=sync_state, phase="restore_snapshot")
     generation = max(1, int(sync_state.get("restore_generation") or 1))
     previous_record_id = sync_state.get("restore_record_id")
-    previous_record_failed = bool(
-        previous_record_id
-        and _restore_record_failed(
-            record_id=int(previous_record_id),
+    if previous_record_id and _restore_record_failed(
+        record_id=int(previous_record_id),
+        organization_id=org.id,
+    ):
+        record = RestoreRecord.objects.filter(
+            pk=int(previous_record_id),
             organization_id=org.id,
+        ).first()
+        task = (
+            Task.objects.filter(
+                organization_id=org.id,
+                task_uuid=record.task_uuid,
+            ).first()
+            if record is not None
+            else None
         )
-    )
-    snapshot_id = resolve_snapshot_id_for_sync(ks=ks)
+        message = (task.error_message if task else None) or "Snapshot restore failed."
+        raise KnowledgeSourceSyncError(message)
     previous_snapshot_id = sync_state.get("snapshot_id_used")
-    snapshot_changed = bool(
-        previous_snapshot_id is not None
-        and str(previous_snapshot_id) != str(snapshot_id)
+    snapshot_id = (
+        int(previous_snapshot_id)
+        if previous_record_id and previous_snapshot_id is not None
+        else resolve_snapshot_id_for_sync(ks=ks)
     )
-    if previous_record_failed or snapshot_changed:
-        generation += 1
-        sync_state["restore_generation"] = generation
-        sync_state["restore_scope_status"] = {}
-        sync_state.pop("restore_record_id", None)
-        sync_state.pop("conversion", None)
     snapshot = BackupSourceSnapshot.objects.filter(
         organization_id=org.id,
         pk=snapshot_id,
@@ -881,7 +932,15 @@ def _run_phase_restore_snapshot(
     ks.sync_state_json = sync_state
     ks.save(update_fields=["last_restore_record_id", "sync_state_json", "updated_at"])
 
-    _wait_for_restore_record(record_id=record.id, organization_id=org.id)
+    if _restore_record_failed(record_id=record.id, organization_id=org.id):
+        task = Task.objects.filter(
+            organization_id=org.id,
+            task_uuid=record.task_uuid,
+        ).first()
+        message = (task.error_message if task else None) or "Snapshot restore failed."
+        raise KnowledgeSourceSyncError(message)
+    if not _restore_record_succeeded(record_id=record.id, organization_id=org.id):
+        raise KnowledgeSourceSyncPending("Snapshot restore is still running.")
 
     for key in restore_scope_status:
         if restore_scope_status[key] != "done":
@@ -1012,25 +1071,6 @@ def _is_degraded(*, ks: LensKnowledgeSource, sync_state: dict[str, Any]) -> bool
         return False
     used = sync_state.get("snapshot_id_used")
     return used is not None and int(used) != int(latest_id)
-
-
-def _wait_for_restore_record(*, record_id: int, organization_id: int) -> None:
-    deadline = time.monotonic() + _RESTORE_WAIT_SECONDS
-    while time.monotonic() < deadline:
-        if _restore_record_succeeded(record_id=record_id, organization_id=organization_id):
-            return
-        if _restore_record_failed(record_id=record_id, organization_id=organization_id):
-            record = RestoreRecord.objects.filter(pk=record_id, organization_id=organization_id).first()
-            task = None
-            if record is not None:
-                task = Task.objects.filter(
-                    organization_id=organization_id,
-                    task_uuid=record.task_uuid,
-                ).first()
-            message = (task.error_message if task else None) or "Snapshot restore failed."
-            raise KnowledgeSourceSyncError(message)
-        time.sleep(_RESTORE_POLL_SECONDS)
-    raise KnowledgeSourceSyncError("Snapshot restore timed out.")
 
 
 def _restore_record_succeeded(*, record_id: int, organization_id: int) -> bool:

@@ -1,15 +1,28 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ElMessage } from 'element-plus'
 import NodeBasicInfoPanel from '../../components/NodeBasicInfoPanel.vue'
 import NodePerfSettingsPanel from '../../components/NodePerfSettingsPanel.vue'
 import NodeMaintenancePanel from '../../components/NodeMaintenancePanel.vue'
 import HflDetailDrawerFooter from '../../components/HflDetailDrawerFooter.vue'
 import { getGatewayNode } from '../../lib/nodeApi'
-import { fetchGatewayAiStatus, type GatewayAiStatus } from '../../lib/lensApi'
+import { apiErrorMessage } from '../../lib/api'
+import {
+  fetchGatewayAiStatus,
+  fetchGatewayChatWorkload,
+  patchGatewayChatWorkload,
+  type GatewayAiStatus,
+  type GatewayChatWorkload,
+} from '../../lib/lensApi'
+import {
+  fetchPublicGatewayChatWorkload,
+  patchPublicGatewayChatWorkload,
+} from '../../platform-ops/lib/platformOpsApi'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import GatewayLensBasicSection from './GatewayLensBasicSection.vue'
+import GatewayChatWorkloadSection from './GatewayChatWorkloadSection.vue'
 import type { ApiNode } from '../../types/node'
 
 const props = defineProps<{
@@ -34,6 +47,8 @@ const open = computed({
 
 const node = ref<ApiNode | null>(null)
 const gatewayAi = ref<GatewayAiStatus | null>(null)
+const gatewayWorkload = ref<GatewayChatWorkload | null>(null)
+const workloadSaving = ref(false)
 const busy = ref(false)
 const saving = ref(false)
 const savedInSession = ref(false)
@@ -41,6 +56,7 @@ const drawerTab = ref<'basic' | 'performance' | 'maintenance'>('basic')
 const basicPanelRef = ref<InstanceType<typeof NodeBasicInfoPanel> | null>(null)
 const perfPanelRef = ref<InstanceType<typeof NodePerfSettingsPanel> | null>(null)
 const { drawerSize, updateDrawerWidth, bindDrawerResize, unbindDrawerResize } = useResponsiveDrawerWidth()
+let workloadWriteVersion = 0
 
 const perfTabActive = computed(() => open.value && drawerTab.value === 'performance')
 
@@ -65,6 +81,7 @@ function onDrawerClosed() {
   unbindDrawerResize()
   node.value = null
   gatewayAi.value = null
+  gatewayWorkload.value = null
   drawerTab.value = 'basic'
   stopPolling()
   if (savedInSession.value) {
@@ -100,29 +117,81 @@ async function refresh() {
   if (id == null) {
     node.value = null
     gatewayAi.value = null
+    gatewayWorkload.value = null
     return
   }
   const signal = requests.nextSignal('gateway-node-detail')
+  const workloadVersion = workloadWriteVersion
+  const scope = props.gatewayScope ?? 'user'
+  const previousWorkload = (
+    gatewayWorkload.value?.gateway_id === id
+    && gatewayWorkload.value.gateway_scope === scope
+  )
+    ? gatewayWorkload.value
+    : null
   busy.value = true
   try {
-    const [nodeRow, aiRow] = await Promise.all([
+    const isPlatform = scope === 'platform'
+    const [nodeRow, aiRow, workloadRow] = await Promise.all([
       getGatewayNode(id, props.gatewayScope === 'platform' ? 'platform' : 'tenant', { signal }),
-      fetchGatewayAiStatus(id).catch(() => null),
+      isPlatform ? Promise.resolve(null) : fetchGatewayAiStatus(id).catch(() => null),
+      isPlatform
+        ? fetchPublicGatewayChatWorkload(id, { signal }).catch(() => previousWorkload)
+        : fetchGatewayChatWorkload(id, { signal }).catch(() => previousWorkload),
     ])
     node.value = nodeRow
     gatewayAi.value = aiRow
+    if (
+      workloadVersion === workloadWriteVersion
+      && props.nodeId === id
+      && (props.gatewayScope ?? 'user') === scope
+    ) {
+      gatewayWorkload.value = workloadRow
+    }
   } catch (e) {
     if (requests.isAbortError(e)) return
     node.value = null
     gatewayAi.value = null
+    gatewayWorkload.value = null
   } finally {
     requests.releaseSignal('gateway-node-detail', signal)
     if (!signal.aborted) busy.value = false
   }
 }
 
+async function saveChatWorkload(settings: {
+  chat_prepare_concurrency: number
+  chat_queue_capacity: number
+}) {
+  const id = props.nodeId
+  if (id == null || workloadSaving.value) return
+  const scope = props.gatewayScope ?? 'user'
+  workloadWriteVersion += 1
+  workloadSaving.value = true
+  try {
+    const updatedWorkload = scope === 'platform'
+      ? await patchPublicGatewayChatWorkload(id, settings)
+      : await patchGatewayChatWorkload(id, settings)
+    if (
+      props.nodeId === id
+      && (props.gatewayScope ?? 'user') === scope
+    ) {
+      gatewayWorkload.value = updatedWorkload
+    }
+    savedInSession.value = true
+    ElMessage.success({ message: t('insight.dataGateway.chatWorkloadSaved'), grouping: true })
+  } catch (error) {
+    ElMessage.error({
+      message: apiErrorMessage(error, t('insight.dataGateway.chatWorkloadSaveFailed')),
+      grouping: true,
+    })
+  } finally {
+    workloadSaving.value = false
+  }
+}
+
 watch(
-  () => [open.value, props.nodeId] as const,
+  () => [open.value, props.nodeId, props.gatewayScope] as const,
   ([isOpen, id]) => {
     if (isOpen && id != null) {
       drawerTab.value = props.initialTab ?? 'basic'
@@ -133,6 +202,7 @@ watch(
       requests.abortScope('gateway-node-detail')
       node.value = null
       gatewayAi.value = null
+      gatewayWorkload.value = null
       stopPolling()
     }
   },
@@ -151,7 +221,12 @@ function startPolling() {
   stopPolling()
   if (!open.value || props.nodeId == null) return
   pollTimer = setInterval(() => {
-    if (open.value && props.nodeId != null && !busy.value) void refresh()
+    if (
+      open.value
+      && props.nodeId != null
+      && !busy.value
+      && !workloadSaving.value
+    ) void refresh()
   }, 8000)
 }
 
@@ -216,6 +291,12 @@ onUnmounted(() => {
             >
               <template #before-runtime>
                 <GatewayLensBasicSection :gateway-ai="gatewayAi" />
+                <GatewayChatWorkloadSection
+                  v-if="gatewayWorkload"
+                  :workload="gatewayWorkload"
+                  :saving="workloadSaving"
+                  @save="saveChatWorkload"
+                />
               </template>
             </NodeBasicInfoPanel>
           </ElTabPane>
