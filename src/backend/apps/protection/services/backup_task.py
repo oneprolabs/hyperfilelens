@@ -76,6 +76,7 @@ _TASK_TRIGGER_MAP = {
 _DEFAULT_DIRECTORY_WAIT_TIMEOUT_SECONDS = 3600
 _BACKUP_EXECUTION_LOCK_TTL_BUFFER_SECONDS = 600
 _BACKUP_EXECUTION_LOCK_VALUE = "running"
+_QUOTA_EXCEEDED_ERROR_CODE = "SUBSCRIPTION.QUOTA_EXCEEDED"
 _TASK_TERMINAL_STATUSES = {
     Task.Status.SUCCESS,
     Task.Status.FAILED,
@@ -93,6 +94,11 @@ _DIRECTORY_TERMINAL_STATUSES = {
     BackupSourceSnapshotDirectory.Status.FAILED,
     BackupSourceSnapshotDirectory.Status.DELETED,
 }
+
+
+def _is_global_backup_admission_error(exc: Exception) -> bool:
+    return isinstance(exc, AppError) and exc.code == _QUOTA_EXCEEDED_ERROR_CODE
+
 
 logger = logging.getLogger(__name__)
 
@@ -776,6 +782,8 @@ def start_backup_tasks(
                 # backup because configured path contents can change without a
                 # config edit. Never block the Backup Now request on path.size.
             except (ValidationError, AppError) as exc:
+                if _is_global_backup_admission_error(exc):
+                    raise
                 skipped_count += 1
                 results.append(
                     {
@@ -1004,6 +1012,8 @@ def start_backup_tasks(
                         "message": "A backup task for this source and backup config is already running.",
                     }
             except (ValidationError, AppError) as exc:
+                if _is_global_backup_admission_error(exc):
+                    raise
                 skipped_count += 1
                 results.append(
                     {
