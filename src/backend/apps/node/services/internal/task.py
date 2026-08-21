@@ -53,11 +53,15 @@ _DOWNLINK_ERRORS = (
     InvalidChannelLayerError,
     MessageTooLarge,
 )
-_ACK_BACKUP_TASKS = frozenset(
+_ACK_DURABLE_TASKS = frozenset(
     {
         ("protection.backup", "backup.run"),
         ("protection.backup", "backup.snapshot.create"),
         ("protection.backup.policy_prepare", "repository.policy.apply"),
+        ("protection.snapshot_delete", "snapshot.delete"),
+        ("protection.backup_config_reset", "snapshot.delete"),
+        ("source.connection_probe", "nas.test"),
+        ("storage.repository_health", "repo.status"),
     }
 )
 
@@ -160,7 +164,7 @@ def task_uses_command_ack(task: NodeTask) -> bool:
     after an upgrade.  Once a command has been sent with durable ACK semantics,
     its PostgreSQL record must retain those semantics for reconciliation.
     """
-    if (task.correlation_type, task.kind) not in _ACK_BACKUP_TASKS:
+    if (task.correlation_type, task.kind) not in _ACK_DURABLE_TASKS:
         return False
     result = task.result if isinstance(task.result, dict) else {}
     selected = str(result.get(_DELIVERY_PROTOCOL_KEY) or "")
@@ -182,7 +186,7 @@ def task_uses_command_ack(task: NodeTask) -> bool:
 
 def _persist_delivery_protocol(*, task: NodeTask) -> bool:
     """Select the delivery protocol once and persist it without a migration."""
-    if (task.correlation_type, task.kind) not in _ACK_BACKUP_TASKS:
+    if (task.correlation_type, task.kind) not in _ACK_DURABLE_TASKS:
         return False
     with transaction.atomic():
         locked = (
@@ -245,6 +249,22 @@ def _initial_watchdog_deadline(
     from_time: datetime | None = None,
     kind: str = "",
 ) -> datetime:
+    if correlation_type in {
+        "source.connection_probe",
+        "storage.repository_health",
+    }:
+        base = from_time or timezone.now()
+        return base + timezone.timedelta(
+            seconds=max(1, node_conf.AUTOMATIC_PROBE_WATCHDOG_SECONDS)
+        )
+    if correlation_type in {
+        "protection.snapshot_delete",
+        "protection.backup_config_reset",
+    } and kind == "snapshot.delete":
+        base = from_time or timezone.now()
+        return base + timezone.timedelta(
+            seconds=max(1, node_conf.SNAPSHOT_DELETE_WATCHDOG_SECONDS)
+        )
     if correlation_type == node_conf.LIFECYCLE_CORRELATION_TYPE:
         return _lifecycle_detached_watchdog_deadline(from_time=from_time)
     from apps.protection import conf as protection_conf
@@ -599,6 +619,20 @@ def _fail_task_delivery(*, task: NodeTask, reason: str) -> NodeTask:
         task_id=str(task.id),
         message=_terminal_stream_message(task),
     )
+    if task.correlation_type in {
+        "source.connection_probe",
+        "storage.repository_health",
+        "protection.snapshot_delete",
+        "protection.backup_config_reset",
+    }:
+        try:
+            _project_terminal_node_task(task=task)
+        except Exception:
+            logger.exception(
+                "agent task delivery failure projection failed task_id=%s kind=%s",
+                task.id,
+                task.kind,
+            )
     return task
 
 
@@ -877,7 +911,7 @@ def _timeout_unaccepted_task(
 
 
 def reconcile_unaccepted_agent_tasks(*, limit: int = 200) -> dict[str, int | bool]:
-    """Retry ACK-capable backup commands with the original NodeTask identity."""
+    """Retry durable ACK commands with their original NodeTask identity."""
     now = timezone.now()
     ack_wait = timezone.timedelta(
         seconds=max(1, node_conf.TASK_COMMAND_ACK_TIMEOUT_SECONDS)
@@ -887,7 +921,7 @@ def reconcile_unaccepted_agent_tasks(*, limit: int = 200) -> dict[str, int | boo
     )
     max_attempts = 1 + max(0, node_conf.TASK_COMMAND_ACK_MAX_RETRIES)
     ack_task_filter = Q()
-    for correlation_type, kind in _ACK_BACKUP_TASKS:
+    for correlation_type, kind in _ACK_DURABLE_TASKS:
         ack_task_filter |= Q(correlation_type=correlation_type, kind=kind)
     protocol_lookup = f"result__{_DELIVERY_PROTOCOL_KEY}"
     candidate_query = NodeTask.objects.filter(
@@ -1046,7 +1080,11 @@ def record_task_progress(
             "updated_at",
         ]
     else:
-        task.watchdog_deadline_at = _watchdog_deadline(from_time=now)
+        task.watchdog_deadline_at = _initial_watchdog_deadline(
+            correlation_type=task.correlation_type,
+            from_time=now,
+            kind=task.kind,
+        )
         update_fields = [
             "status",
             "accepted_at",

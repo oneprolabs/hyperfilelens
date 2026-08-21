@@ -8,6 +8,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from apps.node.services.interface import run_agent_task_async
 from apps.protection.models import BackupConfig, BackupSourceSnapshot, BackupSourceSnapshotDirectory
 from apps.protection.services.kopia_snapshot_delete import (
     classify_kopia_snapshot_delete_results,
@@ -20,7 +21,12 @@ from apps.protection.services.repository_compatibility import validate_backup_re
 from apps.protection.services.snapshot_repository_locator import (
     group_snapshot_directories_by_repository_locator,
 )
-from apps.protection.services.snapshot_delete_execution import run_snapshot_delete
+from apps.protection.services.snapshot_delete_execution import (
+    AgentSnapshotDeletePending,
+    ControllerSnapshotDeleteBusy,
+    run_snapshot_delete,
+    snapshot_delete_agent_work_active,
+)
 from apps.storage.repositories.models import Repository
 from apps.source.constants import PipelineStep
 from apps.source.services.internal.selectable_ids import parse_selectable_id
@@ -550,6 +556,21 @@ def _run_backup_config_reset_task_locked(
             result_payload=result,
         )
         return result
+    except (AgentSnapshotDeletePending, ControllerSnapshotDeleteBusy) as exc:
+        _defer_backup_config_reset_for_remote_work(
+            task=task,
+            message=str(exc),
+        )
+        return {
+            "source_type": source_type,
+            "source_ref_id": source_ref_id,
+            "status": "waiting",
+            "reason": (
+                "agent_cleanup_pending"
+                if isinstance(exc, AgentSnapshotDeletePending)
+                else "controller_cleanup_busy"
+            ),
+        }
     except Exception as exc:
         logger.exception(
             "backup config reset failed org_id=%s source=%s:%s task_uuid=%s",
@@ -583,6 +604,28 @@ def _run_backup_config_reset_task_locked(
             error_message=message,
         )
         return {"source_type": source_type, "source_ref_id": source_ref_id, "status": "failed", "error_message": message}
+
+
+def _defer_backup_config_reset_for_remote_work(
+    *, task: Task, message: str
+) -> None:
+    with transaction.atomic():
+        locked = (
+            Task.objects.select_for_update()
+            .filter(pk=task.pk, status=Task.Status.RUNNING)
+            .first()
+        )
+        if locked is None:
+            return
+        locked.status = Task.Status.PENDING
+        locked.save(update_fields=["status", "updated_at"])
+        append_task_step_event(
+            task=locked,
+            step_name=locked.current_step or "delete_kopia_snapshots",
+            level=TaskEvent.Level.INFO,
+            message="Waiting for snapshot cleanup to continue",
+            metadata={"reason": str(message or "")[:500]},
+        )
 
 
 def _delete_physical_snapshots(*, task: Task, organization_id: int, config_ids: list[int]) -> tuple[int, int]:
@@ -737,8 +780,6 @@ def _run_kopia_snapshot_delete(
     repository: Repository,
     kopia_ids: list[str],
 ):
-    from apps.node.services.interface import run_agent_task_sync
-
     return run_snapshot_delete(
         organization_id=organization_id,
         task=task,
@@ -747,7 +788,7 @@ def _run_kopia_snapshot_delete(
         repository=repository,
         kopia_ids=kopia_ids,
         correlation_type="protection.backup_config_reset",
-        agent_runner=run_agent_task_sync,
+        agent_runner=run_agent_task_async,
     )
 
 
@@ -802,6 +843,8 @@ def reconcile_stuck_backup_config_reset_tasks(
     )
     redispatched = 0
     for row in stuck:
+        if snapshot_delete_agent_work_active(task=row):
+            continue
         payload = row.request_payload if isinstance(row.request_payload, dict) else {}
         source_type = str(payload.get("source_type") or "").strip()
         source_ref_id = int(payload.get("source_ref_id") or 0)

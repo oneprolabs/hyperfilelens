@@ -526,7 +526,7 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
         CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}},
         SOURCE_UNREGISTER_EAGER=True,
     )
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_bulk_delete_keeps_failed_snapshot_remove_task(self, mock_run_agent_task_sync):
         mock_run_agent_task_sync.return_value = SimpleNamespace(
             task=SimpleNamespace(id="node-delete-fail", status="failed", last_error="kopia delete failed"),
@@ -572,7 +572,7 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
         "apps.source.services.internal.backup_source_delete.agent_connection_status",
         return_value="online",
     )
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_strict_online_agent_keeps_source_when_snapshot_cleanup_fails(
         self,
         mock_run_agent_task_sync,

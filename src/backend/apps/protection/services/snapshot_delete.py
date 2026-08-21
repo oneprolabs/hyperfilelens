@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from apps.node.services.interface import run_agent_task_sync
+from apps.node.services.interface import run_agent_task_async
 from apps.protection.models import BackupSourceSnapshot, BackupSourceSnapshotDirectory
 from apps.protection.services.backup_task import (
     _set_step_status,
@@ -22,7 +22,12 @@ from apps.protection.services.repository_compatibility import validate_backup_re
 from apps.protection.services.snapshot_repository_locator import (
     group_snapshot_directories_by_repository_locator,
 )
-from apps.protection.services.snapshot_delete_execution import run_snapshot_delete
+from apps.protection.services.snapshot_delete_execution import (
+    AgentSnapshotDeletePending,
+    ControllerSnapshotDeleteBusy,
+    run_snapshot_delete,
+    snapshot_delete_agent_work_active,
+)
 from apps.storage.services.internal.repository_workload import (
     RepositoryWorkload,
     lock_repositories_for_workload,
@@ -481,6 +486,22 @@ def run_snapshot_delete_task(
             task_uuid=task_uuid,
             source_snapshot_id=source_snapshot_id,
         )
+    except (AgentSnapshotDeletePending, ControllerSnapshotDeleteBusy) as exc:
+        _defer_snapshot_delete_for_remote_work(
+            organization_id=organization_id,
+            task_uuid=task_uuid,
+            message=str(exc),
+        )
+        return {
+            "task_uuid": str(task_uuid),
+            "source_snapshot_id": source_snapshot_id,
+            "status": "waiting",
+            "reason": (
+                "agent_cleanup_pending"
+                if isinstance(exc, AgentSnapshotDeletePending)
+                else "controller_cleanup_busy"
+            ),
+        }
     except Exception as exc:
         task = Task.objects.filter(organization_id=organization_id, task_uuid=task_uuid).first()
         if task is None:
@@ -510,6 +531,32 @@ def run_snapshot_delete_task(
         )
     finally:
         cache.delete(lock_key)
+
+
+def _defer_snapshot_delete_for_remote_work(
+    *, organization_id: int, task_uuid: str, message: str
+) -> None:
+    with transaction.atomic():
+        task = (
+            Task.objects.select_for_update()
+            .filter(
+                organization_id=organization_id,
+                task_uuid=task_uuid,
+                status=Task.Status.RUNNING,
+            )
+            .first()
+        )
+        if task is None:
+            return
+        task.status = Task.Status.PENDING
+        task.save(update_fields=["status", "updated_at"])
+        append_task_step_event(
+            task=task,
+            step_name=task.current_step or "delete_kopia_snapshots",
+            level=TaskEvent.Level.INFO,
+            message="Waiting for snapshot cleanup to continue",
+            metadata={"reason": str(message or "")[:500]},
+        )
 
 
 def _run_snapshot_delete_task_locked(
@@ -617,7 +664,7 @@ def _run_snapshot_delete_task_locked(
             repository=repository,
             kopia_ids=group_kopia_ids,
             correlation_type="protection.snapshot_delete",
-            agent_runner=run_agent_task_sync,
+            agent_runner=run_agent_task_async,
         )
         result = outcome.result if isinstance(outcome.result, dict) else {}
         group_results = (
@@ -739,6 +786,8 @@ def reconcile_snapshot_delete_tasks(*, now=None, limit: int = 100) -> dict[str, 
         ).order_by("updated_at", "id")[:limit]
     )
     for task in stale_pending:
+        if snapshot_delete_agent_work_active(task=task):
+            continue
         snapshot_id = int((task.request_payload or {}).get("source_snapshot_id") or 0)
         snapshot = BackupSourceSnapshot.objects.filter(
             organization_id=task.organization_id,

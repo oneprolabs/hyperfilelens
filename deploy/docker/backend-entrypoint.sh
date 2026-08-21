@@ -136,6 +136,7 @@ run_worker_dev() {
     --stable-seconds "${DEV_WORKER_STABLE_SECONDS:-30}" \
     --base-delay "${DEV_WORKER_RESTART_DELAY_SECONDS:-1}" \
     -- celery -A common worker --loglevel=INFO \
+    --concurrency="${CELERY_WORKER_CONCURRENCY:-4}" \
     -Q backend,node.lifecycle,node.ingest,source.remote-io,storage.provider-validation
 }
 
@@ -177,7 +178,7 @@ case "${1:-api}" in
     wait_for_postgres
     echo "[entrypoint] start celery worker"
     exec celery -A common worker --loglevel=INFO \
-      --concurrency="${CELERY_WORKER_CONCURRENCY:-2}" \
+      --concurrency="${CELERY_WORKER_CONCURRENCY:-4}" \
       -Q backend,node.lifecycle,node.ingest,source.remote-io,storage.provider-validation
     ;;
   worker-dev)

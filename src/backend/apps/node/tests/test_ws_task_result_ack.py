@@ -5,9 +5,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from django.db import DatabaseError
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
+from django.utils import timezone
 
+from apps.iam.models import Organization
+from apps.node.models import Node, NodeTask
 from apps.node.ws.node_agent import _MAX_AGENT_UPLINK_BYTES, NodeAgentConsumer
+from apps.node.ws.uplink import trigger_task_result_followup
 from apps.node.ws.wire import TASK_RESULT_ACK_SUBPROTOCOL
 
 
@@ -195,3 +199,44 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
         consumer.send.assert_awaited_once()
         recovery.assert_called_once_with(node_task=task)
         followup.assert_not_called()
+
+
+class NodeTaskResultFollowupTests(TestCase):
+    def test_normal_result_projects_new_async_domains(self):
+        organization = Organization.objects.create(
+            key="node-task-result-followup-org",
+            name="Node Task Result Follow-up Org",
+        )
+        node = Node.objects.create(
+            organization=organization,
+            name="node-task-result-followup-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        node_task = NodeTask.objects.create(
+            organization=organization,
+            node=node,
+            kind="nas.test",
+            correlation_type="source.connection_probe",
+            correlation_id="1",
+            status=NodeTask.Status.SUCCESS,
+            dispatched_at=timezone.now(),
+            accepted_at=timezone.now(),
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        with (
+            patch(
+                "apps.source.tasks.connection_probe."
+                "project_source_connection_probe"
+            ) as project_source,
+            patch(
+                "apps.protection.services.snapshot_delete_execution."
+                "queue_snapshot_delete_result_followup"
+            ) as queue_snapshot,
+        ):
+            trigger_task_result_followup(node_task_id=node_task.id)
+
+        project_source.assert_called_once_with(node_task=node_task)
+        queue_snapshot.assert_called_once_with(node_task=node_task)

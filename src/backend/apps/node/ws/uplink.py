@@ -360,7 +360,13 @@ def project_identical_task_result_recovery(*, node_task: NodeTask) -> None:
         project_repository_health_from_agent_result,
     )
 
-    project_repository_health_from_agent_result(node_task=node_task)
+    project_repository_health_from_agent_result(
+        node_task=node_task,
+        allow_failure=False,
+    )
+    from apps.source.tasks.connection_probe import project_source_connection_probe
+
+    project_source_connection_probe(node_task=node_task)
 
 
 def trigger_task_result_followup(*, node_task_id) -> None:
@@ -376,6 +382,22 @@ def trigger_task_result_followup(*, node_task_id) -> None:
         project_repository_health_from_agent_result(node_task=task)
     except Exception:
         logger.exception("repository health result projection failed task_id=%s", task.id)
+    try:
+        from apps.source.tasks.connection_probe import (
+            project_source_connection_probe,
+        )
+
+        project_source_connection_probe(node_task=task)
+    except Exception:
+        logger.exception("source connection result projection failed task_id=%s", task.id)
+    try:
+        from apps.protection.services.snapshot_delete_execution import (
+            queue_snapshot_delete_result_followup,
+        )
+
+        queue_snapshot_delete_result_followup(node_task=task)
+    except Exception:
+        logger.exception("snapshot delete result follow-up failed task_id=%s", task.id)
     try:
         from apps.node.services.internal.node_lifecycle import (
             queue_detached_remove_verification,

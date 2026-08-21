@@ -26,7 +26,10 @@ from apps.source.constants import PipelineStep
 from apps.source.models import SourceBackupPipelineEntry, SourceResource
 from apps.source.services.internal.agent_host_sync import sync_agent_source_host
 from apps.source.services.internal.source_credentials import resolve_source_credentials
-from apps.source.tasks.connection_probe import run_source_resource_capacity_probe
+from apps.source.tasks.connection_probe import (
+    project_source_connection_probe,
+    run_source_resource_capacity_probe,
+)
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import complete_task
@@ -704,22 +707,8 @@ class SourceResourceApiTests(TestCase):
             SourceResource.all_objects.filter(id=ghost.id).exists(),
         )
 
-    @patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
-    def test_create_nas_auto_probes_capacity(self, mock_dispatch):
+    def test_create_nas_auto_probes_capacity(self):
         canonical_nfs_export = custom_mount("nfs-export")
-        mock_dispatch.return_value = SimpleNamespace(
-            ok=True,
-            timed_out=False,
-            task=None,
-            result={
-                "mount_point": canonical_nfs_export,
-                "space_info": {
-                    "total_bytes": 1_000_000_000_000,
-                    "used_bytes": 250_000_000_000,
-                    "free_bytes": 750_000_000_000,
-                },
-            },
-        )
         with patch(
             "apps.source.tasks.connection_probe.probe_source_resource_capacity.apply_async"
         ) as apply_async:
@@ -754,13 +743,25 @@ class SourceResourceApiTests(TestCase):
             **apply_async.call_args.kwargs["kwargs"]
         )
 
-        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["status"], "dispatched")
+        node_task = NodeTask.objects.get(id=result["node_task_id"])
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.result = {
+            "mount_point": canonical_nfs_export,
+            "space_info": {
+                "total_bytes": 1_000_000_000_000,
+                "used_bytes": 250_000_000_000,
+                "free_bytes": 750_000_000_000,
+            },
+        }
+        node_task.save(update_fields=["status", "result", "updated_at"])
+
+        self.assertTrue(project_source_connection_probe(node_task=node_task))
         resource.refresh_from_db()
         self.assertEqual(resource.total_size, 1_000_000_000_000)
         self.assertEqual(resource.used_size, 250_000_000_000)
         self.assertEqual(resource.free_size, 750_000_000_000)
         self.assertIsNotNone(resource.last_connection_test)
-        mock_dispatch.assert_called_once()
 
     def test_backup_selectable_catalog(self):
         agent = Node.objects.create(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from contextlib import nullcontext
 from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -12,7 +13,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.iam.models import Membership, Organization
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
@@ -29,6 +30,9 @@ from apps.protection.services.snapshot_delete import (
     reconcile_snapshot_delete_tasks,
     run_snapshot_delete_task,
     snapshot_delete_retry_delay,
+)
+from apps.protection.services.snapshot_delete_execution import (
+    queue_snapshot_delete_result_followup,
 )
 from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
@@ -139,7 +143,7 @@ class SnapshotDeleteTaskTests(TestCase):
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
 
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_run_snapshot_delete_task_marks_logical_snapshot_deleted(
         self, mock_run_agent_task_sync
     ):
@@ -238,7 +242,7 @@ class SnapshotDeleteTaskTests(TestCase):
             BackupSourceSnapshot.Status.DELETE_FAILED,
         )
 
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_snapshot_delete_groups_by_locator_and_preserves_partial_results(
         self,
         mock_run_agent_task_sync,
@@ -344,7 +348,7 @@ class SnapshotDeleteTaskTests(TestCase):
             {original_proxy.id, replacement_proxy.id},
         )
 
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_run_snapshot_delete_task_keeps_logical_snapshot_when_partial_delete_fails(
         self, mock_run_agent_task_sync
     ):
@@ -394,7 +398,7 @@ class SnapshotDeleteTaskTests(TestCase):
             BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
 
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_already_absent_physical_snapshots_complete_logical_delete(
         self, mock_run_agent_task_sync
     ):
@@ -435,7 +439,7 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(task.status, Task.Status.SUCCESS)
         self.assertEqual(result["already_absent_count"], 2)
 
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_legacy_sentinel_row_is_not_dispatched(self, mock_run_agent_task_sync):
         BackupSourceSnapshotDirectory.objects.filter(
             source_snapshot=self.snapshot,
@@ -509,7 +513,7 @@ class SnapshotDeleteTaskTests(TestCase):
             ],
         },
     )
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_offline_s3_writer_falls_back_to_controller(
         self,
         mock_run_agent_task_sync,
@@ -537,7 +541,35 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETED)
         self.assertEqual(result["deleted_count"], 2)
 
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete_execution.delete_s3_snapshots")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
+    def test_controller_cleanup_slot_waits_in_postgresql_without_blocking_worker(
+        self,
+        mock_run_agent_task_sync,
+        mock_delete_s3_snapshots,
+    ):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        self.agent.availability = Node.Availability.OFFLINE
+        self.agent.save(update_fields=["availability", "updated_at"])
+
+        with patch(
+            "apps.protection.services.snapshot_delete_execution."
+            "repository_execution_lock",
+            return_value=nullcontext(False),
+        ):
+            result = run_snapshot_delete_task(
+                organization_id=self.org.id,
+                task_uuid=str(task.task_uuid),
+                source_snapshot_id=self.snapshot.id,
+            )
+
+        task.refresh_from_db()
+        mock_run_agent_task_sync.assert_not_called()
+        mock_delete_s3_snapshots.assert_not_called()
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(task.status, Task.Status.PENDING)
+
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_busy_s3_writer_does_not_shift_cleanup_to_controller(
         self,
         mock_run_agent_task_sync,
@@ -562,7 +594,7 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertIn("busy", task.error_message)
 
     @patch("apps.protection.services.snapshot_delete_execution.delete_s3_snapshots")
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_online_s3_writer_remains_preferred_over_controller(
         self,
         mock_run_agent_task_sync,
@@ -598,6 +630,95 @@ class SnapshotDeleteTaskTests(TestCase):
         )
         mock_delete_s3_snapshots.assert_not_called()
 
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
+    def test_agent_delete_releases_worker_and_resumes_from_durable_result(
+        self,
+        dispatch_async,
+    ):
+        def create_node_task(**kwargs):
+            node_task = NodeTask.objects.create(
+                organization_id=kwargs["organization_id"],
+                node_id=kwargs["node_id"],
+                kind=kwargs["kind"],
+                payload=kwargs["persisted_payload"],
+                correlation_type=kwargs["correlation_type"],
+                correlation_id=kwargs["correlation_id"],
+                parent_task=kwargs["parent_task"],
+                status=NodeTask.Status.RUNNING,
+                accepted_at=timezone.now(),
+                watchdog_deadline_at=timezone.now() + timedelta(hours=1),
+            )
+            return SimpleNamespace(task=node_task, task_id=str(node_task.id))
+
+        dispatch_async.side_effect = create_node_task
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        waiting = run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        task.refresh_from_db()
+        self.assertEqual(waiting["status"], "waiting")
+        self.assertEqual(waiting["reason"], "agent_cleanup_pending")
+        self.assertEqual(task.status, Task.Status.PENDING)
+        node_task = NodeTask.objects.get(parent_task=task, kind="snapshot.delete")
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.result = {
+            "deleted_count": 2,
+            "failed_count": 0,
+            "results": [
+                {"kopia_snapshot_id": "kopia-a", "status": "success"},
+                {"kopia_snapshot_id": "kopia-b", "status": "success"},
+            ],
+        }
+        node_task.save(update_fields=["status", "result", "updated_at"])
+
+        result = run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        task.refresh_from_db()
+        self.snapshot.refresh_from_db()
+        self.assertEqual(result["deleted_count"], 2)
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETED)
+        dispatch_async.assert_called_once()
+
+    @patch(
+        "apps.protection.tasks.snapshot_delete."
+        "execute_snapshot_delete_task.apply_async"
+    )
+    def test_agent_delete_result_queues_short_parent_continuation(self, apply_async):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="snapshot.delete",
+            correlation_type="protection.snapshot_delete",
+            correlation_id=f"{task.task_uuid}:0:test",
+            parent_task=task,
+            status=NodeTask.Status.SUCCESS,
+            accepted_at=timezone.now(),
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            queued = queue_snapshot_delete_result_followup(node_task=node_task)
+
+        self.assertTrue(queued)
+        apply_async.assert_called_once_with(
+            kwargs={
+                "organization_id": self.org.id,
+                "task_uuid": str(task.task_uuid),
+                "source_snapshot_id": self.snapshot.id,
+            },
+            countdown=1,
+        )
+
     @patch(
         "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots",
         return_value={
@@ -609,7 +730,7 @@ class SnapshotDeleteTaskTests(TestCase):
             ],
         },
     )
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_s3_delivery_failure_before_dispatch_uses_controller(
         self,
         mock_run_agent_task_sync,
@@ -637,8 +758,48 @@ class SnapshotDeleteTaskTests(TestCase):
         mock_run_agent_task_sync.assert_called_once()
         mock_delete_s3_snapshots.assert_called_once()
 
+    @patch(
+        "apps.protection.services.snapshot_delete_execution.delete_s3_snapshots",
+        return_value={
+            "deleted_count": 2,
+            "failed_count": 0,
+            "results": [
+                {"kopia_snapshot_id": "kopia-a", "status": "success"},
+                {"kopia_snapshot_id": "kopia-b", "status": "success"},
+            ],
+        },
+    )
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
+    def test_s3_unaccepted_timeout_before_dispatch_uses_controller(
+        self,
+        mock_run_agent_task_sync,
+        mock_delete_s3_snapshots,
+    ):
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            task=SimpleNamespace(
+                id="node-delete-unaccepted-timeout",
+                status=NodeTask.Status.TIMEOUT,
+                last_error="Agent did not durably accept task.command",
+                dispatched_at=None,
+                accepted_at=None,
+            ),
+            result={},
+            ok=False,
+            timed_out=True,
+        )
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        mock_run_agent_task_sync.assert_called_once()
+        mock_delete_s3_snapshots.assert_called_once()
+
     @patch("apps.protection.services.snapshot_delete_execution.delete_s3_snapshots")
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_s3_failure_after_dispatch_does_not_run_twice_on_controller(
         self,
         mock_run_agent_task_sync,
@@ -667,7 +828,7 @@ class SnapshotDeleteTaskTests(TestCase):
         mock_delete_s3_snapshots.assert_not_called()
 
     @patch("apps.protection.services.snapshot_delete_execution.delete_s3_snapshots")
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_nas_source_s3_cleanup_prefers_backup_writer_proxy(
         self,
         mock_run_agent_task_sync,
@@ -733,7 +894,7 @@ class SnapshotDeleteTaskTests(TestCase):
         )
         mock_delete_s3_snapshots.assert_not_called()
 
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_offline_direct_nas_writer_never_uses_controller(
         self,
         mock_run_agent_task_sync,
@@ -767,7 +928,7 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(task.status, Task.Status.FAILED)
         self.assertIn("offline", task.error_message)
 
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_offline_proxy_filesystem_never_uses_controller(
         self,
         mock_run_agent_task_sync,
@@ -817,7 +978,7 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(task.status, Task.Status.FAILED)
         self.assertIn("offline", task.error_message)
 
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_offline_proxy_bound_nas_never_uses_controller(
         self,
         mock_run_agent_task_sync,
@@ -868,7 +1029,7 @@ class SnapshotDeleteTaskTests(TestCase):
             ],
         },
     )
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_data_gateway_is_never_selected_as_snapshot_delete_worker(
         self,
         mock_run_agent_task_sync,
@@ -923,7 +1084,7 @@ class SnapshotDeleteTaskTests(TestCase):
             ],
         },
     )
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_controller_treats_already_absent_snapshots_as_idempotent_success(
         self,
         mock_run_agent_task_sync,
@@ -965,6 +1126,30 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(
             self.snapshot.status, BackupSourceSnapshot.Status.DELETE_FAILED
         )
+
+    @patch("apps.protection.services.snapshot_delete.queue_snapshot_delete_task")
+    def test_reconcile_skips_parent_with_active_agent_delete(self, queue_task):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        old = timezone.now() - timedelta(minutes=10)
+        Task.objects.filter(pk=task.pk).update(
+            status=Task.Status.PENDING,
+            updated_at=old,
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            parent_task=task,
+            kind="snapshot.delete",
+            correlation_type="protection.snapshot_delete",
+            correlation_id=f"{task.task_uuid}:0:test",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timedelta(hours=1),
+        )
+
+        result = reconcile_snapshot_delete_tasks(now=timezone.now())
+
+        self.assertEqual(result["requeued_pending"], 0)
+        queue_task.assert_not_called()
 
     def test_directory_result_normalizes_none_instead_of_stringifying_it(self):
         row = record_source_snapshot_directory_result(
@@ -1037,7 +1222,7 @@ class SnapshotDeleteTaskTests(TestCase):
             .exists()
         )
 
-    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_delete_failed_manual_retry_reuses_original_task(
         self, mock_run_agent_task_sync
     ):
