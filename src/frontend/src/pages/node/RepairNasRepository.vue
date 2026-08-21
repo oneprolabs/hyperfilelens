@@ -9,7 +9,9 @@ import { apiErrorMessage } from '../../lib/api'
 import {
   getStorageRepository,
   listStorageRepositoryAssociatedSources,
+  preflightStorageRepositoryBinding,
   repairStorageRepository,
+  type StorageRepositoryBindingPreflight,
   type StorageRepository,
 } from '../../lib/storageRepositoryApi'
 import { listAllNodes } from '../../lib/nodeApi'
@@ -19,6 +21,7 @@ import {
 } from '../../lib/nasMountTroubleshooting'
 import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
 import type { ApiNode } from '../../types/node'
+import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import NasProxyTopology from './NasProxyTopology.vue'
 import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 import {
@@ -74,6 +77,14 @@ const quotaAlertThreshold = ref<number | undefined>(80)
 const proxyNodeId = ref<number | undefined>(undefined)
 const initialProxyNodeId = ref<number | null>(null)
 const busyWithBackups = ref(false)
+const bindingPreflight = ref<StorageRepositoryBindingPreflight | null>(null)
+const bindingPreflightProxyId = ref<number | null>(null)
+const bindingPreflightLoading = ref(false)
+const bindingPreflightError = ref('')
+const cleanupBindDialogOpen = ref(false)
+const cleanupBindClaimCount = ref(0)
+let bindingPreflightRequest = 0
+let cleanupBindConfirmationResolver: ((confirmed: boolean) => void) | null = null
 
 const availableProxyNodes = computed(() =>
   proxyNodes.value.filter((node) => node.role === 'proxy' && node.availability === 'online'),
@@ -124,6 +135,18 @@ const currentProxyName = computed(() => {
 })
 const smbUsernameMasked = computed(() => (hasSmbUsername.value ? credentialMask : '\u2014'))
 const smbPasswordMasked = computed(() => (hasSmbPassword.value ? credentialMask : '\u2014'))
+const bindingOwnerSummary = computed(() =>
+  (bindingPreflight.value?.owners || [])
+    .map((owner) => {
+      const role = owner.node_role === 'proxy'
+        ? t('repairNasRepo.ownerRoleProxy')
+        : owner.node_role === 'agent'
+          ? t('repairNasRepo.ownerRoleAgent')
+          : t('repairNasRepo.ownerRoleUnknown')
+      return `${role} ${owner.node_name || `#${owner.node_id || '?'}`} (${owner.claim_state})`
+    })
+    .join(', '),
+)
 
 function extractConfigString(
   config: Record<string, unknown> | undefined,
@@ -204,6 +227,44 @@ async function refreshProxyNodesManually() {
   } finally {
     proxyNodesRefreshing.value = false
   }
+}
+
+async function refreshBindingPreflight(nodeId: number) {
+  const request = ++bindingPreflightRequest
+  bindingPreflightLoading.value = true
+  bindingPreflightError.value = ''
+  try {
+    const result = await preflightStorageRepositoryBinding(repoId.value, nodeId)
+    if (request !== bindingPreflightRequest) return null
+    bindingPreflight.value = result
+    bindingPreflightProxyId.value = nodeId
+    return result
+  } catch (err) {
+    if (request !== bindingPreflightRequest) return null
+    bindingPreflight.value = null
+    bindingPreflightProxyId.value = null
+    bindingPreflightError.value = apiErrorMessage(
+      err,
+      t('repairNasRepo.bindingPreflightFailed'),
+    )
+    return null
+  } finally {
+    if (request === bindingPreflightRequest) bindingPreflightLoading.value = false
+  }
+}
+
+function requestCleanupBindConfirmation(claimCount: number) {
+  cleanupBindClaimCount.value = claimCount
+  cleanupBindDialogOpen.value = true
+  return new Promise<boolean>((resolve) => {
+    cleanupBindConfirmationResolver = resolve
+  })
+}
+
+function resolveCleanupBindConfirmation(confirmed: boolean) {
+  cleanupBindDialogOpen.value = false
+  cleanupBindConfirmationResolver?.(confirmed)
+  cleanupBindConfirmationResolver = null
 }
 
 function openProxyDeploy() {
@@ -313,11 +374,7 @@ async function onSubmit() {
         config.smb_domain = smbDomain.value.trim()
       }
     }
-    const payload: {
-      name?: string
-      config?: Record<string, unknown>
-      bind_node_id?: number | null
-    } = {
+    const payload: Parameters<typeof repairStorageRepository>[1] = {
       name: displayName.value.trim(),
       config,
     }
@@ -329,6 +386,30 @@ async function onSubmit() {
       payload.bind_node_id = proxyNodeId.value
     } else {
       payload.bind_node_id = null
+    }
+    if (!isCurrentlyBound.value && payload.bind_node_id) {
+      const preflight = (
+        bindingPreflightProxyId.value === payload.bind_node_id
+          ? bindingPreflight.value
+          : null
+      ) || await refreshBindingPreflight(payload.bind_node_id)
+      if (!preflight) {
+        ElMessage.error({
+          message: bindingPreflightError.value || t('repairNasRepo.bindingPreflightFailed'),
+          grouping: true,
+        })
+        return
+      }
+      if (!preflight.allowed) {
+        if (!preflight.recovery_eligible) {
+          ElMessage.error({ message: preflight.message, grouping: true })
+          return
+        }
+        const confirmed = await requestCleanupBindConfirmation(preflight.claim_count)
+        if (!confirmed) return
+        payload.cleanup_failed_provisioning_targets = true
+        payload.cleanup_confirmation = 'CLEAN UP AND BIND'
+      }
     }
     const repaired = await repairStorageRepository(repoId.value, payload)
     const accepted = String(repaired.status || '').toLowerCase() === 'creating'
@@ -388,6 +469,21 @@ watch(quotaAlertEnabled, (enabled) => {
   if (enabled && (quotaAlertThreshold.value == null || quotaAlertThreshold.value === 0)) {
     quotaAlertThreshold.value = 80
   }
+})
+
+watch(proxyNodeId, (nodeId) => {
+  bindingPreflightRequest += 1
+  bindingPreflight.value = null
+  bindingPreflightProxyId.value = null
+  bindingPreflightError.value = ''
+  if (!isCurrentlyBound.value && nodeId) {
+    void refreshBindingPreflight(nodeId)
+  }
+})
+
+onBeforeUnmount(() => {
+  cleanupBindConfirmationResolver?.(false)
+  cleanupBindConfirmationResolver = null
 })
 
 onMounted(async () => {
@@ -849,6 +945,30 @@ onMounted(async () => {
                         </template>
                       </div>
                     </ElFormItem>
+                    <ElAlert
+                      v-if="!isCurrentlyBound && proxyNodeId && (bindingPreflightLoading || bindingPreflightError || (bindingPreflight && !bindingPreflight.allowed))"
+                      :type="bindingPreflight?.recovery_eligible ? 'warning' : 'error'"
+                      :closable="false"
+                      class="mb-4"
+                    >
+                      <template #title>
+                        {{ bindingPreflightLoading
+                          ? t('repairNasRepo.bindingPreflightLoading')
+                          : bindingPreflightError || bindingPreflight?.message }}
+                      </template>
+                      <div
+                        v-if="bindingOwnerSummary"
+                        class="mt-1 text-xs"
+                      >
+                        {{ t('repairNasRepo.retainedTargetOwners', { owners: bindingOwnerSummary }) }}
+                      </div>
+                      <div
+                        v-if="bindingPreflight?.recovery_eligible"
+                        class="mt-1 text-xs"
+                      >
+                        {{ t('repairNasRepo.cleanupBindAvailable') }}
+                      </div>
+                    </ElAlert>
                     <ElFormItem
                       v-if="proxyNodeId"
                       :label="t('repositoriesPage.fieldRepositoryServerHost')"
@@ -973,6 +1093,19 @@ onMounted(async () => {
       </div>
     </div>
   </div>
+  <DangerConfirmDialog
+    v-model="cleanupBindDialogOpen"
+    :title="t('repairNasRepo.cleanupBindConfirmTitle')"
+    :message="t('repairNasRepo.cleanupBindConfirmDetail', { n: cleanupBindClaimCount })"
+    confirm-mode="keyword"
+    confirm-keyword="CLEAN UP AND BIND"
+    confirm-keyword-placeholder="CLEAN UP AND BIND"
+    :cancel-text="t('repositoriesPage.btnCancel')"
+    :confirm-text="t('repairNasRepo.cleanupBindConfirmButton')"
+    level="high"
+    @confirm="resolveCleanupBindConfirmation(true)"
+    @cancel="resolveCleanupBindConfirmation(false)"
+  />
 </template>
 
 <style scoped>

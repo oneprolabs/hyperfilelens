@@ -15,6 +15,7 @@ from apps.storage.repositories.models import (
 from apps.storage.services.internal.repository_create import (
     _create_error_code,
     enqueue_repository_create_task,
+    retry_repository_create,
     run_repository_create_task,
 )
 from apps.storage.services.internal.repository_errors import (
@@ -189,6 +190,54 @@ class RepositoryCreateTaskTests(TestCase):
         self.assertEqual(repository.status, Repository.Status.CREATE_FAILED)
         self.assertEqual(repository.health, Repository.Health.OFFLINE)
         self.assertTrue(Repository.objects.filter(id=repository.id).exists())
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
+    def test_issue_637_s3_retry_recovers_same_identity_after_45_percent_failure(
+        self,
+        initialize,
+        _enqueue,
+    ):
+        initialize.side_effect = [
+            RepositoryInitializationError("transient first initialization failure"),
+            None,
+        ]
+        repository = self._s3_repository(name="issue-637-s3")
+        repository_id = repository.id
+        claim = reserve_repository_location(repository)
+        first_task = self._enqueue_create(repository)
+
+        first_result = run_repository_create_task(repository_task_id=first_task.id)
+
+        self.assertEqual(first_result["status"], "failed")
+        first_task.task.refresh_from_db()
+        repository.refresh_from_db()
+        claim.refresh_from_db()
+        self.assertEqual(int(first_task.task.progress), 45)
+        self.assertEqual(repository.status, Repository.Status.CREATE_FAILED)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+
+        retry_task = retry_repository_create(
+            repository=repository,
+            requested_by=self.user,
+        )
+        retry_result = run_repository_create_task(repository_task_id=retry_task.id)
+
+        self.assertEqual(retry_result["status"], "success")
+        repository.refresh_from_db()
+        claim.refresh_from_db()
+        self.assertEqual(repository.id, repository_id)
+        self.assertEqual(repository.status, Repository.Status.CREATED)
+        self.assertEqual(repository.health, Repository.Health.ONLINE)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.OWNED)
+        self.assertEqual(
+            [call.kwargs["recovery"] for call in initialize.call_args_list],
+            [False, True],
+        )
 
     @mock.patch(
         "apps.storage.services.internal.repository_create.initialize_s3_repository"

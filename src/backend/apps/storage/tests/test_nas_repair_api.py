@@ -18,11 +18,12 @@ from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.protection.models import BackupConfig
 from apps.storage.repositories.models import (
@@ -34,6 +35,9 @@ from apps.storage.repositories.models import (
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_CODE,
     RepositoryAlreadyExistsError,
+)
+from apps.storage.services.internal.repository_agent_operation import (
+    RepositoryAgentOperationResult,
 )
 from apps.storage.services.internal.repository_location import (
     mark_repository_location_owned,
@@ -154,6 +158,51 @@ class NasRepairApiTests(TestCase):
                 "smb_password": "p",
             },
         )
+
+    def _failed_proxy_provision_residual(self, repository, *, owner=None):
+        owner = owner or self.proxy_b
+        owner.metadata = {
+            "inventory": {
+                "capabilities": [
+                    "repository_cleanup_v1",
+                    "repository_cleanup_ownership_v1",
+                ]
+            }
+        }
+        owner.save(update_fields=["metadata", "updated_at"])
+        repository_subdir = f"hp-repos/agent-{owner.id}"
+        claim = reserve_direct_nas_location(
+            repository=repository,
+            node_id=owner.id,
+            repository_subdir=repository_subdir,
+        )
+        claim.state = RepositoryLocationClaim.State.RESIDUAL
+        claim.save(update_fields=["state", "updated_at"])
+        parent = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+            display_name="Failed Direct NAS provisioning",
+            status=Task.Status.FAILED,
+            request_payload={"repository_id": repository.id},
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=owner,
+            parent_task=parent,
+            kind="repo.initialize",
+            status=NodeTask.Status.SUCCESS,
+            watchdog_deadline_at=timezone.now(),
+            payload={
+                "repository_id": repository.id,
+                "repository": {
+                    "id": repository.id,
+                    "subdir": repository_subdir,
+                },
+            },
+            result={"ownership_verified": True},
+        )
+        return claim
 
     # --- save-only scenarios ---------------------------------------------
 
@@ -439,12 +488,272 @@ class NasRepairApiTests(TestCase):
             {"bind_node_id": self.proxy_a.id},
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("physical Agent targets", str(response.data))
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        problem = response.data["data"]
+        self.assertEqual(problem["code"], "STORAGE.NAS_BIND_BLOCKED")
+        blocker = problem["meta"]["binding_blocker"]
+        self.assertEqual(blocker["blocker_code"], "DIRECT_NAS_ACTIVE_TARGETS")
+        self.assertEqual(blocker["claim_count"], 1)
+        self.assertEqual(blocker["owners"][0]["node_role"], NodeRole.AGENT)
+        self.assertNotIn("repository_subdir", str(blocker))
         repo.refresh_from_db()
         self.assertIsNone(repo.bind_node_id)
         self.assertEqual(repo.status, Repository.Status.CREATED)
         self.assertFalse(RepositoryTask.objects.filter(repository=repo).exists())
+
+    def test_binding_preflight_reports_proxy_owner_and_upgrade_action(self):
+        repo = self._make_unbound_nas(protocol=Repository.NasProtocol.NFS)
+        claim = self._failed_proxy_provision_residual(repo)
+        self.proxy_b.metadata = {"inventory": {"capabilities": []}}
+        self.proxy_b.save(update_fields=["metadata", "updated_at"])
+
+        response = self.client.post(
+            f"/api/v1/storage/repositories/{repo.id}/repair/binding-preflight/",
+            {"bind_node_id": self.proxy_a.id},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertFalse(response.data["allowed"])
+        self.assertFalse(response.data["recovery_eligible"])
+        self.assertEqual(
+            response.data["blocker_code"], "DIRECT_NAS_OWNER_UPGRADE_REQUIRED"
+        )
+        self.assertEqual(response.data["required_action"], "upgrade_owner_node")
+        self.assertEqual(response.data["owners"][0]["node_role"], NodeRole.PROXY)
+        self.assertIn(self.proxy_b.name, response.data["message"])
+        self.assertNotIn(claim.root_path, str(response.data))
+        self.assertNotIn("recovery_claim_ids", response.data)
+
+    def test_binding_preflight_reports_associated_source_without_physical_claims(self):
+        repo = self._make_unbound_nas()
+        BackupConfig.objects.create(
+            organization_id=self.org.id,
+            name="preflight-associated-config",
+            source_type="agent",
+            source_ref_id=456,
+            repository_id=repo.id,
+        )
+
+        response = self.client.post(
+            f"/api/v1/storage/repositories/{repo.id}/repair/binding-preflight/",
+            {"bind_node_id": self.proxy_a.id},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertFalse(response.data["allowed"])
+        self.assertFalse(response.data["recovery_eligible"])
+        self.assertEqual(response.data["blocker_code"], "DIRECT_NAS_BIND_DEPENDENCIES")
+        self.assertEqual(response.data["required_action"], "remove_dependencies")
+        self.assertEqual(response.data["claim_count"], 0)
+
+    def test_binding_preflight_rejects_proxy_from_another_organization(self):
+        other_org = Organization.objects.create(
+            key="other-nas-repair-org",
+            name="Other NAS Repair Org",
+        )
+        other_proxy = Node.objects.create(
+            organization=other_org,
+            name="private-other-org-proxy",
+            role=NodeRole.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.1.31",
+        )
+        repo = self._make_unbound_nas()
+
+        response = self.client.post(
+            f"/api/v1/storage/repositories/{repo.id}/repair/binding-preflight/",
+            {"bind_node_id": other_proxy.id},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertNotIn(other_proxy.name, str(response.data))
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_proxy_nas_repository"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
+    )
+    def test_confirmed_failed_provision_cleanup_binds_only_after_verified_delete(
+        self,
+        resolve_operation,
+        initialize_proxy,
+    ):
+        repo = self._make_unbound_nas(protocol=Repository.NasProtocol.NFS)
+        claim = self._failed_proxy_provision_residual(repo)
+        resolve_operation.return_value = RepositoryAgentOperationResult(
+            waiting=False,
+            node_task_id=None,
+            result={"ownership_verified": True, "cleanup_complete": True},
+        )
+
+        blocked = self._patch_repair(repo.id, {"bind_node_id": self.proxy_a.id})
+        self.assertEqual(blocked.status_code, status.HTTP_409_CONFLICT)
+        repo.refresh_from_db()
+        self.assertIsNone(repo.bind_node_id)
+        claim.refresh_from_db()
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+
+        accepted = self._patch_repair(
+            repo.id,
+            {
+                "bind_node_id": self.proxy_a.id,
+                "cleanup_failed_provisioning_targets": True,
+                "cleanup_confirmation": "CLEAN UP AND BIND",
+            },
+        )
+        self.assertEqual(accepted.status_code, status.HTTP_202_ACCEPTED, accepted.content)
+        repo.refresh_from_db()
+        self.assertIsNone(repo.bind_node_id)
+        self.assertEqual(repo.status, Repository.Status.CREATING)
+
+        result = self._run_create_task(
+            repo,
+            operation_type=RepositoryTask.OperationType.REPAIR_BIND,
+        )
+
+        self.assertEqual(result["status"], "success")
+        repo.refresh_from_db()
+        claim.refresh_from_db()
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RELEASED)
+        self.assertEqual(repo.bind_node_id, self.proxy_a.id)
+        self.assertEqual(repo.bind_node_type, Repository.BindNodeType.PROXY)
+        self.assertEqual(repo.status, Repository.Status.CREATED)
+        cleanup_payload = resolve_operation.call_args.kwargs["payload"]
+        self.assertFalse(cleanup_payload["ownership_verified"])
+        self.assertEqual(
+            cleanup_payload["repository"]["subdir"],
+            f"hp-repos/agent-{self.proxy_b.id}",
+        )
+        cleanup_task = RepositoryTask.objects.get(
+            repository=repo,
+            operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
+        )
+        self.assertEqual(cleanup_task.requested_by_id, self.user.id)
+        initialize_proxy.assert_called_once()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
+        side_effect=RuntimeError("cleanup failed"),
+    )
+    def test_cleanup_failure_keeps_repository_unbound_and_claim_residual(
+        self,
+        _resolve_operation,
+    ):
+        repo = self._make_unbound_nas(protocol=Repository.NasProtocol.NFS)
+        claim = self._failed_proxy_provision_residual(repo)
+        accepted = self._patch_repair(
+            repo.id,
+            {
+                "bind_node_id": self.proxy_a.id,
+                "cleanup_failed_provisioning_targets": True,
+                "cleanup_confirmation": "CLEAN UP AND BIND",
+            },
+        )
+        self.assertEqual(accepted.status_code, status.HTTP_202_ACCEPTED)
+
+        result = self._run_create_task(
+            repo,
+            operation_type=RepositoryTask.OperationType.REPAIR_BIND,
+        )
+
+        self.assertEqual(result["status"], "failed")
+        repo.refresh_from_db()
+        claim.refresh_from_db()
+        self.assertIsNone(repo.bind_node_id)
+        self.assertEqual(repo.status, Repository.Status.CREATED)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
+    )
+    def test_cleanup_without_fresh_ownership_proof_keeps_residual(
+        self,
+        resolve_operation,
+    ):
+        resolve_operation.return_value = RepositoryAgentOperationResult(
+            waiting=False,
+            node_task_id=None,
+            result={"ownership_verified": False, "cleanup_complete": True},
+        )
+        repo = self._make_unbound_nas(protocol=Repository.NasProtocol.NFS)
+        claim = self._failed_proxy_provision_residual(repo)
+        accepted = self._patch_repair(
+            repo.id,
+            {
+                "bind_node_id": self.proxy_a.id,
+                "cleanup_failed_provisioning_targets": True,
+                "cleanup_confirmation": "CLEAN UP AND BIND",
+            },
+        )
+        self.assertEqual(accepted.status_code, status.HTTP_202_ACCEPTED)
+
+        result = self._run_create_task(repo)
+
+        self.assertEqual(result["status"], "failed")
+        repo.refresh_from_db()
+        claim.refresh_from_db()
+        self.assertIsNone(repo.bind_node_id)
+        self.assertEqual(repo.status, Repository.Status.CREATED)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
+    )
+    def test_dependency_created_during_cleanup_prevents_binding_and_claim_release(
+        self,
+        resolve_operation,
+    ):
+        repo = self._make_unbound_nas(protocol=Repository.NasProtocol.NFS)
+        claim = self._failed_proxy_provision_residual(repo)
+
+        def complete_cleanup_after_dependency_appears(**_kwargs):
+            BackupConfig.objects.create(
+                organization_id=self.org.id,
+                name="concurrent-associated-config",
+                source_type="agent",
+                source_ref_id=789,
+                repository_id=repo.id,
+            )
+            return RepositoryAgentOperationResult(
+                waiting=False,
+                node_task_id=None,
+                result={"ownership_verified": True, "cleanup_complete": True},
+            )
+
+        resolve_operation.side_effect = complete_cleanup_after_dependency_appears
+        accepted = self._patch_repair(
+            repo.id,
+            {
+                "bind_node_id": self.proxy_a.id,
+                "cleanup_failed_provisioning_targets": True,
+                "cleanup_confirmation": "CLEAN UP AND BIND",
+            },
+        )
+        self.assertEqual(accepted.status_code, status.HTTP_202_ACCEPTED)
+
+        result = self._run_create_task(repo)
+
+        self.assertEqual(result["status"], "failed")
+        repo.refresh_from_db()
+        claim.refresh_from_db()
+        self.assertIsNone(repo.bind_node_id)
+        self.assertEqual(repo.status, Repository.Status.CREATED)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+        self.assertTrue(
+            BackupConfig.objects.filter(
+                organization_id=self.org.id,
+                repository_id=repo.id,
+                name="concurrent-associated-config",
+            ).exists()
+        )
 
     # --- swap (currently bound) ------------------------------------------
 

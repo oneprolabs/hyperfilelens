@@ -523,6 +523,23 @@ def create_direct_nas_target_cleanup_task(
     if not preflight["allowed"]:
         raise RepositoryCleanupBlocked(preflight)
 
+    parent_payload = (
+        triggered_by_task.request_payload
+        if isinstance(triggered_by_task.request_payload, dict)
+        else {}
+    )
+    recovery_claim_ids = {
+        int(value)
+        for value in parent_payload.get("residual_recovery_claim_ids", [])
+        if str(value).isdigit()
+    }
+    recovery_parent = (
+        triggered_by_task.task_type == Task.Type.REPOSITORY_OPERATION
+        and parent_payload.get("operation_type")
+        == RepositoryTask.OperationType.REPAIR_BIND
+        and bool(recovery_claim_ids)
+    )
+
     with transaction.atomic():
         locked = Repository.objects.select_for_update().get(
             pk=repository.id,
@@ -537,6 +554,8 @@ def create_direct_nas_target_cleanup_task(
         allowed_statuses = {Repository.Status.CREATED}
         if triggered_by_task.task_type == Task.Type.REPOSITORY_OPERATION:
             allowed_statuses.add(Repository.Status.REMOVING)
+        if recovery_parent:
+            allowed_statuses.add(Repository.Status.CREATING)
         if locked.status not in allowed_statuses:
             raise ValidationError(
                 {
@@ -556,6 +575,25 @@ def create_direct_nas_target_cleanup_task(
             raise ValidationError(
                 {"detail": "Direct NAS physical cleanup target was not found."}
             )
+        if recovery_parent:
+            matching_claim = RepositoryLocationClaim.objects.filter(
+                id__in=recovery_claim_ids,
+                repository=locked,
+                organization_id=locked.organization_id,
+                scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+                state=RepositoryLocationClaim.State.RESIDUAL,
+                owner_node_id=target.owner_node_id,
+                root_path=str(target.repository_subdir or "").strip("/"),
+            ).exists()
+            if not matching_claim:
+                raise ValidationError(
+                    {
+                        "detail": (
+                            "The Direct NAS cleanup target no longer matches the "
+                            "approved failed-provisioning recovery claim."
+                        )
+                    }
+                )
 
         source_unregister_attempt = int(triggered_by_task.retry_count or 0)
         existing = (
@@ -1149,6 +1187,38 @@ def _ensure_cleanup_targets(repository: Repository) -> list[RepositoryExecutionT
     return targets
 
 
+def ensure_direct_nas_cleanup_target_for_claim(
+    *, repository: Repository, claim: RepositoryLocationClaim
+) -> RepositoryExecutionTarget:
+    """Materialize the durable cleanup target for one exact Direct NAS Claim."""
+    if (
+        claim.repository_id != repository.id
+        or claim.organization_id != repository.organization_id
+        or claim.scope != RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT
+        or claim.state != RepositoryLocationClaim.State.RESIDUAL
+        or not claim.owner_node_id
+    ):
+        raise ValidationError("Direct NAS recovery claim is no longer eligible.")
+    repository_subdir = str(claim.root_path or "").strip("/")
+    target_key = (
+        f"repository:{repository.id}:node:{claim.owner_node_id}:"
+        f"subdir:{repository_subdir}"
+    )
+    target, _created = RepositoryExecutionTarget.objects.update_or_create(
+        target_key=target_key,
+        defaults={
+            "organization_id": repository.organization_id,
+            "repository": repository,
+            "owner_type": RepositoryExecutionTarget.OwnerType.NODE,
+            "owner_node_id": int(claim.owner_node_id),
+            "owner_identity": _owner_identity(int(claim.owner_node_id)),
+            "repository_subdir": repository_subdir,
+            "is_active": True,
+        },
+    )
+    return target
+
+
 def _create_cleanup_task(
     *,
     repository: Repository,
@@ -1169,6 +1239,17 @@ def _create_cleanup_task(
         if operation_type == RepositoryTask.OperationType.CLEANUP_TARGET
         else "Delete Repository"
     )
+    triggered_payload = (
+        triggered_by_task.request_payload
+        if triggered_by_task is not None
+        and isinstance(triggered_by_task.request_payload, dict)
+        else {}
+    )
+    residual_recovery_claim_ids = [
+        int(value)
+        for value in triggered_payload.get("residual_recovery_claim_ids", [])
+        if str(value).isdigit()
+    ]
     task = create_task(
         organization_id=repository.organization_id,
         task_type=Task.Type.REPOSITORY_OPERATION,
@@ -1203,6 +1284,13 @@ def _create_cleanup_task(
                 if triggered_by_task is not None
                 else None
             ),
+            "failed_provisioning_recovery": bool(
+                operation_type == RepositoryTask.OperationType.CLEANUP_TARGET
+                and triggered_payload.get("operation_type")
+                == RepositoryTask.OperationType.REPAIR_BIND
+                and residual_recovery_claim_ids
+            ),
+            "residual_recovery_claim_ids": residual_recovery_claim_ids,
             "cleanup_plan": _repository_cleanup_plan(
                 repository=repository,
                 target=target,
@@ -1404,6 +1492,41 @@ def _create_replacement_cleanup_task(
     return replacement
 
 
+def _failed_provisioning_residual_cleanup_allowed(
+    *, repository_task: RepositoryTask, target: RepositoryExecutionTarget
+) -> bool:
+    payload = (
+        repository_task.task.request_payload
+        if isinstance(repository_task.task.request_payload, dict)
+        else {}
+    )
+    if payload.get("failed_provisioning_recovery") is not True:
+        return False
+    cleanup_plan = payload.get("cleanup_plan")
+    cleanup_plan = cleanup_plan if isinstance(cleanup_plan, dict) else {}
+    frozen_claim_ids = {
+        int(value)
+        for value in cleanup_plan.get("location_claim_ids", [])
+        if str(value).isdigit()
+    }
+    approved_claim_ids = {
+        int(value)
+        for value in payload.get("residual_recovery_claim_ids", [])
+        if str(value).isdigit()
+    }
+    if not frozen_claim_ids or not frozen_claim_ids.issubset(approved_claim_ids):
+        return False
+    return RepositoryLocationClaim.objects.filter(
+        id__in=frozen_claim_ids,
+        repository_id=repository_task.repository_id,
+        organization_id=repository_task.repository.organization_id,
+        scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+        state=RepositoryLocationClaim.State.RESIDUAL,
+        owner_node_id=target.owner_node_id,
+        root_path=str(target.repository_subdir or "").strip("/"),
+    ).count() == len(frozen_claim_ids)
+
+
 def _execute_physical_cleanup(
     repository_task: RepositoryTask,
     *,
@@ -1458,7 +1581,18 @@ def _execute_physical_cleanup(
         # before applying the same destructive ownership gate as new repos.
         _prepare_s3_cleanup_ownership(repository)
         has_owned_location = repository_has_owned_location(repository)
-    if not preserves_unmanaged_proxy_directory and not has_owned_location:
+    failed_provisioning_recovery = bool(
+        direct_nas_target
+        and _failed_provisioning_residual_cleanup_allowed(
+            repository_task=repository_task,
+            target=target,
+        )
+    )
+    if (
+        not preserves_unmanaged_proxy_directory
+        and not has_owned_location
+        and not failed_provisioning_recovery
+    ):
         claims = repository.location_claims.filter(
             state__in=[
                 RepositoryLocationClaim.State.RESERVED,
@@ -1573,6 +1707,14 @@ def _execute_physical_cleanup(
         if exc.result.get("ownership_verified") is True:
             _persist_agent_cleanup_owner_verified(repository_task.task)
         raise
+    if (
+        failed_provisioning_recovery
+        and operation.result.get("ownership_verified") is not True
+    ):
+        raise ValidationError(
+            "Repository owner did not verify physical repository ownership. "
+            "No retained Direct NAS target was released."
+        )
     if operation.result.get("ownership_verified") is True:
         _persist_agent_cleanup_owner_verified(repository_task.task)
     return operation
@@ -2114,9 +2256,18 @@ def _apply_cleanup_success(
             == RepositoryTask.OperationType.CLEANUP_TARGET
         ):
             if target is not None:
+                task_payload = (
+                    repository_task.task.request_payload
+                    if isinstance(repository_task.task.request_payload, dict)
+                    else {}
+                )
+                defer_recovery_release = bool(
+                    task_payload.get("failed_provisioning_recovery") is True
+                )
                 if (
                     cleanup_complete
                     and cleanup_result != Repository.CleanupResult.PRESERVED
+                    and not defer_recovery_release
                 ):
                     release_repository_location(
                         repository,

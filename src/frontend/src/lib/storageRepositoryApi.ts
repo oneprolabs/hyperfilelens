@@ -180,6 +180,40 @@ export type StorageRepositoryRepairPayload = {
   name?: string
   config?: StorageRepositoryRepairConfig
   bind_node_id?: number | null
+  cleanup_failed_provisioning_targets?: boolean
+  cleanup_confirmation?: 'CLEAN UP AND BIND'
+}
+
+export type StorageRepositoryBindingOwner = {
+  node_id?: number | null
+  node_name: string
+  node_role: 'agent' | 'proxy' | 'unknown' | string
+  node_online: boolean
+  claim_state: string
+}
+
+export type StorageRepositoryBindingPreflight = {
+  allowed: boolean
+  recovery_eligible: boolean
+  blocker_code: string
+  required_action: 'bind' | 'cleanup_and_bind' | 'remove_dependencies' | 'upgrade_owner_node' | 'bring_owner_online' | 'retry_or_remove_sources' | 'recreate_repository' | string
+  claim_count: number
+  claim_states: string[]
+  owners: StorageRepositoryBindingOwner[]
+  selected_proxy: {
+    node_id: number
+    node_name: string
+    node_role: string
+  }
+  confirmation_required: boolean
+  message: string
+  dependency_blockers?: StorageRepositoryCleanupBlocker[]
+  missing_capability?: Array<{
+    node_id: number
+    node_name: string
+    node_role: string
+    missing_capabilities: string[]
+  }>
 }
 
 export type StorageRepositoryListParams = {
@@ -436,6 +470,19 @@ export async function repairStorageRepository(
     await api<unknown>(`${repositoryBase}/${id}/repair/`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
+      headers: orgHeaders(),
+    }),
+  )
+}
+
+export async function preflightStorageRepositoryBinding(
+  id: number,
+  bindNodeId: number,
+) {
+  return unwrapApiPayload<StorageRepositoryBindingPreflight>(
+    await api<unknown>(`${repositoryBase}/${id}/repair/binding-preflight/`, {
+      method: 'POST',
+      body: JSON.stringify({ bind_node_id: bindNodeId }),
       headers: orgHeaders(),
     }),
   )

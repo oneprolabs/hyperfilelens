@@ -32,6 +32,7 @@ from apps.storage.services.internal.repository_endpoints import (
     s3_endpoint_snapshot,
 )
 from apps.storage.services.internal.nas_repair import (
+    NAS_BIND_RECOVERY_CONFIRMATION,
     NAS_REPAIR_MUTABLE_CONFIG_FIELDS,
 )
 from apps.storage.services.internal.s3_bucket_name import s3_bucket_name_error
@@ -897,6 +898,12 @@ class NASRepositoryRepairSerializer(serializers.Serializer):
         required=False, allow_blank=False, max_length=200, trim_whitespace=True
     )
     bind_node_id = serializers.IntegerField(required=False, allow_null=True)
+    cleanup_failed_provisioning_targets = serializers.BooleanField(
+        required=False, default=False
+    )
+    cleanup_confirmation = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
 
     # NAS mutable config fields. The "config" wrapper is reused so the
     # frontend keeps a single payload shape with create/update.
@@ -943,4 +950,21 @@ class NASRepositoryRepairSerializer(serializers.Serializer):
                     raise serializers.ValidationError(
                         {"config.%s" % key: "SMB fields are not accepted for NFS."}
                     )
+        if attrs.get("cleanup_failed_provisioning_targets"):
+            if attrs.get("cleanup_confirmation") != NAS_BIND_RECOVERY_CONFIRMATION:
+                raise serializers.ValidationError(
+                    {
+                        "cleanup_confirmation": (
+                            f'Type "{NAS_BIND_RECOVERY_CONFIRMATION}" exactly to confirm.'
+                        )
+                    }
+                )
+            if not attrs.get("bind_node_id"):
+                raise serializers.ValidationError(
+                    {"bind_node_id": "Select a Proxy before cleanup and binding."}
+                )
         return attrs
+
+
+class NASRepositoryBindingPreflightSerializer(serializers.Serializer):
+    bind_node_id = serializers.IntegerField(required=True, min_value=1)

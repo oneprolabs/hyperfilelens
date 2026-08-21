@@ -9,7 +9,7 @@ remount failures on an already-bound repository).
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Iterable
 from uuid import uuid4
 
 from django.core.cache import cache
@@ -157,6 +157,8 @@ def enqueue_repository_create_task(
     remount_previous_node_id: int | None = None,
     remount_previous_mount_path: str | None = None,
     remount_new_claim_id: int | None = None,
+    residual_recovery_claim_ids: Iterable[int] = (),
+    intended_bind_node_id: int | None = None,
 ) -> RepositoryTask:
     if operation_type not in CREATE_OPERATION_TYPES:
         raise ValidationError(
@@ -168,6 +170,17 @@ def enqueue_repository_create_task(
     ):
         raise ValidationError(
             {"detail": "Remount requires the previous proxy node id for rollback."}
+        )
+    recovery_claim_ids = sorted(
+        {int(claim_id) for claim_id in residual_recovery_claim_ids if claim_id}
+    )
+    residual_bind_recovery = bool(recovery_claim_ids)
+    if residual_bind_recovery and (
+        operation_type != RepositoryTask.OperationType.REPAIR_BIND
+        or not intended_bind_node_id
+    ):
+        raise ValidationError(
+            {"detail": "Residual cleanup is only supported for an explicit Proxy bind."}
         )
 
     existing = active_repository_create_task(repository)
@@ -187,9 +200,13 @@ def enqueue_repository_create_task(
             Repository.Status.CREATE_FAILED,
         }:
             # Remount may briefly set CREATING from CREATED; create path starts CREATING.
-            if locked.status != Repository.Status.CREATED or operation_type != (
-                RepositoryTask.OperationType.REPAIR_REMOUNT
-            ):
+            accepts_created = operation_type == RepositoryTask.OperationType.REPAIR_REMOUNT
+            accepts_created = accepts_created or (
+                residual_bind_recovery
+                and operation_type == RepositoryTask.OperationType.REPAIR_BIND
+                and locked.bind_node_id is None
+            )
+            if locked.status != Repository.Status.CREATED or not accepts_created:
                 raise ValidationError(
                     {
                         "detail": (
@@ -199,9 +216,15 @@ def enqueue_repository_create_task(
                     }
                 )
 
-        owner_type, owner_node_id, owner_identity, target = _resolve_create_owner(
-            locked
-        )
+        if residual_bind_recovery:
+            owner_type = RepositoryExecutionTarget.OwnerType.CONTROLLER
+            owner_node_id = None
+            owner_identity = "hfl-repair@controller"
+            target = None
+        else:
+            owner_type, owner_node_id, owner_identity, target = _resolve_create_owner(
+                locked
+            )
         if locked.status != Repository.Status.CREATING:
             locked.status = Repository.Status.CREATING
             locked.save(update_fields=["status", "updated_at"])
@@ -216,8 +239,10 @@ def enqueue_repository_create_task(
             "repository_id": locked.id,
             "operation_type": operation_type,
             "repo_type": locked.repo_type,
-            "bind_node_id": locked.bind_node_id,
+            "bind_node_id": intended_bind_node_id or locked.bind_node_id,
         }
+        if residual_bind_recovery:
+            request_payload["residual_recovery_claim_ids"] = recovery_claim_ids
         if remount_previous_node_id is not None:
             request_payload["previous_bind_node_id"] = int(remount_previous_node_id)
         if remount_previous_mount_path is not None:
@@ -244,7 +269,11 @@ def enqueue_repository_create_task(
                     "is_primary": True,
                 }
             ],
-            steps=list(CREATE_STEPS),
+            steps=(
+                ["cleanup_failed_provisioning_targets", *CREATE_STEPS]
+                if residual_bind_recovery
+                else list(CREATE_STEPS)
+            ),
             normalize_trigger_type=False,
         )
         repository_task = RepositoryTask.objects.create(
@@ -408,6 +437,29 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
             message="Repository remount failed; previous proxy binding was restored.",
         )
 
+    try:
+        recovery_wait = _advance_failed_provisioning_cleanup_and_bind(
+            repository_task=repository_task,
+        )
+        if recovery_wait is not None:
+            return recovery_wait
+    except Exception as exc:
+        message = _safe_error_message(repository, _exception_message(exc))
+        _fail_create_keep_row(
+            repository_task,
+            error_code="DIRECT_NAS_BIND_RECOVERY_FAILED",
+            message=message,
+            physical_initialize_done=False,
+        )
+        return {
+            "status": "failed",
+            "repository_task_id": repository_task.id,
+            "error_code": "DIRECT_NAS_BIND_RECOVERY_FAILED",
+            "error": message,
+        }
+    repository = Repository.objects.get(pk=repository_task.repository_id)
+    repository_task.refresh_from_db()
+    task.refresh_from_db()
     initialize_done = _initialize_step_complete(task)
     # In-process latch: step rows may fail to persist after physical work returns.
     # Fail paths must not unwind bind/remount once this flips true.
@@ -601,6 +653,207 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
             "error_code": error_code,
             "error": message,
         }
+
+
+def _advance_failed_provisioning_cleanup_and_bind(
+    *, repository_task: RepositoryTask
+) -> dict[str, Any] | None:
+    payload = (
+        repository_task.task.request_payload
+        if isinstance(repository_task.task.request_payload, dict)
+        else {}
+    )
+    recovery_claim_ids = sorted(
+        {
+            int(value)
+            for value in payload.get("residual_recovery_claim_ids", [])
+            if str(value).isdigit()
+        }
+    )
+    if not recovery_claim_ids:
+        return None
+    if repository_task.operation_type != RepositoryTask.OperationType.REPAIR_BIND:
+        raise ValidationError("Residual cleanup continuation is not a Proxy bind.")
+
+    from apps.storage.services.internal.repository_cleanup import (
+        _repository_task_user,
+        create_direct_nas_target_cleanup_task,
+        ensure_direct_nas_cleanup_target_for_claim,
+        repository_cleanup_preflight,
+        run_repository_cleanup_task,
+    )
+
+    task = repository_task.task
+    _set_create_step(
+        task,
+        "cleanup_failed_provisioning_targets",
+        TaskStep.Status.RUNNING,
+        5,
+    )
+    children = list(
+        RepositoryTask.objects.filter(
+            repository_id=repository_task.repository_id,
+            triggered_by_task=task,
+            operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
+        )
+        .select_related("task", "execution_target")
+        .order_by("id")
+    )
+
+    def child_claim_ids(child: RepositoryTask) -> set[int]:
+        child_payload = (
+            child.task.request_payload
+            if isinstance(child.task.request_payload, dict)
+            else {}
+        )
+        cleanup_plan = child_payload.get("cleanup_plan")
+        cleanup_plan = cleanup_plan if isinstance(cleanup_plan, dict) else {}
+        return {
+            int(value)
+            for value in cleanup_plan.get("location_claim_ids", [])
+            if str(value).isdigit()
+        }
+
+    children_by_claim = {
+        claim_id: child
+        for child in children
+        for claim_id in child_claim_ids(child)
+    }
+    repository = Repository.objects.get(pk=repository_task.repository_id)
+    for claim_id in recovery_claim_ids:
+        child = children_by_claim.get(claim_id)
+        if child is None:
+            claim = RepositoryLocationClaim.objects.filter(
+                id=claim_id,
+                repository=repository,
+                organization_id=repository.organization_id,
+                scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+                state=RepositoryLocationClaim.State.RESIDUAL,
+            ).first()
+            if claim is None:
+                raise ValidationError(
+                    "A retained Direct NAS recovery claim changed before cleanup."
+                )
+            target = ensure_direct_nas_cleanup_target_for_claim(
+                repository=repository,
+                claim=claim,
+            )
+            child = create_direct_nas_target_cleanup_task(
+                repository=repository,
+                target_id=target.id,
+                triggered_by_task=task,
+                requested_by=_repository_task_user(repository_task),
+                force=False,
+                dispatch=False,
+            )
+            children.append(child)
+            children_by_claim[claim_id] = child
+        if child.task.status in ACTIVE_TASK_STATUSES:
+            run_repository_cleanup_task(repository_task_id=child.id)
+            child.task.refresh_from_db()
+        if child.task.status in ACTIVE_TASK_STATUSES:
+            return {
+                "status": "waiting",
+                "repository_task_id": repository_task.id,
+                "cleanup_task_uuid": str(child.task.task_uuid),
+            }
+        if child.task.status != Task.Status.SUCCESS:
+            raise ValidationError(
+                child.task.error_message
+                or "Ownership-verified Direct NAS target cleanup failed."
+            )
+
+    child_task_ids = [child.task_id for child in children]
+    intended_bind_node_id = int(payload.get("bind_node_id") or 0)
+    if not intended_bind_node_id:
+        raise ValidationError("The selected Proxy is unavailable.")
+
+    with transaction.atomic():
+        locked = Repository.objects.select_for_update().get(
+            pk=repository.id,
+            organization_id=repository.organization_id,
+        )
+        if locked.bind_node_id is not None or locked.status != Repository.Status.CREATING:
+            raise ValidationError(
+                "Repository binding state changed during residual cleanup."
+            )
+        claims = list(
+            RepositoryLocationClaim.objects.select_for_update()
+            .filter(
+                id__in=recovery_claim_ids,
+                repository=locked,
+                organization_id=locked.organization_id,
+                scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+                state=RepositoryLocationClaim.State.RESIDUAL,
+            )
+            .order_by("id")
+        )
+        if len(claims) != len(recovery_claim_ids):
+            raise ValidationError(
+                "A retained Direct NAS recovery claim changed before binding."
+            )
+        dependency_check = repository_cleanup_preflight(
+            repository=locked,
+            ignored_task_ids=[task.id, *child_task_ids],
+        )
+        blockers = [
+            item
+            for item in dependency_check["blockers"]
+            if item.get("code") != "repository_ownership_unverified"
+        ]
+        if blockers:
+            raise ValidationError(str(blockers[0].get("detail") or "Binding is blocked."))
+        node = Node.objects.filter(
+            id=intended_bind_node_id,
+            organization_id=locked.organization_id,
+            role=NodeRole.PROXY,
+            availability=Node.Availability.ONLINE,
+            is_deleted=False,
+        ).first()
+        if node is None:
+            raise ValidationError("The selected Proxy is no longer online.")
+
+        for claim in claims:
+            release_repository_location(
+                locked,
+                owner_node_id=claim.owner_node_id,
+                repository_subdir=claim.root_path,
+            )
+        locked.bind_node_type = Repository.BindNodeType.PROXY
+        locked.bind_node_id = node.id
+        config = dict(locked.config or {})
+        config["proxy_mount_path"] = nas_mount_point(locked, node_id=node.id)
+        locked.config = config
+        locked.save(
+            update_fields=[
+                "bind_node_type",
+                "bind_node_id",
+                "config",
+                "updated_at",
+            ]
+        )
+        reserve_repository_location(locked)
+        owner_type, owner_node_id, owner_identity, target = _resolve_create_owner(locked)
+        RepositoryTask.objects.filter(id=repository_task.id).update(
+            owner_type=owner_type,
+            owner_node_id=owner_node_id,
+            owner_identity=owner_identity,
+            execution_target=target,
+        )
+        if target is not None:
+            if target.active_task_id not in {None, task.id}:
+                raise ValidationError("The selected Proxy repository target is busy.")
+            target.active_task = task
+            target.is_active = True
+            target.save(update_fields=["active_task", "is_active", "updated_at"])
+
+    _set_create_step(
+        task,
+        "cleanup_failed_provisioning_targets",
+        TaskStep.Status.SUCCESS,
+        10,
+    )
+    return None
 
 
 def _initialize_step_complete(task: Task) -> bool:
