@@ -7,7 +7,7 @@ import ipaddress
 import logging
 import time
 from collections import defaultdict
-from datetime import datetime, timezone as datetime_timezone
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from decimal import Decimal
 from typing import Any
 
@@ -15,7 +15,7 @@ from django.conf import settings
 from django.db.models import Exists, OuterRef, Q, QuerySet
 from django.utils import timezone
 
-from apps.node.models import Node, NodeTask
+from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.protection.models import (
     BackupConfig,
