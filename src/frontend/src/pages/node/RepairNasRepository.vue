@@ -32,6 +32,10 @@ import {
   repositoryQuotaValueFromGb,
   type RepositoryQuotaUnit,
 } from '../../lib/repositoryQuota'
+import {
+  bindingPreflightFromApiError,
+  nasBindingPreflightPresentation,
+} from '../../lib/nasBindingPreflightPresentation'
 
 type NasProtocol = 'smb' | 'nfs'
 
@@ -136,18 +140,11 @@ const currentProxyName = computed(() => {
 })
 const smbUsernameMasked = computed(() => (hasSmbUsername.value ? credentialMask : '\u2014'))
 const smbPasswordMasked = computed(() => (hasSmbPassword.value ? credentialMask : '\u2014'))
-const bindingOwnerSummary = computed(() =>
-  (bindingPreflight.value?.owners || [])
-    .map((owner) => {
-      const role = owner.node_role === 'proxy'
-        ? t('repairNasRepo.ownerRoleProxy')
-        : owner.node_role === 'agent'
-          ? t('repairNasRepo.ownerRoleAgent')
-          : t('repairNasRepo.ownerRoleUnknown')
-      return `${role} ${owner.node_name || `#${owner.node_id || '?'}`} (${owner.claim_state})`
-    })
-    .join(', '),
-)
+const bindingPresentation = computed(() => (
+  bindingPreflight.value && !bindingPreflight.value.allowed
+    ? nasBindingPreflightPresentation(bindingPreflight.value, t)
+    : null
+))
 
 function extractConfigString(
   config: Record<string, unknown> | undefined,
@@ -294,7 +291,7 @@ function validateForm(): string | null {
     proxyNodeId.value = undefined
   }
   if (proxyBindingBlocked.value && proxyNodeId.value) {
-    return t('repairNasRepo.bindBlockedByAssociatedSources', { n: associatedSourcesCount.value })
+    return t('repairNasRepo.bindingBlockedAssociatedDetail', { n: associatedSourcesCount.value })
   }
   if (protocol.value === 'smb') {
     if (smbUsernameRewriting.value && !smbUsernameDraft.value.trim()) {
@@ -403,7 +400,8 @@ async function onSubmit() {
       }
       if (!preflight.allowed) {
         if (!preflight.recovery_eligible) {
-          ElMessage.error({ message: preflight.message, grouping: true })
+          const presentation = nasBindingPreflightPresentation(preflight, t)
+          ElMessage.error({ message: presentation.detail, grouping: true })
           return
         }
         const confirmed = await requestCleanupBindConfirmation(preflight.claim_count)
@@ -432,6 +430,14 @@ async function onSubmit() {
       },
     })
   } catch (err) {
+    const blockedPreflight = bindingPreflightFromApiError(err)
+    if (blockedPreflight) {
+      bindingPreflight.value = blockedPreflight
+      bindingPreflightProxyId.value = proxyNodeId.value || null
+      const presentation = nasBindingPreflightPresentation(blockedPreflight, t)
+      ElMessage.error({ message: presentation.detail, grouping: true })
+      return
+    }
     const message = apiErrorMessage(err, t('repairNasRepo.saveFailed'))
     if (typeof message === 'string' && /running|busy|backup/i.test(message)) {
       busyWithBackups.value = true
@@ -955,19 +961,19 @@ onMounted(async () => {
                       <template #title>
                         {{ bindingPreflightLoading
                           ? t('repairNasRepo.bindingPreflightLoading')
-                          : bindingPreflightError || bindingPreflight?.message }}
+                          : bindingPreflightError || bindingPresentation?.title }}
                       </template>
                       <div
-                        v-if="bindingOwnerSummary"
+                        v-if="bindingPresentation?.detail"
                         class="mt-1 text-xs"
                       >
-                        {{ t('repairNasRepo.retainedTargetOwners', { owners: bindingOwnerSummary }) }}
+                        {{ bindingPresentation.detail }}
                       </div>
                       <div
-                        v-if="bindingPreflight?.recovery_eligible"
+                        v-if="bindingPresentation?.relatedNode"
                         class="mt-1 text-xs"
                       >
-                        {{ t('repairNasRepo.cleanupBindAvailable') }}
+                        {{ bindingPresentation.relatedNode }}
                       </div>
                     </ElAlert>
                     <ElFormItem

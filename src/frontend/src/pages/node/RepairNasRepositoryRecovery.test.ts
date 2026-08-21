@@ -25,9 +25,14 @@ describe('Edit NAS Repository residual recovery', () => {
     expect(source).toContain("payload.cleanup_confirmation = 'CLEAN UP AND BIND'")
   })
 
-  it('shows the backend guidance and actual owner role instead of assuming Agent', () => {
-    expect(source).toContain('bindingPreflight?.message')
-    expect(source).toContain("owner.node_role === 'proxy'")
-    expect(source).toContain("t('repairNasRepo.retainedTargetOwners'")
+  it('renders localized blocker guidance instead of backend diagnostics or Claim state', () => {
+    expect(source).toContain('nasBindingPreflightPresentation(')
+    expect(source).toContain("t('repairNasRepo.bindingBlockedAssociatedDetail'")
+    expect(source).toContain('bindingPresentation?.title')
+    expect(source).toContain('bindingPresentation.detail')
+    expect(source).not.toContain('bindingPreflight?.message')
+    expect(source).not.toContain('preflight.message')
+    expect(source).not.toContain('owner.claim_state')
+    expect(source).not.toContain('retainedTargetOwners')
   })
 })
