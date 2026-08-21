@@ -56,7 +56,9 @@ describe('restore record contextual navigation', () => {
   })
 
   it('shows runtime metrics with an explicit unavailable fallback', () => {
-    expect(drawer).toContain('restoreRecordRuntimeMetricParts(t, restoreRecordRuntime(record))')
+    expect(drawer).toContain('restoreRecordRuntimeMetricParts(')
+    expect(drawer).toContain('restoreRecordRuntime(record)')
+    expect(drawer).toContain('restoreRecordTaskStatus(record)')
     expect(drawer).toContain("t('protection.backupsPage.flowRestoreRecordMetricsUnavailable')")
     expect(drawer).toContain('@click.stop="openTaskDetailByUuid(row.task_uuid)"')
   })

@@ -119,4 +119,39 @@ describe('restore record display', () => {
       transfer_progress: { phase: 'done' },
     })).toEqual([])
   })
+
+  it('hides total-only metrics for a successful restore', () => {
+    expect(restoreRecordRuntimeMetricParts((key) => key, {
+      transfer_progress: {
+        phase: 'done',
+        processed_count: 0,
+        total_count: 263,
+        bytes_done: 0,
+        bytes_total: 649_000_000,
+        bytes_total_known: true,
+      },
+    }, 'success')).toEqual([])
+  })
+
+  it('keeps valid final metrics for a successful restore', () => {
+    const t = (key: string, args?: Record<string, unknown>) => {
+      if (key.endsWith('flowRestoreRecordItemsProgress')) return `${args?.done} / ${args?.total} items processed`
+      if (key.endsWith('bytesCapacity')) return `${args?.done} / ${args?.total}`
+      return key
+    }
+
+    expect(restoreRecordRuntimeMetricParts(t, {
+      transfer_progress: {
+        phase: 'done',
+        processed_count: 263,
+        total_count: 263,
+        bytes_done: 649_000_000,
+        bytes_total: 649_000_000,
+        bytes_total_known: true,
+      },
+    }, 'success')).toEqual([
+      '263 / 263 items processed',
+      '649 MB / 649 MB',
+    ])
+  })
 })
