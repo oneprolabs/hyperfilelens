@@ -164,7 +164,32 @@ for command_body in "${cmd_up_body}" "${cmd_restart_body}"; do
 	[[ -n "${gate_line}" ]]
 	[[ -n "${application_line}" ]]
 	((gate_line < application_line))
+	model_repair_line="$(grep -nF 'repair_existing_multimodal_model' <<<"${command_body}" | cut -d: -f1)"
+	[[ -n "${model_repair_line}" ]]
+	((application_line < model_repair_line))
 done
+repair_model_body="$(sed -n '/^repair_existing_multimodal_model()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
+grep -F '{"role":"multimodal","repair_existing":true}' <<<"${repair_model_body}" >/dev/null
+grep -F 'ensure_platform_ai_model' <<<"${repair_model_body}" >/dev/null
+
+# Source upgrades must invoke the idempotent repair through the running API,
+# and a temporarily unavailable insight API must not take down the dev stack.
+model_repair_args="${tmp}/model-repair.args"
+model_repair_input="${tmp}/model-repair.input"
+wait_for_api_healthy() { return 0; }
+compose() {
+	printf '%s\n' "$*" >"${model_repair_args}"
+	cat >"${model_repair_input}"
+}
+WITH_SOURCELENS=1
+repair_existing_multimodal_model >/dev/null
+grep -Fx 'exec -T api python manage.py ensure_platform_ai_model' "${model_repair_args}" >/dev/null
+grep -Fx '{"role":"multimodal","repair_existing":true}' "${model_repair_input}" >/dev/null
+compose() {
+	cat >/dev/null
+	return 42
+}
+repair_existing_multimodal_model >/dev/null
 backend_stop_line="$(grep -nF 'compose stop api worker scheduler' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
 data_services_line="$(grep -nF 'compose up -d --wait --no-build --pull never postgres redis' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
 migration_line="$(grep -nF 'compose --profile tools run --rm --no-deps migration' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"

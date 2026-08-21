@@ -4481,6 +4481,27 @@ sync_optional_identity_settings() {
 	fi
 }
 
+repair_existing_multimodal_model() {
+	step "Reconciling the existing multimodal model capability"
+	local output command_status
+	set +e
+	output="$(
+		printf '%s\n' '{"role":"multimodal","repair_existing":true}' \
+			| compose_in_root exec -T "$(active_api_service)" \
+				python manage.py ensure_platform_ai_model 2>&1
+	)"
+	command_status=$?
+	set -e
+	if [[ -n "${output}" ]]; then
+		printf '%s\n' "${output}"
+	fi
+	if [[ "${command_status}" -ne 0 ]]; then
+		warn "Existing multimodal model capability could not be reconciled; core services remain available"
+		return 0
+	fi
+	ok "Existing multimodal model capability reconciled"
+}
+
 # --- Commands ---
 
 cmd_install() {
@@ -4585,6 +4606,7 @@ cmd_install() {
 	fi
 	print_section "[7/8] Preparing platform services"
 	sync_optional_identity_settings
+	repair_existing_multimodal_model
 	ensure_local_platform_gateway
 	prune_agent_release_media
 	ok "Platform configuration and managed services are ready"
@@ -4657,6 +4679,7 @@ cmd_start() {
 	wait_for_hfl_health || die "HyperFileLens failed its startup health gate"
 	wait_for_sourcelens_health || die "bundled SourceLens failed its startup health gate"
 	sync_optional_identity_settings
+	repair_existing_multimodal_model
 	log "Services started"
 	compose_all_profiles ps
 }
@@ -6267,6 +6290,7 @@ cmd_upgrade() {
 	fi
 	record_upgrade_transaction_phase sourcelens_complete
 	sync_optional_identity_settings
+	repair_existing_multimodal_model
 	check_local_platform_gateway_continuity
 	ensure_local_platform_gateway
 	record_upgrade_transaction_phase gateway_verified

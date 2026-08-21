@@ -246,6 +246,12 @@ assert install.index("apply_runtime_configuration") < install.index("load_images
 assert install.index("apply_runtime_configuration") < install.index("install_bundled_sourcelens")
 assert install.index("wait_for_hfl_health") < install.index("sync_optional_identity_settings")
 assert start.index("wait_for_hfl_health") < start.index("sync_optional_identity_settings")
+assert install.index("sync_optional_identity_settings") < install.index(
+    "repair_existing_multimodal_model"
+)
+assert start.index("sync_optional_identity_settings") < start.index(
+    "repair_existing_multimodal_model"
+)
 assert upgrade.index("apply_upgrade_files") < upgrade.index("apply_runtime_configuration")
 assert upgrade.index("apply_runtime_configuration") < upgrade.index("install_bundled_sourcelens")
 assert upgrade.index("apply_runtime_configuration") < upgrade.index(
@@ -254,7 +260,14 @@ assert upgrade.index("apply_runtime_configuration") < upgrade.index(
 assert upgrade.index("wait_for_services_health") < upgrade.index(
     "sync_optional_identity_settings"
 )
+assert upgrade.index("sync_optional_identity_settings") < upgrade.index(
+    "repair_existing_multimodal_model"
+)
 PY
+
+repair_model_body="$(sed -n '/^repair_existing_multimodal_model()/,/^}/p' "${installer}")"
+grep -F '{"role":"multimodal","repair_existing":true}' <<<"${repair_model_body}" >/dev/null
+grep -F 'ensure_platform_ai_model' <<<"${repair_model_body}" >/dev/null
 
 grep -F 'bash "${package_root}/install.sh" "${install_args[@]}"' \
 	"${remote_deploy}" >/dev/null
