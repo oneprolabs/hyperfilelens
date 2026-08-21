@@ -91,8 +91,38 @@ func TestTransferBytesUploadingUsesEstimatedTotal(t *testing.T) {
 	if !known || total != 1_700*1000*1000 {
 		t.Fatalf("expected estimated total, got total=%d known=%v", total, known)
 	}
-	if done != 500*1000*1000 {
-		t.Fatalf("expected uploaded bytes as done, got %d", done)
+	if done != 1_200*1000*1000 {
+		t.Fatalf("expected processed bytes as done, got %d", done)
+	}
+}
+
+func TestParseStructuredProgressUsesLogicalProcessedBytes(t *testing.T) {
+	line := `{"type":"hfl_snapshot_progress","schema_version":2,"sequence":17,"sampled_at":"2026-08-20T08:00:00Z","phase":"processing","processed_bytes":3478373863,"estimated_bytes":4130621356,"uploaded_bytes":270077614,"percent_complete":84.20945817140641,"elapsed_seconds":10.2,"remaining_seconds":2}`
+	snapshot, ok := ParseProgressLine(line)
+	if !ok {
+		t.Fatal("expected structured progress line to parse")
+	}
+	if snapshot.SchemaVersion != 2 || snapshot.ProcessedBytes != 3_478_373_863 {
+		t.Fatalf("unexpected structured snapshot: %#v", snapshot)
+	}
+	if snapshot.UploadedBytes != 270_077_614 || !snapshot.EstimatedKnown || snapshot.EstimatedBytes != 4_130_621_356 {
+		t.Fatalf("unexpected structured byte domains: %#v", snapshot)
+	}
+
+	payload := ProgressPayload(snapshot)
+	if payload["bytes_done"] != int64(3_478_373_863) || payload["uploaded_bytes"] != int64(270_077_614) {
+		t.Fatalf("expected logical and physical bytes to remain separate: %#v", payload)
+	}
+	if payload["progress_schema_version"] != 2 || payload["progress_sequence"] != int64(17) {
+		t.Fatalf("expected v2 contract metadata: %#v", payload)
+	}
+}
+
+func TestParseStructuredProgressPreservesKnownZeroUpload(t *testing.T) {
+	line := `{"type":"hfl_snapshot_progress","schema_version":2,"sequence":2,"sampled_at":"2026-08-20T08:00:00Z","phase":"processing","processed_bytes":3157346250,"estimated_bytes":3157346250,"uploaded_bytes":0,"percent_complete":99.99,"elapsed_seconds":2.1,"remaining_seconds":0}`
+	snapshot, ok := ParseProgressLine(line)
+	if !ok || snapshot.UploadedBytes != 0 || !snapshot.KopiaEtaKnown {
+		t.Fatalf("expected known zero values, got %#v ok=%v", snapshot, ok)
 	}
 }
 

@@ -1,0 +1,357 @@
+diff --git a/cli/cli_progress.go b/cli/cli_progress.go
+index 02a1d517..36070f0c 100644
+--- a/cli/cli_progress.go
++++ b/cli/cli_progress.go
+@@ -1,6 +1,7 @@
+ package cli
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+ 	"os"
+ 	"strconv"
+@@ -19,7 +20,11 @@ import (
+ )
+ 
+ const (
+-	spinner = `|/-\`
++	spinner               = `|/-\`
++	progressFormatText    = "text"
++	progressFormatHFLJSON = "hfl-json"
++	hflProgressEventType  = "hfl_snapshot_progress"
++	hflProgressSchema     = 2
+ )
+ 
+ type progressFlags struct {
+@@ -27,6 +32,7 @@ type progressFlags struct {
+ 	progressEstimationType      string
+ 	adaptiveEstimationThreshold int64
+ 	progressUpdateInterval      time.Duration
++	progressFormat              string
+ 	out                         textOutput
+ }
+ 
+@@ -41,6 +47,8 @@ func (p *progressFlags) setup(svc appServices, app *kingpin.Application) {
+ 	app.Flag("progress-estimation-type", "Set type of estimation of the data to be snapshotted").Hidden().Default(upload.EstimationTypeClassic).
+ 		EnumVar(&p.progressEstimationType, upload.EstimationTypeClassic, upload.EstimationTypeRough, upload.EstimationTypeAdaptive)
+ 	app.Flag("progress-update-interval", "How often to update progress information").Hidden().Default("300ms").DurationVar(&p.progressUpdateInterval)
++	app.Flag("progress-format", "Progress output format").Hidden().Default(progressFormatText).
++		EnumVar(&p.progressFormat, progressFormatText, progressFormatHFLJSON)
+ 	app.Flag("adaptive-estimation-threshold", "Sets the threshold below which the classic estimation method will be used").Hidden().Default(strconv.FormatInt(upload.AdaptiveEstimationThreshold, 10)).Int64Var(&p.adaptiveEstimationThreshold)
+ 	p.out.setup(svc)
+ }
+@@ -61,6 +69,7 @@ type cliProgress struct {
+ 	fatalErrorCount   atomic.Int32
+ 	uploading         atomic.Bool
+ 	uploadFinished    atomic.Bool
++	finalizing        atomic.Bool
+ 
+ 	outputMutex sync.Mutex
+ 
+@@ -68,8 +77,13 @@ type cliProgress struct {
+ 	lastLineLength int
+ 	// +checklocks:outputMutex
+ 	spinPhase int
++	// +checklocks:outputMutex
++	sequence int64
++	// +checklocks:outputMutex
++	estimated bool
+ 
+ 	uploadStartTime timetrack.Estimator // +checklocksignore
++	uploadStartedAt time.Time           // +checklocksignore
+ 
+ 	estimatedFileCount  int64 // +checklocksignore
+ 	estimatedTotalBytes int64 // +checklocksignore
+@@ -82,7 +96,7 @@ type cliProgress struct {
+ 
+ // Enabled returns true when progress is enabled.
+ func (p *cliProgress) Enabled() bool {
+-	return p.enableProgress
++	return p.enableProgress || p.progressFormat == progressFormatHFLJSON
+ }
+ 
+ func (p *cliProgress) HashingFile(_ string) {
+@@ -145,6 +159,22 @@ func (p *cliProgress) output(col *color.Color, msg string) {
+ 	hashedFiles := p.hashedFiles.Load()
+ 	ignoredErrorCount := p.ignoredErrorCount.Load()
+ 	fatalErrorCount := p.fatalErrorCount.Load()
++	processedBytes := hashedBytes + cachedBytes
++
++	if msg != "" {
++		prefix := "\n ! "
++		if !p.enableProgress {
++			prefix = ""
++		}
++
++		col.Fprintf(p.out.stderr(), "%v%v", prefix, msg) //nolint:errcheck
++	}
++
++	if p.progressFormat == progressFormatHFLJSON {
++		p.outputHFLJSON(processedBytes, uploadedBytes)
++
++		return
++	}
+ 
+ 	line := fmt.Sprintf(
+ 		" %v %v hashing, %v hashed (%v), %v cached (%v), uploaded %v",
+@@ -169,15 +199,6 @@ func (p *cliProgress) output(col *color.Color, msg string) {
+ 		line += fmt.Sprintf(" (%v errors ignored)", ignoredErrorCount)
+ 	}
+ 
+-	if msg != "" {
+-		prefix := "\n ! "
+-		if !p.enableProgress {
+-			prefix = ""
+-		}
+-
+-		col.Fprintf(p.out.stderr(), "%v%v", prefix, msg) //nolint:errcheck
+-	}
+-
+ 	if !p.enableProgress {
+ 		return
+ 	}
+@@ -201,6 +222,83 @@ func (p *cliProgress) output(col *color.Color, msg string) {
+ 	p.out.printStderr("\r%v%v", line, extraSpaces)
+ }
+ 
++type hflProgressEvent struct {
++	Type             string   `json:"type"`
++	SchemaVersion    int      `json:"schema_version"`
++	Sequence         int64    `json:"sequence"`
++	SampledAt        string   `json:"sampled_at"`
++	Phase            string   `json:"phase"`
++	ProcessedBytes   int64    `json:"processed_bytes"`
++	EstimatedBytes   *int64   `json:"estimated_bytes"`
++	UploadedBytes    int64    `json:"uploaded_bytes"`
++	PercentComplete  *float64 `json:"percent_complete"`
++	ElapsedSeconds   float64  `json:"elapsed_seconds"`
++	RemainingSeconds *int64   `json:"remaining_seconds"`
++}
++
++// +checklocks:p.outputMutex
++func (p *cliProgress) outputHFLJSON(processedBytes, uploadedBytes int64) {
++	now := time.Now() //nolint:forbidigo
++	phase := "estimating"
++
++	if p.estimated {
++		phase = "processing"
++	}
++
++	if p.finalizing.Load() {
++		phase = "finalizing"
++	}
++
++	if p.uploadFinished.Load() {
++		phase = "done"
++	}
++
++	p.sequence++
++	event := hflProgressEvent{
++		Type:           hflProgressEventType,
++		SchemaVersion:  hflProgressSchema,
++		Sequence:       p.sequence,
++		SampledAt:      now.UTC().Format(time.RFC3339Nano),
++		Phase:          phase,
++		ProcessedBytes: processedBytes,
++		UploadedBytes:  uploadedBytes,
++		ElapsedSeconds: now.Sub(p.uploadStartedAt).Seconds(),
++	}
++
++	if phase == "done" {
++		percent := 100.0
++		event.PercentComplete = &percent
++	}
++
++	if p.estimated {
++		total := p.estimatedTotalBytes
++		event.EstimatedBytes = &total
++
++		if phase != "done" && total > 0 {
++			percent := 100 * float64(processedBytes) / float64(total)
++			if percent >= 100 {
++				percent = 99.99
++			}
++
++			event.PercentComplete = &percent
++
++			if phase == "processing" {
++				if est, ok := p.uploadStartTime.Estimate(float64(processedBytes), float64(total)); ok {
++					remaining := int64(est.Remaining / time.Second)
++					event.RemainingSeconds = &remaining
++				}
++			}
++		}
++	}
++
++	encoded, err := json.Marshal(event)
++	if err != nil {
++		return
++	}
++
++	p.out.printStderr("%s\n", encoded)
++}
++
+ // +checklocks:p.outputMutex
+ func (p *cliProgress) spinnerCharacter() string {
+ 	if p.uploadFinished.Load() {
+@@ -217,6 +315,7 @@ func (p *cliProgress) spinnerCharacter() string {
+ func (p *cliProgress) StartShared() {
+ 	*p = cliProgress{
+ 		uploadStartTime: timetrack.Start(),
++		uploadStartedAt: time.Now(), //nolint:forbidigo
+ 		shared:          true,
+ 		progressFlags:   p.progressFlags,
+ 	}
+@@ -237,10 +336,12 @@ func (p *cliProgress) UploadStarted() {
+ 
+ 	*p = cliProgress{
+ 		uploadStartTime: timetrack.Start(),
++		uploadStartedAt: time.Now(), //nolint:forbidigo
+ 		progressFlags:   p.progressFlags,
+ 	}
+ 
+ 	p.uploading.Store(true)
++	p.output(defaultColor, "")
+ }
+ 
+ func (p *cliProgress) EstimatedDataSize(fileCount, totalBytes int64) {
+@@ -254,6 +355,11 @@ func (p *cliProgress) EstimatedDataSize(fileCount, totalBytes int64) {
+ 
+ 	p.estimatedFileCount = fileCount
+ 	p.estimatedTotalBytes = totalBytes
++	p.estimated = true
++
++	if p.progressFormat == progressFormatHFLJSON {
++		p.outputHFLJSON(p.hashedBytes.Load()+p.cachedBytes.Load(), p.uploadedBytes.Load())
++	}
+ }
+ 
+ func (p *cliProgress) UploadFinished() {
+@@ -266,16 +372,32 @@ func (p *cliProgress) Finish() {
+ 		return
+ 	}
+ 
+-	p.uploadFinished.Store(true)
+-	p.uploading.Store(false)
++	if p.progressFormat == progressFormatHFLJSON {
++		p.finalizing.Store(true)
++		p.output(defaultColor, "")
+ 
++		return
++	}
++
++	p.uploadFinished.Store(true)
+ 	p.output(defaultColor, "")
++	p.uploading.Store(false)
+ 
+ 	if p.enableProgress {
+ 		p.out.printStderr("\n")
+ 	}
+ }
+ 
++func (p *cliProgress) Complete() {
++	if p.shared || p.progressFormat != progressFormatHFLJSON {
++		return
++	}
++
++	p.uploadFinished.Store(true)
++	p.output(defaultColor, "")
++	p.uploading.Store(false)
++}
++
+ func (p *cliProgress) EstimationParameters() upload.EstimationParameters {
+ 	return upload.EstimationParameters{
+ 		Type:              p.progressEstimationType,
+diff --git a/cli/cli_progress_hfl_test.go b/cli/cli_progress_hfl_test.go
+new file mode 100644
+index 00000000..b93e48c3
+--- /dev/null
++++ b/cli/cli_progress_hfl_test.go
+@@ -0,0 +1,74 @@
++package cli
++
++import (
++	"bytes"
++	"encoding/json"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestHFLStructuredProgress(t *testing.T) {
++	var stderr bytes.Buffer
++
++	app := NewApp()
++	app.stderrWriter = &stderr
++
++	p := &cliProgress{
++		progressFlags: progressFlags{
++			progressFormat:         progressFormatHFLJSON,
++			progressUpdateInterval: time.Hour,
++		},
++	}
++	p.out.setup(app)
++
++	p.UploadStarted()
++	p.EstimatedDataSize(10, 4_130_621_356)
++	p.CachedFile("ignored", 3_208_296_249)
++	p.HashedBytes(270_077_614)
++	p.UploadedBytes(270_077_614)
++	p.Finish()
++	p.Complete()
++
++	lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
++	if len(lines) < 4 {
++		t.Fatalf("expected at least 4 progress events, got %d: %q", len(lines), stderr.String())
++	}
++
++	events := make([]hflProgressEvent, len(lines))
++	for i, line := range lines {
++		if err := json.Unmarshal([]byte(line), &events[i]); err != nil {
++			t.Fatalf("event %d is not valid JSON: %v", i, err)
++		}
++
++		if events[i].Sequence != int64(i+1) {
++			t.Fatalf("event %d has sequence %d", i, events[i].Sequence)
++		}
++	}
++
++	if events[0].Phase != "estimating" || events[0].EstimatedBytes != nil || events[0].PercentComplete != nil {
++		t.Fatalf("unexpected initial event: %+v", events[0])
++	}
++
++	finalizing := events[len(events)-2]
++	if finalizing.Phase != "finalizing" {
++		t.Fatalf("expected finalizing phase, got %q", finalizing.Phase)
++	}
++
++	if finalizing.ProcessedBytes != 3_478_373_863 || finalizing.UploadedBytes != 270_077_614 {
++		t.Fatalf("unexpected exact counters: %+v", finalizing)
++	}
++
++	if finalizing.EstimatedBytes == nil || *finalizing.EstimatedBytes != 4_130_621_356 {
++		t.Fatalf("unexpected estimated bytes: %+v", finalizing.EstimatedBytes)
++	}
++
++	if finalizing.PercentComplete == nil || *finalizing.PercentComplete < 84.20 || *finalizing.PercentComplete > 84.22 {
++		t.Fatalf("unexpected percent: %+v", finalizing.PercentComplete)
++	}
++
++	done := events[len(events)-1]
++	if done.Phase != "done" || done.PercentComplete == nil || *done.PercentComplete != 100 {
++		t.Fatalf("unexpected done event: %+v", done)
++	}
++}
+diff --git a/cli/command_snapshot_create.go b/cli/command_snapshot_create.go
+index 6a9a994f..720e5d40 100644
+--- a/cli/command_snapshot_create.go
++++ b/cli/command_snapshot_create.go
+@@ -163,6 +163,8 @@ func (c *commandSnapshotCreate) run(ctx context.Context, rep repo.RepositoryWrit
+ 	}
+ 
+ 	if len(finalErrors) == 0 {
++		c.svc.getProgress().Complete()
++
+ 		return nil
+ 	}
+ 

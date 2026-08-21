@@ -156,8 +156,27 @@ sync_source() {
 	KOPIA_GIT_COMMIT="$(git -C "${KOPIA_SOURCE_DIR}" rev-parse HEAD)"
 }
 
-patch_sha256() {
-	sha256sum "${KOPIA_PATCH_FILE}" | awk '{print $1}'
+patch_set_sha256() {
+	local patch digest
+	for patch in "${KOPIA_PATCH_FILES[@]}"; do
+		[[ -f "${patch}" ]] || die "missing Kopia patch: ${patch}"
+		digest="$(sha256sum "${patch}" | awk '{print $1}')"
+		printf '%s:%s\n' "$(basename "${patch}")" "${digest}"
+	done | sha256sum | awk '{print $1}'
+}
+
+patch_names() {
+	local patch
+	for patch in "${KOPIA_PATCH_FILES[@]}"; do
+		printf '%s ' "$(basename "${patch}")"
+	done
+}
+
+patch_digests() {
+	local patch
+	for patch in "${KOPIA_PATCH_FILES[@]}"; do
+		sha256sum "${patch}" | awk '{printf "%s ", $1}'
+	done
 }
 
 go_toolchain_version() {
@@ -211,14 +230,24 @@ PY
 }
 
 build_matrix() {
-	[[ -f "${KOPIA_PATCH_FILE}" ]] || die "missing Kopia patch: ${KOPIA_PATCH_FILE}"
-	git -C "${KOPIA_SOURCE_DIR}" apply --check "${KOPIA_PATCH_FILE}" || die "Kopia patch does not apply to ${KOPIA_GIT_REF}"
-	git -C "${KOPIA_SOURCE_DIR}" apply "${KOPIA_PATCH_FILE}"
+	local patch
+	for patch in "${KOPIA_PATCH_FILES[@]}"; do
+		[[ -f "${patch}" ]] || die "missing Kopia patch: ${patch}"
+		git -C "${KOPIA_SOURCE_DIR}" apply --check "${patch}" \
+			|| die "Kopia patch $(basename "${patch}") does not apply to ${KOPIA_GIT_REF}"
+		git -C "${KOPIA_SOURCE_DIR}" apply "${patch}"
+	done
+
 	log "Testing the Kopia S3 URL-style patch"
 	(
 		cd "${KOPIA_SOURCE_DIR}"
 		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" go test ./repo/blob/s3 \
 			-run 'Test(BucketLookupForURLStyle|OptionsURLStyleJSONRoundTrip|URLStyleRequestAddressing)$'
+	)
+	log "Testing the Kopia HFL structured-progress patch"
+	(
+		cd "${KOPIA_SOURCE_DIR}"
+		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" go test ./cli -run '^TestHFLStructuredProgress$'
 	)
 
 	local build_info patch_short entry goos goarch output
@@ -343,6 +372,7 @@ write_metadata() {
 	MODE="${KOPIA_ARTIFACT_MODE}" URL="${KOPIA_GIT_URL}" REF="${KOPIA_GIT_REF}" \
 		COMMIT="${KOPIA_GIT_COMMIT}" VERSION="${KOPIA_VERSION}" GO_VERSION="${KOPIA_GO_VERSION}" \
 		PATCH_SHA="${KOPIA_PATCH_SHA256}" BUILD_PROFILE="${KOPIA_BUILD_PROFILE}" \
+		PATCH_NAMES="${KOPIA_PATCH_NAMES}" PATCH_DIGESTS="${KOPIA_PATCH_DIGESTS}" \
 		MATRIX_VALUE="${MATRIX}" ROOT="${KOPIA_BUILD_DIR}" \
 		OUT="${KOPIA_INFO_FILE}" python3 - <<'PY'
 import hashlib
@@ -352,6 +382,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 root = Path(os.environ["ROOT"])
+patch_names = os.environ["PATCH_NAMES"].split()
+patch_digests = os.environ["PATCH_DIGESTS"].split()
+if len(patch_names) != len(patch_digests):
+    raise SystemExit("Kopia patch metadata is inconsistent")
+patches = [
+    {"name": name, "sha256": digest}
+    for name, digest in zip(patch_names, patch_digests)
+]
 files = {}
 for entry in os.environ["MATRIX_VALUE"].split():
     goos, goarch = entry.split(":", 1)
@@ -374,8 +412,12 @@ payload = {
     "go_version": os.environ["GO_VERSION"],
     "build_profile": os.environ["BUILD_PROFILE"],
     "patch_sha256": os.environ["PATCH_SHA"],
+    "patches": patches,
     "matrix": os.environ["MATRIX_VALUE"].split(),
-    "features": {"s3_url_style": os.environ["MODE"] == "build"},
+    "features": {
+        "s3_url_style": os.environ["MODE"] == "build",
+        "hfl_structured_progress_v2": os.environ["MODE"] == "build",
+    },
     "files": files,
     "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }
@@ -408,10 +450,14 @@ EOF
 	sync_source
 	KOPIA_GO_VERSION="$(go_toolchain_version)"
 	if [[ "${KOPIA_ARTIFACT_MODE}" == build ]]; then
-		KOPIA_PATCH_SHA256="$(patch_sha256)"
-		KOPIA_BUILD_PROFILE="cgo-disabled,trimpath,strip,embedded-html-ui,hfl-buildinfo-v1,s3-patch-tests-v1"
+		KOPIA_PATCH_SHA256="$(patch_set_sha256)"
+		KOPIA_PATCH_NAMES="$(patch_names)"
+		KOPIA_PATCH_DIGESTS="$(patch_digests)"
+		KOPIA_BUILD_PROFILE="cgo-disabled,trimpath,strip,embedded-html-ui,hfl-buildinfo-v2,s3-patch-tests-v1,structured-progress-v2-tests-v1"
 	else
 		KOPIA_PATCH_SHA256=""
+		KOPIA_PATCH_NAMES=""
+		KOPIA_PATCH_DIGESTS=""
 		KOPIA_BUILD_PROFILE="official-release-archive"
 	fi
 	if cache_is_valid; then

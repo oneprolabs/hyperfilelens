@@ -203,32 +203,79 @@ class Step3ProgressTests(SimpleTestCase):
         self.assertEqual(transfer["eta_source"], "step3")
         self.assertEqual(transfer["eta_seconds"], 49)
 
-    def test_backup_eta_matches_capacity_and_upload_speed(self):
-        uploaded = 138 * 1_000_000
-        du_total = 263 * 1_000_000
-        speed_bps = int(1.49 * 1_000_000)
+    def test_backup_eta_matches_processed_capacity_and_processing_speed(self):
+        processed = 138 * 1_000_000
+        total = 263 * 1_000_000
+        processing_speed_bps = int(10.5 * 1_000_000)
+        upload_speed_bps = int(1.49 * 1_000_000)
         transfer = enrich_step3_backup_transfer(
-            transfer={"phase": "transferring", "upload_speed_bps": speed_bps},
+            transfer={"phase": "transferring", "upload_speed_bps": upload_speed_bps},
             previous={},
             aggregate={
-                "uploaded_bytes": uploaded,
+                "progress_schema_version": 2,
+                "processed_bytes": processed,
+                "bytes_done": processed,
+                "uploaded_bytes": 25 * 1_000_000,
                 "uploaded_count": 0,
                 "hashed_count": 15_603,
-                "estimated_bytes": 200 * 1_000_000,
-                "upload_speed_bps": speed_bps,
+                "estimated_bytes": total,
+                "bytes_total": total,
+                "bytes_total_known": True,
+                "processing_speed_bps": processing_speed_bps,
+                "upload_speed_bps": upload_speed_bps,
                 "eta_seconds": 33,
                 "eta_source": "kopia",
             },
-            du_total=du_total,
+            du_total=500 * 1_000_000,
         )
         self.assertEqual(transfer["eta_source"], "step3")
         expected = compute_step3_eta_seconds(
-            bytes_done=uploaded,
-            bytes_total=du_total,
-            upload_speed_bps=speed_bps,
+            bytes_done=processed,
+            bytes_total=total,
+            processing_speed_bps=processing_speed_bps,
         )
         self.assertEqual(transfer["eta_seconds"], expected)
-        self.assertGreater(transfer["eta_seconds"], 60)
+        self.assertEqual(transfer["speed_bps"], upload_speed_bps)
+        self.assertEqual(transfer["bytes_done"], processed)
+
+    def test_schema_v2_uses_kopia_total_immediately(self):
+        transfer = enrich_step3_backup_transfer(
+            transfer={"phase": "transferring"},
+            previous={},
+            aggregate={
+                "progress_schema_version": 2,
+                "processed_bytes": 3_478_373_863,
+                "bytes_done": 3_478_373_863,
+                "uploaded_bytes": 270_077_614,
+                "estimated_bytes": 4_130_621_356,
+                "bytes_total": 4_130_621_356,
+                "bytes_total_known": True,
+            },
+            du_total=9_000_000_000,
+        )
+        self.assertTrue(transfer["switch_latched"])
+        self.assertEqual(transfer["kopia_total_locked"], 4_130_621_356)
+        self.assertEqual(transfer["bytes_done"], 3_478_373_863)
+        self.assertEqual(transfer["bytes_total"], 4_130_621_356)
+        self.assertAlmostEqual(transfer["step3_display_percent"], 84.21, places=2)
+
+    def test_schema_v2_unknown_total_has_no_percent_or_eta(self):
+        transfer = enrich_step3_backup_transfer(
+            transfer={"phase": "transferring", "eta_seconds": 30},
+            previous={},
+            aggregate={
+                "progress_schema_version": 2,
+                "processed_bytes": 3_157_346_250,
+                "bytes_done": 3_157_346_250,
+                "uploaded_bytes": 192,
+                "bytes_total_known": False,
+                "processing_speed_bps": 100_000_000,
+            },
+            du_total=9_000_000_000,
+        )
+        self.assertFalse(transfer["bytes_total_known"])
+        self.assertIsNone(transfer.get("step3_display_percent"))
+        self.assertIsNone(transfer.get("eta_seconds"))
 
     def test_backup_hides_eta_without_reliable_speed(self):
         transfer = enrich_step3_backup_transfer(

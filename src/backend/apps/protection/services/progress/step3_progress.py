@@ -230,18 +230,26 @@ def _step3_upload_speed_bps(*, merged: dict[str, Any], aggregate: dict[str, Any]
     return 0
 
 
+def _step3_processing_speed_bps(*, merged: dict[str, Any], aggregate: dict[str, Any]) -> int:
+    for source in (aggregate, merged):
+        speed = _int(source.get("processing_speed_bps") or source.get("hash_speed_bps"))
+        if speed >= _MIN_STEP3_SPEED_BPS:
+            return speed
+    return 0
+
+
 def compute_step3_eta_seconds(
     *,
     bytes_done: int,
     bytes_total: int,
-    upload_speed_bps: int,
+    processing_speed_bps: int,
 ) -> int | None:
-    if bytes_total <= 0 or upload_speed_bps < _MIN_STEP3_SPEED_BPS:
+    if bytes_total <= 0 or processing_speed_bps < _MIN_STEP3_SPEED_BPS:
         return None
     remaining = int(bytes_total) - int(bytes_done)
     if remaining <= 0:
         return 0
-    return max(1, int(remaining / upload_speed_bps))
+    return max(1, int(remaining / processing_speed_bps))
 
 
 def apply_step3_row3_metrics(
@@ -250,10 +258,14 @@ def apply_step3_row3_metrics(
     aggregate: dict[str, Any],
     bytes_done: int,
     effective_total: int,
+    eta_speed_kind: str = "processing",
 ) -> None:
-    """Row 3 capacity · speed · ETA use one consistent byte model for Step 3."""
+    """Keep displayed upload speed separate from the logical ETA byte domain."""
     phase = str(merged.get("phase") or "").lower()
     if phase != "transferring":
+        if phase == "finalizing":
+            merged["eta_seconds"] = None
+            merged["eta_source"] = None
         return
 
     upload_speed_bps = _step3_upload_speed_bps(merged=merged, aggregate=aggregate)
@@ -262,6 +274,11 @@ def apply_step3_row3_metrics(
         merged["speed_bps"] = upload_speed_bps
         merged["speed_source"] = merged.get("upload_speed_source") or aggregate.get("speed_source") or "step3"
 
+    eta_speed_bps = (
+        upload_speed_bps
+        if eta_speed_kind == "upload"
+        else _step3_processing_speed_bps(merged=merged, aggregate=aggregate)
+    )
     if effective_total <= 0 or not merged.get("bytes_total_known"):
         merged["eta_seconds"] = None
         merged["eta_source"] = None
@@ -272,7 +289,7 @@ def apply_step3_row3_metrics(
         merged["eta_source"] = None
         return
 
-    if upload_speed_bps < _MIN_STEP3_SPEED_BPS:
+    if eta_speed_bps < _MIN_STEP3_SPEED_BPS:
         merged["eta_seconds"] = None
         merged["eta_source"] = None
         return
@@ -280,7 +297,7 @@ def apply_step3_row3_metrics(
     eta_seconds = compute_step3_eta_seconds(
         bytes_done=bytes_done,
         bytes_total=effective_total,
-        upload_speed_bps=upload_speed_bps,
+        processing_speed_bps=eta_speed_bps,
     )
     if eta_seconds is not None:
         merged["eta_seconds"] = eta_seconds
@@ -305,12 +322,27 @@ def enrich_step3_backup_transfer(
     # Agent reconnect snapshots can temporarily contain zeroed counters. Keep
     # task-scoped cumulative values monotonic instead of letting a transient
     # snapshot reset the Step 3 row while its display percent stays latched.
+    schema_version = max(
+        _int(aggregate.get("progress_schema_version")),
+        _int(merged.get("progress_schema_version")),
+        _int(prev.get("progress_schema_version")),
+        1,
+    )
+    processed_bytes = max(
+        _int(aggregate.get("processed_bytes")),
+        _int(aggregate.get("bytes_done")),
+        _int(merged.get("processed_bytes")),
+        _int(merged.get("bytes_done")),
+        _int(prev.get("processed_bytes")),
+        _int(prev.get("bytes_done")),
+    )
     uploaded_bytes = max(
         _int(aggregate.get("uploaded_bytes")),
         _int(merged.get("uploaded_bytes")),
         _int(prev.get("uploaded_bytes")),
-        _int(prev.get("bytes_done")),
     )
+    if schema_version < 2:
+        processed_bytes = max(processed_bytes, uploaded_bytes)
     uploaded_count = max(
         _int(aggregate.get("uploaded_count")),
         _int(merged.get("uploaded_count")),
@@ -343,7 +375,7 @@ def enrich_step3_backup_transfer(
         history = _append_estimated_sample(history=history, estimated_bytes=estimated_bytes, now=current_now)
     merged["estimated_history"] = history
 
-    if not switch_latched and should_latch_kopia_switch(
+    if schema_version < 2 and not switch_latched and should_latch_kopia_switch(
         uploaded_bytes=uploaded_bytes,
         estimated_bytes=estimated_bytes,
         history=history,
@@ -352,10 +384,12 @@ def enrich_step3_backup_transfer(
         switch_latched = True
         kopia_total_locked = estimated_bytes
 
-    merged["switch_latched"] = switch_latched
-    merged["kopia_total_locked"] = kopia_total_locked
-
-    if switch_latched:
+    if schema_version >= 2:
+        effective_total = _int(aggregate.get("bytes_total")) if aggregate.get("bytes_total_known") else 0
+        switch_latched = effective_total > 0
+        kopia_total_locked = effective_total
+        merged["bytes_total_estimated"] = False
+    elif switch_latched:
         effective_total = estimated_bytes if estimated_bytes > 0 else kopia_total_locked
         if not bool(aggregate.get("bytes_total_known")) and kopia_total_locked > 0:
             effective_total = kopia_total_locked
@@ -364,45 +398,59 @@ def enrich_step3_backup_transfer(
         effective_total = frozen_du_total
         merged["bytes_total_estimated"] = frozen_du_total > 0
 
-    merged["bytes_done"] = uploaded_bytes
+    merged["switch_latched"] = switch_latched
+    merged["kopia_total_locked"] = kopia_total_locked
+    merged["progress_schema_version"] = schema_version
+    merged["processed_bytes"] = processed_bytes
+    merged["bytes_done"] = processed_bytes
     if effective_total > 0:
         merged["bytes_total"] = effective_total
         merged["bytes_total_known"] = True
         merged["bytes_total_reference"] = not switch_latched
     else:
+        merged.pop("bytes_total", None)
         merged["bytes_total_known"] = False
         merged["bytes_total_reference"] = False
 
-    prev_display = _float(prev.get("step3_display_percent"))
-    if prev_display is None:
-        prev_display = _float(prev.get("display_percent"))
-    display = compute_step3_display_percent(
-        bytes_done=uploaded_bytes,
-        effective_total=effective_total,
-        previous_display=prev_display,
-    )
+    phase = str(merged.get("phase") or "").lower()
+    if schema_version >= 2 and effective_total <= 0:
+        merged.pop("step3_display_percent", None)
+        display = None
+    else:
+        prev_display = None
+        if schema_version < 2:
+            prev_display = _float(prev.get("step3_display_percent"))
+            if prev_display is None:
+                prev_display = _float(prev.get("display_percent"))
+        display = compute_step3_display_percent(
+            bytes_done=processed_bytes,
+            effective_total=effective_total,
+            previous_display=prev_display,
+        )
+    if phase not in {"done", "success", "completed"} and display is not None and display >= 100:
+        display = 99.0
     if display is not None:
         merged["step3_display_percent"] = display
 
-    phase = str(merged.get("phase") or "").lower()
     apply_step3_row3_metrics(
         merged=merged,
         aggregate=aggregate,
-        bytes_done=uploaded_bytes,
+        bytes_done=processed_bytes,
         effective_total=effective_total if effective_total > 0 and merged.get("bytes_total_known") else 0,
     )
     if phase == "transferring":
         merged["show_metrics"] = bool(
-            uploaded_bytes > 0
+            processed_bytes > 0
             or merged.get("upload_speed_bps")
             or merged.get("eta_seconds")
             or effective_total > 0
         )
 
     logger.debug(
-        "step3_backup_progress uploaded_bytes=%s estimated_bytes=%s du_total=%s "
+        "step3_backup_progress processed_bytes=%s uploaded_bytes=%s estimated_bytes=%s du_total=%s "
         "switch_latched=%s kopia_total_locked=%s effective_total=%s step3_display_percent=%s "
         "upload_speed_bps=%s eta_seconds=%s eta_source=%s",
+        processed_bytes,
         uploaded_bytes,
         estimated_bytes,
         du_total,
@@ -514,6 +562,7 @@ def enrich_step3_restore_transfer(
         aggregate=aggregate,
         bytes_done=bytes_done,
         effective_total=effective_total if effective_total > 0 and merged.get("bytes_total_known") else 0,
+        eta_speed_kind="upload",
     )
     if phase == "transferring":
         merged["show_metrics"] = bool(

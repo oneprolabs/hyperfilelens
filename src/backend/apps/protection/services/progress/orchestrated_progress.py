@@ -142,7 +142,9 @@ def slim_transfer_progress(kopia_payload: dict[str, Any]) -> dict[str, Any]:
         "phase": str(kopia_payload.get("orchestration_phase") or "").strip().lower(),
         "label_key": str(kopia_payload.get("orchestration_label_key") or "").strip() or None,
         "label_args": label_args if isinstance(label_args, dict) else {},
+        "progress_schema_version": int(aggregate.get("progress_schema_version") or 1),
         "bytes_done": int(aggregate.get("bytes_done") or 0),
+        "processed_bytes": int(aggregate.get("processed_bytes") or aggregate.get("bytes_done") or 0),
         "bytes_total": aggregate.get("bytes_total"),
         "bytes_total_known": bool(aggregate.get("bytes_total_known")),
         "bytes_total_reference": bool(aggregate.get("bytes_total_reference")),
@@ -155,9 +157,12 @@ def slim_transfer_progress(kopia_payload: dict[str, Any]) -> dict[str, Any]:
         "path_index": aggregate.get("path_index"),
         "path_total": aggregate.get("path_total"),
         "speed_bps": aggregate.get("speed_bps"),
+        "processing_speed_bps": aggregate.get("processing_speed_bps"),
         "hash_speed_bps": aggregate.get("hash_speed_bps"),
         "upload_speed_bps": aggregate.get("upload_speed_bps"),
         "speed_source": aggregate.get("speed_source"),
+        "processing_speed_source": aggregate.get("processing_speed_source"),
+        "upload_speed_source": aggregate.get("upload_speed_source"),
         "display_percent": kopia_payload.get("display_percent"),
         "eta_seconds": aggregate.get("eta_seconds"),
         "eta_source": aggregate.get("eta_source"),
@@ -229,16 +234,6 @@ def _merge_monotonic_transfer_metrics(*, merged: dict[str, Any], previous: dict[
                 value for value in (_float(merged.get("display_percent")), _float(previous.get("display_percent")))
                 if value is not None
             )
-
-    for key in ("upload_speed_bps", "hash_speed_bps", "speed_bps"):
-        if not merged.get(key) and previous.get(key):
-            merged[key] = previous[key]
-    if not merged.get("speed_source") and previous.get("speed_source"):
-        merged["speed_source"] = previous["speed_source"]
-
-    if not merged.get("eta_seconds") and previous.get("eta_seconds"):
-        merged["eta_seconds"] = previous["eta_seconds"]
-        merged["eta_source"] = previous.get("eta_source")
 
     if previous.get("show_metrics") and not merged.get("show_metrics"):
         merged["show_metrics"] = True
@@ -336,7 +331,14 @@ def orchestrated_backup_from_agent_progress(
         }
     elif str(progress.get("phase") or "").lower() == "kopia_transfer" or progress.get("kopia_phase"):
         phase = str(progress.get("kopia_phase") or progress.get("phase") or "").lower()
-        orch_phase = "transferring" if phase in {"uploading", "hashing", "restoring", "running"} else "estimating"
+        if phase in {"uploading", "hashing", "restoring", "running", "processing"}:
+            orch_phase = "transferring"
+        elif phase == "finalizing":
+            orch_phase = "finalizing"
+        elif phase in {"done", "snapshot_created"}:
+            orch_phase = "done"
+        else:
+            orch_phase = "estimating"
         kopia_percent = progress.get("kopia_percent", progress.get("percent"))
         kopia_payload = {
             "orchestration_phase": orch_phase,

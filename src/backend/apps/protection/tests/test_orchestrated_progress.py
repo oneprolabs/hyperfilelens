@@ -133,6 +133,7 @@ class OrchestratedProgressTests(SimpleTestCase):
                 "bytes_total_known": True,
                 "display_percent": 1.69,
                 "upload_speed_bps": 500_000,
+                "eta_seconds": 30,
                 "show_metrics": True,
             },
             current={
@@ -146,4 +147,5 @@ class OrchestratedProgressTests(SimpleTestCase):
         )
         self.assertEqual(merged["bytes_done"], 9_500_000)
         self.assertEqual(merged["display_percent"], 1.69)
-        self.assertEqual(merged["upload_speed_bps"], 500_000)
+        self.assertIsNone(merged.get("upload_speed_bps"))
+        self.assertIsNone(merged.get("eta_seconds"))

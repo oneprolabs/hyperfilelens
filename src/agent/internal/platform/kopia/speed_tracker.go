@@ -6,89 +6,83 @@ import (
 )
 
 const (
-	speedMinSampleGap   = 2 * time.Second
-	speedMinBps         = int64(100)
-	speedEmaAlpha       = 0.35
+	speedWindow       = 4 * time.Second
+	speedMinSpan      = 1 * time.Second
+	speedFreshness    = 6 * time.Second
+	speedWindowSource = "window"
 )
 
-// SpeedTracker computes smoothed upload/hash throughput from byte counter samples.
-type SpeedTracker struct {
-	mu          sync.Mutex
-	lastCounter int64
-	lastAt      time.Time
-	emaSpeed    float64
-	hasSample   bool
+type speedSample struct {
+	counter int64
+	at      time.Time
 }
 
+// SpeedTracker computes bounded-window throughput from exact counter samples.
+type SpeedTracker struct {
+	mu          sync.Mutex
+	samples     []speedSample
+	lastSpeed   int64
+	lastSpeedAt time.Time
+}
+
+// Observe returns a speed only after the samples span enough time. A non-empty
+// source makes a measured zero distinct from an unavailable sample.
 func (t *SpeedTracker) Observe(counter int64, now time.Time) (speedBps int64, source string) {
-	if counter <= 0 {
+	if counter < 0 || now.IsZero() {
 		return 0, ""
 	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if !t.hasSample {
-		t.lastCounter = counter
-		t.lastAt = now
-		t.hasSample = true
+	if len(t.samples) == 0 || counter < t.samples[len(t.samples)-1].counter {
+		t.samples = []speedSample{{counter: counter, at: now}}
+		t.lastSpeed = 0
+		t.lastSpeedAt = time.Time{}
 		return 0, ""
 	}
 
-	if counter < t.lastCounter {
-		t.lastCounter = counter
-		t.lastAt = now
-		t.emaSpeed = 0
-		return 0, ""
-	}
-
-	if counter == t.lastCounter {
-		if t.emaSpeed > 0 {
-			return int64(t.emaSpeed), "ema"
+	last := t.samples[len(t.samples)-1]
+	if !now.After(last.at) {
+		if now.Equal(last.at) {
+			t.samples[len(t.samples)-1].counter = counter
 		}
 		return 0, ""
 	}
 
-	deltaT := now.Sub(t.lastAt)
-	if deltaT < speedMinSampleGap {
-		if t.emaSpeed > 0 {
-			return int64(t.emaSpeed), "ema"
+	t.samples = append(t.samples, speedSample{counter: counter, at: now})
+	for len(t.samples) > 2 && now.Sub(t.samples[1].at) >= speedWindow {
+		t.samples = t.samples[1:]
+	}
+
+	oldest := t.samples[0]
+	span := now.Sub(oldest.at)
+	if span < speedMinSpan {
+		if !t.lastSpeedAt.IsZero() && now.Sub(t.lastSpeedAt) <= speedFreshness {
+			return t.lastSpeed, speedWindowSource
 		}
 		return 0, ""
 	}
 
-	instant := float64(counter-t.lastCounter) / deltaT.Seconds()
-	if instant < float64(speedMinBps) {
-		t.lastCounter = counter
-		t.lastAt = now
-		if t.emaSpeed > 0 {
-			return int64(t.emaSpeed), "ema"
-		}
+	delta := counter - oldest.counter
+	if delta < 0 {
 		return 0, ""
 	}
 
-	if t.emaSpeed <= 0 {
-		t.emaSpeed = instant
-	} else {
-		t.emaSpeed = speedEmaAlpha*instant + (1-speedEmaAlpha)*t.emaSpeed
-	}
-	t.lastCounter = counter
-	t.lastAt = now
-	return int64(t.emaSpeed), "ema"
+	t.lastSpeed = int64(float64(delta) / span.Seconds())
+	t.lastSpeedAt = now
+	return t.lastSpeed, speedWindowSource
 }
 
+// ProcessingCounter returns logical bytes processed by Kopia.
+func ProcessingCounter(snapshot ProgressSnapshot) int64 {
+	if snapshot.ProcessedBytes > 0 {
+		return snapshot.ProcessedBytes
+	}
+	return snapshot.CachedBytes + snapshot.HashedBytes
+}
+
+// SpeedCounter preserves the legacy helper name while returning logical work.
 func SpeedCounter(snapshot ProgressSnapshot) int64 {
-	switch snapshot.Phase {
-	case "uploading":
-		if snapshot.UploadedBytes > 0 {
-			return snapshot.UploadedBytes
-		}
-	case "hashing":
-		if snapshot.HashedBytes > 0 {
-			return snapshot.HashedBytes
-		}
-	}
-	if snapshot.UploadedBytes > 0 {
-		return snapshot.UploadedBytes
-	}
-	return snapshot.HashedBytes
+	return ProcessingCounter(snapshot)
 }

@@ -37,14 +37,13 @@ const taskProgressValue = computed(() => {
 const displayPercent = computed(() => {
   const transfer = props.transferProgress
   const step3 = Number(transfer?.step3_display_percent)
-  const phase = String(transfer?.phase || '').toLowerCase()
-  if ((props.stopping || phase === 'transferring') && taskProgressValue.value != null) {
+  if (props.stopping && taskProgressValue.value != null) {
     return taskProgressValue.value
   }
   if (props.stopping && Number.isFinite(step3)) {
     return parseTaskProgressValue(step3)
   }
-  if (phase === 'transferring') {
+  if (shouldShowStep3Percent(transfer)) {
     return resolveStep3DisplayPercent(transfer, 0)
   }
   return 0
@@ -52,8 +51,7 @@ const displayPercent = computed(() => {
 const barPercent = computed(() => formatTaskProgressBarPercent(displayPercent.value))
 const progressText = computed(() => formatTaskProgressPercent(displayPercent.value))
 const showRightPercent = computed(() => {
-  const phase = String(props.transferProgress?.phase || '').toLowerCase()
-  if ((props.stopping || phase === 'transferring') && taskProgressValue.value != null) return true
+  if (props.stopping && taskProgressValue.value != null) return true
   return shouldShowStep3Percent(props.transferProgress)
 })
 const orchestrationLabel = computed(() => {

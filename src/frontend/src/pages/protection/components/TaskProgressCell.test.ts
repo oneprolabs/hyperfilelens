@@ -16,11 +16,14 @@ const i18n = createI18n({
       protection: {
         taskProgress: {
           bytesTransferred: '{size} transferred',
+          bytesProcessed: 'Processed: {size}',
           bytesCapacity: '{done} / {total}',
+          bytesProcessedCapacity: 'Processed: {done} / {total}',
           bytesCapacityEst: 'Incremental transfer: {done} / est. {total}',
           bytesCapacityRef: 'Transferred: {done} / source data: {total}',
           etaMinutes: '{n} min left',
           hashSpeed: 'Scanning: {speed}',
+          uploadSpeed: 'Upload: {speed}',
           transfer: {
             hashedOnly: 'Backing up',
             uploadedAndHashed: 'Backing up',
@@ -56,6 +59,8 @@ function mountCell(
         phase: 'transferring',
         label_key: 'protection.taskProgress.transfer.hashedOnly',
         label_args: { hashed: 947 },
+        progress_schema_version: 2,
+        processed_bytes: 900_000_000,
         bytes_done: 900_000_000,
         bytes_total: 322_000_000_000,
         bytes_total_known: true,
@@ -74,11 +79,11 @@ function mountCell(
 }
 
 describe('TaskProgressCell', () => {
-  it('uses task progress while transferring so the list matches task details', () => {
+  it('uses the logical snapshot percent while transferring', () => {
     const wrapper = mountCell(59.1)
 
-    expect(wrapper.get('.task-progress-cell__percent').text()).toBe('59.10%')
-    expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('59.1')
+    expect(wrapper.get('.task-progress-cell__percent').text()).toBe('0.28%')
+    expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('0.28')
     expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Backing up')
     expect(wrapper.text()).not.toContain('947')
   })
@@ -90,14 +95,14 @@ describe('TaskProgressCell', () => {
     expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('0.28')
   })
 
-  it('keeps task progress visible when the byte total is unknown', () => {
+  it('does not show a numeric snapshot percent when the byte total is unknown', () => {
     const wrapper = mountCell(59.1, {
       bytes_total: null,
       bytes_total_known: false,
     })
 
-    expect(wrapper.get('.task-progress-cell__percent').text()).toBe('59.10%')
-    expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('59.1')
+    expect(wrapper.find('.task-progress-cell__percent').exists()).toBe(false)
+    expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('0')
   })
 
   it('keeps task progress stable while the task is stopping', () => {
@@ -118,7 +123,7 @@ describe('TaskProgressCell', () => {
     expect(wrapper.text()).not.toContain('947')
   })
 
-  it('uses task progress for restore transfers too', () => {
+  it('uses Step 3 progress for restore transfers too', () => {
     const wrapper = mountCell(65.4, {
       label_key: 'protection.taskProgress.restore.transferring',
       label_args: {},
@@ -126,12 +131,13 @@ describe('TaskProgressCell', () => {
     })
 
     expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Restoring')
-    expect(wrapper.get('.task-progress-cell__percent').text()).toBe('65.40%')
-    expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('65.4')
+    expect(wrapper.get('.task-progress-cell__percent').text()).toBe('10.20%')
+    expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('10.2')
   })
 
   it('labels hash throughput and includes it in either overflow target tooltip', () => {
     const wrapper = mountCell(14.55, {
+      progress_schema_version: 1,
       bytes_done: 0,
       bytes_total: null,
       bytes_total_known: false,
@@ -151,7 +157,7 @@ describe('TaskProgressCell', () => {
     const wrapper = mountCell(59.1)
     const line = wrapper.get('.task-progress-cell__metric-line')
 
-    expect(line.text()).toBe('Transferred: 900 MB / source data: 322 GB · 5.74 MB/s · 15 min left')
+    expect(line.text()).toBe('Processed: 900 MB / 322 GB · Upload: 5.74 MB/s · 15 min left')
     expect(line.element.children).toHaveLength(0)
 
     const source = readFileSync(resolve(process.cwd(), 'src/pages/protection/components/TaskProgressCell.vue'), 'utf8')
@@ -163,8 +169,8 @@ describe('TaskProgressCell', () => {
 
     expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe([
       'Backing up',
-      'Transferred: 900 MB / source data: 322 GB',
-      '5.74 MB/s',
+      'Processed: 900 MB / 322 GB',
+      'Upload: 5.74 MB/s',
       '15 min left',
     ].join('\n'))
   })

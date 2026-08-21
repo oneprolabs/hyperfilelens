@@ -1473,6 +1473,16 @@ func runPreparedManagedSnapshot(
 		progressState.maybeSend(runCtx, rep, taskID, snapshot)
 	}
 	res, runErr := runManagedSnapshotCommand(runCtx, bin, snapshotArgs, env, "", onProgressLine)
+	if runErr != nil && managedSnapshotStructuredProgressUnsupported(res) {
+		res, runErr = runManagedSnapshotCommand(
+			runCtx,
+			bin,
+			managedBackupLegacySnapshotArgs(configFile, sourcePath),
+			env,
+			"",
+			onProgressLine,
+		)
+	}
 	stalled := runCtx.Err() != nil && ctx.Err() == nil && progressState.stallExceeded(stallSeconds)
 	close(stallDone)
 	cancelRun()
@@ -1496,16 +1506,9 @@ func runPreparedManagedSnapshot(
 	}
 	collectManagedSnapshotStorageStats(ctx, bin, configFile, env, sourcePath, result)
 
-	_ = sendProgress(ctx, rep, taskID, map[string]any{
-		"phase":             "kopia_transfer",
-		"kopia_phase":       "snapshot_created",
-		"kopia_percent":     100,
-		"percent":           100,
-		"bytes_done":        int64(1),
-		"bytes_total":       int64(1),
-		"bytes_total_known": true,
-		"kopia_snapshot_id": stringValue(result["kopia_snapshot_id"]),
-	})
+	_ = sendProgress(ctx, rep, taskID, progressState.completionPayload(
+		stringValue(result["kopia_snapshot_id"]),
+	))
 	return "success", result, ""
 }
 
@@ -1576,10 +1579,17 @@ func managedSnapshotPolicyNotFound(res process.Result) bool {
 	return strings.Contains(output, "unable to get policy tree") || strings.Contains(output, "policy not found")
 }
 
+func managedSnapshotStructuredProgressUnsupported(res process.Result) bool {
+	output := strings.ToLower(res.Stderr + "\n" + res.Stdout)
+	return strings.Contains(output, "progress-format") &&
+		(strings.Contains(output, "unknown flag") || strings.Contains(output, "unknown long flag"))
+}
+
 func managedBackupSnapshotArgs(configFile string, sourcePath string, operationID string) []string {
 	args := []string{
 		"--config-file=" + configFile,
 		"--progress",
+		"--progress-format=hfl-json",
 		"--progress-estimation-type=classic",
 		"snapshot",
 		"create",
@@ -1589,6 +1599,17 @@ func managedBackupSnapshotArgs(configFile string, sourcePath string, operationID
 		args = append(args, "--tags="+backupOperationTagKey+":"+operationID)
 	}
 	return append(args, "--json")
+}
+
+func managedBackupLegacySnapshotArgs(configFile string, sourcePath string) []string {
+	args := managedBackupSnapshotArgs(configFile, sourcePath, "")
+	legacy := make([]string, 0, len(args)-1)
+	for _, arg := range args {
+		if arg != "--progress-format=hfl-json" {
+			legacy = append(legacy, arg)
+		}
+	}
+	return legacy
 }
 
 func managedSnapshotReconcileArgs(configFile string, operationID string) []string {
@@ -3766,17 +3787,21 @@ func firstPresent(m map[string]any, keys ...string) any {
 }
 
 type kopiaProgressReporter struct {
-	mu                 sync.Mutex
-	lastPercent        int
-	lastSentAt         time.Time
-	lastSubstantiveAt  time.Time
-	lastSignature      string
-	lastHashCounter    int64
-	lastUploadCounter  int64
-	lastHashedCount    int64
-	lastUploadedCount  int64
-	hashSpeedTracker   kopia.SpeedTracker
-	uploadSpeedTracker kopia.SpeedTracker
+	mu                    sync.Mutex
+	lastPercent           int
+	lastSentAt            time.Time
+	lastSubstantiveAt     time.Time
+	lastSignature         string
+	lastProcessingCounter int64
+	lastUploadCounter     int64
+	lastPhase             string
+	lastSequence          int64
+	lastHashedCount       int64
+	lastUploadedCount     int64
+	lastSnapshot          kopia.ProgressSnapshot
+	hasSnapshot           bool
+	hashSpeedTracker      kopia.SpeedTracker
+	uploadSpeedTracker    kopia.SpeedTracker
 }
 
 func newKopiaProgressReporter() *kopiaProgressReporter {
@@ -3786,11 +3811,12 @@ func newKopiaProgressReporter() *kopiaProgressReporter {
 
 func (r *kopiaProgressReporter) noteSubstantive(snapshot kopia.ProgressSnapshot) {
 	sig := fmt.Sprintf(
-		"%d|%d|%d|%d",
-		snapshot.HashedBytes,
+		"%d|%d|%d|%d|%s",
+		kopia.ProcessingCounter(snapshot),
 		snapshot.UploadedBytes,
 		snapshot.HashedCount,
 		snapshot.UploadedCount,
+		snapshot.Phase,
 	)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -3871,7 +3897,7 @@ func (r *kopiaProgressReporter) maybeSend(
 	snapshot kopia.ProgressSnapshot,
 ) {
 	snapshot = r.stabilizeSnapshot(snapshot)
-	if snapshot.Percent <= 0 &&
+	if snapshot.SchemaVersion < 2 && snapshot.Percent <= 0 &&
 		snapshot.HashingCount == 0 &&
 		snapshot.HashedCount == 0 &&
 		snapshot.UploadedCount == 0 &&
@@ -3879,24 +3905,36 @@ func (r *kopiaProgressReporter) maybeSend(
 		snapshot.HashedBytes == 0 {
 		return
 	}
-	if snapshot.Percent <= 0 {
+	if snapshot.SchemaVersion < 2 && snapshot.Percent <= 0 {
 		snapshot.Percent = 1
+		snapshot.PercentValue = 1
+		snapshot.PercentKnown = true
 	}
-	hashCounter := snapshot.HashedBytes
+	processingCounter := kopia.ProcessingCounter(snapshot)
 	uploadCounter := snapshot.UploadedBytes
 	now := time.Now()
-	hashSpeedBps, hashSpeedSource := r.hashSpeedTracker.Observe(hashCounter, now)
-	uploadSpeedBps, uploadSpeedSource := r.uploadSpeedTracker.Observe(uploadCounter, now)
+	sampleTime := now
+	if parsed, err := time.Parse(time.RFC3339Nano, snapshot.SampledAt); err == nil {
+		sampleTime = parsed
+	}
+	hashSpeedBps, hashSpeedSource := r.hashSpeedTracker.Observe(processingCounter, sampleTime)
+	uploadSpeedBps, uploadSpeedSource := r.uploadSpeedTracker.Observe(uploadCounter, sampleTime)
 	r.mu.Lock()
 	shouldSend := r.lastPercent < 0 ||
 		snapshot.Percent > r.lastPercent ||
-		hashCounter > r.lastHashCounter ||
+		processingCounter > r.lastProcessingCounter ||
 		uploadCounter > r.lastUploadCounter ||
+		snapshot.Phase != r.lastPhase ||
+		snapshot.Sequence > r.lastSequence ||
 		now.Sub(r.lastSentAt) >= 3*time.Second
+	r.lastSnapshot = snapshot
+	r.hasSnapshot = true
 	if shouldSend {
 		r.lastPercent = snapshot.Percent
-		r.lastHashCounter = hashCounter
+		r.lastProcessingCounter = processingCounter
 		r.lastUploadCounter = uploadCounter
+		r.lastPhase = snapshot.Phase
+		r.lastSequence = snapshot.Sequence
 		r.lastSentAt = now
 	}
 	r.mu.Unlock()
@@ -3913,6 +3951,41 @@ func (r *kopiaProgressReporter) maybeSend(
 		uploadSpeedBps,
 		uploadSpeedSource,
 	))
+}
+
+func (r *kopiaProgressReporter) completionPayload(snapshotID string) map[string]any {
+	r.mu.Lock()
+	snapshot := r.lastSnapshot
+	hasSnapshot := r.hasSnapshot
+	r.mu.Unlock()
+
+	var payload map[string]any
+	if hasSnapshot {
+		payload = kopia.ProgressPayload(snapshot)
+	} else {
+		payload = map[string]any{
+			"progress_schema_version": 1,
+			"phase":                   "kopia_transfer",
+			"processed_bytes":         int64(0),
+			"uploaded_bytes":          int64(0),
+			"bytes_done":              int64(0),
+			"bytes_total":             int64(0),
+			"bytes_total_known":       false,
+		}
+	}
+	payload["phase"] = "kopia_transfer"
+	payload["kopia_phase"] = "snapshot_created"
+	payload["kopia_percent"] = 100.0
+	payload["percent"] = 100.0
+	payload["processing_speed_bps"] = int64(0)
+	payload["processing_speed_source"] = "completed"
+	payload["upload_speed_bps"] = int64(0)
+	payload["upload_speed_source"] = "completed"
+	payload["speed_bps"] = int64(0)
+	payload["speed_source"] = "completed"
+	payload["kopia_eta_seconds"] = int64(0)
+	payload["kopia_snapshot_id"] = snapshotID
+	return payload
 }
 
 func (r *kopiaProgressReporter) noteSubstantivePayload(payload map[string]any) {

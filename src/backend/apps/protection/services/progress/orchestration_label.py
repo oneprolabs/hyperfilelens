@@ -31,6 +31,14 @@ def backup_orchestration_label_meta(
         if label:
             return {"label_key": "protection.taskProgress.backup.preparing"}, "preparing"
 
+    active_phases = {
+        str((lane.get("progress") or {}).get("kopia_phase") or "").lower()
+        for lane in lanes
+        if str(lane.get("status") or "").lower() in {"running", "dispatching", "creating"}
+    }
+    if "finalizing" in active_phases:
+        return {"label_key": "protection.taskProgress.backup.finalizing"}, "finalizing"
+
     stalled = [
         lane
         for lane in lanes
@@ -120,8 +128,10 @@ def _transfer_phase_key(lanes: list[dict[str, Any]]) -> str:
     }
     if "uploading" in phases:
         return "uploading"
-    if "hashing" in phases:
+    if "processing" in phases or "hashing" in phases:
         return "hashing"
+    if "finalizing" in phases:
+        return "finalizing"
     if "restoring" in phases:
         return "restoring"
     return "transferringGeneric"
