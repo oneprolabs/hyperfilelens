@@ -1,13 +1,15 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { en } from '../../locales/en'
 
 const page = readFileSync(resolve(process.cwd(), 'src/pages/node/Repositories.vue'), 'utf8')
-const english = readFileSync(resolve(process.cwd(), 'src/locales/en.ts'), 'utf8')
-const chinese = readFileSync(
+const zhHans = JSON.parse(readFileSync(
   resolve(process.cwd(), '../../language-packs/packs/zh-hans/frontend/messages.json'),
   'utf8',
-)
+)) as {
+  repositoriesPage: Record<string, string>
+}
 
 describe('repository residual status UI', () => {
   it('separates retained-location recovery from connectivity', () => {
@@ -28,14 +30,19 @@ describe('repository residual status UI', () => {
     expect(page).toContain('@click="openDetailReleaseResidualDialog"')
   })
 
-  it('provides matching English and Simplified Chinese status copy', () => {
-    expect(english).toContain("statusResidualActionRequired: 'Residual action required'")
-    expect(english).toContain("statusRepositoryRecordRemoved: 'Repository record removed'")
-    expect(english).toContain("connectivityNotApplicable: 'Not applicable'")
-    expect(english).toContain("residualReviewAction: 'Review and resolve'")
-    expect(chinese).toContain('"statusResidualActionRequired": "残留待处理"')
-    expect(chinese).toContain('"statusRepositoryRecordRemoved": "平台记录已移除"')
-    expect(chinese).toContain('"connectivityNotApplicable": "不适用"')
-    expect(chinese).toContain('"residualReviewAction": "查看并处理"')
+  it('provides English source copy and Simplified Chinese translations', () => {
+    const copy = [
+      ['statusResidualActionRequired', 'Residual action required'],
+      ['statusRepositoryRecordRemoved', 'Repository record removed'],
+      ['connectivityNotApplicable', 'Not applicable'],
+      ['residualReviewAction', 'Review and resolve'],
+    ] as const
+
+    for (const [key, english] of copy) {
+      expect(en.repositoriesPage[key]).toBe(english)
+      expect(zhHans.repositoriesPage[key]).toEqual(expect.any(String))
+      expect(zhHans.repositoriesPage[key].trim()).not.toBe('')
+      expect(zhHans.repositoriesPage[key]).not.toBe(english)
+    }
   })
 })
