@@ -5,6 +5,7 @@ Agent WebSocket session and uplink for lifecycle and task frames.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from django.db import DatabaseError, transaction
 from django.utils import timezone
@@ -33,10 +34,19 @@ from apps.source.services.internal.agent_host_sync import sync_agent_source_host
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from redis import Redis
+
 
 def on_agent_connected(*, node_id: int, session_id: str, client_ip: str | None = None) -> None:
-    redis_store.set_agent_location(agent_id=node_id, session_id=session_id)
-    redis_store.touch_ws_instance_alive()
+    redis_client = redis_store.get_redis()
+    route_recorded = redis_store.set_agent_location(
+        agent_id=node_id,
+        session_id=session_id,
+        redis_client=redis_client,
+    )
+    if route_recorded:
+        redis_store.touch_ws_instance_alive(redis_client=redis_client)
     observed_at = timezone.now()
     updates: dict = {
         "last_seen_at": observed_at,
@@ -55,13 +65,18 @@ def on_agent_connected(*, node_id: int, session_id: str, client_ip: str | None =
         session_id,
         client_ip or "-",
     )
-    _schedule_lifecycle_advance(node_id=node_id)
+    _schedule_lifecycle_advance(
+        node_id=node_id,
+        redis_client=redis_client if route_recorded else None,
+    )
 
 
 def on_agent_disconnected(*, node_id: int, session_id: str) -> None:
+    redis_client = redis_store.get_redis()
     if not redis_store.clear_agent_location_if_session(
         agent_id=node_id,
         session_id=session_id,
+        redis_client=redis_client,
     ):
         logger.info(
             "agent ws disconnected ignored (superseded session) node_id=%s session=%s",
@@ -89,13 +104,39 @@ def on_agent_disconnected(*, node_id: int, session_id: str) -> None:
             node_id,
             exc_info=True,
         )
-    _schedule_lifecycle_advance(node_id=node_id)
+    _schedule_lifecycle_advance(node_id=node_id, redis_client=redis_client)
 
 
-def _schedule_lifecycle_advance(*, node_id: int) -> None:
+def _schedule_lifecycle_advance(
+    *,
+    node_id: int,
+    redis_client: Redis | None,
+) -> None:
+    if not redis_store.claim_lifecycle_advance_event(
+        node_id=int(node_id),
+        redis_client=redis_client,
+    ):
+        logger.debug(
+            "Agent lifecycle wake-up coalesced or deferred node_id=%s",
+            node_id,
+        )
+        return
     from apps.node.tasks.lifecycle import advance_node_lifecycle_for_node
 
-    advance_node_lifecycle_for_node.delay(node_id=int(node_id))
+    try:
+        advance_node_lifecycle_for_node.apply_async(
+            kwargs={"node_id": int(node_id)},
+            expires=node_conf.LIFECYCLE_ADVANCE_EXPIRE_SECONDS,
+        )
+    except Exception:
+        # Connection state is authoritative in Redis/PostgreSQL and the
+        # periodic lifecycle sweep will retry after broker recovery.  A
+        # disposable wake-up must never tear down a healthy WebSocket.
+        logger.warning(
+            "failed to enqueue Agent lifecycle wake-up node_id=%s",
+            node_id,
+            exc_info=True,
+        )
 
 
 def handle_uplink(*, node_id: int, message: ParsedUplink) -> NodeTask | None:

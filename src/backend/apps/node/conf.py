@@ -85,6 +85,13 @@ WS_INSTANCE_KEEPALIVE_INTERVAL_SECONDS = env_int(
 LIFECYCLE_ADVANCE_INTERVAL_SECONDS = env_int(
     "NODE_LIFECYCLE_ADVANCE_INTERVAL_SECONDS", 2
 )
+# WebSocket connect/disconnect callbacks are edge-triggered.  Coalesce bursts
+# from a flapping Agent into one lifecycle wake-up; the periodic sweep remains
+# the durable fallback for events that arrive while Redis is unavailable.
+LIFECYCLE_EVENT_COALESCE_SECONDS = env_int(
+    "NODE_LIFECYCLE_EVENT_COALESCE_SECONDS",
+    _AGENT_HEARTBEAT_SECONDS,
+)
 HEARTBEAT_INVENTORY_MIN_INTERVAL_SECONDS = env_int(
     "NODE_HEARTBEAT_INVENTORY_MIN_INTERVAL_SECONDS",
     300,

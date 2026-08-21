@@ -25,6 +25,21 @@ logger = logging.getLogger(__name__)
 _client: redis.Redis | None = None
 
 
+class _DefaultRedisClient:
+    """Sentinel requesting the lazily initialized process Redis client."""
+
+
+_DEFAULT_REDIS_CLIENT = _DefaultRedisClient()
+
+
+def _resolve_redis_client(
+    client: redis.Redis | None | _DefaultRedisClient,
+) -> redis.Redis | None:
+    if isinstance(client, _DefaultRedisClient):
+        return get_redis()
+    return client
+
+
 def _broker_url() -> str:
     return getattr(settings, "CELERY_BROKER_URL", "redis://redis:6379/0")
 
@@ -78,17 +93,24 @@ def set_agent_location(
     agent_id: int,
     ws_instance_id: str | None = None,
     session_id: str | None = None,
-) -> None:
-    r = get_redis()
+    redis_client: redis.Redis | None | _DefaultRedisClient = _DEFAULT_REDIS_CLIENT,
+) -> bool:
+    """Record the current WebSocket route and report whether Redis accepted it."""
+    r = _resolve_redis_client(redis_client)
     if r is None:
-        return
+        return False
     ws_id = ws_instance_id or node_conf.WS_INSTANCE_ID
     value = (
         _encode_agent_loc(ws_instance_id=ws_id, session_id=session_id)
         if session_id
         else ws_id
     )
-    r.set(agent_loc_key(agent_id), value, ex=node_conf.AGENT_LOC_TTL_SECONDS)
+    try:
+        r.set(agent_loc_key(agent_id), value, ex=node_conf.AGENT_LOC_TTL_SECONDS)
+        return True
+    except redis.RedisError as exc:
+        logger.warning("failed to record Agent route agent_id=%s: %s", agent_id, exc)
+        return False
 
 
 def touch_agent_location(*, agent_id: int) -> None:
@@ -173,32 +195,37 @@ def clear_agent_location_if_session(
     *,
     agent_id: int,
     session_id: str,
+    redis_client: redis.Redis | None | _DefaultRedisClient = _DEFAULT_REDIS_CLIENT,
 ) -> bool:
     """
     Remove ``agent_loc`` when it still belongs to ``session_id``.
 
     Returns True when this session owned the key (or Redis is unavailable).
     """
-    r = get_redis()
+    r = _resolve_redis_client(redis_client)
     if r is None:
         return True
     key = agent_loc_key(agent_id)
-    result = r.eval(
-        """
-        local raw = redis.call('get', KEYS[1])
-        if not raw then return 1 end
-        local decoded, payload = pcall(cjson.decode, raw)
-        if decoded and type(payload) == 'table' and payload['session'] then
-            if tostring(payload['session']) ~= ARGV[1] then return 0 end
-        end
-        redis.call('del', KEYS[1])
-        return 1
-        """,
-        1,
-        key,
-        session_id,
-    )
-    return bool(result)
+    try:
+        result = r.eval(
+            """
+            local raw = redis.call('get', KEYS[1])
+            if not raw then return 1 end
+            local decoded, payload = pcall(cjson.decode, raw)
+            if decoded and type(payload) == 'table' and payload['session'] then
+                if tostring(payload['session']) ~= ARGV[1] then return 0 end
+            end
+            redis.call('del', KEYS[1])
+            return 1
+            """,
+            1,
+            key,
+            session_id,
+        )
+        return bool(result)
+    except redis.RedisError as exc:
+        logger.warning("failed to clear Agent route agent_id=%s: %s", agent_id, exc)
+        return True
 
 
 def ws_alive_key(ws_instance_id: str) -> str:
@@ -260,12 +287,18 @@ def offline_task_finalization_ready() -> bool:
     return has_live_ws_instance() and not ws_recovery_hold_active()
 
 
-def touch_ws_instance_alive() -> None:
-    r = get_redis()
+def touch_ws_instance_alive(
+    *,
+    redis_client: redis.Redis | None | _DefaultRedisClient = _DEFAULT_REDIS_CLIENT,
+) -> None:
+    r = _resolve_redis_client(redis_client)
     if r is None:
         return
     ws_id = node_conf.WS_INSTANCE_ID
-    r.set(ws_alive_key(ws_id), "1", ex=node_conf.WS_INSTANCE_ALIVE_TTL_SECONDS)
+    try:
+        r.set(ws_alive_key(ws_id), "1", ex=node_conf.WS_INSTANCE_ALIVE_TTL_SECONDS)
+    except redis.RedisError as exc:
+        logger.warning("failed to renew WebSocket instance lease: %s", exc)
 
 
 def task_stream_key(task_id: str) -> str:
@@ -288,6 +321,44 @@ def task_uplink_activity_key(task_id: str) -> str:
 def periodic_lease_key(name: str) -> str:
     """Return the Redis key used to coalesce one periodic task family."""
     return f"periodic_lease:{name}"
+
+
+def lifecycle_advance_event_key(*, node_id: int) -> str:
+    """Return the short-lived coalescing key for one Node lifecycle wake-up."""
+    return f"node_lifecycle_event:{int(node_id)}"
+
+
+def claim_lifecycle_advance_event(
+    *,
+    node_id: int,
+    redis_client: redis.Redis | None | _DefaultRedisClient = _DEFAULT_REDIS_CLIENT,
+) -> bool:
+    """Claim one lifecycle wake-up for a flapping node.
+
+    Redis also backs the Celery broker, so an unavailable connection fails
+    closed instead of creating an enqueue/log storm.  PostgreSQL keeps the
+    lifecycle state durable, and the periodic sweep resumes it after Redis
+    recovery.  Redis coalesces duplicate callbacks atomically while healthy.
+    """
+    r = _resolve_redis_client(redis_client)
+    if r is None:
+        return False
+    try:
+        return bool(
+            r.set(
+                lifecycle_advance_event_key(node_id=node_id),
+                "1",
+                nx=True,
+                ex=max(1, int(node_conf.LIFECYCLE_EVENT_COALESCE_SECONDS)),
+            )
+        )
+    except redis.RedisError as exc:
+        logger.warning(
+            "lifecycle event coalescing unavailable node_id=%s: %s",
+            node_id,
+            exc,
+        )
+        return False
 
 
 @dataclass
@@ -684,18 +755,27 @@ def set_task_info(
     r = get_redis()
     if r is None:
         return
-    r.set(
-        task_info_key(task_id),
-        json.dumps(data, ensure_ascii=False),
-        ex=max(60, int(ttl_seconds)),
-    )
+    try:
+        r.set(
+            task_info_key(task_id),
+            json.dumps(data, ensure_ascii=False),
+            ex=max(60, int(ttl_seconds)),
+        )
+    except redis.RedisError as exc:
+        # PostgreSQL is authoritative. A missing hot projection only adds a
+        # polling interval and must not roll back durable task state.
+        logger.warning("task info projection failed task=%s: %s", task_id, exc)
 
 
 def get_task_info(*, task_id: str) -> dict[str, Any] | None:
     r = get_redis()
     if r is None:
         return None
-    raw = r.get(task_info_key(task_id))
+    try:
+        raw = r.get(task_info_key(task_id))
+    except redis.RedisError as exc:
+        logger.warning("task info projection unavailable task=%s: %s", task_id, exc)
+        return None
     if not raw:
         return None
     try:
