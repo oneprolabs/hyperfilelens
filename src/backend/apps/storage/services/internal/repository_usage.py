@@ -12,6 +12,7 @@ from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.utils import timezone
+from django.utils.crypto import salted_hmac
 
 from apps.storage.repositories.models import (
     Repository,
@@ -70,6 +71,41 @@ class RepositoryUsageProbeResult:
     storage_used_bytes: int | None = None
     storage_available_bytes: int | None = None
     storage_pool_key: str = ""
+
+
+def repository_observation_revision(repository: Repository) -> str:
+    """Return a stable revision for fields that change the physical target.
+
+    Repository ``updated_at`` also changes when health and usage metrics are
+    projected.  It therefore cannot fence concurrent per-node observations for
+    a direct NAS repository.  This digest changes only when the target or its
+    credentials/binding changes and contains no credential material itself.
+    """
+
+    identity = {
+        "repository_uuid": str(repository.repository_uuid),
+        "repo_type": repository.repo_type,
+        "status": repository.status,
+        "config": repository.config if isinstance(repository.config, dict) else {},
+        "credential_id": repository.credential_id,
+        "nas_protocol": repository.nas_protocol,
+        "bind_node_type": repository.bind_node_type,
+        "bind_node_id": repository.bind_node_id,
+        "s3_platform": repository.s3_platform,
+        "s3_bucket": repository.s3_bucket,
+    }
+    serialized = json.dumps(
+        identity,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        default=str,
+    )
+    return salted_hmac(
+        "hyperfilelens.repository-observation-revision",
+        serialized,
+        algorithm="sha256",
+    ).hexdigest()
 
 
 def capacity_bytes_from_config(config: dict | None) -> int:
@@ -398,6 +434,37 @@ def _parse_agent_repo_status_result(
     return estimated, fs_total, mount_point, usage_error, capacity_error
 
 
+def repository_usage_probe_from_agent_result(
+    result: dict[str, Any],
+    *,
+    repository_subdir: str = "",
+) -> RepositoryUsageProbeResult:
+    """Normalize a terminal Agent ``repo.status`` result for persistence."""
+
+    estimated, capacity, mount_point, usage_error, capacity_error = (
+        _parse_agent_repo_status_result(
+            result,
+            repository_subdir=repository_subdir,
+        )
+    )
+    _total, storage_used, storage_available, storage_pool_key, _storage_mount = (
+        _parse_agent_storage_info(
+            result,
+            repository_subdir=repository_subdir,
+        )
+    )
+    return RepositoryUsageProbeResult(
+        estimated,
+        capacity,
+        mount_point=mount_point,
+        usage_error=usage_error,
+        capacity_error=capacity_error,
+        storage_used_bytes=storage_used,
+        storage_available_bytes=storage_available,
+        storage_pool_key=storage_pool_key,
+    )
+
+
 def _run_repository_usage_probe(
     *,
     repository: Repository,
@@ -454,25 +521,14 @@ def _run_repository_usage_probe(
             message = str(result.get("error") or result.get("stderr") or "").strip()
         return RepositoryUsageProbeResult(None, None, (message or "repo.status failed")[:1000])
     result = outcome.result if isinstance(outcome.result, dict) else {}
-    repository_payload = payload.get("repository") if isinstance(payload.get("repository"), dict) else {}
-    repository_subdir = str(repository_payload.get("subdir") or "").strip()
-    estimated, capacity, mount_point, usage_error, capacity_error = _parse_agent_repo_status_result(
-        result,
-        repository_subdir=repository_subdir,
+    repository_payload = (
+        payload.get("repository")
+        if isinstance(payload.get("repository"), dict)
+        else {}
     )
-    _total, storage_used, storage_available, storage_pool_key, _storage_mount = _parse_agent_storage_info(
+    return repository_usage_probe_from_agent_result(
         result,
-        repository_subdir=repository_subdir,
-    )
-    return RepositoryUsageProbeResult(
-        estimated,
-        capacity,
-        mount_point=mount_point,
-        usage_error=usage_error,
-        capacity_error=capacity_error,
-        storage_used_bytes=storage_used,
-        storage_available_bytes=storage_available,
-        storage_pool_key=storage_pool_key,
+        repository_subdir=str(repository_payload.get("subdir") or "").strip(),
     )
 
 
@@ -836,18 +892,21 @@ def _repository_storage_pool_key(
     return ""
 
 
-def sync_repository_usage(
+def apply_repository_usage_probe(
     repository: Repository,
+    probe: RepositoryUsageProbeResult,
     *,
     persist: bool = True,
     recorded_at=None,
+    checked_at=None,
 ) -> Repository:
+    """Persist one already-collected usage observation without remote I/O."""
+
     config_capacity = capacity_bytes_from_config(repository.config)
     capacity_changed = False
     if config_capacity > 0 and int(repository.capacity_bytes or 0) != config_capacity:
         repository.capacity_bytes = config_capacity
         capacity_changed = True
-    probe = collect_usage_candidates(repository)
     estimated_usage_bytes = probe.estimated_usage_bytes
     fs_capacity = probe.capacity_bytes
     usage_error = probe.usage_error or probe.error
@@ -882,7 +941,7 @@ def sync_repository_usage(
     if probe.mount_point and repository.storage_mount_point != probe.mount_point:
         repository.storage_mount_point = probe.mount_point
         storage_metric_fields.append("storage_mount_point")
-    checked_at = timezone.now()
+    checked_at = checked_at or timezone.now()
     repository.last_checked_at = checked_at
     repository.metrics_last_attempt_at = checked_at
     update_fields: list[str] = ["last_checked_at", "metrics_last_attempt_at"]
@@ -929,6 +988,22 @@ def sync_repository_usage(
             usage_bytes=estimated_usage_bytes,
         )
     return repository
+
+
+def sync_repository_usage(
+    repository: Repository,
+    *,
+    persist: bool = True,
+    recorded_at=None,
+) -> Repository:
+    """Collect repository usage synchronously for interactive/local workflows."""
+
+    return apply_repository_usage_probe(
+        repository,
+        collect_usage_candidates(repository),
+        persist=persist,
+        recorded_at=recorded_at,
+    )
 
 
 def _valid_repo_type(value: str | None) -> str | None:
@@ -991,6 +1066,7 @@ def sync_organization_repositories(
     force: bool = False,
     stale_after_seconds: int | None = None,
     recorded_at=None,
+    async_agent_probes: bool = False,
 ) -> dict[str, Any]:
     ids = _normalize_repository_ids(repository_ids)
     logger.info(
@@ -1012,10 +1088,25 @@ def sync_organization_repositories(
     )
     synced = 0
     snapshots_upserted = 0
+    observations_dispatched = 0
     for repository in qs:
-        sync_repository_usage(repository, recorded_at=recorded_at)
+        if async_agent_probes and repository.repo_type in {
+            Repository.Type.NAS,
+            Repository.Type.PROXY_FS,
+        }:
+            from apps.storage.services.internal.repository_health import (
+                dispatch_automatic_repository_observation,
+            )
+
+            node_tasks = dispatch_automatic_repository_observation(
+                repository=repository,
+                include_usage=True,
+            )
+            observations_dispatched += len(node_tasks or [])
+        else:
+            sync_repository_usage(repository, recorded_at=recorded_at)
+            snapshots_upserted += 1
         synced += 1
-        snapshots_upserted += 1
     logger.info(
         "repository usage sync org finished org_id=%s repositories_synced=%s",
         organization_id,
@@ -1025,6 +1116,7 @@ def sync_organization_repositories(
         "organization_id": organization_id,
         "repositories_synced": synced,
         "snapshots_upserted": snapshots_upserted,
+        "observations_dispatched": observations_dispatched,
     }
 
 
@@ -1035,6 +1127,7 @@ def sync_all_repositories(
     force: bool = False,
     stale_after_seconds: int | None = None,
     recorded_at=None,
+    async_agent_probes: bool = False,
 ) -> dict[str, Any]:
     logger.info(
         "repository usage sync all started limit=%s repo_type=%s force=%s stale_after_seconds=%s",
@@ -1051,14 +1144,30 @@ def sync_all_repositories(
     )
     synced = 0
     snapshots_upserted = 0
+    observations_dispatched = 0
     for repository in qs:
-        sync_repository_usage(repository, recorded_at=recorded_at)
+        if async_agent_probes and repository.repo_type in {
+            Repository.Type.NAS,
+            Repository.Type.PROXY_FS,
+        }:
+            from apps.storage.services.internal.repository_health import (
+                dispatch_automatic_repository_observation,
+            )
+
+            node_tasks = dispatch_automatic_repository_observation(
+                repository=repository,
+                include_usage=True,
+            )
+            observations_dispatched += len(node_tasks or [])
+        else:
+            sync_repository_usage(repository, recorded_at=recorded_at)
+            snapshots_upserted += 1
         synced += 1
-        snapshots_upserted += 1
     logger.info("repository usage sync all finished repositories_synced=%s", synced)
     return {
         "repositories_synced": synced,
         "snapshots_upserted": snapshots_upserted,
+        "observations_dispatched": observations_dispatched,
     }
 
 

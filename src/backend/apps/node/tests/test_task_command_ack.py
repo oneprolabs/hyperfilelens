@@ -74,6 +74,36 @@ class TaskCommandAckTests(TestCase):
         "apps.node.services.internal.task._node_route_state",
         return_value=_RouteState.ONLINE,
     )
+    def test_background_operations_use_durable_acceptance(
+        self, _route, send_command, _set_info
+    ):
+        for correlation_type, kind in (
+            ("protection.snapshot_delete", "snapshot.delete"),
+            ("protection.backup_config_reset", "snapshot.delete"),
+            ("source.connection_probe", "nas.test"),
+            ("storage.repository_health", "repo.status"),
+        ):
+            with self.subTest(correlation_type=correlation_type, kind=kind):
+                task = deliver_agent_task(
+                    task=self.task(
+                        kind=kind,
+                        correlation_type=correlation_type,
+                    )
+                )
+
+                self.assertEqual(task.status, NodeTask.Status.PENDING)
+                self.assertEqual(task.delivery_attempt_count, 1)
+                self.assertIsNotNone(task.dispatched_at)
+                self.assertIsNone(task.accepted_at)
+
+        self.assertEqual(send_command.call_count, 4)
+
+    @patch("apps.node.services.internal.task.redis_store.set_task_info")
+    @patch("apps.node.services.internal.task._send_task_command")
+    @patch(
+        "apps.node.services.internal.task._node_route_state",
+        return_value=_RouteState.ONLINE,
+    )
     def test_repeated_orchestrator_observation_does_not_redeliver_ack_task(
         self, _route, send_command, _set_info
     ):

@@ -27,6 +27,7 @@ from apps.source.services.internal.nas_agent import (
     apply_unmount_success,
     build_nas_agent_payload,
     dispatch_nas_agent_task,
+    dispatch_nas_agent_task_async,
     explain_nas_mount_point_error,
 )
 from apps.source.services.internal.availability import (
@@ -135,6 +136,25 @@ def run_connection_test(
         correlation_id=str(resource.id if resource else payload.get("resource_id") or node.id),
         wait_timeout_seconds=180,
     )
+    return connection_test_result_from_agent_outcome(
+        resource=resource,
+        node=node,
+        resource_type=rtype,
+        payload=payload,
+        outcome=outcome,
+    )
+
+
+def connection_test_result_from_agent_outcome(
+    *,
+    resource: SourceResource | None,
+    node: Node,
+    resource_type: str,
+    payload: dict[str, Any],
+    outcome: Any,
+) -> dict[str, Any]:
+    """Normalize a synchronous or asynchronously projected NAS test result."""
+
     if outcome.timed_out:
         logger.warning(
             "source connection test timed out node_id=%s resource_id=%s",
@@ -156,7 +176,10 @@ def run_connection_test(
         )
         raw_result = getattr(outcome, "result", None)
         result = raw_result if isinstance(raw_result, dict) else {}
-        details = {"storage_type": rtype, "protocol": payload.get("protocol")}
+        details = {
+            "storage_type": resource_type,
+            "protocol": payload.get("protocol"),
+        }
         for key in ("charset", "kernel", "cleanup_status", "mount_status"):
             if key in result:
                 details[key] = result[key]
@@ -181,7 +204,7 @@ def run_connection_test(
     result = outcome.result if isinstance(outcome.result, dict) else {}
     space = result.get("space_info") if isinstance(result.get("space_info"), dict) else {}
     details = {
-        "storage_type": rtype,
+        "storage_type": resource_type,
         "protocol": payload.get("protocol"),
         "mount_point": result.get("mount_point") or payload.get("mount_point"),
         "space_info": space,
@@ -192,11 +215,14 @@ def run_connection_test(
         resource.id if resource else payload.get("resource_id"),
         details.get("mount_point"),
     )
-    return result_with_availability_observation({
-        "success": True,
-        "message": "Connection test successful",
-        "details": details,
-    }, "online")
+    return result_with_availability_observation(
+        {
+            "success": True,
+            "message": "Connection test successful",
+            "details": details,
+        },
+        "online",
+    )
 
 
 def apply_connection_test_result(resource: SourceResource, result: dict) -> None:
@@ -441,6 +467,7 @@ def best_effort_unmount_on_proxy(
     resource: SourceResource,
     node_id: int,
     force: bool = False,
+    wait: bool = True,
 ) -> dict[str, object]:
     """Compensate a stale NAS mount on the selected proxy."""
 
@@ -460,6 +487,24 @@ def best_effort_unmount_on_proxy(
     if force:
         payload["force_cleanup"] = True
     try:
+        if not wait:
+            handle = dispatch_nas_agent_task_async(
+                node=node,
+                kind="nas.unmount",
+                payload=payload,
+                correlation_type="source.unmount.compensation",
+                correlation_id=str(resource.id),
+                persisted_metadata={
+                    "source_resource_id": int(resource.id),
+                    "expected_bound_node_id": int(node_id),
+                    "compensating_unmount": True,
+                },
+            )
+            return {
+                "success": True,
+                "queued": True,
+                "node_task_id": str(handle.task_id),
+            }
         outcome = dispatch_nas_agent_task(
             node=node,
             kind="nas.unmount",

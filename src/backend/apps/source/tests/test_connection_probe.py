@@ -7,7 +7,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.iam.models import Organization
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.source.models import SourceResource
 from apps.source.services.internal.availability import (
     confirmed_agent_failure,
@@ -21,6 +21,8 @@ from apps.source.services.interface import (
     update_source_resource,
 )
 from apps.source.tasks.connection_probe import (
+    SOURCE_CONNECTION_PROBE_CORRELATION_TYPE,
+    project_source_connection_probe,
     queue_source_availability_probes_for_proxy,
     reconcile_source_availability,
     reconcile_stale_source_connection_probes,
@@ -56,29 +58,62 @@ class SourceConnectionProbeTests(TestCase):
             connection_probe_token=self.probe_token,
         )
 
-    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
-    def test_probe_applies_capacity_for_current_source_revision(self, run_test):
-        run_test.return_value = {
-            "success": True,
-            "message": "Connection test successful",
-            "details": {
-                "mount_point": "/var/lib/hyperfilelens-agent/mounts/custom/source",
-                "space_info": {
-                    "total_bytes": 1000,
-                    "used_bytes": 400,
-                    "free_bytes": 600,
+    def _probe_node_task(self) -> NodeTask:
+        return NodeTask.objects.create(
+            organization=self.org,
+            node=self.proxy,
+            kind="nas.test",
+            correlation_type=SOURCE_CONNECTION_PROBE_CORRELATION_TYPE,
+            correlation_id=str(self.resource.id),
+            payload={
+                "source_resource_id": self.resource.id,
+                "connection_probe_token": str(self.probe_token),
+                "expected_bound_node_id": self.proxy.id,
+                "nas": {
+                    "resource_id": self.resource.id,
+                    "protocol": "nfs",
+                    "mount_point": self.resource.effective_mount_point(),
                 },
             },
-        }
+            status=NodeTask.Status.RUNNING,
+            accepted_at=timezone.now(),
+            watchdog_deadline_at=timezone.now() + timedelta(minutes=3),
+        )
+
+    @staticmethod
+    def _dispatch_handle(task: NodeTask) -> SimpleNamespace:
+        return SimpleNamespace(task=task, task_id=str(task.id))
+
+    @mock.patch(
+        "apps.source.tasks.connection_probe.dispatch_nas_agent_task_async"
+    )
+    def test_probe_applies_capacity_for_current_source_revision(self, dispatch):
+        node_task = self._probe_node_task()
+        dispatch.return_value = self._dispatch_handle(node_task)
 
         result = run_source_resource_capacity_probe(
             resource_id=self.resource.id,
             probe_token=str(self.probe_token),
             expected_bound_node_id=self.proxy.id,
         )
+        self.assertEqual(result["status"], "dispatched")
+        self.resource.refresh_from_db()
+        self.assertEqual(self.resource.connection_test_status, "running")
+        self.assertIsNone(self.resource.last_connection_test)
+
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.result = {
+            "mount_point": "/var/lib/hyperfilelens-agent/mounts/custom/source",
+            "space_info": {
+                "total_bytes": 1000,
+                "used_bytes": 400,
+                "free_bytes": 600,
+            },
+        }
+        node_task.save(update_fields=["status", "result", "updated_at"])
+        self.assertTrue(project_source_connection_probe(node_task=node_task))
 
         self.resource.refresh_from_db()
-        self.assertEqual(result["status"], "success")
         self.assertEqual(self.resource.total_size, 1000)
         self.assertEqual(self.resource.used_size, 400)
         self.assertEqual(self.resource.free_size, 600)
@@ -86,144 +121,135 @@ class SourceConnectionProbeTests(TestCase):
         self.assertEqual(self.resource.availability, "online")
         self.assertIsNotNone(self.resource.availability_updated_at)
 
-    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
-    def test_probe_discards_result_after_source_edit(self, run_test):
-        def edit_source(**_kwargs):
-            update_source_resource(
-                resource=SourceResource.objects.get(pk=self.resource.id),
-                user=None,
-                description="edited while probe was running",
+    @mock.patch(
+        "apps.source.tasks.connection_probe.dispatch_nas_agent_task_async",
+        side_effect=RuntimeError("broker unavailable"),
+    )
+    def test_dispatch_failure_releases_probe_claim_for_retry(self, _dispatch):
+        with self.assertRaisesRegex(RuntimeError, "broker unavailable"):
+            run_source_resource_capacity_probe(
+                resource_id=self.resource.id,
+                probe_token=str(self.probe_token),
+                expected_bound_node_id=self.proxy.id,
             )
-            return {
-                "success": True,
-                "message": "Connection test successful",
-                "details": {
-                    "space_info": {
-                        "total_bytes": 1000,
-                        "used_bytes": 400,
-                        "free_bytes": 600,
-                    }
-                },
-            }
 
-        run_test.side_effect = edit_source
+        self.resource.refresh_from_db()
+        self.assertEqual(self.resource.connection_test_status, "pending")
+        self.assertEqual(self.resource.connection_probe_token, self.probe_token)
 
-        result = run_source_resource_capacity_probe(
+    @mock.patch(
+        "apps.source.tasks.connection_probe.dispatch_nas_agent_task_async"
+    )
+    def test_probe_discards_result_after_source_edit(self, dispatch):
+        node_task = self._probe_node_task()
+        dispatch.return_value = self._dispatch_handle(node_task)
+        run_source_resource_capacity_probe(
             resource_id=self.resource.id,
             probe_token=str(self.probe_token),
             expected_bound_node_id=self.proxy.id,
         )
+        update_source_resource(
+            resource=SourceResource.objects.get(pk=self.resource.id),
+            user=None,
+            description="edited while probe was running",
+        )
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.result = {"space_info": {"total_bytes": 1000}}
+        node_task.save(update_fields=["status", "result", "updated_at"])
 
         self.resource.refresh_from_db()
-        self.assertEqual(
-            result,
-            {"status": "discarded", "reason": "source_changed"},
-        )
+        self.assertFalse(project_source_connection_probe(node_task=node_task))
         self.assertEqual(self.resource.total_size, 0)
         self.assertIsNone(self.resource.last_connection_test)
 
     @mock.patch(
         "apps.source.tasks.connection_probe.best_effort_unmount_on_proxy"
     )
-    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
+    @mock.patch("apps.source.tasks.connection_probe.dispatch_nas_agent_task_async")
     def test_probe_discards_result_after_source_delete(
         self,
-        run_test,
+        dispatch,
         best_effort_unmount,
     ):
-        def delete_source(**_kwargs):
-            SourceResource.objects.get(pk=self.resource.id).soft_delete()
-            return {"success": True, "message": "Connection test successful"}
-
-        run_test.side_effect = delete_source
-
-        result = run_source_resource_capacity_probe(
+        node_task = self._probe_node_task()
+        dispatch.return_value = self._dispatch_handle(node_task)
+        run_source_resource_capacity_probe(
             resource_id=self.resource.id,
             probe_token=str(self.probe_token),
             expected_bound_node_id=self.proxy.id,
         )
+        SourceResource.objects.get(pk=self.resource.id).soft_delete()
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.save(update_fields=["status", "updated_at"])
+        self.assertFalse(project_source_connection_probe(node_task=node_task))
 
         deleted = SourceResource.all_objects.get(pk=self.resource.id)
-        self.assertEqual(
-            result,
-            {"status": "discarded", "reason": "source_deleted"},
-        )
         self.assertTrue(deleted.is_deleted)
         self.assertEqual(deleted.total_size, 0)
         best_effort_unmount.assert_called_once_with(
             resource=mock.ANY,
             node_id=self.proxy.id,
             force=True,
+            wait=False,
         )
 
     @mock.patch(
         "apps.source.tasks.connection_probe.best_effort_unmount_on_proxy"
     )
-    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
+    @mock.patch("apps.source.tasks.connection_probe.dispatch_nas_agent_task_async")
     def test_probe_success_racing_removal_is_compensated(
         self,
-        run_test,
+        dispatch,
         best_effort_unmount,
     ):
-        def remove_source(**_kwargs):
-            SourceResource.objects.filter(pk=self.resource.id).update(
-                status="removing",
-            )
-            return {"success": True, "message": "Connection test successful"}
-
-        run_test.side_effect = remove_source
-
-        result = run_source_resource_capacity_probe(
+        node_task = self._probe_node_task()
+        dispatch.return_value = self._dispatch_handle(node_task)
+        run_source_resource_capacity_probe(
             resource_id=self.resource.id,
             probe_token=str(self.probe_token),
             expected_bound_node_id=self.proxy.id,
         )
-
-        self.assertEqual(
-            result,
-            {"status": "discarded", "reason": "source_removing"},
-        )
+        SourceResource.objects.filter(pk=self.resource.id).update(status="removing")
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.save(update_fields=["status", "updated_at"])
+        self.assertFalse(project_source_connection_probe(node_task=node_task))
         best_effort_unmount.assert_called_once_with(
             resource=mock.ANY,
             node_id=self.proxy.id,
             force=True,
+            wait=False,
         )
 
     @mock.patch(
         "apps.source.tasks.connection_probe.best_effort_unmount_on_proxy"
     )
-    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
+    @mock.patch("apps.source.tasks.connection_probe.dispatch_nas_agent_task_async")
     def test_probe_failure_racing_removal_is_compensated(
         self,
-        run_test,
+        dispatch,
         best_effort_unmount,
     ):
-        def remove_source(**_kwargs):
-            SourceResource.objects.filter(pk=self.resource.id).update(
-                status="removing",
-            )
-            return {"success": False, "message": "Capacity read failed"}
-
-        run_test.side_effect = remove_source
-
-        result = run_source_resource_capacity_probe(
+        node_task = self._probe_node_task()
+        dispatch.return_value = self._dispatch_handle(node_task)
+        run_source_resource_capacity_probe(
             resource_id=self.resource.id,
             probe_token=str(self.probe_token),
             expected_bound_node_id=self.proxy.id,
         )
-
-        self.assertEqual(
-            result,
-            {"status": "discarded", "reason": "source_removing"},
-        )
+        SourceResource.objects.filter(pk=self.resource.id).update(status="removing")
+        node_task.status = NodeTask.Status.FAILED
+        node_task.last_error = "Capacity read failed"
+        node_task.save(update_fields=["status", "last_error", "updated_at"])
+        self.assertFalse(project_source_connection_probe(node_task=node_task))
         best_effort_unmount.assert_called_once_with(
             resource=mock.ANY,
             node_id=self.proxy.id,
             force=True,
+            wait=False,
         )
 
-    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
-    def test_probe_skips_remove_failed_source(self, run_test):
+    @mock.patch("apps.source.tasks.connection_probe.dispatch_nas_agent_task_async")
+    def test_probe_skips_remove_failed_source(self, dispatch):
         SourceResource.objects.filter(pk=self.resource.id).update(
             status="remove_failed",
         )
@@ -235,10 +261,10 @@ class SourceConnectionProbeTests(TestCase):
         )
 
         self.assertEqual(result, {"status": "skipped", "reason": "source_removing"})
-        run_test.assert_not_called()
+        dispatch.assert_not_called()
 
-    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
-    def test_probe_claim_cannot_overwrite_removing_fence(self, run_test):
+    @mock.patch("apps.source.tasks.connection_probe.dispatch_nas_agent_task_async")
+    def test_probe_claim_cannot_overwrite_removing_fence(self, dispatch):
         from apps.source.tasks import connection_probe
 
         original_target = connection_probe._probe_target
@@ -263,10 +289,10 @@ class SourceConnectionProbeTests(TestCase):
         self.assertEqual(result, {"status": "skipped", "reason": "source_removing"})
         self.resource.refresh_from_db()
         self.assertEqual(self.resource.status, "removing")
-        run_test.assert_not_called()
+        dispatch.assert_not_called()
 
-    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
-    def test_probe_claim_reports_source_change_race(self, run_test):
+    @mock.patch("apps.source.tasks.connection_probe.dispatch_nas_agent_task_async")
+    def test_probe_claim_reports_source_change_race(self, dispatch):
         from apps.source.tasks import connection_probe
 
         original_target = connection_probe._probe_target
@@ -293,7 +319,7 @@ class SourceConnectionProbeTests(TestCase):
             )
 
         self.assertEqual(result, {"status": "skipped", "reason": "source_changed"})
-        run_test.assert_not_called()
+        dispatch.assert_not_called()
 
     @mock.patch("apps.source.services.interface.run_connection_test")
     def test_manual_probe_does_not_cross_removal_fence(self, run_test):
@@ -469,6 +495,31 @@ class SourceConnectionProbeTests(TestCase):
         self.assertTrue(dispatch_task.call_args.kwargs["payload"]["force_cleanup"])
 
     @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
+    @mock.patch(
+        "apps.source.services.internal.connection.dispatch_nas_agent_task_async"
+    )
+    def test_removal_compensation_can_release_worker_after_dispatch(
+        self,
+        dispatch_async,
+        dispatch_sync,
+    ):
+        dispatch_async.return_value = SimpleNamespace(task_id="unmount-task")
+
+        result = best_effort_unmount_on_proxy(
+            resource=self.resource,
+            node_id=self.proxy.id,
+            force=True,
+            wait=False,
+        )
+
+        self.assertEqual(
+            result,
+            {"success": True, "queued": True, "node_task_id": "unmount-task"},
+        )
+        self.assertTrue(dispatch_async.call_args.kwargs["payload"]["force_cleanup"])
+        dispatch_sync.assert_not_called()
+
+    @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
     def test_regular_proxy_cleanup_does_not_request_force_cleanup(self, dispatch_task):
         dispatch_task.return_value = SimpleNamespace(timed_out=False, ok=True)
 
@@ -533,8 +584,8 @@ class SourceConnectionProbeTests(TestCase):
             ["nas_mount_reference"],
         )
 
-    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
-    def test_probe_skips_when_proxy_is_offline(self, run_test):
+    @mock.patch("apps.source.tasks.connection_probe.dispatch_nas_agent_task_async")
+    def test_probe_skips_when_proxy_is_offline(self, dispatch):
         self.proxy.availability = Node.Availability.OFFLINE
         self.proxy.save(update_fields=["availability", "updated_at"])
 
@@ -547,43 +598,46 @@ class SourceConnectionProbeTests(TestCase):
         self.assertEqual(result, {"status": "failed", "reason": "proxy_offline"})
         self.resource.refresh_from_db()
         self.assertEqual(self.resource.connection_test_status, "failed")
-        run_test.assert_not_called()
+        dispatch.assert_not_called()
 
-    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
-    def test_inconclusive_probe_failure_retains_availability(self, run_test):
+    @mock.patch("apps.source.tasks.connection_probe.dispatch_nas_agent_task_async")
+    def test_inconclusive_probe_failure_retains_availability(self, dispatch):
         SourceResource.objects.filter(pk=self.resource.id).update(
             availability="online",
         )
-        run_test.return_value = {
-            "success": False,
-            "message": "Connection test timed out on the proxy agent.",
-        }
+        node_task = self._probe_node_task()
+        dispatch.return_value = self._dispatch_handle(node_task)
 
         run_source_resource_capacity_probe(
             resource_id=self.resource.id,
             probe_token=str(self.probe_token),
             expected_bound_node_id=self.proxy.id,
         )
+        node_task.status = NodeTask.Status.TIMEOUT
+        node_task.last_error = "Connection test timed out"
+        node_task.save(update_fields=["status", "last_error", "updated_at"])
+        project_source_connection_probe(node_task=node_task)
 
         self.resource.refresh_from_db()
         self.assertEqual(self.resource.availability, "online")
 
-    @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
-    def test_confirmed_agent_failure_marks_availability_offline(self, run_test):
+    @mock.patch("apps.source.tasks.connection_probe.dispatch_nas_agent_task_async")
+    def test_confirmed_agent_failure_marks_availability_offline(self, dispatch):
         SourceResource.objects.filter(pk=self.resource.id).update(
             availability="online",
         )
-        run_test.return_value = {
-            "success": False,
-            "message": "Proxy agent could not access the NAS export.",
-            "_availability_observation": "offline",
-        }
+        node_task = self._probe_node_task()
+        dispatch.return_value = self._dispatch_handle(node_task)
 
         run_source_resource_capacity_probe(
             resource_id=self.resource.id,
             probe_token=str(self.probe_token),
             expected_bound_node_id=self.proxy.id,
         )
+        node_task.status = NodeTask.Status.FAILED
+        node_task.last_error = "Proxy agent could not access the NAS export."
+        node_task.save(update_fields=["status", "last_error", "updated_at"])
+        project_source_connection_probe(node_task=node_task)
 
         self.resource.refresh_from_db()
         self.assertEqual(self.resource.availability, "offline")

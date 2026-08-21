@@ -22,6 +22,7 @@ from apps.protection.models import (
 from apps.protection.services import backup_config as backup_config_service
 from apps.protection.services.backup_config_reset import (
     ensure_backup_config_reset_task,
+    reconcile_stuck_backup_config_reset_tasks,
     run_backup_config_reset_task,
 )
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
@@ -2100,6 +2101,40 @@ class ProtectionBackupConfigApiTests(TestCase):
         self.assertEqual(str(config.reset_task_uuid), str(task.task_uuid))
         delay.assert_not_called()
 
+    @mock.patch(
+        "apps.protection.tasks.backup_config_reset."
+        "execute_backup_config_reset_task.delay"
+    )
+    def test_reset_reconciler_skips_parent_with_active_agent_delete(self, delay):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP_CONFIG_RESET,
+            status=Task.Status.PENDING,
+            request_payload={
+                "source_type": "agent",
+                "source_ref_id": self.agent.id,
+            },
+        )
+        Task.objects.filter(pk=task.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=5)
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            parent_task=task,
+            kind="snapshot.delete",
+            correlation_type="protection.backup_config_reset",
+            correlation_id=f"{task.task_uuid}:0:test",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timedelta(hours=1),
+        )
+
+        result = reconcile_stuck_backup_config_reset_tasks(stale_seconds=90)
+
+        self.assertEqual(result["scanned"], 1)
+        self.assertEqual(result["redispatched"], 0)
+        delay.assert_not_called()
+
     def test_reset_backup_config_rejects_active_backup_before_creating_task(self):
         create = self.client.post(
             "/api/v1/protection/backup-configs/",
@@ -2293,9 +2328,9 @@ class ProtectionBackupConfigApiTests(TestCase):
         config = BackupConfig.objects.get(pk=create.data["id"])
         self.assertNotEqual(config.status, BackupConfig.Status.RESETTING)
 
-    @mock.patch("apps.node.services.interface.run_agent_task_sync")
+    @mock.patch("apps.protection.services.backup_config_reset.run_agent_task_async")
     def test_run_backup_config_reset_deletes_snapshots_configs_and_returns_to_step2(
-        self, run_agent_task_sync
+        self, run_agent_task_async
     ):
         source_key = f"agent:{self.agent.id}"
         self.client.post(
@@ -2368,18 +2403,48 @@ class ProtectionBackupConfigApiTests(TestCase):
         config.status = BackupConfig.Status.RESETTING
         config.reset_task_uuid = reset_task.task_uuid
         config.save(update_fields=["status", "reset_task_uuid", "updated_at"])
-        run_agent_task_sync.return_value = SimpleNamespace(
-            task=SimpleNamespace(id="node-reset-1", status="success", last_error=""),
-            result={
-                "deleted_count": 1,
-                "failed_count": 0,
-                "results": [
-                    {"kopia_snapshot_id": "reset-kopia-1", "status": "success"}
-                ],
-            },
-            ok=True,
-            timed_out=False,
+
+        def dispatch_async(**kwargs):
+            node_task = NodeTask.objects.create(
+                organization_id=kwargs["organization_id"],
+                node_id=kwargs["node_id"],
+                kind=kwargs["kind"],
+                payload=kwargs["persisted_payload"],
+                correlation_type=kwargs["correlation_type"],
+                correlation_id=kwargs["correlation_id"],
+                parent_task=kwargs["parent_task"],
+                status=NodeTask.Status.RUNNING,
+                dispatched_at=timezone.now(),
+                accepted_at=timezone.now(),
+                watchdog_deadline_at=timezone.now() + timedelta(hours=1),
+            )
+            return SimpleNamespace(task=node_task, task_id=str(node_task.id))
+
+        run_agent_task_async.side_effect = dispatch_async
+
+        waiting = run_backup_config_reset_task(
+            organization_id=self.org.id,
+            task_uuid=str(reset_task.task_uuid),
+            source_type="agent",
+            source_ref_id=self.agent.id,
         )
+
+        reset_task.refresh_from_db()
+        self.assertEqual(waiting["status"], "waiting")
+        self.assertEqual(reset_task.status, Task.Status.PENDING)
+        node_task = NodeTask.objects.get(
+            parent_task=reset_task,
+            kind="snapshot.delete",
+        )
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.result = {
+            "deleted_count": 1,
+            "failed_count": 0,
+            "results": [
+                {"kopia_snapshot_id": "reset-kopia-1", "status": "success"}
+            ],
+        }
+        node_task.save(update_fields=["status", "result", "updated_at"])
 
         result = run_backup_config_reset_task(
             organization_id=self.org.id,
@@ -2399,10 +2464,11 @@ class ProtectionBackupConfigApiTests(TestCase):
             ref_id=self.agent.id,
         )
         self.assertEqual(entry.step, 2)
+        run_agent_task_async.assert_called_once()
 
-    @mock.patch("apps.node.services.interface.run_agent_task_sync")
+    @mock.patch("apps.protection.services.backup_config_reset.run_agent_task_async")
     def test_run_backup_config_reset_treats_missing_kopia_snapshot_as_deleted(
-        self, run_agent_task_sync
+        self, run_agent_task_async
     ):
         source_key = f"agent:{self.agent.id}"
         self.client.post(
@@ -2474,36 +2540,65 @@ class ProtectionBackupConfigApiTests(TestCase):
             start=1,
         ):
             reset_task.steps.create(step_index=idx, step_name=step)
-        run_agent_task_sync.return_value = SimpleNamespace(
-            task=SimpleNamespace(
-                id="node-reset-orphan",
-                status="failed",
-                last_error="1 snapshot delete operation(s) failed",
-            ),
-            result={
-                "deleted_count": 0,
-                "failed_count": 1,
-                "results": [
-                    {
-                        "kopia_snapshot_id": "orphan-kopia-1",
-                        "status": "failed",
-                        "error_message": "exit 1: exit status 1",
-                        "delete": {
-                            "stderr": (
-                                "error deleting snapshots by root ID orphan-kopia-1: "
-                                "no snapshots matched orphan-kopia-1"
-                            ),
-                            "stderr_tail": (
-                                "error deleting snapshots by root ID orphan-kopia-1: "
-                                "no snapshots matched orphan-kopia-1"
-                            ),
-                            "exit_code": 1,
-                        },
-                    }
-                ],
-            },
-            ok=False,
-            timed_out=False,
+
+        def dispatch_async(**kwargs):
+            node_task = NodeTask.objects.create(
+                organization_id=kwargs["organization_id"],
+                node_id=kwargs["node_id"],
+                kind=kwargs["kind"],
+                payload=kwargs["persisted_payload"],
+                correlation_type=kwargs["correlation_type"],
+                correlation_id=kwargs["correlation_id"],
+                parent_task=kwargs["parent_task"],
+                status=NodeTask.Status.RUNNING,
+                dispatched_at=timezone.now(),
+                accepted_at=timezone.now(),
+                watchdog_deadline_at=timezone.now() + timedelta(hours=1),
+            )
+            return SimpleNamespace(task=node_task, task_id=str(node_task.id))
+
+        run_agent_task_async.side_effect = dispatch_async
+
+        waiting = run_backup_config_reset_task(
+            organization_id=self.org.id,
+            task_uuid=str(reset_task.task_uuid),
+            source_type="agent",
+            source_ref_id=self.agent.id,
+        )
+
+        reset_task.refresh_from_db()
+        self.assertEqual(waiting["status"], "waiting")
+        self.assertEqual(reset_task.status, Task.Status.PENDING)
+        node_task = NodeTask.objects.get(
+            parent_task=reset_task,
+            kind="snapshot.delete",
+        )
+        node_task.status = NodeTask.Status.FAILED
+        node_task.last_error = "1 snapshot delete operation(s) failed"
+        node_task.result = {
+            "deleted_count": 0,
+            "failed_count": 1,
+            "results": [
+                {
+                    "kopia_snapshot_id": "orphan-kopia-1",
+                    "status": "failed",
+                    "error_message": "exit 1: exit status 1",
+                    "delete": {
+                        "stderr": (
+                            "error deleting snapshots by root ID orphan-kopia-1: "
+                            "no snapshots matched orphan-kopia-1"
+                        ),
+                        "stderr_tail": (
+                            "error deleting snapshots by root ID orphan-kopia-1: "
+                            "no snapshots matched orphan-kopia-1"
+                        ),
+                        "exit_code": 1,
+                    },
+                }
+            ],
+        }
+        node_task.save(
+            update_fields=["status", "last_error", "result", "updated_at"]
         )
 
         result = run_backup_config_reset_task(
@@ -2524,6 +2619,7 @@ class ProtectionBackupConfigApiTests(TestCase):
             ref_id=self.agent.id,
         )
         self.assertEqual(entry.step, 2)
+        run_agent_task_async.assert_called_once()
 
     def test_revert_backup_flow_from_step3_to_step2(self):
         source_key = f"agent:{self.agent.id}"

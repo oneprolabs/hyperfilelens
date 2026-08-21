@@ -72,6 +72,30 @@ def execution_state_blocks_workload(*, node: Node, task: Task) -> bool:
 
 
 def sync_platform_tasks_for_node_task(*, node_task: NodeTask) -> None:
+    if node_task.correlation_type == "source.connection_probe":
+        from apps.source.tasks.connection_probe import (
+            project_source_connection_probe,
+        )
+
+        project_source_connection_probe(node_task=node_task)
+        return
+    if node_task.correlation_type == "storage.repository_health":
+        from apps.storage.services.internal.repository_health import (
+            project_repository_health_from_agent_result,
+        )
+
+        project_repository_health_from_agent_result(node_task=node_task)
+        return
+    if node_task.correlation_type in {
+        "protection.snapshot_delete",
+        "protection.backup_config_reset",
+    }:
+        from apps.protection.services.snapshot_delete_execution import (
+            queue_snapshot_delete_result_followup,
+        )
+
+        queue_snapshot_delete_result_followup(node_task=node_task)
+        return
     if node_task.correlation_type == node_conf.LIFECYCLE_CORRELATION_TYPE:
         from apps.node.services.internal.task import project_node_lifecycle_task
 

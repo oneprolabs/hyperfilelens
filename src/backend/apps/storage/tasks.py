@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from celery import shared_task
 from celery.signals import worker_ready
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from common.observability.celery_context import logged_celery_task
@@ -20,6 +21,7 @@ from apps.storage.services.internal.repository_location import (
     invalidate_repository_location_ownership,
 )
 from apps.storage.services.internal.repository_health import (
+    dispatch_automatic_repository_observation,
     is_repository_ownership_failure,
     probe_repository_health,
 )
@@ -113,6 +115,7 @@ def reconcile_storage_repositories(
             force=force,
             stale_after_seconds=stale_after_seconds,
             recorded_at=recorded_at,
+            async_agent_probes=True,
         )
     else:
         result = sync_all_repositories(
@@ -121,11 +124,13 @@ def reconcile_storage_repositories(
             force=force,
             stale_after_seconds=stale_after_seconds,
             recorded_at=recorded_at,
+            async_agent_probes=True,
         )
     return {
         "repositories_scanned": result.get("repositories_synced", 0),
         "snapshots_upserted": result.get("snapshots_upserted", 0),
         "snapshots_marked_deleted": 0,
+        "observations_dispatched": result.get("observations_dispatched", 0),
     }
 
 
@@ -193,6 +198,26 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                 "repository_id": repository_id,
                 "status": "skipped",
                 "eligible": False,
+            }
+        try:
+            node_tasks = dispatch_automatic_repository_observation(
+                repository=repository,
+                retry_attempt=retry_attempt,
+            )
+        except ValidationError:
+            return {
+                "repository_id": repository_id,
+                "status": repository.health,
+                "probe_status": "transport_unknown",
+                "health_failures": repository.health_failures,
+            }
+        if node_tasks is not None:
+            return {
+                "repository_id": repository_id,
+                "status": repository.health,
+                "probe_status": "dispatched" if node_tasks else "deferred",
+                "node_task_ids": [str(node_task.id) for node_task in node_tasks],
+                "node_task_id": str(node_tasks[0].id) if node_tasks else "",
             }
         try:
             health = probe_repository_health(repository)
@@ -516,6 +541,7 @@ def _execute_repository_operation(*, repository_task_id: int):
             limit=1,
             force=True,
             stale_after_seconds=None,
+            async_agent_probes=True,
         )
         _raise_for_control_decision(
             _set_repository_operation_step(

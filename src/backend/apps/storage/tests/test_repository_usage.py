@@ -22,6 +22,7 @@ from apps.storage.services.internal.repository_usage import (
     capacity_bytes_from_config,
     kopia_estimated_usage_from_packed,
     parse_kopia_content_stats,
+    sync_organization_repositories,
     sync_repository_usage,
 )
 
@@ -50,6 +51,47 @@ class RepositoryUsageTests(TestCase):
         self.assertEqual(capacity_bytes_from_config({"quota_gb": 10}), 10 * 1024**3)
         self.assertEqual(capacity_bytes_from_config({"quota_gb": 0}), 0)
         self.assertEqual(capacity_bytes_from_config(None), 0)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_health."
+        "dispatch_automatic_repository_observation"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage._run_repository_usage_probe"
+    )
+    def test_scheduled_usage_dispatches_agent_observation_without_waiting(
+        self,
+        synchronous_probe,
+        dispatch_observation,
+    ):
+        org = Organization.objects.create(
+            key="scheduled-usage-org",
+            name="Scheduled Usage Org",
+        )
+        repository = Repository.objects.create(
+            organization_id=org.id,
+            name="scheduled-proxy-fs",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=42,
+        )
+        dispatch_observation.return_value = [mock.Mock(id="node-task")]
+
+        result = sync_organization_repositories(
+            organization_id=org.id,
+            force=True,
+            async_agent_probes=True,
+        )
+
+        self.assertEqual(result["repositories_synced"], 1)
+        self.assertEqual(result["observations_dispatched"], 1)
+        self.assertEqual(result["snapshots_upserted"], 0)
+        dispatch_observation.assert_called_once_with(
+            repository=repository,
+            include_usage=True,
+        )
+        synchronous_probe.assert_not_called()
 
     def test_parse_kopia_content_stats_json(self):
         payload = '{"totalSize": 2048, "totalFileCount": 3}'

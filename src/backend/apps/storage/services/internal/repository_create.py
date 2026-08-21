@@ -70,7 +70,6 @@ from apps.storage.services.internal.repository_task_naming import (
 )
 from apps.storage.services.internal.repository_usage import (
     enqueue_repository_usage_refresh,
-    sync_repository_usage,
 )
 from apps.storage.services.internal.s3_validation_errors import (
     classify_s3_validation_error,
@@ -894,15 +893,12 @@ def _complete_create_success(repository_task: RepositoryTask) -> dict[str, Any]:
     _clear_target_active_task(repository_task)
     repository = Repository.objects.get(pk=repository_task.repository_id)
     try:
-        if repository.repo_type == Repository.Type.PROXY_FS:
-            sync_repository_usage(repository)
-        else:
-            enqueue_repository_usage_refresh(
-                organization_id=repository.organization_id,
-                repository_ids=[repository.id],
-                force=True,
-                trigger="storage.repository.create_async",
-            )
+        enqueue_repository_usage_refresh(
+            organization_id=repository.organization_id,
+            repository_ids=[repository.id],
+            force=True,
+            trigger="storage.repository.create_async",
+        )
     except Exception:
         logger.exception(
             "repository create usage refresh failed repository_id=%s",

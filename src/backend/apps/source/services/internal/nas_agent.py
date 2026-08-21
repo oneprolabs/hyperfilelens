@@ -9,7 +9,7 @@ from apps.node import agent_paths
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_log import task_log_context
-from apps.node.services.interface import run_agent_task_sync
+from apps.node.services.interface import run_agent_task_async, run_agent_task_sync
 from apps.source.constants import MountStatus, ResourceType
 from apps.source.models import SourceResource
 from apps.source.services.internal.nas_path_normalize import (
@@ -233,6 +233,52 @@ def dispatch_nas_agent_task(
             _task_error_message(outcome)[:500],
         )
     return outcome
+
+
+def dispatch_nas_agent_task_async(
+    *,
+    node: Node,
+    kind: str,
+    payload: dict[str, Any],
+    correlation_type: str,
+    correlation_id: str,
+    persisted_metadata: dict[str, Any] | None = None,
+):
+    """Persist and dispatch a NAS command without waiting for its result.
+
+    Credentials remain in the protected delivery envelope.  Only scrubbed NAS
+    data and caller-owned correlation metadata are visible in ``NodeTask``.
+    """
+
+    nas = payload if kind.startswith("nas.") else payload.get("nas") or payload
+    logger.info(
+        "nas agent task async dispatch %s protocol=%s server=%s resource_id=%s",
+        task_log_context(
+            node_id=node.id,
+            kind=kind,
+            correlation_type=correlation_type,
+            correlation_id=correlation_id,
+        ),
+        nas.get("protocol") if isinstance(nas, dict) else "-",
+        nas.get("server") if isinstance(nas, dict) else "-",
+        nas.get("resource_id") if isinstance(nas, dict) else "-",
+    )
+    task_payload = {"nas": payload, **payload}
+    persisted_nas = _scrub_nas_task_payload(payload)
+    persisted_payload = {
+        "nas": persisted_nas,
+        **persisted_nas,
+        **dict(persisted_metadata or {}),
+    }
+    return run_agent_task_async(
+        organization_id=node.organization_id,
+        node_id=node.id,
+        kind=kind,
+        payload=task_payload,
+        persisted_payload=persisted_payload,
+        correlation_type=correlation_type,
+        correlation_id=correlation_id,
+    )
 
 
 def _scrub_nas_task_payload(payload: dict[str, Any]) -> dict[str, Any]:

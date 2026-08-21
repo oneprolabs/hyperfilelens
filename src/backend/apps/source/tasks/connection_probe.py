@@ -11,7 +11,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
+from apps.node.services.interface import AgentTaskSyncResult
 from apps.source.constants import (
     Availability,
     ConnectionTestStatus,
@@ -23,12 +24,17 @@ from apps.source.models import SourceResource
 from apps.source.services.internal.connection import (
     apply_connection_test_result_if_current,
     best_effort_unmount_on_proxy,
-    run_connection_test,
+    connection_test_result_from_agent_outcome,
+)
+from apps.source.services.internal.nas_agent import (
+    build_nas_agent_payload,
+    dispatch_nas_agent_task_async,
 )
 
 logger = logging.getLogger(__name__)
 
 SOURCE_REMOTE_IO_QUEUE = "source.remote-io"
+SOURCE_CONNECTION_PROBE_CORRELATION_TYPE = "source.connection_probe"
 _PROBE_MAX_RETRIES = 2
 _PROBE_STALE_SECONDS = source_conf.AVAILABILITY_VALIDITY_SECONDS
 
@@ -87,6 +93,7 @@ def run_source_resource_capacity_probe(
     claimed = SourceResource.all_objects.filter(
         pk=resource.id,
         connection_probe_token=probe_token,
+        connection_test_status=ConnectionTestStatus.PENDING,
         is_deleted=False,
     ).exclude(status__in=ResourceStatus.REMOVAL_FENCED).update(
         connection_test_status=ConnectionTestStatus.RUNNING,
@@ -101,34 +108,97 @@ def run_source_resource_capacity_probe(
         )
         return {"status": "skipped", "reason": skip_reason or "source_changed"}
 
-    probe_resource = resource
-    result = run_connection_test(resource=probe_resource)
+    payload = build_nas_agent_payload(resource=resource)
+    try:
+        handle = dispatch_nas_agent_task_async(
+            node=node,
+            kind="nas.test",
+            payload=payload,
+            correlation_type=SOURCE_CONNECTION_PROBE_CORRELATION_TYPE,
+            correlation_id=str(resource.id),
+            persisted_metadata={
+                "source_resource_id": int(resource.id),
+                "connection_probe_token": str(probe_token),
+                "expected_bound_node_id": int(expected_bound_node_id),
+            },
+        )
+    except Exception:
+        SourceResource.all_objects.filter(
+            pk=resource.id,
+            connection_probe_token=probe_token,
+            connection_test_status=ConnectionTestStatus.RUNNING,
+            is_deleted=False,
+        ).exclude(status__in=ResourceStatus.REMOVAL_FENCED).update(
+            connection_test_status=ConnectionTestStatus.PENDING,
+            updated_at=timezone.now(),
+        )
+        raise
+    return {
+        "status": "dispatched",
+        "resource_id": resource.id,
+        "node_task_id": str(handle.task_id),
+    }
 
-    # The remote call may wait for up to 180 seconds. Lock and re-read the row
-    # before applying the result so an edit, rebind, or delete wins the race.
+
+def project_source_connection_probe(*, node_task: NodeTask) -> bool:
+    """Apply a terminal automatic NAS probe to the source revision that owns it."""
+
+    if (
+        node_task.correlation_type != SOURCE_CONNECTION_PROBE_CORRELATION_TYPE
+        or node_task.kind != "nas.test"
+        or node_task.status
+        not in {
+            NodeTask.Status.SUCCESS,
+            NodeTask.Status.FAILED,
+            NodeTask.Status.TIMEOUT,
+            NodeTask.Status.CANCELED,
+        }
+    ):
+        return False
+    persisted = node_task.payload if isinstance(node_task.payload, dict) else {}
+    resource_id = int(persisted.get("source_resource_id") or 0)
+    probe_token = str(persisted.get("connection_probe_token") or "")
+    expected_node_id = int(persisted.get("expected_bound_node_id") or 0)
+    if resource_id <= 0 or not probe_token or expected_node_id <= 0:
+        logger.warning(
+            "source probe result missing correlation metadata node_task_id=%s",
+            node_task.id,
+        )
+        return False
+
+    probe_resource = SourceResource.all_objects.filter(pk=resource_id).first()
+    if probe_resource is None:
+        return False
+    payload = persisted.get("nas") if isinstance(persisted.get("nas"), dict) else persisted
+    outcome = AgentTaskSyncResult(
+        task=node_task,
+        stream_message=None,
+        timed_out=node_task.status == NodeTask.Status.TIMEOUT,
+    )
+    result = connection_test_result_from_agent_outcome(
+        resource=probe_resource,
+        node=node_task.node,
+        resource_type=probe_resource.resource_type,
+        payload=payload,
+        outcome=outcome,
+    )
     resource, skip_reason = apply_connection_test_result_if_current(
         resource_id=resource_id,
         probe_token=probe_token,
-        expected_bound_node_id=expected_bound_node_id,
+        expected_bound_node_id=expected_node_id,
         require_mount=True,
         result=result,
     )
-    if resource is None:
-        if skip_reason in {
-            "source_deleted",
-            "source_removing",
-        }:
-            best_effort_unmount_on_proxy(
-                resource=probe_resource,
-                node_id=expected_bound_node_id,
-                force=True,
-            )
-        return {"status": "discarded", "reason": skip_reason}
-    return {
-        "status": "success" if result.get("success") else "failed",
-        "resource_id": resource.id,
-        "message": str(result.get("message") or result.get("error") or ""),
-    }
+    if resource is not None:
+        return True
+    if skip_reason in {"source_deleted", "source_removing"}:
+        best_effort_unmount_on_proxy(
+            resource=probe_resource,
+            node_id=expected_node_id,
+            force=True,
+            wait=False,
+        )
+    return False
 
 
 def _record_terminal_probe_failure(
@@ -483,10 +553,12 @@ def reconcile_stale_source_connection_probes_task(*, limit: int = 100) -> dict[s
 
 
 __all__ = [
+    "SOURCE_CONNECTION_PROBE_CORRELATION_TYPE",
     "probe_source_resource_capacity",
     "queue_source_resource_capacity_probe",
     "queue_source_availability_probes_for_proxy",
     "queue_source_availability_probes_for_proxy_task",
+    "project_source_connection_probe",
     "reconcile_source_availability",
     "reconcile_source_availability_task",
     "reconcile_stale_source_connection_probes",

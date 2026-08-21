@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest import mock
 
 from django.core.exceptions import ImproperlyConfigured
@@ -16,7 +17,11 @@ from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
 from apps.storage.conf import repository_health_interval_seconds
 from apps.storage.periodic_tasks import register_periodic_tasks
-from apps.storage.repositories.models import Repository, RepositoryLocationClaim
+from apps.storage.repositories.models import (
+    Repository,
+    RepositoryLocationClaim,
+    RepositoryUsageShard,
+)
 from apps.storage.services.interface import check_repository
 from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
@@ -28,6 +33,8 @@ from apps.storage.services.internal.nas_repository import (
     nas_proxy_repository_subdir,
 )
 from apps.storage.services.internal.repository_health import (
+    REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE,
+    dispatch_automatic_repository_observation,
     project_repository_health_from_agent_result,
     probe_repository_health,
     probe_unbound_nas_repository_health,
@@ -44,6 +51,9 @@ from apps.storage.services.internal.repository_location import (
 )
 from apps.storage.services.internal.repository_ownership import (
     RepositoryOwnershipError,
+)
+from apps.storage.services.internal.repository_usage import (
+    repository_observation_revision,
 )
 from apps.storage.tasks import (
     check_storage_repository_health,
@@ -283,6 +293,40 @@ class RepositoryHealthTaskTests(TestCase):
         self.assertEqual(repository.health, Repository.Health.ONLINE)
         self.assertEqual(repository.health_failures, 1)
         apply_async.assert_not_called()
+
+    @mock.patch("apps.storage.tasks.probe_repository_health")
+    @mock.patch(
+        "apps.storage.tasks.dispatch_automatic_repository_observation"
+    )
+    @mock.patch("apps.storage.tasks.cache.delete")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=True)
+    def test_bound_proxy_probe_dispatches_without_waiting_in_worker(
+        self,
+        _cache_add,
+        _cache_delete,
+        dispatch_probe,
+        synchronous_probe,
+    ):
+        repository = self._repository(
+            "proxy-fs",
+            Repository.Type.PROXY_FS,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=10,
+        )
+        dispatch_probe.return_value = [
+            mock.Mock(
+                id="node-task-id",
+                status=NodeTask.Status.RUNNING,
+            )
+        ]
+
+        result = check_storage_repository_health.run(
+            repository_id=repository.id,
+        )
+
+        self.assertEqual(result["probe_status"], "dispatched")
+        self.assertEqual(result["node_task_id"], "node-task-id")
+        synchronous_probe.assert_not_called()
 
     @mock.patch("apps.storage.tasks.cache.delete")
     @mock.patch("apps.storage.tasks.cache.add", return_value=True)
@@ -726,6 +770,383 @@ class RepositoryHealthResultProjectionTests(TestCase):
         self.repository.refresh_from_db()
         self.assertEqual(self.repository.health, Repository.Health.OFFLINE)
         self.assertEqual(self.repository.health_failures, 2)
+
+    def test_automatic_probe_success_projects_without_worker_wait(self):
+        task = self._repo_status_task()
+        task.payload = {
+            "automatic_health_probe": True,
+            "repository_id": self.repository.id,
+            "repository_updated_at": self.repository.updated_at.isoformat(),
+            "retry_attempt": 0,
+            "repository_subdir": None,
+            "legacy_compatibility_allowed": False,
+        }
+        task.correlation_type = REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE
+        task.save(update_fields=["payload", "correlation_type", "updated_at"])
+
+        projected = project_repository_health_from_agent_result(node_task=task)
+
+        self.assertTrue(projected)
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health, Repository.Health.ONLINE)
+        self.assertEqual(self.repository.health_failures, 0)
+
+    def test_automatic_probe_success_projects_health_and_usage_together(self):
+        task = self._repo_status_task()
+        task.payload = {
+            "automatic_health_probe": True,
+            "repository_id": self.repository.id,
+            "repository_revision": repository_observation_revision(self.repository),
+            "retry_attempt": 0,
+            "repository_subdir": "",
+            "legacy_compatibility_allowed": False,
+            "direct_nas": False,
+            "include_usage": True,
+            "failure_affects_health": False,
+        }
+        task.result = {
+            "ownership_verified": True,
+            "usage_probe": {
+                "status": "success",
+                "estimated_usage_bytes": 256,
+            },
+            "capacity_probe": {"status": "success", "total_bytes": 1024},
+            "space_info": {
+                "total_bytes": 1024,
+                "used_bytes": 300,
+                "free_bytes": 724,
+                "pool_key": "volume-c",
+            },
+        }
+        task.correlation_type = REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE
+        task.save(
+            update_fields=["payload", "result", "correlation_type", "updated_at"]
+        )
+
+        projected = project_repository_health_from_agent_result(node_task=task)
+
+        self.assertTrue(projected)
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health, Repository.Health.ONLINE)
+        self.assertEqual(self.repository.estimated_usage_bytes, 256)
+        self.assertEqual(self.repository.capacity_bytes, 1024)
+        self.assertEqual(self.repository.storage_used_bytes, 300)
+        self.assertEqual(
+            self.repository.usage_probe_status,
+            Repository.MetricProbeStatus.SUCCESS,
+        )
+
+    def test_automatic_probe_result_is_fenced_by_physical_target_revision(self):
+        task = self._repo_status_task()
+        task.payload = {
+            "automatic_health_probe": True,
+            "repository_id": self.repository.id,
+            "repository_revision": repository_observation_revision(self.repository),
+            "retry_attempt": 0,
+            "repository_subdir": "",
+            "legacy_compatibility_allowed": False,
+            "direct_nas": False,
+        }
+        task.correlation_type = REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE
+        task.save(update_fields=["payload", "correlation_type", "updated_at"])
+        self.repository.config = {"proxy_node_dir": "/replacement"}
+        self.repository.save(update_fields=["config", "updated_at"])
+
+        projected = project_repository_health_from_agent_result(node_task=task)
+
+        self.assertFalse(projected)
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health, Repository.Health.OFFLINE)
+
+    @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
+    def test_automatic_probe_failure_schedules_one_durable_retry(self, apply_async):
+        self.repository.health = Repository.Health.ONLINE
+        self.repository.health_failures = 0
+        self.repository.save(update_fields=["health", "health_failures"])
+        task = self._repo_status_task()
+        task.status = NodeTask.Status.FAILED
+        task.accepted_at = timezone.now()
+        task.last_error = "repository status failed"
+        task.result = {"error_code": "REPOSITORY_STATUS_FAILED"}
+        task.payload = {
+            "automatic_health_probe": True,
+            "repository_id": self.repository.id,
+            "repository_updated_at": self.repository.updated_at.isoformat(),
+            "retry_attempt": 0,
+            "repository_subdir": None,
+            "legacy_compatibility_allowed": False,
+        }
+        task.correlation_type = REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE
+        task.save(
+            update_fields=[
+                "status",
+                "accepted_at",
+                "last_error",
+                "result",
+                "payload",
+                "correlation_type",
+                "updated_at",
+            ]
+        )
+
+        projected = project_repository_health_from_agent_result(node_task=task)
+
+        self.assertTrue(projected)
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health_failures, 1)
+        apply_async.assert_called_once_with(
+            kwargs={"repository_id": self.repository.id, "retry_attempt": 1},
+            countdown=30,
+        )
+
+
+class AutomaticDirectNASObservationTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(
+            key="automatic-direct-nas-org",
+            name="Automatic Direct NAS Org",
+        )
+        self.repository = Repository.objects.create(
+            organization_id=self.organization.id,
+            name="automatic-direct-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            config={
+                "server_address": "10.0.0.20",
+                "share_path": "/backups",
+                "kopia_password": "must-not-be-persisted",
+            },
+        )
+
+    def _node(self, name: str, *, online: bool = True) -> Node:
+        node = Node.objects.create(
+            organization=self.organization,
+            name=name,
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=(
+                Node.Availability.ONLINE if online else Node.Availability.OFFLINE
+            ),
+        )
+        BackupConfig.objects.create(
+            organization_id=self.organization.id,
+            name=f"{name}-config",
+            source_type="agent",
+            source_ref_id=node.id,
+            repository_id=self.repository.id,
+        )
+        subdir = nas_agent_repository_subdir(node.id)
+        reserve_direct_nas_location(
+            repository=self.repository,
+            node_id=node.id,
+            repository_subdir=subdir,
+        )
+        mark_repository_location_owned(
+            self.repository,
+            owner_node_id=node.id,
+            repository_subdir=subdir,
+        )
+        mark_repository_location_ownership_verified(
+            self.repository,
+            owner_node_id=node.id,
+            repository_subdir=subdir,
+        )
+        return node
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_health.run_agent_task_async"
+    )
+    def test_dispatches_one_durable_task_per_node_without_persisting_secrets(
+        self,
+        run_async,
+    ):
+        node_a = self._node("agent-a")
+        node_b = self._node("agent-b")
+
+        def create_handle(**kwargs):
+            task = NodeTask.objects.create(
+                organization=self.organization,
+                node_id=kwargs["node_id"],
+                kind=kwargs["kind"],
+                correlation_type=kwargs["correlation_type"],
+                correlation_id=kwargs["correlation_id"],
+                payload=kwargs["persisted_payload"],
+                status=NodeTask.Status.RUNNING,
+                watchdog_deadline_at=timezone.now(),
+            )
+            return SimpleNamespace(task=task, task_id=task.id)
+
+        run_async.side_effect = create_handle
+
+        tasks = dispatch_automatic_repository_observation(
+            repository=self.repository,
+            include_usage=True,
+        )
+
+        self.assertEqual({task.node_id for task in tasks or []}, {node_a.id, node_b.id})
+        self.assertEqual(run_async.call_count, 2)
+        for task in tasks or []:
+            self.assertNotIn("kopia_password", str(task.payload))
+            self.assertTrue(task.payload["direct_nas"])
+            self.assertEqual(
+                set(task.payload["expected_node_ids"]),
+                {node_a.id, node_b.id},
+            )
+        for call in run_async.call_args_list:
+            self.assertFalse(call.kwargs["payload"]["health_only"])
+
+    def test_direct_nas_results_project_per_shard_and_aggregate(self):
+        node_a = self._node("agent-a")
+        node_b = self._node("agent-b")
+        group_id = "observation-group"
+        revision = repository_observation_revision(self.repository)
+        tasks = []
+        for node, usage in ((node_a, 100), (node_b, 250)):
+            task = NodeTask.objects.create(
+                organization=self.organization,
+                node=node,
+                kind="repo.status",
+                correlation_type=REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE,
+                correlation_id=str(self.repository.id),
+                payload={
+                    "automatic_health_probe": True,
+                    "repository_id": self.repository.id,
+                    "repository_revision": revision,
+                    "repository_subdir": nas_agent_repository_subdir(node.id),
+                    "legacy_compatibility_allowed": False,
+                    "direct_nas": True,
+                    "include_usage": True,
+                    "failure_affects_health": False,
+                    "usage_active": True,
+                    "observation_group_id": group_id,
+                    "expected_node_ids": [node_a.id, node_b.id],
+                    "transport_unknown": False,
+                    "retry_attempt": 0,
+                },
+                status=NodeTask.Status.SUCCESS,
+                accepted_at=timezone.now(),
+                result={
+                    "ownership_verified": True,
+                    "usage_probe": {
+                        "status": "success",
+                        "estimated_usage_bytes": usage,
+                    },
+                    "capacity_probe": {
+                        "status": "success",
+                        "total_bytes": 1000,
+                    },
+                },
+                watchdog_deadline_at=timezone.now(),
+            )
+            tasks.append(task)
+
+        self.assertTrue(
+            project_repository_health_from_agent_result(node_task=tasks[0])
+        )
+        self.assertTrue(
+            project_repository_health_from_agent_result(node_task=tasks[1])
+        )
+
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health, Repository.Health.ONLINE)
+        self.assertEqual(self.repository.estimated_usage_bytes, 350)
+        self.assertEqual(self.repository.capacity_bytes, 1000)
+        self.assertEqual(
+            RepositoryUsageShard.objects.filter(
+                repository_id=self.repository.id,
+                status=RepositoryUsageShard.Status.SUCCESS,
+            ).count(),
+            2,
+        )
+
+    @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
+    def test_offline_peer_keeps_all_failure_result_transport_unknown(
+        self,
+        apply_async,
+    ):
+        online = self._node("online-agent")
+        self._node("offline-agent", online=False)
+        task = NodeTask.objects.create(
+            organization=self.organization,
+            node=online,
+            kind="repo.status",
+            correlation_type=REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE,
+            correlation_id=str(self.repository.id),
+            payload={
+                "automatic_health_probe": True,
+                "repository_id": self.repository.id,
+                "repository_revision": repository_observation_revision(
+                    self.repository
+                ),
+                "repository_subdir": nas_agent_repository_subdir(online.id),
+                "legacy_compatibility_allowed": False,
+                "direct_nas": True,
+                "include_usage": False,
+                "failure_affects_health": True,
+                "usage_active": True,
+                "observation_group_id": "transport-unknown-group",
+                "expected_node_ids": [online.id],
+                "transport_unknown": True,
+                "retry_attempt": 0,
+            },
+            status=NodeTask.Status.FAILED,
+            accepted_at=timezone.now(),
+            result={"error_code": "REPOSITORY_STATUS_FAILED"},
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        self.assertTrue(project_repository_health_from_agent_result(node_task=task))
+
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health, Repository.Health.UNVERIFIED)
+        self.assertEqual(self.repository.health_failures, 0)
+        apply_async.assert_not_called()
+
+    @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
+    def test_direct_nas_failure_group_is_projected_only_once(self, apply_async):
+        node = self._node("failed-agent")
+        task = NodeTask.objects.create(
+            organization=self.organization,
+            node=node,
+            kind="repo.status",
+            correlation_type=REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE,
+            correlation_id=str(self.repository.id),
+            payload={
+                "automatic_health_probe": True,
+                "repository_id": self.repository.id,
+                "repository_revision": repository_observation_revision(
+                    self.repository
+                ),
+                "repository_subdir": nas_agent_repository_subdir(node.id),
+                "legacy_compatibility_allowed": False,
+                "direct_nas": True,
+                "include_usage": False,
+                "failure_affects_health": True,
+                "usage_active": True,
+                "observation_group_id": "single-failure-group",
+                "expected_node_ids": [node.id],
+                "transport_unknown": False,
+                "retry_attempt": 0,
+            },
+            status=NodeTask.Status.FAILED,
+            accepted_at=timezone.now(),
+            result={"error_code": "REPOSITORY_STATUS_FAILED"},
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        self.assertTrue(project_repository_health_from_agent_result(node_task=task))
+        task.refresh_from_db()
+        self.assertTrue(project_repository_health_from_agent_result(node_task=task))
+
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health_failures, 1)
+        apply_async.assert_called_once_with(
+            kwargs={"repository_id": self.repository.id, "retry_attempt": 1},
+            countdown=30,
+        )
+
 
 class RepositoryHealthProbeTests(TestCase):
     def setUp(self):
