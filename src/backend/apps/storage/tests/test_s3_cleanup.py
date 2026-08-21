@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import io
 import json
 from unittest import mock
@@ -7,6 +9,7 @@ from django.test import SimpleTestCase
 
 from apps.storage.services.internal.s3_client import (
     S3ClientError,
+    _client,
     delete_s3_bucket_if_empty,
     delete_s3_prefix,
     s3_prefix_has_any_state,
@@ -93,6 +96,47 @@ class S3PrefixCleanupTests(SimpleTestCase):
         client.list_objects_v2.return_value = {}
         client.list_multipart_uploads.return_value = {}
         return client
+
+    def test_delete_objects_request_contains_content_md5_for_serialized_body(self):
+        client = _client(
+            endpoint="https://s3.example.test",
+            region="us-east-1",
+            access_key_id="access-key",
+            secret_access_key="secret-key",
+            s3_url_style="path",
+            use_tls=True,
+            timeout_seconds=1,
+        )
+        captured = {}
+
+        class RequestCaptured(Exception):
+            pass
+
+        def capture_request(request, **_kwargs):
+            captured["body"] = bytes(request.body)
+            captured["content_md5"] = request.headers.get("Content-MD5")
+            raise RequestCaptured
+
+        client.meta.events.register(
+            "before-send.s3.DeleteObjects",
+            capture_request,
+            unique_id="test-capture-delete-objects-request",
+        )
+        try:
+            with self.assertRaises(RequestCaptured):
+                client.delete_objects(
+                    Bucket="bucket",
+                    Delete={"Objects": [{"Key": "repo/object"}], "Quiet": True},
+                )
+        finally:
+            client.close()
+
+        expected = base64.b64encode(
+            hashlib.md5(captured["body"], usedforsecurity=False).digest()
+        )
+        if isinstance(captured["content_md5"], str):
+            expected = expected.decode("ascii")
+        self.assertEqual(captured["content_md5"], expected)
 
     @mock.patch("apps.storage.services.internal.s3_client._client")
     def test_deletes_versions_markers_objects_and_uploads_under_normalized_prefix(
@@ -252,6 +296,10 @@ class S3PrefixCleanupTests(SimpleTestCase):
             (
                 "MissingContentMD5",
                 "Missing required header for this request: Content-Md5.",
+            ),
+            (
+                "MissingArgument",
+                "Missing Some Required Arguments.",
             ),
         )
         for code, message in errors:

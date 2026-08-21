@@ -15,6 +15,7 @@ from apps.audit.constants import AuditAction, AuditResult, AuditResourceType
 from apps.audit.services.interface import write_audit_log
 from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
+from apps.node.services.capabilities import node_capabilities
 from apps.storage.repositories.models import (
     Credential,
     Repository,
@@ -1946,7 +1947,11 @@ def _select_s3_cleanup_agent(repository_task: RepositoryTask) -> Node | None:
             is_deleted=False,
         )
     )
-    eligible = [node for node in candidates if _node_has_s3_cleanup(node)]
+    eligible = [
+        node
+        for node in candidates
+        if _node_has_s3_cleanup(node, platform=repository.s3_platform)
+    ]
     if selected_id:
         selected_any = Node.objects.filter(
             id=selected_id,
@@ -1986,15 +1991,14 @@ def _select_s3_cleanup_agent(repository_task: RepositoryTask) -> Node | None:
     return eligible[0]
 
 
-def _node_has_s3_cleanup(node: Node) -> bool:
-    metadata = node.metadata if isinstance(node.metadata, dict) else {}
-    inventory = (
-        metadata.get("inventory") if isinstance(metadata.get("inventory"), dict) else {}
+def _node_has_s3_cleanup(node: Node, *, platform: str = "") -> bool:
+    capabilities = node_capabilities(node)
+    if str(platform or "").strip().lower() == Repository.S3Platform.ALIYUN:
+        return "repository_cleanup_s3_md5_v2" in capabilities
+    return (
+        "repository_cleanup_s3_v1" in capabilities
+        or "repository_cleanup_s3_md5_v2" in capabilities
     )
-    capabilities = metadata.get("capabilities")
-    if not isinstance(capabilities, list):
-        capabilities = inventory.get("capabilities")
-    return isinstance(capabilities, list) and "repository_cleanup_s3_v1" in capabilities
 
 
 def _task_payload(task: Task) -> dict[str, Any]:

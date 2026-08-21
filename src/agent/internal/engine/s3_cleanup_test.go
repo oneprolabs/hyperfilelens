@@ -2,14 +2,19 @@ package engine
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"errors"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
 
 type fakeS3CleanupClient struct {
@@ -19,6 +24,7 @@ type fakeS3CleanupClient struct {
 	abortUpload   func(*s3.AbortMultipartUploadInput) (*s3.AbortMultipartUploadOutput, error)
 	listVersions  func(*s3.ListObjectVersionsInput) (*s3.ListObjectVersionsOutput, error)
 	deleteObjects func(*s3.DeleteObjectsInput) (*s3.DeleteObjectsOutput, error)
+	deleteObject  func(*s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error)
 	deleteBucket  func(*s3.DeleteBucketInput) (*s3.DeleteBucketOutput, error)
 }
 
@@ -46,8 +52,107 @@ func (f *fakeS3CleanupClient) DeleteObjects(_ context.Context, input *s3.DeleteO
 	return f.deleteObjects(input)
 }
 
+func (f *fakeS3CleanupClient) DeleteObject(_ context.Context, input *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	return f.deleteObject(input)
+}
+
 func (f *fakeS3CleanupClient) DeleteBucket(_ context.Context, input *s3.DeleteBucketInput, _ ...func(*s3.Options)) (*s3.DeleteBucketOutput, error) {
 	return f.deleteBucket(input)
+}
+
+type s3CleanupRoundTripper func(*http.Request) (*http.Response, error)
+
+func (fn s3CleanupRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
+
+func TestDeleteObjectsAddsContentMD5ForS3Compatibility(t *testing.T) {
+	var requestBody []byte
+	var contentMD5 string
+	transport := s3CleanupRoundTripper(func(request *http.Request) (*http.Response, error) {
+		var err error
+		requestBody, err = io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read DeleteObjects request body: %v", err)
+		}
+		contentMD5 = request.Header.Get("Content-MD5")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader("<DeleteResult/>")),
+			Request:    request,
+		}, nil
+	})
+	client := s3.New(s3.Options{
+		BaseEndpoint: aws.String("https://s3.example.test"),
+		Region:       "oss-cn-beijing",
+		UsePathStyle: true,
+		HTTPClient:   &http.Client{Transport: transport},
+		Credentials: credentials.NewStaticCredentialsProvider(
+			"access-key",
+			"secret-key",
+			"",
+		),
+	})
+
+	_, err := client.DeleteObjects(context.Background(), &s3.DeleteObjectsInput{
+		Bucket: aws.String("bucket"),
+		Delete: &types.Delete{
+			Objects: []types.ObjectIdentifier{{Key: aws.String("repo/object")}},
+			Quiet:   aws.Bool(true),
+		},
+	}, addS3DeleteObjectsContentMD5)
+
+	if err != nil {
+		t.Fatalf("DeleteObjects returned error: %v", err)
+	}
+	checksum := md5.Sum(requestBody)
+	want := base64.StdEncoding.EncodeToString(checksum[:])
+	if contentMD5 != want {
+		t.Fatalf("Content-MD5 = %q, want %q for body %q", contentMD5, want, requestBody)
+	}
+}
+
+func TestDeleteObjectIdentifiersFallsBackForAlibabaMissingArgument(t *testing.T) {
+	var deleted []*s3.DeleteObjectInput
+	client := &fakeS3CleanupClient{
+		deleteObjects: func(_ *s3.DeleteObjectsInput) (*s3.DeleteObjectsOutput, error) {
+			return nil, &smithy.GenericAPIError{
+				Code:    "MissingArgument",
+				Message: "Missing Some Required Arguments.",
+			}
+		},
+		deleteObject: func(input *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
+			deleted = append(deleted, input)
+			return &s3.DeleteObjectOutput{}, nil
+		},
+	}
+
+	err := deleteS3ObjectIdentifiers(
+		context.Background(),
+		client,
+		"bucket",
+		[]types.ObjectIdentifier{
+			{Key: aws.String("repo/current")},
+			{Key: aws.String("repo/versioned"), VersionId: aws.String("version-1")},
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("deleteS3ObjectIdentifiers returned error: %v", err)
+	}
+	if len(deleted) != 2 {
+		t.Fatalf("individual delete count = %d, want 2", len(deleted))
+	}
+	if got := aws.ToString(deleted[0].Key); got != "repo/current" {
+		t.Fatalf("first object key = %q", got)
+	}
+	if deleted[0].VersionId != nil {
+		t.Fatalf("current object unexpectedly has VersionId %q", aws.ToString(deleted[0].VersionId))
+	}
+	if got := aws.ToString(deleted[1].VersionId); got != "version-1" {
+		t.Fatalf("versioned object VersionId = %q", got)
+	}
 }
 
 func TestVerifyS3CleanupOwnershipRejectsMissingMarker(t *testing.T) {

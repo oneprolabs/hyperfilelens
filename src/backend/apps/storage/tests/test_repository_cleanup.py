@@ -1038,6 +1038,109 @@ class RepositoryCleanupTests(TestCase):
         self.assertNotIn("secret_access_key", call["persisted_payload"])
 
     @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_bucket_if_empty"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_prefix",
+        return_value={"bucket": "cleanup-bucket", "prefix": "managed/repository/"},
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership"
+    )
+    @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
+    )
+    def test_aliyun_cleanup_skips_legacy_agent_without_md5_capability(
+        self,
+        dispatch_agent,
+        _check_repository,
+        verify_owner,
+        controller_delete,
+        delete_bucket,
+    ):
+        repository = self._s3_repository("aliyun-legacy-agent")
+        repository.s3_platform = Repository.S3Platform.ALIYUN
+        repository.save(update_fields=["s3_platform", "updated_at"])
+        Node.objects.create(
+            organization=self.org,
+            name="legacy-s3-cleanup-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["repository_cleanup_s3_v1"]}},
+        )
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["executor"], "controller")
+        dispatch_agent.assert_not_called()
+        controller_delete.assert_called_once()
+        delete_bucket.assert_not_called()
+        self.assertEqual(verify_owner.call_count, 2)
+
+    @mock.patch("apps.storage.services.internal.repository_cleanup.delete_s3_prefix")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership"
+    )
+    @mock.patch("apps.storage.services.internal.repository_cleanup.check_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
+        return_value=RepositoryAgentOperationResult(
+            waiting=False,
+            node_task_id=None,
+            result={
+                "ownership_verified": True,
+                "physical_cleanup": "deleted",
+                "scope": "s3_prefix",
+                "cleanup_complete": True,
+            },
+        ),
+    )
+    def test_aliyun_cleanup_prefers_agent_with_md5_capability(
+        self,
+        dispatch_agent,
+        _check_repository,
+        _verify_owner,
+        controller_delete,
+    ):
+        repository = self._s3_repository("aliyun-md5-agent")
+        repository.s3_platform = Repository.S3Platform.ALIYUN
+        repository.save(update_fields=["s3_platform", "updated_at"])
+        agent = Node.objects.create(
+            organization=self.org,
+            name="md5-s3-cleanup-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={
+                "capabilities": ["repository_cleanup_s3_v1"],
+                "inventory": {
+                    "capabilities": [
+                        "repository_cleanup_s3_v1",
+                        "repository_cleanup_s3_md5_v2",
+                    ]
+                }
+            },
+        )
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["executor"], "agent")
+        self.assertEqual(dispatch_agent.call_args.kwargs["node"].id, agent.id)
+        controller_delete.assert_not_called()
+
+    @mock.patch(
         "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership",
         side_effect=AssertionError("must not re-authorize a completed Agent cleanup"),
     )

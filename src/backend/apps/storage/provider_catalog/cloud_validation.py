@@ -26,6 +26,10 @@ from apps.storage.conf import provider_validation_region_timeout_seconds
 from apps.storage.provider_catalog.credentials import ProviderCredentials
 from apps.storage.provider_catalog.models import StorageProviderRegionValidation
 from apps.storage.provider_catalog.security import validate_managed_endpoint_network
+from apps.storage.s3_compat import (
+    is_s3_batch_delete_compatibility_error,
+    register_s3_delete_objects_compatibility,
+)
 
 
 OWNERSHIP_KEY = ".hyperfilelens-validation/ownership-v1.json"
@@ -85,7 +89,7 @@ def _bucket_name(context: RegionValidationContext) -> str:
 
 def _s3_client(context: RegionValidationContext):
     style = "virtual" if context.region["s3_url_style"] == "virtual_hosted" else "path"
-    return boto3.client(
+    client = boto3.client(
         "s3",
         endpoint_url=f"https://{context.region['external_endpoint']}",
         region_name=context.region["id"],
@@ -103,6 +107,8 @@ def _s3_client(context: RegionValidationContext):
             response_checksum_validation="when_required",
         ),
     )
+    register_s3_delete_objects_compatibility(client)
+    return client
 
 
 def _error_code(exc: ClientError) -> str:
@@ -219,10 +225,17 @@ def _chunks(items: list[dict], size: int = 1000):
 
 def _delete_entries(client, bucket_name: str, entries: list[dict]) -> None:
     for batch in _chunks(entries):
-        response = client.delete_objects(
-            Bucket=bucket_name,
-            Delete={"Objects": batch, "Quiet": True},
-        )
+        try:
+            response = client.delete_objects(
+                Bucket=bucket_name,
+                Delete={"Objects": batch, "Quiet": True},
+            )
+        except ClientError as exc:
+            if not is_s3_batch_delete_compatibility_error(exc):
+                raise
+            for entry in batch:
+                client.delete_object(Bucket=bucket_name, **entry)
+            continue
         if response.get("Errors"):
             raise ProviderRegionValidationError(
                 "BUCKET_CLEANUP_FAILED",
