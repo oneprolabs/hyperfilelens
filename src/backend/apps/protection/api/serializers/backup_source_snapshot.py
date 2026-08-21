@@ -57,6 +57,8 @@ def _directory_dir_count(row: BackupSourceSnapshotDirectory) -> int:
 
 class BackupSourceSnapshotDirectorySerializer(serializers.ModelSerializer):
     size_bytes = serializers.SerializerMethodField()
+    recoverable_size_bytes = serializers.SerializerMethodField()
+    storage_stats_available = serializers.SerializerMethodField()
     file_count = serializers.SerializerMethodField()
     dir_count = serializers.SerializerMethodField()
 
@@ -80,6 +82,10 @@ class BackupSourceSnapshotDirectorySerializer(serializers.ModelSerializer):
             "cancel_requested_at",
             "created_at",
             "size_bytes",
+            "recoverable_size_bytes",
+            "new_original_content_bytes",
+            "new_packed_content_bytes",
+            "storage_stats_available",
             "file_count",
             "dir_count",
             "stats",
@@ -90,6 +96,15 @@ class BackupSourceSnapshotDirectorySerializer(serializers.ModelSerializer):
 
     def get_size_bytes(self, obj: BackupSourceSnapshotDirectory) -> int:
         return _directory_size_bytes(obj)
+
+    def get_recoverable_size_bytes(self, obj: BackupSourceSnapshotDirectory) -> int:
+        return _directory_size_bytes(obj)
+
+    def get_storage_stats_available(self, obj: BackupSourceSnapshotDirectory) -> bool:
+        return (
+            obj.new_original_content_bytes is not None
+            and obj.new_packed_content_bytes is not None
+        )
 
     def get_file_count(self, obj: BackupSourceSnapshotDirectory) -> int:
         return _directory_file_count(obj)
@@ -104,6 +119,14 @@ class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
     repository_display_name = serializers.SerializerMethodField()
     kopia_snapshot_count = serializers.SerializerMethodField()
     total_size_bytes = serializers.SerializerMethodField()
+    recoverable_size_bytes = serializers.SerializerMethodField()
+    new_original_content_bytes = serializers.SerializerMethodField()
+    new_packed_content_bytes = serializers.SerializerMethodField()
+    storage_stats_available = serializers.SerializerMethodField()
+    data_reuse_ratio = serializers.SerializerMethodField()
+    compression_savings_ratio = serializers.SerializerMethodField()
+    combined_reduction_ratio = serializers.SerializerMethodField()
+    fully_reused = serializers.SerializerMethodField()
     file_count = serializers.SerializerMethodField()
     dir_count = serializers.SerializerMethodField()
 
@@ -131,6 +154,14 @@ class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
             "failed_directory_count",
             "kopia_snapshot_count",
             "total_size_bytes",
+            "recoverable_size_bytes",
+            "new_original_content_bytes",
+            "new_packed_content_bytes",
+            "storage_stats_available",
+            "data_reuse_ratio",
+            "compression_savings_ratio",
+            "combined_reduction_ratio",
+            "fully_reused",
             "file_count",
             "dir_count",
         ]
@@ -157,6 +188,86 @@ class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
         if value > 0:
             return value
         return sum(_directory_size_bytes(row) for row in self._available_directories(obj))
+
+    def get_recoverable_size_bytes(self, obj: BackupSourceSnapshot) -> int:
+        return self.get_total_size_bytes(obj)
+
+    def _storage_efficiency(self, obj: BackupSourceSnapshot) -> dict[str, int | float | bool | None]:
+        cache = getattr(self, "_storage_efficiency_cache", None)
+        if cache is None:
+            cache = {}
+            self._storage_efficiency_cache = cache
+        if obj.pk in cache:
+            return cache[obj.pk]
+
+        rows = self._available_directories(obj)
+        complete = bool(rows) and all(
+            row.new_original_content_bytes is not None
+            and row.new_packed_content_bytes is not None
+            for row in rows
+        )
+        recoverable = self.get_recoverable_size_bytes(obj)
+        original = (
+            sum(int(row.new_original_content_bytes or 0) for row in rows)
+            if complete
+            else None
+        )
+        packed = (
+            sum(int(row.new_packed_content_bytes or 0) for row in rows)
+            if complete
+            else None
+        )
+        reuse_ratio = None
+        compression_ratio = None
+        reduction_ratio = None
+        if complete and original is not None and packed is not None:
+            if recoverable > 0 and original <= recoverable:
+                reuse_ratio = 1 - (original / recoverable)
+            if original > 0:
+                compression_ratio = 1 - (packed / original)
+            if packed > 0:
+                reduction_ratio = recoverable / packed
+        value = {
+            "available": complete,
+            "original": original,
+            "packed": packed,
+            "reuse_ratio": reuse_ratio,
+            "compression_ratio": compression_ratio,
+            "reduction_ratio": reduction_ratio,
+            "fully_reused": bool(
+                complete
+                and recoverable > 0
+                and packed == 0
+            ),
+        }
+        cache[obj.pk] = value
+        return value
+
+    def get_new_original_content_bytes(self, obj: BackupSourceSnapshot) -> int | None:
+        value = self._storage_efficiency(obj)["original"]
+        return int(value) if isinstance(value, int) else None
+
+    def get_new_packed_content_bytes(self, obj: BackupSourceSnapshot) -> int | None:
+        value = self._storage_efficiency(obj)["packed"]
+        return int(value) if isinstance(value, int) else None
+
+    def get_storage_stats_available(self, obj: BackupSourceSnapshot) -> bool:
+        return bool(self._storage_efficiency(obj)["available"])
+
+    def get_data_reuse_ratio(self, obj: BackupSourceSnapshot) -> float | None:
+        value = self._storage_efficiency(obj)["reuse_ratio"]
+        return float(value) if isinstance(value, (int, float)) else None
+
+    def get_compression_savings_ratio(self, obj: BackupSourceSnapshot) -> float | None:
+        value = self._storage_efficiency(obj)["compression_ratio"]
+        return float(value) if isinstance(value, (int, float)) else None
+
+    def get_combined_reduction_ratio(self, obj: BackupSourceSnapshot) -> float | None:
+        value = self._storage_efficiency(obj)["reduction_ratio"]
+        return float(value) if isinstance(value, (int, float)) else None
+
+    def get_fully_reused(self, obj: BackupSourceSnapshot) -> bool:
+        return bool(self._storage_efficiency(obj)["fully_reused"])
 
     def get_file_count(self, obj: BackupSourceSnapshot) -> int:
         value = int(obj.file_count or 0)

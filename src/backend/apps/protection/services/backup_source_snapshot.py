@@ -53,6 +53,19 @@ def _validated_trigger_type(value: str | None) -> str:
     return trigger_type
 
 
+def _optional_nonnegative_stat(stats: dict[str, Any] | None, key: str) -> int | None:
+    if not isinstance(stats, dict) or key not in stats:
+        return None
+    value = stats.get(key)
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
 @transaction.atomic
 def create_source_snapshot(
     *,
@@ -152,6 +165,15 @@ def record_source_snapshot_directory_result(
     if path_type_value not in allowed_path_types:
         path_type_value = BackupSourceSnapshotDirectory.PathType.UNKNOWN
     normalized_kopia_snapshot_id = normalize_kopia_snapshot_id(kopia_snapshot_id)
+    normalized_stats = stats if isinstance(stats, dict) else {}
+    new_original_content_bytes = _optional_nonnegative_stat(
+        normalized_stats,
+        "new_original_content_bytes",
+    )
+    new_packed_content_bytes = _optional_nonnegative_stat(
+        normalized_stats,
+        "new_packed_content_bytes",
+    )
     if status_value == BackupSourceSnapshotDirectory.Status.AVAILABLE and not normalized_kopia_snapshot_id:
         raise ValidationError({"kopia_snapshot_id": "Available directory results require kopia_snapshot_id."})
     if (
@@ -174,9 +196,11 @@ def record_source_snapshot_directory_result(
             "kopia_snapshot_id": normalized_kopia_snapshot_id or None,
             "status": status_value,
             "size_bytes": max(0, int(size_bytes or 0)),
+            "new_original_content_bytes": new_original_content_bytes,
+            "new_packed_content_bytes": new_packed_content_bytes,
             "file_count": max(0, int(file_count or 0)),
             "dir_count": max(0, int(dir_count or 0)),
-            "stats": stats or {},
+            "stats": normalized_stats,
             "error_code": str(error_code or "").strip(),
             "error_message": str(error_message or "").strip(),
         },

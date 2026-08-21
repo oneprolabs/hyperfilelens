@@ -138,6 +138,10 @@ export type BackupSourceSnapshotDirectory = {
   cancel_requested_at?: string | null
   created_at: string
   size_bytes: number
+  recoverable_size_bytes?: number
+  new_original_content_bytes?: number | null
+  new_packed_content_bytes?: number | null
+  storage_stats_available?: boolean
   file_count: number
   dir_count: number
   stats?: Record<string, unknown>
@@ -169,6 +173,14 @@ export type BackupSourceSnapshot = {
   failed_directory_count: number
   kopia_snapshot_count: number
   total_size_bytes: number
+  recoverable_size_bytes?: number
+  new_original_content_bytes?: number | null
+  new_packed_content_bytes?: number | null
+  storage_stats_available?: boolean
+  data_reuse_ratio?: number | null
+  compression_savings_ratio?: number | null
+  combined_reduction_ratio?: number | null
+  fully_reused?: boolean
   file_count: number
   dir_count: number
   error_code?: string

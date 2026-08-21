@@ -145,6 +145,8 @@ class BackupSourceSnapshotDirectory(models.Model):
         db_index=True,
     )
     size_bytes = models.BigIntegerField(default=0)
+    new_original_content_bytes = models.BigIntegerField(blank=True, null=True)
+    new_packed_content_bytes = models.BigIntegerField(blank=True, null=True)
     file_count = models.BigIntegerField(default=0)
     dir_count = models.BigIntegerField(default=0)
     stats = models.JSONField(default=dict, blank=True)
