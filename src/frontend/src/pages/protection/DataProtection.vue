@@ -331,6 +331,23 @@ function showApiErrorI18n(err: unknown, fallback: string) {
 }
 
 const RESTORE_ALREADY_RUNNING_CODE = 'RESTORE.ALREADY_RUNNING'
+const BACKUP_ALREADY_RUNNING_CODE = 'BACKUP.ALREADY_RUNNING'
+
+async function handleBackupAlreadyRunning(
+  err: unknown,
+  refresh?: () => Promise<unknown>,
+): Promise<boolean> {
+  if (toApiError(err).errorCode !== BACKUP_ALREADY_RUNNING_CODE) return false
+  showApiErrorI18n(err, t('protection.backupsPage.msgBackupActiveBlocksActions'))
+  if (refresh) {
+    try {
+      await refresh()
+    } catch {
+      // The conflict remains authoritative even if best-effort runtime refresh fails.
+    }
+  }
+  return true
+}
 
 type RestoreAlreadyRunningMeta = {
   taskUuid: string
@@ -5233,7 +5250,11 @@ async function confirmResetBackupConfiguration() {
     resetBackupConfigConfirmText.value = ''
     ElMessage.success({ message: t('protection.backupsPage.msgResetBackupConfigQueued', { n: result.created_count }), grouping: true })
   } catch (err) {
-    showApiError(err, 'Failed to reset backup configuration')
+    if (await handleBackupAlreadyRunning(
+      err,
+      () => refreshStep3AfterMoreAction({ preserveSelection: true }),
+    )) return
+    showApiErrorI18n(err, t('protection.backupsPage.resetStatusFailed'))
   } finally {
     resetBackupFromStep3Submitting.value = false
   }
@@ -5469,6 +5490,10 @@ function deleteSelectedSourcesFromStep3() {
     step3SourceSelection.value.map((row) => row.id),
     step3SourceSelection.value,
   )
+}
+
+function onBackupSourceConflict() {
+  void refreshFlowStepData(flowMainStep.value, { showLoading: false })
 }
 
 function revertSelectedSourcesFromStep3() {
@@ -9139,7 +9164,11 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
     )
   } catch (e) {
     if (await handleRestoreAlreadyRunning(e)) return
-    showApiError(e)
+    if (await handleBackupAlreadyRunning(
+      e,
+      () => refreshRecoverySourceRuntime(recoverySourceIds()),
+    )) return
+    showApiErrorI18n(e, t('errors.generic.requestFailed'))
   } finally {
     recSubmitting.value = false
   }
@@ -13746,6 +13775,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       :show-snapshots="backupSourceDeleteShowSnapshots"
       :previous-failure-details="backupSourceDeletePreviousFailure"
       @deleted="onBackupSourcesDeleted"
+      @conflict="onBackupSourceConflict"
     />
     <BackupSourceStep3DeleteDialog
       v-if="backupSourceStep3DeleteDialogOpen"
@@ -13754,6 +13784,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       :sources="backupSourceDeleteRows"
       :previous-failure-details="backupSourceDeletePreviousFailure"
       @deleted="onBackupSourcesDeleted"
+      @conflict="onBackupSourceConflict"
     />
     <DangerConfirmDialog
       v-if="deleteRestoreTasksDialogOpen"
@@ -13811,6 +13842,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       @ready="setupDrOpening = false"
       @closed="closeCreate"
       @completed="finishCreateAndGoToStep3"
+      @conflict="onBackupSourceConflict"
     />
     <Teleport to="body">
       <div

@@ -2100,6 +2100,99 @@ class ProtectionBackupConfigApiTests(TestCase):
         self.assertEqual(str(config.reset_task_uuid), str(task.task_uuid))
         delay.assert_not_called()
 
+    def test_reset_backup_config_rejects_active_backup_before_creating_task(self):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Reset blocked by active backup"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Active backup",
+            status=Task.Status.PENDING,
+        )
+        TaskResource.objects.create(
+            task=backup_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        for active_status in (
+            Task.Status.PENDING,
+            Task.Status.WAITING,
+            Task.Status.BLOCKED,
+            Task.Status.RUNNING,
+        ):
+            with self.subTest(active_status=active_status):
+                Task.objects.filter(pk=backup_task.pk).update(status=active_status)
+                response = self.client.post(
+                    "/api/v1/protection/backup-configs/reset/",
+                    {
+                        "source_ids": [f"agent:{self.agent.id}"],
+                        "confirmation": "RESET",
+                    },
+                    format="json",
+                    **self._headers(),
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+                problem = response.data["data"]
+                self.assertEqual(problem["code"], "BACKUP.ALREADY_RUNNING")
+                self.assertEqual(
+                    problem["meta"]["task_uuid"], str(backup_task.task_uuid)
+                )
+                self.assertEqual(problem["meta"]["task_type"], Task.Type.BACKUP)
+                self.assertEqual(problem["meta"]["status"], active_status)
+                self.assertEqual(problem["meta"]["source_type"], "agent")
+                self.assertEqual(problem["meta"]["source_ref_id"], self.agent.id)
+                self.assertFalse(
+                    Task.objects.filter(
+                        task_type=Task.Type.BACKUP_CONFIG_RESET
+                    ).exists()
+                )
+
+        Task.objects.filter(pk=backup_task.pk).update(status=Task.Status.CANCELLED)
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.run",
+            correlation_type="protection.backup",
+            correlation_id=str(backup_task.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            cancel_requested_at=timezone.now(),
+            watchdog_deadline_at=timezone.now() + timedelta(hours=2),
+        )
+        with mock.patch("apps.node.conf.TASK_CANCEL_GRACE_SECONDS", 300):
+            stopping = self.client.post(
+                "/api/v1/protection/backup-configs/reset/",
+                {
+                    "source_ids": [f"agent:{self.agent.id}"],
+                    "confirmation": "RESET",
+                },
+                format="json",
+                **self._headers(),
+            )
+            self.assertEqual(stopping.status_code, status.HTTP_409_CONFLICT)
+            self.assertEqual(stopping.data["data"]["meta"]["status"], "stopping")
+
+            node_task.cancel_requested_at = timezone.now() - timedelta(seconds=301)
+            node_task.save(update_fields=["cancel_requested_at", "updated_at"])
+            finished = self.client.post(
+                "/api/v1/protection/backup-configs/reset/",
+                {
+                    "source_ids": [f"agent:{self.agent.id}"],
+                    "confirmation": "RESET",
+                },
+                format="json",
+                **self._headers(),
+            )
+            self.assertEqual(finished.status_code, status.HTTP_202_ACCEPTED)
+
     @mock.patch(
         "apps.protection.tasks.backup_config_reset.execute_backup_config_reset_task.delay"
     )

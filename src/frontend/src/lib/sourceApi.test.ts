@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { listBackupSelectableSources, productionSourceSummary, testSourceDraft } from './sourceApi'
+import {
+  bulkDeleteBackupSources,
+  listBackupSelectableSources,
+  productionSourceSummary,
+  testSourceDraft,
+} from './sourceApi'
 
 
 afterEach(() => {
@@ -98,6 +103,45 @@ describe('productionSourceSummary', () => {
 
     const url = new URL(String(fetchMock.mock.calls[0][0]), window.location.origin)
     expect(url.pathname).toBe('/api/v1/source/resources/production-summary/')
+  })
+})
+
+describe('bulkDeleteBackupSources', () => {
+  it('preserves a structured active-backup conflict for the caller', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 409,
+      message: 'Backup already running',
+      data: {
+        title: 'Backup already running',
+        status: 409,
+        code: 'BACKUP.ALREADY_RUNNING',
+        meta: {
+          task_uuid: 'backup-task-uuid',
+          task_type: 'backup',
+          status: 'running',
+          source_type: 'agent',
+          source_ref_id: 25,
+        },
+      },
+    }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(bulkDeleteBackupSources(
+      ['agent:25'],
+      false,
+      'DEREGISTER',
+      'source-unregister:test',
+    )).rejects.toMatchObject({
+      status: 409,
+      errorCode: 'BACKUP.ALREADY_RUNNING',
+      meta: {
+        task_uuid: 'backup-task-uuid',
+        source_type: 'agent',
+        source_ref_id: 25,
+      },
+    })
   })
 })
 

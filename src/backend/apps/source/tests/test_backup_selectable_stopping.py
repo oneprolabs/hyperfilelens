@@ -5,11 +5,15 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.utils import timezone
 
+from common.errors import AppError
 from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
-from apps.source.services.internal.backup_selectable import _product_task_is_stopping
-from apps.task.models import Task
+from apps.source.services.internal.source_operation_fence import (
+    assert_no_active_backup_for_source,
+    product_task_is_stopping,
+)
+from apps.task.models import Task, TaskResource
 
 
 class ProductTaskStoppingTests(TestCase):
@@ -25,6 +29,13 @@ class ProductTaskStoppingTests(TestCase):
             task_type=Task.Type.BACKUP,
             display_name="Backup",
             status=Task.Status.CANCELLED,
+        )
+        TaskResource.objects.create(
+            task=self.task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.node.id,
+            is_primary=True,
         )
 
     def create_node_task(self, *, age_seconds: int, cancel_requested: bool = True):
@@ -47,18 +58,59 @@ class ProductTaskStoppingTests(TestCase):
         self.create_node_task(age_seconds=299)
         with patch("apps.node.conf.TASK_CANCEL_GRACE_SECONDS", 300):
             self.assertTrue(
-                _product_task_is_stopping(organization_id=self.org.id, task=self.task)
+                product_task_is_stopping(organization_id=self.org.id, task=self.task)
             )
 
     def test_stopped_at_or_after_cancel_grace(self):
         self.create_node_task(age_seconds=301)
         with patch("apps.node.conf.TASK_CANCEL_GRACE_SECONDS", 300):
             self.assertFalse(
-                _product_task_is_stopping(organization_id=self.org.id, task=self.task)
+                product_task_is_stopping(organization_id=self.org.id, task=self.task)
             )
 
     def test_active_task_without_cancel_request_is_not_stopping(self):
         self.create_node_task(age_seconds=0, cancel_requested=False)
         self.assertFalse(
-            _product_task_is_stopping(organization_id=self.org.id, task=self.task)
+            product_task_is_stopping(organization_id=self.org.id, task=self.task)
+        )
+
+    def test_source_fence_blocks_until_cancel_grace_expires(self):
+        node_task = self.create_node_task(age_seconds=299)
+        with patch("apps.node.conf.TASK_CANCEL_GRACE_SECONDS", 300):
+            with self.assertRaises(AppError) as raised:
+                assert_no_active_backup_for_source(
+                    organization_id=self.org.id,
+                    source_type="agent",
+                    source_ref_id=self.node.id,
+                )
+            self.assertEqual(raised.exception.code, "BACKUP.ALREADY_RUNNING")
+            self.assertEqual(raised.exception.status, 409)
+            self.assertEqual(raised.exception.meta["status"], "stopping")
+
+            node_task.cancel_requested_at = timezone.now() - timezone.timedelta(
+                seconds=301
+            )
+            node_task.save(update_fields=["cancel_requested_at", "updated_at"])
+            assert_no_active_backup_for_source(
+                organization_id=self.org.id,
+                source_type="agent",
+                source_ref_id=self.node.id,
+            )
+
+    def test_source_fence_ignores_malformed_backup_correlation_id(self):
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="backup.run",
+            correlation_type="protection.backup",
+            correlation_id="not-a-task-uuid",
+            status=NodeTask.Status.RUNNING,
+            cancel_requested_at=timezone.now(),
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=2),
+        )
+
+        assert_no_active_backup_for_source(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.node.id,
         )

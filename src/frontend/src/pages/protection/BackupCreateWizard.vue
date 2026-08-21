@@ -193,6 +193,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   closed: []
   completed: [sourceIds: string[]]
+  conflict: [payload: { sourceIds: string[] }]
   ready: []
 }>()
 const EmbeddedWizardShell = defineComponent({
@@ -5731,6 +5732,9 @@ async function runEditBackupConfig() {
   const step = editStepForSection(section)
   if (createStep.value !== step) createStep.value = step
   if (!validateCreateStep(step)) return
+  const editedSourceIds = normalizeSourceIdList(editables.map(({ config }) =>
+    `${config.source_type}:${config.source_ref_id}`,
+  ))
   createPhase.value = 'waiting'
   try {
     for (const { backup, group, config } of editables) {
@@ -5748,9 +5752,6 @@ async function runEditBackupConfig() {
         await syncEditRecoveryPlans(config, backup, group)
       }
     }
-    const editedSourceIds = normalizeSourceIdList(editables.map(({ config }) =>
-      `${config.source_type}:${config.source_ref_id}`,
-    ))
     ElMessage.success({ message: t('protection.backupsPage.msgSaveEditDemo'), grouping: true })
     if (props.embedded) {
       emit('completed', editedSourceIds)
@@ -5759,7 +5760,10 @@ async function runEditBackupConfig() {
     closeCreate()
   } catch (err) {
     createPhase.value = 'form'
-    ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
+    ElMessage.error({ message: apiErrorMessageI18n(err, t, editorFailureText.value), grouping: true })
+    if (normalizeThrownError(err).errorCode === 'BACKUP.ALREADY_RUNNING') {
+      emit('conflict', { sourceIds: editedSourceIds })
+    }
   }
 }
 

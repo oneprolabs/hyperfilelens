@@ -484,27 +484,16 @@ export async function bulkDeleteBackupSources(
   confirmation = '',
   idempotencyKey = '',
 ) {
-  try {
-    return unwrapApiPayload<BackupSourceDeleteResult>(
-      await api<unknown>(`${backupSelectableBase}/bulk-delete/`, {
-        method: 'POST',
-        body: JSON.stringify({ ids, force, confirmation }),
-        headers: {
-          ...orgHeaders(),
-          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
-        },
-      }),
-    )
-  } catch (err: unknown) {
-    const parsed = parseBackupSourceDeleteError(err)
-    const error = new Error(parsed.message) as Error & {
-      reasons?: BackupSourceDeleteReason[]
-      hint?: string
-    }
-    error.reasons = parsed.reasons
-    error.hint = parsed.hint
-    throw error
-  }
+  return unwrapApiPayload<BackupSourceDeleteResult>(
+    await api<unknown>(`${backupSelectableBase}/bulk-delete/`, {
+      method: 'POST',
+      body: JSON.stringify({ ids, force, confirmation }),
+      headers: {
+        ...orgHeaders(),
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+      },
+    }),
+  )
 }
 
 export async function deleteSourceResource(id: number, force = false): Promise<SourceDeleteResult> {

@@ -15,6 +15,7 @@ from apps.protection.models import (
     BackupSourceSnapshot,
 )
 from apps.protection.services.backup_task import start_backup_tasks
+from apps.protection.services.backup_config_reset import create_reset_tasks_for_sources
 from apps.source.models import SourceBackupPipelineEntry
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.repository_location import (
@@ -23,6 +24,7 @@ from apps.storage.services.internal.repository_location import (
     reserve_repository_location,
 )
 from apps.task.models import Task, TaskResource
+from common.errors import AppError
 
 
 class BackupTaskConcurrencyTests(TransactionTestCase):
@@ -160,6 +162,74 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
             result["results"][0]["message"],
         )
         self.assertFalse(Task.objects.filter(task_type=Task.Type.BACKUP).exists())
+
+    def test_simultaneous_backup_and_reset_create_one_operation(self):
+        barrier = threading.Barrier(2)
+        outcomes: queue.Queue[str] = queue.Queue()
+        errors: queue.Queue[BaseException] = queue.Queue()
+
+        def start_backup() -> None:
+            close_old_connections()
+            try:
+                barrier.wait(timeout=5)
+                result = start_backup_tasks(
+                    organization_id=self.org.id,
+                    source_ids=[f"agent:{self.agent.id}"],
+                    trigger_type="manual",
+                    idempotency_key="backup-reset-race",
+                )
+                status_value = result["results"][0]["status"]
+                outcomes.put("created" if status_value == "created" else "conflict")
+            except BaseException as exc:  # pragma: no cover - surfaced below
+                errors.put(exc)
+            finally:
+                close_old_connections()
+
+        def reset_config() -> None:
+            close_old_connections()
+            try:
+                barrier.wait(timeout=5)
+                result = create_reset_tasks_for_sources(
+                    organization_id=self.org.id,
+                    source_ids=[f"agent:{self.agent.id}"],
+                    confirmation="RESET",
+                )
+                outcomes.put("created" if result["created_count"] == 1 else "conflict")
+            except AppError as exc:
+                if exc.code != "BACKUP.ALREADY_RUNNING":
+                    errors.put(exc)
+                else:
+                    outcomes.put("conflict")
+            except BaseException as exc:  # pragma: no cover - surfaced below
+                errors.put(exc)
+            finally:
+                close_old_connections()
+
+        with (
+            patch("apps.protection.services.backup_task._queue_backup_execution"),
+            patch(
+                "apps.protection.services.backup_config_reset.queue_backup_config_reset_task"
+            ),
+        ):
+            threads = [
+                threading.Thread(target=start_backup),
+                threading.Thread(target=reset_config),
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
+
+        if not errors.empty():
+            raise errors.get()
+        self.assertEqual(outcomes.qsize(), 2)
+        self.assertEqual(sorted(outcomes.get() for _ in range(2)), ["conflict", "created"])
+        self.assertEqual(
+            Task.objects.filter(
+                task_type__in=(Task.Type.BACKUP, Task.Type.BACKUP_CONFIG_RESET)
+            ).count(),
+            1,
+        )
 
     def test_backup_start_revalidates_repository_before_task_creation(self):
         self.repository.status = Repository.Status.REMOVING

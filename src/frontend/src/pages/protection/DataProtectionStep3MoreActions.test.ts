@@ -30,6 +30,7 @@ describe('backup wizard step 3 More Actions refresh', () => {
     const openRecoveryForSource = functionSource('openRecoveryForSource', 'openSnapshotRestore')
     const editConfig = functionSource('openBackupConfigEditFromStep3', 'onBackupConfigEditPickSelected')
     const resetConfig = functionSource('resetSelectedBackupConfigurations', 'confirmResetBackupConfiguration')
+    const confirmReset = functionSource('confirmResetBackupConfiguration', 'onBackupSourcesDeleted')
     const runRecovery = sourceBetween('async function runRecovery', '</script>')
 
     expect(gating).toContain("sourceBackupRuntime(sourceId).running || runtimeStopping(sourceId, 'backup')")
@@ -45,10 +46,14 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(openRecoveryForSource).toContain('if (sourceHasActiveBackup(sourceId))')
     expect(editConfig).toContain('sources.some((source) => sourceHasActiveBackup(source.id))')
     expect(resetConfig).toContain('sources.some((source) => sourceHasActiveBackup(source.id))')
+    expect(confirmReset).toContain('await handleBackupAlreadyRunning(')
+    expect(confirmReset).not.toContain('void refreshStep3AfterMoreAction')
     expect(startBackup).toContain(".filter((item) => item.status === 'created')")
     expect(startBackup).toContain('markBackupStartAwaitingRuntime')
     expect(startBackup).toContain("t('protection.backupsPage.msgStartBackupAcceptedRefreshFailed')")
     expect(runRecovery).toContain('await recoveryBlockedByActiveBackup()')
+    expect(runRecovery).toContain('await handleBackupAlreadyRunning(')
+    expect(runRecovery).toContain('refreshRecoverySourceRuntime(recoverySourceIds())')
     expect(page).toContain('async function refreshRecoverySourceRuntime(sourceIds: string[])')
     expect(page).toContain('const recoveryHasActiveBackup = computed')
     expect(page).toContain(':disabled="!selectedRecoveryPlans.length || recoveryHasActiveBackup"')
@@ -57,6 +62,17 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(page).toContain("t('protection.backupsPage.msgBackupActiveBlocksActions')")
     expect(protectionLocale).toContain("msgBackupActiveBlocksActions:")
     expect(protectionLocale).toContain('A backup is starting or running for a selected source.')
+  })
+
+  it('keeps stop and display-name actions available during an active backup', () => {
+    const displayNameGate = sourceBetween(
+      'const step3DisplayNameEditEnabled',
+      'function openDisplayNameEditor',
+    )
+    const stopGate = sourceBetween('const step3CanStopBackup', 'const step3CanStopRestore')
+
+    expect(displayNameGate).not.toContain('step3SelectionHasActiveBackup')
+    expect(stopGate).toContain('sourceBackupRuntime(row.id).running')
   })
 
   it('keeps accepted backups fenced until refreshed runtime is available', () => {
@@ -137,7 +153,9 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(editHandler).toContain('const step = editStepForSection(section)')
     expect(editHandler).toContain('if (createStep.value !== step) createStep.value = step')
     expect(editHandler).toContain('if (!validateCreateStep(step)) return')
-    expect(editHandler).toContain('apiErrorMessage(err, editorFailureText.value)')
+    expect(editHandler).toContain('apiErrorMessageI18n(err, t, editorFailureText.value)')
+    expect(editHandler).toContain("normalizeThrownError(err).errorCode === 'BACKUP.ALREADY_RUNNING'")
+    expect(editHandler).toContain("emit('conflict', { sourceIds: editedSourceIds })")
     expect(protectionLocale).toContain("editFailed: 'Failed to save backup configuration'")
     expect(protectionLocale).toContain("msgEditConfigUnavailable: 'No editable backup configuration is available. Refresh the page and try again.'")
   })

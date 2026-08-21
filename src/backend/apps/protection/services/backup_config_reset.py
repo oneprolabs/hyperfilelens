@@ -320,6 +320,7 @@ def _reset_block_message(
     return ""
 
 
+@transaction.atomic
 def create_reset_tasks_for_sources(
     *,
     organization_id: int,
@@ -328,6 +329,20 @@ def create_reset_tasks_for_sources(
 ) -> dict[str, Any]:
     if confirmation != "RESET":
         raise ValidationError({"confirmation": "Type RESET exactly to confirm reset."})
+    parsed_sources = [
+        parsed
+        for source_id in source_ids
+        if (parsed := _source_from_id(source_id)) is not None
+    ]
+    if parsed_sources:
+        from apps.source.services.internal.source_operation_fence import (
+            assert_no_active_backup_for_sources,
+        )
+
+        assert_no_active_backup_for_sources(
+            organization_id=organization_id,
+            sources=parsed_sources,
+        )
     results: list[dict[str, Any]] = []
     for source_id in source_ids:
         parsed = _source_from_id(source_id)

@@ -116,7 +116,7 @@ export const en = {
         'Shared instance {meter} capacity is full. Contact your platform administrator to raise the deployment grant or free capacity from other organizations.',
       subscriptionQuotaExceededGateway:
         'This Public Data Gateway is at capacity. Contact your platform administrator to raise the workspace limit on this gateway.',
-      backupAlreadyRunning: 'A backup is already running for this source.',
+      backupAlreadyRunning: 'A backup is starting or running for this source. Stop it or wait for it to finish before continuing.',
       restoreAlreadyRunning: 'A restore task is already running for this source.',
     },
   },

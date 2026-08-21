@@ -7,6 +7,7 @@ from rest_framework.test import APITestCase
 from apps.iam.services.registration_service import provision_registered_user_tenant
 from apps.node.models import Node, NodeTask, NodeToken
 from apps.node.models.base import NodeRole
+from apps.task.models import Task, TaskResource
 
 User = get_user_model()
 
@@ -57,6 +58,33 @@ class NodeApiOrgScopingTests(APITestCase):
             HTTP_X_ORG_KEY=self.org_a.key,
         )
         self.assertEqual(detail.status_code, status.HTTP_200_OK)
+
+    def test_node_display_name_can_change_while_backup_is_active(self):
+        backup_task = Task.objects.create(
+            organization_id=self.org_a.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Active backup",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=backup_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.node_a.id,
+            is_primary=True,
+        )
+        self.client.force_authenticate(user=self.user_a)
+
+        response = self.client.patch(
+            reverse("node-detail", kwargs={"pk": self.node_a.id}),
+            {"name": "agent-a-renamed"},
+            format="json",
+            HTTP_X_ORG_KEY=self.org_a.key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.node_a.refresh_from_db()
+        self.assertEqual(self.node_a.name, "agent-a-renamed")
 
     def test_node_list_is_scoped_to_x_org_key(self):
         self.client.force_authenticate(user=self.user_a)

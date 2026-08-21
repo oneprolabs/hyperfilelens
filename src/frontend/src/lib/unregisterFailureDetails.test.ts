@@ -48,6 +48,36 @@ describe('unregisterFailureToErrorDetails', () => {
     ]))
   })
 
+  it('localizes a structured active-backup conflict', () => {
+    const details = unregisterFailureToErrorDetails({
+      t,
+      sourceId: 'agent:1',
+      sourceName: 'linux-32',
+      apiError: {
+        status: 409,
+        message: 'Backup already running',
+        errorCode: 'BACKUP.ALREADY_RUNNING',
+        meta: {
+          task_uuid: 'backup-task-uuid',
+          source_type: 'agent',
+          source_ref_id: 1,
+        },
+      },
+    })
+
+    expect(details.errorCode).toBe('BACKUP.ALREADY_RUNNING')
+    expect(details.summary).toBe(
+      'A backup is starting or running for this source. Stop it or wait for it to finish before continuing.',
+    )
+    expect(details.reasons).toEqual([details.summary])
+    expect(details.summary).not.toContain('backup-task-uuid')
+    expect(details.rawDetail).toMatchObject({
+      task_uuid: 'backup-task-uuid',
+      blocking_source_type: 'agent',
+      blocking_source_ref_id: 1,
+    })
+  })
+
   it('maps async task cleanup residue and retained resources', () => {
     const details = unregisterFailureToErrorDetails({
       t,

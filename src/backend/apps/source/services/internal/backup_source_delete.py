@@ -2939,6 +2939,37 @@ def queue_delete_backup_sources(
         )
         if existing_group_uuid is not None:
             operation_group_uuid = existing_group_uuid
+        sources_to_guard: list[tuple[str, int]] = []
+        for selectable_id in normalized:
+            task_idempotency_key = idempotency_keys.get(selectable_id)
+            if (
+                task_idempotency_key
+                and idempotent_tasks.get(task_idempotency_key) is not None
+            ):
+                continue
+            ctx = _resolve_context(
+                organization_id=org.id,
+                selectable_id=selectable_id,
+            )
+            if ctx is None:
+                continue
+            existing = _active_unregister_task_for_source(
+                organization_id=org.id,
+                source_type=ctx.source_type,
+                source_ref_id=ctx.source_ref_id,
+            )
+            if existing is not None and not _is_legacy_deferred_unregister(existing):
+                continue
+            sources_to_guard.append((ctx.source_type, ctx.source_ref_id))
+        if sources_to_guard:
+            from apps.source.services.internal.source_operation_fence import (
+                assert_no_active_backup_for_sources,
+            )
+
+            assert_no_active_backup_for_sources(
+                organization_id=org.id,
+                sources=sources_to_guard,
+            )
         for selectable_id in normalized:
             task_idempotency_key = idempotency_keys.get(selectable_id)
             if task_idempotency_key:

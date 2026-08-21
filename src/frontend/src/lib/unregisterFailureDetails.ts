@@ -1,8 +1,10 @@
 import type { ComposerTranslation } from 'vue-i18n'
 
+import { apiErrorMessageI18n } from './api'
 import { unregisterReasonLabel } from './backupSourceUnregisterDialog'
 import type { ErrorDetailsPayload } from './errors/details'
 import { openErrorDetails } from './errors/details'
+import { toApiError } from './errors/normalizer'
 import { notifyError, notifyWarning } from './notify'
 import {
   parseBackupSourceDeleteError,
@@ -118,32 +120,44 @@ export function unregisterFailureToErrorDetails(input: {
 
   if (input.apiError != null) {
     const parsed = parseBackupSourceDeleteError(input.apiError)
+    const apiError = toApiError(input.apiError)
+    const meta = apiError.meta || {}
+    const structuredErrorCode = apiError.status > 0 ? apiError.errorCode : undefined
+    const displayMessage = structuredErrorCode
+      ? apiErrorMessageI18n(input.apiError, t, fallback)
+      : (parsed.message || fallback)
     const scopedReasons = reasonsForUnregisterSource(parsed.reasons, input.sourceId)
     const reasons = uniqueStrings([
       ...scopedReasons.map((reason) => unregisterReasonLabel(reason, t)),
       // Prefer scoped reason text; keep API message only when it adds signal.
-      scopedReasons.length ? '' : parsed.message,
+      scopedReasons.length ? '' : displayMessage,
     ])
     const resolutions = uniqueStrings([
       parsed.hint,
       t('protection.backupsPage.unregisterFailureRetryHint'),
     ])
-    const summary = source
+    let summary = source
       ? t('protection.backupsPage.unregisterFailureSummaryNamed', { name: source })
-      : (reasons[0] || parsed.message || fallback)
+      : (reasons[0] || displayMessage || fallback)
+    if (structuredErrorCode === 'BACKUP.ALREADY_RUNNING') summary = displayMessage
     return {
       title: t('protection.backupsPage.unregisterFailureTitle'),
       summary,
       issue: summary,
-      errorCode: undefined,
-      reasons: reasons.length ? reasons : [parsed.message || fallback],
+      errorCode: structuredErrorCode,
+      reasons: reasons.length ? reasons : [displayMessage || fallback],
       resolutions,
       rawDetail: {
         source_id: input.sourceId,
         source_name: input.sourceName,
+        task_uuid: String(meta.task_uuid || '').trim() || undefined,
+        task_type: String(meta.task_type || '').trim() || undefined,
+        task_status: String(meta.status || '').trim() || undefined,
+        blocking_source_type: String(meta.source_type || '').trim() || undefined,
+        blocking_source_ref_id: Number(meta.source_ref_id || 0) || undefined,
         hint: parsed.hint,
         reasons: scopedReasons,
-        message: parsed.message,
+        message: displayMessage,
       },
     }
   }
