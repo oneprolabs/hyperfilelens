@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../styles/fullscreen-form-styles'
 /**
  * --------------------------------------------------------------------------
  */
@@ -427,8 +428,6 @@ watch(repositoryId, (id) => {
   </div>
 </template>
 
-<style src="../../styles/fullscreen-form-shell.css"></style>
-<style src="../../styles/resource-add.css"></style>
 <style scoped>
 .edit-proxy-fs-locked-badge {
   display: inline-flex;

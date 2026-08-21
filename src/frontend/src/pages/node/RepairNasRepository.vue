@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../styles/fullscreen-form-styles'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -1876,6 +1877,3 @@ onMounted(async () => {
 
 }
 </style>
-
-<style src="../../styles/fullscreen-form-shell.css"></style>
-<style src="../../styles/resource-add.css"></style>

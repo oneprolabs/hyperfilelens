@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../../styles/fullscreen-form-styles'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -154,7 +155,5 @@ onUnmounted(() => {
   />
 </template>
 
-<style src="../../../styles/fullscreen-form-shell.css"></style>
-<style src="../../../styles/resource-add.css"></style>
 <style src="../../../styles/source-deploy-ui.css"></style>
 <style src="../../../styles/agent-install-wizard.css"></style>

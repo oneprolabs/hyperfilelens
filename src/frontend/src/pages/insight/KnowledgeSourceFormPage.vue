@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../styles/fullscreen-form-styles'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensKnowledgePath } from '../../lib/lensEngineRoutes'
@@ -845,8 +846,6 @@ onMounted(() => {
   </div>
 </template>
 
-<style src="../../styles/fullscreen-form-shell.css"></style>
-<style src="../../styles/resource-add.css"></style>
 <style scoped>
 .ks-form-fullscreen .fullscreen-form-page {
   display: flex;

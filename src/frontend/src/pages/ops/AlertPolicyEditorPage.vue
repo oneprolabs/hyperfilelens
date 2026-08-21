@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../styles/fullscreen-form-styles'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -1515,6 +1516,4 @@ onMounted(async () => {
   </div>
 </template>
 
-<style src="../../styles/fullscreen-form-shell.css"></style>
-<style src="../../styles/resource-add.css"></style>
 <style src="../../styles/alert-policy-editor.css"></style>
