@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -291,7 +292,7 @@ func (e *Engine) applyUserInstallationScope(kind string, payload Payload) (Paylo
 		repositoryType == "proxy_fs" ||
 		strings.HasPrefix(kind, "lens.") ||
 		strings.HasPrefix(kind, "repository.server.") {
-		return payload, fmt.Errorf("user-level Agent supports only local Home protection")
+		return payload, fmt.Errorf("user-level Agent supports only local file protection")
 	}
 	if strings.TrimSpace(payload.ConfigFile) != "" || repositoryConfigFile != "" {
 		return payload, fmt.Errorf("user-level Agent requires Agent-managed repository configuration")
@@ -307,11 +308,22 @@ func (e *Engine) applyUserInstallationScope(kind string, payload Payload) (Paylo
 	path := payload.Path
 	switch kind {
 	case "browse":
-		payload.ListMounts = false
+		// Windows user mode exposes only fixed drives readable by the Agent
+		// identity. Unix user mode intentionally remains rooted at Home.
+		if runtime.GOOS == "windows" {
+			payload.WindowsUserScope = true
+			if payload.ListMounts || path == "" {
+				payload.Path = ""
+				payload.ListMounts = true
+				return payload, nil
+			}
+		} else {
+			payload.ListMounts = false
+		}
 	case "backup", "backup.snapshot.create", "repository.policy.apply",
 		"path.usage", "path.info", "path.size", "path.estimate", "source.path.size":
 		if path == "" {
-			return payload, fmt.Errorf("a path under the current user Home directory is required")
+			return payload, fmt.Errorf("a path available to the current user is required")
 		}
 		if (kind == "backup" || kind == "backup.snapshot.create" ||
 			kind == "repository.policy.apply") && !managedRepository {
@@ -322,7 +334,7 @@ func (e *Engine) applyUserInstallationScope(kind string, payload Payload) (Paylo
 			path = target
 		}
 		if path == "" {
-			return payload, fmt.Errorf("a restore path under the current user Home directory is required")
+			return payload, fmt.Errorf("a restore path available to the current user is required")
 		}
 		if !managedRepository {
 			return payload, fmt.Errorf("user-level Agent requires an Agent-managed repository")
@@ -417,17 +429,20 @@ func (e *Engine) runBrowse(
 	if p.ListMounts || p.Path == "" {
 		root = ""
 		listing, err = svc.ListMountPoints(ctx, explorer.ListOptions{
-			IncludeMetadata: p.IncludeMetadata,
-			Limit:           p.Limit,
-			Cursor:          p.Cursor,
+			IncludeMetadata:  p.IncludeMetadata,
+			Limit:            p.Limit,
+			Cursor:           p.Cursor,
+			LocalFixedOnly:   p.WindowsUserScope,
+			FilterUnreadable: p.WindowsUserScope,
 		})
 	} else {
 		root = explorer.NormalizeMountPath(p.Path)
 		listing, err = svc.ListLocalWithOptions(ctx, root, explorer.ListOptions{
-			DirsOnly:        p.DirsOnly,
-			IncludeMetadata: p.IncludeMetadata,
-			Limit:           p.Limit,
-			Cursor:          p.Cursor,
+			DirsOnly:         p.DirsOnly,
+			IncludeMetadata:  p.IncludeMetadata,
+			Limit:            p.Limit,
+			Cursor:           p.Cursor,
+			FilterUnreadable: p.WindowsUserScope,
 		})
 	}
 	if err != nil {

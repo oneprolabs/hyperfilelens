@@ -1821,7 +1821,7 @@ class SourceResourceApiTests(TestCase):
         "apps.source.services.internal.backup_source_directory._try_cached_mount_listing"
     )
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
-    def test_current_user_agent_directory_root_uses_home_not_mounts(
+    def test_current_user_windows_agent_directory_root_uses_accessible_mounts(
         self, mock_run_task, mock_cached_mounts
     ):
         agent = Node.objects.create(
@@ -1833,17 +1833,83 @@ class SourceResourceApiTests(TestCase):
             availability=Node.Availability.ONLINE,
             os_name="windows",
         )
-        home_path = r"C:\Users\alice"
         mock_run_task.return_value = SimpleNamespace(
             timed_out=False,
             ok=True,
             task_id="task-current-user-root",
             result={
+                "entries": [
+                    {
+                        "name": "C:\\",
+                        "path": "C:\\",
+                        "is_dir": True,
+                    },
+                    {
+                        "name": "D:\\",
+                        "path": "D:\\",
+                        "is_dir": True,
+                    },
+                ],
+            },
+            task=SimpleNamespace(last_error=""),
+        )
+
+        resp = self.client.get(
+            f"/api/v1/source/backup-selectable/directories/?source_id=agent:{agent.id}",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["path"], "")
+        self.assertEqual(resp.data["root_path"], "")
+        self.assertEqual(resp.data["root"]["label"], "C:\\")
+        self.assertEqual(resp.data["root"]["path"], "C:\\")
+        self.assertEqual(
+            [entry["path"] for entry in resp.data["entries"]], ["C:\\", "D:\\"]
+        )
+        self.assertEqual(resp.data["count"], 2)
+        self.assertFalse(resp.data["has_more"])
+        self.assertEqual(resp.data["next_cursor"], "")
+        mock_cached_mounts.assert_not_called()
+        _, kwargs = mock_run_task.call_args
+        self.assertEqual(
+            kwargs["payload"],
+            {
+                "path": "",
+                "list_mounts": True,
+                "dirs_only": True,
+                "include_metadata": False,
+                "limit": 200,
+            },
+        )
+
+    @patch(
+        "apps.source.services.internal.backup_source_directory._try_cached_mount_listing"
+    )
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_current_user_linux_agent_directory_root_remains_home_scoped(
+        self, mock_run_task, mock_cached_mounts
+    ):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="current-user-linux-root",
+            role=Node.Role.AGENT,
+            installation_mode=Node.InstallationMode.USER,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            os_name="linux",
+        )
+        home_path = "/home/alice"
+        mock_run_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=True,
+            task_id="task-current-user-linux-root",
+            result={
                 "path": home_path,
                 "entries": [
                     {
                         "name": "Documents",
-                        "path": rf"{home_path}\Documents",
+                        "path": f"{home_path}/Documents",
                         "is_dir": True,
                     }
                 ],
@@ -1862,9 +1928,6 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(resp.data["root"]["label"], "Home")
         self.assertEqual(resp.data["root"]["path"], home_path)
         self.assertEqual(resp.data["entries"], [])
-        self.assertEqual(resp.data["count"], 0)
-        self.assertFalse(resp.data["has_more"])
-        self.assertEqual(resp.data["next_cursor"], "")
         mock_cached_mounts.assert_not_called()
         _, kwargs = mock_run_task.call_args
         self.assertEqual(

@@ -25,10 +25,12 @@ type Entry struct {
 
 // ListOptions controls how much data a local listing should collect.
 type ListOptions struct {
-	DirsOnly        bool
-	IncludeMetadata bool
-	Limit           int
-	Cursor          string
+	DirsOnly         bool
+	IncludeMetadata  bool
+	Limit            int
+	Cursor           string
+	LocalFixedOnly   bool
+	FilterUnreadable bool
 }
 
 // ListResult is the bounded local listing response.
@@ -76,6 +78,10 @@ func (s *Service) ListMountPoints(ctx context.Context, opts ListOptions) (ListRe
 	appendEntry := func(mountpoint, device string) bool {
 		mountpoint = normalizeMountPath(mountpoint)
 		if mountpoint == "" || mountpoint == "." {
+			return false
+		}
+		if !mountPointAllowed(mountpoint, opts.LocalFixedOnly) ||
+			(opts.FilterUnreadable && !pathReadable(mountpoint)) {
 			return false
 		}
 		key := mountKey(mountpoint)
@@ -220,13 +226,17 @@ func (s *Service) ListLocalWithOptions(ctx context.Context, path string, opts Li
 			if opts.DirsOnly && !isDir {
 				continue
 			}
+			entryPath := filepath.Join(root, item.Name())
+			if opts.FilterUnreadable && !pathReadable(entryPath) {
+				continue
+			}
 			if matched < offset {
 				matched++
 				continue
 			}
 			e := Entry{
 				Name:  item.Name(),
-				Path:  filepath.Join(root, item.Name()),
+				Path:  entryPath,
 				IsDir: isDir,
 			}
 			if opts.IncludeMetadata {
@@ -251,6 +261,14 @@ func (s *Service) ListLocalWithOptions(ctx context.Context, path string, opts Li
 		}
 	}
 	return ListResult{Entries: out, HasMore: hasMore}, nil
+}
+
+func pathReadable(path string) bool {
+	handle, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	return handle.Close() == nil
 }
 
 // ListRepository is reserved for Kopia-backed listing (use task payload args today).

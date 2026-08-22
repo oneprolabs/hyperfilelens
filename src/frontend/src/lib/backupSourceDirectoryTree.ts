@@ -51,7 +51,11 @@ export function shouldUseSingleDirectoryRoot(
 ) {
   if (parentPath || !source) return false
   if (source.type === 'nas') return true
-  if (source.type === 'host' && source.installation_mode === 'user') return true
+  if (
+    source.type === 'host'
+    && source.installation_mode === 'user'
+    && source.platform !== 'windows'
+  ) return true
   return source.type === 'host' && (source.platform === 'linux' || source.platform === 'macos')
 }
 

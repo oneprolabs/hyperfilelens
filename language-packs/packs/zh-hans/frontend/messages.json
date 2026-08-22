@@ -3825,7 +3825,7 @@
     "installationModeSystem": "系统服务",
     "installationModeUser": "当前用户",
     "installationModeSystemHint": "需要管理员授权安装。用户注销后仍持续运行，可保护系统服务账号有权访问的文件，并持续采集监控数据。",
-    "installationModeUserHint": "无需管理员权限。仅保护当前用户 Home 目录，用户注销后暂停，并在该用户登录期间采集监控数据。",
+    "installationModeUserHint": "无需管理员权限。可保护当前用户有权访问的文件（Linux/macOS 为 Home 目录，Windows 为可访问的本地磁盘），用户注销后暂停，并在登录期间采集监控数据。",
     "osMetaLinux": "主流发行版 · x86_64 或 ARM64",
     "osMetaWindows": "Win 10/11 · Server 2016+ · 仅 64 位",
     "osMetaMacos": "Intel 或 Apple Silicon",
