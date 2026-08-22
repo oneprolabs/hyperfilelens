@@ -71,6 +71,9 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 	} else if err := userSessionLifecycleConstraint(ctx, cfg.InstallationMode); err != nil {
 		report.RoleOK = false
 		report.RoleError = err.Error()
+	} else if err := accountConstraint(cfg); err != nil {
+		report.RoleOK = false
+		report.RoleError = err.Error()
 	} else {
 		report.RoleOK = true
 	}
@@ -78,6 +81,8 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 	if report.PrivilegesOK {
 		if cfg.InstallationMode == model.InstallationModeUser {
 			logOKDetail("Running as the current user", currentUserPrivilegeDetail())
+		} else if cfg.InstallationMode == model.InstallationModeAccount {
+			logOKDetail("Running with administrator privileges", "the Agent will run as "+cfg.RunAsUser)
 		} else {
 			logOKDetail("Running with administrator privileges", adminPrivilegeDetail())
 		}
@@ -332,6 +337,12 @@ func lifecycleManagerConstraint(
 	manager string,
 	mode model.InstallationMode,
 ) error {
+	if mode == model.InstallationModeAccount && runtime.GOOS == "windows" {
+		if manager != "windows-task" {
+			return fmt.Errorf("Windows Task Scheduler is required for specified-user continuous protection")
+		}
+		return nil
+	}
 	if mode == model.InstallationModeUser {
 		switch runtime.GOOS {
 		case "linux":
@@ -374,6 +385,12 @@ func detectLifecycleManager(
 	ctx context.Context,
 	mode model.InstallationMode,
 ) string {
+	if mode == model.InstallationModeAccount && runtime.GOOS == "windows" {
+		if _, err := exec.LookPath("schtasks.exe"); err == nil {
+			return "windows-task"
+		}
+		return "none"
+	}
 	if mode != model.InstallationModeUser {
 		return detectServiceManager(ctx)
 	}
@@ -450,6 +467,24 @@ func userSessionLifecycleConstraint(
 		return fmt.Errorf(
 			"current-user protection must pause after sign-out, but systemd user lingering is enabled; disable lingering or choose Host files continuous protection",
 		)
+	}
+	return nil
+}
+
+func accountConstraint(cfg Config) error {
+	if cfg.InstallationMode != model.InstallationModeAccount {
+		return nil
+	}
+	if strings.TrimSpace(cfg.RunAsUser) == "" {
+		// The native installer prompts for the target account after the
+		// elevated installation boundary is established.
+		return nil
+	}
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	if _, err := exec.Command("id", "-u", cfg.RunAsUser).Output(); err != nil {
+		return fmt.Errorf("the specified account %q does not exist", cfg.RunAsUser)
 	}
 	return nil
 }

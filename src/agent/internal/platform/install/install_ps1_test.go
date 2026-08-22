@@ -66,8 +66,8 @@ func TestInstallPs1UsesFixedUserDataDirectory(t *testing.T) {
 
 func TestInstallPs1RestrictsUserModeToSourceAgent(t *testing.T) {
 	source := readPackagingInstallScript(t)
-	if !strings.Contains(source, `$InstallationMode -eq "user" -and $Role -ne "agent"`) {
-		t.Fatal("install.ps1 must reject user-level Proxy and Data Gateway installs")
+	if !strings.Contains(source, `$InstallationMode -ne "system" -and $Role -ne "agent"`) {
+		t.Fatal("install.ps1 must reject user-scoped Proxy and Data Gateway installs")
 	}
 }
 
@@ -89,6 +89,26 @@ func TestInstallPs1UsesFullWindowsIdentityForCurrentUserTask(t *testing.T) {
 	}
 	if strings.Contains(source, `New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME`) {
 		t.Fatal("current-user task must not use an ambiguous short account name")
+	}
+}
+
+func TestInstallPs1SupportsSpecifiedUserContinuousTask(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	for _, want := range []string{
+		`$InstallationMode -eq "account"`,
+		`New-ScheduledTaskTrigger -AtStartup`,
+		`-LogonType S4U`,
+		`-UserId $RunAsUser`,
+		`HFL_RUN_AS_USER=$RunAsUser`,
+		`HFL_RUN_AS_HOME=$RunAsHome`,
+		`$existingEnv = Join-Path $env:ProgramData "HyperFileLens\Agent\agent.env"`,
+		`Grant-HflDirectoryAccess -Path $dataRoot -Account $RunAsUser`,
+		`Grant-HflDirectoryAccess -Path $logDir -Account $RunAsUser`,
+		`$nextCommand = if ($InstallationMode -ne "system")`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("install.ps1 missing specified-user continuous task contract %q", want)
+		}
 	}
 }
 

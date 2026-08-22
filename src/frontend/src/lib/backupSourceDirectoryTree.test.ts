@@ -5,8 +5,22 @@ import {
   isLikelySmbFilenameEncodingIssue,
   isLikelySmbFilenamePathNotFound,
   selectBackupSourceDirectoryTreeEntries,
+  shouldUseSingleDirectoryRoot,
   shouldAutoExpandRefreshedDirectory,
 } from './backupSourceDirectoryTree'
+
+describe('backup source directory roots', () => {
+  it('keeps specified-user continuous Linux and macOS agents at the system root', () => {
+    for (const platform of ['linux', 'macos'] as const) {
+      expect(
+        shouldUseSingleDirectoryRoot(
+          { type: 'host', platform, installation_mode: 'account' },
+          '',
+        ),
+      ).toBe(false)
+    }
+  })
+})
 
 describe('SMB filename encoding issue detection', () => {
   const smbWithoutCharset = { type: 'nas' as const, protocol: 'smb' as const, mount_options: 'rw' }

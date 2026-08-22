@@ -247,11 +247,19 @@ const osPickerOptions = computed(() => [
   { value: 'macos' as EnrollmentOs, label: t('nodesDeploy.osMacos'), meta: t('nodeLifecycle.osMetaMacos') },
 ])
 
-// Keep the API's system/user values internal. The install page describes the
-// protection result, so users do not have to choose an operating-system service.
-// A scoped continuous mode needs a separate installer/API contract before it
-// can be offered here; do not map that future option to the host-service mode.
+// Keep service-manager details internal. The three choices describe the
+// protection result and lifecycle boundary; the installer selects the native
+// service mechanism for the chosen operating system.
 const installationModeOptions = computed(() => [
+  {
+    value: 'account' as NodeInstallationMode,
+    title: t('nodeLifecycle.installationModeAccount'),
+    description: t('nodeLifecycle.installationModeAccountDescription'),
+    scope: t('nodeLifecycle.installationModeAccountScope'),
+    runtime: t('nodeLifecycle.installationModeAccountRuntime'),
+    permission: t('nodeLifecycle.installationModeAccountPermission'),
+    recommendation: t(`nodeLifecycle.installationModeAccountRecommendation.${props.os}`),
+  },
   {
     value: 'user' as NodeInstallationMode,
     title: t('nodeLifecycle.installationModeUser'),
@@ -901,7 +909,9 @@ defineExpose({ clearInstallCommand })
             >
               {{ selectedInstallationMode === 'user'
                 ? t('nodeLifecycle.installationModeUserHint')
-                : t('nodeLifecycle.installationModeSystemHint') }}
+                : selectedInstallationMode === 'account'
+                  ? t('nodeLifecycle.installationModeAccountHint')
+                  : t('nodeLifecycle.installationModeSystemHint') }}
             </p>
           </div>
         </section>

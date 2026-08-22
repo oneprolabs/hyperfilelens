@@ -14,7 +14,10 @@ func UserHome() (string, error) {
 }
 
 func userHomePaths() (declared, canonical string, err error) {
-	home, err := os.UserHomeDir()
+	home := strings.TrimSpace(os.Getenv("HFL_RUN_AS_HOME"))
+	if home == "" {
+		home, err = os.UserHomeDir()
+	}
 	if err != nil || strings.TrimSpace(home) == "" {
 		return "", "", fmt.Errorf("current user Home directory is unavailable")
 	}
@@ -30,9 +33,11 @@ func userHomePaths() (declared, canonical string, err error) {
 	return home, filepath.Clean(resolved), nil
 }
 
-// ResolveUserScopedPath applies the platform boundary for a user-level Agent.
-// Unix paths remain under Home. Windows paths may use readable local fixed drives.
-// Missing final components are permitted for restore destinations when requested.
+// ResolveUserScopedPath applies the platform boundary for a user-scoped Agent.
+// Current-user mode remains under Home. Specified-user continuous mode uses the
+// selected account's process permissions. Windows paths may use readable local
+// fixed drives. Missing final components are permitted for restore destinations
+// when requested.
 func ResolveUserScopedPath(path string, allowMissing bool) (string, error) {
 	return resolveUserScopedPath(path, allowMissing)
 }
@@ -71,6 +76,48 @@ func resolveHomeScopedPath(path string, allowMissing bool) (string, error) {
 			home,
 		)
 	}
+	return resolved, nil
+}
+
+// resolveAccountScopedPath relies on the service's selected account token for
+// Unix access checks. An account may legitimately own service data outside its
+// profile directory, so account mode does not impose a Home-only boundary.
+func resolveAccountScopedPath(path string, allowMissing bool) (string, error) {
+	declaredHome, _, err := userHomePaths()
+	if err != nil {
+		return "", err
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return declaredHome, nil
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(declaredHome, path)
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	absPath = filepath.Clean(absPath)
+	resolved := absPath
+	if allowMissing {
+		resolved, err = resolvePathWithMissingTail(absPath)
+	} else {
+		resolved, err = filepath.EvalSymlinks(absPath)
+	}
+	if err != nil {
+		return "", err
+	}
+	resolved = filepath.Clean(resolved)
+	probe := resolved
+	if allowMissing {
+		probe = filepath.Dir(resolved)
+	}
+	handle, err := os.Open(probe)
+	if err != nil {
+		return "", fmt.Errorf("%w: specified account cannot read %s", os.ErrPermission, resolved)
+	}
+	_ = handle.Close()
 	return resolved, nil
 }
 

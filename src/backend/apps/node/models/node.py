@@ -42,7 +42,7 @@ class Node(OrganizationScopedModel):
         choices=InstallationMode.choices,
         default=InstallationMode.SYSTEM,
         db_index=True,
-        help_text="Immutable user-level or system-level installation mode.",
+        help_text="Immutable protection mode selected for one Agent installation.",
     )
     version = models.CharField(max_length=50, blank=True, default="")
     os_name = models.CharField(max_length=80, blank=True, default="")

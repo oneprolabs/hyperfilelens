@@ -122,13 +122,44 @@ func TestInstallShellEnforcesUserModeBoundary(t *testing.T) {
 	body := readPackagingInstallShell(t)
 	for _, want := range []string{
 		`User-level installation must run as the current user without sudo.`,
-		`User-level installation is only available for Source Agent.`,
+		`User-scoped installation is only available for Source Agent.`,
 		`User-level installation uses the fixed data directory ${DEFAULT_DATA}; --data-dir is not supported.`,
 		`HFL_INSTALLATION_MODE=${INSTALLATION_MODE}`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("install.sh missing user-mode boundary %q", want)
 		}
+	}
+}
+
+func TestInstallShellSupportsSpecifiedUserContinuousMode(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	for _, want := range []string{
+		`INSTALLATION_MODE}" == "account"`,
+		`sed -i "/^\[Service\]/a User=${RUN_AS_USER}"`,
+		`<key>UserName</key>`,
+		`HFL_RUN_AS_USER=${RUN_AS_USER}`,
+		`PERSISTED_ENV="/var/lib/hyperfilelens-agent/agent.env"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh missing specified-user continuous contract %q", want)
+		}
+	}
+}
+
+func TestInstallShellKeepsSpecifiedUserOutOfUserManager(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	start := strings.Index(body, "hfl_systemctl() {")
+	if start < 0 {
+		t.Fatal("install.sh missing hfl_systemctl helper")
+	}
+	end := strings.Index(body[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("install.sh hfl_systemctl helper has no end")
+	}
+	helper := body[start : start+end]
+	if strings.Contains(helper, `INSTALLATION_MODE}" == "account"`) {
+		t.Fatal("specified-user continuous mode must not select systemctl --user")
 	}
 }
 

@@ -19,6 +19,9 @@ import (
 )
 
 func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID string, p Payload) (string, map[string]any, string) {
+	if e.current().InstallationMode == model.InstallationModeAccount {
+		return "failed", nil, "specified-user continuous protection requires administrator authorization for upgrade; run the generated local administrator command"
+	}
 	archivePath, targetVersion, workDir, err := e.prepareUpgradeBundle(ctx, rep, taskID, p)
 	if err != nil {
 		return "failed", nil, err.Error()
@@ -78,6 +81,9 @@ func (e *Engine) runAgentUninstall(ctx context.Context, rep ReporterSink, taskID
 	}
 
 	cfg := e.current()
+	if cfg.InstallationMode == model.InstallationModeAccount {
+		return "failed", nil, "specified-user continuous protection requires administrator authorization for uninstall; run the generated local administrator command"
+	}
 	dataDir := strings.TrimSpace(cfg.DataDir)
 	if dataDir == "" {
 		dataDir = vfs.DefaultAgentDataDir()

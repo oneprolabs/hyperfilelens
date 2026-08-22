@@ -9,6 +9,8 @@ set -euo pipefail
 
 BUNDLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLATION_MODE="${HFL_INSTALLATION_MODE:-}"
+RUN_AS_USER="${HFL_RUN_AS_USER:-}"
+RUN_AS_HOME="${HFL_RUN_AS_HOME:-}"
 if [[ -z "${INSTALLATION_MODE}" ]]; then
 	if [[ "${BUNDLE_ROOT}" == "/opt/hyperfilelens-agent" ]]; then
 		INSTALLATION_MODE="system"
@@ -21,8 +23,23 @@ if [[ -z "${INSTALLATION_MODE}" ]]; then
 		esac
 	fi
 fi
-[[ "${INSTALLATION_MODE}" == "system" || "${INSTALLATION_MODE}" == "user" ]] \
-	|| { echo "ERROR: HFL_INSTALLATION_MODE must be system or user" >&2; exit 2; }
+# Commands launched from an installed machine-wide script must retain the
+# persisted account mode. Bootstrap installs pass HFL_INSTALLATION_MODE
+# explicitly, so this only applies to local start/status/upgrade/uninstall.
+if [[ -z "${HFL_INSTALLATION_MODE:-}" && "${BUNDLE_ROOT}" == "/opt/hyperfilelens-agent" ]]; then
+	PERSISTED_ENV="/var/lib/hyperfilelens-agent/agent.env"
+	if [[ -f "${PERSISTED_ENV}" ]]; then
+		while IFS='=' read -r key value; do
+			case "${key}" in
+			HFL_INSTALLATION_MODE) INSTALLATION_MODE="${value}" ;;
+			HFL_RUN_AS_USER) RUN_AS_USER="${value}" ;;
+			HFL_RUN_AS_HOME) RUN_AS_HOME="${value}" ;;
+			esac
+		done <"${PERSISTED_ENV}"
+	fi
+fi
+[[ "${INSTALLATION_MODE}" == "system" || "${INSTALLATION_MODE}" == "user" || "${INSTALLATION_MODE}" == "account" ]] \
+	|| { echo "ERROR: HFL_INSTALLATION_MODE must be system, user, or account" >&2; exit 2; }
 
 # Unix paths use product slug "hyperfilelens-agent" (see internal/platform/vfs/paths.go).
 if [[ "${INSTALLATION_MODE}" == "user" && "$(uname -s)" == "Darwin" ]]; then
@@ -94,7 +111,7 @@ exec 3>&1 4>&2
 
 usage() {
 	local command_prefix="" lifecycle="hyperfilelens-agent.service"
-	if [[ "${INSTALLATION_MODE}" == "system" ]]; then
+	if [[ "${INSTALLATION_MODE}" != "user" ]]; then
 		command_prefix="sudo "
 	fi
 	if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -167,6 +184,7 @@ parse_install_flags() {
 			--node-token) NODE_TOKEN="$2"; shift 2 ;;
 			--node-id) NODE_ID="$2"; shift 2 ;;
 			--data-dir) DATA_DIR="$2"; shift 2 ;;
+			--run-as-user) RUN_AS_USER="$2"; shift 2 ;;
 			--role) NODE_ROLE="$2"; shift 2 ;;
 			--no-start) NO_START=1; shift ;;
 			--quiet-footer) QUIET_FOOTER=1; shift ;;
@@ -361,8 +379,9 @@ install_launchd_plist() {
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
-	<key>WorkingDirectory</key>
-	<string>${plist_install}</string>
+		<key>WorkingDirectory</key>
+		<string>${plist_install}</string>
+		$(if [[ "${INSTALLATION_MODE}" == "account" ]]; then printf '<key>UserName</key>\n\t<string>%s</string>\n' "$(xml_escape "${RUN_AS_USER}")"; fi)
 	<key>StandardOutPath</key>
 	<string>${plist_stdout}</string>
 	<key>StandardErrorPath</key>
@@ -911,6 +930,10 @@ merge_agent_env() {
 	local kopia_path="${INSTALL_DIR}/kopia"
 	local -a keys=(HFL_DATA_DIR HFL_INSTALLATION_MODE HFL_KOPIA_PATH HFL_INSECURE_TLS)
 	local -a vals=("${data_dir}" "${INSTALLATION_MODE}" "${kopia_path}" "1")
+	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
+		keys+=(HFL_RUN_AS_USER HFL_RUN_AS_HOME)
+		vals+=("${RUN_AS_USER}" "${RUN_AS_HOME}")
+	fi
 	local optional
 	for optional in SENTRY_ENABLED SENTRY_BACKEND_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE HFL_SENTRY_LENSNODE_RELEASE; do
 		if [[ -n "${!optional:-}" && "${!optional}" != *$'\n'* && "${!optional}" != *$'\r'* ]]; then
@@ -1233,6 +1256,8 @@ write_agent_env() {
 		echo "HFL_DATA_DIR=${DATA_DIR}"
 		echo "HFL_NODE_ROLE=${NODE_ROLE}"
 		echo "HFL_INSTALLATION_MODE=${INSTALLATION_MODE}"
+		[[ -z "${RUN_AS_USER}" ]] || echo "HFL_RUN_AS_USER=${RUN_AS_USER}"
+		[[ -z "${RUN_AS_HOME}" ]] || echo "HFL_RUN_AS_HOME=${RUN_AS_HOME}"
 		echo "HFL_KOPIA_PATH=${kopia_path}"
 		echo "HFL_INSECURE_TLS=${HFL_INSECURE_TLS:-1}"
 		for name in SENTRY_ENABLED SENTRY_BACKEND_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE HFL_SENTRY_LENSNODE_RELEASE; do
@@ -1301,6 +1326,11 @@ TimeoutStopSec=30
 [Install]
 WantedBy=multi-user.target
 EOF
+	fi
+	if [[ "${INSTALLATION_MODE}" == "account" && "$(uname -s)" == "Linux" ]]; then
+		sed -i '/^User=/d' "${UNIT_DST}"
+		sed -i "/^\[Service\]/a User=${RUN_AS_USER}" "${UNIT_DST}"
+		sed -i 's/^Description=.*/Description=HyperFileLens Agent (Specified User Continuous)/' "${UNIT_DST}"
 	fi
 	if [[ "$(uname -s)" == "Darwin" ]]; then
 		sed -i '' "s#^EnvironmentFile=.*#EnvironmentFile=${env_file}#" "$UNIT_DST"
@@ -1494,8 +1524,26 @@ start_service_only() {
 cmd_install() {
 	parse_install_flags "$@"
 	require_root
-	if [[ "${INSTALLATION_MODE}" == "user" && "${NODE_ROLE}" != "agent" ]]; then
-		log_fail "User-level installation is only available for Source Agent." 2
+	if [[ "${INSTALLATION_MODE}" != "system" && "${NODE_ROLE}" != "agent" ]]; then
+		log_fail "User-scoped installation is only available for Source Agent." 2
+	fi
+	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
+		if [[ -z "${RUN_AS_USER}" ]]; then
+			local default_run_as_user="${SUDO_USER:-}"
+			read -r -p "Enter the existing ordinary account to protect${default_run_as_user:+ [${default_run_as_user}]}: " RUN_AS_USER
+			RUN_AS_USER="${RUN_AS_USER:-${default_run_as_user}}"
+		fi
+		[[ -n "${RUN_AS_USER}" ]] || log_fail "An account is required for specified-user continuous protection." 2
+		id "${RUN_AS_USER}" >/dev/null 2>&1 || log_fail "The specified account '${RUN_AS_USER}' does not exist." 2
+		[[ "$(id -u "${RUN_AS_USER}")" -ne 0 ]] || log_fail "Specified-user continuous protection requires a non-root account." 2
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			RUN_AS_HOME="$(dscl . -read "/Users/${RUN_AS_USER}" NFSHomeDirectory 2>/dev/null | awk '{$1=""; sub(/^ /, ""); print}')"
+		else
+			RUN_AS_HOME="$(getent passwd "${RUN_AS_USER}" 2>/dev/null | cut -d: -f6)"
+		fi
+		[[ -n "${RUN_AS_HOME}" && -d "${RUN_AS_HOME}" ]] || log_fail "The home directory for '${RUN_AS_USER}' could not be resolved." 2
+		export HFL_RUN_AS_USER="${RUN_AS_USER}"
+		export HFL_RUN_AS_HOME="${RUN_AS_HOME}"
 	fi
 	require_service_manager
 	verify_bundle
@@ -1511,6 +1559,11 @@ cmd_install() {
 		[[ "${DATA_DIR}" == "${DEFAULT_DATA}" ]] \
 			|| log_fail "User-level installation uses the fixed data directory ${DEFAULT_DATA}; --data-dir is not supported." 2
 		mkdir -p "${DATA_DIR}"
+		chmod 700 "${DATA_DIR}"
+	fi
+	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
+		mkdir -p "${DATA_DIR}"
+		chown -R "${RUN_AS_USER}:" "${DATA_DIR}" 2>/dev/null || chown -R "${RUN_AS_USER}" "${DATA_DIR}"
 		chmod 700 "${DATA_DIR}"
 	fi
 	begin_install_log "${DATA_DIR}"
@@ -1541,6 +1594,10 @@ cmd_install() {
 	install_nas_deps "${NODE_ROLE}"
 	deploy_binaries
 	write_agent_env "${DATA_DIR}/agent.env"
+	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
+		chown "${RUN_AS_USER}" "${DATA_DIR}/agent.env" "${DATA_DIR}" 2>/dev/null || true
+		chown -R "${RUN_AS_USER}" "${DATA_DIR}/logs" 2>/dev/null || true
+	fi
 
 	if agent_uses_launchd; then
 		if [[ $NO_START -eq 1 ]]; then

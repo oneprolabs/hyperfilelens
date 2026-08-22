@@ -1055,6 +1055,12 @@ def _start_node_remove_locked(
     if node.role not in (NodeRole.AGENT, NodeRole.PROXY, NodeRole.GATEWAY):
         raise NodeLifecycleError("Only enrolled agents support remote removal.", code="role_not_managed")
 
+    if node.installation_mode == Node.InstallationMode.ACCOUNT:
+        raise NodeLifecycleError(
+            "specified-user continuous protection requires a local administrator command for uninstall",
+            code="local_admin_required",
+        )
+
     if node.role == NodeRole.AGENT:
         from apps.source.services.internal.source_operation_fence import (
             assert_source_product_operation_allowed,
@@ -1220,6 +1226,19 @@ def preview_batch_operations(
         item = {"node_id": node.id, "name": node.name}
         if _active_lifecycle_task(org=org, node=node):
             skipped_in_progress.append({**item, "reason": "lifecycle_in_progress"})
+            continue
+
+        if node.installation_mode == Node.InstallationMode.ACCOUNT:
+            skipped_not_upgradeable.append(
+                {
+                    **item,
+                    "reason": "local_admin_required",
+                    "message": (
+                        "specified-user continuous protection requires a local "
+                        "administrator command for uninstall or upgrade"
+                    ),
+                }
+            )
             continue
 
         blockers = (

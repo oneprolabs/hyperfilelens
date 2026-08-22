@@ -53,6 +53,18 @@ func TestUserLifecycleManagerConstraint(t *testing.T) {
 	}
 }
 
+func TestSpecifiedUserContinuousUsesSystemLifecycleManager(t *testing.T) {
+	manager := map[string]string{
+		"linux": "systemd", "darwin": "launchd", "windows": "windows-task",
+	}[runtime.GOOS]
+	if manager == "" {
+		t.Skip("unsupported test platform")
+	}
+	if err := lifecycleManagerConstraint(manager, model.InstallationModeAccount); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUserSessionLifecycleConstraintDoesNotAffectSystemMode(t *testing.T) {
 	if err := userSessionLifecycleConstraint(
 		context.Background(),
@@ -118,5 +130,23 @@ func TestInstallMarkersDetectPartialInstallation(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestPlanInstallRejectsProtectionModeSwitchInPlace(t *testing.T) {
+	state := InstallState{
+		Installed:        true,
+		OrgKey:           "org",
+		Role:             string(model.RoleAgent),
+		InstallationMode: string(model.InstallationModeSystem),
+	}
+	cfg := Config{
+		OrgKey:           "org",
+		NodeRole:         model.RoleAgent,
+		InstallationMode: model.InstallationModeAccount,
+	}
+	plan, err := PlanInstall(context.Background(), cfg, state, InstallModeAuto)
+	if err == nil || plan.Action != "" {
+		t.Fatalf("mode switch plan = %#v, err=%v; want a rejected in-place switch", plan, err)
 	}
 }

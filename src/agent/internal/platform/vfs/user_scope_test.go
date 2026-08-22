@@ -30,6 +30,28 @@ func TestResolveUserScopedPathAllowsHomeAndMissingRestoreTarget(t *testing.T) {
 	}
 }
 
+func TestResolveUserScopedPathAccountAllowsReadablePathOutsideHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix account scope semantics")
+	}
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	serviceData := filepath.Join(root, "service-data")
+	if err := os.Mkdir(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(serviceData, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HFL_INSTALLATION_MODE", "account")
+	t.Setenv("HFL_RUN_AS_HOME", home)
+
+	resolved, err := ResolveUserScopedPath(serviceData, false)
+	if err != nil || resolved != serviceData {
+		t.Fatalf("account path resolved to %q, err=%v", resolved, err)
+	}
+}
+
 func TestResolveUserScopedPathRejectsOutsideAndEscapingSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses Unix symlink semantics")

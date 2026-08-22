@@ -22,6 +22,8 @@ param(
   [string]$NodeToken = "",
   [string]$NodeId = "",
   [string]$DataDir = "",
+  [string]$RunAsUser = "",
+  [string]$RunAsHome = "",
   [string]$Role = "agent",
   [string]$From = "",
   [switch]$NoService,
@@ -47,8 +49,18 @@ elseif ($BundleRoot.TrimEnd('\') -eq $userInstallRoot.TrimEnd('\')) {
 else {
   "system"
 }
-if ($InstallationMode -notin @("system", "user")) {
-  throw "HFL_INSTALLATION_MODE must be system or user."
+if (-not $env:HFL_INSTALLATION_MODE -and $BundleRoot.TrimEnd('\') -ne $userInstallRoot.TrimEnd('\')) {
+  $existingEnv = Join-Path $env:ProgramData "HyperFileLens\Agent\agent.env"
+  if (Test-Path -LiteralPath $existingEnv) {
+    foreach ($line in Get-Content -LiteralPath $existingEnv) {
+      if ($line -match '^HFL_INSTALLATION_MODE=(.+)$') { $InstallationMode = $Matches[1].Trim().ToLowerInvariant() }
+      if ($line -match '^HFL_RUN_AS_USER=(.+)$') { $RunAsUser = $Matches[1].Trim() }
+      if ($line -match '^HFL_RUN_AS_HOME=(.+)$') { $RunAsHome = $Matches[1].Trim() }
+    }
+  }
+}
+if ($InstallationMode -notin @("system", "user", "account")) {
+  throw "HFL_INSTALLATION_MODE must be system, user, or account."
 }
 $ServiceName = "HyperFileLensAgent"
 if ($InstallationMode -eq "user") {
@@ -61,8 +73,14 @@ else {
 }
 $InstalledVersionFile = Join-Path $InstallRoot "INSTALLED_VERSION"
 $TaskName = "HyperFileLensAgent"
-$LifecycleLabel = if ($InstallationMode -eq "user") { "current-user task" } else { "Windows service" }
+$LifecycleLabel = if ($InstallationMode -eq "user") { "current-user task" } elseif ($InstallationMode -eq "account") { "specified-user task" } else { "Windows service" }
 $CurrentWindowsIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+if ([string]::IsNullOrWhiteSpace($RunAsUser) -and $env:HFL_RUN_AS_USER) {
+  $RunAsUser = $env:HFL_RUN_AS_USER.Trim()
+}
+if ([string]::IsNullOrWhiteSpace($RunAsHome) -and $env:HFL_RUN_AS_HOME) {
+  $RunAsHome = $env:HFL_RUN_AS_HOME.Trim()
+}
 
 function Test-HflAdministrator {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -72,14 +90,19 @@ function Test-HflAdministrator {
 
 function Assert-HflInstallationIdentity {
   $elevated = Test-HflAdministrator
-  if ($InstallationMode -eq "user" -and $Role -ne "agent") {
+  if ($InstallationMode -ne "system" -and $Role -ne "agent") {
     throw "User-level installation is only available for Source Agent."
   }
   if ($InstallationMode -eq "user" -and $elevated) {
     throw "User-level installation must run without UAC elevation."
   }
-  if ($InstallationMode -eq "system" -and -not $elevated) {
+  if ($InstallationMode -in @("system", "account") -and -not $elevated) {
     throw "Administrator privileges are required for system-level installation."
+  }
+  if ($InstallationMode -eq "account" -and $Command -eq "install") {
+    $defaultRunAsUser = if ([string]::IsNullOrWhiteSpace($RunAsUser)) { $CurrentWindowsIdentity } else { $RunAsUser }
+    $selectedRunAsUser = Read-Host "Enter the existing Windows account to protect (default: $defaultRunAsUser)"
+    $RunAsUser = if ([string]::IsNullOrWhiteSpace($selectedRunAsUser)) { $defaultRunAsUser } else { $selectedRunAsUser.Trim() }
   }
 }
 
@@ -408,12 +431,13 @@ function Write-HflBundlePreflight {
 }
 
 function Get-HflServiceStatusLine {
-  if ($InstallationMode -eq "user") {
+  if ($InstallationMode -ne "system") {
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if ($null -eq $task) { return "not installed" }
     $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
     if ($null -eq $info) { return $task.State.ToString().ToLowerInvariant() }
-    return "$($task.State.ToString().ToLowerInvariant()) (current-user task)"
+    $label = if ($InstallationMode -eq "account") { "specified-user task ($RunAsUser)" } else { "current-user task" }
+    return "$($task.State.ToString().ToLowerInvariant()) ($label)"
   }
   $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
   if ($null -eq $svc) { return "not installed" }
@@ -622,6 +646,10 @@ function Merge-AgentEnv {
     HFL_KOPIA_PATH        = $kopiaPath
     HFL_INSECURE_TLS      = "1"
   }
+  if ($InstallationMode -eq "account") {
+    $template.HFL_RUN_AS_USER = $RunAsUser
+    $template.HFL_RUN_AS_HOME = $RunAsHome
+  }
   $dir = Split-Path -Parent $EnvFile
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
   if (-not (Test-Path -LiteralPath $EnvFile)) {
@@ -656,12 +684,26 @@ function Ensure-HflLogsDir {
   param([Parameter(Mandatory = $true)][string]$DataRoot)
   $logDir = Join-Path $DataRoot "logs"
   New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-  # HyperFileLensAgent runs as LocalSystem; upgrade scripts may create logs as admin.
+  # System mode runs as LocalSystem; account mode runs as the selected user.
   icacls $logDir /grant "SYSTEM:(OI)(CI)M" /Q 2>$null | Out-Null
   icacls $logDir /grant "*S-1-5-32-544:(OI)(CI)M" /Q 2>$null | Out-Null
+  if ($InstallationMode -eq "account" -and $RunAsUser) {
+    Grant-HflDirectoryAccess -Path $logDir -Account $RunAsUser
+  }
   $agentLog = Join-Path $logDir "agent.log"
   if (-not (Test-Path -LiteralPath $agentLog)) {
     New-Item -ItemType File -Force -Path $agentLog | Out-Null
+  }
+}
+
+function Grant-HflDirectoryAccess {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$Account
+  )
+  & icacls.exe $Path /grant "${Account}:(OI)(CI)M" /Q 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not grant the specified account '$Account' access to '$Path' (icacls exit code $LASTEXITCODE)."
   }
 }
 
@@ -711,7 +753,7 @@ function Test-SafeDataPath([string]$path) {
   if ([string]::IsNullOrWhiteSpace($path)) { return $false }
   $full = try { [System.IO.Path]::GetFullPath($path) } catch { return $false }
   if (Test-HflPathContainsReparsePoint -Path $full) { return $false }
-  if ($InstallationMode -eq "user") {
+  if ($InstallationMode -ne "system") {
     $expected = [System.IO.Path]::GetFullPath($DefaultDataRoot)
     return $full.TrimEnd('\').Equals(
       $expected.TrimEnd('\'),
@@ -760,14 +802,14 @@ function Wait-HflServiceStopped {
 }
 
 function Stop-HflService {
-  if ($InstallationMode -eq "user") {
+  if ($InstallationMode -ne "system") {
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if ($null -eq $task) {
-      Write-HflSkip "stop current-user task $TaskName (not installed)"
+      Write-HflSkip "stop $LifecycleLabel $TaskName (not installed)"
       return
     }
     Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    Write-HflOk "stopped current-user task $TaskName"
+    Write-HflOk "stopped $LifecycleLabel $TaskName"
     return
   }
   $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
@@ -821,14 +863,14 @@ function Stop-AgentForUpgrade {
 }
 
 function Remove-HflService {
-  if ($InstallationMode -eq "user") {
+  if ($InstallationMode -ne "system") {
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
       Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
       Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-      Write-HflOk "removed current-user task $TaskName"
+      Write-HflOk "removed $LifecycleLabel $TaskName"
     }
     else {
-      Write-HflSkip "remove current-user task $TaskName (not installed)"
+      Write-HflSkip "remove $LifecycleLabel $TaskName (not installed)"
     }
     return
   }
@@ -956,6 +998,39 @@ function Install-HflService {
     }
     return
   }
+  if ($InstallationMode -eq "account") {
+    $action = New-ScheduledTaskAction `
+      -Execute $ExePath `
+      -Argument "run -data-dir `"$DataRoot`""
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $principal = New-ScheduledTaskPrincipal `
+      -UserId $RunAsUser `
+      -LogonType S4U `
+      -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet `
+      -StartWhenAvailable `
+      -AllowStartIfOnBatteries `
+      -DontStopIfGoingOnBatteries `
+      -RestartCount 3 `
+      -RestartInterval (New-TimeSpan -Minutes 1) `
+      -ExecutionTimeLimit ([TimeSpan]::Zero)
+    Register-ScheduledTask `
+      -TaskName $TaskName `
+      -Action $action `
+      -Trigger $trigger `
+      -Settings $settings `
+      -Principal $principal `
+      -Force | Out-Null
+    Write-HflOk "installed specified-user task $TaskName ($RunAsUser)"
+    if (-not $NoStart) {
+      Start-ScheduledTask -TaskName $TaskName
+      Write-HflOk "started specified-user task $TaskName ($(Get-HflServiceStatusLine))"
+    }
+    else {
+      Write-HflSkip "start specified-user task $TaskName (-NoStart)"
+    }
+    return
+  }
   $binPath = "`"$ExePath`" run -data-dir `"$DataRoot`""
   New-Service -Name $ServiceName `
     -BinaryPathName $binPath `
@@ -985,7 +1060,7 @@ function Assert-HflInstalled {
 }
 
 function Start-HflServiceOnly {
-  if ($InstallationMode -eq "user") {
+  if ($InstallationMode -ne "system") {
     if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
       Install-HflService `
         -ExePath (Join-Path $InstallRoot "hfl-agent.exe") `
@@ -993,7 +1068,7 @@ function Start-HflServiceOnly {
       return
     }
     Start-ScheduledTask -TaskName $TaskName
-    Write-HflOk "started current-user task $TaskName ($(Get-HflServiceStatusLine))"
+    Write-HflOk "started $LifecycleLabel $TaskName ($(Get-HflServiceStatusLine))"
     return
   }
   $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
@@ -1175,6 +1250,10 @@ function Write-AgentEnv {
     "HFL_INSTALLATION_MODE=$InstallationMode",
     "HFL_INSECURE_TLS=1"
   )
+  if ($InstallationMode -eq "account") {
+    $lines += "HFL_RUN_AS_USER=$RunAsUser"
+    $lines += "HFL_RUN_AS_HOME=$RunAsHome"
+  }
   if ($WssUrl) { $lines = @("HFL_WSS_URL=$WssUrl") + $lines }
   if ($ApiBase) { $lines += "HFL_API_BASE=$ApiBase" }
   if ($OrgKey) { $lines += "HFL_ORG_KEY=$OrgKey" }
@@ -1215,6 +1294,41 @@ function Invoke-Install {
       )) {
       throw "User-level installation uses the fixed data directory $DefaultDataRoot; -DataDir is not supported."
     }
+  }
+  if ($InstallationMode -eq "account") {
+    if ([string]::IsNullOrWhiteSpace($RunAsUser)) {
+      throw "A Windows account is required for specified-user continuous protection."
+    }
+    try {
+      $sid = ([System.Security.Principal.NTAccount]::new($RunAsUser)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    }
+    catch {
+      throw "The specified Windows account '$RunAsUser' could not be resolved."
+    }
+    try {
+      $isAdministrator = @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop) |
+        Where-Object { $_.SID.Value -eq $sid }
+      if ($isAdministrator) {
+        throw "Specified-user continuous protection requires a non-administrator account."
+      }
+    }
+    catch {
+      if ($_.Exception.Message -like 'Specified-user continuous protection*') { throw }
+      throw "The installer could not verify local administrator-group membership for '$RunAsUser'; specified-user continuous protection was not installed."
+    }
+    if ([string]::IsNullOrWhiteSpace($RunAsHome)) {
+      $profileKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
+      $profile = (Get-ItemProperty -LiteralPath $profileKey -ErrorAction SilentlyContinue).ProfileImagePath
+      if ($profile) { $RunAsHome = [Environment]::ExpandEnvironmentVariables($profile) }
+    }
+    if ([string]::IsNullOrWhiteSpace($RunAsHome) -or -not (Test-Path -LiteralPath $RunAsHome)) {
+      throw "The profile directory for '$RunAsUser' could not be resolved."
+    }
+    $dataRoot = if ($DataDir) { $DataDir } else { $DefaultDataRoot }
+    New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+    Grant-HflDirectoryAccess -Path $dataRoot -Account $RunAsUser
+    $env:HFL_RUN_AS_USER = $RunAsUser
+    $env:HFL_RUN_AS_HOME = $RunAsHome
   }
   Start-HflInstallLog -DataRoot $dataRoot
   try {
@@ -1271,7 +1385,7 @@ function Invoke-Install {
     Write-HflSummaryLine "Config" $envFile
     if ($NoStart) {
       Write-HflSummaryLine "Lifecycle" "$ServiceName (not started)"
-      $nextCommand = if ($InstallationMode -eq "user") {
+      $nextCommand = if ($InstallationMode -ne "system") {
         "& `"$(Join-Path $InstallRoot 'install.cmd')`" start"
       }
       else {

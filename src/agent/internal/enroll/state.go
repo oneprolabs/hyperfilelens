@@ -16,12 +16,13 @@ import (
 
 // InstallState describes an existing agent installation on this host.
 type InstallState struct {
-	Installed bool
-	Version   string
-	NodeID    string
-	OrgKey    string
-	Role      string
-	Service   string
+	Installed        bool
+	Version          string
+	NodeID           string
+	OrgKey           string
+	Role             string
+	InstallationMode string
+	Service          string
 }
 
 // DetectInstallState inspects the default install paths for an existing agent.
@@ -42,6 +43,7 @@ func DetectInstallState() InstallState {
 	state.NodeID = ReadNodeID(envPath)
 	state.OrgKey = readEnvKey(envPath, "HFL_ORG_KEY")
 	state.Role = readEnvKey(envPath, "HFL_NODE_ROLE")
+	state.InstallationMode = readEnvKey(envPath, "HFL_INSTALLATION_MODE")
 	state.Service = serviceState(context.Background())
 	return state
 }

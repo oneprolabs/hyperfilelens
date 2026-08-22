@@ -141,6 +141,9 @@ func InstallDirForMode(mode model.InstallationMode) string {
 
 // AgentDataDirForMode returns the state directory for a persisted Agent mode.
 func AgentDataDirForMode(mode model.InstallationMode) string {
+	// The selected-user continuous mode is machine-installed and keeps its
+	// durable state in the machine data root. File access is still bounded by
+	// the selected account at runtime via HFL_RUN_AS_USER/HFL_RUN_AS_HOME.
 	if mode == model.InstallationModeUser {
 		path, err := UserDataDir()
 		if err == nil {
@@ -150,15 +153,19 @@ func AgentDataDirForMode(mode model.InstallationMode) string {
 	return SystemDataDir()
 }
 
-// UserInstallation reports whether the process is configured for user-level lifecycle.
+// UserInstallation reports whether the process is configured for the
+// current-user lifecycle. The account-scoped continuous mode is machine
+// installed and therefore uses the system lifecycle manager.
 func UserInstallation() bool {
-	return os.Getenv(installationModeEnv) == "user"
+	mode, err := model.ParseInstallationMode(strings.TrimSpace(os.Getenv(installationModeEnv)))
+	return err == nil && mode == model.InstallationModeUser
 }
 
 // DefaultInstallDir returns the platform default binary install directory.
 func DefaultInstallDir() string {
 	mode := model.InstallationModeSystem
-	if UserInstallation() {
+	configured, err := model.ParseInstallationMode(strings.TrimSpace(os.Getenv(installationModeEnv)))
+	if err == nil && configured == model.InstallationModeUser {
 		mode = model.InstallationModeUser
 	}
 	return InstallDirForMode(mode)

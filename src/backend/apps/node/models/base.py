@@ -20,6 +20,7 @@ class NodeInstallationMode(models.TextChoices):
 
     SYSTEM = "system", "System Service"
     USER = "user", "Current User"
+    ACCOUNT = "account", "Specified User Continuous"
 
 
 class TimeStampedModel(models.Model):
