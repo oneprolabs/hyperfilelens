@@ -107,6 +107,7 @@ Inputs:
   build/kopia/KOPIA_INFO.json
   build/kopia/dist/<os>/<arch>/kopia[.exe]
   build/agent/<version>/<os>/<arch>/hfl-agent-*
+  build/agent/<version>/windows/<arch>/hfl-agent-user-launcher-*.exe
   build/dependencies/agent/ubuntu-{20.04,22.04,24.04}/<arch>/MANIFEST.json
   src/agent/packaging/
 
@@ -344,6 +345,10 @@ def agent_binary_name(goos: str, goarch: str) -> str:
     return f"hfl-agent-{goos}-{goarch}{suffix}"
 
 
+def user_launcher_binary_name(goos: str, goarch: str) -> str:
+    return f"hfl-agent-user-launcher-{goos}-{goarch}.exe"
+
+
 def package_name(goos: str, goarch: str, flavor: str = "standard") -> str:
     name = f"hfl-agent-{version}-{goos}-{goarch}"
     if flavor in {"ubuntu2004", "ubuntu2204", "ubuntu2404"}:
@@ -422,6 +427,15 @@ def assemble_standard(goos: str, goarch: str, kopia_info: dict) -> None:
         kopia_destination = bin_dir / ("kopia.exe" if goos == "windows" else "kopia")
         shutil.copy2(agent_source, agent_destination)
         executable(agent_destination)
+        if goos == "windows":
+            launcher_source = platform_dir / user_launcher_binary_name(goos, goarch)
+            if not launcher_source.is_file():
+                raise PrerequisiteError(
+                    f"missing current-user launcher: {launcher_source}"
+                )
+            launcher_destination = bin_dir / "hfl-agent-user-launcher.exe"
+            shutil.copy2(launcher_source, launcher_destination)
+            executable(launcher_destination)
         shutil.copy2(kopia_source, kopia_destination)
         executable(kopia_destination)
 
