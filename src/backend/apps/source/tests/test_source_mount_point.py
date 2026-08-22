@@ -95,7 +95,7 @@ class ExplainNasMountPointErrorTests(SimpleTestCase):
             payload_mount_point=agent_paths.source_mount_point(3),
         )
         self.assertIn("/mnt/hf1/nfs/host_export", message)
-        self.assertIn("/var/lib/hyperfilelens-agent/mounts/", message)
+        self.assertIn("/opt/hyperfilelens-agent/mounts/", message)
 
     @mock.patch("apps.source.services.internal.nas_agent.run_agent_task_sync")
     def test_nas_password_is_delivery_only_and_not_persisted_in_task_payload(self, run_sync):

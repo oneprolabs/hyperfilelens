@@ -103,7 +103,7 @@ class SourceConnectionProbeTests(TestCase):
 
         node_task.status = NodeTask.Status.SUCCESS
         node_task.result = {
-            "mount_point": "/var/lib/hyperfilelens-agent/mounts/custom/source",
+            "mount_point": "/opt/hyperfilelens-agent/mounts/custom/source",
             "space_info": {
                 "total_bytes": 1000,
                 "used_bytes": 400,

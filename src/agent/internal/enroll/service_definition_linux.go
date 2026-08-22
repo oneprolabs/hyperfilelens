@@ -81,7 +81,7 @@ TimeoutStopSec=30
 
 [Install]
 WantedBy=default.target
-`, escapeSystemdUnitPath(filepath.Join(dataDir, "agent.env")), escapeSystemdUnitPath(installDir), agent), nil
+`, escapeSystemdUnitPath(filepath.Join(vfs.AgentConfigDir(dataDir), "agent.env")), escapeSystemdUnitPath(installDir), agent), nil
 }
 
 func absoluteSystemdPath(path string) (string, error) {

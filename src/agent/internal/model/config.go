@@ -66,12 +66,17 @@ type AgentConfig struct {
 	NodeToken        string           `json:"node_token"`
 	InstallationID   string           `json:"installation_id"`
 	InstallationMode InstallationMode `json:"installation_mode"`
+	// AgentRoot is the installer-owned unified root containing bin, config, data,
+	// logs, cache, mounts, runtime, lifecycle, and backup siblings.
+	AgentRoot string `json:"agent_root"`
 	// RunAsUser is the selected ordinary account for account-scoped continuous mode.
 	RunAsUser string `json:"run_as_user"`
 	// RunAsHome is the installer-resolved profile root for that account.
 	RunAsHome string `json:"run_as_home"`
-	DataDir   string `json:"data_dir"`
-	// LogDir overrides the default rolling log directory ({DataDir}/logs). Empty uses DataDir/logs.
+	// DataDir retains the historical field and HFL_DATA_DIR name for the
+	// canonical Agent Root.
+	DataDir string `json:"data_dir"`
+	// LogDir overrides the default rolling log directory ({DataDir}/logs). Empty uses AgentRoot/logs.
 	LogDir string `json:"log_dir"`
 	// KopiaPath is the path to the Kopia CLI; empty means rely on PATH.
 	KopiaPath string `json:"kopia_path"`

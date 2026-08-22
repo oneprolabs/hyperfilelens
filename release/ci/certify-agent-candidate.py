@@ -407,7 +407,7 @@ def mock_console(package: pathlib.Path, version: str):
 
 def installed_uninstall_command(platform_name: str) -> list[str]:
     if platform_name == "windows":
-        script = pathlib.Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "HyperFileLens" / "Agent" / "install.ps1"
+        script = pathlib.Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "HyperFileLens" / "Agent" / "bin" / "install.ps1"
         return [
             "powershell.exe",
             "-NoProfile",
@@ -418,7 +418,7 @@ def installed_uninstall_command(platform_name: str) -> list[str]:
             "uninstall",
             "-PurgeAll",
         ]
-    return ["sudo", "/opt/hyperfilelens-agent/install.sh", "uninstall", "--purge-all"]
+    return ["sudo", "/opt/hyperfilelens-agent/bin/install.sh", "uninstall", "--purge-all"]
 
 
 def certify_enrollment(

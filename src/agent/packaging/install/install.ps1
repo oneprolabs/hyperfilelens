@@ -2,8 +2,9 @@
 .SYNOPSIS
   HyperFileLens Agent bundle installer (Windows).
 
-  After install, install.cmd / install.ps1 and MANIFEST.json are copied to the install directory
-  for local uninstall/status. Upgrade still requires a fresh release archive (or remote agent.upgrade).
+  After install, installers are copied to bin/ while MANIFEST.json and
+  INSTALLED_VERSION remain at the Agent Root for local status and rollback.
+  Upgrade still requires a fresh release archive (or remote agent.upgrade).
   Run install.cmd (not install.ps1 directly).
 
 .EXAMPLE
@@ -39,23 +40,31 @@ param(
 
 $ErrorActionPreference = "Stop"
 $BundleRoot = $PSScriptRoot
-$userInstallRoot = Join-Path $env:LOCALAPPDATA "Programs\HyperFileLens\Agent"
+$userAgentRoot = Join-Path $env:LOCALAPPDATA "HyperFileLens\Agent"
+$machineAgentRoot = Join-Path $env:ProgramData "HyperFileLens\Agent"
+$legacyInstallRoot = Join-Path $env:ProgramFiles "HyperFileLens\Agent"
+$legacyDataRoot = Join-Path $env:ProgramData "HyperFileLens\Agent"
 $InstallationMode = if ($env:HFL_INSTALLATION_MODE) {
   $env:HFL_INSTALLATION_MODE.Trim().ToLowerInvariant()
 }
-elseif ($BundleRoot.TrimEnd('\') -eq $userInstallRoot.TrimEnd('\')) {
+elseif ($BundleRoot.TrimEnd('\') -eq (Join-Path $userAgentRoot "bin").TrimEnd('\')) {
   "user"
 }
 else {
   "system"
 }
-if (-not $env:HFL_INSTALLATION_MODE -and $BundleRoot.TrimEnd('\') -ne $userInstallRoot.TrimEnd('\')) {
-  $existingEnv = Join-Path $env:ProgramData "HyperFileLens\Agent\agent.env"
-  if (Test-Path -LiteralPath $existingEnv) {
-    foreach ($line in Get-Content -LiteralPath $existingEnv) {
-      if ($line -match '^HFL_INSTALLATION_MODE=(.+)$') { $InstallationMode = $Matches[1].Trim().ToLowerInvariant() }
-      if ($line -match '^HFL_RUN_AS_USER=(.+)$') { $RunAsUser = $Matches[1].Trim() }
-      if ($line -match '^HFL_RUN_AS_HOME=(.+)$') { $RunAsHome = $Matches[1].Trim() }
+if (-not $env:HFL_INSTALLATION_MODE -and $BundleRoot.TrimEnd('\') -ne (Join-Path $userAgentRoot "bin").TrimEnd('\')) {
+  foreach ($existingEnv in @(
+      (Join-Path $machineAgentRoot "config\agent.env"),
+      (Join-Path $legacyDataRoot "agent.env")
+    )) {
+    if (Test-Path -LiteralPath $existingEnv) {
+      foreach ($line in Get-Content -LiteralPath $existingEnv) {
+        if ($line -match '^HFL_INSTALLATION_MODE=(.+)$') { $InstallationMode = $Matches[1].Trim().ToLowerInvariant() }
+        if ($line -match '^HFL_RUN_AS_USER=(.+)$') { $RunAsUser = $Matches[1].Trim() }
+        if ($line -match '^HFL_RUN_AS_HOME=(.+)$') { $RunAsHome = $Matches[1].Trim() }
+      }
+      break
     }
   }
 }
@@ -64,17 +73,28 @@ if ($InstallationMode -notin @("system", "user", "account")) {
 }
 $ServiceName = "HyperFileLensAgent"
 if ($InstallationMode -eq "user") {
-  $InstallRoot = $userInstallRoot
-  $DefaultDataRoot = Join-Path $env:LOCALAPPDATA "HyperFileLens\AgentData"
+  $AgentRoot = $userAgentRoot
 }
 else {
-  $InstallRoot = Join-Path $env:ProgramFiles "HyperFileLens\Agent"
-  $DefaultDataRoot = Join-Path $env:ProgramData "HyperFileLens\Agent"
+  $AgentRoot = $machineAgentRoot
 }
-$InstalledVersionFile = Join-Path $InstallRoot "INSTALLED_VERSION"
+$InstallRoot = Join-Path $AgentRoot "bin"
+$DefaultDataRoot = $AgentRoot
+$ConfigRoot = Join-Path $AgentRoot "config"
+$DataStoreRoot = Join-Path $AgentRoot "data"
+$LogsRoot = Join-Path $AgentRoot "logs"
+$CacheRoot = Join-Path $AgentRoot "cache"
+$MountsRoot = Join-Path $AgentRoot "mounts"
+$RuntimeRoot = Join-Path $AgentRoot "runtime"
+$LifecycleRoot = Join-Path $AgentRoot "lifecycle"
+$BackupRoot = Join-Path $AgentRoot "backup"
+$InstalledVersionFile = Join-Path $AgentRoot "INSTALLED_VERSION"
+$ManifestFile = Join-Path $AgentRoot "MANIFEST.json"
 $TaskName = "HyperFileLensAgent"
 $LifecycleLabel = if ($InstallationMode -eq "user") { "current-user task" } elseif ($InstallationMode -eq "account") { "specified-user task" } else { "Windows service" }
 $CurrentWindowsIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$script:LegacyMigrationRoot = ""
+$script:LegacyServiceWasRunning = $false
 if ([string]::IsNullOrWhiteSpace($RunAsUser) -and $env:HFL_RUN_AS_USER) {
   $RunAsUser = $env:HFL_RUN_AS_USER.Trim()
 }
@@ -86,6 +106,38 @@ function Test-HflAdministrator {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
   $principal = New-Object Security.Principal.WindowsPrincipal($identity)
   return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-HflConfigRoot { param([string]$Root = $AgentRoot); return (Join-Path $Root "config") }
+function Get-HflDataStoreRoot { param([string]$Root = $AgentRoot); return (Join-Path $Root "data") }
+function Get-HflLogsRoot { param([string]$Root = $AgentRoot); return (Join-Path $Root "logs") }
+function Get-HflCacheRoot { param([string]$Root = $AgentRoot); return (Join-Path $Root "cache") }
+function Get-HflMountsRoot { param([string]$Root = $AgentRoot); return (Join-Path $Root "mounts") }
+function Get-HflRuntimeRoot { param([string]$Root = $AgentRoot); return (Join-Path $Root "runtime") }
+function Get-HflLifecycleRoot { param([string]$Root = $AgentRoot); return (Join-Path $Root "lifecycle") }
+function Get-HflBackupRoot { param([string]$Root = $AgentRoot); return (Join-Path $Root "backup") }
+function Get-HflEnvFile { param([string]$Root = $AgentRoot); return (Join-Path (Get-HflConfigRoot $Root) "agent.env") }
+function Get-HflConfigFile { param([string]$Root = $AgentRoot); return (Join-Path (Get-HflConfigRoot $Root) "config.json") }
+
+function Ensure-HflAgentLayout {
+  param([Parameter(Mandatory = $true)][string]$Root)
+  $directories = @(
+    (Join-Path $Root "bin"),
+    (Join-Path $Root "config"),
+    (Join-Path $Root "data"),
+    (Join-Path $Root "logs"),
+    (Join-Path $Root "cache\repositories"),
+    (Join-Path $Root "mounts\repositories"),
+    (Join-Path $Root "mounts\sources"),
+    (Join-Path $Root "mounts\custom"),
+    (Join-Path $Root "runtime\workspace"),
+    (Join-Path $Root "runtime\download"),
+    (Join-Path $Root "lifecycle\upgrade"),
+    (Join-Path $Root "lifecycle\uninstall"),
+    (Join-Path $Root "backup\rollback"),
+    (Join-Path $Root "backup\legacy")
+  )
+  New-Item -ItemType Directory -Force -Path $directories | Out-Null
 }
 
 function Assert-HflInstallationIdentity {
@@ -134,17 +186,16 @@ Options:
 
   upgrade:
     -From PATH           Path to new package directory or hfl-agent-*.zip (required)
-                          Extracts to DATA_DIR/runtime/workspace, merges missing agent.env keys,
+                          Extracts to DATA_DIR/runtime/workspace, merges missing config/agent.env keys,
                           migrates agent.db schema, overwrites binaries; removes workspace on success
 
   uninstall:
-    -PurgeAll                   Remove data directory and agent.env
+    -PurgeAll                   Remove Agent Root and config/agent.env
     -KeepInstallationIdentity   Keep agent.env installation identity (incomplete-install rollback)
 
 Install paths:
   $InstallRoot         Binaries and installer scripts
-  $DefaultDataRoot     Runtime data, backup, and configuration
-  $DefaultDataRoot\backup\state\  Pre-upgrade agent.env/agent.db snapshot (retained)
+  $DefaultDataRoot     Unified Agent Root (config/, data/, logs/, cache/, mounts/, runtime/, lifecycle/, backup/)
   ${LifecycleLabel}: $ServiceName   Managed startup registration
 
 Examples (cmd.exe):
@@ -208,7 +259,7 @@ function Write-HflDetailLine {
 function Start-HflInstallLog {
   param([Parameter(Mandatory = $true)][string]$DataRoot)
   Ensure-HflLogsDir -DataRoot $DataRoot
-  $script:HflInstallLogPath = Join-Path (Join-Path $DataRoot "logs") "install.log"
+  $script:HflInstallLogPath = Join-Path (Get-HflLogsRoot $DataRoot) "install.log"
   $ts = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
   Write-HflInstallLogLine "[$ts] [INFO ] Install session started."
 }
@@ -229,7 +280,7 @@ function Stop-HflInstallLog {
 function Start-HflUninstallLog {
   param([Parameter(Mandatory = $true)][string]$DataRoot)
   Ensure-HflLogsDir -DataRoot $DataRoot
-  $script:HflUninstallLogPath = Join-Path (Join-Path $DataRoot "logs") "uninstall.log"
+  $script:HflUninstallLogPath = Join-Path (Get-HflLogsRoot $DataRoot) "uninstall.log"
   $ts = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
   Write-HflInstallLogLine "[$ts] [INFO ] Uninstall session started."
 }
@@ -490,7 +541,7 @@ function Get-BundleVersionFrom {
   param([Parameter(Mandatory = $true)][string]$Root)
   $manifest = Join-Path $Root "MANIFEST.json"
   if (-not (Test-Path -LiteralPath $manifest)) {
-    $manifest = Join-Path $InstallRoot "MANIFEST.json"
+    $manifest = $ManifestFile
   }
   if (Test-Path -LiteralPath $manifest) {
     return (Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).agent_version
@@ -508,7 +559,7 @@ function Test-AgentPackageRoot {
 
 function Get-UpgradeWorkspace {
   param([Parameter(Mandatory = $true)][string]$DataRoot)
-  return Join-Path $DataRoot "runtime\workspace"
+  return Join-Path (Get-HflRuntimeRoot $DataRoot) "workspace"
 }
 
 function Remove-UpgradeWorkspace {
@@ -551,14 +602,18 @@ function Backup-AgentConfigAndDb {
     [Parameter(Mandatory = $true)][string]$DataRoot,
     [string]$PreviousVersion = "unknown"
   )
-  $stateDir = Join-Path $DataRoot "backup\state"
-  $archive = Join-Path $stateDir "latest.zip"
-  $meta = Join-Path $DataRoot "backup\meta.json"
-  $names = @("agent.env", "agent.db", "agent.db-wal", "agent.db-shm")
-  $items = @()
-  foreach ($name in $names) {
-    $path = Join-Path $DataRoot $name
-    if (Test-Path -LiteralPath $path) { $items += $path }
+  $stateDir = Join-Path (Get-HflBackupRoot $DataRoot) "rollback"
+	$archive = Join-Path $stateDir "latest.zip"
+	$meta = Join-Path $stateDir "meta.json"
+	$names = @(
+	  @{ Source = (Join-Path (Get-HflConfigRoot $DataRoot) "agent.env"); Archive = "config-agent.env" },
+	  @{ Source = (Join-Path (Get-HflDataStoreRoot $DataRoot) "agent.db"); Archive = "data-agent.db" },
+	  @{ Source = (Join-Path (Get-HflDataStoreRoot $DataRoot) "agent.db-wal"); Archive = "data-agent.db-wal" },
+	  @{ Source = (Join-Path (Get-HflDataStoreRoot $DataRoot) "agent.db-shm"); Archive = "data-agent.db-shm" }
+	)
+	$items = @()
+	foreach ($entry in $names) {
+		if (Test-Path -LiteralPath $entry.Source) { $items += $entry }
   }
   New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
   if ($items.Count -eq 0) {
@@ -567,10 +622,10 @@ function Backup-AgentConfigAndDb {
   }
   $tempDir = Join-Path $env:TEMP "hfl-agent-backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
   New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
-  try {
-    foreach ($path in $items) {
-      Copy-Item -LiteralPath $path -Destination (Join-Path $tempDir (Split-Path -Leaf $path)) -Force
-    }
+	  try {
+	    foreach ($entry in $items) {
+			Copy-Item -LiteralPath $entry.Source -Destination (Join-Path $tempDir $entry.Archive) -Force
+	    }
     Compress-Archive -Path (Join-Path $tempDir '*') -DestinationPath $archive -Force
     Write-HflOk "backed up agent.env/agent.db -> $archive"
     $createdAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -578,7 +633,7 @@ function Backup-AgentConfigAndDb {
 {
   "created_at": "$createdAt",
   "previous_version": "$PreviousVersion",
-  "state_archive": "backup/state/latest.zip"
+  "state_archive": "backup/rollback/latest.zip"
 }
 "@ | Set-Content -LiteralPath $meta -Encoding UTF8
     Write-HflOk "wrote $meta"
@@ -596,17 +651,20 @@ $script:UpgradeBinBackup = ""
 
 function Backup-RollbackBinaries {
   param([Parameter(Mandatory = $true)][string]$DataRoot)
-  $script:UpgradeBinBackup = Join-Path $DataRoot "backup\rollback\bin"
-  $rollbackRoot = Join-Path $DataRoot "backup\rollback"
+	$script:UpgradeBinBackup = Join-Path (Get-HflBackupRoot $DataRoot) "rollback\bin"
+	$rollbackRoot = Join-Path (Get-HflBackupRoot $DataRoot) "rollback"
   if (Test-Path -LiteralPath $rollbackRoot) {
     Remove-Item -Recurse -Force -LiteralPath $rollbackRoot
   }
   New-Item -ItemType Directory -Force -Path $script:UpgradeBinBackup | Out-Null
-  foreach ($name in @("hfl-agent.exe", "hfl-agent-user-launcher.exe", "kopia.exe", "MANIFEST.json", "INSTALLED_VERSION")) {
-    $src = Join-Path $InstallRoot $name
+	foreach ($name in @("hfl-agent.exe", "hfl-agent-user-launcher.exe", "kopia.exe")) {
+		$src = Join-Path $InstallRoot $name
     if (Test-Path -LiteralPath $src) {
       Copy-Item -LiteralPath $src -Destination (Join-Path $script:UpgradeBinBackup $name) -Force
-    }
+	}
+	foreach ($path in @($ManifestFile, $InstalledVersionFile)) {
+		if (Test-Path -LiteralPath $path) { Copy-Item -LiteralPath $path -Destination (Join-Path $script:UpgradeBinBackup (Split-Path -Leaf $path)) -Force }
+	}
   }
   Write-HflOk "backed up binaries -> $($script:UpgradeBinBackup)"
 }
@@ -615,18 +673,22 @@ function Restore-RollbackBinaries {
   if ([string]::IsNullOrWhiteSpace($script:UpgradeBinBackup) -or -not (Test-Path -LiteralPath $script:UpgradeBinBackup)) {
     return
   }
-  foreach ($name in @("hfl-agent.exe", "hfl-agent-user-launcher.exe", "kopia.exe", "MANIFEST.json", "INSTALLED_VERSION")) {
+	foreach ($name in @("hfl-agent.exe", "hfl-agent-user-launcher.exe", "kopia.exe")) {
     $src = Join-Path $script:UpgradeBinBackup $name
     if (Test-Path -LiteralPath $src) {
       Copy-Item -LiteralPath $src -Destination (Join-Path $InstallRoot $name) -Force
-    }
+	}
+	foreach ($entry in @(@{ Name = "MANIFEST.json"; Target = $ManifestFile }, @{ Name = "INSTALLED_VERSION"; Target = $InstalledVersionFile })) {
+		$src = Join-Path $script:UpgradeBinBackup $entry.Name
+		if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $entry.Target -Force }
+	}
   }
   Write-HflWarn "restored binaries from $($script:UpgradeBinBackup)"
 }
 
 function Remove-UpgradeRollback {
   param([Parameter(Mandatory = $true)][string]$DataRoot)
-  $rollback = Join-Path $DataRoot "backup\rollback"
+	$rollback = Join-Path (Get-HflBackupRoot $DataRoot) "rollback"
   if (Test-Path -LiteralPath $rollback) {
     Remove-Item -Recurse -Force -LiteralPath $rollback
     Write-HflOk "removed $rollback (upgrade succeeded; state snapshot retained)"
@@ -642,6 +704,7 @@ function Merge-AgentEnv {
   $kopiaPath = Join-Path $InstallRoot "kopia.exe"
   $template = [ordered]@{
     HFL_DATA_DIR          = $DataRoot
+    HFL_AGENT_ROOT        = $AgentRoot
     HFL_INSTALLATION_MODE = $InstallationMode
     HFL_KOPIA_PATH        = $kopiaPath
     HFL_INSECURE_TLS      = "1"
@@ -671,18 +734,30 @@ function Merge-AgentEnv {
       $added += $key
     }
   }
+
+  # Preserve identity, console, and credential fields from the old file, but
+  # always rewrite installer-owned paths for the unified Agent Root.
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_DATA_DIR" -Value $DataRoot
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_AGENT_ROOT" -Value $AgentRoot
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_INSTALLATION_MODE" -Value $InstallationMode
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_KOPIA_PATH" -Value $kopiaPath
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_INSECURE_TLS" -Value "1"
+  if ($InstallationMode -eq "account") {
+    Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_RUN_AS_USER" -Value $RunAsUser
+    Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_RUN_AS_HOME" -Value $RunAsHome
+  }
+  Set-Content -Path $EnvFile -Value ($lines -join "`n") -Encoding UTF8
   if ($added.Count -gt 0) {
-    Set-Content -Path $EnvFile -Value ($lines -join "`n") -Encoding UTF8
     Write-HflOk "merged agent.env keys: $($added -join ', ')"
   }
   else {
-    Write-HflOk "agent.env unchanged (no missing keys)"
+    Write-HflOk "updated unified Agent Root paths in $EnvFile"
   }
 }
 
 function Ensure-HflLogsDir {
   param([Parameter(Mandatory = $true)][string]$DataRoot)
-  $logDir = Join-Path $DataRoot "logs"
+	$logDir = Get-HflLogsRoot $DataRoot
   New-Item -ItemType Directory -Force -Path $logDir | Out-Null
   # System mode runs as LocalSystem; account mode runs as the selected user.
   icacls $logDir /grant "SYSTEM:(OI)(CI)M" /Q 2>$null | Out-Null
@@ -704,6 +779,41 @@ function Grant-HflDirectoryAccess {
   & icacls.exe $Path /grant "${Account}:(OI)(CI)M" /Q 2>$null | Out-Null
   if ($LASTEXITCODE -ne 0) {
     throw "Could not grant the specified account '$Account' access to '$Path' (icacls exit code $LASTEXITCODE)."
+  }
+}
+
+function Grant-HflDirectoryReadAccess {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$Account
+  )
+  & icacls.exe $Path /grant "${Account}:(OI)(CI)RX" /Q 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not grant the specified account '$Account' read access to '$Path' (icacls exit code $LASTEXITCODE)."
+  }
+}
+
+function Set-HflAgentRootPermissions {
+  Ensure-HflAgentLayout -Root $AgentRoot
+  if ($InstallationMode -eq "user") {
+    return
+  }
+  # Keep one physical root while preventing the runtime account from replacing
+  # the Agent binaries. Mutable state receives a separate write ACL.
+  & icacls.exe $AgentRoot /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" /Q 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Could not secure Agent Root '$AgentRoot'." }
+  & icacls.exe $InstallRoot /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" /Q 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Could not secure Agent binaries '$InstallRoot'." }
+  foreach ($mutable in @($ConfigRoot, $DataStoreRoot, $LogsRoot, $CacheRoot, $MountsRoot, $RuntimeRoot, $LifecycleRoot, $BackupRoot)) {
+    & icacls.exe $mutable /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" /Q 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not secure Agent directory '$mutable'." }
+  }
+  if ($InstallationMode -eq "account" -and $RunAsUser) {
+    Grant-HflDirectoryReadAccess -Path $AgentRoot -Account $RunAsUser
+    Grant-HflDirectoryReadAccess -Path $InstallRoot -Account $RunAsUser
+    foreach ($mutable in @($ConfigRoot, $DataStoreRoot, $LogsRoot, $CacheRoot, $MountsRoot, $RuntimeRoot, $LifecycleRoot, $BackupRoot)) {
+      Grant-HflDirectoryAccess -Path $mutable -Account $RunAsUser
+    }
   }
 }
 
@@ -731,11 +841,178 @@ function Test-Installed {
   return Test-Path -LiteralPath (Join-Path $InstallRoot "hfl-agent.exe")
 }
 
+function Test-LegacyLayout {
+  if ($InstallationMode -eq "user") { return $false }
+  $legacyAgent = Join-Path $legacyInstallRoot "hfl-agent.exe"
+  $legacyEnv = Join-Path $legacyDataRoot "agent.env"
+  $legacyDb = Join-Path $legacyDataRoot "agent.db"
+  $newAgent = Join-Path $InstallRoot "hfl-agent.exe"
+  $newEnv = Get-HflEnvFile $DefaultDataRoot
+  $newDb = Join-Path $DataStoreRoot "agent.db"
+  $migrationMarker = Join-Path $LifecycleRoot ".legacy-migration"
+  return ((Test-Path -LiteralPath $legacyAgent) -and -not (Test-Path -LiteralPath $newAgent)) -or
+    ((Test-Path -LiteralPath $legacyEnv) -and -not (Test-Path -LiteralPath $newEnv)) -or
+    # A partially initialized unified root can already have config/agent.env
+    # while the legacy flat database still needs to be moved into data/.
+    ((Test-Path -LiteralPath $legacyDb) -and -not (Test-Path -LiteralPath $newDb)) -or
+    # Retry cleanup after an interrupted migration even when the canonical
+    # database was already copied before the previous run failed.
+    ((Test-Path -LiteralPath $migrationMarker) -and (Test-Path -LiteralPath $legacyDb))
+}
+
+function Copy-LegacyEntry {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+  if (-not (Test-Path -LiteralPath $Source)) { return }
+  try {
+    $sourceFull = [System.IO.Path]::GetFullPath($Source).TrimEnd('\')
+    $destinationFull = [System.IO.Path]::GetFullPath($Destination).TrimEnd('\')
+    if ($sourceFull.Equals($destinationFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+      return
+    }
+  }
+  catch {
+    throw "Could not resolve legacy migration path: $($_.Exception.Message)"
+  }
+  $parent = Split-Path -Parent $Destination
+  if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+  if (Test-Path -LiteralPath $Source -PathType Container) {
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Copy-Item -Path (Join-Path $Source '*') -Destination $Destination -Recurse -Force
+  }
+  else {
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
+  }
+}
+
+function Copy-LegacyBackupTree {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+  if (-not (Test-Path -LiteralPath $Source)) { return }
+  New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  # On Windows the legacy data root is the new Agent Root. The archive lives
+  # below backup/legacy, so copying backup recursively must exclude that
+  # archive subtree or the copy would contain itself.
+  foreach ($entry in Get-ChildItem -Force -LiteralPath $Source) {
+    if ($entry.Name -eq "legacy") { continue }
+    Copy-Item -LiteralPath $entry.FullName -Destination $Destination -Recurse -Force
+  }
+}
+
+function Invoke-LegacyMigration {
+  if (-not (Test-LegacyLayout)) { return }
+  $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
+  $script:LegacyMigrationRoot = Join-Path (Get-HflBackupRoot $DefaultDataRoot) "legacy\$stamp"
+  $legacyProgram = Join-Path $script:LegacyMigrationRoot "program"
+  $legacyState = Join-Path $script:LegacyMigrationRoot "state"
+  New-Item -ItemType Directory -Force -Path $legacyProgram, $legacyState, $DefaultDataRoot | Out-Null
+
+  # Stop the old Windows service before copying SQLite and runtime state.
+  $oldService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+  $script:LegacyServiceWasRunning = ($null -ne $oldService -and $oldService.Status -eq 'Running')
+  Stop-HflService
+
+  foreach ($name in @("hfl-agent.exe", "kopia.exe", "install.ps1", "install.cmd", "uninstall.cmd", "MANIFEST.json", "INSTALLED_VERSION", "run-agent.ps1", "hfl-agent-user-launcher.exe")) {
+    Copy-LegacyEntry -Source (Join-Path $legacyInstallRoot $name) -Destination (Join-Path $legacyProgram $name)
+  }
+  foreach ($name in @("agent.env", "agent.db", "agent.db-wal", "agent.db-shm", "config.json", "logs", "cache", "mounts", "lifecycle", "install.lock")) {
+    Copy-LegacyEntry -Source (Join-Path $legacyDataRoot $name) -Destination (Join-Path $legacyState $name)
+  }
+  Copy-LegacyBackupTree -Source (Join-Path $legacyDataRoot "backup") -Destination (Join-Path $legacyState "backup")
+  Copy-LegacyEntry -Source (Join-Path $legacyDataRoot "agent.env") -Destination (Join-Path $ConfigRoot "agent.env")
+  Copy-LegacyEntry -Source (Join-Path $legacyDataRoot "config.json") -Destination (Join-Path $ConfigRoot "config.json")
+  foreach ($name in @("agent.db", "agent.db-wal", "agent.db-shm")) {
+    Copy-LegacyEntry -Source (Join-Path $legacyDataRoot $name) -Destination (Join-Path $DataStoreRoot $name)
+  }
+  foreach ($name in @("logs", "cache", "mounts", "runtime", "lifecycle")) {
+    Copy-LegacyEntry -Source (Join-Path $legacyDataRoot $name) -Destination (Join-Path $AgentRoot $name)
+  }
+  # Promote the pre-unified backup/state snapshots into backup/rollback. The
+  # complete original tree remains available under backup/legacy for rollback.
+  Copy-LegacyEntry -Source (Join-Path $legacyDataRoot "backup\rollback") -Destination (Join-Path $BackupRoot "rollback")
+  Copy-LegacyEntry -Source (Join-Path $legacyDataRoot "backup\state") -Destination (Join-Path $BackupRoot "rollback")
+  Copy-LegacyEntry -Source (Join-Path $legacyDataRoot "backup\meta.json") -Destination (Join-Path $BackupRoot "rollback\meta.json")
+  Copy-LegacyEntry -Source (Join-Path $legacyDataRoot "install.lock") -Destination (Join-Path $LifecycleRoot "install.lock")
+  Set-Content -LiteralPath (Join-Path $LifecycleRoot ".legacy-migration") -Value "HFL_INSTALLATION_MODE=system" -Encoding UTF8
+  Write-HflWarn "migrated legacy Agent layout into $AgentRoot; old files are archived under $script:LegacyMigrationRoot"
+}
+
+function Restore-LegacyServiceOnFailure {
+  if (-not $script:LegacyServiceWasRunning) { return }
+  if (-not (Test-Path -LiteralPath $legacyInstallRoot)) { return }
+  try {
+    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($null -ne $service -and $service.Status -ne 'Running') {
+      Remove-HflService
+      $legacyBinary = Join-Path $legacyInstallRoot "hfl-agent.exe"
+      $legacyData = $legacyDataRoot
+      $legacyBinPath = "`"$legacyBinary`" run -data-dir `"$legacyData`""
+      New-Service -Name $ServiceName `
+        -BinaryPathName $legacyBinPath `
+        -DisplayName "HyperFileLens Agent" `
+        -Description "HyperFileLens backup agent (legacy installation)" `
+        -StartupType Automatic | Out-Null
+      Start-Service -Name $ServiceName
+      Write-HflWarn "restored the legacy Agent service after migration failure"
+    }
+    elseif ($null -eq $service) {
+      $legacyBinary = Join-Path $legacyInstallRoot "hfl-agent.exe"
+      $legacyBinPath = "`"$legacyBinary`" run -data-dir `"$legacyDataRoot`""
+      New-Service -Name $ServiceName `
+        -BinaryPathName $legacyBinPath `
+        -DisplayName "HyperFileLens Agent" `
+        -Description "HyperFileLens backup agent (legacy installation)" `
+        -StartupType Automatic | Out-Null
+      Start-Service -Name $ServiceName
+      Write-HflWarn "recreated the legacy Agent service after migration failure"
+    }
+  }
+  catch {
+    Write-HflWarn "could not restore the legacy Agent service after migration failure: $($_.Exception.Message)"
+  }
+}
+
+function Complete-LegacyMigration {
+  if ([string]::IsNullOrWhiteSpace($script:LegacyMigrationRoot)) { return }
+  $status = Get-HflServiceStatusLine
+  if ($status -notmatch 'running|active') {
+    Write-HflWarn "legacy layout retained because the new service is not healthy ($status)"
+    return
+  }
+  if (Test-Path -LiteralPath $legacyInstallRoot) {
+    Remove-Item -Recurse -Force -LiteralPath $legacyInstallRoot -ErrorAction SilentlyContinue
+  }
+  # The Windows legacy data root is the new Agent Root. Remove only old
+  # On Windows the legacy data root is the same physical AgentRoot, so the
+  # copied entries are now the canonical siblings and must not be deleted.
+  if ([System.IO.Path]::GetFullPath($legacyDataRoot).TrimEnd('\') -ne [System.IO.Path]::GetFullPath($AgentRoot).TrimEnd('\')) {
+    foreach ($name in @("agent.env", "agent.db", "agent.db-wal", "agent.db-shm", "config.json", "logs", "cache", "mounts", "runtime", "lifecycle", "install.lock")) {
+      Remove-Item -Recurse -Force -LiteralPath (Join-Path $AgentRoot $name) -ErrorAction SilentlyContinue
+    }
+  }
+  else {
+    # Legacy Windows state and metadata lived below backup/state or directly
+    # under backup. Remove only those obsolete paths; backup/rollback is now
+    # the single upgrade snapshot location.
+    foreach ($name in @("agent.env", "agent.db", "agent.db-wal", "agent.db-shm", "config.json", "install.lock")) {
+      Remove-Item -Force -LiteralPath (Join-Path $AgentRoot $name) -ErrorAction SilentlyContinue
+    }
+    Remove-Item -Recurse -Force -LiteralPath (Join-Path $BackupRoot "state") -ErrorAction SilentlyContinue
+    Remove-Item -Force -LiteralPath (Join-Path $BackupRoot "meta.json") -ErrorAction SilentlyContinue
+  }
+  Remove-Item -Force -LiteralPath (Join-Path $LifecycleRoot ".legacy-migration") -ErrorAction SilentlyContinue
+  Write-HflOk "removed legacy Agent directories after successful migration"
+}
+
 function Get-ResolvedDataRoot {
   param([string]$Override)
   if ($Override) { return $Override }
   $candidates = @(
-    (Join-Path $DefaultDataRoot "agent.env")
+    (Get-HflEnvFile $DefaultDataRoot)
   )
   foreach ($f in $candidates) {
     if (Test-Path -LiteralPath $f) {
@@ -760,8 +1037,9 @@ function Test-SafeDataPath([string]$path) {
       [System.StringComparison]::OrdinalIgnoreCase
     )
   }
-  $base = $env:ProgramData
-  $allowedRoot = Join-Path ([System.IO.Path]::GetFullPath($base)) "HyperFileLens"
+  $allowedRoot = [System.IO.Path]::GetFullPath(
+    (Join-Path $env:ProgramData "HyperFileLens\Agent")
+  )
   return $full.TrimEnd('\').StartsWith(
     $allowedRoot.TrimEnd('\') + '\',
     [System.StringComparison]::OrdinalIgnoreCase
@@ -1155,8 +1433,8 @@ endlocal & exit /b %EC%
   }
   Write-HflOk "deployed $destUninstall"
   if (Test-Path -LiteralPath $srcManifest) {
-    Copy-Item -Force -Path $srcManifest -Destination (Join-Path $InstallRoot "MANIFEST.json")
-    Write-HflOk "deployed $(Join-Path $InstallRoot 'MANIFEST.json')"
+    Copy-Item -Force -Path $srcManifest -Destination $ManifestFile
+    Write-HflOk "deployed $ManifestFile"
   }
 }
 
@@ -1239,26 +1517,50 @@ function Deploy-Binaries {
   Deploy-AdminScripts -SrcRoot $SrcRoot
 }
 
+function Set-HflEnvLine {
+  param(
+    [Parameter(Mandatory = $true)][ref]$Lines,
+    [Parameter(Mandatory = $true)][string]$Key,
+    [string]$Value
+  )
+  if ([string]::IsNullOrWhiteSpace($Value)) { return }
+  $escapedKey = [regex]::Escape($Key)
+  $newLine = "{0}={1}" -f $Key, $Value.Replace('"', '\"')
+  $found = $false
+  $updated = foreach ($line in @($Lines.Value)) {
+    if ($line -match "^\s*$escapedKey=") {
+      if (-not $found) { $found = $true; $newLine }
+    }
+    else { $line }
+  }
+  if (-not $found) { $updated += $newLine }
+  $Lines.Value = @($updated)
+}
+
 function Write-AgentEnv {
   param([string]$EnvFile, [string]$DataRoot)
   Ensure-HflLogsDir -DataRoot $DataRoot
   $kopiaPath = Join-Path $InstallRoot "kopia.exe"
-  $lines = @(
-    "HFL_DATA_DIR=$DataRoot",
-    "HFL_KOPIA_PATH=$kopiaPath",
-    "HFL_NODE_ROLE=$Role",
-    "HFL_INSTALLATION_MODE=$InstallationMode",
-    "HFL_INSECURE_TLS=1"
-  )
+  $dir = Split-Path -Parent $EnvFile
+  if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  $lines = if (Test-Path -LiteralPath $EnvFile) { @(Get-Content -LiteralPath $EnvFile) } else { @() }
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_WSS_URL" -Value $WssUrl
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_API_BASE" -Value $ApiBase
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_ORG_KEY" -Value $OrgKey
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_NODE_TOKEN" -Value $NodeToken
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_NODE_ID" -Value $NodeId
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_DATA_DIR" -Value $DataRoot
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_AGENT_ROOT" -Value $AgentRoot
+  $existingRole = Read-HflEnvValue -EnvFile $EnvFile -Key "HFL_NODE_ROLE"
+  $effectiveRole = if ($Role -eq "agent" -and $existingRole) { $existingRole } else { $Role }
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_KOPIA_PATH" -Value $kopiaPath
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_NODE_ROLE" -Value $effectiveRole
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_INSTALLATION_MODE" -Value $InstallationMode
   if ($InstallationMode -eq "account") {
-    $lines += "HFL_RUN_AS_USER=$RunAsUser"
-    $lines += "HFL_RUN_AS_HOME=$RunAsHome"
+    Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_RUN_AS_USER" -Value $RunAsUser
+    Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_RUN_AS_HOME" -Value $RunAsHome
   }
-  if ($WssUrl) { $lines = @("HFL_WSS_URL=$WssUrl") + $lines }
-  if ($ApiBase) { $lines += "HFL_API_BASE=$ApiBase" }
-  if ($OrgKey) { $lines += "HFL_ORG_KEY=$OrgKey" }
-  if ($NodeToken) { $lines += "HFL_NODE_TOKEN=$NodeToken" }
-  if ($NodeId) { $lines += "HFL_NODE_ID=$NodeId" }
+  Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_INSECURE_TLS" -Value "1"
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $EnvFile) | Out-Null
   Set-Content -Path $EnvFile -Value ($lines -join "`n") -Encoding UTF8
   Write-HflOk "wrote $EnvFile"
@@ -1325,11 +1627,11 @@ function Invoke-Install {
       throw "The profile directory for '$RunAsUser' could not be resolved."
     }
     $dataRoot = if ($DataDir) { $DataDir } else { $DefaultDataRoot }
-    New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
-    Grant-HflDirectoryAccess -Path $dataRoot -Account $RunAsUser
+    Ensure-HflAgentLayout -Root $AgentRoot
     $env:HFL_RUN_AS_USER = $RunAsUser
     $env:HFL_RUN_AS_HOME = $RunAsHome
   }
+  Set-HflAgentRootPermissions
   Start-HflInstallLog -DataRoot $dataRoot
   try {
     if (-not $QuietFooter) {
@@ -1345,8 +1647,9 @@ function Invoke-Install {
       Write-HflSection "Installing Agent"
     }
 
+    Invoke-LegacyMigration
     Deploy-Binaries
-    $envFile = Join-Path $dataRoot "agent.env"
+    $envFile = Get-HflEnvFile $dataRoot
     Write-AgentEnv -EnvFile $envFile -DataRoot $dataRoot
 
     if ($NoService) {
@@ -1367,6 +1670,9 @@ function Invoke-Install {
 
     Install-HflService -ExePath (Join-Path $InstallRoot "hfl-agent.exe") -DataRoot $dataRoot -NoStart:$NoStart
 
+    if (-not $NoStart) {
+      Complete-LegacyMigration
+    }
     if ($QuietFooter) {
       Stop-HflInstallLog -ExitCode 0
       return
@@ -1401,6 +1707,7 @@ function Invoke-Install {
     Stop-HflInstallLog -ExitCode 0
   }
   catch {
+    Restore-LegacyServiceOnFailure
     Write-HflLog -Level 'FAIL ' -Message "Installation failed: $($_.Exception.Message)"
     Stop-HflInstallLog -ExitCode 1
     throw
@@ -1408,7 +1715,11 @@ function Invoke-Install {
 }
 
 function Invoke-Upgrade {
-  if (-not (Test-Installed)) {
+  $legacyUpgrade = $false
+  if (-not (Test-Installed) -and (Test-LegacyLayout)) {
+    $legacyUpgrade = $true
+  }
+  elseif (-not (Test-Installed)) {
     throw "Agent not installed. Use: install.cmd"
   }
   if (-not $From) {
@@ -1416,17 +1727,23 @@ function Invoke-Upgrade {
   }
 
   $null = Get-HflSupportedArchitecture
-  $dataRoot = Get-ResolvedDataRoot -Override $DataDir
-  $envFile = Join-Path $dataRoot "agent.env"
+  $dataRoot = if ($legacyUpgrade) { $DefaultDataRoot } else { Get-ResolvedDataRoot -Override $DataDir }
+  $envFile = Get-HflEnvFile $dataRoot
   $workspace = Get-UpgradeWorkspace -DataRoot $dataRoot
   $prevVer = "unknown"
   if (Test-Path -LiteralPath $InstalledVersionFile) {
     $prevVer = (Get-Content -LiteralPath $InstalledVersionFile -Raw).Trim()
   }
+  elseif ($legacyUpgrade -and (Test-Path -LiteralPath (Join-Path $legacyInstallRoot "INSTALLED_VERSION"))) {
+    $prevVer = (Get-Content -LiteralPath (Join-Path $legacyInstallRoot "INSTALLED_VERSION") -Raw).Trim()
+  }
 
   $upgradeSucceeded = $false
   Start-HflInstallLog -DataRoot $dataRoot
   try {
+    if ($legacyUpgrade) {
+      Invoke-LegacyMigration
+    }
     $srcRoot = Resolve-UpgradeSource -Path $From -DataRoot $dataRoot
     $newVer = Get-BundleVersionFrom -Root $srcRoot
 
@@ -1459,7 +1776,7 @@ function Invoke-Upgrade {
     catch {
       Write-HflWarn "upgrade failed: $($_.Exception.Message); attempting rollback"
       Restore-RollbackBinaries
-      if (-not $NoService) {
+      if (-not $NoService -and -not $legacyUpgrade) {
         try {
           Start-HflServiceOnly
         }
@@ -1472,6 +1789,7 @@ function Invoke-Upgrade {
     $upgradeSucceeded = $true
   }
   catch {
+    Restore-LegacyServiceOnFailure
     Write-HflLog -Level 'FAIL ' -Message "Upgrade failed: $($_.Exception.Message)"
     throw
   }
@@ -1483,10 +1801,16 @@ function Invoke-Upgrade {
   }
 
   if ($QuietFooter) {
+    if (-not $NoRestart) {
+      Complete-LegacyMigration
+    }
     Stop-HflInstallLog -ExitCode 0
     return
   }
 
+  if (-not $NoService -and -not $NoRestart) {
+    Complete-LegacyMigration
+  }
   Write-HflSection "Verifying"
   if (-not $NoService) {
     Write-HflOk "Agent managed startup is $(Get-HflServiceStatusLine)"
@@ -1506,7 +1830,7 @@ function Invoke-Uninstall {
   if ($PurgeAll -and -not (Test-SafeDataPath $dataRoot)) {
     throw "Refusing PurgeAll for unexpected data directory $dataRoot."
   }
-  $envFile = Join-Path $DefaultDataRoot "agent.env"
+  $envFile = Get-HflEnvFile $DefaultDataRoot
   $nodeId = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ID"
   $installedRole = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ROLE"
   $displayRole = Get-HflRoleDisplayName -Value $installedRole
@@ -1566,7 +1890,7 @@ function Invoke-Uninstall {
   Remove-HflInstallFile (Join-Path $InstallRoot "run-agent.ps1")
   Remove-HflInstallFile (Join-Path $InstallRoot "install.ps1")
   Remove-HflInstallFile (Join-Path $InstallRoot "uninstall.cmd")
-  Remove-HflInstallFile (Join-Path $InstallRoot "MANIFEST.json")
+  Remove-HflInstallFile $ManifestFile
   Remove-HflInstallFile $InstalledVersionFile
   Write-HflSkip "remove $(Join-Path $InstallRoot 'install.cmd') (deferred; install.cmd is running this script)"
 
@@ -1616,7 +1940,7 @@ function Invoke-Uninstall {
 }
 
 function Invoke-Status {
-  $envFile = Join-Path $DefaultDataRoot "agent.env"
+  $envFile = Get-HflEnvFile $DefaultDataRoot
   Write-HflBanner "status"
   Write-HflSection "Status"
   if (Test-Installed) {

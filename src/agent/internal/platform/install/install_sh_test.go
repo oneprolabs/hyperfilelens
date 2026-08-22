@@ -124,10 +124,23 @@ func TestInstallShellEnforcesUserModeBoundary(t *testing.T) {
 		`User-level installation must run as the current user without sudo.`,
 		`User-scoped installation is only available for Source Agent.`,
 		`User-level installation uses the fixed data directory ${DEFAULT_DATA}; --data-dir is not supported.`,
-		`HFL_INSTALLATION_MODE=${INSTALLATION_MODE}`,
+		`set_agent_env_key "${env_file}" HFL_INSTALLATION_MODE "${INSTALLATION_MODE}"`,
+		`set_agent_env_key "${env_file}" HFL_AGENT_ROOT "${AGENT_ROOT}"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("install.sh missing user-mode boundary %q", want)
+		}
+	}
+}
+
+func TestInstallShellDetectsUserModeFromCustomXDGDataHome(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	for _, want := range []string{
+		`USER_DATA_HOME="${XDG_DATA_HOME:-}"`,
+		`"${USER_DATA_HOME}/hyperfilelens-agent/bin"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh must detect custom XDG user root using %q", want)
 		}
 	}
 }
@@ -138,11 +151,39 @@ func TestInstallShellSupportsSpecifiedUserContinuousMode(t *testing.T) {
 		`INSTALLATION_MODE}" == "account"`,
 		`sed -i "/^\[Service\]/a User=${RUN_AS_USER}"`,
 		`<key>UserName</key>`,
-		`HFL_RUN_AS_USER=${RUN_AS_USER}`,
-		`PERSISTED_ENV="/var/lib/hyperfilelens-agent/agent.env"`,
+		`set_agent_env_key "${env_file}" HFL_RUN_AS_USER "${RUN_AS_USER}"`,
+		`PERSISTED_ENV="/opt/hyperfilelens-agent/config/agent.env"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("install.sh missing specified-user continuous contract %q", want)
+		}
+	}
+}
+
+func TestInstallShellPreservesLegacyEnvironmentDuringRootMigration(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	for _, want := range []string{
+		`LEGACY_ENV_SOURCE="${LEGACY_DATA_DIR}/agent.env"`,
+		`if [[ -f "${LEGACY_DATA_DIR}/agent.db" && ! -f "$(agent_data_store_dir "${DEFAULT_DATA}")/agent.db" ]]; then`,
+		`cp -p "${LEGACY_ENV_SOURCE}" "${env_file}"`,
+		`env_value_for_file`,
+		`if [[ "\${value:0:1}" == '"' && "\${value: -1}" == '"' ]]`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh migration environment handling missing %q", want)
+		}
+	}
+}
+
+func TestInstallShellDoesNotArchiveTheNewRootIntoItself(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	for _, want := range []string{
+		`if [[ "${LEGACY_INSTALL_DIR}" != "${AGENT_ROOT}" ]]; then`,
+		`copy_legacy_entry "${LEGACY_INSTALL_DIR}/backup" "${legacy_program}/backup"`,
+		`copy_legacy_entry "${LEGACY_DATA_DIR}/backup/state"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh legacy migration missing recursion guard %q", want)
 		}
 	}
 }
@@ -213,5 +254,11 @@ func TestGatewayHooksPreferLongLivedNodeCredential(t *testing.T) {
 				t.Fatalf("gateway hook does not prefer node credential: %s", hook)
 			}
 		})
+	}
+	if !strings.Contains(unixGatewaySidecarUpgradeHook, `agent_root="${DATA_DIR:-}"`) {
+		t.Fatal("gateway upgrade hook must resolve the persisted Agent Root")
+	}
+	if !strings.Contains(unixGatewaySidecarUpgradeHook, `agent_root="${INSTALL_SH%/bin/install.sh}"`) {
+		t.Fatal("detached gateway upgrade hook must derive Agent Root from INSTALL_SH")
 	}
 }

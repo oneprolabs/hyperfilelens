@@ -13,22 +13,22 @@ const (
 	mountCustomDir       = "custom"
 )
 
-// AgentMountsDir is DATA_DIR/mounts (runtime NAS mount roots).
+// AgentMountsDir is AgentRoot/mounts (runtime NAS mount roots).
 func AgentMountsDir(dataRoot string) string {
 	return filepath.Join(strings.TrimSpace(dataRoot), dirMounts)
 }
 
-// MountRepositoriesDir is DATA_DIR/mounts/repositories.
+// MountRepositoriesDir is AgentRoot/mounts/repositories.
 func MountRepositoriesDir(dataRoot string) string {
 	return filepath.Join(AgentMountsDir(dataRoot), mountRepositoriesDir)
 }
 
-// MountSourcesDir is DATA_DIR/mounts/sources.
+// MountSourcesDir is AgentRoot/mounts/sources.
 func MountSourcesDir(dataRoot string) string {
 	return filepath.Join(AgentMountsDir(dataRoot), mountSourcesDir)
 }
 
-// MountCustomDir is DATA_DIR/mounts/custom.
+// MountCustomDir is AgentRoot/mounts/custom.
 func MountCustomDir(dataRoot string) string {
 	return filepath.Join(AgentMountsDir(dataRoot), mountCustomDir)
 }

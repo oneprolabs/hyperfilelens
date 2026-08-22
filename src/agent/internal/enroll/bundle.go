@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"hyperfilelens/agent/internal/platform/install"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 // RunBundleUpgrade upgrades an installed agent from a downloaded release archive.
@@ -153,7 +154,7 @@ func agentInstallLogPath() string {
 	if dataDir == "" {
 		return "the agent install log on this host"
 	}
-	return filepath.Join(dataDir, "logs", "install.log")
+	return filepath.Join(vfs.AgentLogDir(dataDir), "install.log")
 }
 
 // InstalledAgentVersion runs the installed hfl-agent -version.

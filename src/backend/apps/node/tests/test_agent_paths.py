@@ -12,13 +12,13 @@ class AgentPathsTests(SimpleTestCase):
     def test_repository_mount_point(self):
         self.assertEqual(
             repository_mount_point(42, node_id=3),
-            "/var/lib/hyperfilelens-agent/mounts/repositories/repo-42-node-3",
+            "/opt/hyperfilelens-agent/mounts/repositories/repo-42-node-3",
         )
 
     def test_source_mount_point(self):
         self.assertEqual(
             source_mount_point(12),
-            "/var/lib/hyperfilelens-agent/mounts/sources/source-12",
+            "/opt/hyperfilelens-agent/mounts/sources/source-12",
         )
 
     def test_require_agent_mount_path_accepts_canonical_path(self):

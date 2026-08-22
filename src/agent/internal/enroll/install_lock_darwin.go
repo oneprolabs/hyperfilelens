@@ -26,7 +26,11 @@ func installLockPath() (string, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return "", err
 	}
-	return filepath.Join(dataDir, "install.lock"), nil
+	path := filepath.Join(vfs.AgentLifecycleDir(dataDir), "install.lock")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func acquireInstallLock(_ context.Context) (func(), error) {

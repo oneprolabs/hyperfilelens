@@ -216,7 +216,7 @@ const TABLE_HEADER_STYLE: Record<string, string> = {
   fontWeight: '600',
   whiteSpace: 'nowrap',
 }
-const AGENT_REPOSITORY_MOUNT_ROOT = '/var/lib/hyperfilelens-agent/mounts/repositories'
+const AGENT_REPOSITORY_MOUNT_ROOT = '/opt/hyperfilelens-agent/mounts/repositories'
 
 function proxyRepositoryMountPath(repositoryId?: number | null, proxyId?: number | null) {
   if (!repositoryId || !proxyId) return ''

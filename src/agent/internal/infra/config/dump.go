@@ -41,6 +41,14 @@ func DumpText(cfg *model.AgentConfig) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	agentRoot := strings.TrimSpace(cfg.AgentRoot)
+	if agentRoot == "" {
+		mode := cfg.InstallationMode
+		if mode == "" {
+			mode = model.InstallationModeSystem
+		}
+		agentRoot = vfs.AgentRootForMode(mode)
+	}
 	mask := func(s string) string {
 		if s == "" {
 			return ""
@@ -59,6 +67,7 @@ func DumpText(cfg *model.AgentConfig) (string, error) {
 	fmt.Fprintf(&b, "wss_url=%q\n", cfg.WSSURL)
 	fmt.Fprintf(&b, "api_base_url=%q\n", cfg.APIBaseURL)
 	fmt.Fprintf(&b, "data_dir=%q\n", dataRoot)
+	fmt.Fprintf(&b, "agent_root=%q\n", agentRoot)
 	fmt.Fprintf(&b, "log_dir=%q\n", logDir)
 	fmt.Fprintf(&b, "cache_dir=%q\n", cacheDir)
 	fmt.Fprintf(&b, "kopia_path=%q\n", cfg.KopiaPath)

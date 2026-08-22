@@ -27,7 +27,7 @@ class NasSharePathTests(SimpleTestCase):
         )
 
     def test_to_share_relative(self):
-        mount_root = "/var/lib/hyperfilelens-agent/mounts/custom/nfs-share"
+        mount_root = "/opt/hyperfilelens-agent/mounts/custom/nfs-share"
         self.assertEqual(to_share_relative(mount_root, mount_root), "/")
         self.assertEqual(to_share_relative(mount_root, f"{mount_root}/bbb"), "/bbb")
         self.assertEqual(
@@ -36,7 +36,7 @@ class NasSharePathTests(SimpleTestCase):
         )
 
     def test_to_mount_path(self):
-        mount_root = "/var/lib/hyperfilelens-agent/mounts/custom/nfs-share"
+        mount_root = "/opt/hyperfilelens-agent/mounts/custom/nfs-share"
         self.assertEqual(to_mount_path(mount_root, "/"), mount_root)
         self.assertEqual(to_mount_path(mount_root, "/bbb"), f"{mount_root}/bbb")
         self.assertEqual(
@@ -45,7 +45,7 @@ class NasSharePathTests(SimpleTestCase):
         )
 
     def test_normalize_user_share_path(self):
-        mount_root = "/var/lib/hyperfilelens-agent/mounts/custom/nfs-share"
+        mount_root = "/opt/hyperfilelens-agent/mounts/custom/nfs-share"
         export_path = "/root/nfs_share"
         self.assertEqual(
             normalize_user_share_path(

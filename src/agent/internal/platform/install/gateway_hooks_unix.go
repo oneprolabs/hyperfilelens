@@ -4,7 +4,13 @@ package install
 
 const unixGatewaySidecarUpgradeHook = `
 run_gateway_sidecar_upgrade_if_needed() {
-  local env_file="/var/lib/hyperfilelens-agent/agent.env"
+  # DATA_DIR is the persisted unified Agent Root. Detached runners also know
+  # the root through INSTALL_SH (.../Agent/bin/install.sh), so macOS does not
+  # accidentally fall back to the Linux /opt path.
+  local agent_root="${DATA_DIR:-}"
+  [[ -n "$agent_root" ]] || agent_root="${INSTALL_SH%/bin/install.sh}"
+  [[ -n "$agent_root" && "$agent_root" != "$INSTALL_SH" ]] || agent_root="/opt/hyperfilelens-agent"
+  local env_file="$agent_root/config/agent.env"
   local api_base org token node_id insecure bootstrap script tmp purge_flag curl_tls
   [[ -f "$env_file" ]] || return 0
   grep -q '^HFL_NODE_ROLE=gateway' "$env_file" || return 0
@@ -43,7 +49,7 @@ run_gateway_sidecar_upgrade_if_needed() {
 
 const unixGatewaySidecarUninstallHook = `
 run_gateway_sidecar_uninstall_if_needed() {
-  local env_file="$DATA_DIR/agent.env"
+  local env_file="$DATA_DIR/config/agent.env"
   local api_base org token node_id insecure bootstrap script tmp curl_tls purge_args
   [[ -f "$env_file" ]] || return 0
   grep -q '^HFL_NODE_ROLE=gateway' "$env_file" || return 0

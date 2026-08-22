@@ -1123,7 +1123,7 @@ ensure_local_platform_gateway_dev() {
 	fi
 
 	local command_output parsed org_key token api_base wss_url managed_node_ids
-	local agent_env="/var/lib/hyperfilelens-agent/agent.env"
+	local agent_env="/opt/hyperfilelens-agent/config/agent.env"
 	set +e
 	command_output="$(compose exec -T api python manage.py ensure_local_platform_gateway_enrollment 2>&1)"
 	local command_status=$?
@@ -1196,7 +1196,7 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 	local gateway_args=(--yes --no-banner)
 	# --reinstall mirrors helper InstallState.Installed, which stat()s the agent
 	# binary (not agent.env), so gate on the same path (-e) to avoid a misleading error.
-	local agent_bin="/opt/hyperfilelens-agent/hfl-agent"
+	local agent_bin="/opt/hyperfilelens-agent/bin/hfl-agent"
 	if [[ "${UPGRADE_GATEWAY}" -eq 1 && -e "${agent_bin}" ]]; then
 		gateway_args+=(--reinstall)
 		log "Forcing local Data Gateway host Agent upgrade to the newest published release"
@@ -1236,7 +1236,7 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 wait_for_local_platform_gateway_ready_dev() {
 	local timeout_seconds=${1:-180} deadline node_id
 	deadline=$((SECONDS + timeout_seconds))
-	node_id="$(grep -E '^HFL_NODE_ID=' /var/lib/hyperfilelens-agent/agent.env 2>/dev/null \
+	node_id="$(grep -E '^HFL_NODE_ID=' /opt/hyperfilelens-agent/config/agent.env 2>/dev/null \
 		| head -1 | cut -d= -f2- | tr -d '\r' || true)"
 	if [[ ! "${node_id}" =~ ^[0-9]+$ ]]; then
 		return 1
