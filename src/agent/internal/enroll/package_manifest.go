@@ -60,7 +60,13 @@ func validateAgentPackageFor(root, platform, arch string, role model.Role, expec
 
 	required := []string{"bin/hfl-agent", "bin/kopia"}
 	if platform == "windows" {
-		required = []string{"bin/hfl-agent.exe", "bin/kopia.exe", "install.ps1", "install.cmd"}
+		required = []string{
+			"bin/hfl-agent.exe",
+			"bin/hfl-agent-user-launcher.exe",
+			"bin/kopia.exe",
+			"install.ps1",
+			"install.cmd",
+		}
 	} else {
 		required = append(required, "install.sh")
 	}

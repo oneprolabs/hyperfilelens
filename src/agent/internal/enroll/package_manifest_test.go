@@ -56,6 +56,7 @@ func writeTestAgentPackage(t *testing.T, platform, arch, flavor string) string {
 	kopiaName := "bin/kopia"
 	if platform == "windows" {
 		files["bin/hfl-agent.exe"] = []byte("agent")
+		files["bin/hfl-agent-user-launcher.exe"] = []byte("launcher")
 		files["bin/kopia.exe"] = []byte("kopia")
 		files["install.ps1"] = []byte("# installer\n")
 		files["install.cmd"] = []byte("@echo off\r\n")

@@ -452,6 +452,7 @@ function Read-HflEnvValue {
 
 function Test-BundleLayout {
   return (Test-Path -LiteralPath (Join-Path $BundleRoot "bin\hfl-agent.exe")) -and
+    (Test-Path -LiteralPath (Join-Path $BundleRoot "bin\hfl-agent-user-launcher.exe")) -and
     (Test-Path -LiteralPath (Join-Path $BundleRoot "bin\kopia.exe"))
 }
 
@@ -477,7 +478,8 @@ function Test-AgentPackageRoot {
   param([Parameter(Mandatory = $true)][string]$Root)
   return (Test-Path -LiteralPath (Join-Path $Root "MANIFEST.json")) -and
     (Test-Path -LiteralPath (Join-Path $Root "install.ps1")) -and
-    (Test-Path -LiteralPath (Join-Path $Root "bin\hfl-agent.exe"))
+    (Test-Path -LiteralPath (Join-Path $Root "bin\hfl-agent.exe")) -and
+    (Test-Path -LiteralPath (Join-Path $Root "bin\hfl-agent-user-launcher.exe"))
 }
 
 function Get-UpgradeWorkspace {
@@ -576,7 +578,7 @@ function Backup-RollbackBinaries {
     Remove-Item -Recurse -Force -LiteralPath $rollbackRoot
   }
   New-Item -ItemType Directory -Force -Path $script:UpgradeBinBackup | Out-Null
-  foreach ($name in @("hfl-agent.exe", "kopia.exe", "MANIFEST.json", "INSTALLED_VERSION")) {
+  foreach ($name in @("hfl-agent.exe", "hfl-agent-user-launcher.exe", "kopia.exe", "MANIFEST.json", "INSTALLED_VERSION")) {
     $src = Join-Path $InstallRoot $name
     if (Test-Path -LiteralPath $src) {
       Copy-Item -LiteralPath $src -Destination (Join-Path $script:UpgradeBinBackup $name) -Force
@@ -589,7 +591,7 @@ function Restore-RollbackBinaries {
   if ([string]::IsNullOrWhiteSpace($script:UpgradeBinBackup) -or -not (Test-Path -LiteralPath $script:UpgradeBinBackup)) {
     return
   }
-  foreach ($name in @("hfl-agent.exe", "kopia.exe", "MANIFEST.json", "INSTALLED_VERSION")) {
+  foreach ($name in @("hfl-agent.exe", "hfl-agent-user-launcher.exe", "kopia.exe", "MANIFEST.json", "INSTALLED_VERSION")) {
     $src = Join-Path $script:UpgradeBinBackup $name
     if (Test-Path -LiteralPath $src) {
       Copy-Item -LiteralPath $src -Destination (Join-Path $InstallRoot $name) -Force
@@ -789,7 +791,7 @@ function Stop-HflService {
 
 function Stop-HflAgentProcesses {
   param([string]$Reason = "uninstall")
-  foreach ($name in @("hfl-agent", "kopia")) {
+  foreach ($name in @("hfl-agent", "hfl-agent-user-launcher", "kopia")) {
     $deadline = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline) {
       $procs = @(Get-Process -Name $name -ErrorAction SilentlyContinue)
@@ -912,56 +914,19 @@ exit 0
   Write-HflOk "scheduled removal of install directory $target (after install.cmd exits)"
 }
 
-function Write-HflUserTaskRunner {
-  param(
-    [Parameter(Mandatory = $true)][string]$ExePath,
-    [Parameter(Mandatory = $true)][string]$DataRoot
-  )
-  $runner = Join-Path $InstallRoot "run-agent.ps1"
-  $exeEsc = $ExePath.Replace("'", "''")
-  $dataEsc = $DataRoot.Replace("'", "''")
-  $body = @"
-`$ErrorActionPreference = 'Stop'
-`$agent = '$exeEsc'
-`$dataRoot = '$dataEsc'
-try {
-  # Hiding powershell.exe alone is insufficient when Windows Terminal is the
-  # default console host: the console Agent can still receive a new window.
-  # CreateNoWindow applies to the Agent process itself.
-  `$startInfo = New-Object System.Diagnostics.ProcessStartInfo
-  `$startInfo.FileName = `$agent
-  `$startInfo.Arguments = 'run -data-dir "' + `$dataRoot + '"'
-  `$startInfo.UseShellExecute = `$false
-  `$startInfo.CreateNoWindow = `$true
-  `$startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-  `$process = [System.Diagnostics.Process]::Start(`$startInfo)
-  if (`$null -eq `$process) { exit 1 }
-  `$process.WaitForExit()
-  exit `$process.ExitCode
-}
-catch {
-  exit 1
-}
-"@
-  Set-Content -LiteralPath $runner -Value $body -Encoding UTF8
-  return $runner
-}
-
 function Install-HflService {
   param([string]$ExePath, [string]$DataRoot, [switch]$NoStart)
   Remove-HflService
   if ($InstallationMode -eq "user") {
-    # Task Scheduler owns the process after installation. The hidden runner
-    # creates the console Agent without allocating an interactive window.
-    $runner = Write-HflUserTaskRunner -ExePath $ExePath -DataRoot $DataRoot
-    $powershellName = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh.exe" } else { "powershell.exe" }
-    $powershell = Join-Path $PSHOME $powershellName
-    if (-not (Test-Path -LiteralPath $powershell)) {
-      throw "Could not resolve the current PowerShell executable for the user task."
+    # A dedicated GUI-subsystem launcher keeps the task and Agent windowless.
+    # PowerShell cannot reliably suppress its console under Windows Terminal.
+    $runner = Join-Path $InstallRoot "hfl-agent-user-launcher.exe"
+    if (-not (Test-Path -LiteralPath $runner)) {
+      throw "Current-user Agent launcher is missing: $runner"
     }
     $action = New-ScheduledTaskAction `
-      -Execute $powershell `
-      -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runner`""
+      -Execute $runner `
+      -Argument "-data-dir `"$DataRoot`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $CurrentWindowsIdentity
     $principal = New-ScheduledTaskPrincipal `
       -UserId $CurrentWindowsIdentity `
@@ -1160,6 +1125,7 @@ function Deploy-InstallerFile {
 function Deploy-Binaries {
   param([string]$SrcRoot = $BundleRoot)
   $srcAgent = Join-Path $SrcRoot "bin\hfl-agent.exe"
+  $srcLauncher = Join-Path $SrcRoot "bin\hfl-agent-user-launcher.exe"
   $srcKopia = Join-Path $SrcRoot "bin\kopia.exe"
   if (-not (Test-Path -LiteralPath $srcAgent)) {
     if (Test-InstalledScriptLocation) {
@@ -1173,6 +1139,12 @@ function Deploy-Binaries {
     }
     throw "Missing bundle kopia: $srcKopia"
   }
+  if (-not (Test-Path -LiteralPath $srcLauncher)) {
+    if (Test-InstalledScriptLocation) {
+      throw "Missing current-user Agent launcher: $srcLauncher. Run upgrade -From <package.zip>, or use remote agent.upgrade."
+    }
+    throw "Missing current-user Agent launcher: $srcLauncher"
+  }
   New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
   $deployAgent = -not $KopiaOnly.IsPresent
   $deployKopia = -not $AgentOnly.IsPresent
@@ -1180,6 +1152,8 @@ function Deploy-Binaries {
   if ($deployAgent) {
     Copy-Item -Force -Path $srcAgent -Destination (Join-Path $InstallRoot "hfl-agent.exe")
     Write-HflOk "deployed $(Join-Path $InstallRoot 'hfl-agent.exe') ($ver)"
+    Copy-Item -Force -Path $srcLauncher -Destination (Join-Path $InstallRoot "hfl-agent-user-launcher.exe")
+    Write-HflOk "deployed $(Join-Path $InstallRoot 'hfl-agent-user-launcher.exe')"
   }
   if ($deployKopia) {
     Copy-Item -Force -Path $srcKopia -Destination (Join-Path $InstallRoot "kopia.exe")
@@ -1473,6 +1447,7 @@ function Invoke-Uninstall {
   }
 
   Remove-HflInstallFile (Join-Path $InstallRoot "hfl-agent.exe")
+  Remove-HflInstallFile (Join-Path $InstallRoot "hfl-agent-user-launcher.exe")
   Remove-HflInstallFile (Join-Path $InstallRoot "kopia.exe")
   Remove-HflInstallFile (Join-Path $InstallRoot "run-agent.ps1")
   Remove-HflInstallFile (Join-Path $InstallRoot "install.ps1")
