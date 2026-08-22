@@ -276,6 +276,33 @@ def active_llm_configs(*, org: Organization) -> list[dict[str, Any]]:
     return rows
 
 
+def active_llm_configs_available_to_org(
+    org: Organization,
+) -> list[dict[str, Any]]:
+    """Return active models owned by the org or inherited from the platform.
+
+    Platform-managed defaults are intentionally available to every tenant, while
+    tenant-owned models remain isolated to their owning organization.  Keep the
+    tenant row first so an organization-specific display name wins if the same
+    SourceLens configuration is represented in both scopes.
+    """
+
+    from apps.lens_bridge.services import platform_lens
+
+    rows = active_llm_configs(org=org)
+    platform_org = platform_lens.get_or_create_platform_org()
+    if org.pk == platform_org.pk:
+        return rows
+
+    seen = {str(row.get("uuid")) for row in rows if row.get("uuid")}
+    for row in active_llm_configs(org=platform_org):
+        uuid_value = str(row.get("uuid") or "")
+        if uuid_value and uuid_value not in seen:
+            rows.append(row)
+            seen.add(uuid_value)
+    return rows
+
+
 def delete_org_model(org: Organization, config_uuid: uuid.UUID) -> None:
     require_org_model(org, config_uuid)
     sl_client.request_json("DELETE", f"/api/v1/admin/llm-config/{config_uuid}/")
@@ -312,4 +339,44 @@ def validate_default_model_ref(
     ).exists():
         raise ValidationError(
             {field_name: "Model does not belong to this organization."}
+        )
+
+
+def validate_agent_model_ref(
+    org: Organization,
+    config_uuid: uuid.UUID | None,
+    *,
+    field_name: str = "agent_model_ref",
+) -> None:
+    """Validate a user-selected model without allowing the multimodal role."""
+
+    if config_uuid is None:
+        return
+    link = org_model_links(org).filter(
+        sl_config_uuid=config_uuid,
+        is_deployment_history=False,
+    ).first()
+    if link is None:
+        from apps.lens_bridge.services import platform_lens
+
+        platform_org = platform_lens.get_or_create_platform_org()
+        if org.pk != platform_org.pk:
+            link = org_model_links(platform_org).filter(
+                sl_config_uuid=config_uuid,
+                is_deployment_history=False,
+            ).first()
+    if link is None:
+        raise ValidationError(
+            {field_name: "Model is not available to this organization."}
+        )
+    if link.deployment_role == LensOrgModelLink.DeploymentRole.MULTIMODAL:
+        raise ValidationError(
+            {field_name: "Select an Agent model for Chat responses."}
+        )
+    from apps.lens_bridge.services import provisioning
+
+    _, multimodal_ref = provisioning.configured_default_model_refs_for_org(org)
+    if multimodal_ref and config_uuid == uuid.UUID(str(multimodal_ref)):
+        raise ValidationError(
+            {field_name: "Select an Agent model for Chat responses."}
         )

@@ -41,6 +41,7 @@ import {
   type LensGatewayInsight,
   type LensCopilotGatewayOption,
   type LensKnowledgeSource,
+  type LensLlmConfig,
   type LensSessionLink,
 } from '../../lib/lensApi'
 import CopilotComposer from './copilot/CopilotComposer.vue'
@@ -50,6 +51,7 @@ import CopilotLifecycleState from './copilot/CopilotLifecycleState.vue'
 import CopilotMessageList from './copilot/CopilotMessageList.vue'
 import CopilotSessionSidebar from './copilot/CopilotSessionSidebar.vue'
 import CopilotShareDialog from './copilot/CopilotShareDialog.vue'
+import CopilotExecutionSettingsDialog from './copilot/CopilotExecutionSettingsDialog.vue'
 import { toSessionRows, type SessionRow } from './copilot/sessionOrdering'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import type {
@@ -84,6 +86,7 @@ const deleteLoading = ref(false)
 const deleteTarget = ref<SessionRow | null>(null)
 const shareOpen = ref(false)
 const shareTarget = ref<SessionRow | null>(null)
+const executionSettingsOpen = ref(false)
 const messagesBySession = ref<Record<number, CopilotDisplayMessage[]>>({})
 const selectedStarterBySession = ref<Record<number, string>>({})
 const input = ref('')
@@ -236,6 +239,17 @@ function applySessionSyncMeta(sessionId: number, payload: { last_assistant_messa
   refreshPollerSessions()
 }
 
+function openExecutionSettings() {
+  if (!activeSession.value || activeSession.value.lifecycle_status !== 'ready') return
+  executionSettingsOpen.value = true
+}
+
+function applyExecutionSettings(updated: LensSessionLink) {
+  sessions.value = toSessionRows(
+    sessions.value.map((row) => row.id === updated.id ? { ...row, ...updated } : row),
+  )
+}
+
 const syncHandlers = {
   onMessages: applyMessagesFromSync,
   onSessionMeta: applySessionActiveMeta,
@@ -253,6 +267,15 @@ function refreshPollerSessions() {
 }
 
 const assistantByUuid = computed(() => new Map(assistants.value.map((row) => [row.uuid, row])))
+
+const selectableAgentModels = computed<LensLlmConfig[]>(() => (
+  (modelReadiness.value?.active_models || []).filter((row) => (
+    row.is_active !== false
+    && !row.is_deployment_history
+    && row.deployment_role !== 'multimodal'
+    && row.uuid !== modelReadiness.value?.default_multimodal_model_ref
+  ))
+))
 
 const chatReadyAssistants = computed(() => assistants.value.filter(isAssistantChatReady))
 
@@ -1153,6 +1176,7 @@ onUnmounted(() => {
         <CopilotContextBar
           v-if="activeSession"
           :session="activeSession"
+          @edit-execution="openExecutionSettings"
         />
 
         <CopilotLifecycleState
@@ -1225,6 +1249,12 @@ onUnmounted(() => {
       v-model="shareOpen"
       :session="shareTarget"
       @closed="shareTarget = null"
+    />
+    <CopilotExecutionSettingsDialog
+      v-model="executionSettingsOpen"
+      :session="activeSession"
+      :models="selectableAgentModels"
+      @saved="applyExecutionSettings"
     />
   </div>
 </template>

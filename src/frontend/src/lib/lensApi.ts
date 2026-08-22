@@ -92,6 +92,8 @@ export type LensCopilotReadiness = {
   default_multimodal_model_ref: string | null
 }
 
+export type LensAnalysisMode = 'fast' | 'standard' | 'deep'
+
 export type LensCopilotUsageSummary = {
   estimated_cost: number | null
   cost_currency: string
@@ -312,6 +314,7 @@ export type LensSessionLink = {
   selected_task?: string | null
   agent_model_ref: string | null
   multimodal_model_ref?: string | null
+  analysis_mode?: LensAnalysisMode
   backup_config_id: number | null
   backup_source_name: string | null
   backup_source_snapshot_id: number | null
@@ -1011,6 +1014,8 @@ export type CreateCopilotSessionPayload = {
   }>
   gateway_mode: 'auto' | 'manual'
   gateway_link_id?: number | null
+  analysis_mode?: LensAnalysisMode
+  agent_model_ref?: string | null
 }
 
 export async function createCopilotSession(body: CreateCopilotSessionPayload): Promise<LensSessionLink> {
@@ -1248,6 +1253,21 @@ export async function patchCopilotSession(
   body: { agent_model_ref: string | null },
 ): Promise<LensSessionLink> {
   const raw = await api(lensUrl(`copilot/sessions/${sessionId}/model/`), {
+    method: 'PATCH',
+    headers: lensHeaders(),
+    body: JSON.stringify(body),
+  })
+  return lensPayload<LensSessionLink>(raw)
+}
+
+export async function patchCopilotSessionExecution(
+  sessionId: number,
+  body: {
+    analysis_mode?: LensAnalysisMode
+    agent_model_ref?: string | null
+  },
+): Promise<LensSessionLink> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/execution/`), {
     method: 'PATCH',
     headers: lensHeaders(),
     body: JSON.stringify(body),
