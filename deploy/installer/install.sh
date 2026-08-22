@@ -43,8 +43,8 @@ UPGRADE_TRANSACTION_PHASE=""
 UPGRADE_TRANSACTION_INITIALIZED=0
 INSTALLER_LOCK_ACQUIRED=0
 DRAINED_WS_INSTANCES=""
-LOCAL_PLATFORM_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent"
-LOCAL_PLATFORM_AGENT_DATA_DIR="/var/lib/hyperfilelens-agent"
+LOCAL_PLATFORM_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent/bin"
+LOCAL_PLATFORM_AGENT_DATA_DIR="/opt/hyperfilelens-agent"
 LOCAL_PLATFORM_LENSNODE_ENV_FILE="/etc/hyperfilelens/lensnode.env"
 LOCAL_PLATFORM_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
 
@@ -1928,8 +1928,8 @@ prune_agent_release_media() {
 	local action name target
 	[[ -d "${releases}" ]] || return 0
 	desired="$(read_version 2>/dev/null || true)"
-	if [[ -f "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/INSTALLED_VERSION" ]]; then
-		installed="$(tr -d ' \t\r\n' <"${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/INSTALLED_VERSION")"
+	if [[ -f "${LOCAL_PLATFORM_AGENT_DATA_DIR}/INSTALLED_VERSION" ]]; then
+		installed="$(tr -d ' \t\r\n' <"${LOCAL_PLATFORM_AGENT_DATA_DIR}/INSTALLED_VERSION")"
 	fi
 
 	while IFS=$'\t' read -r action name; do
@@ -4117,7 +4117,7 @@ check_local_platform_gateway_continuity() {
 	if ! platform_gateway_auto_deploy_enabled; then
 		return 0
 	fi
-	if [[ ! -f "${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env" ]]; then
+	if [[ ! -f "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env" ]]; then
 		skip "Installer-managed platform Gateway is not installed; bootstrap follows the control-plane upgrade"
 		return 0
 	fi
@@ -4132,14 +4132,14 @@ check_local_platform_gateway_continuity() {
 }
 
 read_agent_env_value() {
-	local key=$1 env_file="${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env"
+	local key=$1 env_file="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
 	[[ -f "${env_file}" ]] || return 0
 	grep -E "^${key}=" "${env_file}" 2>/dev/null \
 		| head -1 | cut -d= -f2- | tr -d '\r' || true
 }
 
 local_platform_gateway_agent_is_managed() {
-	local env_file="${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env"
+	local env_file="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
 	[[ ! -L "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" \
 		&& ! -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}" \
 		&& -f "${env_file}" && ! -L "${env_file}" ]] || return 1
@@ -4240,7 +4240,7 @@ wait_for_local_platform_gateway_readiness() {
 }
 
 local_platform_gateway_installed_agent_version() {
-	local version_file="${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/INSTALLED_VERSION"
+	local version_file="${LOCAL_PLATFORM_AGENT_DATA_DIR}/INSTALLED_VERSION"
 	[[ -f "${version_file}" ]] || return 0
 	tr -d ' \t\r\n' <"${version_file}"
 }
@@ -5876,8 +5876,8 @@ cmd_uninstall() {
 		die "--purge-data includes bundled SourceLens data; add --with-sourcelens or use --purge-all"
 	fi
 	if [[ -e "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" || -L "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" \
-		|| -e "${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env" \
-		|| -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env" ]]; then
+		|| -e "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env" \
+		|| -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env" ]]; then
 		local_agent_present=1
 	fi
 	if local_platform_gateway_agent_is_managed; then

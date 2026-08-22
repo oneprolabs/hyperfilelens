@@ -54,7 +54,7 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 	if !strings.Contains(body, `script="$INSTALL_DIR/libexec/gateway-lifecycle.sh"`) {
 		t.Fatalf("script should prefer the Agent-owned Gateway lifecycle helper:\n%s", body)
 	}
-	if !strings.Contains(body, `local env_file="$DATA_DIR/agent.env"`) {
+	if !strings.Contains(body, `local env_file="$DATA_DIR/config/agent.env"`) {
 		t.Fatalf("script should read Gateway credentials from the resolved data directory:\n%s", body)
 	}
 	if !strings.Contains(body, `removed gateway resource policy $RESOURCE_DROPIN`) {
@@ -132,12 +132,12 @@ func TestWriteUnixUserUninstallScriptUsesUserLifecycle(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
-	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
 	path := home + "/run-uninstall.sh"
 	err := writeUnixUninstallScript(
-		filepath.Join(home, ".local", "lib", "hyperfilelens-agent"),
-		filepath.Join(home, ".local", "state", "hyperfilelens-agent"),
-		filepath.Join(home, ".local", "state", "hyperfilelens-agent", "logs"),
+		filepath.Join(home, ".local", "share", "hyperfilelens-agent", "bin"),
+		filepath.Join(home, ".local", "share", "hyperfilelens-agent", "state"),
+		filepath.Join(home, ".local", "share", "hyperfilelens-agent", "state", "logs"),
 		false,
 		true,
 		UninstallCompletion{
@@ -159,7 +159,7 @@ func TestWriteUnixUserUninstallScriptUsesUserLifecycle(t *testing.T) {
 		"USER_INSTALL=1",
 		"systemctl --user",
 		filepath.Join(home, ".config", "systemd", "user", unixServiceUnit),
-		fmt.Sprintf("USER_INSTALL_ROOT=%q", filepath.Join(home, ".local", "lib", "hyperfilelens-agent")),
+		fmt.Sprintf("USER_INSTALL_ROOT=%q", filepath.Join(home, ".local", "share", "hyperfilelens-agent", "bin")),
 		`is_managed_install_path()`,
 		`"$path" == "$USER_INSTALL_ROOT"`,
 		`is_managed_data_path()`,
@@ -185,11 +185,11 @@ func TestWriteUnixUserUninstallScriptUsesUserLifecycle(t *testing.T) {
 func TestWriteUnixUserUninstallScriptDoesNotTrustConfiguredExternalDataDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
 	externalData := filepath.Join(t.TempDir(), "hyperfilelens-agent")
 	path := filepath.Join(home, "run-uninstall.sh")
 	err := writeUnixUninstallScript(
-		filepath.Join(home, ".local", "lib", "hyperfilelens-agent"),
+		filepath.Join(home, ".local", "share", "hyperfilelens-agent", "bin"),
 		externalData,
 		filepath.Join(externalData, "logs"),
 		false,
@@ -209,7 +209,7 @@ func TestWriteUnixUserUninstallScriptDoesNotTrustConfiguredExternalDataDir(t *te
 		t.Fatal(err)
 	}
 	text := string(body)
-	trustedDefault := filepath.Join(home, ".local", "state", "hyperfilelens-agent")
+	trustedDefault := filepath.Join(home, ".local", "share", "hyperfilelens-agent")
 	if !strings.Contains(text, fmt.Sprintf("DEFAULT_DATA_ROOT=%q", trustedDefault)) {
 		t.Fatalf("script must use trusted default data root %q", trustedDefault)
 	}
@@ -221,7 +221,7 @@ func TestWriteUnixUserUninstallScriptDoesNotTrustConfiguredExternalDataDir(t *te
 func TestValidateUnixUninstallPaths(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
 
 	systemInstall := filepath.Clean(vfs.InstallDirForMode(model.InstallationModeSystem))
 	systemData := filepath.Clean(vfs.AgentDataDirForMode(model.InstallationModeSystem))

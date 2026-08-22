@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"hyperfilelens/agent/internal/platform/vfs"
 	_ "modernc.org/sqlite"
 )
 
@@ -52,7 +53,7 @@ type DB struct {
 
 // DefaultPath returns the SQLite file path under the agent data directory.
 func DefaultPath(dataDir string) string {
-	return filepath.Join(dataDir, "agent.db")
+	return vfs.AgentDatabasePath(dataDir)
 }
 
 // Open initializes the SQLite database at path with WAL journaling enabled.

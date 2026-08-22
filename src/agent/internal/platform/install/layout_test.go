@@ -1,13 +1,37 @@
 package install
 
-import "testing"
+import (
+	"testing"
+
+	"hyperfilelens/agent/internal/platform/vfs"
+)
+
+func TestUpgradeArtifactsStayUnderRollbackDirectory(t *testing.T) {
+	root := "/opt/hyperfilelens-agent"
+	if got, want := BackupStateLatestPath(root), root+"/backup/rollback/latest.tar.gz"; got != want {
+		t.Fatalf("latest snapshot path = %q, want %q", got, want)
+	}
+	if got, want := BackupMetaPath(root), root+"/backup/rollback/meta.json"; got != want {
+		t.Fatalf("snapshot metadata path = %q, want %q", got, want)
+	}
+	if got, want := BackupRollbackBinDir(root), root+"/backup/rollback/bin"; got != want {
+		t.Fatalf("binary rollback path = %q, want %q", got, want)
+	}
+	if got, want := vfs.AgentDatabasePath(root), root+"/data/agent.db"; got != want {
+		t.Fatalf("database path = %q, want %q", got, want)
+	}
+}
 
 func TestPathAllowedForRemoval(t *testing.T) {
 	allowed := []string{
 		"/opt/hyperfilelens-agent",
 		"/opt/hyperfilelens-agent/backup",
+		"/opt/hyperfilelens-agent/backup/rollback",
+		"/opt/hyperfilelens-agent/backup/legacy",
+		// Legacy state remains removable only for an explicit pre-unified
+		// installation migration or purge retry.
 		"/var/lib/hyperfilelens-agent",
-		"/var/lib/hyperfilelens-agent/backup/state",
+		"/var/lib/hyperfilelens-agent/backup/rollback",
 	}
 	for _, path := range allowed {
 		if !PathAllowedForRemoval(path) {

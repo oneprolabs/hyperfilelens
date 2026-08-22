@@ -18,7 +18,6 @@ const (
 	unixResourceDropIn   = "/etc/systemd/system/hyperfilelens-agent.service.d/20-gateway-resources.conf"
 	unixLaunchdPlist     = "/Library/LaunchDaemons/com.hyperfilelens.agent.plist"
 	unixLaunchdLabel     = "com.hyperfilelens.agent"
-	unixDefaultDataRoot  = "/var/lib/hyperfilelens-agent"
 	uninstallDelaySecond = 5
 )
 
@@ -35,10 +34,14 @@ func ScheduleDetachedUninstall(
 		installDir = DefaultInstallDir()
 	}
 	dataDir = strings.TrimSpace(dataDir)
-	if dataDir == "" {
-		dataDir = unixDefaultDataRoot
-	}
 	installDir = filepath.Clean(installDir)
+	mode := model.InstallationModeSystem
+	if userInstall {
+		mode = model.InstallationModeUser
+	}
+	if dataDir == "" {
+		dataDir = vfs.AgentDataDirForMode(mode)
+	}
 	dataDir = filepath.Clean(dataDir)
 	if err := validateUnixUninstallPaths(installDir, dataDir, keepData, userInstall); err != nil {
 		return err
@@ -212,7 +215,7 @@ func writeUnixUninstallScript(
 	resourceDropIn := unixResourceDropIn
 	launchdPlist := unixLaunchdPlist
 	launchdDomain := "system"
-	defaultDataRoot := unixDefaultDataRoot
+	defaultDataRoot := dataDir
 	userHome := ""
 	if userInstall {
 		userInstallFlag = "1"
@@ -385,9 +388,9 @@ verify_uninstall_artifacts() {
     "$INSTALL_DIR/hfl-agent" \
     "$INSTALL_DIR/kopia" \
     "$INSTALL_DIR/run-agent.sh" \
-    "$INSTALL_DIR/INSTALLED_VERSION" \
+    "$DATA_DIR/INSTALLED_VERSION" \
     "$INSTALL_DIR/install.sh" \
-    "$INSTALL_DIR/MANIFEST.json" \
+    "$DATA_DIR/MANIFEST.json" \
     "$UNIT_FILE" \
     "$RESOURCE_DROPIN" \
     "$LAUNCHD_PLIST"; do
@@ -505,7 +508,7 @@ if [[ "$KEEP_DATA" == "1" ]]; then
 	log "retired installation identity; the existing console record is preserved and the next installation will register a new record"
 fi
 
-for target in "$INSTALL_DIR/hfl-agent" "$INSTALL_DIR/kopia" "$INSTALL_DIR/run-agent.sh" "$INSTALL_DIR/INSTALLED_VERSION" "$INSTALL_DIR/install.sh" "$INSTALL_DIR/MANIFEST.json"; do
+for target in "$INSTALL_DIR/hfl-agent" "$INSTALL_DIR/kopia" "$INSTALL_DIR/run-agent.sh" "$DATA_DIR/INSTALLED_VERSION" "$INSTALL_DIR/install.sh" "$DATA_DIR/MANIFEST.json"; do
   if [[ -e "$target" ]]; then
     if rm -f "$target"; then
       log "removed $target"
@@ -518,9 +521,11 @@ for target in "$INSTALL_DIR/hfl-agent" "$INSTALL_DIR/kopia" "$INSTALL_DIR/run-ag
 done
 
 if [[ "$INSTALL_DIR" == "/opt/hyperfilelens-agent" \
-  || "$INSTALL_DIR" == /opt/hyperfilelens-agent/* \
-  || "$INSTALL_DIR" == "/var/lib/hyperfilelens-agent" \
-  || "$INSTALL_DIR" == /var/lib/hyperfilelens-agent/* ]] \
+	|| "$INSTALL_DIR" == /opt/hyperfilelens-agent/* \
+	|| "$INSTALL_DIR" == "/var/lib/hyperfilelens-agent" \
+	|| "$INSTALL_DIR" == /var/lib/hyperfilelens-agent/* \
+	|| "$INSTALL_DIR" == "/Library/Application Support/HyperFileLens/Agent" \
+	|| "$INSTALL_DIR" == /Library/Application\ Support/HyperFileLens/Agent/* ]] \
   || is_managed_install_path "$INSTALL_DIR"; then
     if [[ -e "$INSTALL_DIR" ]]; then
       if rm -rf "$INSTALL_DIR"; then
@@ -547,10 +552,12 @@ else
 fi
 
 if [[ "$KEEP_DATA" == "0" ]]; then
-  if [[ "$DATA_DIR" == "/var/lib/hyperfilelens-agent" \
-    || "$DATA_DIR" == /var/lib/hyperfilelens-agent/* \
-    || "$DATA_DIR" == "/opt/hyperfilelens-agent" \
-    || "$DATA_DIR" == /opt/hyperfilelens-agent/* ]] \
+if [[ "$DATA_DIR" == "/var/lib/hyperfilelens-agent" \
+	|| "$DATA_DIR" == /var/lib/hyperfilelens-agent/* \
+	|| "$DATA_DIR" == "/opt/hyperfilelens-agent" \
+	|| "$DATA_DIR" == /opt/hyperfilelens-agent/* \
+	|| "$DATA_DIR" == "/Library/Application Support/HyperFileLens/Agent" \
+	|| "$DATA_DIR" == /Library/Application\ Support/HyperFileLens/Agent/* ]] \
     || is_managed_data_path "$DATA_DIR"; then
       if [[ -e "$DATA_DIR" ]]; then
         if rm -rf "$DATA_DIR"; then
@@ -572,11 +579,11 @@ if [[ "$KEEP_DATA" == "0" ]]; then
       log "data directory $DATA_DIR outside allowed prefixes; skipped removal"
       AGENT_ARTIFACTS_FAILED=1
   fi
-  if [[ -f "$DEFAULT_DATA_ROOT/agent.env" ]]; then
-    if rm -f "$DEFAULT_DATA_ROOT/agent.env"; then
-      log "removed $DEFAULT_DATA_ROOT/agent.env"
+  if [[ -f "$DEFAULT_DATA_ROOT/config/agent.env" ]]; then
+    if rm -f "$DEFAULT_DATA_ROOT/config/agent.env"; then
+      log "removed $DEFAULT_DATA_ROOT/config/agent.env"
     else
-      log "failed to remove $DEFAULT_DATA_ROOT/agent.env (exit=$?)"
+      log "failed to remove $DEFAULT_DATA_ROOT/config/agent.env (exit=$?)"
     fi
   fi
 else

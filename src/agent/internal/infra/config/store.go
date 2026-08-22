@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -206,7 +205,7 @@ func (s *Store) SetNodeCredential(_ context.Context, credential string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := ClearNodeTokenJSONOverride(filepath.Dir(s.jsonPath)); err != nil {
+	if err := clearNodeTokenJSONOverridePath(s.jsonPath); err != nil {
 		return err
 	}
 	values, err := ParseEnvFile(s.envPath)

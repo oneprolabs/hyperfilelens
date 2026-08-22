@@ -40,6 +40,10 @@ func SendInventory(
 	if installationMode == "" {
 		installationMode = model.InstallationModeSystem
 	}
+	rootPath := cfg.AgentRoot
+	if rootPath == "" {
+		rootPath = vfs.AgentRootForMode(installationMode)
+	}
 	for key, value := range map[string]any{
 		"agent_version":     selfupdate.Version,
 		"agent_commit":      selfupdate.Commit,
@@ -50,8 +54,13 @@ func SendInventory(
 		"arch":              runtime.GOARCH,
 		"hostname":          hostname(),
 		"kopia_path":        cfg.KopiaPath,
-		"root_path":         dataDir,
-		"install_path":      vfs.InstallDirForMode(installationMode),
+		// root_path is the source-host browsing root and must remain the
+		// Agent data directory for backend compatibility. The installer-owned
+		// unified root is reported separately.
+		"root_path":    dataDir,
+		"data_path":    dataDir,
+		"agent_root":   rootPath,
+		"install_path": vfs.InstallDirForMode(installationMode),
 		"capabilities": []string{
 			"task_command_ack_v1",
 			"repository_operation_v1",

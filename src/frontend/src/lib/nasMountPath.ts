@@ -1,4 +1,4 @@
-export const DEFAULT_AGENT_DATA_DIR = '/var/lib/hyperfilelens-agent'
+export const DEFAULT_AGENT_DATA_DIR = '/opt/hyperfilelens-agent'
 
 export type NasSourceProtocol = 'smb' | 'nfs'
 

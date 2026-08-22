@@ -9,7 +9,6 @@ const (
 	dirBackup          = "backup"
 	dirRuntime         = "runtime"
 	dirLifecycle       = "lifecycle"
-	subState           = "state"
 	stateLatestArchive = "latest.tar.gz"
 	backupMetaFile     = "meta.json"
 	runtimeDownload    = "download"
@@ -25,12 +24,12 @@ func BackupRollbackBinDir(dataDir string) string {
 
 // BackupStateLatestPath is the fixed agent.env/agent.db snapshot path.
 func BackupStateLatestPath(dataDir string) string {
-	return filepath.Join(strings.TrimSpace(dataDir), dirBackup, subState, stateLatestArchive)
+	return filepath.Join(strings.TrimSpace(dataDir), dirBackup, "rollback", stateLatestArchive)
 }
 
-// BackupMetaPath is backup/meta.json describing the latest pre-upgrade snapshot.
+// BackupMetaPath is backup/rollback/meta.json describing the latest pre-upgrade snapshot.
 func BackupMetaPath(dataDir string) string {
-	return filepath.Join(strings.TrimSpace(dataDir), dirBackup, backupMetaFile)
+	return filepath.Join(strings.TrimSpace(dataDir), dirBackup, "rollback", backupMetaFile)
 }
 
 // RuntimeDownloadDir holds WS download artifacts before staging.
@@ -70,10 +69,11 @@ func PathAllowedForRemoval(path string) bool {
 		return false
 	}
 	switch path {
-	case "/opt/hyperfilelens-agent", "/var/lib/hyperfilelens-agent":
+	case "/opt/hyperfilelens-agent", "/var/lib/hyperfilelens-agent", "/Library/Application Support/HyperFileLens/Agent":
 		return true
 	default:
 		return strings.HasPrefix(path, "/opt/hyperfilelens-agent/") ||
-			strings.HasPrefix(path, "/var/lib/hyperfilelens-agent/")
+			strings.HasPrefix(path, "/var/lib/hyperfilelens-agent/") ||
+			strings.HasPrefix(path, "/Library/Application Support/HyperFileLens/Agent/")
 	}
 }

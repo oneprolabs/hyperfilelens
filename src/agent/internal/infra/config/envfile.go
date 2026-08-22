@@ -10,12 +10,13 @@ import (
 	"strings"
 
 	"hyperfilelens/agent/internal/platform/atomicfile"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 const agentEnvFileName = "agent.env"
 
 func agentEnvPath(dataDir string) string {
-	return filepath.Join(dataDir, agentEnvFileName)
+	return filepath.Join(vfs.AgentConfigDir(dataDir), agentEnvFileName)
 }
 
 // ParseEnvFile reads KEY=value lines into a map (does not mutate os.Environ).

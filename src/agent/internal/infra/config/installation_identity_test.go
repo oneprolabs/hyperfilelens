@@ -10,8 +10,8 @@ import (
 func TestRetireInstallationIdentityPreservesNonIdentityConfiguration(t *testing.T) {
 	t.Parallel()
 	dataDir := t.TempDir()
-	envPath := filepath.Join(dataDir, agentEnvFileName)
-	jsonPath := filepath.Join(dataDir, configJSONName)
+	envPath := filepath.Join(dataDir, "config", agentEnvFileName)
+	jsonPath := filepath.Join(dataDir, "config", configJSONName)
 	envContent := strings.Join([]string{
 		"# preserved comment",
 		"HFL_API_BASE=https://console.example",
@@ -30,6 +30,9 @@ func TestRetireInstallationIdentityPreservesNonIdentityConfiguration(t *testing.
   "future_setting": {"enabled": true}
 }
 `
+	if err := os.MkdirAll(filepath.Dir(envPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(envPath, []byte(envContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -84,13 +87,16 @@ func TestRetireInstallationIdentityIsIdempotentWithoutConfigFiles(t *testing.T) 
 func TestClearNodeTokenJSONOverridePreservesOtherSettings(t *testing.T) {
 	t.Parallel()
 	dataDir := t.TempDir()
-	jsonPath := filepath.Join(dataDir, configJSONName)
+	jsonPath := filepath.Join(dataDir, "config", configJSONName)
 	content := `{
   "api_base_url": "https://console.example",
   "node_token": "stale-enrollment-token",
   "future_setting": {"enabled": true}
 }
 `
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(jsonPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}

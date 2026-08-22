@@ -431,7 +431,7 @@ class KopiaFailureMessageTests(SimpleTestCase):
                 "stderr": (
                     "failed to open repository: unable to establish session: "
                     "rpc error: code = PermissionDenied desc = access denied for hfl-backup@proxy: EOF\n"
-                    "write error: unable to open log file: open /var/lib/hyperfilelens-agent/cache/kopia/cli-logs/x.log: no such file or directory"
+                    "write error: unable to open log file: open /opt/hyperfilelens-agent/cache/kopia/cli-logs/x.log: no such file or directory"
                 )
             }
         }

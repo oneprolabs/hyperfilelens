@@ -31,6 +31,7 @@ import (
 	"hyperfilelens/agent/internal/platform/kopia"
 	"hyperfilelens/agent/internal/platform/process"
 	"hyperfilelens/agent/internal/platform/tlsclient"
+	"hyperfilelens/agent/internal/platform/vfs"
 	nassvc "hyperfilelens/agent/internal/service/nas"
 )
 
@@ -447,7 +448,7 @@ func (e *Engine) repositoryConfigPath(spec repositorySpec) string {
 	} else if spec.ID > 0 {
 		filename = fmt.Sprintf("repo-%d.config", spec.ID)
 	}
-	return filepath.Join(base, "kopia", "repositories", filename)
+	return filepath.Join(vfs.AgentCacheDir(base), "repositories", filename)
 }
 
 func repositoryNamespaceToken(namespace string) string {

@@ -77,7 +77,7 @@ class UninstallCompletionTests(TestCase):
             cleanup_failures=[
                 {"code": "mount_busy", "detail": "Managed mount is still active."}
             ],
-            retained_resources=["/var/lib/hyperfilelens-agent/mounts/source-1"],
+            retained_resources=["/opt/hyperfilelens-agent/mounts/source-1"],
         )
 
         task.refresh_from_db()

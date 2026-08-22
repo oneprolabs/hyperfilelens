@@ -6,7 +6,7 @@ import (
 	"hyperfilelens/agent/internal/platform/vfs"
 )
 
-const testCustomMount = "/var/lib/hyperfilelens-agent/mounts/custom/backup"
+const testCustomMount = "/opt/hyperfilelens-agent/mounts/custom/backup"
 
 func TestParseSpecSMB(t *testing.T) {
 	spec, err := ParseSpec(map[string]any{
@@ -31,7 +31,7 @@ func TestParseSpecNFS(t *testing.T) {
 		"protocol":    "nfs",
 		"server":      "192.168.1.20",
 		"export_path": "/export/data",
-		"mount_point": vfs.SourceMountPoint(vfs.UnixDataDir(), 7),
+		"mount_point": vfs.SourceMountPoint(vfs.SystemDataDir(), 7),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

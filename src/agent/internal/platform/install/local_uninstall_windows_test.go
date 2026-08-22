@@ -201,7 +201,7 @@ func TestWriteWindowsUserUninstallScriptUsesCurrentUserLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/run-uninstall.ps1"
 	err := writeWindowsUninstallScript(
-		`C:\Users\agent\AppData\Local\Programs\HyperFileLens\Agent`,
+		`C:\Users\agent\AppData\Local\HyperFileLens\Agent\bin`,
 		dir+`/data`,
 		dir+`/data/logs`,
 		false,
@@ -227,7 +227,7 @@ func TestWriteWindowsUserUninstallScriptUsesCurrentUserLifecycle(t *testing.T) {
 		`Stop-ScheduledTask -TaskName HyperFileLensAgent`,
 		`Get-ScheduledTask -TaskName HyperFileLensAgent`,
 		`Unregister-ScheduledTask -TaskName HyperFileLensAgent`,
-		`Join-Path $env:LOCALAPPDATA 'HyperFileLens\AgentData'`,
+		`Join-Path $env:LOCALAPPDATA 'HyperFileLens\Agent'`,
 		`return $full.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)`,
 	} {
 		if !strings.Contains(body, want) {

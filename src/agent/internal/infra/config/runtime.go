@@ -8,17 +8,24 @@ import (
 	"strings"
 
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
-// BootstrapAgentHome loads "<home>/agent.env" into the environment (without overriding existing vars),
-// then sets HFL_DATA_DIR to home when still unset. Single-root portable layout.
+// BootstrapAgentHome loads the unified root's config/agent.env into the
+// environment (without overriding existing vars), then sets HFL_DATA_DIR to
+// that root when still unset. The legacy root/agent.env location remains a
+// read-only compatibility fallback for older installations.
 func BootstrapAgentHome() error {
 	home := strings.TrimSpace(os.Getenv("HFL_AGENT_HOME"))
 	if home == "" {
 		return nil
 	}
 	home = filepath.Clean(home)
-	if err := LoadEnvFile(filepath.Join(home, "agent.env")); err != nil {
+	envPath := filepath.Join(vfs.AgentConfigDir(home), "agent.env")
+	if _, err := os.Stat(envPath); os.IsNotExist(err) {
+		envPath = filepath.Join(home, "agent.env")
+	}
+	if err := LoadEnvFile(envPath); err != nil {
 		return err
 	}
 	if strings.TrimSpace(os.Getenv("HFL_DATA_DIR")) == "" {
@@ -44,6 +51,7 @@ func RuntimeFromEnv() (*model.AgentConfig, error) {
 		NodeID:                    strings.TrimSpace(os.Getenv("HFL_NODE_ID")),
 		InstallationID:            strings.TrimSpace(os.Getenv("HFL_INSTALLATION_ID")),
 		InstallationMode:          installationMode,
+		AgentRoot:                 strings.TrimSpace(os.Getenv("HFL_AGENT_ROOT")),
 		RunAsUser:                 strings.TrimSpace(os.Getenv("HFL_RUN_AS_USER")),
 		RunAsHome:                 strings.TrimSpace(os.Getenv("HFL_RUN_AS_HOME")),
 		NodeToken:                 firstNonEmpty(strings.TrimSpace(os.Getenv("HFL_NODE_CREDENTIAL")), strings.TrimSpace(os.Getenv("HFL_NODE_TOKEN"))),

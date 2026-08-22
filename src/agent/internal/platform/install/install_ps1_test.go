@@ -38,7 +38,7 @@ func TestInstallPs1DoesNotRemoveInstallParent(t *testing.T) {
 func TestInstallPs1SafeDataPathRequiresHyperFileLensDescendant(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	for _, want := range []string{
-		`$allowedRoot = Join-Path ([System.IO.Path]::GetFullPath($base)) "HyperFileLens"`,
+		`(Join-Path $env:ProgramData "HyperFileLens\Agent")`,
 		`$allowedRoot.TrimEnd('\') + '\'`,
 		`Test-HflPathContainsReparsePoint -Path $full`,
 		`[System.IO.FileAttributes]::ReparsePoint`,
@@ -57,6 +57,8 @@ func TestInstallPs1UsesFixedUserDataDirectory(t *testing.T) {
 	for _, want := range []string{
 		`$expected = [System.IO.Path]::GetFullPath($DefaultDataRoot)`,
 		`User-level installation uses the fixed data directory $DefaultDataRoot; -DataDir is not supported.`,
+		`Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_DATA_DIR" -Value $DataRoot`,
+		`Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_AGENT_ROOT" -Value $AgentRoot`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("install.ps1 missing fixed user data rule %q", want)
@@ -99,15 +101,40 @@ func TestInstallPs1SupportsSpecifiedUserContinuousTask(t *testing.T) {
 		`New-ScheduledTaskTrigger -AtStartup`,
 		`-LogonType S4U`,
 		`-UserId $RunAsUser`,
-		`HFL_RUN_AS_USER=$RunAsUser`,
-		`HFL_RUN_AS_HOME=$RunAsHome`,
-		`$existingEnv = Join-Path $env:ProgramData "HyperFileLens\Agent\agent.env"`,
-		`Grant-HflDirectoryAccess -Path $dataRoot -Account $RunAsUser`,
+		`Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_RUN_AS_USER" -Value $RunAsUser`,
+		`Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_RUN_AS_HOME" -Value $RunAsHome`,
+		`(Join-Path $machineAgentRoot "config\agent.env")`,
+		`Grant-HflDirectoryAccess -Path $mutable -Account $RunAsUser`,
 		`Grant-HflDirectoryAccess -Path $logDir -Account $RunAsUser`,
 		`$nextCommand = if ($InstallationMode -ne "system")`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("install.ps1 missing specified-user continuous task contract %q", want)
+		}
+	}
+}
+
+func TestInstallPs1LegacyMigrationUsesUnifiedStateRoot(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	if strings.Contains(source, `Join-Path $DefaultDataRoot "state\`) {
+		t.Fatal("legacy migration must not create a state wrapper directory")
+	}
+	for _, want := range []string{
+		`function Copy-LegacyBackupTree`,
+		`$legacyDb = Join-Path $legacyDataRoot "agent.db"`,
+		`$newDb = Join-Path $DataStoreRoot "agent.db"`,
+		`$migrationMarker = Join-Path $LifecycleRoot ".legacy-migration"`,
+		`if ($entry.Name -eq "legacy") { continue }`,
+		`Join-Path $ConfigRoot "agent.env"`,
+		`Join-Path $DataStoreRoot $name`,
+		`Join-Path $BackupRoot "rollback"`,
+		`Join-Path $legacyDataRoot "backup\state"`,
+		`foreach ($name in @("agent.env", "agent.db", "agent.db-wal", "agent.db-shm", "config.json", "install.lock"))`,
+		`Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_AGENT_ROOT" -Value $AgentRoot`,
+		`Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_DATA_DIR" -Value $DataRoot`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("install.ps1 legacy migration missing %q", want)
 		}
 	}
 }

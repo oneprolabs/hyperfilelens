@@ -1,11 +1,14 @@
 import type { EnrollmentOs } from './nodeApi'
 import type { NodeInstallationMode, NodeRole } from '../types/node'
 
-const LINUX_INSTALL_DIR = '/opt/hyperfilelens-agent'
-const LINUX_DATA_DIR = '/var/lib/hyperfilelens-agent'
+const LINUX_AGENT_ROOT = '/opt/hyperfilelens-agent'
+const LINUX_INSTALL_DIR = `${LINUX_AGENT_ROOT}/bin`
+const LINUX_DATA_DIR = LINUX_AGENT_ROOT
+const MAC_AGENT_ROOT = '/Library/Application Support/HyperFileLens/Agent'
+const MAC_USER_AGENT_ROOT = '$HOME/Library/Application Support/HyperFileLens/Agent'
 const MAC_LAUNCHD_LABEL = 'com.hyperfilelens.agent'
-const WIN_INSTALL_CMD = '& "$env:ProgramFiles\\HyperFileLens\\Agent\\install.cmd"'
-const WIN_USER_INSTALL_CMD = '& "$env:LOCALAPPDATA\\Programs\\HyperFileLens\\Agent\\install.cmd"'
+const WIN_INSTALL_CMD = '& "$env:ProgramData\\HyperFileLens\\Agent\\bin\\install.cmd"'
+const WIN_USER_INSTALL_CMD = '& "$env:LOCALAPPDATA\\HyperFileLens\\Agent\\bin\\install.cmd"'
 
 export type NodeLifecycleTab = 'install' | 'upgrade' | 'uninstall' | 'service'
 
@@ -27,6 +30,17 @@ export function roleSupportedOnOs(role: NodeRole, os: EnrollmentOs): boolean {
 
 export function linuxInstallScriptPath() {
   return `${LINUX_INSTALL_DIR}/install.sh`
+}
+
+function installScriptPath(os: EnrollmentOs, installationMode: NodeInstallationMode): string {
+  if (installationMode === 'user') {
+    return os === 'macos'
+      ? `"${MAC_USER_AGENT_ROOT}/bin/install.sh"`
+      : '"${XDG_DATA_HOME:-$HOME/.local/share}/hyperfilelens-agent/bin/install.sh"'
+  }
+  return os === 'macos'
+    ? `"${MAC_AGENT_ROOT}/bin/install.sh"`
+    : linuxInstallScriptPath()
 }
 
 export function enrollmentHelperDownloadUrl(
@@ -79,11 +93,7 @@ export function buildLocalUpgradeCommand(
     return `${installCommand} upgrade -From "${zip}"`
   }
   const archive = pkg.endsWith('.tar.gz') ? pkg : '/tmp/hfl-agent.tar.gz'
-  const installScript = installationMode === 'user'
-    ? (os === 'macos'
-        ? '"$HOME/Library/Application Support/HyperFileLens/Agent/bin/install.sh"'
-        : '"$HOME/.local/lib/hyperfilelens-agent/install.sh"')
-    : linuxInstallScriptPath()
+  const installScript = installScriptPath(os, installationMode)
   const privilegePrefix = installationMode === 'user' ? '' : 'sudo '
   if (withDownload && downloadUrl) {
     return `curl ${curlDownloadOptions(tlsVerify)} -o ${archive} '${downloadUrl}'\n${privilegePrefix}${installScript} upgrade --from ${archive}`
@@ -108,11 +118,7 @@ export function buildLocalUninstallCommand(
       ? `${installCommand} uninstall -PurgeAll`
       : `${installCommand} uninstall`
   }
-  const installScript = installationMode === 'user'
-    ? (os === 'macos'
-        ? '"$HOME/Library/Application Support/HyperFileLens/Agent/bin/install.sh"'
-        : '"$HOME/.local/lib/hyperfilelens-agent/install.sh"')
-    : linuxInstallScriptPath()
+  const installScript = installScriptPath(os, installationMode)
   const privilegePrefix = installationMode === 'user' ? '' : 'sudo '
   return purgeAll
     ? `${privilegePrefix}${installScript} uninstall --purge-all`
@@ -146,11 +152,7 @@ export function buildLocalServiceCommand(
     if (action === 'stop') return 'Stop-Service HyperFileLensAgent -Force'
     return 'Restart-Service HyperFileLensAgent'
   }
-  const installScript = installationMode === 'user'
-    ? (os === 'macos'
-        ? '"$HOME/Library/Application Support/HyperFileLens/Agent/bin/install.sh"'
-        : '"$HOME/.local/lib/hyperfilelens-agent/install.sh"')
-    : linuxInstallScriptPath()
+  const installScript = installScriptPath(os, installationMode)
   return `${installationMode === 'user' ? '' : 'sudo '}${installScript} ${action}`
 }
 
@@ -188,8 +190,8 @@ export function installPathsSummary(
   if (installationMode === 'user') {
     if (os === 'windows') {
       return {
-        installDir: '%LOCALAPPDATA%\\Programs\\HyperFileLens\\Agent',
-        dataDir: '%LOCALAPPDATA%\\HyperFileLens\\AgentData',
+        installDir: '%LOCALAPPDATA%\\HyperFileLens\\Agent\\bin',
+        dataDir: '%LOCALAPPDATA%\\HyperFileLens\\Agent',
         service: 'HyperFileLensAgent (current-user task)',
       }
     }
@@ -201,23 +203,23 @@ export function installPathsSummary(
       }
     }
     return {
-      installDir: '~/.local/lib/hyperfilelens-agent',
-      dataDir: '$XDG_STATE_HOME/hyperfilelens-agent or ~/.local/state/hyperfilelens-agent',
+      installDir: '${XDG_DATA_HOME:-$HOME/.local/share}/hyperfilelens-agent/bin',
+      dataDir: '${XDG_DATA_HOME:-$HOME/.local/share}/hyperfilelens-agent',
       service: 'hyperfilelens-agent.service (systemd user)',
     }
   }
   if (installationMode === 'account') {
     if (os === 'windows') {
       return {
-        installDir: 'C:\\Program Files\\HyperFileLens\\Agent',
+        installDir: 'C:\\ProgramData\\HyperFileLens\\Agent\\bin',
         dataDir: 'C:\\ProgramData\\HyperFileLens\\Agent',
         service: 'HyperFileLensAgent (runs as the selected user)',
       }
     }
     if (os === 'macos') {
       return {
-        installDir: '/opt/hyperfilelens-agent',
-        dataDir: '/var/lib/hyperfilelens-agent',
+        installDir: `${MAC_AGENT_ROOT}/bin`,
+        dataDir: MAC_AGENT_ROOT,
         service: `${MAC_LAUNCHD_LABEL} (runs as the selected user)`,
       }
     }
@@ -229,15 +231,15 @@ export function installPathsSummary(
   }
   if (os === 'windows') {
     return {
-      installDir: 'C:\\Program Files\\HyperFileLens\\Agent',
+      installDir: 'C:\\ProgramData\\HyperFileLens\\Agent\\bin',
       dataDir: 'C:\\ProgramData\\HyperFileLens\\Agent',
       service: 'HyperFileLensAgent',
     }
   }
   if (os === 'macos') {
     return {
-      installDir: LINUX_INSTALL_DIR,
-      dataDir: LINUX_DATA_DIR,
+      installDir: `${MAC_AGENT_ROOT}/bin`,
+      dataDir: MAC_AGENT_ROOT,
       service: `${MAC_LAUNCHD_LABEL} (LaunchDaemon)`,
     }
   }

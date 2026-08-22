@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 // Config holds enrollment credentials from HFL_* environment variables.
@@ -90,6 +91,7 @@ func LoadInstalledCommandEnv() {
 		"HFL_NODE_TOKEN",
 		"HFL_INSTALLATION_ID",
 		"HFL_INSTALLATION_MODE",
+		"HFL_AGENT_ROOT",
 		"HFL_RUN_AS_USER",
 		"HFL_RUN_AS_HOME",
 		"HFL_INSECURE_TLS",
@@ -114,6 +116,7 @@ func (c Config) AgentConfig() *model.AgentConfig {
 		NodeToken:        c.NodeToken,
 		InstallationID:   c.InstallationID,
 		InstallationMode: c.InstallationMode,
+		AgentRoot:        strings.TrimSpace(os.Getenv("HFL_AGENT_ROOT")),
 		RunAsUser:        c.RunAsUser,
 		RunAsHome:        c.RunAsHome,
 		NodeID:           ReadNodeID(envPath),
@@ -124,5 +127,5 @@ func (c Config) AgentConfig() *model.AgentConfig {
 
 // EnvFilePath returns the platform default agent.env path.
 func EnvFilePath() string {
-	return filepath.Join(dataDirForAgent(), "agent.env")
+	return filepath.Join(vfs.AgentConfigDir(dataDirForAgent()), "agent.env")
 }

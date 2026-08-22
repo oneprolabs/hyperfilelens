@@ -14,23 +14,23 @@ import (
 func TestEnsureUserSystemdUnitRepairsStaleDefinition(t *testing.T) {
 	home := t.TempDir()
 	configHome := filepath.Join(home, "config home")
-	stateHome := filepath.Join(home, "state home")
+	dataHome := filepath.Join(home, "data home")
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", configHome)
-	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
 	t.Setenv("HFL_INSTALLATION_MODE", "user")
-	installDir := filepath.Join(home, ".local", "lib", "hyperfilelens-agent")
-	dataDir := filepath.Join(stateHome, "hyperfilelens-agent")
+	installDir := filepath.Join(dataHome, "hyperfilelens-agent", "bin")
+	dataDir := filepath.Join(dataHome, "hyperfilelens-agent")
 	if err := os.MkdirAll(installDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(dataDir, "config"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(installDir, "hfl-agent"), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "agent.env"), nil, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, "config", "agent.env"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,7 +51,7 @@ func TestEnsureUserSystemdUnitRepairsStaleDefinition(t *testing.T) {
 	}
 	unit := string(raw)
 	for _, want := range []string{
-		"EnvironmentFile=" + filepath.Join(dataDir, "agent.env"),
+		"EnvironmentFile=" + filepath.Join(dataDir, "config", "agent.env"),
 		"WorkingDirectory=" + installDir,
 		`ExecStart="` + filepath.Join(installDir, "hfl-agent") + `" run`,
 		"WantedBy=default.target",
@@ -121,10 +121,10 @@ func TestRepairUnitMatchesBundleInstallerTemplate(t *testing.T) {
 	}
 	template = template[:heredocEnd]
 
-	installDir := "/home/alice/.local/lib/hyperfilelens-agent"
-	dataDir := "/home/alice/.local/state/hyperfilelens-agent"
+	installDir := "/home/alice/.local/share/hyperfilelens-agent/bin"
+	dataDir := "/home/alice/.local/share/hyperfilelens-agent"
 	want := strings.NewReplacer(
-		"${unit_env_file}", filepath.Join(dataDir, "agent.env"),
+		"${unit_env_file}", filepath.Join(dataDir, "config", "agent.env"),
 		"${unit_working_dir}", installDir,
 		"${unit_agent}", filepath.Join(installDir, "hfl-agent"),
 	).Replace(template) + "\n"
