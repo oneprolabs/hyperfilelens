@@ -92,6 +92,43 @@ func TestInstallPs1UsesFullWindowsIdentityForCurrentUserTask(t *testing.T) {
 	}
 }
 
+func TestInstallPs1RunsCurrentUserAgentThroughHiddenRunner(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	for _, want := range []string{
+		`function Write-HflUserTaskRunner`,
+		`$runner = Join-Path $InstallRoot "run-agent.ps1"`,
+		`$powershellName = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh.exe" } else { "powershell.exe" }`,
+		`$powershell = Join-Path $PSHOME $powershellName`,
+		`-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File`,
+		"& `$agent run -data-dir `$dataRoot",
+		`Remove-HflInstallFile (Join-Path $InstallRoot "run-agent.ps1")`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("install.ps1 hidden current-user runner is missing %q", want)
+		}
+	}
+	installServiceStart := strings.Index(source, "function Install-HflService")
+	if installServiceStart < 0 {
+		t.Fatal("install.ps1 service installer is missing")
+	}
+	userServiceStart := strings.Index(
+		source[installServiceStart:],
+		`if ($InstallationMode -eq "user") {`,
+	)
+	if userServiceStart < 0 {
+		t.Fatal("install.ps1 current-user service branch is missing")
+	}
+	userService := source[installServiceStart+userServiceStart:]
+	systemServiceStart := strings.Index(userService, `$binPath = "`)
+	if systemServiceStart < 0 {
+		t.Fatal("install.ps1 system service branch is missing")
+	}
+	userService = userService[:systemServiceStart]
+	if strings.Contains(userService, "-Execute $ExePath") {
+		t.Fatal("current-user task must not launch the console Agent executable directly")
+	}
+}
+
 func TestInstallPs1UpgradePersistsMissingInstallationMode(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	mergeStart := strings.Index(source, "function Merge-AgentEnv")

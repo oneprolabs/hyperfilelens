@@ -1705,7 +1705,7 @@ export const en = {
     installationModeSystem: 'System Service',
     installationModeUser: 'Current User',
     installationModeSystemHint: 'Administrator-authorized installation. Runs continuously after sign-out, protects files the system service can access, and provides continuous monitoring.',
-    installationModeUserHint: 'No administrator access required. Protects only the current user Home directory, pauses after sign-out, and provides monitoring while that user is signed in.',
+    installationModeUserHint: 'No administrator access required. Protects files the current user can access (Home on Linux/macOS and accessible local drives on Windows), pauses after sign-out, and provides monitoring while signed in.',
     osMetaLinux: 'Major distros · x86_64 or ARM64',
     osMetaWindows: 'Win 10/11 · Server 2016+ · 64-bit only',
     osMetaMacos: 'Intel or Apple Silicon',

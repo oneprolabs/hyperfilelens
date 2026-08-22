@@ -41,6 +41,12 @@ func startSystemd(ctx context.Context) error {
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return fmt.Errorf("systemctl not found")
 	}
+	// Rebind and repair can start from an older inactive installation without
+	// running the bundle installer again. Recreate the user unit here so a stale
+	// or previously invalid definition cannot survive into the start attempt.
+	if err := ensureUserSystemdUnit(); err != nil {
+		return fmt.Errorf("repair current-user systemd unit: %w", err)
+	}
 	for _, args := range [][]string{
 		{"daemon-reload"},
 		{"enable", "hyperfilelens-agent.service"},

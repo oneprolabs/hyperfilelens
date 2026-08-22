@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestResolveUserScopedPathWindowsHomeBoundary(t *testing.T) {
+func TestResolveUserScopedPathWindowsAllowsReadableFixedDrivePaths(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	outside := filepath.Join(root, "outside")
@@ -42,7 +42,15 @@ func TestResolveUserScopedPathWindowsHomeBoundary(t *testing.T) {
 		t.Fatalf("restore path resolved to %q, want %q", resolved, restoreTarget)
 	}
 
-	if _, err := ResolveUserScopedPath(outside, false); err == nil {
-		t.Fatal("path outside Home should be rejected")
+	resolved, err = ResolveUserScopedPath(outside, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(filepath.Clean(resolved), filepath.Clean(outside)) {
+		t.Fatalf("outside-Home path resolved to %q, want %q", resolved, outside)
+	}
+
+	if _, err := ResolveUserScopedPath(`\\server\share`, false); err == nil {
+		t.Fatal("UNC path should be rejected for a user-level Agent")
 	}
 }

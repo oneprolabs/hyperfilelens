@@ -145,6 +145,16 @@ func TestListLocalWithOptionsKeepsFilesByDefault(t *testing.T) {
 	}
 }
 
+func TestPathReadableRejectsMissingPath(t *testing.T) {
+	root := t.TempDir()
+	if !pathReadable(root) {
+		t.Fatalf("existing directory should be readable: %s", root)
+	}
+	if pathReadable(filepath.Join(root, "missing")) {
+		t.Fatal("missing path must not be reported as readable")
+	}
+}
+
 func TestListLocalWithOptionsLimit(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{"a", "b", "c"} {

@@ -8,17 +8,18 @@ import (
 
 // Payload is the task.command JSON body from the control plane or CLI.
 type Payload struct {
-	Path            string
-	ConfigFile      string
-	SnapshotID      string
-	Args            []string
-	Env             map[string]string
-	DirsOnly        bool
-	IncludeMetadata bool
-	Limit           int
-	Cursor          string
-	ListMounts      bool
-	Extra           map[string]any
+	Path             string
+	ConfigFile       string
+	SnapshotID       string
+	Args             []string
+	Env              map[string]string
+	DirsOnly         bool
+	IncludeMetadata  bool
+	Limit            int
+	Cursor           string
+	ListMounts       bool
+	WindowsUserScope bool
+	Extra            map[string]any
 }
 
 func ParsePayload(raw map[string]any) Payload {

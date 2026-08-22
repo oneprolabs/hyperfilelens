@@ -101,13 +101,20 @@ def _clean_path(path: str) -> str:
     return posixpath.normpath(value)
 
 
-def _agent_default_path(node: Node) -> str:
+def _node_os_name(node: Node) -> str:
     metadata = node.metadata if isinstance(node.metadata, dict) else {}
     inventory = (
         metadata.get("inventory") if isinstance(metadata.get("inventory"), dict) else {}
     )
-    os_name = str(inventory.get("os") or node.os_name or "").strip().lower()
-    if "windows" in os_name:
+    return str(inventory.get("os") or node.os_name or "").strip().lower()
+
+
+def _is_windows_node(node: Node) -> bool:
+    return "windows" in _node_os_name(node)
+
+
+def _agent_default_path(node: Node) -> str:
+    if _is_windows_node(node):
         return "C:\\"
     return "/"
 
@@ -373,7 +380,7 @@ def _is_top_level_mount_request(
 ) -> bool:
     if target.source_kind not in ("agent", "proxy"):
         return False
-    if _is_current_user_agent(target.node):
+    if _is_current_user_agent(target.node) and not _is_windows_node(target.node):
         return False
     if cursor:
         return False
@@ -545,14 +552,17 @@ def list_backup_source_directories(
         cursor=cursor,
     )
     if use_mount_listing:
-        cached = _try_cached_mount_listing(
-            organization_id=organization_id,
-            node=target.node,
-            target=target,
-            source_id=source_id,
-        )
-        if cached is not None:
-            return cached
+        # A current-user Windows Agent must enumerate drives with its own
+        # process token. Heartbeat disk inventory may reflect broader access.
+        if not _is_current_user_agent(target.node):
+            cached = _try_cached_mount_listing(
+                organization_id=organization_id,
+                node=target.node,
+                target=target,
+                source_id=source_id,
+            )
+            if cached is not None:
+                return cached
     collect_metadata = (
         bool(include_files) if include_metadata is None else bool(include_metadata)
     )
@@ -660,7 +670,11 @@ def list_backup_source_directories(
     response_entries = entries
     response_has_more = _safe_bool(result.get("has_more"))
     response_next_cursor = str(result.get("next_cursor") or "")
-    if request_root and _is_current_user_agent(target.node):
+    if (
+        request_root
+        and _is_current_user_agent(target.node)
+        and not _is_windows_node(target.node)
+    ):
         home_path = _normalize_mount_path(str(result.get("path") or ""))
         if not home_path:
             raise BackupSourceDirectoryError(
@@ -681,6 +695,19 @@ def list_backup_source_directories(
         response_entries = []
         response_has_more = False
         response_next_cursor = ""
+    elif (
+        request_root
+        and use_mount_listing
+        and response_entries
+        and not response_target.path
+    ):
+        response_target = BrowseTarget(
+            source_kind=target.source_kind,
+            source_ref_id=target.source_ref_id,
+            node=target.node,
+            path=response_entries[0]["path"],
+            root_path=target.root_path,
+        )
     return {
         "source_id": source_id,
         "source_kind": target.source_kind,

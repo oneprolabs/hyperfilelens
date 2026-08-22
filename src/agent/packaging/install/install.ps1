@@ -912,13 +912,46 @@ exit 0
   Write-HflOk "scheduled removal of install directory $target (after install.cmd exits)"
 }
 
+function Write-HflUserTaskRunner {
+  param(
+    [Parameter(Mandatory = $true)][string]$ExePath,
+    [Parameter(Mandatory = $true)][string]$DataRoot
+  )
+  $runner = Join-Path $InstallRoot "run-agent.ps1"
+  $exeEsc = $ExePath.Replace("'", "''")
+  $dataEsc = $DataRoot.Replace("'", "''")
+  $body = @"
+`$ErrorActionPreference = 'Stop'
+`$agent = '$exeEsc'
+`$dataRoot = '$dataEsc'
+try {
+  & `$agent run -data-dir `$dataRoot
+  if (`$null -ne `$LASTEXITCODE) { exit `$LASTEXITCODE }
+  exit 0
+}
+catch {
+  exit 1
+}
+"@
+  Set-Content -LiteralPath $runner -Value $body -Encoding UTF8
+  return $runner
+}
+
 function Install-HflService {
   param([string]$ExePath, [string]$DataRoot, [switch]$NoStart)
   Remove-HflService
   if ($InstallationMode -eq "user") {
+    # Task Scheduler owns the process after installation. A hidden PowerShell
+    # host prevents hfl-agent.exe from opening a console window in the session.
+    $runner = Write-HflUserTaskRunner -ExePath $ExePath -DataRoot $DataRoot
+    $powershellName = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh.exe" } else { "powershell.exe" }
+    $powershell = Join-Path $PSHOME $powershellName
+    if (-not (Test-Path -LiteralPath $powershell)) {
+      throw "Could not resolve the current PowerShell executable for the user task."
+    }
     $action = New-ScheduledTaskAction `
-      -Execute $ExePath `
-      -Argument "run -data-dir `"$DataRoot`""
+      -Execute $powershell `
+      -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runner`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $CurrentWindowsIdentity
     $principal = New-ScheduledTaskPrincipal `
       -UserId $CurrentWindowsIdentity `
@@ -1431,6 +1464,7 @@ function Invoke-Uninstall {
 
   Remove-HflInstallFile (Join-Path $InstallRoot "hfl-agent.exe")
   Remove-HflInstallFile (Join-Path $InstallRoot "kopia.exe")
+  Remove-HflInstallFile (Join-Path $InstallRoot "run-agent.ps1")
   Remove-HflInstallFile (Join-Path $InstallRoot "install.ps1")
   Remove-HflInstallFile (Join-Path $InstallRoot "uninstall.cmd")
   Remove-HflInstallFile (Join-Path $InstallRoot "MANIFEST.json")

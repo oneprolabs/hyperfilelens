@@ -30,9 +30,14 @@ func userHomePaths() (declared, canonical string, err error) {
 	return home, filepath.Clean(resolved), nil
 }
 
-// ResolveUserScopedPath resolves path and rejects anything outside Home.
+// ResolveUserScopedPath applies the platform boundary for a user-level Agent.
+// Unix paths remain under Home. Windows paths may use readable local fixed drives.
 // Missing final components are permitted for restore destinations when requested.
 func ResolveUserScopedPath(path string, allowMissing bool) (string, error) {
+	return resolveUserScopedPath(path, allowMissing)
+}
+
+func resolveHomeScopedPath(path string, allowMissing bool) (string, error) {
 	declaredHome, home, err := userHomePaths()
 	if err != nil {
 		return "", err

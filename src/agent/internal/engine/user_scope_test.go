@@ -10,12 +10,11 @@ import (
 	"hyperfilelens/agent/internal/model"
 )
 
-func TestUserInstallationScopeDefaultsBrowseToHome(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses Unix HOME semantics")
-	}
+func TestUserInstallationScopeUsesPlatformBrowseRoot(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	if runtime.GOOS != "windows" {
+		t.Setenv("HOME", home)
+	}
 	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
 		InstallationMode: model.InstallationModeUser,
 	}})
@@ -27,7 +26,18 @@ func TestUserInstallationScopeDefaultsBrowseToHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if payload.Path != home || payload.ListMounts {
+	if runtime.GOOS == "windows" {
+		if payload.Path != "" || !payload.ListMounts || !payload.WindowsUserScope {
+			t.Fatalf(
+				"Windows browse scope = path %q, list_mounts=%t, user_scope=%t",
+				payload.Path,
+				payload.ListMounts,
+				payload.WindowsUserScope,
+			)
+		}
+		return
+	}
+	if payload.Path != home || payload.ListMounts || payload.WindowsUserScope {
 		t.Fatalf("browse scope = path %q, list_mounts=%t", payload.Path, payload.ListMounts)
 	}
 }
