@@ -93,6 +93,8 @@ def _chat_create_request_identity(
     gateway_mode: str,
     gateway_link_id: int | None,
     title: str | None,
+    analysis_mode: str | None = None,
+    agent_model_ref: str | uuid_lib.UUID | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Return a stable request hash and normalized user-selected scopes."""
 
@@ -155,6 +157,13 @@ def _chat_create_request_identity(
         ),
         "title": str(title or "").strip(),
     }
+    # Keep omitted optional fields out of the identity so idempotent retries
+    # from older clients remain compatible with records created before the
+    # advanced execution options were introduced.
+    if analysis_mode is not None:
+        canonical_request["analysis_mode"] = str(analysis_mode)
+    if agent_model_ref is not None:
+        canonical_request["agent_model_ref"] = str(agent_model_ref)
     request_hash = hashlib.sha256(
         json.dumps(
             canonical_request,
@@ -336,6 +345,8 @@ def create_copilot_chat(
     gateway_link_id: int | None,
     idempotency_key: str,
     title: str | None = None,
+    analysis_mode: str | None = None,
+    agent_model_ref: str | uuid_lib.UUID | None = None,
 ) -> LensSessionLink:
     """Persist an idempotent local Chat shell without remote service calls."""
     request_key = str(idempotency_key or "").strip()
@@ -348,6 +359,8 @@ def create_copilot_chat(
         gateway_mode=gateway_mode,
         gateway_link_id=gateway_link_id,
         title=title,
+        analysis_mode=analysis_mode,
+        agent_model_ref=agent_model_ref,
     )
     existing = LensSessionLink.objects.filter(
         organization=org,
@@ -465,13 +478,26 @@ def create_copilot_chat(
         ),
         require_ready=False,
     )
-    model_ref, multimodal_model_ref = (
+    default_model_ref, multimodal_model_ref = (
         provisioning.configured_default_model_refs_for_org(org)
     )
+    model_ref = str(agent_model_ref or default_model_ref or "")
     if not model_ref:
         raise ValidationError(
             {"model": "Configure an active AI model before creating a chat."}
         )
+    if agent_model_ref is not None:
+        from apps.lens_bridge.services import org_models
+
+        org_models.validate_agent_model_ref(
+            org,
+            uuid_lib.UUID(str(agent_model_ref)),
+        )
+    normalized_analysis_mode = str(
+        analysis_mode or LensSessionLink.AnalysisMode.STANDARD
+    )
+    if normalized_analysis_mode not in LensSessionLink.AnalysisMode.values:
+        raise ValidationError({"analysis_mode": "Select a supported analysis mode."})
 
     source_display_name = resolve_source_display_name(
         organization_id=org.id,
@@ -498,8 +524,9 @@ def create_copilot_chat(
             source_scopes_json=normalized_scopes,
             gateway_link=gateway_link,
             gateway_selection_mode=gateway_mode,
-            agent_model_ref=model_ref,
+            agent_model_ref=uuid_lib.UUID(model_ref),
             multimodal_model_ref=multimodal_model_ref,
+            analysis_mode=normalized_analysis_mode,
             scope_resolution_status=(
                 LensSessionLink.ScopeResolutionStatus.RESOLVED
                 if all_scopes_resolved
@@ -1038,6 +1065,7 @@ def _run_copilot_chat_provision(
                 gateway_link=gateway_link,
                 model_ref=link.agent_model_ref,
                 multimodal_model_ref=link.multimodal_model_ref,
+                analysis_mode=link.analysis_mode,
                 slug=assistant_slug,
             )
     try:

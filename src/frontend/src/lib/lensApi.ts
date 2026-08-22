@@ -6,7 +6,9 @@ import type { BackupSnapshotBrowserEntry } from './protectionBackupConfigApi'
 import { asList, unwrapApiPayload } from './parse'
 
 const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
-const COPILOT_SNAPSHOT_BROWSE_POLL_MS = 500
+// The first read is immediate; bounded backoff keeps the picker responsive
+// without continuously polling a busy Reader.
+const COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS = [150, 300, 500]
 const COPILOT_SNAPSHOT_BROWSE_MAX_POLLS = 240
 
 export type LensApiScope = 'tenant' | 'platform'
@@ -89,6 +91,8 @@ export type LensCopilotReadiness = {
   default_agent_model_ref: string | null
   default_multimodal_model_ref: string | null
 }
+
+export type LensAnalysisMode = 'fast' | 'standard' | 'deep'
 
 export type LensCopilotUsageSummary = {
   estimated_cost: number | null
@@ -310,6 +314,7 @@ export type LensSessionLink = {
   selected_task?: string | null
   agent_model_ref: string | null
   multimodal_model_ref?: string | null
+  analysis_mode?: LensAnalysisMode
   backup_config_id: number | null
   backup_source_name: string | null
   backup_source_snapshot_id: number | null
@@ -1009,6 +1014,8 @@ export type CreateCopilotSessionPayload = {
   }>
   gateway_mode: 'auto' | 'manual'
   gateway_link_id?: number | null
+  analysis_mode?: LensAnalysisMode
+  agent_model_ref?: string | null
 }
 
 export async function createCopilotSession(body: CreateCopilotSessionPayload): Promise<LensSessionLink> {
@@ -1094,22 +1101,30 @@ export async function browseCopilotSnapshotDirectory(
         retryable: true,
       }
     }
+    if (polls > 0) {
+      const delay = COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS[
+        Math.min(polls - 1, COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS.length - 1)
+      ]
+      await new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new DOMException('Aborted', 'AbortError'))
+          return
+        }
+        const onAbort = () => {
+          window.clearTimeout(timer)
+          reject(new DOMException('Aborted', 'AbortError'))
+        }
+        const timer = window.setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve()
+        }, delay)
+        signal?.addEventListener('abort', onAbort, { once: true })
+      })
+    }
     polls += 1
-    await new Promise<void>((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(new DOMException('Aborted', 'AbortError'))
-        return
-      }
-      const onAbort = () => {
-        window.clearTimeout(timer)
-        reject(new DOMException('Aborted', 'AbortError'))
-      }
-      const timer = window.setTimeout(() => {
-        signal?.removeEventListener('abort', onAbort)
-        resolve()
-      }, COPILOT_SNAPSHOT_BROWSE_POLL_MS)
-      signal?.addEventListener('abort', onAbort, { once: true })
-    })
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError')
+    }
     task = await fetchCopilotSnapshotBrowse(task.task_id, signal)
   }
   if (task.status !== 'success') {
@@ -1238,6 +1253,21 @@ export async function patchCopilotSession(
   body: { agent_model_ref: string | null },
 ): Promise<LensSessionLink> {
   const raw = await api(lensUrl(`copilot/sessions/${sessionId}/model/`), {
+    method: 'PATCH',
+    headers: lensHeaders(),
+    body: JSON.stringify(body),
+  })
+  return lensPayload<LensSessionLink>(raw)
+}
+
+export async function patchCopilotSessionExecution(
+  sessionId: number,
+  body: {
+    analysis_mode?: LensAnalysisMode
+    agent_model_ref?: string | null
+  },
+): Promise<LensSessionLink> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/execution/`), {
     method: 'PATCH',
     headers: lensHeaders(),
     body: JSON.stringify(body),

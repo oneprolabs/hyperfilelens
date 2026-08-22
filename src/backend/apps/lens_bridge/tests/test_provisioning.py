@@ -395,6 +395,7 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
         self.assertEqual(str(result), assistant_uuid)
         payload = request_json.call_args.kwargs["json_body"]
         self.assertEqual(payload["agent_model_ref"], agent_ref)
+        self.assertEqual(payload["agent_rounds"], "balanced")
         self.assertEqual(
             payload["multimodal_model_ref"],
             multimodal_ref,
@@ -412,6 +413,20 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
                 "exclude_dirs": [],
                 "exclude_extensions": [],
             },
+        )
+
+    def test_analysis_mode_maps_to_source_lens_agent_rounds(self):
+        from apps.lens_bridge.services import provisioning
+
+        self.assertEqual(provisioning.agent_rounds_for_analysis_mode("fast"), "fast")
+        self.assertEqual(
+            provisioning.agent_rounds_for_analysis_mode("standard"),
+            "balanced",
+        )
+        self.assertEqual(provisioning.agent_rounds_for_analysis_mode("deep"), "deep")
+        self.assertEqual(
+            provisioning.agent_rounds_for_analysis_mode("unsupported"),
+            "balanced",
         )
 
 

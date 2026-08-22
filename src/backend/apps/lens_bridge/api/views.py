@@ -603,7 +603,7 @@ class LensCopilotReadinessView(OrgScopedMixin, APIView):
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
     def get(self, request):
-        active_models = org_models.active_llm_configs(org=self.org)
+        active_models = org_models.active_llm_configs_available_to_org(self.org)
         agent_ref, multimodal_ref = provisioning.default_model_refs_for_org(
             self.org,
             tenant_rows=active_models,
@@ -620,6 +620,10 @@ class LensCopilotReadinessView(OrgScopedMixin, APIView):
                     "provider": str(model.get("provider") or ""),
                     "config": {"model": str(config.get("model") or "")},
                     "is_active": True,
+                    "deployment_role": str(model.get("deployment_role") or ""),
+                    "is_deployment_history": bool(
+                        model.get("is_deployment_history")
+                    ),
                     "is_default_agent": bool(
                         model.get("is_default_agent")
                     ),
@@ -1176,6 +1180,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             "create_run",
             "feedback",
             "set_model",
+            "set_execution",
             "set_title",
             "mark_viewed",
             "cancel_run",
@@ -1361,6 +1366,8 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                 gateway_link_id=body.validated_data.get("gateway_link_id"),
                 idempotency_key=body.validated_data["idempotency_key"],
                 title=body.validated_data.get("title"),
+                analysis_mode=body.validated_data.get("analysis_mode"),
+                agent_model_ref=body.validated_data.get("agent_model_ref"),
             )
         except ValidationError:
             raise
@@ -1378,7 +1385,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         model_ref = body.validated_data.get("agent_model_ref")
         if model_ref is None:
             return Response(LensSessionLinkSerializer(link).data)
-        org_models.validate_default_model_ref(self.org, model_ref)
+        org_models.validate_agent_model_ref(self.org, model_ref)
         ks = link.knowledge_source
         if ks is None:
             return Response(
@@ -1392,6 +1399,46 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         )
         link.agent_model_ref = model_ref
         link.save(update_fields=["agent_model_ref", "updated_at"])
+        return Response(LensSessionLinkSerializer(link).data)
+
+    @action(detail=True, methods=["patch"], url_path="execution")
+    def set_execution(self, request, pk=None):
+        """Update Chat-owned analysis mode and Agent model together."""
+
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        body = LensSessionUpdateSerializer(data=request.data, partial=True)
+        body.is_valid(raise_exception=True)
+        values = body.validated_data
+        model_ref = values.get("agent_model_ref")
+        analysis_mode = values.get("analysis_mode")
+        if model_ref is None and analysis_mode is None:
+            return Response(LensSessionLinkSerializer(link).data)
+        if model_ref is not None:
+            org_models.validate_agent_model_ref(self.org, model_ref)
+        ks = link.knowledge_source
+        if ks is None or link.sl_assistant_uuid is None:
+            return Response(
+                {"execution": "Chat is not ready for execution settings."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            provisioning.sync_assistant_execution_config(
+                ks=ks,
+                model_ref=model_ref,
+                analysis_mode=analysis_mode,
+                assistant_uuid=link.sl_assistant_uuid,
+            )
+        except sl_client.LensBridgeError as exc:
+            return _lens_error_response(exc)
+        update_fields = ["updated_at"]
+        if model_ref is not None:
+            link.agent_model_ref = model_ref
+            update_fields.append("agent_model_ref")
+        if analysis_mode is not None:
+            link.analysis_mode = analysis_mode
+            update_fields.append("analysis_mode")
+        link.save(update_fields=update_fields)
         return Response(LensSessionLinkSerializer(link).data)
 
     @action(detail=True, methods=["patch"], url_path="title")

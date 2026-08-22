@@ -652,6 +652,13 @@ class LensChatBinding(OrganizationScopedModel):
 class LensSessionLink(OrganizationScopedModel):
     """Maps HFL user sessions to SourceLens sessions (1 Chat ↔ 1 KS+Ass)."""
 
+    class AnalysisMode(models.TextChoices):
+        """Product-level analysis choices mapped to SourceLens agent rounds."""
+
+        FAST = "fast", "Fast"
+        STANDARD = "standard", "Standard"
+        DEEP = "deep", "Deep"
+
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
         ARCHIVED = "archived", "Archived"
@@ -754,6 +761,12 @@ class LensSessionLink(OrganizationScopedModel):
     sl_assistant_uuid = models.UUIDField(null=True, blank=True, db_index=True)
     agent_model_ref = models.UUIDField(null=True, blank=True, db_index=True)
     multimodal_model_ref = models.UUIDField(null=True, blank=True, db_index=True)
+    analysis_mode = models.CharField(
+        max_length=16,
+        choices=AnalysisMode.choices,
+        default=AnalysisMode.STANDARD,
+        db_index=True,
+    )
     title = models.CharField(max_length=160, blank=True, default="")
     last_message_at = models.DateTimeField(null=True, blank=True)
     last_assistant_message_at = models.DateTimeField(null=True, blank=True)

@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { MessageSquare, TriangleAlert } from 'lucide-vue-next'
+import { MessageSquare, Settings2, TriangleAlert } from 'lucide-vue-next'
 import { formatBytes } from '../../../lib/kopiaProgress'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import { copilotGatewayKind } from '../../../lib/copilotGatewayTerminology'
@@ -18,6 +18,10 @@ import type { LensSessionLink } from '../../../lib/lensApi'
 
 const props = defineProps<{
   session: LensSessionLink
+}>()
+
+const emit = defineEmits<{
+  (event: 'edit-execution'): void
 }>()
 
 const { t } = useI18n()
@@ -127,6 +131,19 @@ function openBackupDetail() {
           :class="statusClass"
         ><i />{{ statusLabel }}</span>
       </div>
+      <button
+        v-if="session.lifecycle_status === 'ready'"
+        type="button"
+        class="copilot-context-bar__settings"
+        :title="t('insight.copilot.executionSettingsTitle')"
+        @click="emit('edit-execution')"
+      >
+        <Settings2
+          :size="15"
+          aria-hidden="true"
+        />
+        <span>{{ t('insight.copilot.executionSettingsShort') }}</span>
+      </button>
     </div>
 
     <div
@@ -290,6 +307,8 @@ function openBackupDetail() {
 .copilot-context-bar { display: flex; min-width: 0; flex-direction: column; gap: 5px; padding: 9px 18px 10px; border-bottom: 1px solid var(--color-border-light); background: var(--color-card-bg); }
 .copilot-context-bar__top { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
 .copilot-context-bar__identity { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.copilot-context-bar__settings { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--color-border-light); border-radius: 6px; background: var(--color-card-bg); color: var(--color-text-tertiary); font-size: 11px; cursor: pointer; }
+.copilot-context-bar__settings:hover { border-color: var(--color-primary); color: var(--color-primary); }
 .copilot-context-bar__icon { flex-shrink: 0; color: var(--color-primary); }
 .copilot-context-bar__identity h1 { min-width: 0; overflow: hidden; margin: 0; color: var(--color-text-title); font-size: 14px; font-weight: 650; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
 .copilot-context-bar__status { display: inline-flex; min-height: 20px; flex-shrink: 0; align-items: center; gap: 5px; padding: 1px 7px; border: 1px solid #abefc6; border-radius: 999px; background: #ecfdf3; color: #027a48; font-size: 11px; font-weight: 600; line-height: 16px; }

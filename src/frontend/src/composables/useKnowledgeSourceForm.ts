@@ -113,6 +113,9 @@ export function useKnowledgeSourceForm(
   let backupScopeBlurSequence = 0
   let scopeDisposed = false
   const snapshotBrowseControllers = new Set<AbortController>()
+  type SnapshotBrowseResult = Awaited<ReturnType<typeof browseCopilotSnapshotDirectory>>
+  const snapshotBrowseCache = new Map<string, SnapshotBrowseResult>()
+  const SNAPSHOT_BROWSE_CACHE_LIMIT = 64
   const openBackupScopePickerId = ref<string | null>(null)
   const backupScopeTreeRevision = ref(0)
   const backupScopeBrowseLoading = ref(false)
@@ -136,18 +139,37 @@ export function useKnowledgeSourceForm(
     const gatewayLinkId = snapshotReaderGatewayLinkId.value
     if (!snapshotId) throw new Error('Select a backup snapshot before browsing files.')
     if (!gatewayLinkId) throw new Error('Select an available Data Gateway before browsing files.')
+    const path = params.path || ''
+    const limit = Math.max(1, Math.min(params.limit || 500, 500))
+    const cacheKey = [snapshotId, gatewayLinkId, directoryId, path, limit].join(':')
+    const cached = snapshotBrowseCache.get(cacheKey)
+    if (cached) return cached
     const controller = new AbortController()
     snapshotBrowseControllers.add(controller)
     try {
-      return await browseCopilotSnapshotDirectory(
+      const result = await browseCopilotSnapshotDirectory(
         directoryId,
         {
           ...params,
+          path,
+          limit,
           backupSourceSnapshotId: snapshotId,
           gatewayLinkId,
         },
         controller.signal,
       )
+      snapshotBrowseCache.set(cacheKey, result)
+      while (snapshotBrowseCache.size > SNAPSHOT_BROWSE_CACHE_LIMIT) {
+        const oldest = snapshotBrowseCache.keys().next().value
+        if (oldest == null) break
+        snapshotBrowseCache.delete(oldest)
+      }
+      return result
+    } catch (error) {
+      // Do not retain failed or canceled browse attempts; a later expansion
+      // can make a fresh request after the Reader recovers.
+      snapshotBrowseCache.delete(cacheKey)
+      throw error
     } finally {
       snapshotBrowseControllers.delete(controller)
     }
