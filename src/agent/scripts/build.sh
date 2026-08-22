@@ -92,8 +92,9 @@ usage() {
 Usage: ./src/agent/scripts/build.sh [--release|--clean|--clean-all] [options]
 
 Purpose:
-  Cross-compile hfl-agent and hfl-enroll from local Go source. This script does
-  not fetch Kopia, run tests, or assemble customer-facing archives.
+  Cross-compile hfl-agent, hfl-enroll, and the Windows current-user launcher
+  from local Go source. This script does not fetch Kopia, run tests, or
+  assemble customer-facing archives.
 
 Modes (default: --release):
   --release              Build the configured platform matrix
@@ -105,6 +106,7 @@ Inputs:
 
 Outputs:
   build/agent/<version>/<os>/<arch>/hfl-agent-*
+  build/agent/<version>/windows/<arch>/hfl-agent-user-launcher-*.exe
   build/agent/<version>/<os>/<arch>/hfl-enroll-*
   build/agent/<version>/BUILD_INFO.json
 
@@ -266,7 +268,7 @@ build_release() {
 	cd "${AGENT_ROOT}"
 	mkdir -p "${WORK_ROOT}"
 	local ldflags="-s -w -X hyperfilelens/agent/internal/selfupdate.Version=${AGENT_VERSION} -X hyperfilelens/agent/internal/selfupdate.Commit=${COMMIT}"
-	local item goos goarch name enroll_name dir
+	local item goos goarch name enroll_name launcher_name dir
 
 	for item in ${MATRIX}; do
 		IFS=: read -r goos goarch <<<"${item}"
@@ -280,6 +282,16 @@ build_release() {
 			log_fail "Failed to build hfl-agent for ${goos}/${goarch}"
 		fi
 		log_ok "Built ${dir}/${name}"
+		if [[ "${goos}" == windows ]]; then
+			launcher_name="hfl-agent-user-launcher-${goos}-${goarch}.exe"
+			log_step "Building hfl-agent-user-launcher for ${goos}/${goarch}"
+			if ! GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 \
+				go build -buildvcs=false -trimpath -ldflags "-s -w -H=windowsgui" \
+				-o "${dir}/${launcher_name}" ./cmd/useragentlauncher; then
+				log_fail "Failed to build hfl-agent-user-launcher for ${goos}/${goarch}"
+			fi
+			log_ok "Built ${dir}/${launcher_name}"
+		fi
 
 		enroll_name="hfl-enroll-${goos}-${goarch}"
 		[[ "${goos}" == windows ]] && enroll_name+=".exe"

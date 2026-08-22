@@ -92,23 +92,18 @@ func TestInstallPs1UsesFullWindowsIdentityForCurrentUserTask(t *testing.T) {
 	}
 }
 
-func TestInstallPs1RunsCurrentUserAgentThroughHiddenRunner(t *testing.T) {
+func TestInstallPs1RunsCurrentUserAgentThroughWindowlessLauncher(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	for _, want := range []string{
-		`function Write-HflUserTaskRunner`,
-		`$runner = Join-Path $InstallRoot "run-agent.ps1"`,
-		`$powershellName = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh.exe" } else { "powershell.exe" }`,
-		`$powershell = Join-Path $PSHOME $powershellName`,
-		`-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File`,
-		"`$startInfo = New-Object System.Diagnostics.ProcessStartInfo",
-		"`$startInfo.UseShellExecute = `$false",
-		"`$startInfo.CreateNoWindow = `$true",
-		"`$startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden",
-		"[System.Diagnostics.Process]::Start(`$startInfo)",
+		`$runner = Join-Path $InstallRoot "hfl-agent-user-launcher.exe"`,
+		`-Execute $runner`,
+		"-Argument \"-data-dir `\"$DataRoot`\"\"",
+		`Copy-Item -Force -Path $srcLauncher -Destination (Join-Path $InstallRoot "hfl-agent-user-launcher.exe")`,
+		`Remove-HflInstallFile (Join-Path $InstallRoot "hfl-agent-user-launcher.exe")`,
 		`Remove-HflInstallFile (Join-Path $InstallRoot "run-agent.ps1")`,
 	} {
 		if !strings.Contains(source, want) {
-			t.Fatalf("install.ps1 hidden current-user runner is missing %q", want)
+			t.Fatalf("install.ps1 current-user launcher is missing %q", want)
 		}
 	}
 	installServiceStart := strings.Index(source, "function Install-HflService")
@@ -128,11 +123,11 @@ func TestInstallPs1RunsCurrentUserAgentThroughHiddenRunner(t *testing.T) {
 		t.Fatal("install.ps1 system service branch is missing")
 	}
 	userService = userService[:systemServiceStart]
-	if strings.Contains(userService, "-Execute $ExePath") {
-		t.Fatal("current-user task must not launch the console Agent executable directly")
+	if strings.Contains(userService, "powershell.exe") || strings.Contains(userService, "$powershell") {
+		t.Fatal("current-user task must not keep a console PowerShell runner alive")
 	}
-	if strings.Contains(source, "& `$agent run -data-dir `$dataRoot") {
-		t.Fatal("hidden runner must create the Agent with CreateNoWindow")
+	if strings.Contains(source, "function Write-HflUserTaskRunner") {
+		t.Fatal("legacy PowerShell current-user runner must not be generated")
 	}
 }
 
