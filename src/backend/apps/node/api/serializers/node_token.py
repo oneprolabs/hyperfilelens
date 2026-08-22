@@ -102,11 +102,14 @@ class NodeTokenCreateSerializer(serializers.ModelSerializer):
             "installation_mode",
             NodeInstallationMode.SYSTEM,
         )
-        if installation_mode == NodeInstallationMode.USER and role != Node.Role.AGENT:
+        if installation_mode in (
+            NodeInstallationMode.USER,
+            NodeInstallationMode.ACCOUNT,
+        ) and role != Node.Role.AGENT:
             raise serializers.ValidationError(
                 {
                     "installation_mode": (
-                        "User-level installation is only available for Source Agent."
+                        "User-scoped installation is only available for Source Agent."
                     )
                 }
             )

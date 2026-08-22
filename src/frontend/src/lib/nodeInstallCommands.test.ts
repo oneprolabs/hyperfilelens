@@ -51,6 +51,14 @@ describe('node upgrade download TLS policy', () => {
 })
 
 describe('manual node maintenance commands', () => {
+  it('uses administrator installation for specified-user continuous mode', () => {
+    const command = buildLocalUpgradeCommand(
+      'linux', '/tmp/hfl-agent.tar.gz', true,
+      'https://console.example/hfl-agent.tar.gz', 'agent', true, '', 'amd64', 'account',
+    )
+    expect(command).toContain('sudo ')
+    expect(command).not.toContain('.local/lib/hyperfilelens-agent')
+  })
   it('uses the node architecture in the downloaded package path', () => {
     expect(defaultPackagePath('linux', '1.0.1', 'arm64')).toContain('linux-arm64')
     expect(defaultPackagePath('macos', '1.0.1', 'amd64')).toContain('darwin-amd64')
@@ -150,5 +158,18 @@ describe('manual node maintenance commands', () => {
       expect(command).not.toContain('Restart-Service')
     }
     expect(upgrade).toContain('-o "$env:TEMP\\hfl-agent.zip"')
+  })
+
+  it('uses the Task Scheduler installer for Windows specified-user mode', () => {
+    const commands = [
+      buildLocalServiceCommand('windows', 'status', 'agent', 'account'),
+      buildLocalServiceCommand('windows', 'start', 'agent', 'account'),
+      buildLocalServiceCommand('windows', 'stop', 'agent', 'account'),
+      buildLocalServiceCommand('windows', 'restart', 'agent', 'account'),
+    ]
+
+    expect(commands.every((command) => command.includes('$env:ProgramFiles\\HyperFileLens\\Agent\\install.cmd'))).toBe(true)
+    expect(commands.join('\n')).not.toContain('Start-Service')
+    expect(commands.join('\n')).not.toContain('Restart-Service')
   })
 })

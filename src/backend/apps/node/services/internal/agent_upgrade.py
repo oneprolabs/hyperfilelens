@@ -58,6 +58,12 @@ def validate_agent_upgrade(*, node: Node) -> str:
             code="role_not_upgradeable",
         )
 
+    if node.installation_mode == Node.InstallationMode.ACCOUNT:
+        raise AgentUpgradeError(
+            "specified-user continuous protection requires a local administrator command for upgrade",
+            code="local_admin_required",
+        )
+
     if node.availability != Node.Availability.ONLINE:
         raise AgentUpgradeError("node is offline", code="node_offline")
 

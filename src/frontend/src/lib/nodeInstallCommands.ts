@@ -137,6 +137,10 @@ export function buildLocalServiceCommand(
     if (installationMode === 'user') {
       return `${WIN_USER_INSTALL_CMD} ${action}`
     }
+    if (installationMode === 'account') {
+      // Specified-user continuous mode uses Task Scheduler, not SCM.
+      return `${WIN_INSTALL_CMD} ${action}`
+    }
     if (action === 'status') return `${WIN_INSTALL_CMD} status`
     if (action === 'start') return 'Start-Service HyperFileLensAgent'
     if (action === 'stop') return 'Stop-Service HyperFileLensAgent -Force'
@@ -200,6 +204,27 @@ export function installPathsSummary(
       installDir: '~/.local/lib/hyperfilelens-agent',
       dataDir: '$XDG_STATE_HOME/hyperfilelens-agent or ~/.local/state/hyperfilelens-agent',
       service: 'hyperfilelens-agent.service (systemd user)',
+    }
+  }
+  if (installationMode === 'account') {
+    if (os === 'windows') {
+      return {
+        installDir: 'C:\\Program Files\\HyperFileLens\\Agent',
+        dataDir: 'C:\\ProgramData\\HyperFileLens\\Agent',
+        service: 'HyperFileLensAgent (runs as the selected user)',
+      }
+    }
+    if (os === 'macos') {
+      return {
+        installDir: '/opt/hyperfilelens-agent',
+        dataDir: '/var/lib/hyperfilelens-agent',
+        service: `${MAC_LAUNCHD_LABEL} (runs as the selected user)`,
+      }
+    }
+    return {
+      installDir: LINUX_INSTALL_DIR,
+      dataDir: LINUX_DATA_DIR,
+      service: 'hyperfilelens-agent.service (runs as the selected user)',
     }
   }
   if (os === 'windows') {

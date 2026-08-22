@@ -17,6 +17,11 @@ func installationModeForExecutable(configured model.InstallationMode) model.Inst
 	if configured == "" {
 		configured = model.InstallationModeSystem
 	}
+	// Account-scoped continuous installs intentionally use the machine-wide
+	// binary path while retaining their selected ordinary-user identity.
+	if configured == model.InstallationModeAccount {
+		return configured
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return configured

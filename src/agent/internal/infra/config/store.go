@@ -112,9 +112,9 @@ func (s *Store) reloadLocked() error {
 		s.role = cfg.Role
 		s.identityLocked = true
 	}
-	if s.installationMode == model.InstallationModeUser &&
+	if s.installationMode.UserScoped() &&
 		s.role != "" && s.role != model.RoleAgent {
-		return fmt.Errorf("user-level installation is only available for Source Agent")
+		return fmt.Errorf("user-scoped installation is only available for Source Agent")
 	}
 	cfg.InstallationMode = s.installationMode
 	cfg.DataDir = s.dataDir

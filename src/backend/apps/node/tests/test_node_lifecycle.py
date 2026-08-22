@@ -100,6 +100,15 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(raised.exception.code, "source_operation_in_progress")
         self.assertFalse(NodeTask.objects.filter(node=self.node).exists())
 
+    def test_account_mode_remove_requires_local_admin_command(self):
+        self.node.installation_mode = Node.InstallationMode.ACCOUNT
+        self.node.save(update_fields=["installation_mode", "updated_at"])
+
+        with self.assertRaises(NodeLifecycleError) as raised:
+            start_node_remove(org=self.org, node=self.node, user=self.user)
+
+        self.assertEqual(raised.exception.code, "local_admin_required")
+
     def test_force_remove_is_blocked_by_unrelated_source_unregister(self):
         self._create_active_source_unregister()
 

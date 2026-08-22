@@ -5,13 +5,14 @@ package enroll
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/install"
-	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 // StartInstalledService enables and starts the platform service after enrollment.
@@ -72,5 +73,7 @@ func startSystemd(ctx context.Context) error {
 }
 
 func installIsUserLevel() bool {
-	return vfs.UserInstallation()
+	// Only the self-service current-user mode uses a per-user service manager.
+	// Account-scoped continuous mode uses a system unit with User=selected.
+	return strings.TrimSpace(os.Getenv("HFL_INSTALLATION_MODE")) == string(model.InstallationModeUser)
 }

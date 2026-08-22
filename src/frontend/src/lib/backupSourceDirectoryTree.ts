@@ -56,7 +56,9 @@ export function shouldUseSingleDirectoryRoot(
     && source.installation_mode === 'user'
     && source.platform !== 'windows'
   ) return true
-  return source.type === 'host' && (source.platform === 'linux' || source.platform === 'macos')
+  return source.type === 'host'
+    && (source.platform === 'linux' || source.platform === 'macos')
+    && source.installation_mode !== 'account'
 }
 
 export function selectBackupSourceDirectoryTreeEntries(params: {

@@ -17,6 +17,9 @@ const (
 const (
 	InstallationModeSystem InstallationMode = "system"
 	InstallationModeUser   InstallationMode = "user"
+	// InstallationModeAccount runs continuously as a selected non-admin account.
+	// The installer is elevated only to register the background service.
+	InstallationModeAccount InstallationMode = "account"
 )
 
 // ParseRole validates CLI role strings.
@@ -32,11 +35,23 @@ func ParseRole(s string) (Role, error) {
 // ParseInstallationMode validates installation mode strings.
 func ParseInstallationMode(s string) (InstallationMode, error) {
 	switch InstallationMode(s) {
-	case InstallationModeSystem, InstallationModeUser:
+	case InstallationModeSystem, InstallationModeUser, InstallationModeAccount:
 		return InstallationMode(s), nil
 	default:
 		return "", fmt.Errorf("invalid installation mode %q", s)
 	}
+}
+
+// UserScoped reports whether file access must be bounded by the Agent's
+// ordinary-user token rather than the host service identity.
+func (m InstallationMode) UserScoped() bool {
+	return m == InstallationModeUser || m == InstallationModeAccount
+}
+
+// Continuous reports whether the Agent is expected to run without an active
+// interactive login session.
+func (m InstallationMode) Continuous() bool {
+	return m == InstallationModeSystem || m == InstallationModeAccount
 }
 
 // AgentConfig holds durable and runtime configuration fields.
@@ -51,7 +66,11 @@ type AgentConfig struct {
 	NodeToken        string           `json:"node_token"`
 	InstallationID   string           `json:"installation_id"`
 	InstallationMode InstallationMode `json:"installation_mode"`
-	DataDir          string           `json:"data_dir"`
+	// RunAsUser is the selected ordinary account for account-scoped continuous mode.
+	RunAsUser string `json:"run_as_user"`
+	// RunAsHome is the installer-resolved profile root for that account.
+	RunAsHome string `json:"run_as_home"`
+	DataDir   string `json:"data_dir"`
 	// LogDir overrides the default rolling log directory ({DataDir}/logs). Empty uses DataDir/logs.
 	LogDir string `json:"log_dir"`
 	// KopiaPath is the path to the Kopia CLI; empty means rely on PATH.

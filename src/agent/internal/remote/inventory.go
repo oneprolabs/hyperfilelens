@@ -45,6 +45,7 @@ func SendInventory(
 		"agent_commit":      selfupdate.Commit,
 		"role":              string(cfg.Role),
 		"installation_mode": string(installationMode),
+		"run_as_user":       cfg.RunAsUser,
 		"os":                runtime.GOOS,
 		"arch":              runtime.GOARCH,
 		"hostname":          hostname(),

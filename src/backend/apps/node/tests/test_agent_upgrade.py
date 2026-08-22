@@ -33,6 +33,18 @@ def test_validate_agent_upgrade_rejects_offline(releases_root):
     assert exc.value.code == "node_offline"
 
 
+def test_validate_agent_upgrade_requires_local_admin_for_account_mode(releases_root):
+    node = Node(
+        role=Node.Role.AGENT,
+        installation_mode=Node.InstallationMode.ACCOUNT,
+        status=Node.Status.ACTIVE,
+        availability=Node.Availability.ONLINE,
+    )
+    with pytest.raises(AgentUpgradeError, match="local administrator command") as exc:
+        validate_agent_upgrade(node=node)
+    assert exc.value.code == "local_admin_required"
+
+
 def test_validate_agent_upgrade_accepts_same_version(releases_root):
     node = Node(
         role=Node.Role.AGENT,

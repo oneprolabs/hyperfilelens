@@ -57,11 +57,16 @@ $env:HFL_ORG_KEY = "__HFL_ORG_KEY__"
 $env:HFL_NODE_ROLE = "__HFL_NODE_ROLE__"
 $env:HFL_NODE_TOKEN = "__HFL_NODE_TOKEN__"
 $env:HFL_INSTALLATION_MODE = "__HFL_INSTALLATION_MODE__"
+if ($env:HFL_INSTALLATION_MODE -eq "account" -and -not $env:HFL_RUN_AS_USER) {
+  # The elevated installer will confirm the selected account. This default is
+  # only a convenience for the account that launched the enrollment command.
+  $env:HFL_RUN_AS_USER = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+}
 $env:HFL_API_BASE = "__HFL_API_BASE__"
 $env:HFL_WSS_URL = "__HFL_WSS_URL__"
 $env:HFL_INSECURE_TLS = "__HFL_INSECURE_TLS__"
 
-if ($env:HFL_INSTALLATION_MODE -eq "system" -and -not (Test-HflAdmin)) {
+if ($env:HFL_INSTALLATION_MODE -in @("system", "account") -and -not (Test-HflAdmin)) {
   Write-HflBootstrapLog "INFO " "Administrator privileges are required. Approve the UAC prompt to continue."
   $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
   $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -Verb RunAs -PassThru -Wait

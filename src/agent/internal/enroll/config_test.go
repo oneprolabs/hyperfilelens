@@ -41,6 +41,31 @@ func TestLoadConfigAcceptsUserLevelSourceAgent(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAcceptsSpecifiedUserContinuousSourceAgent(t *testing.T) {
+	setRequiredEnrollmentEnv(t)
+	t.Setenv("HFL_NODE_ROLE", "agent")
+	t.Setenv("HFL_INSTALLATION_MODE", "account")
+	t.Setenv("HFL_RUN_AS_USER", "backup-user")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.InstallationMode != model.InstallationModeAccount || cfg.RunAsUser != "backup-user" {
+		t.Fatalf("specified-user config = mode %q, account %q", cfg.InstallationMode, cfg.RunAsUser)
+	}
+}
+
+func TestLoadConfigRejectsSpecifiedUserInfrastructureRole(t *testing.T) {
+	setRequiredEnrollmentEnv(t)
+	t.Setenv("HFL_NODE_ROLE", "proxy")
+	t.Setenv("HFL_INSTALLATION_MODE", "account")
+
+	if _, err := LoadConfigFromEnv(); err == nil {
+		t.Fatal("expected specified-user proxy configuration to be rejected")
+	}
+}
+
 func TestLoadConfigRejectsUserLevelInfrastructureRole(t *testing.T) {
 	setRequiredEnrollmentEnv(t)
 	t.Setenv("HFL_NODE_ROLE", "gateway")

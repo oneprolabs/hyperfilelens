@@ -53,6 +53,14 @@ func PlanInstall(
 			roleDisplayName(cfg.NodeRole, cfg.GatewayScope),
 		)
 	}
+	if state.InstallationMode != "" &&
+		!strings.EqualFold(state.InstallationMode, string(cfg.InstallationMode)) {
+		return ReinstallPlan{}, fmt.Errorf(
+			"this host is already installed in %s mode; uninstall that local installation before switching to %s mode",
+			state.InstallationMode,
+			cfg.InstallationMode,
+		)
+	}
 	if mode != InstallModeAuto && !state.Installed {
 		return ReinstallPlan{}, fmt.Errorf("--%s requires an existing HyperFileLens Agent installation", mode)
 	}

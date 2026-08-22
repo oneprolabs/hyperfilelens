@@ -272,7 +272,7 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 }
 
 func (e *Engine) applyUserInstallationScope(kind string, payload Payload) (Payload, error) {
-	if e.current().InstallationMode != model.InstallationModeUser {
+	if !e.current().InstallationMode.UserScoped() {
 		return payload, nil
 	}
 	repositoryType := ""

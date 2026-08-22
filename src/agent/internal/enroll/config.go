@@ -16,6 +16,8 @@ type Config struct {
 	NodeToken        string
 	InstallationID   string
 	InstallationMode model.InstallationMode
+	RunAsUser        string
+	RunAsHome        string
 	GatewayScope     string
 	APIBase          string
 	WSSURL           string
@@ -40,8 +42,8 @@ func LoadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	if installationMode == model.InstallationModeUser && role != model.RoleAgent {
-		return Config{}, fmt.Errorf("user-level installation is only available for Source Agent")
+	if installationMode.UserScoped() && role != model.RoleAgent {
+		return Config{}, fmt.Errorf("user-scoped installation is only available for Source Agent")
 	}
 	cfg := Config{
 		OrgKey:           strings.TrimSpace(os.Getenv("HFL_ORG_KEY")),
@@ -49,6 +51,8 @@ func LoadConfigFromEnv() (Config, error) {
 		NodeToken:        firstNonEmptyValue(os.Getenv("HFL_NODE_CREDENTIAL"), os.Getenv("HFL_NODE_TOKEN")),
 		InstallationID:   strings.TrimSpace(os.Getenv("HFL_INSTALLATION_ID")),
 		InstallationMode: installationMode,
+		RunAsUser:        strings.TrimSpace(os.Getenv("HFL_RUN_AS_USER")),
+		RunAsHome:        strings.TrimSpace(os.Getenv("HFL_RUN_AS_HOME")),
 		GatewayScope:     strings.TrimSpace(os.Getenv("HFL_GATEWAY_SCOPE")),
 		APIBase:          strings.TrimRight(strings.TrimSpace(os.Getenv("HFL_API_BASE")), "/"),
 		WSSURL:           strings.TrimSpace(os.Getenv("HFL_WSS_URL")),
@@ -86,6 +90,8 @@ func LoadInstalledCommandEnv() {
 		"HFL_NODE_TOKEN",
 		"HFL_INSTALLATION_ID",
 		"HFL_INSTALLATION_MODE",
+		"HFL_RUN_AS_USER",
+		"HFL_RUN_AS_HOME",
 		"HFL_INSECURE_TLS",
 		"HFL_GATEWAY_SCOPE",
 	} {
@@ -108,6 +114,8 @@ func (c Config) AgentConfig() *model.AgentConfig {
 		NodeToken:        c.NodeToken,
 		InstallationID:   c.InstallationID,
 		InstallationMode: c.InstallationMode,
+		RunAsUser:        c.RunAsUser,
+		RunAsHome:        c.RunAsHome,
 		NodeID:           ReadNodeID(envPath),
 		Role:             c.NodeRole,
 		DataDir:          dataDirForAgent(),

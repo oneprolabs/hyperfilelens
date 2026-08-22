@@ -51,6 +51,19 @@ func TestUserLevelLinuxLayoutHonorsXDGStateHome(t *testing.T) {
 	}
 }
 
+func TestSpecifiedUserContinuousUsesMachineLifecycleLayout(t *testing.T) {
+	t.Setenv("HFL_INSTALLATION_MODE", "account")
+	if UserInstallation() {
+		t.Fatal("specified-user continuous mode must not use the current-user lifecycle")
+	}
+	if got := DefaultInstallDir(); got != SystemInstallDir() {
+		t.Fatalf("DefaultInstallDir() = %q, want machine path %q", got, SystemInstallDir())
+	}
+	if got := DefaultAgentDataDir(); got != SystemDataDir() {
+		t.Fatalf("DefaultAgentDataDir() = %q, want machine path %q", got, SystemDataDir())
+	}
+}
+
 func TestAgentDataDirMatchesDefault(t *testing.T) {
 	if AgentDataDir("/opt/hyperfilelens-agent/hfl-agent") != DefaultAgentDataDir() {
 		t.Fatal("AgentDataDir should match DefaultAgentDataDir")

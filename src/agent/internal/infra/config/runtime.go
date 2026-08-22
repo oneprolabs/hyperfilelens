@@ -44,6 +44,8 @@ func RuntimeFromEnv() (*model.AgentConfig, error) {
 		NodeID:                    strings.TrimSpace(os.Getenv("HFL_NODE_ID")),
 		InstallationID:            strings.TrimSpace(os.Getenv("HFL_INSTALLATION_ID")),
 		InstallationMode:          installationMode,
+		RunAsUser:                 strings.TrimSpace(os.Getenv("HFL_RUN_AS_USER")),
+		RunAsHome:                 strings.TrimSpace(os.Getenv("HFL_RUN_AS_HOME")),
 		NodeToken:                 firstNonEmpty(strings.TrimSpace(os.Getenv("HFL_NODE_CREDENTIAL")), strings.TrimSpace(os.Getenv("HFL_NODE_TOKEN"))),
 		DataDir:                   strings.TrimSpace(os.Getenv("HFL_DATA_DIR")),
 		LogDir:                    strings.TrimSpace(os.Getenv("HFL_LOG_DIR")),

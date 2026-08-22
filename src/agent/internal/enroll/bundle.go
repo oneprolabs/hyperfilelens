@@ -65,7 +65,12 @@ func runBundleInstallUnix(ctx context.Context, bundleRoot string, cfg Config) er
 	}
 	cmd := exec.CommandContext(ctx, script, args...)
 	cmd.Dir = bundleRoot
-	cmd.Env = append(os.Environ(), "HFL_INSTALLATION_MODE="+string(cfg.InstallationMode))
+	cmd.Env = append(
+		os.Environ(),
+		"HFL_INSTALLATION_MODE="+string(cfg.InstallationMode),
+		"HFL_RUN_AS_USER="+cfg.RunAsUser,
+		"HFL_RUN_AS_HOME="+cfg.RunAsHome,
+	)
 	return runStreamingCommand(cmd, "Agent installation")
 }
 
@@ -84,9 +89,17 @@ func runBundleInstallWindows(ctx context.Context, bundleRoot string, cfg Config)
 		"-NoService",
 		"-QuietFooter",
 	}
+	if cfg.RunAsUser != "" {
+		args = append(args, "-RunAsUser", cfg.RunAsUser)
+	}
 	cmd := exec.CommandContext(ctx, "powershell.exe", args...)
 	cmd.Dir = bundleRoot
-	cmd.Env = append(os.Environ(), "HFL_INSTALLATION_MODE="+string(cfg.InstallationMode))
+	cmd.Env = append(
+		os.Environ(),
+		"HFL_INSTALLATION_MODE="+string(cfg.InstallationMode),
+		"HFL_RUN_AS_USER="+cfg.RunAsUser,
+		"HFL_RUN_AS_HOME="+cfg.RunAsHome,
+	)
 	return runStreamingCommand(cmd, "Agent installation")
 }
 
