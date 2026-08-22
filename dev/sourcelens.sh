@@ -198,6 +198,13 @@ require_docker() {
 	docker info >/dev/null 2>&1 || sourcelens_die "docker daemon is not reachable"
 }
 
+sourcelens_compose_logged() {
+	local status=0
+	sourcelens_dev_compose "$@" 2>&1 | tr '\r' '\n' | hfl_log_output_line docker \
+		|| status="${PIPESTATUS[0]}"
+	return "${status}"
+}
+
 cmd_prepare() {
 	require_docker
 	hfl_docker_validate_pull_settings "${SOURCELENS_DOCKER_PULL_TIMEOUT}" \
@@ -224,7 +231,7 @@ cmd_up() {
 	sourcelens_ensure_shared_network
 	sourcelens_log "Starting SourceLens stack (project=${SOURCELENS_COMPOSE_PROJECT})"
 	hfl_compose_command_with_exit_event_recovery \
-		sourcelens_dev_compose up -d --pull never --remove-orphans
+		sourcelens_compose_logged up -d --pull never --remove-orphans
 	sourcelens_ensure_database_initialized
 	if command -v curl >/dev/null 2>&1; then
 		sourcelens_wait_for_health || true
@@ -239,7 +246,7 @@ cmd_down() {
 		return 0
 	}
 	sourcelens_log "Stopping SourceLens stack (project=${SOURCELENS_COMPOSE_PROJECT})"
-	hfl_compose_command_with_exit_event_recovery sourcelens_dev_compose down
+	hfl_compose_command_with_exit_event_recovery sourcelens_compose_logged down
 }
 
 main() {

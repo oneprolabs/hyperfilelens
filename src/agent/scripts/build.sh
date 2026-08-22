@@ -9,6 +9,8 @@ AGENT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${AGENT_ROOT}/../.." && pwd)"
 # shellcheck source=../../../tools/lib/version.sh
 source "${REPO_ROOT}/tools/lib/version.sh"
+# shellcheck source=../../../tools/lib/logging.sh
+source "${REPO_ROOT}/tools/lib/logging.sh"
 
 DEFAULT_MATRIX="linux:amd64 linux:arm64 darwin:amd64 darwin:arm64 windows:amd64"
 MODE="release"
@@ -40,7 +42,8 @@ _hfl_emit_raw() {
 	local level=$1 tag
 	shift
 	if [[ "${HFL_LOG_TERMINAL_TIMESTAMPS:-1}" == "1" ]]; then
-		printf '[%s] [%s] %s\n' "$(hfl_now)" "${level}" "$(hfl_finish_sentence "$@")" >&2
+		HFL_LOG_COMPONENT=agent \
+			hfl_log_emit "${level// /}" "$(hfl_finish_sentence "$@")"
 	else
 		case "${level// /}" in
 		INFO) tag='INFO ' ;;

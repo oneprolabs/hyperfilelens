@@ -108,6 +108,32 @@ grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] progress-one$' \
 grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] progress-two$' \
 	"${capture_log}" >/dev/null
 
+# Timestamped output follows the Agent installer contract: status is the
+# fixed-width field immediately after the timestamp, followed by a compact
+# component name. ANSI styling is disabled in persisted/captured output.
+timestamp_output="$({
+	source "${ROOT_REPO}/tools/lib/logging.sh"
+	export HFL_LOG_TERMINAL_TIMESTAMPS=1 HFL_LOG_COMPONENT=sourcelens-dev HFL_LOG_COLOR=0
+	hfl_log_step "Preparing SourceLens"
+	hfl_log_emit_with_component 'OUT ' docker 'Container sourcelens-api Started'
+	hfl_log_ok "Insight services are prepared"
+} 2>&1)"
+grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] \[\.\.\.\.\] \[sourcelens\] Preparing SourceLens$' <<<"${timestamp_output}" >/dev/null
+grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] \[OUT \] \[docker\] Container sourcelens-api Started$' <<<"${timestamp_output}" >/dev/null
+grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] \[ OK \] \[sourcelens\] Insight services are prepared$' <<<"${timestamp_output}" >/dev/null
+
+# A terminal that declares itself as dumb must not receive ANSI styling in
+# auto mode. Explicit HFL_LOG_COLOR=1/always remains an opt-in override.
+dumb_color_result="$({
+	TERM=dumb HFL_LOG_COLOR=auto source "${ROOT_REPO}/tools/lib/logging.sh"
+	if hfl_log_color_enabled; then
+		printf 'enabled'
+	else
+		printf 'disabled'
+	fi
+} 2>/dev/null)"
+[[ "${dumb_color_result}" == "disabled" ]]
+
 failure_log="${fixture}/dev-failure.log"
 failure_stderr="${fixture}/dev-failure.stderr"
 set +e
