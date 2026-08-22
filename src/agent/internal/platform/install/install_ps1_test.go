@@ -100,7 +100,11 @@ func TestInstallPs1RunsCurrentUserAgentThroughHiddenRunner(t *testing.T) {
 		`$powershellName = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh.exe" } else { "powershell.exe" }`,
 		`$powershell = Join-Path $PSHOME $powershellName`,
 		`-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File`,
-		"& `$agent run -data-dir `$dataRoot",
+		"`$startInfo = New-Object System.Diagnostics.ProcessStartInfo",
+		"`$startInfo.UseShellExecute = `$false",
+		"`$startInfo.CreateNoWindow = `$true",
+		"`$startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden",
+		"[System.Diagnostics.Process]::Start(`$startInfo)",
 		`Remove-HflInstallFile (Join-Path $InstallRoot "run-agent.ps1")`,
 	} {
 		if !strings.Contains(source, want) {
@@ -126,6 +130,9 @@ func TestInstallPs1RunsCurrentUserAgentThroughHiddenRunner(t *testing.T) {
 	userService = userService[:systemServiceStart]
 	if strings.Contains(userService, "-Execute $ExePath") {
 		t.Fatal("current-user task must not launch the console Agent executable directly")
+	}
+	if strings.Contains(source, "& `$agent run -data-dir `$dataRoot") {
+		t.Fatal("hidden runner must create the Agent with CreateNoWindow")
 	}
 }
 

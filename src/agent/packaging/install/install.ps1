@@ -925,9 +925,19 @@ function Write-HflUserTaskRunner {
 `$agent = '$exeEsc'
 `$dataRoot = '$dataEsc'
 try {
-  & `$agent run -data-dir `$dataRoot
-  if (`$null -ne `$LASTEXITCODE) { exit `$LASTEXITCODE }
-  exit 0
+  # Hiding powershell.exe alone is insufficient when Windows Terminal is the
+  # default console host: the console Agent can still receive a new window.
+  # CreateNoWindow applies to the Agent process itself.
+  `$startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  `$startInfo.FileName = `$agent
+  `$startInfo.Arguments = 'run -data-dir "' + `$dataRoot + '"'
+  `$startInfo.UseShellExecute = `$false
+  `$startInfo.CreateNoWindow = `$true
+  `$startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+  `$process = [System.Diagnostics.Process]::Start(`$startInfo)
+  if (`$null -eq `$process) { exit 1 }
+  `$process.WaitForExit()
+  exit `$process.ExitCode
 }
 catch {
   exit 1
@@ -941,8 +951,8 @@ function Install-HflService {
   param([string]$ExePath, [string]$DataRoot, [switch]$NoStart)
   Remove-HflService
   if ($InstallationMode -eq "user") {
-    # Task Scheduler owns the process after installation. A hidden PowerShell
-    # host prevents hfl-agent.exe from opening a console window in the session.
+    # Task Scheduler owns the process after installation. The hidden runner
+    # creates the console Agent without allocating an interactive window.
     $runner = Write-HflUserTaskRunner -ExePath $ExePath -DataRoot $DataRoot
     $powershellName = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh.exe" } else { "powershell.exe" }
     $powershell = Join-Path $PSHOME $powershellName
