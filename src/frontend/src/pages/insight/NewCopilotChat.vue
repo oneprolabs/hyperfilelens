@@ -17,6 +17,7 @@ import {
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import HflPopover from '../../components/HflPopover.vue'
+import { useCopilotSelectionPreview } from '../../composables/useCopilotSelectionPreview'
 import { useKnowledgeSourceForm, type BackupScopePickerNode, type KnowledgeSourceType } from '../../composables/useKnowledgeSourceForm'
 import { apiErrorMessage } from '../../lib/api'
 import { formatBytes } from '../../lib/kopiaProgress'
@@ -25,6 +26,7 @@ import {
   createCopilotSession,
   fetchCopilotReadiness,
   listCopilotGatewayOptions,
+  type LensAdmissionPreview,
   type LensCopilotGatewayOption,
   type LensCopilotReadiness,
 } from '../../lib/lensApi'
@@ -37,6 +39,7 @@ type SubmitBlockCode =
   | 'backup_source'
   | 'snapshot'
   | 'source_scope'
+  | 'selection_preview'
   | 'public_gateway'
   | 'private_gateway'
 
@@ -115,6 +118,31 @@ const sourceScopes = computed(() => backupScopeEntries.value
     backup_snapshot_directory_id: row.directoryId as number,
     path_type: row.pathType,
   })))
+const previewScopes = computed(() => backupScopeEntries.value
+  .filter((row) => row.path.trim() && row.directoryId)
+  .map((row) => ({
+    key: row.id,
+    revision: row.revision,
+    directoryId: row.directoryId as number,
+    path: row.path.trim(),
+    pathType: row.pathType,
+    knownFileCount: row.knownFileCount,
+    knownSizeBytes: row.knownSizeBytes,
+  })))
+const {
+  admission: selectionAdmission,
+  admissionError: selectionAdmissionError,
+  admissionLoading: selectionAdmissionLoading,
+  calculationStatus: selectionCalculationStatus,
+  ready: selectionPreviewReady,
+  stateForScope: selectionStateForScope,
+  totals: selectionTotals,
+} = useCopilotSelectionPreview({
+  snapshotId: effectiveSnapshotId,
+  gatewayLinkId: snapshotGatewayLinkId,
+  gatewayMode,
+  scopes: previewScopes,
+})
 const agentModelReady = computed(() => Boolean(readiness.value?.default_agent_model_ref))
 const visualModelReady = computed(() => Boolean(readiness.value?.default_multimodal_model_ref))
 const selectedGateway = computed(() => gatewayMode.value === 'auto'
@@ -132,13 +160,16 @@ const selectedSnapshot = computed(() => snapshotsForSelectedBackupSource.value.f
   (row) => row.id === effectiveSnapshotId.value,
 ) ?? null)
 const selectedScopeSummary = computed(() => sourceScopes.value.length > 0
-  ? `${sourceScopes.value.length} selected`
+  ? selectionTotals.value
+    ? `${sourceScopes.value.length} paths · ${selectionTotals.value.fileCount.toLocaleString()} files · ${formatBytes(selectionTotals.value.sizeBytes)}`
+    : `${sourceScopes.value.length} selected`
   : '—')
 const canCreate = computed(() => Boolean(
   effectiveSnapshotId.value
   && sourceScopes.value.length > 0
   && selectedGateway.value
   && agentModelReady.value
+  && selectionPreviewReady.value
   && !submitting.value,
 ))
 const submitBlocker = computed<SubmitBlocker | null>(() => {
@@ -180,6 +211,64 @@ const submitBlocker = computed<SubmitBlocker | null>(() => {
       }
     }
   }
+  if (selectionCalculationStatus.value === 'calculating') {
+    return {
+      code: 'selection_preview',
+      message: 'Calculating the selected file count and size…',
+    }
+  }
+  if (selectionCalculationStatus.value === 'waiting') {
+    return {
+      code: 'selection_preview',
+      message: 'Waiting for the Repository Reader. Calculation will resume automatically.',
+    }
+  }
+  if (selectionCalculationStatus.value === 'error') {
+    const failed = backupScopeEntries.value
+      .map((row) => selectionStateForScope(row.id))
+      .find((row) => row.status === 'error')
+    return {
+      code: 'selection_preview',
+      message: failed?.error || 'Unable to calculate the selected data.',
+    }
+  }
+  if (selectionAdmissionLoading.value) {
+    return {
+      code: 'selection_preview',
+      message: 'Verifying organization capacity…',
+    }
+  }
+  if (selectionAdmissionError.value) {
+    return {
+      code: 'selection_preview',
+      message: selectionAdmissionError.value,
+    }
+  }
+  const reasons = selectionAdmission.value?.admission.reasons || []
+  if (reasons.includes('selection_file_limit')) {
+    return {
+      code: 'selection_preview',
+      message: 'The selected data exceeds the per-Chat file limit.',
+    }
+  }
+  if (reasons.includes('selection_size_limit')) {
+    return {
+      code: 'selection_preview',
+      message: 'The selected data exceeds the per-Chat size limit.',
+    }
+  }
+  if (reasons.includes('organization_capacity')) {
+    return {
+      code: 'selection_preview',
+      message: 'The organization does not have enough Public Data Gateway capacity for this Chat.',
+    }
+  }
+  if (reasons.includes('organization_capacity_unavailable')) {
+    return {
+      code: 'selection_preview',
+      message: 'Organization capacity is temporarily unavailable. The system will update automatically.',
+    }
+  }
   return null
 })
 const footerSubmitBlockReason = computed(() => (
@@ -199,6 +288,47 @@ function isBackupScopePickerOpen(entryId: string) {
 
 function handleBackupScopeNodeClick(entryId: string, data: BackupScopePickerNode) {
   pickBackupScopeForEntry(entryId, data)
+}
+
+function scopeDataSummary(entryId: string): string {
+  const state = selectionStateForScope(entryId)
+  if (state.status === 'covered') return `Included by ${state.coveredBy}`
+  if (state.status === 'calculating') return 'Calculating…'
+  if (state.status === 'waiting') return 'Waiting for Reader…'
+  if (state.status === 'error') return 'Unavailable'
+  if (state.summary) {
+    return `${state.summary.file_count.toLocaleString()} files · ${formatBytes(state.summary.size_bytes)}`
+  }
+  return '—'
+}
+
+function quotaCount(value: number | undefined): string {
+  if (value == null) return 'Unavailable'
+  return value < 0 ? 'Unlimited' : value.toLocaleString()
+}
+
+function quotaBytes(value: number | undefined): string {
+  if (value == null) return 'Unavailable'
+  return value < 0 ? 'Unlimited' : formatBytes(value)
+}
+
+function organizationCapacityBytes(
+  value: number | null | undefined,
+  capacity: LensAdmissionPreview['organization_capacity'] | undefined,
+): string {
+  if (!capacity || capacity.limit_available === false) return 'Unavailable'
+  if (capacity.limit_bytes == null || capacity.limit_bytes < 0) return 'Unlimited'
+  if (capacity.usage_incomplete) return 'Unavailable'
+  return value == null ? 'Unavailable' : formatBytes(value)
+}
+
+function organizationUsedBytes(
+  capacity: LensAdmissionPreview['organization_capacity'] | undefined,
+): string {
+  if (!capacity || capacity.limit_available === false || capacity.usage_incomplete) {
+    return 'Unavailable'
+  }
+  return capacity.used_bytes == null ? 'Unavailable' : formatBytes(capacity.used_bytes)
 }
 
 function syncBackupScopePickerWidth() {
@@ -254,9 +384,9 @@ async function load() {
 }
 
 async function createChat() {
-  if (!effectiveSnapshotId.value || !selectedBackupConfigId.value || !selectedGateway.value || !agentModelReady.value) return
+  if (!canCreate.value || !selectedBackupConfigId.value) return
   const scopesValid = await validateAllBackupScopeEntries(true)
-  if (!scopesValid || sourceScopes.value.length === 0) return
+  if (!scopesValid || sourceScopes.value.length === 0 || !selectionPreviewReady.value) return
 
   submitting.value = true
   const requestPayload = {
@@ -411,7 +541,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       class="new-chat-scope-stack__header"
                       aria-hidden="true"
                     >
-                      <span /><span>Path</span><span>Actions</span>
+                      <span /><span>Path</span><span>Selected data</span><span>Actions</span>
                     </div>
                     <div
                       v-for="(scopeEntry, scopeIndex) in backupScopeEntries"
@@ -483,11 +613,22 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                                     class="hfl-dir-tree-node__path"
                                   >{{ data.path }}</span>
                                 </div>
+                                <span
+                                  v-if="data.type === 'file' && data.sizeBytes != null"
+                                  class="new-chat-scope-tree__size"
+                                >{{ formatBytes(data.sizeBytes) }}</span>
                               </div>
                             </template>
                           </el-tree>
                         </div>
                       </HflPopover>
+                      <span
+                        class="new-chat-scope-row__summary"
+                        :class="{
+                          'is-waiting': ['calculating', 'waiting'].includes(selectionStateForScope(scopeEntry.id).status),
+                          'is-error': selectionStateForScope(scopeEntry.id).status === 'error',
+                        }"
+                      >{{ scopeDataSummary(scopeEntry.id) }}</span>
                       <ElButton
                         type="danger"
                         class="new-chat-scope-row__remove"
@@ -532,6 +673,63 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                   <p class="fullscreen-form-field__hint new-chat-scope-hint">
                     {{ t('insight.copilot.dataOriginHint') }}
                   </p>
+                  <div
+                    v-if="sourceScopes.length"
+                    class="new-chat-selection-summary"
+                    aria-live="polite"
+                  >
+                    <div class="new-chat-selection-summary__head">
+                      <strong>Selected data</strong>
+                      <span>{{ sourceScopes.length }} paths</span>
+                    </div>
+                    <dl>
+                      <div>
+                        <dt>Files</dt>
+                        <dd>
+                          {{ selectionTotals ? selectionTotals.fileCount.toLocaleString() : 'Calculating…' }}
+                          / {{ quotaCount(selectionAdmission?.selection_limits.max_files) }}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Selected size</dt>
+                        <dd>
+                          {{ selectionTotals ? formatBytes(selectionTotals.sizeBytes) : 'Calculating…' }}
+                          / {{ quotaBytes(selectionAdmission?.selection_limits.max_bytes) }}
+                        </dd>
+                      </div>
+                      <template v-if="selectionAdmission?.organization_capacity.applicable">
+                        <div>
+                          <dt>Organization used</dt>
+                          <dd>{{ organizationUsedBytes(selectionAdmission.organization_capacity) }}</dd>
+                        </div>
+                        <div>
+                          <dt>Available now</dt>
+                          <dd>
+                            {{ organizationCapacityBytes(
+                              selectionAdmission.organization_capacity.remaining_bytes,
+                              selectionAdmission.organization_capacity,
+                            ) }}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Available after creation</dt>
+                          <dd>
+                            {{ organizationCapacityBytes(
+                              selectionAdmission.organization_capacity.after_create_bytes,
+                              selectionAdmission.organization_capacity,
+                            ) }}
+                          </dd>
+                        </div>
+                      </template>
+                    </dl>
+                    <p
+                      v-if="submitBlocker?.code === 'selection_preview'"
+                      class="new-chat-selection-summary__status"
+                      :class="{ 'is-error': selectionCalculationStatus === 'error' || Boolean(selectionAdmissionError) || Boolean(selectionAdmission?.admission.reasons.length) }"
+                    >
+                      {{ submitBlocker.message }}
+                    </p>
+                  </div>
                 </div>
               </section>
             </div>
@@ -740,17 +938,30 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-source-subsection__head { margin-bottom: 12px; }
 .new-chat-source-subsection__head h3 { margin: 0; }
 .new-chat-scope-stack { overflow: visible; border: 1px solid #e5e6eb; border-radius: 8px; background: #fff; }
-.new-chat-scope-stack__header, .new-chat-scope-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 48px; gap: 8px; align-items: center; padding: 8px 16px 8px 10px; }
+.new-chat-scope-stack__header, .new-chat-scope-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(150px, .55fr) 48px; gap: 8px; align-items: center; padding: 8px 16px 8px 10px; }
 .new-chat-scope-stack__header { color: #86909c; font-size: 12px; font-weight: 700; background: #f7f8fa; border-radius: 8px 8px 0 0; }
 .new-chat-scope-row { border-top: 1px solid #f2f3f5; }
 .new-chat-scope-row__index { color: #86909c; font-size: 12px; font-weight: 700; text-align: center; }
+.new-chat-scope-row__summary { min-width: 0; overflow: hidden; color: #4e5969; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.new-chat-scope-row__summary.is-waiting { color: #86909c; }
+.new-chat-scope-row__summary.is-error { color: var(--color-danger-text, #c45656); }
 .new-chat-scope-row__remove { width: 34px; height: 34px; padding: 0; justify-self: center; }
 .new-chat-scope-tree { min-width: 100%; }
+.new-chat-scope-tree__size { flex: 0 0 auto; color: #86909c; font-size: 12px; font-variant-numeric: tabular-nums; }
 .new-chat-scope-stack__add { display: flex; justify-content: center; padding: 8px 48px 10px; border-top: 1px solid #f2f3f5; }
 .new-chat-scope-stack__add button { display: inline-flex; width: 70%; min-height: 32px; align-items: center; justify-content: center; gap: 8px; margin: 0; padding: 0 12px; border: 1px dashed rgba(148, 163, 184, .8); border-radius: 8px; background: rgba(248, 250, 252, .72); color: #165dff; font-size: 13px; font-weight: 600; cursor: pointer; transition: border-color .16s ease, background .16s ease; }
 .new-chat-scope-stack__add button:hover:not(:disabled) { border-color: #165dff; background: rgba(239, 246, 255, .82); }
 .new-chat-scope-stack__add button:disabled { cursor: not-allowed; opacity: .55; }
 .new-chat-scope-hint { margin-top: 8px; }
+.new-chat-selection-summary { margin-top: 14px; padding: 12px 14px; border: 1px solid #e5e6eb; border-radius: 8px; background: #f7f8fa; }
+.new-chat-selection-summary__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #1d2129; font-size: 13px; }
+.new-chat-selection-summary__head span { color: #86909c; font-size: 12px; }
+.new-chat-selection-summary dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin: 10px 0 0; }
+.new-chat-selection-summary dl div { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
+.new-chat-selection-summary dt { color: #86909c; font-size: 12px; }
+.new-chat-selection-summary dd { margin: 0; overflow: hidden; color: #1d2129; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.new-chat-selection-summary__status { margin: 10px 0 0; color: #4e5969; font-size: 12px; line-height: 1.5; }
+.new-chat-selection-summary__status.is-error { color: var(--color-danger-text, #c45656); }
 .new-chat-hint { margin: 10px 0 0; color: #86909c; font-size: 12px; line-height: 1.5; }
 .new-chat-hint--warn { color: #d46b08; }
 .new-chat-gateway-warning { display: flex; width: 100%; box-sizing: border-box; align-items: flex-start; gap: 8px; margin-top: 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--color-warning) 35%, var(--color-card-bg)); border-radius: 8px; background: color-mix(in srgb, var(--color-warning) 10%, var(--color-card-bg)); color: var(--color-warning-text); font-size: 12px; line-height: 1.5; }
@@ -775,5 +986,12 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-gateway-option__status { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; color: #00b42a; font-size: 12px; font-weight: 600; }
 .new-chat-gateway-option__dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px rgba(0, 180, 42, .12); }
 :global(.new-chat-gateway-select-popper .el-select-dropdown__wrap) { max-height: 220px; }
-@media (max-width: 900px) { .new-chat-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) {
+  .new-chat-grid { grid-template-columns: 1fr; }
+  .new-chat-scope-stack__header { display: none; }
+  .new-chat-scope-row { grid-template-columns: 28px minmax(0, 1fr) 40px; }
+  .new-chat-scope-row__summary { grid-row: 2; grid-column: 2 / 4; }
+  .new-chat-scope-row__remove { grid-row: 1; grid-column: 3; }
+  .new-chat-selection-summary dl { grid-template-columns: 1fr; }
+}
 </style>

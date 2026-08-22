@@ -441,27 +441,28 @@ def normalized_browse_entries(
             "folder",
             "d",
         }
+        raw_size = item.get("size_bytes", item.get("size"))
+        try:
+            size_bytes = _exact_result_int(raw_size)
+            size_known = size_bytes >= 0
+        except (TypeError, ValueError, OverflowError):
+            size_bytes = 0
+            size_known = False
+        if not size_known:
+            size_bytes = 0
         rows.append(
             {
                 "name": name,
                 "path": path,
                 "type": "dir" if is_directory else "file",
-                "size_bytes": _nonnegative_int(
-                    item.get("size_bytes", item.get("size", 0))
-                ),
+                "size_bytes": size_bytes,
+                "size_known": size_known,
                 "modified_at": item.get("modified_at") or item.get("mod_time") or None,
                 "downloadable": item.get("downloadable", True) is not False,
                 "has_children": item.get("has_children"),
             }
         )
     return rows
-
-
-def _nonnegative_int(value: Any) -> int:
-    try:
-        return max(0, int(value or 0))
-    except (TypeError, ValueError, OverflowError):
-        return 0
 
 
 def browse_skipped_special_count(task: NodeTask) -> int:

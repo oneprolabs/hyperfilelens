@@ -266,6 +266,89 @@ class CopilotSessionApiTests(TestCase):
         self.assertEqual(payload["run_outcomes"], [])
         self.assertEqual(payload["response_state"]["status"], "idle")
 
+    def test_sync_returns_structured_gateway_capacity_failure(self):
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
+        self.session.lifecycle_error = "internal capacity diagnostic"
+        self.session.lifecycle_error_state_json = {
+            "code": "SUBSCRIPTION.QUOTA_EXCEEDED",
+            "message": "This Public Data Gateway is at capacity.",
+            "retryable": True,
+            "meta": {
+                "quota_type": "gateway.public_capacity_bytes",
+                "scope": "gateway",
+                "limit": 10 * 1024**2,
+                "used": 11_890_256,
+            },
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "lifecycle_error",
+                "lifecycle_error_state_json",
+                "updated_at",
+            ]
+        )
+
+        response = self.client.get(
+            reverse(
+                "lens-copilot-session-sync",
+                kwargs={"pk": self.session.pk},
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json().get("data", response.json())
+        self.assertEqual(
+            payload["lifecycle_error_code"],
+            "SUBSCRIPTION.QUOTA_EXCEEDED",
+        )
+        self.assertEqual(payload["lifecycle_error_meta"]["scope"], "gateway")
+        self.assertNotIn("limit", payload["lifecycle_error_meta"])
+        self.assertNotIn("used", payload["lifecycle_error_meta"])
+        self.assertNotIn(
+            "internal capacity diagnostic",
+            payload["lifecycle_error_message"],
+        )
+        self.assertEqual(
+            payload["lifecycle_error"],
+            payload["lifecycle_error_message"],
+        )
+        serializer_payload = LensSessionLinkSerializer(self.session).data
+        self.assertEqual(
+            serializer_payload["lifecycle_error"],
+            serializer_payload["lifecycle_error_message"],
+        )
+        self.assertNotIn(
+            "internal capacity diagnostic",
+            serializer_payload["lifecycle_error"],
+        )
+
+    def test_not_ready_actions_never_return_raw_lifecycle_diagnostics(self):
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
+        self.session.lifecycle_error = "private repository path /srv/internal/config"
+        self.session.lifecycle_error_state_json = {}
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "lifecycle_error",
+                "lifecycle_error_state_json",
+                "updated_at",
+            ]
+        )
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-pin",
+                kwargs={"pk": self.session.pk},
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("/srv/internal/config", str(response.json()))
+        self.assertIn("Chat preparation failed", str(response.json()))
+
     @patch(
         "apps.lens_bridge.api.views.copilot_service.list_copilot_assistants",
         return_value=[],

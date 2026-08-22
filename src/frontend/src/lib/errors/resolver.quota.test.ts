@@ -11,7 +11,9 @@ const messages: Record<string, string> = {
   'errors.codes.subscriptionQuotaExceededInstanceMeter':
     'Shared instance {meter} capacity is full. Contact your platform administrator to raise the deployment grant or free capacity from other organizations.',
   'errors.codes.subscriptionQuotaExceededGateway':
-    'This Public Data Gateway is at capacity. Contact your platform administrator to raise the workspace limit on this gateway.',
+    'The shared Data Gateway currently has insufficient capacity. Try again later or contact your platform administrator.',
+  'errors.codes.subscriptionQuotaUsageUnavailable':
+    'Capacity information is temporarily unavailable. Try again shortly.',
   'licenseQuota.users': 'Users',
   'licenseQuota.publicGatewayCapacity': 'Public Gateway Capacity',
 }
@@ -59,7 +61,7 @@ describe('subscription quota error messages', () => {
       },
       t,
     )
-    expect(message).toContain('This Public Data Gateway is at capacity')
+    expect(message).toContain('shared Data Gateway currently has insufficient capacity')
   })
 
   it('falls back to English without a translate function', () => {
@@ -70,5 +72,20 @@ describe('subscription quota error messages', () => {
       meta: { quota_type: 'max_object_storage', scope: 'organization' },
     })
     expect(message).toContain('Object Storage quota is full for this organization')
+  })
+
+  it('maps temporarily unavailable quota usage without exposing diagnostics', () => {
+    const message = resolveErrorMessageI18n(
+      {
+        status: 503,
+        errorCode: 'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE',
+        message: 'internal meter diagnostic',
+        meta: { quota_type: 'max_public_gateway_capacity_bytes', scope: 'instance' },
+      },
+      t,
+    )
+
+    expect(message).toBe('Capacity information is temporarily unavailable. Try again shortly.')
+    expect(message).not.toContain('internal meter diagnostic')
   })
 })

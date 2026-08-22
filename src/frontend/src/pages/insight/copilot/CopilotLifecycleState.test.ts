@@ -168,6 +168,23 @@ describe('CopilotLifecycleState', () => {
     expect(wrapper.text()).toContain('Try Again')
   })
 
+  it('uses quota context for Public Data Gateway capacity failures', () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'failed',
+      lifecycle_error_code: 'SUBSCRIPTION.QUOTA_EXCEEDED',
+      lifecycle_error_message: 'internal quota diagnostic',
+      lifecycle_error_retryable: true,
+      lifecycle_error_meta: {
+        quota_type: 'gateway.public_capacity_bytes',
+        scope: 'gateway',
+      },
+    }))
+
+    expect(wrapper.text()).toContain('shared Data Gateway currently has insufficient capacity')
+    expect(wrapper.text()).not.toContain('internal quota diagnostic')
+    expect(wrapper.text()).toContain('Try Again')
+  })
+
   it('keeps retry available for legacy failures without a structured code', () => {
     const wrapper = mountState(session({
       lifecycle_status: 'failed',

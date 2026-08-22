@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from apps.lens_bridge.api.views import (
     LensAssistantViewSet,
     LensCopilotAssistantView,
+    LensCopilotAdmissionPreviewView,
     LensCopilotBindingView,
     LensCopilotGatewayOptionsView,
     LensCopilotKnowledgeSourceView,
@@ -15,6 +16,8 @@ from apps.lens_bridge.api.views import (
     LensCopilotSessionViewSet,
     LensCopilotSnapshotBrowseTaskView,
     LensCopilotSnapshotBrowseView,
+    LensCopilotScopePreviewTaskView,
+    LensCopilotScopePreviewView,
     LensCopilotUsageView,
     LensGatewayViewSet,
     LensKnowledgeSourceViewSet,
@@ -60,6 +63,21 @@ urlpatterns = [
         "copilot/snapshot-browse/<uuid:task_id>/",
         LensCopilotSnapshotBrowseTaskView.as_view(),
         name="lens-copilot-snapshot-browse-task",
+    ),
+    path(
+        "copilot/selection-preview/",
+        LensCopilotScopePreviewView.as_view(),
+        name="lens-copilot-selection-preview",
+    ),
+    path(
+        "copilot/selection-preview/<uuid:task_id>/",
+        LensCopilotScopePreviewTaskView.as_view(),
+        name="lens-copilot-selection-preview-task",
+    ),
+    path(
+        "copilot/admission-preview/",
+        LensCopilotAdmissionPreviewView.as_view(),
+        name="lens-copilot-admission-preview",
     ),
     path("copilot/usage/", LensCopilotUsageView.as_view(), name="lens-copilot-usage"),
     path(

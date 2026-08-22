@@ -47,6 +47,7 @@ export const ERROR_CODE_I18N_KEYS: Record<string, string> = {
   'AGENT.TASK_FAILED': 'errors.codes.agentTaskFailed',
   'BACKUP.QUOTA_EXCEEDED': 'errors.codes.backupQuotaExceeded',
   'SUBSCRIPTION.QUOTA_EXCEEDED': 'errors.codes.subscriptionQuotaExceeded',
+  'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE': 'errors.codes.subscriptionQuotaUsageUnavailable',
   'BACKUP.ALREADY_RUNNING': 'errors.codes.backupAlreadyRunning',
   'RESTORE.ALREADY_RUNNING': 'errors.codes.restoreAlreadyRunning',
 }
@@ -98,6 +99,8 @@ export const ERROR_CODE_FALLBACK_EN: Record<string, string> = {
   'BACKUP.QUOTA_EXCEEDED': 'Backup quota exceeded. Upgrade your subscription and try again.',
   'SUBSCRIPTION.QUOTA_EXCEEDED':
     'Organization quota is full. Contact your platform administrator to raise limits.',
+  'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE':
+    'Capacity information is temporarily unavailable. Try again shortly.',
   'BACKUP.ALREADY_RUNNING': 'A backup is starting or running for this source. Stop it or wait for it to finish before continuing.',
   'RESTORE.ALREADY_RUNNING': 'A restore task is already running for this source.',
 }

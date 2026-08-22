@@ -313,9 +313,23 @@ class GatewayChatQueueTests(TestCase):
             session.id,
             str(claim_token),
             "scope validation failed",
+            error_state={
+                "code": "SUBSCRIPTION.QUOTA_EXCEEDED",
+                "message": "This Public Data Gateway is at capacity.",
+                "retryable": True,
+                "meta": {
+                    "quota_type": "gateway.public_capacity_bytes",
+                    "scope": "gateway",
+                },
+            },
             expected_generation=session.provision_generation,
         )
 
+        session.refresh_from_db()
+        self.assertEqual(
+            session.lifecycle_error_state_json["code"],
+            "SUBSCRIPTION.QUOTA_EXCEEDED",
+        )
         release_slot.assert_called_once_with(
             session_link_id=session.id,
             expected_generation=session.provision_generation,

@@ -330,6 +330,7 @@ export type LensSessionLink = {
   lifecycle_error_code?: string
   lifecycle_error_message?: string
   lifecycle_error_retryable?: boolean
+  lifecycle_error_meta?: Record<string, unknown>
   provision_phase?: string
   provision_detail?: string
   queue_position?: number
@@ -377,6 +378,7 @@ export type LensCopilotSyncResponse = {
   lifecycle_error_code?: string
   lifecycle_error_message?: string
   lifecycle_error_retryable?: boolean
+  lifecycle_error_meta?: Record<string, unknown>
   last_assistant_message_at?: string | null
   has_unread?: boolean
 }
@@ -1126,6 +1128,101 @@ export async function browseCopilotSnapshotDirectory(
     has_more: Boolean(task.has_more),
     skipped_special_count: Math.max(0, Number(task.skipped_special_count || 0)),
   }
+}
+
+export type LensScopeSummary = {
+  path_type: 'file' | 'dir'
+  file_count: number
+  size_bytes: number
+  skipped_special_count: number
+}
+
+export type LensScopePreviewTask = {
+  task_id: string | null
+  status: 'pending' | 'running' | 'success' | 'failed' | 'timeout' | 'canceled' | string
+  error?: string
+  error_code?: string
+  retryable?: boolean
+  summary?: LensScopeSummary
+}
+
+export async function startCopilotScopePreview(body: {
+  directory_id: number
+  backup_source_snapshot_id: number
+  gateway_link_id: number
+  source_path: string
+  request_token: string
+  attempt?: number
+}, signal?: AbortSignal): Promise<LensScopePreviewTask> {
+  const raw = await api(lensUrl('copilot/selection-preview/'), {
+    method: 'POST',
+    headers: lensHeaders(),
+    signal,
+    body: JSON.stringify(body),
+  })
+  return lensPayload<LensScopePreviewTask>(raw)
+}
+
+export async function fetchCopilotScopePreview(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<LensScopePreviewTask> {
+  const raw = await api(lensUrl(`copilot/selection-preview/${taskId}/`), {
+    headers: lensHeaders(),
+    signal,
+  })
+  return lensPayload<LensScopePreviewTask>(raw)
+}
+
+export async function cancelCopilotScopePreview(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await api(lensUrl(`copilot/selection-preview/${taskId}/`), {
+    method: 'DELETE',
+    headers: lensHeaders(),
+    signal,
+  })
+}
+
+export type LensAdmissionPreview = {
+  gateway_scope: 'platform' | 'user' | string
+  selection: {
+    file_count: number
+    size_bytes: number
+  }
+  selection_limits: {
+    max_files: number
+    max_bytes: number
+  }
+  organization_capacity: {
+    applicable: boolean
+    limit_available?: boolean
+    limit_bytes?: number
+    used_bytes?: number
+    remaining_bytes?: number | null
+    after_create_bytes?: number | null
+    usage_incomplete?: boolean
+  }
+  admission: {
+    allowed: boolean
+    reasons: string[]
+  }
+}
+
+export async function previewCopilotAdmission(body: {
+  gateway_mode: 'auto' | 'manual'
+  gateway_link_id?: number | null
+  file_count: number
+  size_bytes: number
+}, signal?: AbortSignal): Promise<LensAdmissionPreview> {
+  const raw = await api(lensUrl('copilot/admission-preview/'), {
+    method: 'POST',
+    headers: lensHeaders(),
+    signal,
+    body: JSON.stringify(body),
+  })
+  return lensPayload<LensAdmissionPreview>(raw)
 }
 
 export async function retryCopilotSession(sessionId: number): Promise<LensSessionLink> {

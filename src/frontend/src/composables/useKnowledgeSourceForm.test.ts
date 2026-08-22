@@ -245,6 +245,36 @@ describe('knowledge source backup scope validation', () => {
     }
   })
 
+  it('validates a manual path beneath a POSIX root snapshot', async () => {
+    const { form, wrapper } = mountForm()
+    try {
+      const rootSnapshot = snapshotFixture()
+      rootSnapshot.directories = rootSnapshot.directories.map((directory) => ({
+        ...directory,
+        source_path: '/',
+      }))
+      form.snapshots.value = [rootSnapshot]
+      form.snapshotDetail.value = rootSnapshot
+
+      const entryId = form.backupScopeEntries.value[0].id
+      form.updateBackupScopeEntryInput(entryId, '/documents/report.txt')
+
+      await expect(form.validateBackupScopeEntry(entryId)).resolves.toBe(true)
+      expect(mocks.browseCopilotSnapshotDirectory).toHaveBeenCalledWith(31, {
+        backupSourceSnapshotId: 71,
+        gatewayLinkId: 17,
+        path: 'documents/report.txt',
+        limit: 1,
+      }, expect.any(AbortSignal))
+      expect(form.backupScopeEntries.value[0]).toMatchObject({
+        path: '/documents/report.txt',
+        directoryId: 31,
+      })
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('validates a manual path when the picker closes without a selection', async () => {
     const { form, wrapper } = mountForm()
     try {
@@ -484,5 +514,130 @@ describe('knowledge source backup scope validation', () => {
 
     expect(resolvedNodes).toEqual([[]])
     expect(mocks.error).not.toHaveBeenCalled()
+  })
+
+  it('preserves a browsed file size for selection preview', async () => {
+    mocks.browseCopilotSnapshotDirectory.mockResolvedValueOnce({
+      entries: [{
+        name: 'report.pdf',
+        path: 'reports/report.pdf',
+        type: 'file',
+        size_bytes: 4096,
+        size_known: true,
+      }],
+    })
+    const { form, wrapper } = mountForm()
+    try {
+      const resolvedNodes: Array<Array<{ sizeBytes?: number }>> = []
+      await form.loadBackupScopePickerNode(
+        {
+          level: 1,
+          data: {
+            id: '31:dir:/root/datatest',
+            label: 'datatest',
+            path: '/root/datatest',
+            type: 'dir',
+            directoryId: 31,
+            browsePath: '',
+            sourceRootPath: '/root/datatest',
+            isLeaf: false,
+          },
+        },
+        (nodes) => resolvedNodes.push(nodes),
+      )
+
+      const fileNode = resolvedNodes[0][0]
+      expect(fileNode).toMatchObject({ sizeBytes: 4096 })
+      form.pickBackupScopeForEntry(
+        form.backupScopeEntries.value[0].id,
+        fileNode as Parameters<typeof form.pickBackupScopeForEntry>[1],
+      )
+      expect(form.backupScopeEntries.value[0]).toMatchObject({
+        knownSizeBytes: 4096,
+        knownFileCount: 1,
+      })
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps a browsed file size unknown when the reader omits size metadata', async () => {
+    mocks.browseCopilotSnapshotDirectory.mockResolvedValueOnce({
+      entries: [{
+        name: 'legacy.bin',
+        path: 'legacy.bin',
+        type: 'file',
+        size_bytes: 0,
+        size_known: false,
+      }],
+    })
+    const { form, wrapper } = mountForm()
+    try {
+      const resolvedNodes: Array<Array<{ sizeBytes?: number }>> = []
+      await form.loadBackupScopePickerNode(
+        {
+          level: 1,
+          data: {
+            id: '31:dir:/root/datatest',
+            label: 'datatest',
+            path: '/root/datatest',
+            type: 'dir',
+            directoryId: 31,
+            browsePath: '',
+            sourceRootPath: '/root/datatest',
+            isLeaf: false,
+          },
+        },
+        (nodes) => resolvedNodes.push(nodes),
+      )
+
+      const fileNode = resolvedNodes[0][0]
+      expect(fileNode.sizeBytes).toBeUndefined()
+      form.pickBackupScopeForEntry(
+        form.backupScopeEntries.value[0].id,
+        fileNode as Parameters<typeof form.pickBackupScopeForEntry>[1],
+      )
+      expect(form.backupScopeEntries.value[0]).toMatchObject({
+        knownSizeBytes: null,
+        knownFileCount: 1,
+      })
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('treats an old browse response without size_known as unknown', async () => {
+    mocks.browseCopilotSnapshotDirectory.mockResolvedValueOnce({
+      entries: [{
+        name: 'rolling-upgrade.bin',
+        path: 'rolling-upgrade.bin',
+        type: 'file',
+        size_bytes: 0,
+      }],
+    })
+    const { form, wrapper } = mountForm()
+    try {
+      const resolvedNodes: Array<Array<{ sizeBytes?: number }>> = []
+      await form.loadBackupScopePickerNode(
+        {
+          level: 1,
+          data: {
+            id: '31:dir:/root/datatest',
+            label: 'datatest',
+            path: '/root/datatest',
+            type: 'dir',
+            directoryId: 31,
+            browsePath: '',
+            sourceRootPath: '/root/datatest',
+            isLeaf: false,
+          },
+        },
+        (nodes) => resolvedNodes.push(nodes),
+      )
+
+      expect(resolvedNodes[0][0].sizeBytes).toBeUndefined()
+    } finally {
+      wrapper.unmount()
+    }
   })
 })

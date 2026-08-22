@@ -194,6 +194,7 @@ export type BackupSnapshotBrowserEntry = {
   path: string
   type: 'file' | 'dir' | string
   size_bytes: number
+  size_known?: boolean
   modified_at?: string | null
   downloadable: boolean
   has_children?: boolean | null

@@ -37,6 +37,9 @@ from apps.lens_bridge.services import (
     sl_client,
 )
 from apps.lens_bridge.services.chat_binding import _grant_assistant_to_chat_user
+from apps.lens_bridge.services.chat_lifecycle_errors import (
+    lifecycle_error_state_from_exception,
+)
 from apps.lens_bridge.services.teardown_claims import (
     PROVISION_CLAIM_TTL_SECONDS,
     TEARDOWN_CLAIM_TTL_SECONDS,
@@ -115,6 +118,30 @@ def _chat_create_request_identity(
                 "backup_snapshot_directory_id": directory_id,
             }
         )
+    deduplicated_scopes: list[dict[str, Any]] = []
+    for candidate in request_scopes:
+        directory_id = candidate["backup_snapshot_directory_id"]
+        candidate_path = candidate["source_path"]
+        covered = False
+        retained: list[dict[str, Any]] = []
+        for existing in deduplicated_scopes:
+            if existing["backup_snapshot_directory_id"] != directory_id:
+                retained.append(existing)
+                continue
+            existing_path = existing["source_path"]
+            if candidate_path == existing_path or candidate_path.startswith(
+                f"{existing_path.rstrip('/')}/"
+            ):
+                covered = True
+                retained.append(existing)
+                continue
+            if existing_path.startswith(f"{candidate_path.rstrip('/')}/"):
+                continue
+            retained.append(existing)
+        if not covered:
+            retained.append(candidate)
+        deduplicated_scopes = retained
+    request_scopes = deduplicated_scopes
     if not request_scopes:
         raise ValidationError({"source_scopes": "Select at least one file or folder."})
 
@@ -355,6 +382,13 @@ def create_copilot_chat(
         raise ValidationError(
             {"backup_source_snapshot_id": "Snapshot not found for this backup source."}
         )
+    if snapshot.status not in {
+        BackupSourceSnapshot.Status.AVAILABLE,
+        BackupSourceSnapshot.Status.PARTIAL,
+    }:
+        raise ValidationError(
+            {"backup_source_snapshot_id": "Snapshot is no longer available."}
+        )
 
     normalized_scopes: list[dict[str, Any]] = []
     from apps.subscription.services.quota import (
@@ -480,6 +514,7 @@ def create_copilot_chat(
             provision_phase=LensSessionLink.ProvisionPhase.QUEUED,
             provision_detail="Chat creation is queued.",
             lifecycle_error="",
+            lifecycle_error_state_json={},
         )
 
     try:
@@ -555,6 +590,7 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
         locked.provision_phase = LensSessionLink.ProvisionPhase.DELETING
         locked.provision_detail = "Deleting chat resources."
         locked.lifecycle_error = ""
+        locked.lifecycle_error_state_json = {}
         locked.status = LensSessionLink.Status.ARCHIVED
         locked.provision_claim_token = None
         locked.provision_claimed_at = None
@@ -574,6 +610,7 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
                 "provision_phase",
                 "provision_detail",
                 "lifecycle_error",
+                "lifecycle_error_state_json",
                 "status",
                 "provision_claim_token",
                 "provision_claimed_at",
@@ -644,6 +681,7 @@ def _claim_copilot_chat_provision(
         link.provision_claimed_at = now
         link.provision_next_retry_at = next_retry_at(link.provision_attempts)
         link.lifecycle_error = ""
+        link.lifecycle_error_state_json = {}
         link.save(
             update_fields=[
                 "provision_attempts",
@@ -651,6 +689,7 @@ def _claim_copilot_chat_provision(
                 "provision_claimed_at",
                 "provision_next_retry_at",
                 "lifecycle_error",
+                "lifecycle_error_state_json",
                 "updated_at",
             ]
         )
@@ -721,6 +760,7 @@ def run_copilot_chat_provision(
             "copilot chat provision failed session_link_id=%s",
             session_link_id,
         )
+        error_state = lifecycle_error_state_from_exception(exc)
         link = LensSessionLink.objects.filter(pk=session_link_id).first()
         cleanup_errors: list[str] = []
         if link is not None:
@@ -742,12 +782,14 @@ def run_copilot_chat_provision(
                 session_link_id,
                 claim_token,
                 message=f"{exc}; {'; '.join(cleanup_errors)}",
+                error_state=error_state,
             )
         else:
             _mark_provision_failed_by_id(
                 session_link_id,
                 claim_token,
                 str(exc),
+                error_state=error_state,
                 expected_generation=link.provision_generation if link else 0,
             )
         raise
@@ -1311,8 +1353,9 @@ def _reserve_chat_capacity(
             limits = provider.get_limits(locked.organization) or {}
             if "max_public_gateway_capacity_bytes" not in limits:
                 raise AppError(
-                    code="SUBSCRIPTION.QUOTA_EXCEEDED",
-                    status=403,
+                    code="SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE",
+                    status=503,
+                    retryable=True,
                     title="Organization public gateway capacity is unavailable.",
                     diagnostic="max_public_gateway_capacity_bytes missing from quota limits",
                     meta={
@@ -1827,6 +1870,7 @@ def _complete_copilot_chat_provision(
     link.provision_phase = LensSessionLink.ProvisionPhase.READY
     link.provision_detail = "Chat is ready."
     link.lifecycle_error = ""
+    link.lifecycle_error_state_json = {}
     provision_state = dict(link.provision_state_json or {})
     for kind in (_ASSISTANT_CREATE_OPERATION, _SESSION_CREATE_OPERATION):
         operation = dict(provision_state.get(kind) or {})
@@ -1849,6 +1893,7 @@ def _complete_copilot_chat_provision(
             "provision_phase",
             "provision_detail",
             "lifecycle_error",
+            "lifecycle_error_state_json",
             "provision_state_json",
             "cleanup_intent",
             "cleanup_status",
@@ -1993,13 +2038,21 @@ def _record_late_source_lens_resource(
         else LensSessionLink.CleanupIntent.RESET_FOR_RETRY
     )
     link.lifecycle_error = error[:2000]
+    link.lifecycle_error_state_json = lifecycle_error_state_from_exception(
+        RuntimeError(link.lifecycle_error)
+    )
     link.cleanup_intent = cleanup_intent
     link.cleanup_status = LensSessionLink.CleanupStatus.PENDING
     teardown_state = dict(link.teardown_state_json or {})
     teardown_state["intent"] = cleanup_intent
     link.teardown_state_json = teardown_state
     update_fields.extend(
-        ["cleanup_intent", "cleanup_status", "teardown_state_json"]
+        [
+            "lifecycle_error_state_json",
+            "cleanup_intent",
+            "cleanup_status",
+            "teardown_state_json",
+        ]
     )
     link.teardown_claim_token = None
     link.teardown_claimed_at = None
@@ -2531,6 +2584,9 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
             else "Chat cleanup is incomplete and will be retried."
         )
         link.lifecycle_error = "; ".join([*critical_errors, *warnings])[:2000]
+        link.lifecycle_error_state_json = lifecycle_error_state_from_exception(
+            RuntimeError(link.lifecycle_error)
+        )
     elif reset_for_retry:
         link.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
         link.status = LensSessionLink.Status.ACTIVE
@@ -2541,6 +2597,12 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         link.lifecycle_error = "; ".join(
             item for item in [provision_error, *warnings] if item
         )[:2000]
+        provision_error_state = teardown_state.get("provision_error_state")
+        link.lifecycle_error_state_json = (
+            dict(provision_error_state)
+            if isinstance(provision_error_state, dict)
+            else {}
+        )
     else:
         link.lifecycle_status = LensSessionLink.LifecycleStatus.DELETED
         link.status = LensSessionLink.Status.ARCHIVED
@@ -2548,6 +2610,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         link.provision_detail = "Chat resources deleted."
         link.cleanup_status = LensSessionLink.CleanupStatus.COMPLETE
         link.lifecycle_error = "; ".join(warnings)[:2000]
+        link.lifecycle_error_state_json = {}
     link.active_run_uuid = None
     link.active_run_status = ""
     link.teardown_state_json = teardown_state
@@ -2579,6 +2642,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         provision_phase=link.provision_phase,
         provision_detail=link.provision_detail,
         lifecycle_error=link.lifecycle_error,
+        lifecycle_error_state_json=link.lifecycle_error_state_json,
         active_run_uuid=None,
         active_run_status="",
         teardown_state_json=teardown_state,
@@ -2615,6 +2679,7 @@ def _mark_provision_failed_by_id(
     claim_token: str,
     message: str,
     *,
+    error_state: dict[str, Any] | None = None,
     expected_generation: int,
 ) -> None:
     updated = LensSessionLink.objects.filter(
@@ -2626,6 +2691,7 @@ def _mark_provision_failed_by_id(
         provision_phase=LensSessionLink.ProvisionPhase.QUEUED,
         provision_detail="Chat preparation failed.",
         lifecycle_error=(message or "provision failed")[:2000],
+        lifecycle_error_state_json=dict(error_state or {}),
         provision_claim_token=None,
         provision_claimed_at=None,
         provision_next_retry_at=None,
@@ -2658,6 +2724,7 @@ def _transition_failed_provision_to_teardown(
     claim_token: str,
     *,
     message: str,
+    error_state: dict[str, Any] | None = None,
 ) -> bool:
     """Fence retry and hand incomplete compensation to durable teardown."""
     link = (
@@ -2676,6 +2743,7 @@ def _transition_failed_provision_to_teardown(
     link.provision_phase = LensSessionLink.ProvisionPhase.CLEANING_UP
     link.provision_detail = "Provisioning cleanup is incomplete and will be retried."
     link.lifecycle_error = message[:2000]
+    link.lifecycle_error_state_json = dict(error_state or {})
     link.provision_claim_token = None
     link.provision_claimed_at = None
     link.provision_next_retry_at = None
@@ -2690,6 +2758,7 @@ def _transition_failed_provision_to_teardown(
     link.teardown_state_json = {
         "intent": _TEARDOWN_INTENT_RESET_FOR_RETRY,
         "provision_error": message[:2000],
+        "provision_error_state": dict(error_state or {}),
     }
     link.save(
         update_fields=[
@@ -2698,6 +2767,7 @@ def _transition_failed_provision_to_teardown(
             "provision_phase",
             "provision_detail",
             "lifecycle_error",
+            "lifecycle_error_state_json",
             "provision_claim_token",
             "provision_claimed_at",
             "provision_next_retry_at",
@@ -2774,8 +2844,9 @@ def _assert_retry_public_gateway_capacity(*, session: LensSessionLink) -> None:
     limits = provider.get_limits(session.organization) or {}
     if "max_public_gateway_capacity_bytes" not in limits:
         raise AppError(
-            code="SUBSCRIPTION.QUOTA_EXCEEDED",
-            status=403,
+            code="SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE",
+            status=503,
+            retryable=True,
             title="Organization public gateway capacity is unavailable.",
             diagnostic="max_public_gateway_capacity_bytes missing from quota limits",
             meta={
@@ -2844,6 +2915,7 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     locked.provision_phase = LensSessionLink.ProvisionPhase.QUEUED
     locked.provision_detail = "Chat creation is queued."
     locked.lifecycle_error = ""
+    locked.lifecycle_error_state_json = {}
     locked.provision_claim_token = None
     locked.provision_claimed_at = None
     locked.provision_next_retry_at = None
@@ -2871,6 +2943,7 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             "provision_phase",
             "provision_detail",
             "lifecycle_error",
+            "lifecycle_error_state_json",
             "provision_claim_token",
             "provision_claimed_at",
             "provision_next_retry_at",
@@ -2920,6 +2993,7 @@ def _queue_provision_or_mark_failed(
         logger.exception(
             "copilot chat provision dispatch failed session_link_id=%s", session_link_id
         )
+        error_state = lifecycle_error_state_from_exception(exc)
         LensSessionLink.objects.filter(
             pk=session_link_id,
             lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
@@ -2928,6 +3002,7 @@ def _queue_provision_or_mark_failed(
             provision_phase=LensSessionLink.ProvisionPhase.QUEUED,
             provision_detail=("Chat preparation is waiting for the worker queue."),
             lifecycle_error=str(exc)[:2000],
+            lifecycle_error_state_json=error_state,
             provision_next_retry_at=timezone.now() + timedelta(seconds=60),
             updated_at=timezone.now(),
         )
@@ -2942,6 +3017,7 @@ def _queue_teardown_or_record_error(session_link_id: int) -> None:
         logger.exception(
             "copilot chat teardown dispatch failed session_link_id=%s", session_link_id
         )
+        error_state = lifecycle_error_state_from_exception(exc)
         cleanup_query = LensSessionLink.objects.filter(
             pk=session_link_id,
             cleanup_status__in=(
@@ -2955,6 +3031,7 @@ def _queue_teardown_or_record_error(session_link_id: int) -> None:
         ).first()
         cleanup_query.update(
             lifecycle_error=("Teardown queue unavailable: " + str(exc))[:2000],
+            lifecycle_error_state_json=error_state,
             provision_detail=(
                 "Recovery cleanup is waiting for the worker queue."
                 if cleanup_intent

@@ -60,6 +60,10 @@ class GatewaySelectAccountingTests(SimpleTestCase):
             relative_scope_path(root="/documents", selected="/documents/a/b.txt"),
             "a/b.txt",
         )
+        self.assertEqual(
+            relative_scope_path(root="/", selected="/documents/a.txt"),
+            "documents/a.txt",
+        )
         self.assertEqual(relative_scope_path(root="/documents", selected="/other"), "")
 
     def test_root_empty_directory_is_known_zero(self):

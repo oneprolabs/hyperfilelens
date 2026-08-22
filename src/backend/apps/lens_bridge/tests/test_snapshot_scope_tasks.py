@@ -41,7 +41,9 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
         self.assertEqual(rows[0]["type"], "dir")
         self.assertEqual(rows[0]["path"], "finance/reports")
         self.assertTrue(rows[0]["downloadable"])
+        self.assertTrue(rows[0]["size_known"])
         self.assertEqual(rows[1]["size_bytes"], 42)
+        self.assertTrue(rows[1]["size_known"])
         self.assertFalse(rows[1]["downloadable"])
 
     def test_scope_summary_rejects_negative_agent_values(self):
@@ -96,6 +98,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["path"], "reports/report.pdf")
         self.assertEqual(rows[0]["size_bytes"], 0)
+        self.assertFalse(rows[0]["size_known"])
 
     def test_maps_only_known_special_content_failure_to_product_message(self):
         task = SimpleNamespace(

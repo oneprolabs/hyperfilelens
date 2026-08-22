@@ -403,6 +403,12 @@ class LensWorkspaceBinding(OrganizationScopedModel):
         NOT_APPLICABLE = "not_applicable", "Not applicable"
         ERROR = "error", "Error"
 
+    class CapacityAccountingStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        EXACT = "exact", "Exact"
+        CONSERVATIVE = "conservative", "Conservative"
+        UNKNOWN = "unknown", "Unknown"
+
     workspace_uid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     knowledge_source = models.OneToOneField(
         LensKnowledgeSource,
@@ -435,6 +441,13 @@ class LensWorkspaceBinding(OrganizationScopedModel):
         default=IdentityStatus.PENDING,
         db_index=True,
     )
+    capacity_accounted_bytes = models.BigIntegerField(default=0)
+    capacity_accounting_status = models.CharField(
+        max_length=16,
+        choices=CapacityAccountingStatus.choices,
+        default=CapacityAccountingStatus.PENDING,
+        db_index=True,
+    )
     last_error = models.TextField(blank=True, default="")
 
     class Meta:
@@ -459,6 +472,10 @@ class LensWorkspaceBinding(OrganizationScopedModel):
                     )
                 ),
                 name="lens_bws_kind_path_identity_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(capacity_accounted_bytes__gte=0),
+                name="lens_bws_capacity_nonnegative_ck",
             ),
         ]
         indexes = [
@@ -763,6 +780,7 @@ class LensSessionLink(OrganizationScopedModel):
         db_index=True,
     )
     lifecycle_error = models.TextField(blank=True, default="")
+    lifecycle_error_state_json = models.JSONField(default=dict, blank=True)
     provision_phase = models.CharField(
         max_length=32,
         choices=ProvisionPhase.choices,

@@ -33,7 +33,7 @@ function resolveSubscriptionQuotaMessage(
   if (scope === 'gateway') {
     return t
       ? t('errors.codes.subscriptionQuotaExceededGateway')
-      : 'This Public Data Gateway is at capacity. Contact your platform administrator to raise the workspace limit on this gateway.'
+      : 'The shared Data Gateway currently has insufficient capacity. Try again later or contact your platform administrator.'
   }
 
   if (scope === 'instance') {

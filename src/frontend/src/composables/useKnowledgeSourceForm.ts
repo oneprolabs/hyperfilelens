@@ -40,6 +40,8 @@ export type BackupScopePickerNode = {
   directoryId?: number
   browsePath?: string
   sourceRootPath?: string
+  sizeBytes?: number
+  fileCount?: number
   isLeaf: boolean
 }
 
@@ -48,6 +50,8 @@ export type BackupScopeEntry = {
   path: string
   directoryId: number | null
   pathType: 'dir' | 'file' | 'unknown'
+  knownSizeBytes: number | null
+  knownFileCount: number | null
   revision: number
 }
 
@@ -77,6 +81,8 @@ function createBackupScopeEntry(): BackupScopeEntry {
     path: '',
     directoryId: null,
     pathType: 'unknown',
+    knownSizeBytes: null,
+    knownFileCount: null,
     revision: 0,
   }
 }
@@ -385,7 +391,8 @@ export function useKnowledgeSourceForm(
   function isSameOrAncestorPath(ancestor: string, path: string) {
     const a = normalizePathForCompare(ancestor)
     const p = normalizePathForCompare(path)
-    return p === a || p.startsWith(`${a}/`)
+    const prefix = a === '/' ? '/' : `${a}/`
+    return p === a || p.startsWith(prefix)
   }
 
   function findSnapshotDirectoryForPath(path: string) {
@@ -398,8 +405,9 @@ export function useKnowledgeSourceForm(
     const root = normalizePathForCompare(rootPath)
     const full = normalizePathForCompare(absolutePath)
     if (full === root) return ''
-    if (!full.startsWith(`${root}/`)) return absolutePath
-    return full.slice(root.length + 1)
+    const prefix = root === '/' ? '/' : `${root}/`
+    if (!full.startsWith(prefix)) return absolutePath
+    return full.slice(prefix.length)
   }
 
   function backupScopePickerNodeId(directoryId: number | undefined, path: string, type: string) {
@@ -419,6 +427,8 @@ export function useKnowledgeSourceForm(
           directoryId: directory.id,
           browsePath: '',
           sourceRootPath: directory.source_path,
+          sizeBytes: Math.max(0, Number(directory.size_bytes || 0)),
+          fileCount: sourceType === 'file' ? 1 : Math.max(0, Number(directory.file_count || 0)),
           isLeaf: sourceType === 'file',
         }
       })
@@ -444,6 +454,9 @@ export function useKnowledgeSourceForm(
       const sep: '/' | '\\' = isWindowsPath(data.sourceRootPath || data.path) ? '\\' : '/'
       resolve(result.entries.map((entry) => {
         const isDir = entry.type === 'dir'
+        const fileSize = entry.size_known === true && entry.size_bytes != null
+          ? Number(entry.size_bytes)
+          : null
         const relativePath = (entry.path ?? '').replace(/^\/+/, '')
         const fullPath = relativePath
           ? joinPathBySep(data.sourceRootPath || data.path, relativePath, sep)
@@ -456,6 +469,10 @@ export function useKnowledgeSourceForm(
           directoryId: data.directoryId,
           browsePath: relativePath,
           sourceRootPath: data.sourceRootPath || data.path,
+          sizeBytes: !isDir && fileSize != null && Number.isFinite(fileSize) && fileSize >= 0
+            ? fileSize
+            : undefined,
+          fileCount: isDir ? undefined : 1,
           isLeaf: !isDir,
         }
       }))
@@ -501,6 +518,8 @@ export function useKnowledgeSourceForm(
             path: value,
             directoryId: null,
             pathType: 'unknown',
+            knownSizeBytes: null,
+            knownFileCount: null,
             revision: row.revision + 1,
           }
         : row,
@@ -516,6 +535,8 @@ export function useKnowledgeSourceForm(
             path: node.path,
             directoryId: node.directoryId ?? null,
             pathType: node.type,
+            knownSizeBytes: node.sizeBytes ?? null,
+            knownFileCount: node.fileCount ?? null,
             revision: row.revision + 1,
           }
         : row,
@@ -578,14 +599,22 @@ export function useKnowledgeSourceForm(
       }
       backupScopeEntries.value = backupScopeEntries.value.map((row) =>
         row.id === entryId
-          ? {
-              ...row,
-              path: rawPath,
-              directoryId: directory.id,
-              pathType: normalizePathForCompare(rawPath) === normalizePathForCompare(directory.source_path)
+          ? (() => {
+              const isRoot = normalizePathForCompare(rawPath) === normalizePathForCompare(directory.source_path)
+              const pathType = isRoot
                 ? (directory.path_type === 'file' ? 'file' : 'dir')
-                : row.pathType,
-            }
+                : row.pathType
+              return {
+                ...row,
+                path: rawPath,
+                directoryId: directory.id,
+                pathType,
+                knownSizeBytes: isRoot ? Math.max(0, Number(directory.size_bytes || 0)) : null,
+                knownFileCount: isRoot
+                  ? (pathType === 'file' ? 1 : Math.max(0, Number(directory.file_count || 0)))
+                  : null,
+              }
+            })()
           : row,
       )
       openBackupScopePickerId.value = null

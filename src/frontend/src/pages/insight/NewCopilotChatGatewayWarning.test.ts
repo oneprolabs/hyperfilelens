@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
   routerReplace: vi.fn(),
   routerResolve: vi.fn(),
+  useCopilotSelectionPreview: vi.fn(),
   useKnowledgeSourceForm: vi.fn(),
 }))
 
@@ -37,6 +38,10 @@ vi.mock('vue-router', () => ({
 
 vi.mock('../../composables/useKnowledgeSourceForm', () => ({
   useKnowledgeSourceForm: mocks.useKnowledgeSourceForm,
+}))
+
+vi.mock('../../composables/useCopilotSelectionPreview', () => ({
+  useCopilotSelectionPreview: mocks.useCopilotSelectionPreview,
 }))
 
 vi.mock('../../lib/api', () => ({
@@ -89,6 +94,16 @@ type FormScenario = {
 type MountScenario = FormScenario & {
   agentModelReady?: boolean
   gatewayResponse?: Promise<LensCopilotGatewayOption[]> | LensCopilotGatewayOption[]
+  selectionStatus?: 'idle' | 'calculating' | 'waiting' | 'error' | 'ready'
+  selectionReasons?: string[]
+  selectionLimits?: { max_files: number; max_bytes: number }
+  organizationCapacity?: {
+    applicable: boolean
+    used_bytes?: number
+    limit_bytes?: number
+    remaining_bytes?: number | null
+    after_create_bytes?: number | null
+  }
 }
 
 function formState({
@@ -121,6 +136,8 @@ function formState({
       path: scopeReady ? '/documents/contracts' : '',
       directoryId: scopeReady ? 31 : null,
       pathType: 'dir',
+      knownFileCount: scopeReady ? 4 : null,
+      knownSizeBytes: scopeReady ? 1024 : null,
     }]),
     openBackupScopePickerId: ref<string | null>(null),
     backupScopeTreeRevision: ref(0),
@@ -152,12 +169,43 @@ async function mountNewChat({
   sourceReady = true,
   snapshotReady = true,
   scopeReady = true,
+  selectionStatus = scopeReady ? 'ready' : 'idle',
+  selectionReasons = [],
+  selectionLimits = { max_files: -1, max_bytes: -1 },
+  organizationCapacity = {
+    applicable: true,
+    used_bytes: 0,
+    limit_bytes: -1,
+    remaining_bytes: null,
+    after_create_bytes: null,
+  },
 }: MountScenario = {}): Promise<VueWrapper> {
   mocks.useKnowledgeSourceForm.mockReturnValue(formState({
     sourceReady,
     snapshotReady,
     scopeReady,
   }))
+  mocks.useCopilotSelectionPreview.mockReturnValue({
+    admission: ref({
+      gateway_scope: 'platform',
+      selection: { file_count: 4, size_bytes: 1024 },
+      selection_limits: selectionLimits,
+      organization_capacity: organizationCapacity,
+      admission: { allowed: selectionReasons.length === 0, reasons: selectionReasons },
+    }),
+    admissionError: ref(''),
+    admissionLoading: ref(false),
+    calculationStatus: ref(selectionStatus),
+    ready: ref(scopeReady && selectionStatus === 'ready' && selectionReasons.length === 0),
+    stateForScope: () => ({
+      status: scopeReady ? 'ready' : 'idle',
+      summary: scopeReady ? { path_type: 'dir', file_count: 4, size_bytes: 1024, skipped_special_count: 0 } : null,
+      error: '',
+      retryable: false,
+      coveredBy: '',
+    }),
+    totals: ref(scopeReady ? { fileCount: 4, sizeBytes: 1024 } : null),
+  })
   mocks.fetchCopilotReadiness.mockResolvedValue({
     active_models: [],
     default_agent_model_ref: agentModelReady ? 'agent-model-ref' : null,
@@ -306,6 +354,105 @@ describe('New Chat Public Data Gateway warning', () => {
 
     expect(wrapper.find('.new-chat-gateway-warning').exists()).toBe(false)
     expect(footerHint(wrapper).exists()).toBe(false)
+    expect(startChatButton(wrapper).attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('disables Start Chat while the selected data is being calculated', async () => {
+    const wrapper = await mountNewChat({
+      gatewayResponse: [publicGateway],
+      selectionStatus: 'calculating',
+    })
+
+    expect(wrapper.get('.new-chat-selection-summary__status').text()).toContain('Calculating')
+    expect(startChatButton(wrapper).attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['selection_file_limit', 'per-Chat file limit'],
+    ['selection_size_limit', 'per-Chat size limit'],
+    ['organization_capacity', 'organization does not have enough'],
+  ])('disables Start Chat when admission reports %s', async (reason, message) => {
+    const wrapper = await mountNewChat({
+      gatewayResponse: [publicGateway],
+      selectionReasons: [reason],
+    })
+
+    expect(wrapper.get('.new-chat-selection-summary__status').text()).toContain(message)
+    expect(startChatButton(wrapper).attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('shows Unlimited for unconfigured per-Chat limits without exposing Gateway capacity', async () => {
+    const wrapper = await mountNewChat({ gatewayResponse: [publicGateway] })
+    const summary = wrapper.get('.new-chat-selection-summary')
+
+    expect(summary.text().match(/Unlimited/g)).toHaveLength(4)
+    expect(summary.text()).not.toContain('Gateway capacity')
+    expect(summary.text()).not.toContain('Instance')
+    wrapper.unmount()
+  })
+
+  it('does not label temporarily unknown organization capacity as Unlimited', async () => {
+    const wrapper = await mountNewChat({
+      gatewayResponse: [publicGateway],
+      selectionReasons: ['organization_capacity_unavailable'],
+      organizationCapacity: {
+        applicable: true,
+        used_bytes: 1024,
+        limit_bytes: 10 * 1024,
+        remaining_bytes: null,
+        after_create_bytes: null,
+      },
+    })
+    const summary = wrapper.get('.new-chat-selection-summary')
+
+    expect(summary.text().match(/Unavailable/g)).toHaveLength(2)
+    expect(summary.text()).toContain('temporarily unavailable')
+    expect(startChatButton(wrapper).attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('does not present partial organization usage as an exact value', async () => {
+    const wrapper = await mountNewChat({
+      gatewayResponse: [publicGateway],
+      selectionReasons: ['organization_capacity_unavailable'],
+      organizationCapacity: {
+        applicable: true,
+        limit_available: true,
+        used_bytes: 1024,
+        limit_bytes: 10 * 1024,
+        remaining_bytes: null,
+        after_create_bytes: null,
+        usage_incomplete: true,
+      },
+    })
+    const summary = wrapper.get('.new-chat-selection-summary')
+
+    expect(summary.text().match(/Unavailable/g)).toHaveLength(3)
+    expect(summary.text()).not.toContain('1 KB')
+    expect(startChatButton(wrapper).attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('keeps unlimited organization capacity clear when usage is incomplete', async () => {
+    const wrapper = await mountNewChat({
+      gatewayResponse: [publicGateway],
+      organizationCapacity: {
+        applicable: true,
+        limit_available: true,
+        used_bytes: 1024,
+        limit_bytes: -1,
+        remaining_bytes: null,
+        after_create_bytes: null,
+        usage_incomplete: true,
+      },
+    })
+    const summary = wrapper.get('.new-chat-selection-summary')
+
+    expect(summary.text().match(/Unlimited/g)).toHaveLength(4)
+    expect(summary.text().match(/Unavailable/g)).toHaveLength(1)
     expect(startChatButton(wrapper).attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
