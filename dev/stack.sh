@@ -381,6 +381,16 @@ compose() {
 	)
 }
 
+# Stream human-facing Docker/Compose output through the same status envelope as
+# the Agent installer. Command substitutions continue to use compose() so
+# machine-readable values are never prefixed or altered.
+compose_logged() {
+	local status=0
+	compose "$@" 2>&1 | tr '\r' '\n' | hfl_log_output_line docker \
+		|| status="${PIPESTATUS[0]}"
+	return "${status}"
+}
+
 ensure_bridge_network() {
 	local network="hyperfilelens-bridge"
 	if docker network inspect "${network}" >/dev/null 2>&1; then
@@ -597,7 +607,7 @@ prepare_website_static() {
 refresh_website_web_mount() {
 	[[ "${WEBSITE_ARTIFACT_REBUILT}" -eq 1 ]] || return 0
 	log "Website artifact directory replaced; recreating Web to refresh its bind mount"
-	compose up -d --no-deps --no-build --pull never --force-recreate web
+	compose_logged up -d --no-deps --no-build --pull never --force-recreate web
 }
 
 build_dev_images() {
@@ -623,9 +633,9 @@ build_dev_images() {
 			|| die "backend development image is missing or stale in offline mode"
 		log "Building backend development dependency image"
 		if [[ "${force}" -eq 1 ]]; then
-			compose build --no-cache worker
+			compose_logged build --no-cache worker
 		else
-			compose build worker
+			compose_logged build worker
 		fi
 		cache_update backend-image "${backend_fingerprint}"
 	else
@@ -638,9 +648,9 @@ build_dev_images() {
 			|| die "frontend development image is missing or stale in offline mode"
 		log "Building frontend development dependency image"
 		if [[ "${force}" -eq 1 ]]; then
-			compose build --no-cache web
+			compose_logged build --no-cache web
 		else
-			compose build web
+			compose_logged build web
 		fi
 		cache_update frontend-image "${frontend_fingerprint}"
 	else
@@ -1311,15 +1321,15 @@ repair_existing_multimodal_model() {
 
 run_dev_migration_gate() {
 	log "Stopping backend services before database migration"
-	compose stop api worker scheduler
+	compose_logged stop api worker scheduler
 	log "Starting development data services"
-	compose up -d --wait --no-build --pull never postgres redis
+	compose_logged up -d --wait --no-build --pull never postgres redis
 	log "Applying backend database migrations"
-	compose --profile tools run --rm --no-deps migration
+	compose_logged --profile tools run --rm --no-deps migration
 }
 
 cmd_up() {
-	hfl_print_section "[1/8] Checking development environment"
+	hfl_log_step "[1/8] Checking development environment"
 	apply_mirror_env_defaults
 	require_dev_build_tools
 	ensure_env_file
@@ -1329,30 +1339,30 @@ cmd_up() {
 	verify_amd64_runtime
 	ensure_bridge_network
 	hfl_log_ok "Development tools, runtime images, and shared network are ready"
-	hfl_print_section "[2/8] Preparing insight services"
+	hfl_log_step "[2/8] Preparing insight services"
 	prepare_sourcelens_dev 0
 	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
 		hfl_log_ok "Insight services are prepared"
 	else
 		hfl_log_skip "Insight services are disabled for this run"
 	fi
-	hfl_print_section "[3/8] Preparing HyperFileLens artifacts and images"
+	hfl_log_step "[3/8] Preparing HyperFileLens artifacts and images"
 	prepare_dev 0
 	hfl_log_ok "HyperFileLens development artifacts and images are ready"
-	hfl_print_section "[4/8] Applying database migrations"
+	hfl_log_step "[4/8] Applying database migrations"
 	run_dev_migration_gate
 	hfl_log_ok "Database migrations and singleton initialization completed"
-	hfl_print_section "[5/8] Starting development services"
+	hfl_log_step "[5/8] Starting development services"
 	log "Starting hot-reload HFL stack from explicitly prepared images"
-	compose up -d --no-build --pull never --remove-orphans
+	compose_logged up -d --no-build --pull never --remove-orphans
 	refresh_website_web_mount
 	hfl_log_ok "Hot-reload HyperFileLens services started"
-	hfl_print_section "[6/8] Applying identity and email configuration"
+	hfl_log_step "[6/8] Applying identity and email configuration"
 	sync_optional_identity_settings
 	repair_existing_multimodal_model
-	hfl_print_section "[7/8] Preparing Platform Data Gateway"
+	hfl_log_step "[7/8] Preparing Platform Data Gateway"
 	ensure_local_platform_gateway_dev
-	hfl_print_section "[8/8] Development environment summary"
+	hfl_log_step "[8/8] Development environment summary"
 	print_urls
 }
 
@@ -1360,7 +1370,7 @@ cmd_down() {
 	require_docker
 	[[ -f "${ROOT}/.env" ]] || warn ".env missing; using compose defaults where applicable"
 	log "Stopping stack: docker compose down"
-	compose down
+	compose_logged down
 	stop_sourcelens_dev
 	log "Stopped"
 }
@@ -1368,7 +1378,7 @@ cmd_down() {
 cmd_restart() {
 	local force=$1
 
-	hfl_print_section "[1/8] Checking development environment"
+	hfl_log_step "[1/8] Checking development environment"
 	apply_mirror_env_defaults
 	require_dev_build_tools
 	ensure_env_file
@@ -1378,36 +1388,36 @@ cmd_restart() {
 	verify_amd64_runtime
 	ensure_bridge_network
 	hfl_log_ok "Development tools, runtime images, and shared network are ready"
-	hfl_print_section "[2/8] Preparing insight services"
+	hfl_log_step "[2/8] Preparing insight services"
 	prepare_sourcelens_dev "${force}"
 	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
 		hfl_log_ok "Insight services are prepared"
 	else
 		hfl_log_skip "Insight services are disabled for this run"
 	fi
-	hfl_print_section "[3/8] Preparing HyperFileLens artifacts and images"
+	hfl_log_step "[3/8] Preparing HyperFileLens artifacts and images"
 	prepare_dev "${force}"
 	hfl_log_ok "HyperFileLens development artifacts and images are ready"
-	hfl_print_section "[4/8] Applying database migrations"
+	hfl_log_step "[4/8] Applying database migrations"
 	run_dev_migration_gate
 	hfl_log_ok "Database migrations and singleton initialization completed"
-	hfl_print_section "[5/8] Restarting development services"
+	hfl_log_step "[5/8] Restarting development services"
 
 	if [[ "${force}" -eq 1 ]]; then
 		log "Force restart: recreating services from freshly rebuilt images"
-		compose up -d --no-build --pull never --force-recreate --remove-orphans
+		compose_logged up -d --no-build --pull never --force-recreate --remove-orphans
 	else
 		log "Restarting only services whose image or configuration changed"
-		compose up -d --no-build --pull never --remove-orphans
+		compose_logged up -d --no-build --pull never --remove-orphans
 		refresh_website_web_mount
 	fi
 	hfl_log_ok "HyperFileLens development services restarted"
-	hfl_print_section "[6/8] Applying identity and email configuration"
+	hfl_log_step "[6/8] Applying identity and email configuration"
 	sync_optional_identity_settings
 	repair_existing_multimodal_model
-	hfl_print_section "[7/8] Preparing Platform Data Gateway"
+	hfl_log_step "[7/8] Preparing Platform Data Gateway"
 	ensure_local_platform_gateway_dev
-	hfl_print_section "[8/8] Development environment summary"
+	hfl_log_step "[8/8] Development environment summary"
 	print_urls
 }
 
@@ -1500,7 +1510,7 @@ cmd_doctor() {
 clean_runtime() {
 	require_docker
 	ensure_env_file
-	compose down --volumes --remove-orphans || true
+	compose_logged down --volumes --remove-orphans || true
 	if [[ -x "${ROOT}/dev/sourcelens.sh" ]]; then
 		"${ROOT}/dev/sourcelens.sh" down || true
 	fi
@@ -1758,7 +1768,7 @@ main() {
 		print_config
 		return 0
 	fi
-	HFL_LOG_TERMINAL_TIMESTAMPS=0
+	HFL_LOG_TERMINAL_TIMESTAMPS=1
 	HFL_LOG_SESSION_MESSAGES=0
 	HFL_LOG_CAPTURE_STDOUT=1
 	export HFL_LOG_TERMINAL_TIMESTAMPS HFL_LOG_SESSION_MESSAGES \

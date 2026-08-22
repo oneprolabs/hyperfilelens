@@ -13,29 +13,90 @@ HFL_LOG_TERMINAL_TIMESTAMPS="${HFL_LOG_TERMINAL_TIMESTAMPS:-1}"
 HFL_PARENT_SESSION="${HFL_PARENT_SESSION:-0}"
 HFL_LOG_SESSION_MESSAGES="${HFL_LOG_SESSION_MESSAGES:-1}"
 HFL_LOG_CAPTURE_STDOUT="${HFL_LOG_CAPTURE_STDOUT:-0}"
+HFL_LOG_COLOR="${HFL_LOG_COLOR:-auto}"
+export HFL_LOG_COLOR
 HFL_LOG_SESSION_STARTED=0
 
 hfl_log_timestamp() {
 	date -u '+%Y-%m-%dT%H:%M:%S.000Z'
 }
 
+hfl_log_component_name() {
+	local component="${HFL_LOG_COMPONENT:-hfl}"
+	case "${component}" in
+	dev*) printf '%s' "dev" ;;
+	docker*) printf '%s' "docker" ;;
+	sourcelens* | sl*) printf '%s' "sourcelens" ;;
+	agent*) printf '%s' "agent" ;;
+	gateway*) printf '%s' "gateway" ;;
+	*) printf '%s' "${component}" ;;
+	esac
+}
+
+hfl_log_status_token() {
+	case "${1}" in
+	OK | ' OK ' | ' OK  ') printf '%s' ' OK ' ;;
+	STEP | ....) printf '%s' '....' ;;
+	WARN) printf '%s' 'WARN' ;;
+	FAIL | ERROR) printf '%s' 'FAIL' ;;
+	SKIP) printf '%s' 'SKIP' ;;
+	OUT | 'OUT ') printf '%s' 'OUT ' ;;
+	INFO) printf '%s' 'INFO' ;;
+	DEBUG) printf '%s' 'DBG ' ;;
+	*) printf '%s' "${1}" ;;
+	esac
+}
+
+hfl_log_color_enabled() {
+	[[ "${HFL_LOG_COLOR}" != "0" && -z "${NO_COLOR:-}" ]] || return 1
+	if [[ "${HFL_LOG_COLOR}" == "1" || "${HFL_LOG_COLOR}" == "always" ]]; then
+		return 0
+	fi
+	# Respect terminals that explicitly advertise that ANSI styling is not
+	# supported. This keeps piped/non-interactive output portable even when the
+	# caller has inherited a terminal descriptor from a parent process.
+	[[ "${TERM:-}" != "dumb" ]] || return 1
+	# Dev logging mirrors stderr through a process substitution, so the live
+	# terminal is kept on fd 4. Fall back to stderr for standalone callers.
+	[[ -t 4 || -t 2 ]]
+}
+
+hfl_log_color_status() {
+	local token="$1"
+	if ! hfl_log_color_enabled; then
+		printf '%s' "${token}"
+		return 0
+	fi
+	case "${token}" in
+	' OK ') printf '\033[32m%s\033[0m' "${token}" ;;
+	'....') printf '\033[35m%s\033[0m' "${token}" ;;
+	WARN) printf '\033[33m%s\033[0m' "${token}" ;;
+	FAIL) printf '\033[31m%s\033[0m' "${token}" ;;
+	SKIP | INFO) printf '\033[36m%s\033[0m' "${token}" ;;
+	*) printf '%s' "${token}" ;;
+	esac
+}
+
 hfl_log_emit() {
-	local level=$1 tag
+	local level=$1 tag component legacy_tag
 	shift
+	tag="$(hfl_log_status_token "${level}")"
+	component="$(hfl_log_component_name)"
 	if [[ "${HFL_LOG_TERMINAL_TIMESTAMPS}" == "1" ]]; then
-		printf '[%s] [%-5s] %s\n' "$(hfl_log_timestamp)" "${level}" "$*" >&2
+		printf '[%s] [%s] [%s] %s\n' \
+			"$(hfl_log_timestamp)" "$(hfl_log_color_status "${tag}")" "${component}" "$*" >&2
 	else
 		case "${level}" in
-		INFO) tag='INFO ' ;;
-		STEP) tag='....' ;;
-		OK) tag=' OK ' ;;
-		WARN) tag='WARN' ;;
-		SKIP) tag='SKIP' ;;
-		ERROR | FAIL) tag='FAIL' ;;
-		DEBUG) tag='DEBUG' ;;
-		*) tag="${level}" ;;
+		INFO) legacy_tag='INFO ' ;;
+		STEP | ....) legacy_tag='....' ;;
+		OK | ' OK ' | ' OK  ') legacy_tag=' OK ' ;;
+		WARN) legacy_tag='WARN' ;;
+		SKIP) legacy_tag='SKIP' ;;
+		ERROR | FAIL) legacy_tag='FAIL' ;;
+		DEBUG) legacy_tag='DEBUG' ;;
+		*) legacy_tag="${tag}" ;;
 		esac
-		printf '[%s] %s\n' "${tag}" "$*" >&2
+		printf '[%s] %s\n' "${legacy_tag}" "$*" >&2
 	fi
 }
 
@@ -49,6 +110,29 @@ hfl_log_debug() {
 	hfl_log_emit DEBUG "$@"
 }
 hfl_log_fail() { hfl_log_emit FAIL "$@"; }
+
+hfl_log_output_line() {
+	local source="${1:-${HFL_LOG_COMPONENT:-hfl}}" line
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		# Keep the live stream readable; blank separators carry no diagnostic
+		# information and are already represented by the timestamp sequence.
+		[[ -n "${line}" ]] || continue
+		hfl_log_emit_with_component 'OUT ' "${source}" "${line}"
+	done
+}
+
+hfl_log_emit_with_component() {
+	local level="$1" component="$2" message="$3" tag legacy_tag
+	tag="$(hfl_log_status_token "${level}")"
+	if [[ "${HFL_LOG_TERMINAL_TIMESTAMPS}" == "1" ]]; then
+		printf '[%s] [%s] [%s] %s\n' \
+			"$(hfl_log_timestamp)" "$(hfl_log_color_status "${tag}")" "${component}" "${message}" >&2
+	else
+		legacy_tag="${tag}"
+		[[ "${level}" == "INFO" ]] && legacy_tag='INFO '
+		printf '[%s] %s\n' "${legacy_tag}" "${message}" >&2
+	fi
+}
 
 hfl_die() {
 	local message=${1:-"operation failed"}
@@ -64,10 +148,19 @@ hfl_require_value() {
 }
 
 hfl_log_timestamp_stream() {
-	local log_file=$1 line timestamp
+	local log_file=$1 line timestamp structured_prefix
 	local TZ=UTC
 	export TZ
-	while IFS= read -r line || [[ -n "${line}" ]]; do
+	structured_prefix='^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.000Z\] \[[^]]+\] \[[^]]+\] '
+	# Strip ANSI once for the whole stream rather than spawning sed once per
+	# line during large Docker/BuildKit logs.
+	sed $'s/\\033\\[[0-9;]*m//g' | while IFS= read -r line || [[ -n "${line}" ]]; do
+		# Structured terminal lines already carry their own timestamp. Do not
+		# prepend a second timestamp when the capture stream mirrors them.
+		if [[ "${line}" =~ ${structured_prefix} ]]; then
+			printf '%s\n' "${line}" >>"${log_file}"
+			continue
+		fi
 		printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
 		printf '[%s] %s\n' "${timestamp}" "${line}" >>"${log_file}"
 	done
