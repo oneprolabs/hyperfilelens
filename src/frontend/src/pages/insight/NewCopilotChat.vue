@@ -4,12 +4,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ArrowLeft,
+  ChevronDown,
   CirclePlus,
   File,
   FolderOpen,
   MessageSquare,
   Plus,
   RefreshCw,
+  SlidersHorizontal,
   TextCursorInput,
   Trash2,
   TriangleAlert,
@@ -27,6 +29,7 @@ import {
   fetchCopilotReadiness,
   listCopilotGatewayOptions,
   type LensAdmissionPreview,
+  type LensAnalysisMode,
   type LensCopilotGatewayOption,
   type LensCopilotReadiness,
 } from '../../lib/lensApi'
@@ -55,6 +58,10 @@ const gatewayRefreshing = ref(false)
 const gatewayOptionsResolved = ref(false)
 const gatewayOptions = ref<LensCopilotGatewayOption[]>([])
 const readiness = ref<LensCopilotReadiness | null>(null)
+const advancedOptionsOpen = ref(false)
+const selectedAnalysisMode = ref<LensAnalysisMode>('standard')
+const selectedAgentModelRef = ref<string | null>(null)
+const analysisModes: LensAnalysisMode[] = ['fast', 'standard', 'deep']
 const gatewayMode = ref<'auto' | 'manual'>('auto')
 const gatewayLinkId = ref<number | null>(null)
 const backupScopePickerWidth = ref(460)
@@ -145,6 +152,15 @@ const {
 })
 const agentModelReady = computed(() => Boolean(readiness.value?.default_agent_model_ref))
 const visualModelReady = computed(() => Boolean(readiness.value?.default_multimodal_model_ref))
+const agentModels = computed(() => (readiness.value?.active_models || []).filter((row) => (
+  row.is_active !== false
+  && !row.is_deployment_history
+  && row.deployment_role !== 'multimodal'
+  && row.uuid !== readiness.value?.default_multimodal_model_ref
+)))
+const selectedAgentModel = computed(() => agentModels.value.find(
+  (row) => row.uuid === selectedAgentModelRef.value,
+) ?? null)
 const selectedGateway = computed(() => gatewayMode.value === 'auto'
   ? autoGateway.value
   : privateGateways.value.find((row) => row.gateway_link_id === gatewayLinkId.value) ?? null)
@@ -169,6 +185,7 @@ const canCreate = computed(() => Boolean(
   && sourceScopes.value.length > 0
   && selectedGateway.value
   && agentModelReady.value
+  && selectedAgentModelRef.value
   && selectionPreviewReady.value
   && !submitting.value,
 ))
@@ -282,6 +299,20 @@ function snapshotOptionLabel(row: { finished_at?: string | null; started_at?: st
   return `${time ? formatLocalDateTime(time) : '—'} · ${formatBytes(row.total_size_bytes)}`
 }
 
+function modelLabel(row: { name?: string; provider?: string; config?: { model?: string }; uuid: string }): string {
+  const configuredName = String(row.name || '').trim()
+  if (configuredName) return configuredName
+  const provider = String(row.provider || 'Model').trim()
+  const model = String(row.config?.model || row.uuid).trim()
+  return `${provider} · ${model}`
+}
+
+function analysisModeLabel(mode: LensAnalysisMode): string {
+  if (mode === 'fast') return 'Fast'
+  if (mode === 'deep') return 'Deep'
+  return 'Standard (recommended)'
+}
+
 function isBackupScopePickerOpen(entryId: string) {
   return openBackupScopePickerId.value === entryId
 }
@@ -376,6 +407,14 @@ async function load() {
       refreshGatewayOptions(false),
       fetchCopilotReadiness().then((row) => {
         readiness.value = row
+        if (!selectedAgentModelRef.value || !agentModels.value.some((model) => model.uuid === selectedAgentModelRef.value)) {
+          selectedAgentModelRef.value = (
+            row.default_agent_model_ref
+            && agentModels.value.some((model) => model.uuid === row.default_agent_model_ref)
+          )
+            ? row.default_agent_model_ref
+            : agentModels.value[0]?.uuid ?? row.default_agent_model_ref
+        }
       }),
     ])
   } catch (error) {
@@ -395,6 +434,8 @@ async function createChat() {
     source_scopes: sourceScopes.value,
     gateway_mode: gatewayMode.value,
     gateway_link_id: gatewayMode.value === 'manual' ? gatewayLinkId.value : null,
+    analysis_mode: selectedAnalysisMode.value,
+    agent_model_ref: selectedAgentModelRef.value,
   }
   const requestFingerprint = JSON.stringify(requestPayload)
   if (!createIdempotencyKey || createRequestFingerprint !== requestFingerprint) {
@@ -739,6 +780,83 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
               </section>
             </div>
 
+            <div class="fullscreen-form-card new-chat-advanced-card">
+              <button
+                type="button"
+                class="new-chat-advanced-toggle"
+                :aria-expanded="advancedOptionsOpen"
+                @click="advancedOptionsOpen = !advancedOptionsOpen"
+              >
+                <span class="new-chat-advanced-toggle__title">
+                  <SlidersHorizontal
+                    :size="16"
+                    aria-hidden="true"
+                  />
+                  <span>Advanced options</span>
+                </span>
+                <ChevronDown
+                  :size="17"
+                  class="new-chat-advanced-toggle__chevron"
+                  :class="{ 'is-open': advancedOptionsOpen }"
+                  aria-hidden="true"
+                />
+              </button>
+              <div
+                v-if="advancedOptionsOpen"
+                class="new-chat-advanced-content"
+              >
+                <div class="new-chat-grid">
+                  <div class="fullscreen-form-field">
+                    <label
+                      for="copilot-analysis-mode"
+                      class="fullscreen-form-field__label"
+                    >Analysis mode</label>
+                    <ElSelect
+                      id="copilot-analysis-mode"
+                      v-model="selectedAnalysisMode"
+                      class="new-chat-advanced-select"
+                    >
+                      <ElOption
+                        v-for="mode in analysisModes"
+                        :key="mode"
+                        :label="analysisModeLabel(mode)"
+                        :value="mode"
+                      />
+                    </ElSelect>
+                    <p class="fullscreen-form-field__hint">
+                      Controls analysis depth and expected response time.
+                    </p>
+                  </div>
+                  <div class="fullscreen-form-field">
+                    <label
+                      for="copilot-agent-model"
+                      class="fullscreen-form-field__label"
+                    >Conversation model</label>
+                    <ElSelect
+                      id="copilot-agent-model"
+                      v-model="selectedAgentModelRef"
+                      class="new-chat-advanced-select"
+                      :disabled="!agentModels.length"
+                      placeholder="Select a conversation model"
+                    >
+                      <ElOption
+                        v-for="row in agentModels"
+                        :key="row.uuid"
+                        :label="modelLabel(row)"
+                        :value="row.uuid"
+                      />
+                    </ElSelect>
+                    <p class="fullscreen-form-field__hint">
+                      Used to generate answers and run the analysis.
+                    </p>
+                  </div>
+                </div>
+                <p class="new-chat-advanced-note">
+                  Image understanding and document conversion use administrator-configured services.
+                </p>
+              </div>
+            </div>
+
             <div class="fullscreen-form-card">
               <section class="fullscreen-form-section">
                 <div class="new-chat-section-head">
@@ -885,6 +1003,20 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
               </section>
               <section class="add-form-preview-section">
                 <h3 class="add-form-preview-section__title">
+                  Execution
+                </h3>
+                <div class="add-form-preview-row">
+                  <span class="add-form-preview-row__label">Analysis mode</span><span class="add-form-preview-row__value">{{ analysisModeLabel(selectedAnalysisMode) }}</span>
+                </div>
+                <div class="add-form-preview-row">
+                  <span class="add-form-preview-row__label">Conversation model</span><span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': !selectedAgentModel }"
+                  >{{ selectedAgentModel ? modelLabel(selectedAgentModel) : 'Organization default' }}</span>
+                </div>
+              </section>
+              <section class="add-form-preview-section">
+                <h3 class="add-form-preview-section__title">
                   Data Privacy
                 </h3>
                 <div class="add-form-preview-row">
@@ -939,6 +1071,16 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-grid :deep(.el-select), .new-chat-gateway-select { width: 100%; }
 .new-chat-section-head { margin-bottom: 24px; }
 .new-chat-section-head .fullscreen-form-section__title { display: flex; align-items: center; gap: 8px; margin: 0; }
+.new-chat-advanced-card { overflow: hidden; }
+.new-chat-advanced-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 20px; border: 0; background: transparent; color: #1d2129; cursor: pointer; text-align: left; }
+.new-chat-advanced-toggle__title { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; }
+.new-chat-advanced-toggle__title svg { color: #165dff; }
+.new-chat-advanced-toggle__chevron { color: #86909c; transition: transform .16s ease; }
+.new-chat-advanced-toggle__chevron.is-open { transform: rotate(180deg); }
+.new-chat-advanced-content { padding: 0 20px 20px; border-top: 1px solid #f2f3f5; }
+.new-chat-advanced-content .new-chat-grid { padding-top: 18px; }
+.new-chat-advanced-select { width: 100%; }
+.new-chat-advanced-note { margin: 14px 0 0; padding: 9px 10px; border: 1px solid #e5e6eb; border-radius: 8px; background: #f7f8fa; color: #86909c; font-size: 12px; line-height: 1.5; }
 .new-chat-source-divider { height: 1px; margin: 26px 0 22px; background: #f2f3f5; }
 .new-chat-source-subsection__head { margin-bottom: 12px; }
 .new-chat-source-subsection__head h3 { margin: 0; }

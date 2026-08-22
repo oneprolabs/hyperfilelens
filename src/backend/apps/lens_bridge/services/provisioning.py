@@ -32,6 +32,18 @@ _LENSNODE_DIR_WAIT_SECONDS = 60.0
 _LENSNODE_DIR_POLL_SECONDS = 0.5
 LENSNODE_PROVISION_CLAIM_TTL_SECONDS = 300
 
+ANALYSIS_MODE_AGENT_ROUNDS = {
+    "fast": "fast",
+    "standard": "balanced",
+    "deep": "deep",
+}
+
+
+def agent_rounds_for_analysis_mode(mode: str | None) -> str:
+    """Map HFL's stable product choices to SourceLens execution values."""
+
+    return ANALYSIS_MODE_AGENT_ROUNDS.get(str(mode or "standard"), "balanced")
+
 
 class LensNodeProvisionBusyError(sl_client.LensBridgeError):
     """Raised when another caller owns the durable provisioning lease."""
@@ -506,6 +518,7 @@ def create_sl_assistant_for_ks(
     gateway_link: LensGatewayLink,
     model_ref: str | uuid.UUID | None = None,
     multimodal_model_ref: str | uuid.UUID | None = None,
+    analysis_mode: str | None = None,
     slug: str | None = None,
 ) -> uuid.UUID:
     """Create the remote Assistant without mutating HFL ownership state."""
@@ -536,7 +549,7 @@ def create_sl_assistant_for_ks(
         "selected_task": selected_task,
         "selected_dirs": selected_dirs,
         "agent_model_ref": model_ref,
-        "agent_rounds": "balanced",
+        "agent_rounds": agent_rounds_for_analysis_mode(analysis_mode),
         "visibility": "private",
         "status": "active",
     }
@@ -564,16 +577,40 @@ def sync_assistant_agent_model(
     assistant_uuid: uuid.UUID | None = None,
 ) -> None:
     """Push agent model selection to the linked SourceLens Assistant."""
+
+    sync_assistant_execution_config(
+        ks=ks,
+        model_ref=model_ref,
+        assistant_uuid=assistant_uuid,
+    )
+
+
+def sync_assistant_execution_config(
+    *,
+    ks: LensKnowledgeSource,
+    model_ref: uuid.UUID | str | None = None,
+    analysis_mode: str | None = None,
+    assistant_uuid: uuid.UUID | None = None,
+) -> None:
+    """Push Chat-owned execution settings through SourceLens's Assistant API."""
+
     target = assistant_uuid or assistant_uuid_for_ks(ks)
     if not target:
         raise ValidationError({"knowledge_source": "Knowledge source has no linked assistant."})
     if ks.sl_assistant_uuid != target:
         ks.sl_assistant_uuid = target
         ks.save(update_fields=["sl_assistant_uuid", "updated_at"])
+    payload: dict[str, str] = {}
+    if model_ref is not None:
+        payload["agent_model_ref"] = str(model_ref)
+    if analysis_mode is not None:
+        payload["agent_rounds"] = agent_rounds_for_analysis_mode(analysis_mode)
+    if not payload:
+        return
     sl_client.request_json(
         "PATCH",
         f"/api/lens/assistants/{target}/",
-        json_body={"agent_model_ref": str(model_ref)},
+        json_body=payload,
     )
 
 

@@ -86,6 +86,30 @@ class LensSessionCreateSerializerTests(SimpleTestCase):
             ),
         )
 
+    def test_create_accepts_chat_execution_options(self):
+        model_ref = uuid.uuid4()
+        serializer = LensSessionCreateSerializer(
+            data=self._payload(
+                analysis_mode=LensSessionLink.AnalysisMode.DEEP,
+                agent_model_ref=str(model_ref),
+            )
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data["analysis_mode"],
+            LensSessionLink.AnalysisMode.DEEP,
+        )
+        self.assertEqual(serializer.validated_data["agent_model_ref"], model_ref)
+
+    def test_create_rejects_unknown_analysis_mode(self):
+        serializer = LensSessionCreateSerializer(
+            data=self._payload(analysis_mode="max")
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("analysis_mode", serializer.errors)
+
     def test_run_accepts_an_attachment_without_question_text(self):
         attachment_uuid = uuid.uuid4()
         serializer = LensRunCreateSerializer(
