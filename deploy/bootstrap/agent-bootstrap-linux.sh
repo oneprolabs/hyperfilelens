@@ -116,7 +116,7 @@ if [[ "${HFL_INSTALLATION_MODE}" == "user" ]]; then
 	HFL_USER_LINGER="$(loginctl show-user "$(id -u)" --property=Linger --value 2>/dev/null)" \
 		|| hfl_fail "Unable to verify the current user's systemd sign-out behavior." 2
 	if [[ "${HFL_USER_LINGER}" == "yes" ]]; then
-		hfl_fail "Current-user mode must pause after sign-out, but systemd user lingering is enabled. Disable lingering or choose System Service mode." 2
+		hfl_fail "Current-user protection must pause after sign-out, but systemd user lingering is enabled. Disable lingering or choose Host files continuous protection." 2
 	fi
 else
 	if [[ "$(id -u)" -ne 0 ]]; then
