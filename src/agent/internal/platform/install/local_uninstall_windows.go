@@ -361,7 +361,7 @@ try {
       if ($LASTEXITCODE -ne 0) {
         throw "hfl-agent exited with code $LASTEXITCODE"
       }
-      Log "retired installation identity; remove the old console record before reinstalling or changing run mode"
+      Log "retired installation identity; the existing console record is preserved and the next installation will register a new record"
     } catch {
       Add-CleanupFailure -code 'installation_identity_retirement_failed' -detail $_.Exception.Message -retained @('installation_identity')
       throw

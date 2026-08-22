@@ -54,7 +54,10 @@ class Node(OrganizationScopedModel):
         blank=True,
         default="",
         db_index=True,
-        help_text="Product-scoped digest used to prevent duplicate host installations.",
+        help_text=(
+            "Non-authoritative product-scoped digest used only for host correlation; "
+            "duplicate values are expected after reinstallation."
+        ),
     )
     ip_address = models.GenericIPAddressField(
         blank=True,
@@ -116,6 +119,8 @@ class Node(OrganizationScopedModel):
             ),
         ]
         constraints = [
+            # host_fingerprint is deliberately not unique: each fresh local
+            # installation keeps the old Node and creates a new record.
             models.CheckConstraint(
                 condition=(
                     models.Q(installation_mode=NodeInstallationMode.SYSTEM)
@@ -127,11 +132,6 @@ class Node(OrganizationScopedModel):
                 fields=["organization", "role", "installation_id"],
                 condition=models.Q(is_deleted=False) & ~models.Q(installation_id=""),
                 name="node_unique_installation_identity",
-            ),
-            models.UniqueConstraint(
-                fields=["host_fingerprint"],
-                condition=models.Q(is_deleted=False) & ~models.Q(host_fingerprint=""),
-                name="node_unique_active_host_fingerprint",
             ),
         ]
 

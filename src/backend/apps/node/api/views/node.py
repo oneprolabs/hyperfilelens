@@ -70,19 +70,6 @@ def health(_request):
     return JsonResponse({"app": "node", "status": "ok"})
 
 
-def _host_install_conflict_response() -> Response:
-    return Response(
-        {
-            "error": (
-                "another Agent installation record already exists for this host; "
-                "uninstall the existing Agent and remove its console record before "
-                "installing again or changing run mode"
-            )
-        },
-        status=status.HTTP_409_CONFLICT,
-    )
-
-
 class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet):
     org_scoped_skip_actions = ("heartbeat",)
 
@@ -497,6 +484,10 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     )
                 node = None
                 if installation_id:
+                    # The installation identity is authoritative; the host
+                    # fingerprint is non-unique correlation metadata. A fresh
+                    # local installation must create a new Node even when an
+                    # older record has the same host fingerprint.
                     node = (
                         Node.objects.select_for_update()
                         .filter(
@@ -506,23 +497,6 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                         )
                         .first()
                     )
-                if host_fingerprint:
-                    conflicting_host = (
-                        Node.objects.select_for_update()
-                        .filter(host_fingerprint=host_fingerprint)
-                        .exclude(pk=node.pk if node is not None else None)
-                        .first()
-                    )
-                    if conflicting_host is not None:
-                        return _host_install_conflict_response()
-                    if node is not None and node.host_fingerprint not in (
-                        "",
-                        host_fingerprint,
-                    ):
-                        return Response(
-                            {"error": "installation identity belongs to another host"},
-                            status=status.HTTP_409_CONFLICT,
-                        )
                 if (
                     node is not None
                     and node.installation_mode != token_row.installation_mode
@@ -566,12 +540,6 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                             )
                     except IntegrityError:
                         if not installation_id:
-                            if host_fingerprint and (
-                                Node.objects.select_for_update()
-                                .filter(host_fingerprint=host_fingerprint)
-                                .exists()
-                            ):
-                                return _host_install_conflict_response()
                             raise
                         node = (
                             Node.objects.select_for_update()
@@ -583,12 +551,6 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                             .first()
                         )
                         if node is None:
-                            if host_fingerprint and (
-                                Node.objects.select_for_update()
-                                .filter(host_fingerprint=host_fingerprint)
-                                .exists()
-                            ):
-                                return _host_install_conflict_response()
                             raise
                         if node.installation_mode != token_row.installation_mode:
                             return Response(
@@ -599,26 +561,6 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                                 },
                                 status=status.HTTP_409_CONFLICT,
                             )
-                        if host_fingerprint and node.host_fingerprint not in (
-                            "",
-                            host_fingerprint,
-                        ):
-                            return Response(
-                                {
-                                    "error": (
-                                        "installation identity belongs to another host"
-                                    )
-                                },
-                                status=status.HTTP_409_CONFLICT,
-                            )
-                        if (
-                            host_fingerprint
-                            and Node.objects.select_for_update()
-                            .filter(host_fingerprint=host_fingerprint)
-                            .exclude(pk=node.pk)
-                            .exists()
-                        ):
-                            return _host_install_conflict_response()
                         created_node = False
                     else:
                         unique_name = uniquify_node_name(
@@ -630,12 +572,8 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                             node.name = unique_name
                             node.save(update_fields=["name", "updated_at"])
                 if host_fingerprint and not node.host_fingerprint:
-                    try:
-                        with transaction.atomic():
-                            node.host_fingerprint = host_fingerprint
-                            node.save(update_fields=["host_fingerprint", "updated_at"])
-                    except IntegrityError:
-                        return _host_install_conflict_response()
+                    node.host_fingerprint = host_fingerprint
+                    node.save(update_fields=["host_fingerprint", "updated_at"])
                 credential_reused = bool(
                     not created_node
                     and existing_node_credential
@@ -685,18 +623,6 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     {"error": "installation mode is fixed during enrollment"},
                     status=status.HTTP_409_CONFLICT,
                 )
-            if host_fingerprint:
-                if node.host_fingerprint not in ("", host_fingerprint):
-                    return Response(
-                        {"error": "installation identity belongs to another host"},
-                        status=status.HTTP_409_CONFLICT,
-                    )
-                if (
-                    Node.objects.filter(host_fingerprint=host_fingerprint)
-                    .exclude(pk=node.pk)
-                    .exists()
-                ):
-                    return _host_install_conflict_response()
             if legacy_token is not None:
                 token_row = legacy_token
                 node_credential = issue_node_credential(
@@ -746,18 +672,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 node.connection_ip_address = client_ip
             if host_fingerprint and not node.host_fingerprint:
                 node.host_fingerprint = host_fingerprint
-            try:
-                with transaction.atomic():
-                    node.save()
-            except IntegrityError:
-                if (
-                    host_fingerprint
-                    and Node.objects.filter(host_fingerprint=host_fingerprint)
-                    .exclude(pk=node.pk)
-                    .exists()
-                ):
-                    return _host_install_conflict_response()
-                raise
+            node.save()
         else:
             return Response(
                 {"error": "node not found; enrollment token required"},

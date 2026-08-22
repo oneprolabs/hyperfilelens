@@ -1267,8 +1267,8 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-EnvironmentFile="${unit_env_file}"
-WorkingDirectory="${unit_working_dir}"
+EnvironmentFile=${unit_env_file}
+WorkingDirectory=${unit_working_dir}
 ExecStart="${unit_agent}" run
 Restart=always
 RestartSec=5
@@ -1819,7 +1819,7 @@ retire_installation_identity() {
 		"${agent_bin}" config retire-installation --data-dir "${data_dir}"; then
 		log_fail "Failed to retire the local installation identity; Agent files and data were preserved for retry." 1
 	fi
-	log_ok "Local installation identity retired; remove the old console record before reinstalling or changing run mode."
+	log_ok "Local installation identity retired; the existing console record is preserved and the next installation will register a new record."
 }
 
 uninstall_gateway_sidecar_if_needed() {
