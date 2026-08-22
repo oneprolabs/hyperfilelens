@@ -183,6 +183,12 @@ func TestWriteWindowsUninstallScriptKeepDataSkipsPurgeAll(t *testing.T) {
 	if !strings.Contains(text, `config retire-installation --data-dir $data`) {
 		t.Fatalf("keep_data script does not retire installation identity:\n%s", text)
 	}
+	if !strings.Contains(text, "the existing console record is preserved and the next installation will register a new record") {
+		t.Fatalf("keep_data script must preserve the console record during local uninstall:\n%s", text)
+	}
+	if strings.Contains(text, "remove the old console record") {
+		t.Fatalf("keep_data script must not require local uninstall to change the console record:\n%s", text)
+	}
 	assertOrdered(t, text,
 		`config retire-installation --data-dir $data`,
 		`if ($keep -eq '0') {`,

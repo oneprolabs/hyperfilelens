@@ -1423,7 +1423,7 @@ function Invoke-Uninstall {
     if ($LASTEXITCODE -ne 0) {
       throw "Failed to retire the local installation identity; Agent files and data were preserved for retry."
     }
-    Write-HflOk "Local installation identity retired; remove the old console record before reinstalling or changing run mode."
+    Write-HflOk "Local installation identity retired; the existing console record is preserved and the next installation will register a new record."
   }
   elseif ($KeepInstallationIdentity) {
     Write-HflSkip "installation identity preserved for install retry"

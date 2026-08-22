@@ -502,7 +502,7 @@ if [[ "$KEEP_DATA" == "1" ]]; then
     AGENT_ARTIFACTS_FAILED=1
     exit 1
   fi
-	log "retired installation identity; remove the old console record before reinstalling or changing run mode"
+	log "retired installation identity; the existing console record is preserved and the next installation will register a new record"
 fi
 
 for target in "$INSTALL_DIR/hfl-agent" "$INSTALL_DIR/kopia" "$INSTALL_DIR/run-agent.sh" "$INSTALL_DIR/INSTALLED_VERSION" "$INSTALL_DIR/install.sh" "$INSTALL_DIR/MANIFEST.json"; do

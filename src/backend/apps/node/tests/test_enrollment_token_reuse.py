@@ -74,7 +74,7 @@ class EnrollmentTokenReuseTests(TestCase):
         self.assertIsNotNone(self.token_row.used_at)
         self.assertEqual(Node.objects.filter(organization=self.org).count(), 2)
 
-    def test_host_fingerprint_prevents_a_second_installation(self):
+    def test_new_installation_on_same_host_creates_a_new_node(self):
         fingerprint = "a" * 64
         first = self._heartbeat(
             name="host-a",
@@ -92,11 +92,16 @@ class EnrollmentTokenReuseTests(TestCase):
             host_fingerprint=fingerprint,
         )
 
-        self.assertEqual(second.status_code, 409)
-        self.assertIn("remove its console record", second.data["error"])
-        self.assertEqual(Node.objects.filter(organization=self.org).count(), 1)
+        self.assertEqual(second.status_code, 200)
+        self.assertNotEqual(first.data["node_id"], second.data["node_id"])
+        nodes = list(Node.objects.filter(organization=self.org).order_by("id"))
+        self.assertEqual(len(nodes), 2)
+        self.assertEqual(nodes[0].installation_mode, NodeInstallationMode.SYSTEM)
+        self.assertEqual(nodes[1].installation_mode, NodeInstallationMode.USER)
+        self.assertEqual(nodes[0].host_fingerprint, fingerprint)
+        self.assertEqual(nodes[1].host_fingerprint, fingerprint)
 
-    def test_offline_host_must_be_uninstalled_before_changing_mode(self):
+    def test_offline_host_record_is_preserved_when_a_new_agent_is_installed(self):
         fingerprint = "c" * 64
         first = self._heartbeat(
             name="host-a",
@@ -118,14 +123,24 @@ class EnrollmentTokenReuseTests(TestCase):
             host_fingerprint=fingerprint,
         )
 
-        self.assertEqual(replacement.status_code, 409)
-        self.assertEqual(Node.objects.filter(organization=self.org).count(), 1)
+        self.assertEqual(replacement.status_code, 200)
+        self.assertEqual(Node.objects.filter(organization=self.org).count(), 2)
         node.refresh_from_db()
         self.assertEqual(node.installation_id, "hfli_host_a")
         self.assertEqual(node.installation_mode, NodeInstallationMode.SYSTEM)
+        self.assertEqual(node.availability, Node.Availability.OFFLINE)
         self.assertTrue(validate_node_credential(node, first_credential, touch=False))
+        replacement_node = Node.objects.get(pk=replacement.data["node_id"])
+        self.assertEqual(
+            replacement_node.installation_id,
+            "hfli_host_a_user",
+        )
+        self.assertEqual(
+            replacement_node.installation_mode,
+            NodeInstallationMode.USER,
+        )
 
-    def test_database_rejects_duplicate_active_host_fingerprint(self):
+    def test_database_allows_duplicate_active_host_fingerprint(self):
         fingerprint = "b" * 64
         Node.objects.create(
             organization=self.org,
@@ -134,13 +149,17 @@ class EnrollmentTokenReuseTests(TestCase):
             host_fingerprint=fingerprint,
         )
 
-        with self.assertRaises(IntegrityError), transaction.atomic():
-            Node.objects.create(
-                organization=self.org,
-                name="host-b",
-                role=NodeRole.AGENT,
-                host_fingerprint=fingerprint,
-            )
+        Node.objects.create(
+            organization=self.org,
+            name="host-b",
+            role=NodeRole.AGENT,
+            host_fingerprint=fingerprint,
+        )
+
+        self.assertEqual(
+            Node.objects.filter(host_fingerprint=fingerprint).count(),
+            2,
+        )
 
     @mock.patch(
         "apps.node.api.views.node.sync_agent_source_host",

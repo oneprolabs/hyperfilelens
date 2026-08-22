@@ -97,6 +97,12 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 	if !strings.Contains(body, `config retire-installation --data-dir "$DATA_DIR"`) {
 		t.Fatalf("script must retire installation identity when data is preserved:\n%s", body)
 	}
+	if !strings.Contains(body, "the existing console record is preserved and the next installation will register a new record") {
+		t.Fatalf("script must preserve the console record during local uninstall:\n%s", body)
+	}
+	if strings.Contains(body, "remove the old console record") {
+		t.Fatalf("script must not require local uninstall to change the console record:\n%s", body)
+	}
 	unmountAt := strings.Index(body, `unmount_agent_mounts "$DATA_DIR"`)
 	stopAt := strings.Index(body, `hfl_systemctl stop "$SERVICE_NAME"`)
 	retireAt := strings.Index(body, `config retire-installation --data-dir "$DATA_DIR"`)

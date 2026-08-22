@@ -4,6 +4,7 @@ package install
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -36,8 +37,11 @@ func TestInstallShellRetiresIdentityBeforeRemovingAgent(t *testing.T) {
 	if strings.Index(body, retire) > strings.Index(body, remove) {
 		t.Fatal("install.sh removes hfl-agent before retiring installation identity")
 	}
-	if !strings.Contains(body, "remove the old console record before reinstalling or changing run mode") {
-		t.Fatal("install.sh does not explain the retired installation identity")
+	if !strings.Contains(body, "the existing console record is preserved and the next installation will register a new record") {
+		t.Fatal("install.sh does not explain that local uninstall preserves the console record")
+	}
+	if strings.Contains(body, "remove the old console record") {
+		t.Fatal("install.sh must not require local uninstall to change the console record")
 	}
 	if !strings.Contains(body, "--keep-installation-identity") {
 		t.Fatal("install.sh missing incomplete-install rollback flag")
@@ -57,8 +61,8 @@ func TestInstallShellDefinesUserLifecycleForLinuxAndMacOS(t *testing.T) {
 		`loginctl is required to verify that current-user mode stops after sign-out.`,
 		`WantedBy=default.target`,
 		`Description=HyperFileLens Agent (Current User)`,
-		`EnvironmentFile="${unit_env_file}"`,
-		`WorkingDirectory="${unit_working_dir}"`,
+		`EnvironmentFile=${unit_env_file}`,
+		`WorkingDirectory=${unit_working_dir}`,
 		`ExecStart="${unit_agent}" run`,
 		`systemd_escape_unit_value`,
 		`An active macOS user session is required for user-level installation.`,
@@ -67,6 +71,50 @@ func TestInstallShellDefinesUserLifecycleForLinuxAndMacOS(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("install.sh missing user lifecycle rule %q", want)
 		}
+	}
+}
+
+func TestUserSystemdUnitTemplateIsValid(t *testing.T) {
+	if _, err := exec.LookPath("systemd-analyze"); err != nil {
+		t.Skip("systemd-analyze is not available")
+	}
+
+	body := readPackagingInstallShell(t)
+	functionStart := strings.Index(body, "install_systemd_unit() {")
+	if functionStart < 0 {
+		t.Fatal("install.sh missing install_systemd_unit")
+	}
+	body = body[functionStart:]
+	heredocStart := strings.Index(body, `cat >"${UNIT_DST}" <<EOF`+"\n")
+	if heredocStart < 0 {
+		t.Fatal("install.sh missing user systemd unit template")
+	}
+	template := body[heredocStart+len(`cat >"${UNIT_DST}" <<EOF`)+1:]
+	heredocEnd := strings.Index(template, "\nEOF")
+	if heredocEnd < 0 {
+		t.Fatal("install.sh user systemd unit template is not terminated")
+	}
+	template = template[:heredocEnd]
+
+	workingDir := filepath.Join(t.TempDir(), "agent home")
+	if err := os.MkdirAll(workingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(workingDir, "agent.env")
+	if err := os.WriteFile(envFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unit := strings.NewReplacer(
+		"${unit_env_file}", envFile,
+		"${unit_working_dir}", workingDir,
+		"${unit_agent}", "/bin/true",
+	).Replace(template)
+	unitPath := filepath.Join(t.TempDir(), "hyperfilelens-agent.service")
+	if err := os.WriteFile(unitPath, []byte(unit), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("systemd-analyze", "verify", unitPath).CombinedOutput(); err != nil {
+		t.Fatalf("invalid user systemd unit:\n%s\n%s", unit, output)
 	}
 }
 

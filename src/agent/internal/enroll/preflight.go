@@ -30,6 +30,9 @@ type EnvironmentReport struct {
 // RunEnvironmentChecks validates the host and prints user-facing results.
 func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, error) {
 	failures := &preflightFailures{}
+	// Existing-install and cross-mode conflicts are deliberately determined
+	// only from local installation markers. Do not make the control plane or a
+	// host fingerprint an installation-admission authority.
 	report := &EnvironmentReport{
 		Platform: platformDescription(),
 		ArchOK:   supportedRuntimeArch(),

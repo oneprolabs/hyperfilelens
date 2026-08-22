@@ -132,8 +132,11 @@ func TestInstallPs1RetiresIdentityBeforeRemovingAgent(t *testing.T) {
 	if strings.Index(source, retire) > strings.Index(source, remove) {
 		t.Fatal("install.ps1 removes hfl-agent before retiring installation identity")
 	}
-	if !strings.Contains(source, "remove the old console record before reinstalling or changing run mode") {
-		t.Fatal("install.ps1 does not explain the retired installation identity")
+	if !strings.Contains(source, "the existing console record is preserved and the next installation will register a new record") {
+		t.Fatal("install.ps1 does not explain that local uninstall preserves the console record")
+	}
+	if strings.Contains(source, "remove the old console record") {
+		t.Fatal("install.ps1 must not require local uninstall to change the console record")
 	}
 	if !strings.Contains(source, "-KeepInstallationIdentity") {
 		t.Fatal("install.ps1 missing incomplete-install rollback flag")
