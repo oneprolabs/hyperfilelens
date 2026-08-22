@@ -6,7 +6,9 @@ import type { BackupSnapshotBrowserEntry } from './protectionBackupConfigApi'
 import { asList, unwrapApiPayload } from './parse'
 
 const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
-const COPILOT_SNAPSHOT_BROWSE_POLL_MS = 500
+// The first read is immediate; bounded backoff keeps the picker responsive
+// without continuously polling a busy Reader.
+const COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS = [150, 300, 500]
 const COPILOT_SNAPSHOT_BROWSE_MAX_POLLS = 240
 
 export type LensApiScope = 'tenant' | 'platform'
@@ -1094,22 +1096,30 @@ export async function browseCopilotSnapshotDirectory(
         retryable: true,
       }
     }
+    if (polls > 0) {
+      const delay = COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS[
+        Math.min(polls - 1, COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS.length - 1)
+      ]
+      await new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new DOMException('Aborted', 'AbortError'))
+          return
+        }
+        const onAbort = () => {
+          window.clearTimeout(timer)
+          reject(new DOMException('Aborted', 'AbortError'))
+        }
+        const timer = window.setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve()
+        }, delay)
+        signal?.addEventListener('abort', onAbort, { once: true })
+      })
+    }
     polls += 1
-    await new Promise<void>((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(new DOMException('Aborted', 'AbortError'))
-        return
-      }
-      const onAbort = () => {
-        window.clearTimeout(timer)
-        reject(new DOMException('Aborted', 'AbortError'))
-      }
-      const timer = window.setTimeout(() => {
-        signal?.removeEventListener('abort', onAbort)
-        resolve()
-      }, COPILOT_SNAPSHOT_BROWSE_POLL_MS)
-      signal?.addEventListener('abort', onAbort, { once: true })
-    })
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError')
+    }
     task = await fetchCopilotSnapshotBrowse(task.task_id, signal)
   }
   if (task.status !== 'success') {

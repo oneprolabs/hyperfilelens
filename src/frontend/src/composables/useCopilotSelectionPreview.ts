@@ -35,7 +35,10 @@ type PreviewOptions = {
   scopes: ComputedRef<CopilotSelectionScope[]>
 }
 
-const POLL_MS = 1_000
+// Check once immediately after dispatch, then use a short bounded backoff.
+// The Reader task is asynchronous, but a completed task should not add an
+// unnecessary full second to the user's selection flow.
+const POLL_DELAYS_MS = [250, 400, 650, 1_000]
 const MAX_POLLS = 120
 const RETRY_DELAYS_MS = [0, 2_000, 5_000, 15_000]
 const REQUEST_RETRY_DELAYS_MS = [0, 2_000, 5_000, 15_000]
@@ -255,8 +258,11 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
           error: 'Selected data calculation is taking longer than expected.',
         }
       }
+      if (polls > 0) {
+        const delay = POLL_DELAYS_MS[Math.min(polls - 1, POLL_DELAYS_MS.length - 1)]
+        await sleep(delay, signal)
+      }
       polls += 1
-      await sleep(POLL_MS, signal)
       current = await fetchTaskWithRetry(current.task_id, signal)
     }
     return current
