@@ -553,8 +553,9 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                         :visible="isBackupScopePickerOpen(scopeEntry.id)"
                         trigger="click"
                         placement="bottom-start"
+                        :fallback-placements="['top-start', 'bottom-end', 'top-end']"
                         :width="backupScopePickerWidth"
-                        popper-class="ks-backup-scope-popover"
+                        popper-class="new-chat-scope-popover"
                         @update:visible="(open) => setBackupScopePickerOpen(scopeEntry.id, open)"
                       >
                         <template #reference>
@@ -608,9 +609,13 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                                   class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--file"
                                 />
                                 <div class="hfl-dir-tree-node__text">
-                                  <span class="hfl-dir-tree-node__label">{{ data.label }}</span><span
+                                  <span
+                                    class="hfl-dir-tree-node__label"
+                                    :title="data.label"
+                                  >{{ data.label }}</span><span
                                     v-if="data.path"
                                     class="hfl-dir-tree-node__path"
+                                    :title="data.path"
                                   >{{ data.path }}</span>
                                 </div>
                                 <span
@@ -986,6 +991,25 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-gateway-option__status { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; color: #00b42a; font-size: 12px; font-weight: 600; }
 .new-chat-gateway-option__dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px rgba(0, 180, 42, .12); }
 :global(.new-chat-gateway-select-popper .el-select-dropdown__wrap) { max-height: 220px; }
+:global(.new-chat-scope-popover.el-popper) {
+  box-sizing: border-box;
+  max-width: calc(100vw - 24px);
+  padding: 8px;
+}
+:global(.new-chat-scope-popover .hfl-dir-tree) {
+  max-height: min(36vh, 300px);
+  overflow-x: hidden;
+}
+:global(.new-chat-scope-popover .el-tree-node__content) { min-width: 0; }
+:global(.new-chat-scope-popover .hfl-dir-tree-node__text) { overflow: hidden; }
+:global(.new-chat-scope-popover .hfl-dir-tree-node__label),
+:global(.new-chat-scope-popover .hfl-dir-tree-node__path) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
 @media (max-width: 900px) {
   .new-chat-grid { grid-template-columns: 1fr; }
   .new-chat-scope-stack__header { display: none; }
