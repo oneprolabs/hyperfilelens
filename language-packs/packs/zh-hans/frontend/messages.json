@@ -93,7 +93,8 @@
       "subscriptionQuotaExceededMeter": "该组织的 {meter} 配额已满。请联系平台管理员提高限制。",
       "subscriptionQuotaExceededInstance": "共享实例容量已满。请联系平台管理员提高部署额度，或释放其他组织占用的容量。",
       "subscriptionQuotaExceededInstanceMeter": "共享实例的 {meter} 容量已满。请联系平台管理员提高部署额度，或释放其他组织占用的容量。",
-      "subscriptionQuotaExceededGateway": "该公共数据网关容量已满。请联系平台管理员提高此网关的工作区容量上限。"
+      "subscriptionQuotaExceededGateway": "共享数据网关当前容量不足。请稍后重试或联系平台管理员。",
+      "subscriptionQuotaUsageUnavailable": "容量信息暂时不可用，请稍后重试。"
     },
     "pageLoad": {
       "update": {
