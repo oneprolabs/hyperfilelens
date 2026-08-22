@@ -285,7 +285,7 @@ require_service_manager() {
 		user_linger="$(loginctl show-user "$(id -u)" --property=Linger --value 2>/dev/null)" \
 			|| log_fail "Unable to verify the current user's systemd sign-out behavior." 2
 		if [[ "${user_linger}" == "yes" ]]; then
-			log_fail "Current-user mode must pause after sign-out, but systemd user lingering is enabled. Disable lingering or choose System Service mode." 2
+			log_fail "Current-user protection must pause after sign-out, but systemd user lingering is enabled. Disable lingering or choose Host files continuous protection." 2
 		fi
 		return 0
 	fi

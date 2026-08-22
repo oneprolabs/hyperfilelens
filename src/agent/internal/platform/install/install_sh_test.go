@@ -66,7 +66,7 @@ func TestInstallShellDefinesUserLifecycleForLinuxAndMacOS(t *testing.T) {
 		`ExecStart="${unit_agent}" run`,
 		`systemd_escape_unit_value`,
 		`An active macOS user session is required for user-level installation.`,
-		`systemd user lingering is enabled. Disable lingering or choose System Service mode.`,
+		`systemd user lingering is enabled. Disable lingering or choose Host files continuous protection.`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("install.sh missing user lifecycle rule %q", want)

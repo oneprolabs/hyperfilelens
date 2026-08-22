@@ -448,7 +448,7 @@ func userSessionLifecycleConstraint(
 	}
 	if strings.EqualFold(strings.TrimSpace(string(out)), "yes") {
 		return fmt.Errorf(
-			"current-user mode must pause after sign-out, but systemd user lingering is enabled; disable lingering or choose system mode",
+			"current-user protection must pause after sign-out, but systemd user lingering is enabled; disable lingering or choose Host files continuous protection",
 		)
 	}
 	return nil
