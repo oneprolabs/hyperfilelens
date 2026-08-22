@@ -30,7 +30,8 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain('Runs continuously after sign-out')
     expect(locale).toContain('pauses after sign-out')
     expect(locale).toContain('provides continuous monitoring')
-    expect(locale).toContain('provides monitoring while that user is signed in')
+    expect(locale).toContain('accessible local drives on Windows')
+    expect(locale).toContain('provides monitoring while signed in')
     expect(locale).toContain('grant HyperFileLens Agent Full Disk Access in System Settings')
   })
 
