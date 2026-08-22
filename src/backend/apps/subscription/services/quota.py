@@ -132,7 +132,7 @@ def relative_scope_path(*, root: str, selected: str) -> str:
     selected_n = normalize_scope_path(selected)
     if selected_n == root_n:
         return ""
-    prefix = f"{root_n}/"
+    prefix = "/" if root_n == "/" else f"{root_n}/"
     if selected_n.startswith(prefix):
         return selected_n[len(prefix) :]
     return ""

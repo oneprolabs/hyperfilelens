@@ -19,6 +19,7 @@ from apps.lens_bridge.services.public_gateway_capacity import (
     org_public_gateway_capacity_used_bytes,
     public_gateway_capacity_payload,
     set_public_gateway_capacity_bytes,
+    workspace_capacity_accounting,
 )
 from apps.node.models import Node
 from common.errors import AppError
@@ -158,6 +159,188 @@ class PublicGatewayCapacityServiceTests(TestCase):
         self.assertEqual(nbytes, 0)
         self.assertTrue(unknown)
 
+    def test_complete_scope_summary_survives_missing_directory_metadata(self):
+        from apps.lens_bridge.services import public_gateway_capacity as cap
+        from apps.protection.models import BackupSourceSnapshotDirectory
+
+        with patch.object(
+            BackupSourceSnapshotDirectory.objects,
+            "filter",
+        ) as directory_filter:
+            nbytes, unknown = cap._occupancy_from_scope_dicts(
+                organization_id=17,
+                scopes=[
+                    {
+                        "source_path": "/root",
+                        "backup_snapshot_directory_id": 99999999,
+                        "path_type": "dir",
+                        "file_count": 5739,
+                        "size_bytes": 2_972_564,
+                    }
+                ],
+                re_resolve=False,
+            )
+
+        directory_filter.assert_not_called()
+        self.assertEqual(nbytes, 2_972_564)
+        self.assertFalse(unknown)
+
+    def test_legacy_nested_scope_uses_one_directory_upper_bound(self):
+        from apps.protection.models import BackupSourceSnapshotDirectory
+
+        directory = SimpleNamespace(
+            id=31,
+            source_path="/root",
+            file_count=100,
+            size_bytes=4096,
+        )
+        directory_queryset = MagicMock()
+        directory_queryset.__iter__.return_value = iter([directory])
+        directory_queryset.first.return_value = directory
+        with patch.object(
+            BackupSourceSnapshotDirectory.objects,
+            "filter",
+            return_value=directory_queryset,
+        ):
+            nbytes, status = workspace_capacity_accounting(
+                organization_id=17,
+                scopes=[
+                    {
+                        "source_path": "/root/a",
+                        "backup_snapshot_directory_id": 31,
+                        "path_type": "dir",
+                    },
+                    {
+                        "source_path": "/root/b",
+                        "backup_snapshot_directory_id": 31,
+                        "path_type": "dir",
+                    },
+                ],
+            )
+
+        self.assertEqual(nbytes, 4096)
+        self.assertEqual(
+            status,
+            LensWorkspaceBinding.CapacityAccountingStatus.CONSERVATIVE,
+        )
+
+    def test_workspace_accounting_keeps_most_conservative_status(self):
+        from apps.protection.models import BackupSourceSnapshotDirectory
+
+        directories = [
+            SimpleNamespace(id=31, source_path="/first", size_bytes=4096),
+            SimpleNamespace(id=32, source_path="/second", size_bytes=2048),
+        ]
+        directory_queryset = MagicMock()
+        directory_queryset.__iter__.return_value = iter(directories)
+        with patch.object(
+            BackupSourceSnapshotDirectory.objects,
+            "filter",
+            return_value=directory_queryset,
+        ):
+            nbytes, status = workspace_capacity_accounting(
+                organization_id=17,
+                scopes=[
+                    {
+                        "source_path": "/first/nested",
+                        "backup_snapshot_directory_id": 31,
+                        "path_type": "dir",
+                    },
+                    {
+                        "source_path": "/second",
+                        "backup_snapshot_directory_id": 32,
+                        "path_type": "dir",
+                    },
+                ],
+            )
+
+        self.assertEqual(nbytes, 6144)
+        self.assertEqual(
+            status,
+            LensWorkspaceBinding.CapacityAccountingStatus.CONSERVATIVE,
+        )
+
+    def test_workspace_exact_summary_does_not_require_snapshot_metadata(self):
+        from apps.protection.models import BackupSourceSnapshotDirectory
+
+        with patch.object(
+            BackupSourceSnapshotDirectory.objects,
+            "filter",
+        ) as directory_filter:
+            nbytes, status = workspace_capacity_accounting(
+                organization_id=17,
+                scopes=[
+                    {
+                        "source_path": "/root/a",
+                        "backup_snapshot_directory_id": 31,
+                        "path_type": "dir",
+                        "file_count": 10,
+                        "size_bytes": 2048,
+                    }
+                ],
+            )
+
+        directory_filter.assert_not_called()
+        self.assertEqual(nbytes, 2048)
+        self.assertEqual(
+            status,
+            LensWorkspaceBinding.CapacityAccountingStatus.EXACT,
+        )
+
+    def test_workspace_accounting_does_not_double_count_a_selected_child(self):
+        nbytes, status = workspace_capacity_accounting(
+            organization_id=17,
+            scopes=[
+                {
+                    "source_path": "/root",
+                    "backup_snapshot_directory_id": 31,
+                    "path_type": "dir",
+                    "file_count": 10,
+                    "size_bytes": 2048,
+                },
+                {
+                    "source_path": "/root/a",
+                    "backup_snapshot_directory_id": 31,
+                    "path_type": "dir",
+                    "file_count": 2,
+                    "size_bytes": 512,
+                },
+            ],
+        )
+
+        self.assertEqual(nbytes, 2048)
+        self.assertEqual(
+            status,
+            LensWorkspaceBinding.CapacityAccountingStatus.EXACT,
+        )
+
+    def test_workspace_accounting_normalizes_legacy_directory_identifiers(self):
+        nbytes, status = workspace_capacity_accounting(
+            organization_id=17,
+            scopes=[
+                {
+                    "source_path": "/root",
+                    "backup_snapshot_directory_id": 31,
+                    "path_type": "dir",
+                    "file_count": 10,
+                    "size_bytes": 2048,
+                },
+                {
+                    "source_path": "/root/a",
+                    "backup_snapshot_directory_id": "31",
+                    "path_type": "dir",
+                    "file_count": 2,
+                    "size_bytes": 512,
+                },
+            ],
+        )
+
+        self.assertEqual(nbytes, 2048)
+        self.assertEqual(
+            status,
+            LensWorkspaceBinding.CapacityAccountingStatus.EXACT,
+        )
+
     def test_corrupt_scope_summary_fails_closed_without_crashing(self):
         from apps.lens_bridge.services import public_gateway_capacity as cap
         from apps.protection.models import BackupSourceSnapshotDirectory
@@ -262,7 +445,6 @@ class PublicGatewayCapacityServiceTests(TestCase):
                         "source_path": "/root/file.txt",
                         "backup_snapshot_directory_id": 31,
                         "path_type": "file",
-                        "file_count": 1,
                         "size_bytes": 42,
                     }
                 ],

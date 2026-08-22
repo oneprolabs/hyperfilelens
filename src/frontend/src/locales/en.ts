@@ -117,7 +117,9 @@ export const en = {
       subscriptionQuotaExceededInstanceMeter:
         'Shared instance {meter} capacity is full. Contact your platform administrator to raise the deployment grant or free capacity from other organizations.',
       subscriptionQuotaExceededGateway:
-        'This Public Data Gateway is at capacity. Contact your platform administrator to raise the workspace limit on this gateway.',
+        'The shared Data Gateway currently has insufficient capacity. Try again later or contact your platform administrator.',
+      subscriptionQuotaUsageUnavailable:
+        'Capacity information is temporarily unavailable. Try again shortly.',
       backupAlreadyRunning: 'A backup is starting or running for this source. Stop it or wait for it to finish before continuing.',
       restoreAlreadyRunning: 'A restore task is already running for this source.',
     },

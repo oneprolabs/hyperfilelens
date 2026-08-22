@@ -148,6 +148,14 @@ class CopilotLifecycleQueueTests(SimpleTestCase):
             42,
             "claim-token",
             "database schema mismatch",
+            error_state={
+                "code": "INSIGHT.CHAT_PREPARATION_FAILED",
+                "message": (
+                    "Chat preparation failed. Try again or contact your administrator."
+                ),
+                "retryable": True,
+                "meta": {},
+            },
             expected_generation=0,
         )
 
@@ -759,6 +767,60 @@ class CopilotCapacityReservationTests(TestCase):
         )
         self.assertEqual(session.capacity_reserved_bytes, 4096)
 
+    @patch("apps.subscription.services.quota.assert_gateway_select_within_limits")
+    @patch("common.extension_spi.get_quota_provider")
+    def test_missing_organization_capacity_meter_is_temporarily_unavailable(
+        self,
+        get_quota_provider,
+        _assert_limits,
+    ):
+        get_quota_provider.return_value = SimpleNamespace(
+            get_limits=lambda _organization: {},
+        )
+        platform_organization = Organization.objects.create(
+            key="capacity-meter-platform",
+            name="Capacity Meter Platform",
+        )
+        platform_gateway = Node.objects.create(
+            organization=platform_organization,
+            name="capacity-meter-platform-gateway",
+            role=Node.Role.GATEWAY,
+        )
+        platform_gateway_link = LensGatewayLink.objects.create(
+            organization=platform_organization,
+            gateway=platform_gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+        )
+        claim_token = uuid.uuid4()
+        session = LensSessionLink.objects.create(
+            organization=self.organization,
+            hfl_user=self.user,
+            gateway_link=platform_gateway_link,
+            lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+            scope_resolution_status=LensSessionLink.ScopeResolutionStatus.RESOLVED,
+            capacity_reservation_status=(
+                LensSessionLink.CapacityReservationStatus.PENDING
+            ),
+            provision_claim_token=claim_token,
+            source_scopes_json=[
+                {"path_type": "dir", "file_count": 3, "size_bytes": 4096}
+            ],
+        )
+
+        with self.assertRaises(AppError) as raised:
+            chat_lifecycle._reserve_chat_capacity(
+                link=session,
+                claim_token=str(claim_token),
+            )
+
+        self.assertEqual(
+            raised.exception.code,
+            "SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE",
+        )
+        self.assertEqual(raised.exception.status, 503)
+        self.assertTrue(raised.exception.retryable)
+
 
 class CopilotCapacityReservationConcurrencyTests(TransactionTestCase):
     reset_sequences = True
@@ -970,6 +1032,18 @@ class CopilotChatModelBindingTests(TestCase):
             self._create_chat()
 
         self.assertIn("repository_id", raised.exception.detail)
+        self.assertFalse(
+            LensSessionLink.objects.filter(organization=self.organization).exists()
+        )
+
+    def test_unavailable_snapshot_is_rejected_before_chat_creation(self):
+        self.snapshot.status = BackupSourceSnapshot.Status.FAILED
+        self.snapshot.save(update_fields=["status", "updated_at"])
+
+        with self.assertRaises(ValidationError) as raised:
+            self._create_chat()
+
+        self.assertIn("backup_source_snapshot_id", raised.exception.detail)
         self.assertFalse(
             LensSessionLink.objects.filter(organization=self.organization).exists()
         )

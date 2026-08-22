@@ -181,6 +181,22 @@ def create_workspace_binding(
     # directory name so shared Platform Gateways remain collision-free without
     # nesting tenant data below paths SourceLens cannot select.
     relative_path = "" if gateway_local else f"hfl-ks-{workspace_uid}"
+    if gateway_local:
+        capacity_accounted_bytes = 0
+        capacity_accounting_status = (
+            LensWorkspaceBinding.CapacityAccountingStatus.EXACT
+        )
+    else:
+        from apps.lens_bridge.services.public_gateway_capacity import (
+            workspace_capacity_accounting,
+        )
+
+        capacity_accounted_bytes, capacity_accounting_status = (
+            workspace_capacity_accounting(
+                organization_id=int(tenant_organization.id),
+                scopes=list(knowledge_source.source_scopes_json or []),
+            )
+        )
     binding, created = LensWorkspaceBinding.objects.get_or_create(
         organization=tenant_organization,
         knowledge_source=knowledge_source,
@@ -198,6 +214,8 @@ def create_workspace_binding(
                 if gateway_local
                 else LensWorkspaceBinding.IdentityStatus.PENDING
             ),
+            "capacity_accounted_bytes": capacity_accounted_bytes,
+            "capacity_accounting_status": capacity_accounting_status,
         },
     )
     if not created:

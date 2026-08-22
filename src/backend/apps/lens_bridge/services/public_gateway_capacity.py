@@ -53,6 +53,14 @@ def _normalize_capacity_bytes(capacity_bytes: Any) -> int:
     return value
 
 
+def _scope_directory_identity(scope: dict) -> int | str | None:
+    value = scope.get("backup_snapshot_directory_id")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return str(value) if value is not None else None
+
+
 def get_public_gateway_capacity_bytes(*, gateway_link) -> int:
     """Configured workspace capacity in bytes for one Public Gateway (-1 = unlimited)."""
     raw = getattr(gateway_link, "capacity_bytes", None)
@@ -159,10 +167,38 @@ def _occupancy_from_scope_dicts(
     if not scope_entries:
         return 0, False
 
-    paired_scopes: list[dict] = []
-    paired_dirs: list = []
+    trusted_bytes = 0
+    legacy_scopes: list[dict] = []
+    legacy_dirs: list = []
     any_unknown = False
     for scope in scope_entries:
+        path_type = str(scope.get("path_type") or "unknown").lower()
+        has_summary = (
+            scope.get("size_bytes") is not None
+            and scope.get("file_count") is not None
+        )
+        if has_summary:
+            try:
+                size_bytes = _exact_stored_int(scope["size_bytes"])
+                file_count = _exact_stored_int(scope["file_count"])
+            except (TypeError, ValueError, OverflowError):
+                any_unknown = True
+                continue
+            summary_valid = (
+                path_type in {"file", "dir"}
+                and size_bytes >= 0
+                and file_count >= 0
+                and (path_type != "file" or file_count == 1)
+            )
+            if not summary_valid:
+                any_unknown = True
+                continue
+            # This immutable summary was resolved before Chat provisioning and
+            # remains the workspace occupancy authority even when retention
+            # later removes the source snapshot-directory metadata.
+            trusted_bytes += size_bytes
+            continue
+
         try:
             directory_id = int(scope.get("backup_snapshot_directory_id"))
         except (TypeError, ValueError):
@@ -180,34 +216,9 @@ def _occupancy_from_scope_dicts(
         path = str(scope.get("source_path") or directory.source_path or "")
         resolved = {
             "source_path": path,
-            "path_type": str(scope.get("path_type") or "unknown"),
+            "path_type": path_type,
         }
-        has_summary = (
-            scope.get("size_bytes") is not None
-            and scope.get("file_count") is not None
-        )
-        if has_summary:
-            try:
-                size_bytes = _exact_stored_int(scope["size_bytes"])
-                file_count = _exact_stored_int(scope["file_count"])
-            except (TypeError, ValueError, OverflowError):
-                any_unknown = True
-                continue
-            summary_valid = (
-                resolved["path_type"] in {"file", "dir"}
-                and size_bytes >= 0
-                and file_count >= 0
-                and (
-                    resolved["path_type"] != "file"
-                    or file_count == 1
-                )
-            )
-            if not summary_valid:
-                any_unknown = True
-                continue
-            resolved["size_bytes"] = size_bytes
-            resolved["file_count"] = file_count
-        elif "size_bytes" in scope and scope.get("size_bytes") is not None:
+        if "size_bytes" in scope and scope.get("size_bytes") is not None:
             try:
                 legacy_size_bytes = _exact_stored_int(scope["size_bytes"])
             except (TypeError, ValueError, OverflowError):
@@ -217,27 +228,182 @@ def _occupancy_from_scope_dicts(
                     any_unknown = True
                 else:
                     resolved["size_bytes"] = legacy_size_bytes
-        paired_scopes.append(resolved)
-        paired_dirs.append(directory)
-    if not paired_scopes:
-        return 0, True
-    trusted_bytes = sum(
-        max(0, int(scope.get("size_bytes") or 0))
-        for scope in paired_scopes
-        if "file_count" in scope
-    )
-    legacy_scopes = [scope for scope in paired_scopes if "file_count" not in scope]
-    legacy_dirs = [
-        directory
-        for scope, directory in zip(paired_scopes, paired_dirs, strict=True)
-        if "file_count" not in scope
-    ]
+        legacy_scopes.append(resolved)
+        legacy_dirs.append(directory)
+    if not legacy_scopes:
+        return trusted_bytes, any_unknown
     _files, legacy_bytes, unknown = summarize_gateway_select_scopes(
         legacy_scopes,
         legacy_dirs,
     )
     nbytes = trusted_bytes + legacy_bytes
     return int(nbytes or 0), bool(any_unknown or unknown)
+
+
+def workspace_capacity_accounting(
+    *,
+    organization_id: int,
+    scopes: list[dict],
+) -> tuple[int, str]:
+    """Resolve durable workspace bytes without browsing or contacting an Agent.
+
+    Current Chat scopes carry exact summaries. Legacy nested selections use the
+    containing snapshot-directory size as a safe upper bound, counted once per
+    directory. Missing metadata remains explicitly unknown instead of silently
+    undercounting quota usage.
+    """
+    from apps.lens_bridge.models import LensWorkspaceBinding
+    from apps.protection.models import BackupSourceSnapshotDirectory
+    from apps.subscription.services.quota import normalize_scope_path
+
+    candidates = [scope for scope in scopes if isinstance(scope, dict)]
+    entries: list[dict] = []
+    ordered = sorted(
+        enumerate(candidates),
+        key=lambda row: (
+            len(normalize_scope_path(row[1].get("source_path"))),
+            row[0],
+        ),
+    )
+    for _index, candidate in ordered:
+        candidate_path = normalize_scope_path(candidate.get("source_path"))
+        candidate_directory = _scope_directory_identity(candidate)
+        covered = False
+        for existing in entries:
+            if _scope_directory_identity(existing) != candidate_directory:
+                continue
+            existing_path = normalize_scope_path(existing.get("source_path"))
+            prefix = "/" if existing_path == "/" else f"{existing_path}/"
+            if candidate_path == existing_path or candidate_path.startswith(prefix):
+                covered = True
+                break
+        if not covered:
+            entries.append(candidate)
+    if not entries:
+        return 0, LensWorkspaceBinding.CapacityAccountingStatus.UNKNOWN
+
+    if all(
+        scope.get("size_bytes") is not None
+        and scope.get("file_count") is not None
+        for scope in entries
+    ):
+        nbytes, unknown = _occupancy_from_scope_dicts(
+            organization_id=organization_id,
+            scopes=entries,
+            re_resolve=False,
+        )
+        if not unknown:
+            if nbytes > _MAX_BIGINT:
+                return (
+                    _MAX_BIGINT,
+                    LensWorkspaceBinding.CapacityAccountingStatus.UNKNOWN,
+                )
+            return nbytes, LensWorkspaceBinding.CapacityAccountingStatus.EXACT
+
+    grouped: dict[int, list[dict]] = {}
+    ungrouped: list[dict] = []
+    for scope in entries:
+        try:
+            directory_id = int(scope.get("backup_snapshot_directory_id"))
+        except (TypeError, ValueError):
+            ungrouped.append(scope)
+            continue
+        grouped.setdefault(directory_id, []).append(scope)
+
+    total = 0
+    status = LensWorkspaceBinding.CapacityAccountingStatus.EXACT
+    for scope in ungrouped:
+        nbytes, unknown = _occupancy_from_scope_dicts(
+            organization_id=organization_id,
+            scopes=[scope],
+            re_resolve=False,
+        )
+        total += nbytes
+        if unknown:
+            status = LensWorkspaceBinding.CapacityAccountingStatus.UNKNOWN
+
+    directories = {
+        int(directory.id): directory
+        for directory in BackupSourceSnapshotDirectory.objects.filter(
+            id__in=list(grouped),
+            organization_id=organization_id,
+        )
+    }
+    for directory_id, directory_scopes in grouped.items():
+        directory = directories.get(directory_id)
+        if directory is None:
+            known_bytes, unknown = _occupancy_from_scope_dicts(
+                organization_id=organization_id,
+                scopes=directory_scopes,
+                re_resolve=False,
+            )
+            total += known_bytes
+            if unknown:
+                status = LensWorkspaceBinding.CapacityAccountingStatus.UNKNOWN
+            continue
+
+        root = normalize_scope_path(directory.source_path)
+        selects_root = any(
+            normalize_scope_path(scope.get("source_path")) == root
+            for scope in directory_scopes
+        )
+        exact_bytes, unknown = _occupancy_from_scope_dicts(
+            organization_id=organization_id,
+            scopes=directory_scopes,
+            re_resolve=False,
+        )
+        if not unknown:
+            total += exact_bytes
+            continue
+        # A selected root already contains every nested path. Otherwise the
+        # root is a conservative upper bound for the union of legacy paths.
+        total += max(0, int(directory.size_bytes or 0))
+        if (
+            not selects_root
+            and status != LensWorkspaceBinding.CapacityAccountingStatus.UNKNOWN
+        ):
+            status = LensWorkspaceBinding.CapacityAccountingStatus.CONSERVATIVE
+
+    if total > _MAX_BIGINT:
+        return _MAX_BIGINT, LensWorkspaceBinding.CapacityAccountingStatus.UNKNOWN
+    return total, status
+
+
+def workspace_binding_occupancy(*, binding) -> tuple[int, bool]:
+    """Return one managed workspace's durable accounted bytes and unknown flag."""
+    from apps.lens_bridge.models import LensWorkspaceBinding
+
+    status = str(
+        getattr(binding, "capacity_accounting_status", "")
+        or LensWorkspaceBinding.CapacityAccountingStatus.PENDING
+    )
+    if status in {
+        LensWorkspaceBinding.CapacityAccountingStatus.EXACT,
+        LensWorkspaceBinding.CapacityAccountingStatus.CONSERVATIVE,
+    }:
+        try:
+            nbytes = _exact_stored_int(
+                getattr(binding, "capacity_accounted_bytes", 0) or 0
+            )
+        except (TypeError, ValueError, OverflowError):
+            return 0, True
+        return (nbytes, False) if nbytes >= 0 else (0, True)
+    if status == LensWorkspaceBinding.CapacityAccountingStatus.UNKNOWN:
+        try:
+            lower_bound = _exact_stored_int(
+                getattr(binding, "capacity_accounted_bytes", 0) or 0
+            )
+        except (TypeError, ValueError, OverflowError):
+            lower_bound = 0
+        return max(0, lower_bound), True
+    knowledge_source = getattr(binding, "knowledge_source", None)
+    if knowledge_source is None:
+        return 0, True
+    return _occupancy_from_scope_dicts(
+        organization_id=int(binding.organization_id),
+        scopes=list(knowledge_source.source_scopes_json or []),
+        re_resolve=False,
+    )
 
 
 def bulk_public_gateway_used_bytes(
@@ -270,12 +436,7 @@ def bulk_public_gateway_used_bytes(
         ks = binding.knowledge_source
         if ks is None or str(getattr(ks, "lifecycle_status", "")).lower() == "deleted":
             continue
-        org_id = int(getattr(ks, "organization_id", 0) or 0)
-        nbytes, unknown = _occupancy_from_scope_dicts(
-            organization_id=org_id,
-            scopes=list(ks.source_scopes_json or []),
-            re_resolve=True,
-        )
+        nbytes, unknown = workspace_binding_occupancy(binding=binding)
         totals[link_id] = totals.get(link_id, 0) + nbytes
         unknowns[link_id] = bool(unknowns.get(link_id) or unknown)
 
@@ -363,11 +524,7 @@ def bulk_org_public_gateway_used_bytes(
         if ks is None or str(getattr(ks, "lifecycle_status", "")).lower() == "deleted":
             continue
         organization_id = int(binding.organization_id)
-        nbytes, unknown = _occupancy_from_scope_dicts(
-            organization_id=organization_id,
-            scopes=list(ks.source_scopes_json or []),
-            re_resolve=True,
-        )
+        nbytes, unknown = workspace_binding_occupancy(binding=binding)
         totals[organization_id] = totals.get(organization_id, 0) + nbytes
         unknowns[organization_id] = bool(
             unknowns.get(organization_id, False) or unknown
@@ -528,4 +685,6 @@ __all__ = [
     "public_gateway_used_bytes",
     "session_scope_occupancy",
     "set_public_gateway_capacity_bytes",
+    "workspace_binding_occupancy",
+    "workspace_capacity_accounting",
 ]

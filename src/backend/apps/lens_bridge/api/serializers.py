@@ -500,9 +500,11 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
     has_unread = serializers.SerializerMethodField()
     document_conversion = serializers.SerializerMethodField()
     data_context = serializers.SerializerMethodField()
+    lifecycle_error = serializers.SerializerMethodField()
     lifecycle_error_code = serializers.SerializerMethodField()
     lifecycle_error_message = serializers.SerializerMethodField()
     lifecycle_error_retryable = serializers.SerializerMethodField()
+    lifecycle_error_meta = serializers.SerializerMethodField()
     queue_position = serializers.SerializerMethodField()
     queue_ahead = serializers.SerializerMethodField()
 
@@ -543,6 +545,7 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             "lifecycle_error_code",
             "lifecycle_error_message",
             "lifecycle_error_retryable",
+            "lifecycle_error_meta",
             "last_message_at",
             "last_assistant_message_at",
             "last_viewed_at",
@@ -592,7 +595,15 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
         return cache.get(uuid_str)
 
     def _lifecycle_error(self, obj: LensSessionLink):
-        return classify_chat_lifecycle_error(obj.lifecycle_error)
+        return classify_chat_lifecycle_error(
+            obj.lifecycle_error,
+            obj.lifecycle_error_state_json,
+        )
+
+    def get_lifecycle_error(self, obj: LensSessionLink) -> str:
+        """Keep the legacy field compatible without exposing raw diagnostics."""
+
+        return self._lifecycle_error(obj).message if obj.lifecycle_error else ""
 
     def get_lifecycle_error_code(self, obj: LensSessionLink) -> str:
         return self._lifecycle_error(obj).code if obj.lifecycle_error else ""
@@ -602,6 +613,9 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
 
     def get_lifecycle_error_retryable(self, obj: LensSessionLink) -> bool:
         return self._lifecycle_error(obj).retryable if obj.lifecycle_error else False
+
+    def get_lifecycle_error_meta(self, obj: LensSessionLink) -> dict:
+        return self._lifecycle_error(obj).meta if obj.lifecycle_error else {}
 
     def get_selected_task(self, obj: LensSessionLink) -> str | None:
         cache = self.context.get("assistant_tasks") or {}
@@ -728,6 +742,46 @@ class LensSnapshotBrowseCreateSerializer(serializers.Serializer):
     gateway_link_id = serializers.IntegerField(min_value=1)
     path = serializers.CharField(required=False, allow_blank=True, max_length=2000)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=500, default=500)
+
+
+class LensScopePreviewCreateSerializer(serializers.Serializer):
+    """Validate one selected snapshot path for asynchronous summarization."""
+
+    directory_id = serializers.IntegerField(min_value=1)
+    backup_source_snapshot_id = serializers.IntegerField(min_value=1)
+    gateway_link_id = serializers.IntegerField(min_value=1)
+    source_path = serializers.CharField(max_length=2000)
+    request_token = serializers.UUIDField()
+    attempt = serializers.IntegerField(required=False, min_value=0, max_value=3, default=0)
+
+
+class LensAdmissionPreviewSerializer(serializers.Serializer):
+    """Validate product-visible Chat selection totals."""
+
+    gateway_mode = serializers.ChoiceField(
+        choices=LensSessionLink.GatewaySelectionMode.choices,
+    )
+    gateway_link_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    file_count = serializers.IntegerField(min_value=0, max_value=2**63 - 1)
+    size_bytes = serializers.IntegerField(min_value=0, max_value=2**63 - 1)
+
+    def validate(self, attrs):
+        mode = attrs["gateway_mode"]
+        gateway_link_id = attrs.get("gateway_link_id")
+        if mode == LensSessionLink.GatewaySelectionMode.MANUAL and not gateway_link_id:
+            raise serializers.ValidationError(
+                {"gateway_link_id": "Select a Private Data Gateway."}
+            )
+        if mode == LensSessionLink.GatewaySelectionMode.AUTO and gateway_link_id is not None:
+            raise serializers.ValidationError(
+                {
+                    "gateway_link_id": (
+                        "Do not select a specific Data Gateway when using the Public "
+                        "Data Gateway option."
+                    )
+                }
+            )
+        return attrs
 
 
 class LensSessionUpdateSerializer(serializers.Serializer):

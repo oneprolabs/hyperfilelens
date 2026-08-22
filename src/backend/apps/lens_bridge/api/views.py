@@ -22,6 +22,7 @@ from apps.iam.permissions_org import (
     get_membership,
 )
 from apps.lens_bridge.api.serializers import (
+    LensAdmissionPreviewSerializer,
     LensChatBindingEnsureSerializer,
     LensCopilotGatewayOptionSerializer,
     LensGatewayChatWorkloadSerializer,
@@ -38,6 +39,7 @@ from apps.lens_bridge.api.serializers import (
     LensSessionLinkSerializer,
     LensSessionTitleSerializer,
     LensSessionUpdateSerializer,
+    LensScopePreviewCreateSerializer,
 )
 from apps.lens_bridge.models import (
     LensGatewayLink,
@@ -188,6 +190,79 @@ class LensCopilotSnapshotBrowseTaskView(OrgScopedMixin, APIView):
                 snapshot_scope_tasks.browse_skipped_special_count(task)
             )
         return Response(payload)
+
+
+class LensCopilotScopePreviewView(OrgScopedMixin, APIView):
+    """Summarize one selected snapshot path without blocking the API worker."""
+
+    permission_classes = [IsAuthenticated, IsOrgOperator]
+
+    def post(self, request):
+        body = LensScopePreviewCreateSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        from apps.lens_bridge.services import chat_selection_preview
+
+        payload = chat_selection_preview.start_scope_preview(
+            organization=self.org,
+            user=request.user,
+            snapshot_id=body.validated_data["backup_source_snapshot_id"],
+            directory_id=body.validated_data["directory_id"],
+            source_path=body.validated_data["source_path"],
+            gateway_link_id=body.validated_data["gateway_link_id"],
+            request_token=str(body.validated_data["request_token"]),
+            attempt=body.validated_data["attempt"],
+        )
+        response_status = (
+            status.HTTP_200_OK
+            if payload["status"] == "success"
+            else status.HTTP_202_ACCEPTED
+        )
+        return Response(payload, status=response_status)
+
+
+class LensCopilotScopePreviewTaskView(OrgScopedMixin, APIView):
+    """Inspect or cancel one current-user selection summary task."""
+
+    permission_classes = [IsAuthenticated, IsOrgOperator]
+
+    def get(self, request, task_id):
+        from apps.lens_bridge.services import chat_selection_preview
+
+        task = chat_selection_preview.get_scope_preview_task(
+            organization=self.org,
+            user=request.user,
+            task_id=str(task_id),
+        )
+        return Response(chat_selection_preview.scope_task_payload(task))
+
+    def delete(self, request, task_id):
+        from apps.lens_bridge.services import chat_selection_preview
+
+        task = chat_selection_preview.cancel_scope_preview_task(
+            organization=self.org,
+            user=request.user,
+            task_id=str(task_id),
+        )
+        return Response(chat_selection_preview.scope_task_payload(task))
+
+
+class LensCopilotAdmissionPreviewView(OrgScopedMixin, APIView):
+    """Return the current organization's safe Chat quota projection."""
+
+    permission_classes = [IsAuthenticated, IsOrgOperator]
+
+    def post(self, request):
+        body = LensAdmissionPreviewSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        from apps.lens_bridge.services import chat_selection_preview
+
+        return Response(
+            chat_selection_preview.admission_preview(
+                organization=self.org,
+                user=request.user,
+                **body.validated_data,
+            )
+        )
 
 
 def _lens_error_response(exc: sl_client.LensBridgeError) -> Response:
@@ -1673,7 +1748,10 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
     @action(detail=True, methods=["get"], url_path="sync")
     def sync(self, request, pk=None):
         link = self._get_user_link(pk)
-        lifecycle_error = classify_chat_lifecycle_error(link.lifecycle_error)
+        lifecycle_error = classify_chat_lifecycle_error(
+            link.lifecycle_error,
+            link.lifecycle_error_state_json,
+        )
         if (
             link.lifecycle_status != LensSessionLink.LifecycleStatus.READY
             or not link.sl_session_uuid
@@ -1686,7 +1764,9 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                     "response_state": {"status": "idle", "started_at": None},
                     "run_outcomes": [],
                     "lifecycle_status": link.lifecycle_status,
-                    "lifecycle_error": link.lifecycle_error,
+                    "lifecycle_error": (
+                        lifecycle_error.message if link.lifecycle_error else ""
+                    ),
                     "lifecycle_error_code": (
                         lifecycle_error.code if link.lifecycle_error else ""
                     ),
@@ -1696,6 +1776,9 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                     "lifecycle_error_retryable": (
                         lifecycle_error.retryable if link.lifecycle_error else False
                     ),
+                    "lifecycle_error_meta": (
+                        lifecycle_error.meta if link.lifecycle_error else {}
+                    ),
                 }
             )
         try:
@@ -1703,7 +1786,9 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         except sl_client.LensBridgeError as exc:
             return _lens_error_response(exc)
         data["lifecycle_status"] = link.lifecycle_status
-        data["lifecycle_error"] = link.lifecycle_error
+        data["lifecycle_error"] = (
+            lifecycle_error.message if link.lifecycle_error else ""
+        )
         data["lifecycle_error_code"] = (
             lifecycle_error.code if link.lifecycle_error else ""
         )
@@ -1712,6 +1797,9 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         )
         data["lifecycle_error_retryable"] = (
             lifecycle_error.retryable if link.lifecycle_error else False
+        )
+        data["lifecycle_error_meta"] = (
+            lifecycle_error.meta if link.lifecycle_error else {}
         )
         data["last_assistant_message_at"] = link.last_assistant_message_at
         data["has_unread"] = bool(
@@ -1761,11 +1849,16 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             link.lifecycle_status != LensSessionLink.LifecycleStatus.READY
             or not link.sl_session_uuid
         ):
+            lifecycle_error = classify_chat_lifecycle_error(
+                link.lifecycle_error,
+                link.lifecycle_error_state_json,
+            )
             raise ValidationError(
                 {
                     "lifecycle_status": (
-                        link.lifecycle_error
-                        or "Chat is still preparing. Please wait until provisioning finishes."
+                        lifecycle_error.message
+                        if link.lifecycle_error
+                        else "Chat is still preparing. Please wait until provisioning finishes."
                     )
                 }
             )

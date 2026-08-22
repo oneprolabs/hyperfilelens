@@ -1554,8 +1554,16 @@ class CopilotChatTeardownTests(TestCase):
         original_uuid = self.session.sl_assistant_uuid
         late_uuid = uuid.uuid4()
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETED
+        self.session.lifecycle_error_state_json = {
+            "code": "SUBSCRIPTION.QUOTA_EXCEEDED",
+            "meta": {"scope": "gateway"},
+        }
         self.session.save(
-            update_fields=["lifecycle_status", "updated_at"]
+            update_fields=[
+                "lifecycle_status",
+                "lifecycle_error_state_json",
+                "updated_at",
+            ]
         )
 
         with self.captureOnCommitCallbacks(execute=True):
@@ -1575,6 +1583,10 @@ class CopilotChatTeardownTests(TestCase):
         self.assertEqual(
             self.session.lifecycle_status,
             LensSessionLink.LifecycleStatus.DELETING,
+        )
+        self.assertEqual(
+            self.session.lifecycle_error_state_json["code"],
+            "INSIGHT.CHAT_PREPARATION_FAILED",
         )
         queue_teardown.assert_called_once_with(self.session.id)
 

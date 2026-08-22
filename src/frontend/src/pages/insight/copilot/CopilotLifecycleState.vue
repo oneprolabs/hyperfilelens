@@ -89,6 +89,7 @@ const lifecycleErrorMessage = computed(() => {
       code: errorCode,
       errorCode,
       retryable: props.session.lifecycle_error_retryable,
+      meta: props.session.lifecycle_error_meta,
     },
     t,
     genericLifecycleError,
