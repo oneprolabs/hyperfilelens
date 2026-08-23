@@ -268,8 +268,14 @@ def _node_disk_metrics(node: Node) -> tuple[int | None, int | None]:
         return None, None
     total_raw = inv.get("disk_total_bytes")
     free_raw = inv.get("disk_free_bytes")
-    total = int(total_raw) if total_raw not in (None, "") else None
-    free = int(free_raw) if free_raw not in (None, "") else None
+    try:
+        total = int(total_raw) if total_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        total = None
+    try:
+        free = int(free_raw) if free_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        free = None
     if total is not None and total <= 0:
         total = None
     if free is not None and free < 0:
@@ -277,16 +283,42 @@ def _node_disk_metrics(node: Node) -> tuple[int | None, int | None]:
     return total, free
 
 
-def _disk_blocks_upgrade(node: Node) -> bool:
+def _disk_upgrade_blocker(node: Node) -> dict[str, Any] | None:
     total, free = _node_disk_metrics(node)
     min_free = int(node_conf.UPGRADE_MIN_FREE_BYTES)
-    if free is not None and free < min_free:
-        return True
+    used_pct = None
+    used_pct_raw = None
     if total and free is not None and total > 0:
-        used_pct = ((total - free) / total) * 100
-        if used_pct > float(node_conf.UPGRADE_MAX_DISK_USED_PCT):
-            return True
-    return False
+        used_pct_raw = ((total - free) / total) * 100
+        used_pct = round(used_pct_raw, 1)
+
+    if free is not None and free < min_free:
+        return {
+            "reason": "disk_full",
+            "failure_type": "minimum_free_bytes",
+            "disk_free_bytes": free,
+            "required_free_bytes": min_free,
+            "disk_used_percent": used_pct,
+            "max_disk_used_percent": float(node_conf.UPGRADE_MAX_DISK_USED_PCT),
+            "check_scope": "agent_storage",
+        }
+    if used_pct_raw is not None and used_pct_raw > float(node_conf.UPGRADE_MAX_DISK_USED_PCT):
+        return {
+            "reason": "disk_full",
+            "failure_type": "maximum_used_percent",
+            "disk_free_bytes": free,
+            "required_free_bytes": min_free,
+            "disk_used_percent": used_pct,
+            "max_disk_used_percent": float(node_conf.UPGRADE_MAX_DISK_USED_PCT),
+            "check_scope": "agent_storage",
+        }
+    return None
+
+
+def _disk_blocks_upgrade(node: Node) -> bool:
+    """Keep the boolean helper for callers that only need the eligibility result."""
+
+    return _disk_upgrade_blocker(node) is not None
 
 
 def _running_lifecycle_task(
@@ -1260,8 +1292,9 @@ def preview_batch_operations(
             if node.availability != Node.Availability.ONLINE or not agent_ws_routable(agent_id=node.id):
                 skipped_offline.append({**item, "reason": "offline"})
                 continue
-            if _disk_blocks_upgrade(node):
-                skipped_disk_full.append({**item, "reason": "disk_full"})
+            disk_blocker = _disk_upgrade_blocker(node)
+            if disk_blocker:
+                skipped_disk_full.append({**item, **disk_blocker})
                 continue
             try:
                 target_version = validate_agent_upgrade(node=node)
