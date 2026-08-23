@@ -1040,8 +1040,13 @@ function Test-SafeDataPath([string]$path) {
   $allowedRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $env:ProgramData "HyperFileLens\Agent")
   )
-  return $full.TrimEnd('\').StartsWith(
-    $allowedRoot.TrimEnd('\') + '\',
+  $normalizedFull = $full.TrimEnd('\')
+  $normalizedAllowedRoot = $allowedRoot.TrimEnd('\')
+  return $normalizedFull.Equals(
+    $normalizedAllowedRoot,
+    [System.StringComparison]::OrdinalIgnoreCase
+  ) -or $normalizedFull.StartsWith(
+    $normalizedAllowedRoot + '\',
     [System.StringComparison]::OrdinalIgnoreCase
   )
 }
@@ -1527,12 +1532,15 @@ function Set-HflEnvLine {
   $escapedKey = [regex]::Escape($Key)
   $newLine = "{0}={1}" -f $Key, $Value.Replace('"', '\"')
   $found = $false
-  $updated = foreach ($line in @($Lines.Value)) {
+  # Force the pipeline result to remain an array even when it contains one
+  # line. Without @(...), PowerShell unwraps a single string; the next `+=`
+  # then concatenates the new key onto that string instead of appending a line.
+  $updated = @(foreach ($line in @($Lines.Value)) {
     if ($line -match "^\s*$escapedKey=") {
       if (-not $found) { $found = $true; $newLine }
     }
     else { $line }
-  }
+  })
   if (-not $found) { $updated += $newLine }
   $Lines.Value = @($updated)
 }
@@ -1607,17 +1615,10 @@ function Invoke-Install {
     catch {
       throw "The specified Windows account '$RunAsUser' could not be resolved."
     }
-    try {
-      $isAdministrator = @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop) |
-        Where-Object { $_.SID.Value -eq $sid }
-      if ($isAdministrator) {
-        throw "Specified-user continuous protection requires a non-administrator account."
-      }
-    }
-    catch {
-      if ($_.Exception.Message -like 'Specified-user continuous protection*') { throw }
-      throw "The installer could not verify local administrator-group membership for '$RunAsUser'; specified-user continuous protection was not installed."
-    }
+    # Administrators-group membership does not mean the runtime is elevated.
+    # The specified-user task is always registered with RunLevel Limited, so
+    # the Agent runs with the selected account's non-elevated token even when
+    # that account is also a local administrator.
     if ([string]::IsNullOrWhiteSpace($RunAsHome)) {
       $profileKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
       $profile = (Get-ItemProperty -LiteralPath $profileKey -ErrorAction SilentlyContinue).ProfileImagePath

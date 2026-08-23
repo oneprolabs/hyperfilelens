@@ -37,7 +37,7 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 	if logDir == "" {
 		logDir = vfs.AgentLogDir(dataDir)
 	}
-	installDir := vfs.InstallDirForMode(cfg.InstallationMode)
+	installDir := vfs.LifecycleInstallDirForMode(cfg.InstallationMode)
 	upgradeLog := install.UpgradeLogPath(logDir)
 
 	stagedArchive, err := install.StageUpgradeArchive(dataDir, archivePath)
@@ -88,7 +88,7 @@ func (e *Engine) runAgentUninstall(ctx context.Context, rep ReporterSink, taskID
 	if dataDir == "" {
 		dataDir = vfs.DefaultAgentDataDir()
 	}
-	installDir := vfs.InstallDirForMode(cfg.InstallationMode)
+	installDir := vfs.LifecycleInstallDirForMode(cfg.InstallationMode)
 	logDir := strings.TrimSpace(cfg.LogDir)
 	if logDir == "" {
 		logDir = vfs.AgentLogDir(dataDir)

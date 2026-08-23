@@ -47,7 +47,7 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 	}
 
 	report.ServiceMgr = detectLifecycleManager(ctx, cfg.InstallationMode)
-	persistedInstallationID := readEnvKey(EnvFilePath(), "HFL_INSTALLATION_ID")
+	persistedInstallationID := readEnvKey(installedEnvPath(), "HFL_INSTALLATION_ID")
 	installationID, identityErr := installationID(ctx, cfg)
 	if identityErr == nil {
 		report.InstallationID = installationID

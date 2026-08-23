@@ -269,23 +269,12 @@ def _configured_gateway_link_for_chat(
     gateway_mode: str,
     gateway_link_id: int | None,
 ):
-    """Select an authorized configured gateway using database state only."""
+    """Select an authorized gateway using the same readiness-aware policy as Copilot."""
 
     from apps.lens_bridge.models import LensGatewayLink
 
     if gateway_mode == LensSessionLink.GatewaySelectionMode.AUTO:
-        platform_org = platform_lens.get_or_create_platform_org()
-        return (
-            LensGatewayLink.objects.filter(
-                organization=platform_org,
-                scope=LensGatewayLink.GatewayScope.PLATFORM,
-                sl_lensnode_uuid__isnull=False,
-                is_deleted=False,
-            )
-            .select_related("organization", "gateway")
-            .order_by("-is_platform_default", "created_at", "id")
-            .first()
-        )
+        return platform_lens.resolve_auto_gateway_link_for_copilot(user=user)
     return (
         LensGatewayLink.objects.filter(
             pk=gateway_link_id,

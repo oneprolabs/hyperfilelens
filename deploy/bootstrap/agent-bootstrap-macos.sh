@@ -41,31 +41,110 @@ hfl_format_bytes() {
 	}'
 }
 
+hfl_format_duration() {
+	local seconds="$1"
+	if ((seconds >= 3600)); then
+		printf '%dh %dm' "$((seconds / 3600))" "$(((seconds % 3600) / 60))"
+	elif ((seconds >= 60)); then
+		printf '%dm %ds' "$((seconds / 60))" "$((seconds % 60))"
+	else
+		printf '%ds' "$seconds"
+	fi
+}
+
+hfl_download_progress_line() {
+	local label="$1" downloaded="$2" total="$3" elapsed="$4"
+	local percent=0 filled=0 rate=0 eta=0 bar
+	if ((total > 0)); then
+		percent=$((downloaded * 100 / total))
+		((percent > 100)) && percent=100
+		filled=$((percent * 20 / 100))
+	fi
+	if ((elapsed > 0)); then
+		rate=$((downloaded / elapsed))
+	fi
+	bar="[$(printf '%*s' "${filled}" '' | tr ' ' '#')$(printf '%*s' "$((20 - filled))" '' | tr ' ' '-') ]"
+	bar="${bar/ ]/]}"
+	if ((total > 0)); then
+		if ((rate > 0 && downloaded < total)); then
+			eta=$(((total - downloaded) / rate))
+			printf '  [....] %s %s | %d%% | %s / %s | %s/s | ETA %s' \
+				"${label}" "${bar}" "${percent}" "$(hfl_format_bytes "${downloaded}")" \
+				"$(hfl_format_bytes "${total}")" "$(hfl_format_bytes "${rate}")" "$(hfl_format_duration "${eta}")"
+		else
+			printf '  [....] %s %s | %d%% | %s / %s | %s/s' \
+				"${label}" "${bar}" "${percent}" "$(hfl_format_bytes "${downloaded}")" \
+				"$(hfl_format_bytes "${total}")" "$(hfl_format_bytes "${rate}")"
+		fi
+	else
+		printf '  [....] %s %s downloaded | %s/s | elapsed %s' \
+			"${label}" "$(hfl_format_bytes "${downloaded}")" "$(hfl_format_bytes "${rate}")" \
+			"$(hfl_format_duration "${elapsed}")"
+	fi
+}
+
+hfl_download_header_size() {
+	local headers="$1"
+	[[ -f "${headers}" ]] || { printf '0'; return 0; }
+	awk '
+		BEGIN { IGNORECASE = 1 }
+		/^Content-Length:/ { gsub("\r", "", $2); if ($2 ~ /^[0-9]+$/) size = $2 }
+		/^Content-Range:/ { split($3, parts, "/"); gsub("\r", "", parts[2]); if (parts[2] ~ /^[0-9]+$/) size = parts[2] }
+		END { print size + 0 }
+	' "${headers}" 2>/dev/null
+}
+
 hfl_download() {
 	local label="$1"
 	local url="$2"
 	local destination="$3"
 	local partial="${destination}.part"
-	local started=${SECONDS} elapsed bytes rate
+	local headers="${partial}.headers.$$" started=${SECONDS} elapsed bytes total=0 rate
+	local curl_pid last_report=0 curl_rc=0
 	local -a retry_connrefused=()
 	rm -f "${partial}"
-	hfl_step "Downloading ${label}."
+	rm -f "${headers}"
 	# Older system curl builds may predate --retry-connrefused.
 	if curl --retry-connrefused --version >/dev/null 2>&1; then
 		retry_connrefused=(--retry-connrefused)
 	fi
 	# ${arr[@]+...} keeps empty CURL_TLS safe under `set -u` on Bash < 4.4.
-	if ! curl ${CURL_TLS[@]+"${CURL_TLS[@]}"} \
+	curl ${CURL_TLS[@]+"${CURL_TLS[@]}"} \
 		--fail --silent --show-error --location \
 		--retry 3 ${retry_connrefused[@]+"${retry_connrefused[@]}"} --retry-delay 2 \
-		"${url}" -o "${partial}"; then
-		rm -f "${partial}"
+		--dump-header "${headers}" "${url}" -o "${partial}" &
+		curl_pid=$!
+	while kill -0 "${curl_pid}" 2>/dev/null; do
+		total="$(hfl_download_header_size "${headers}")"
+		if [[ -f "${partial}" ]]; then bytes="$(wc -c <"${partial}")"; else bytes=0; fi
+		elapsed=$((SECONDS - started))
+		if ((elapsed > last_report)); then
+			if [[ -t 1 && "${TERM:-}" != "dumb" && -z "${NO_COLOR:-}" ]]; then
+				printf '\r%s\033[K' "$(hfl_download_progress_line "${label}" "${bytes}" "${total}" "${elapsed}")"
+			else
+				printf '%s\n' "$(hfl_download_progress_line "${label}" "${bytes}" "${total}" "${elapsed}")"
+			fi
+			last_report="${elapsed}"
+		fi
+		sleep 1
+	done
+	if wait "${curl_pid}"; then curl_rc=0; else curl_rc=$?; fi
+	if ((curl_rc != 0)); then
+		[[ -t 1 && "${TERM:-}" != "dumb" && -z "${NO_COLOR:-}" ]] && printf '\n'
+		rm -f "${partial}" "${headers}"
 		hfl_fail "Failed to download ${label}." 3
 	fi
-	mv -f "${partial}" "${destination}"
-	bytes="$(wc -c <"${destination}")"
+	bytes="$(wc -c <"${partial}")"
+	total="$(hfl_download_header_size "${headers}")"
 	elapsed=$((SECONDS - started))
 	((elapsed > 0)) || elapsed=1
+	if [[ -t 1 && "${TERM:-}" != "dumb" && -z "${NO_COLOR:-}" ]]; then
+		printf '\r%s\033[K\n' "$(hfl_download_progress_line "${label}" "${bytes}" "${total}" "${elapsed}")"
+	else
+		printf '%s\n' "$(hfl_download_progress_line "${label}" "${bytes}" "${total}" "${elapsed}")"
+	fi
+	rm -f "${headers}"
+	mv -f "${partial}" "${destination}"
 	rate="$(hfl_format_bytes "$((bytes / elapsed))")/s"
 	hfl_ok "${label} downloaded ($(hfl_format_bytes "${bytes}") in ${elapsed}s, average ${rate})."
 }

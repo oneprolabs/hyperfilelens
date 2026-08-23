@@ -29,6 +29,59 @@ hfl_log() {
 	printf '  [INFO] %s\n' "$*" >&2
 }
 
+hfl_format_bytes() {
+	awk -v bytes="$1" 'BEGIN {
+		split("B KiB MiB GiB TiB", units, " ")
+		value = bytes + 0; unit = 1
+		while (value >= 1024 && unit < 5) { value /= 1024; unit++ }
+		if (unit == 1) printf "%.0f %s", value, units[unit]
+		else printf "%.1f %s", value, units[unit]
+	}'
+}
+
+hfl_format_duration() {
+	local seconds="$1"
+	if ((seconds >= 3600)); then
+		printf '%dh %dm' "$((seconds / 3600))" "$(((seconds % 3600) / 60))"
+	elif ((seconds >= 60)); then
+		printf '%dm %ds' "$((seconds / 60))" "$((seconds % 60))"
+	else
+		printf '%ds' "$seconds"
+	fi
+}
+
+hfl_download_progress_line() {
+	local label="$1" downloaded="$2" total="$3" elapsed="$4" percent=0 filled=0 rate=0 eta=0 bar
+	if ((total > 0)); then
+		percent=$((downloaded * 100 / total)); ((percent > 100)) && percent=100
+		filled=$((percent * 20 / 100))
+	fi
+	((elapsed > 0)) && rate=$((downloaded / elapsed))
+	bar="[$(printf '%*s' "${filled}" '' | tr ' ' '#')$(printf '%*s' "$((20 - filled))" '' | tr ' ' '-') ]"
+	bar="${bar/ ]/]}"
+	if ((total > 0)); then
+		local eta_suffix=""
+		if ((rate > 0 && downloaded < total)); then
+			eta=$(((total - downloaded) / rate))
+			eta_suffix=" | ETA $(hfl_format_duration "${eta}")"
+		fi
+		printf '  [....] %s %s | %d%% | %s / %s | %s/s%s' "${label}" "${bar}" "${percent}" \
+			"$(hfl_format_bytes "${downloaded}")" "$(hfl_format_bytes "${total}")" \
+			"$(hfl_format_bytes "${rate}")" "${eta_suffix}"
+	else
+		printf '  [....] %s %s downloaded | %s/s | elapsed %s' "${label}" "$(hfl_format_bytes "${downloaded}")" \
+			"$(hfl_format_bytes "${rate}")" "$(hfl_format_duration "${elapsed}")"
+	fi
+}
+
+hfl_download_header_size() {
+	[[ -f "$1" ]] || { printf '0'; return 0; }
+	awk 'BEGIN { IGNORECASE = 1 }
+		/^Content-Length:/ { gsub("\r", "", $2); if ($2 ~ /^[0-9]+$/) size = $2 }
+		/^Content-Range:/ { split($3, parts, "/"); gsub("\r", "", parts[2]); if (parts[2] ~ /^[0-9]+$/) size = parts[2] }
+		END { print size + 0 }' "$1" 2>/dev/null
+}
+
 hfl_fail() {
 	HFL_LAST_ERROR=$1
 	printf '  [FAIL] %s\n' "$1" >&2
@@ -176,31 +229,72 @@ compose_down_sidecar() {
 
 download_bootstrap_file() {
 	local name=$1 dest=$2 partial="${2}.part"
-	local attempt curl_rc delay
+	local label="${name}" attempt curl_rc delay headers curl_pid started elapsed bytes total last_report
+	case "${name}" in
+		"${LENSNODE_IMAGE_ARCHIVE}") label="AI engine image bundle" ;;
+		"${SIDECAR_INSTALL_SCRIPT}") label="AI engine installer" ;;
+	esac
 	[[ "${DOWNLOAD_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] \
 		|| hfl_fail "HFL_GATEWAY_DOWNLOAD_MAX_ATTEMPTS must be a positive integer" 2
 	[[ "${DOWNLOAD_RETRY_DELAY_SECONDS}" =~ ^[0-9]+$ ]] \
 		|| hfl_fail "HFL_GATEWAY_DOWNLOAD_RETRY_DELAY_SECONDS must be a non-negative integer" 2
 	mkdir -p "$(dirname "${dest}")"
-	hfl_log "Downloading ${name} from console."
 	for ((attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++)); do
 		curl_rc=0
-		if curl "${curl_tls[@]}" \
+		headers="${partial}.headers.$$"
+		rm -f "${headers}"
+		started=${SECONDS}; last_report=0
+		curl "${curl_tls[@]}" \
 			--fail --silent --show-error --location \
 			--continue-at - \
-			"${GATEWAY_BOOTSTRAP_BASE}/${name}" -o "${partial}"; then
+			--dump-header "${headers}" "${GATEWAY_BOOTSTRAP_BASE}/${name}" -o "${partial}" &
+		curl_pid=$!
+		while kill -0 "${curl_pid}" 2>/dev/null; do
+			total="$(hfl_download_header_size "${headers}")"
+			if [[ -f "${partial}" ]]; then
+				bytes="$(wc -c <"${partial}")"
+			else
+				bytes=0
+			fi
+			elapsed=$((SECONDS - started))
+			if ((elapsed > last_report)); then
+				if [[ -t 1 && "${TERM:-}" != "dumb" && -z "${NO_COLOR:-}" ]]; then
+					printf '\r%s\033[K' "$(hfl_download_progress_line "${label}" "${bytes}" "${total}" "${elapsed}")"
+				else
+					printf '%s\n' "$(hfl_download_progress_line "${label}" "${bytes}" "${total}" "${elapsed}")"
+				fi
+				last_report=${elapsed}
+			fi
+			sleep 1
+		done
+		if wait "${curl_pid}"; then
+			curl_rc=0
+		else
+			curl_rc=$?
+		fi
+		if ((curl_rc == 0)); then
 			if [[ ! -s "${partial}" ]]; then
 				hfl_log "warning: ${name} download produced an empty file (attempt ${attempt}/${DOWNLOAD_MAX_ATTEMPTS})"
 			else
+				bytes="$(wc -c <"${partial}")"
+				total="$(hfl_download_header_size "${headers}")"
+				elapsed=$((SECONDS - started))
+				((elapsed > 0)) || elapsed=1
+				if [[ -t 1 && "${TERM:-}" != "dumb" && -z "${NO_COLOR:-}" ]]; then
+					printf '\r%s\033[K\n' "$(hfl_download_progress_line "${label}" "${bytes}" "${total}" "${elapsed}")"
+				else
+					printf '%s\n' "$(hfl_download_progress_line "${label}" "${bytes}" "${total}" "${elapsed}")"
+				fi
+				rm -f "${headers}"
 				mv -f "${partial}" "${dest}"
-				hfl_log "Downloaded ${name} ($(wc -c <"${dest}") bytes)."
+				hfl_log "Downloaded ${label} ($(hfl_format_bytes "${bytes}"))."
 				chmod +x "${dest}" 2>/dev/null || true
 				return 0
 			fi
 		else
-			curl_rc=$?
 			hfl_log "warning: ${name} download interrupted (attempt ${attempt}/${DOWNLOAD_MAX_ATTEMPTS}, curl=${curl_rc}, partial=$(wc -c <"${partial}" 2>/dev/null || printf 0) bytes)"
 		fi
+		rm -f "${headers}"
 
 		if [[ ("${curl_rc}" -eq 33 || "${curl_rc}" -eq 36) && -s "${partial}" ]]; then
 			hfl_log "warning: server rejected the resume request for ${name}; retrying once from byte zero"

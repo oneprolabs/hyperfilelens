@@ -35,11 +35,10 @@ func TestInstallPs1DoesNotRemoveInstallParent(t *testing.T) {
 	}
 }
 
-func TestInstallPs1SafeDataPathRequiresHyperFileLensDescendant(t *testing.T) {
+func TestInstallPs1SafeDataPathAllowsCanonicalAgentRoot(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	for _, want := range []string{
 		`(Join-Path $env:ProgramData "HyperFileLens\Agent")`,
-		`$allowedRoot.TrimEnd('\') + '\'`,
 		`Test-HflPathContainsReparsePoint -Path $full`,
 		`[System.IO.FileAttributes]::ReparsePoint`,
 	} {
@@ -49,6 +48,10 @@ func TestInstallPs1SafeDataPathRequiresHyperFileLensDescendant(t *testing.T) {
 	}
 	if strings.Contains(source, `StartsWith($pd.TrimEnd('\') + '\HyperFileLens'`) {
 		t.Fatal("safe data path check must enforce a path-component boundary")
+	}
+	if !strings.Contains(source, "$normalizedFull.Equals(") ||
+		!strings.Contains(source, "$normalizedAllowedRoot + '\\'") {
+		t.Fatal("safe data path check must allow the canonical Agent Root itself")
 	}
 }
 
@@ -63,6 +66,13 @@ func TestInstallPs1UsesFixedUserDataDirectory(t *testing.T) {
 		if !strings.Contains(source, want) {
 			t.Fatalf("install.ps1 missing fixed user data rule %q", want)
 		}
+	}
+}
+
+func TestInstallPs1KeepsAgentEnvKeysOnSeparateLines(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	if !strings.Contains(source, "$updated = @(foreach ($line in @($Lines.Value)) {") {
+		t.Fatal("Set-HflEnvLine must preserve an array when updating a single agent.env line")
 	}
 }
 
@@ -100,6 +110,7 @@ func TestInstallPs1SupportsSpecifiedUserContinuousTask(t *testing.T) {
 		`$InstallationMode -eq "account"`,
 		`New-ScheduledTaskTrigger -AtStartup`,
 		`-LogonType S4U`,
+		`-RunLevel Limited`,
 		`-UserId $RunAsUser`,
 		`Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_RUN_AS_USER" -Value $RunAsUser`,
 		`Set-HflEnvLine -Lines ([ref]$lines) -Key "HFL_RUN_AS_HOME" -Value $RunAsHome`,
@@ -111,6 +122,9 @@ func TestInstallPs1SupportsSpecifiedUserContinuousTask(t *testing.T) {
 		if !strings.Contains(source, want) {
 			t.Fatalf("install.ps1 missing specified-user continuous task contract %q", want)
 		}
+	}
+	if strings.Contains(source, "requires a non-administrator account") {
+		t.Fatal("specified-user mode must allow an Administrators-group account when the task runs with RunLevel Limited")
 	}
 }
 

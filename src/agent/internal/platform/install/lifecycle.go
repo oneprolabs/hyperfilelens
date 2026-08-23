@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/vfs"
 )
 
@@ -77,7 +78,7 @@ func runUninstall(ctx context.Context, bundleDir string, keepData, keepInstallat
 }
 
 func upgradeCommand(archivePath string) (string, []string) {
-	installDir := DefaultInstallDir()
+	installDir := vfs.LifecycleInstallDirForMode(model.InstallationModeSystem)
 	if runtime.GOOS == "windows" {
 		return filepath.Join(installDir, "install.ps1"), []string{"upgrade", "-From", archivePath}
 	}

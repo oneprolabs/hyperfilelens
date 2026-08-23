@@ -1,5 +1,6 @@
 import { computed, onScopeDispose, ref, watch, type ComputedRef, type Ref } from 'vue'
 
+import { apiErrorMessage } from '../lib/api'
 import {
   cancelCopilotScopePreview,
   fetchCopilotScopePreview,
@@ -511,7 +512,7 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
         && generation === currentGeneration.value
         && !controller.signal.aborted
       ) {
-        admissionError.value = (error as { message?: string })?.message || 'Unable to verify Chat capacity.'
+        admissionError.value = apiErrorMessage(error, 'Unable to verify Chat capacity.')
         admissionRetryable.value = isRetryableError(error)
       }
     } finally {

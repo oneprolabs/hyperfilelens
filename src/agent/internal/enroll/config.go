@@ -81,7 +81,7 @@ func firstNonEmptyValue(values ...string) string {
 
 // LoadInstalledCommandEnv supplies local lifecycle commands from agent.env.
 func LoadInstalledCommandEnv() {
-	envPath := EnvFilePath()
+	envPath := installedEnvPath()
 	for _, key := range []string{
 		"HFL_WSS_URL",
 		"HFL_API_BASE",
@@ -108,7 +108,7 @@ func LoadInstalledCommandEnv() {
 
 // AgentConfig converts to model.AgentConfig for release/register APIs.
 func (c Config) AgentConfig() *model.AgentConfig {
-	envPath := EnvFilePath()
+	envPath := installedEnvPath()
 	return &model.AgentConfig{
 		WSSURL:           c.WSSURL,
 		APIBaseURL:       c.APIBase,

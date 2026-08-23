@@ -29,6 +29,16 @@ type InstallState struct {
 func DetectInstallState() InstallState {
 	installDir := install.DefaultInstallDir()
 	bin := filepath.Join(installDir, agentBinaryName())
+	legacy := false
+	if info, err := os.Stat(bin); err != nil || info.IsDir() {
+		if legacyBin := legacyAgentBinaryPath(); legacyBin != "" {
+			if legacyInfo, legacyErr := os.Stat(legacyBin); legacyErr == nil && !legacyInfo.IsDir() {
+				bin = legacyBin
+				installDir = filepath.Dir(legacyBin)
+				legacy = true
+			}
+		}
+	}
 	info, err := os.Stat(bin)
 	if err != nil || info.IsDir() {
 		return InstallState{}
@@ -36,20 +46,63 @@ func DetectInstallState() InstallState {
 
 	state := InstallState{Installed: true}
 	versionRoot := filepath.Dir(installDir)
-	if filepath.Base(installDir) != "bin" {
+	if legacy || filepath.Base(installDir) != "bin" {
 		versionRoot = installDir
 	}
 	if data, err := os.ReadFile(vfs.AgentInstalledVersionPath(versionRoot)); err == nil {
 		state.Version = strings.TrimSpace(string(data))
 	}
 
-	envPath := EnvFilePath()
+	envPath := installedEnvPath()
 	state.NodeID = ReadNodeID(envPath)
 	state.OrgKey = readEnvKey(envPath, "HFL_ORG_KEY")
 	state.Role = readEnvKey(envPath, "HFL_NODE_ROLE")
 	state.InstallationMode = readEnvKey(envPath, "HFL_INSTALLATION_MODE")
 	state.Service = serviceState(context.Background())
 	return state
+}
+
+// legacyAgentBinaryPath returns the pre-unified machine-wide Agent binary.
+// It is intentionally used only for upgrade discovery. New installations and
+// all runtime paths continue to use the canonical Agent Root.
+func legacyAgentBinaryPath() string {
+	if runtime.GOOS != "linux" || vfs.UserInstallation() {
+		return ""
+	}
+	return filepath.Join("/opt", vfs.UnixProductSlug, agentBinaryName())
+}
+
+// legacyAgentEnvPath returns the pre-unified Linux machine-wide state file.
+func legacyAgentEnvPath() string {
+	if runtime.GOOS != "linux" || vfs.UserInstallation() {
+		return ""
+	}
+	return filepath.Join("/var/lib", vfs.UnixProductSlug, "agent.env")
+}
+
+// installedEnvPath prefers the canonical Agent Root, but falls back to the
+// old machine-wide state file during the first cross-layout upgrade. Reading
+// the old identity before generating a new one keeps the same console Node.
+func installedEnvPath() string {
+	canonical := EnvFilePath()
+	legacy := legacyAgentEnvPath()
+	if legacy == "" {
+		return canonical
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		return canonical
+	}
+	if _, err := os.Stat(canonical); err != nil {
+		return legacy
+	}
+	// A canonical env file can be staged before the old database is migrated.
+	// In that partial state the old env remains authoritative, even if the
+	// staged file already contains a newly generated identity.
+	canonicalDB := filepath.Join(vfs.AgentDataStoreDir(dataDirForAgent()), "agent.db")
+	if _, err := os.Stat(canonicalDB); err != nil {
+		return legacy
+	}
+	return canonical
 }
 
 // ConflictingInstallPath returns the other lifecycle mode installed for the

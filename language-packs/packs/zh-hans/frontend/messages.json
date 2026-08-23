@@ -3843,7 +3843,7 @@
     "installationModeAccount": "指定用户文件 · 持续保护",
     "installationModeSystemDescription": "保护主机上配置的文件，并在没有用户登录时保持 Agent 运行。",
     "installationModeUserDescription": "保护当前账号可以读取的文件，并在该账号登录期间运行。",
-    "installationModeAccountDescription": "保护指定普通账号可以读取的文件，即使该账号注销也继续运行。",
+    "installationModeAccountDescription": "保护指定账号可以读取的文件，即使该账号注销也继续运行；Agent 以该账号的受限（非提升）权限运行。",
     "installationModeSystemScope": "配置的主机文件",
     "installationModeUserScope": "当前账号可读取的文件",
     "installationModeAccountScope": "指定账号可读取的文件",
@@ -3867,13 +3867,13 @@
       "macos": "适用于个人 Mac"
     },
     "installationModeAccountRecommendation": {
-      "linux": "适用于 Linux 服务器上的业务账号",
-      "windows": "适用于 Windows Server 或共享电脑上的指定账号",
-      "macos": "适用于长期在线 Mac 上的指定账号"
+      "linux": "高级模式 · Linux 服务器上的业务账号",
+      "windows": "高级模式 · Windows Server 或共享电脑上的指定账号",
+      "macos": "高级模式 · 长期在线 Mac 上的指定账号"
     },
     "installationModeSystemHint": "安装时需一次管理员授权。之后 Agent 以主机服务运行并持续上报监控数据。",
     "installationModeUserHint": "请以当前登录用户运行命令。无需管理员权限；当前账号无法读取的文件不会纳入备份。",
-    "installationModeAccountHint": "安装时需要管理员授权并指定要保护的普通账号。之后 Agent 以该账号权限持续运行；不采集该账号的登录密码。",
+    "installationModeAccountHint": "安装时需要管理员授权并指定要保护的账号。之后 Agent 以该账号的受限（非提升）权限持续运行；不采集该账号的登录密码。在线升级和卸载需要在主机上执行管理员命令。",
     "osMetaLinux": "主流发行版 · x86_64 或 ARM64",
     "osMetaWindows": "Win 10/11 · Server 2016+ · 仅 64 位",
     "osMetaMacos": "Intel 或 Apple Silicon",

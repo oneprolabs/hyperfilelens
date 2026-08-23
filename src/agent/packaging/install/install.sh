@@ -2099,10 +2099,19 @@ cmd_upgrade() {
 		ensure_agent_layout "${DATA_DIR}"
 		legacy_upgrade=1
 	elif is_installed && legacy_layout_present; then
-		# The new bin/ tree may be active while the old flat program/data paths
-		# remain from an earlier migration. Archive those paths, but never copy
-		# them over the already authoritative unified state during an upgrade.
-		legacy_residue=1
+		# A first upgrade can have the new binary in place while the old
+		# /var/lib state is still authoritative. Only archive legacy paths when
+		# the canonical env and database are both complete; otherwise migrate
+		# them before merging the target package so installation identity and
+		# local task state are preserved.
+		if [[ ! -f "$(agent_env_file "${DEFAULT_DATA}")" ]] \
+			|| [[ ! -f "$(agent_data_store_dir "${DEFAULT_DATA}")/agent.db" ]]; then
+			DATA_DIR="${DEFAULT_DATA}"
+			ensure_agent_layout "${DATA_DIR}"
+			legacy_upgrade=1
+		else
+			legacy_residue=1
+		fi
 	fi
 	if ! is_installed && [[ "${legacy_upgrade}" -eq 0 ]]; then
 		local command_prefix=""

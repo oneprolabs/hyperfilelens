@@ -18,6 +18,59 @@ func TestJoinDetail(t *testing.T) {
 	}
 }
 
+func TestEmitDetailLineKeepsShortDetailsOnOneLine(t *testing.T) {
+	t.Setenv("HFL_OUTPUT", "plain")
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("COLUMNS", "120")
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	emitDetailLine(" OK ", "CPU architecture is supported", "amd64", writePipe)
+	_ = writePipe.Close()
+	content, err := io.ReadAll(readPipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readPipe.Close()
+	output := string(content)
+	if !strings.Contains(output, "[ OK ] CPU architecture is supported · amd64\n") {
+		t.Fatalf("short detail was not kept inline: %q", output)
+	}
+	if strings.Count(output, "\n") != 1 {
+		t.Fatalf("short detail produced extra lines: %q", output)
+	}
+}
+
+func TestEmitDetailLineWrapsLongDetails(t *testing.T) {
+	t.Setenv("HFL_OUTPUT", "plain")
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("COLUMNS", "50")
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	emitDetailLine(" OK ", "Disk space sufficient", "C:\\Program Files\\HyperFileLens\\Agent 43.7 GB free", writePipe)
+	_ = writePipe.Close()
+	content, err := io.ReadAll(readPipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readPipe.Close()
+	output := string(content)
+	if !strings.Contains(output, "[ OK ] Disk space sufficient\n         C:\\Program Files\\HyperFileLens\\Agent") {
+		t.Fatalf("long detail was not wrapped: %q", output)
+	}
+}
+
+func TestWindowsPowerShellCommandUsesAbsoluteQuotedPath(t *testing.T) {
+	got := windowsPowerShellCommand(`C:\Users\O'Brien\AppData\Local\HyperFileLens\Agent\bin\install.cmd`)
+	want := `& 'C:\Users\O''Brien\AppData\Local\HyperFileLens\Agent\bin\install.cmd'`
+	if got != want {
+		t.Fatalf("windowsPowerShellCommand() = %q, want %q", got, want)
+	}
+}
+
 func TestHumanBytes(t *testing.T) {
 	if humanBytes(2048) != "2.0 KB" {
 		t.Fatalf("got %q", humanBytes(2048))

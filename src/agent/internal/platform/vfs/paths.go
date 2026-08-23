@@ -158,6 +158,51 @@ func InstallDirForMode(mode model.InstallationMode) string {
 	return filepath.Join(SystemAgentRoot(), "bin")
 }
 
+// LifecycleInstallDirForMode returns the directory that contains the lifecycle
+// installer (install.ps1/install.sh). The executable directory is not always
+// that directory: unified releases keep binaries in AgentRoot/bin while the
+// installer remains at AgentRoot. The executable and legacy candidates are
+// checked first so a pre-mode system installation can upgrade in place.
+func LifecycleInstallDirForMode(mode model.InstallationMode) string {
+	candidates := make([]string, 0, 5)
+	if executable, err := os.Executable(); err == nil {
+		dir := filepath.Clean(filepath.Dir(executable))
+		candidates = append(candidates, dir)
+		if strings.EqualFold(filepath.Base(dir), "bin") {
+			candidates = append(candidates, filepath.Dir(dir))
+		}
+	}
+	if mode == model.InstallationModeUser {
+		if root, err := UserDataDir(); err == nil {
+			candidates = append(candidates, root)
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			candidates = append(candidates, LegacyUserInstallDirForHome(home))
+		}
+	} else {
+		candidates = append(candidates, SystemAgentRoot(), LegacySystemInstallDir())
+	}
+	for _, candidate := range candidates {
+		if lifecycleScriptExists(candidate) {
+			return candidate
+		}
+	}
+	return AgentRootForMode(mode)
+}
+
+func lifecycleScriptExists(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+	for _, name := range []string{"install.ps1", "install.sh"} {
+		if _, err := os.Stat(filepath.Join(root, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // AgentDataDirForMode returns the canonical Agent Root for a persisted mode.
 // The historical DataDir name is kept for CLI and environment compatibility.
 func AgentDataDirForMode(mode model.InstallationMode) string {

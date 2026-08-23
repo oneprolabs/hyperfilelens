@@ -97,8 +97,31 @@ func emitDetailLine(level, title, detail string, writer io.Writer) {
 		emitLine(level, joinDetail(title, detail), writer)
 		return
 	}
+	inline := title + " · " + detail
+	if detailFitsTerminal(level, inline, writer) {
+		emitLine(level, inline, writer)
+		return
+	}
 	emitLine(level, title, writer)
 	_, _ = fmt.Fprintf(writer, "         %s\n", detail)
+}
+
+func detailFitsTerminal(level, message string, writer io.Writer) bool {
+	columns := terminalColumns(writer)
+	if columns <= 0 {
+		// Pipes and redirected output should not acquire artificial line breaks.
+		// The persisted log remains complete and the receiving terminal can wrap
+		// naturally when it renders the stream.
+		return true
+	}
+	// emitLine prefixes the message with two spaces, a five-character status
+	// token in brackets, and one separator space.
+	prefixWidth := 2 + len("[") + len(level) + len("] ")
+	return prefixWidth+displayWidth(message) <= columns
+}
+
+func displayWidth(value string) int {
+	return len([]rune(value))
 }
 
 func logInfo(message string) { emitLine("INFO", message, os.Stdout) }
@@ -417,6 +440,7 @@ func printEnrollmentSuccess(info SummaryInfo) {
 			"console_state": "online",
 			"install_path":  info.InstallPath,
 			"data_path":     info.DataPath,
+			"config_path":   filepath.Join(info.DataPath, "config"),
 			"log_file":      info.LogPath,
 		})
 		return
@@ -430,8 +454,9 @@ func printEnrollmentSuccess(info SummaryInfo) {
 	printSummaryValue("Service state", info.Service)
 	printSummaryValue("AI engine", info.LensNode)
 	printSummaryValue("Console state", "online")
-	printSummaryValue("Install path", info.InstallPath)
-	printSummaryValue("Data path", info.DataPath)
+	printSummaryValue("Agent root", info.DataPath)
+	printSummaryValue("Binaries", info.InstallPath)
+	printSummaryValue("Config", filepath.Join(info.DataPath, "config"))
 	printSummaryValue("Log file", info.LogPath)
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Next step")
@@ -443,35 +468,52 @@ func printEnrollmentSuccess(info SummaryInfo) {
 		fmt.Fprintln(os.Stdout, "  protection policies.")
 	}
 	fmt.Fprintln(os.Stdout)
+	printAgentLifecycleCommands(info)
+}
+
+func printAgentLifecycleCommands(info SummaryInfo) {
 	fmt.Fprintln(os.Stdout, "Useful commands")
+	printSummaryValue("CLI path", filepath.Join(info.InstallPath, installerScriptName()))
 	if runtime.GOOS == "windows" {
+		command := windowsPowerShellCommand(filepath.Join(info.InstallPath, installerScriptName()))
 		if vfs.UserInstallation() {
-			fmt.Fprintln(os.Stdout, "  Get-ScheduledTask -TaskName HyperFileLensAgent")
-			fmt.Fprintln(os.Stdout, `  & "$env:LOCALAPPDATA\HyperFileLens\Agent\bin\install.cmd" status`)
+			printSummaryValue("Task status", "schtasks.exe /Query /TN HyperFileLensAgent /FO LIST")
 		} else {
-			fmt.Fprintln(os.Stdout, "  sc.exe query HyperFileLensAgent")
-			fmt.Fprintln(os.Stdout, "  Get-Service HyperFileLensAgent")
-			fmt.Fprintln(os.Stdout, `  & "$env:ProgramData\HyperFileLens\Agent\bin\install.cmd" status`)
+			printSummaryValue("Service status", "sc.exe query HyperFileLensAgent")
 		}
-	} else if runtime.GOOS == "darwin" {
-		if vfs.UserInstallation() {
-			fmt.Fprintln(os.Stdout, `  launchctl print "gui/$(id -u)/com.hyperfilelens.agent"`)
-			fmt.Fprintln(os.Stdout, `  "$HOME/Library/Application Support/HyperFileLens/Agent/bin/install.sh" status`)
-		} else {
-			fmt.Fprintln(os.Stdout, "  launchctl print system/com.hyperfilelens.agent")
-			fmt.Fprintln(os.Stdout, `  sudo "/Library/Application Support/HyperFileLens/Agent/bin/install.sh" status`)
-		}
-	} else {
-		if vfs.UserInstallation() {
-			fmt.Fprintln(os.Stdout, "  systemctl --user status hyperfilelens-agent")
-			fmt.Fprintln(os.Stdout, "  journalctl --user -u hyperfilelens-agent -f")
-			fmt.Fprintln(os.Stdout, `  "${XDG_DATA_HOME:-$HOME/.local/share}/hyperfilelens-agent/bin/install.sh" status`)
-		} else {
-			fmt.Fprintln(os.Stdout, "  systemctl status hyperfilelens-agent")
-			fmt.Fprintln(os.Stdout, "  journalctl -u hyperfilelens-agent -f")
-			fmt.Fprintln(os.Stdout, "  sudo /opt/hyperfilelens-agent/bin/install.sh status")
-		}
+		printSummaryValue("Agent status", command+" status")
+		printSummaryValue("Uninstall", command+" uninstall")
+		printSummaryValue("Purge all", command+" uninstall -PurgeAll")
+		return
 	}
+
+	var lifecycleStatus string
+	if runtime.GOOS == "darwin" {
+		if vfs.UserInstallation() {
+			lifecycleStatus = `launchctl print "gui/$(id -u)/com.hyperfilelens.agent"`
+		} else {
+			lifecycleStatus = "launchctl print system/com.hyperfilelens.agent"
+		}
+	} else if vfs.UserInstallation() {
+		lifecycleStatus = "systemctl --user status hyperfilelens-agent"
+	} else {
+		lifecycleStatus = "systemctl status hyperfilelens-agent"
+	}
+	printSummaryValue("Service status", lifecycleStatus)
+	command := strconv.Quote(filepath.Join(info.InstallPath, installerScriptName()))
+	if !vfs.UserInstallation() {
+		command = "sudo " + command
+	}
+	printSummaryValue("Agent status", command+" status")
+	printSummaryValue("Uninstall", command+" uninstall")
+	printSummaryValue("Purge all", command+" uninstall --purge-all")
+}
+
+// windowsPowerShellCommand returns a copyable PowerShell invocation for a
+// lifecycle script. Backslashes are literal in PowerShell, while apostrophes
+// need doubling inside a single-quoted string.
+func windowsPowerShellCommand(path string) string {
+	return "& '" + strings.ReplaceAll(path, "'", "''") + "'"
 }
 
 func printAlreadyEnrolled(info SummaryInfo) {

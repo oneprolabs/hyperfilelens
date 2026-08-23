@@ -67,6 +67,7 @@ def resolve_platform_default_gateway_link() -> LensGatewayLink | None:
             organization=org,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             sl_lensnode_uuid__isnull=False,
+            is_deleted=False,
         )
         .select_related("gateway")
         .order_by("-is_platform_default", "created_at", "id")

@@ -68,7 +68,7 @@ func ScheduleDetachedUninstall(
 			_ = AppendUninstallLog(logDir, msg)
 		}
 	}
-	if err := startWindowsDetachedScript(scriptPath, logFn); err != nil {
+	if err := startWindowsDetachedScript(scriptPath, userInstall, logFn); err != nil {
 		return fmt.Errorf("start detached uninstall: %w", err)
 	}
 	return nil
@@ -268,8 +268,11 @@ function Test-SafeAgentDataPath {
     $allowedRoot = [System.IO.Path]::GetFullPath(
       (Join-Path $env:ProgramData 'HyperFileLens\Agent')
     ).TrimEnd('\')
-    return $full.StartsWith(
-      $allowedRoot.TrimEnd('\') + '\',
+    return $full.Equals(
+      $allowedRoot,
+      [System.StringComparison]::OrdinalIgnoreCase
+    ) -or $full.StartsWith(
+      $allowedRoot + '\',
       [System.StringComparison]::OrdinalIgnoreCase
     )
   } catch {
@@ -343,6 +346,10 @@ function Remove-AgentDataDirectory {
 Log "detached uninstall script started install_dir=$install data_dir=$data keep_data=$keep"
 $ErrorActionPreference = 'Stop'
 try {
+  # The detached runner must pass the selected lifecycle mode to install.cmd.
+  # This keeps online user-mode removal deterministic even if an older
+  # agent.env was written with malformed line boundaries.
+  $env:HFL_INSTALLATION_MODE = if ($userInstall) { 'user' } else { 'system' }
   Start-Sleep -Seconds $SLEEP_SECONDS
   Log "delay elapsed; running uninstall"
   try {

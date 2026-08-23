@@ -19,6 +19,7 @@ if [[ "${1:-}" == "--retry-connrefused" && "${2:-}" == "--version" ]]; then
 	exit 2
 fi
 output=""
+headers=""
 while (($#)); do
 	printf '%s\n' "$1" >>"${HFL_TEST_CURL_LOG}"
 	case "$1" in
@@ -27,10 +28,18 @@ while (($#)); do
 		printf '%s\n' "${2-}" >>"${HFL_TEST_CURL_LOG}"
 		shift 2
 		;;
+	--dump-header)
+		headers=${2-}
+		printf '%s\n' "${2-}" >>"${HFL_TEST_CURL_LOG}"
+		shift 2
+		;;
 	*) shift ;;
 	esac
 done
 [[ -n "${output}" ]] || exit 2
+if [[ -n "${headers}" ]]; then
+	printf 'HTTP/1.1 200 OK\r\nContent-Length: 27\r\n\r\n' >"${headers}"
+fi
 printf 'bootstrap-download-fixture\n' >"${output}"
 if [[ "${HFL_TEST_CURL_FAIL:-0}" == "1" ]]; then
 	exit 7
@@ -47,9 +56,14 @@ export HFL_TEST_CURL_SUPPORT_RETRY_CONNREFUSED=1
 
 destination="${tmp}/hfl-enroll"
 output="$(hfl_download "HyperFileLens enrollment helper" https://example.invalid/helper "${destination}" 2>&1)"
-grep -F '[....] Downloading HyperFileLens enrollment helper.' <<<"${output}" >/dev/null
+grep -F '[....] HyperFileLens enrollment helper' <<<"${output}" >/dev/null
+grep -F '[####################] | 100% | 27 B / 27 B' <<<"${output}" >/dev/null
 grep -F '[ OK ] HyperFileLens enrollment helper downloaded (' <<<"${output}" >/dev/null
 grep -Fx -- '--silent' "${HFL_TEST_CURL_LOG}" >/dev/null
+if grep -Fx -- '--progress-bar' "${HFL_TEST_CURL_LOG}" >/dev/null; then
+	printf 'ERROR: bootstrap must not expose curl native progress output\n' >&2
+	exit 1
+fi
 grep -Fx -- '--retry' "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx -- '--retry-connrefused' "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx 'bootstrap-download-fixture' "${destination}" >/dev/null

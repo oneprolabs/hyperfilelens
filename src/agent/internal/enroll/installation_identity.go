@@ -7,7 +7,7 @@ import (
 )
 
 func installationID(_ context.Context, cfg Config) (string, error) {
-	return resolveInstallationID(EnvFilePath(), cfg)
+	return resolveInstallationID(installedEnvPath(), cfg)
 }
 
 func resolveInstallationID(envPath string, cfg Config) (string, error) {

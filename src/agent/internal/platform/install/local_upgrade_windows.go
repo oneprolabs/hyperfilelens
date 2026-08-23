@@ -51,7 +51,7 @@ func ScheduleDetachedUpgrade(
 			_ = AppendUpgradeLog(logDir, msg)
 		}
 	}
-	if err := startWindowsDetachedScript(scriptPath, logFn); err != nil {
+	if err := startWindowsDetachedScript(scriptPath, userInstall, logFn); err != nil {
 		logFn(fmt.Sprintf("failed to start detached upgrade script: %v", err))
 		return fmt.Errorf("start detached upgrade: %w", err)
 	}

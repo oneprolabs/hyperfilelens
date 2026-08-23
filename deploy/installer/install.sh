@@ -45,6 +45,8 @@ INSTALLER_LOCK_ACQUIRED=0
 DRAINED_WS_INSTANCES=""
 LOCAL_PLATFORM_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent/bin"
 LOCAL_PLATFORM_AGENT_DATA_DIR="/opt/hyperfilelens-agent"
+LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR="/opt/hyperfilelens-agent"
+LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR="/var/lib/hyperfilelens-agent"
 LOCAL_PLATFORM_LENSNODE_ENV_FILE="/etc/hyperfilelens/lensnode.env"
 LOCAL_PLATFORM_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
 
@@ -4156,7 +4158,7 @@ check_local_platform_gateway_continuity() {
 	if ! platform_gateway_auto_deploy_enabled; then
 		return 0
 	fi
-	if [[ ! -f "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env" ]]; then
+	if [[ ! -f "$(local_platform_gateway_agent_env_file)" ]]; then
 		skip "Installer-managed platform Gateway is not installed; bootstrap follows the control-plane upgrade"
 		return 0
 	fi
@@ -4171,14 +4173,50 @@ check_local_platform_gateway_continuity() {
 }
 
 read_agent_env_value() {
-	local key=$1 env_file="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
+	local key=$1 env_file
+	env_file="$(local_platform_gateway_agent_env_file)"
 	[[ -f "${env_file}" ]] || return 0
 	grep -E "^${key}=" "${env_file}" 2>/dev/null \
 		| head -1 | cut -d= -f2- | tr -d '\r' || true
 }
 
+local_platform_gateway_agent_env_file() {
+	local canonical="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
+	local legacy="${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}/agent.env"
+	if [[ -f "${canonical}" && ( -f "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data/agent.db" || ! -f "${legacy}" ) ]]; then
+		printf '%s' "${canonical}"
+		return 0
+	fi
+	if [[ -f "${legacy}" ]]; then
+		printf '%s' "${legacy}"
+		return 0
+	fi
+	printf '%s' "${canonical}"
+}
+
+local_platform_gateway_agent_installer() {
+	local canonical="${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh"
+	if [[ -f "${canonical}" && ! -L "${canonical}" ]]; then
+		printf '%s' "${canonical}"
+		return 0
+	fi
+	local legacy="${LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR}/install.sh"
+	if [[ -f "${legacy}" && ! -L "${legacy}" ]]; then
+		printf '%s' "${legacy}"
+		return 0
+	fi
+	printf '%s' "${canonical}"
+}
+
+local_platform_gateway_agent_has_unified_layout() {
+	[[ -f "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env" \
+		&& -f "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data/agent.db" \
+		&& -f "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh" ]]
+}
+
 local_platform_gateway_agent_is_managed() {
-	local env_file="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
+	local env_file
+	env_file="$(local_platform_gateway_agent_env_file)"
 	[[ ! -L "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" \
 		&& ! -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}" \
 		&& -f "${env_file}" && ! -L "${env_file}" ]] || return 1
@@ -4187,7 +4225,8 @@ local_platform_gateway_agent_is_managed() {
 }
 
 uninstall_managed_local_platform_gateway() {
-	local installer="${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh"
+	local installer
+	installer="$(local_platform_gateway_agent_installer)"
 	local container_id=""
 	local_platform_gateway_agent_is_managed || return 1
 	[[ -f "${installer}" && ! -L "${installer}" ]] \
@@ -4280,6 +4319,9 @@ wait_for_local_platform_gateway_readiness() {
 
 local_platform_gateway_installed_agent_version() {
 	local version_file="${LOCAL_PLATFORM_AGENT_DATA_DIR}/INSTALLED_VERSION"
+	if [[ ! -f "${version_file}" ]]; then
+		version_file="${LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR}/INSTALLED_VERSION"
+	fi
 	[[ -f "${version_file}" ]] || return 0
 	tr -d ' \t\r\n' <"${version_file}"
 }
@@ -4314,7 +4356,7 @@ upgrade_local_platform_gateway_agent() {
 	local desired=$1 archive install_script marker
 	archive="$(local_platform_gateway_agent_archive "${desired}")" \
 		|| die "no exact local platform Gateway Agent archive exists for ${desired}"
-	install_script="${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh"
+	install_script="$(local_platform_gateway_agent_installer)"
 	marker="${ROOT}/data/.platform-gateway-agent-upgrade"
 	[[ -f "${install_script}" && ! -L "${install_script}" ]] \
 		|| die "installer-managed local platform Gateway has no trusted Agent installer"
@@ -4452,6 +4494,11 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		installed_version="$(local_platform_gateway_installed_agent_version)"
 		if [[ "${installed_version}" == "${desired_version}" ]]; then
 			skip "Local platform Gateway Agent already uses ${desired_version}"
+		elif ! local_platform_gateway_agent_has_unified_layout; then
+			# The current enrollment helper must perform the first old-layout
+			# migration. Running the legacy installer here would upgrade files in
+			# place and bypass identity/state migration.
+			skip "Legacy platform Gateway layout will be migrated by the Agent installer"
 		else
 			upgrade_local_platform_gateway_agent "${desired_version}"
 		fi
@@ -5916,7 +5963,8 @@ cmd_uninstall() {
 	fi
 	if [[ -e "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" || -L "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" \
 		|| -e "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env" \
-		|| -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env" ]]; then
+		|| -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env" \
+		|| -e "${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}/agent.env" ]]; then
 		local_agent_present=1
 	fi
 	if local_platform_gateway_agent_is_managed; then

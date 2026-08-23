@@ -1421,6 +1421,13 @@ ensure_local_platform_gateway_dev() {
 
 	local command_output parsed org_key token api_base wss_url managed_node_ids
 	local agent_env="/opt/hyperfilelens-agent/config/agent.env"
+	# During the first upgrade from the pre-unified Linux layout, the durable
+	# identity is still under /var/lib. Read it for local-install ownership
+	# checks; the Agent installer performs the actual state migration.
+	if [[ -f "/var/lib/hyperfilelens-agent/agent.env" \
+		&& ( ! -f "${agent_env}" || ! -f "/opt/hyperfilelens-agent/data/agent.db" ) ]]; then
+		agent_env="/var/lib/hyperfilelens-agent/agent.env"
+	fi
 	set +e
 	command_output="$(compose exec -T api python manage.py ensure_local_platform_gateway_enrollment 2>&1)"
 	local command_status=$?

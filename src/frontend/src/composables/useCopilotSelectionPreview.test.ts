@@ -381,6 +381,38 @@ describe('useCopilotSelectionPreview', () => {
     vueScope.stop()
   })
 
+  it('surfaces field details when admission validation is rejected', async () => {
+    vi.useFakeTimers()
+    mocks.previewCopilotAdmission.mockRejectedValue({
+      status: 400,
+      message: 'Validation failed',
+      code: 'VALIDATION.FAILED',
+      errorCode: 'VALIDATION.FAILED',
+      fields: {
+        gateway_link_id: ['HFL Gateway Agent is offline or not routable.'],
+      },
+    })
+    const known = scope('known', '/documents/file.txt')
+    known.pathType = 'file'
+    known.knownFileCount = 1
+    known.knownSizeBytes = 256
+    const vueScope = effectScope()
+    const preview = vueScope.run(() => useCopilotSelectionPreview({
+      snapshotId: ref(17),
+      gatewayLinkId: computed(() => 23),
+      gatewayMode: ref('auto'),
+      scopes: computed(() => [known]),
+    }))
+    if (!preview) throw new Error('preview scope was not created')
+
+    await vi.advanceTimersByTimeAsync(400)
+    await nextTick()
+
+    expect(preview.admissionError.value).toBe('HFL Gateway Agent is offline or not routable.')
+    expect(preview.ready.value).toBe(false)
+    vueScope.stop()
+  })
+
   it('reuses a completed data summary across a new selection revision', async () => {
     vi.useFakeTimers()
     mocks.startCopilotScopePreview.mockResolvedValue({

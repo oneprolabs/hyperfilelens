@@ -252,15 +252,6 @@ const osPickerOptions = computed(() => [
 // service mechanism for the chosen operating system.
 const installationModeOptions = computed(() => [
   {
-    value: 'account' as NodeInstallationMode,
-    title: t('nodeLifecycle.installationModeAccount'),
-    description: t('nodeLifecycle.installationModeAccountDescription'),
-    scope: t('nodeLifecycle.installationModeAccountScope'),
-    runtime: t('nodeLifecycle.installationModeAccountRuntime'),
-    permission: t('nodeLifecycle.installationModeAccountPermission'),
-    recommendation: t(`nodeLifecycle.installationModeAccountRecommendation.${props.os}`),
-  },
-  {
     value: 'user' as NodeInstallationMode,
     title: t('nodeLifecycle.installationModeUser'),
     description: t('nodeLifecycle.installationModeUserDescription'),
@@ -268,6 +259,15 @@ const installationModeOptions = computed(() => [
     runtime: t('nodeLifecycle.installationModeUserRuntime'),
     permission: t('nodeLifecycle.installationModeUserPermission'),
     recommendation: t(`nodeLifecycle.installationModeUserRecommendation.${props.os}`),
+  },
+  {
+    value: 'account' as NodeInstallationMode,
+    title: t('nodeLifecycle.installationModeAccount'),
+    description: t('nodeLifecycle.installationModeAccountDescription'),
+    scope: t('nodeLifecycle.installationModeAccountScope'),
+    runtime: t('nodeLifecycle.installationModeAccountRuntime'),
+    permission: t('nodeLifecycle.installationModeAccountPermission'),
+    recommendation: t(`nodeLifecycle.installationModeAccountRecommendation.${props.os}`),
   },
   {
     value: 'system' as NodeInstallationMode,
@@ -1304,15 +1304,17 @@ defineExpose({ clearInstallCommand })
 
 .installation-mode-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+  align-items: stretch;
 }
 
 .installation-mode-card {
   display: flex;
   align-items: flex-start;
   min-width: 0;
-  height: auto;
+  min-height: 224px;
+  height: 100%;
   margin: 0;
   padding: 14px 16px;
   white-space: normal;
@@ -1322,6 +1324,7 @@ defineExpose({ clearInstallCommand })
   display: block;
   min-width: 0;
   width: 100%;
+  height: 100%;
   padding-left: 8px;
   white-space: normal;
 }
@@ -1329,7 +1332,9 @@ defineExpose({ clearInstallCommand })
 .installation-mode-card__content {
   display: grid;
   gap: 6px;
+  height: 100%;
   min-width: 0;
+  grid-template-rows: auto auto auto 1fr;
 }
 
 .installation-mode-card__title {
@@ -1363,9 +1368,19 @@ defineExpose({ clearInstallCommand })
   font-weight: 600;
 }
 
+@media (max-width: 920px) {
+  .installation-mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 680px) {
   .installation-mode-grid {
     grid-template-columns: 1fr;
+  }
+
+  .installation-mode-card {
+    min-height: 0;
   }
 }
 

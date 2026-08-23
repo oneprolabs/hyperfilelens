@@ -21,12 +21,25 @@ func psSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-// startWindowsDetachedScript launches scriptPath outside the agent service job object.
-func startWindowsDetachedScript(scriptPath string, logFn func(string)) error {
+// startWindowsDetachedScript launches scriptPath outside the Agent process job.
+//
+// Task Scheduler is the primary launcher on Windows. A process created by the
+// Agent can inherit a kill-on-close Job Object, and CREATE_BREAKAWAY_FROM_JOB
+// is not guaranteed to be permitted for every service/user installation. The
+// scheduler service is the stable boundary that survives the Agent stopping
+// itself for upgrade or uninstall.
+func startWindowsDetachedScript(scriptPath string, userInstall bool, logFn func(string)) error {
 	scriptPath = strings.TrimSpace(scriptPath)
 	if scriptPath == "" {
 		return fmt.Errorf("script path required")
 	}
+	schedulerErr := scheduleWindowsTaskRunner(scriptPath, userInstall, logFn)
+	if schedulerErr == nil {
+		return nil
+	} else if logFn != nil {
+		logFn(fmt.Sprintf("Task Scheduler launch unavailable; trying detached process: %v", schedulerErr))
+	}
+
 	// Start-Process fully detaches from the service process tree (launchd/systemd analogue).
 	bootstrap := fmt.Sprintf(
 		"Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',%s) -WindowStyle Hidden",
@@ -43,19 +56,10 @@ func startWindowsDetachedScript(scriptPath string, logFn func(string)) error {
 		CreationFlags: windowsCreateNewProcessGroup | windowsCreateBreakawayFromJob,
 	}
 	if err := cmd.Start(); err != nil {
-		// A current-user Agent is itself attached to a kill-on-close Job Object.
-		// Windows may reject CREATE_BREAKAWAY_FROM_JOB for that task. Register a
-		// one-shot Task Scheduler task from a short-lived child instead; the
-		// Task Scheduler service then launches the runner outside the Agent job.
-		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-			if logFn != nil {
-				logFn("breakaway launch was denied; falling back to a one-shot Task Scheduler runner")
-			}
-			if fallbackErr := scheduleWindowsTaskRunner(scriptPath, logFn); fallbackErr == nil {
-				return nil
-			} else {
-				return fmt.Errorf("start detached script launcher: %w; Task Scheduler fallback failed: %v", err, fallbackErr)
-			}
+		// A Job Object may reject CREATE_BREAKAWAY_FROM_JOB. The scheduler was
+		// already attempted above, so return both errors for actionable logs.
+		if errors.Is(err, windows.ERROR_ACCESS_DENIED) || strings.Contains(strings.ToLower(err.Error()), "access is denied") {
+			return fmt.Errorf("start detached script launcher: %w; Task Scheduler launch failed: %v", err, schedulerErr)
 		}
 		return fmt.Errorf("start detached script launcher: %w", err)
 	}
@@ -68,24 +72,25 @@ func startWindowsDetachedScript(scriptPath string, logFn func(string)) error {
 	return nil
 }
 
-// scheduleWindowsTaskRunner registers a temporary interactive task. Unlike a
+// scheduleWindowsTaskRunner registers a temporary task. Unlike a
 // process started by the Agent, the Task Scheduler service does not inherit
 // the Agent's kill-on-close Job Object, so it survives the Agent restart.
-func scheduleWindowsTaskRunner(scriptPath string, logFn func(string)) error {
+func scheduleWindowsTaskRunner(scriptPath string, userInstall bool, logFn func(string)) error {
 	scriptPath = strings.TrimSpace(scriptPath)
 	if scriptPath == "" {
 		return fmt.Errorf("script path required")
 	}
 	taskName := "HyperFileLensAgent.DetachedRunner"
+	principal := scheduledTaskPrincipal(userInstall)
 	bootstrap := fmt.Sprintf(`$taskName = %s
 $script = %s
 $actionArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " + [char]34 + $script + [char]34
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $actionArgs
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(5)
-$principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
+%s
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-`, psSingleQuote(taskName), psSingleQuote(scriptPath))
+`, psSingleQuote(taskName), psSingleQuote(scriptPath), principal)
 	cmd := exec.Command(
 		"powershell.exe",
 		"-NoProfile",
@@ -104,4 +109,11 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Pr
 		logFn(fmt.Sprintf("registered one-shot Task Scheduler upgrade runner task=%s", taskName))
 	}
 	return nil
+}
+
+func scheduledTaskPrincipal(userInstall bool) string {
+	if userInstall {
+		return `$principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited`
+	}
+	return `$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest`
 }

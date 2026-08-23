@@ -103,7 +103,7 @@ func WriteNodeCredential(envPath, credential string) error {
 }
 
 func installedNodeCredential() string {
-	envPath := EnvFilePath()
+	envPath := installedEnvPath()
 	return firstNonEmptyValue(
 		readEnvKey(envPath, "HFL_NODE_CREDENTIAL"),
 		readEnvKey(envPath, "HFL_NODE_TOKEN"),

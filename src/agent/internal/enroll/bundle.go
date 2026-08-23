@@ -229,6 +229,13 @@ func agentInstallLogPath() string {
 // InstalledAgentVersion runs the installed hfl-agent -version.
 func InstalledAgentVersion(ctx context.Context) (string, error) {
 	bin := filepath.Join(install.DefaultInstallDir(), agentBinaryName())
+	if _, err := os.Stat(bin); err != nil {
+		if legacy := legacyAgentBinaryPath(); legacy != "" {
+			if _, legacyErr := os.Stat(legacy); legacyErr == nil {
+				bin = legacy
+			}
+		}
+	}
 	cmd := exec.CommandContext(ctx, bin, "-version")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

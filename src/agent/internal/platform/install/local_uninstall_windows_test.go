@@ -224,6 +224,7 @@ func TestWriteWindowsUserUninstallScriptUsesCurrentUserLifecycle(t *testing.T) {
 	body := string(raw)
 	for _, want := range []string{
 		`$userInstall = $true`,
+		`$env:HFL_INSTALLATION_MODE = if ($userInstall) { 'user' } else { 'system' }`,
 		`Stop-ScheduledTask -TaskName HyperFileLensAgent`,
 		`Get-ScheduledTask -TaskName HyperFileLensAgent`,
 		`Unregister-ScheduledTask -TaskName HyperFileLensAgent`,
