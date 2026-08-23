@@ -3,6 +3,7 @@ package enroll
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -46,14 +47,31 @@ func LoadConfigFromEnv() (Config, error) {
 	if installationMode.UserScoped() && role != model.RoleAgent {
 		return Config{}, fmt.Errorf("user-scoped installation is only available for Source Agent")
 	}
+	runAsUser := strings.TrimSpace(os.Getenv("HFL_RUN_AS_USER"))
+	runAsHome := strings.TrimSpace(os.Getenv("HFL_RUN_AS_HOME"))
+	// Account mode is commonly started by a non-root user with `sudo` (the
+	// bootstrap command shown in the console).  The elevated process must
+	// retain that user's identity so the non-interactive bootstrap can install
+	// the service without waiting for an answer on stdin, which is occupied by
+	// the piped shell script.  Never infer root as the protected account.
+	if installationMode == model.InstallationModeAccount && runAsUser == "" {
+		if sudoUser := strings.TrimSpace(os.Getenv("SUDO_USER")); sudoUser != "" && sudoUser != "root" {
+			runAsUser = sudoUser
+		}
+	}
+	if installationMode == model.InstallationModeAccount && runAsHome == "" && runAsUser != "" {
+		if account, lookupErr := user.Lookup(runAsUser); lookupErr == nil {
+			runAsHome = account.HomeDir
+		}
+	}
 	cfg := Config{
 		OrgKey:           strings.TrimSpace(os.Getenv("HFL_ORG_KEY")),
 		NodeRole:         role,
 		NodeToken:        firstNonEmptyValue(os.Getenv("HFL_NODE_CREDENTIAL"), os.Getenv("HFL_NODE_TOKEN")),
 		InstallationID:   strings.TrimSpace(os.Getenv("HFL_INSTALLATION_ID")),
 		InstallationMode: installationMode,
-		RunAsUser:        strings.TrimSpace(os.Getenv("HFL_RUN_AS_USER")),
-		RunAsHome:        strings.TrimSpace(os.Getenv("HFL_RUN_AS_HOME")),
+		RunAsUser:        runAsUser,
+		RunAsHome:        runAsHome,
 		GatewayScope:     strings.TrimSpace(os.Getenv("HFL_GATEWAY_SCOPE")),
 		APIBase:          strings.TrimRight(strings.TrimSpace(os.Getenv("HFL_API_BASE")), "/"),
 		WSSURL:           strings.TrimSpace(os.Getenv("HFL_WSS_URL")),

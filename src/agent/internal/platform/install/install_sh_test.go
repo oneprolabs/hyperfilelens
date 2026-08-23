@@ -149,6 +149,8 @@ func TestInstallShellSupportsSpecifiedUserContinuousMode(t *testing.T) {
 	body := readPackagingInstallShell(t)
 	for _, want := range []string{
 		`INSTALLATION_MODE}" == "account"`,
+		`if [[ -t 0 ]]; then`,
+		`RUN_AS_USER="${RUN_AS_USER:-${default_run_as_user}}"`,
 		`sed -i "/^\[Service\]/a User=${RUN_AS_USER}"`,
 		`<key>UserName</key>`,
 		`set_agent_env_key "${env_file}" HFL_RUN_AS_USER "${RUN_AS_USER}"`,

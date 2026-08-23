@@ -3683,6 +3683,7 @@
   "nodeLifecycle.state.completed": "93dd2071680996134b12149ddd4885a4011ee64fe805d1c71f1c7ec5738904ff",
   "nodeLifecycle.osStep": "aefe3f39de4a01a2a99483ca74eed75e6805f752511d750195a14ab39629eb06",
   "nodeLifecycle.installationModeStep": "f2552e5cbd1c71cb3e4e53545f7c2c79ab1d43991dc741c5fbfa22f7a6378e95",
+  "nodeLifecycle.installationModeRecommended": "c15bc779fb222cbba4dc76aec7ca84bc7a01a8d006e1c1fdcae28b1baa159fe5",
   "nodeLifecycle.installationModeSystem": "009b4c661d21c9f0416fc688255dc9203b8a64ac788a1198a0182de86d140b65",
   "nodeLifecycle.installationModeUser": "3e998eb41eaa02d425fc2801d9562be29be0f886d81727b08ee773464962d911",
   "nodeLifecycle.installationModeAccount": "52febed47cb3e455cd60b6707da8cb9c5021a976c5f471d7fc542f9b3e3b3f3c",

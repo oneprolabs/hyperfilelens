@@ -16,7 +16,12 @@ import (
 
 // InstallState describes an existing agent installation on this host.
 type InstallState struct {
-	Installed        bool
+	Installed bool
+	// LegacyLayout is true when the pre-unified machine-wide layout was found.
+	// A legacy system installation must take the migration path even when its
+	// version matches the current release, otherwise Gateway setup can read the
+	// new agent.env path before the old identity has been copied.
+	LegacyLayout     bool
 	Version          string
 	NodeID           string
 	OrgKey           string
@@ -44,7 +49,7 @@ func DetectInstallState() InstallState {
 		return InstallState{}
 	}
 
-	state := InstallState{Installed: true}
+	state := InstallState{Installed: true, LegacyLayout: legacy}
 	versionRoot := filepath.Dir(installDir)
 	if legacy || filepath.Base(installDir) != "bin" {
 		versionRoot = installDir

@@ -3838,6 +3838,7 @@
     },
     "osStep": "选择目标操作系统",
     "installationModeStep": "选择保护方式",
+    "installationModeRecommended": "推荐",
     "installationModeSystem": "主机文件 · 持续保护",
     "installationModeUser": "当前用户文件",
     "installationModeAccount": "指定用户文件 · 持续保护",

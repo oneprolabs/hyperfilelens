@@ -1718,6 +1718,7 @@ export const en = {
     },
     osStep: 'Select Target Operating System',
     installationModeStep: 'Choose Protection Mode',
+    installationModeRecommended: 'Recommended',
     installationModeSystem: 'Host files · continuous protection',
     installationModeUser: 'Current user files',
     installationModeAccount: 'Specified user files · continuous protection',

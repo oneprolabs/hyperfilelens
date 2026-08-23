@@ -1929,7 +1929,12 @@ cmd_install() {
 	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
 		if [[ -z "${RUN_AS_USER}" ]]; then
 			local default_run_as_user="${SUDO_USER:-}"
-			read -r -p "Enter the existing ordinary account to protect${default_run_as_user:+ [${default_run_as_user}]}: " RUN_AS_USER
+			# Bootstrap is normally invoked as `sudo bash -s`, so stdin is the
+			# bootstrap script rather than an interactive terminal. Prefer the
+			# invoking sudo account and only prompt when a terminal is available.
+			if [[ -t 0 ]]; then
+				read -r -p "Enter the existing ordinary account to protect${default_run_as_user:+ [${default_run_as_user}]}: " RUN_AS_USER || true
+			fi
 			RUN_AS_USER="${RUN_AS_USER:-${default_run_as_user}}"
 		fi
 		[[ -n "${RUN_AS_USER}" ]] || log_fail "An account is required for specified-user continuous protection." 2

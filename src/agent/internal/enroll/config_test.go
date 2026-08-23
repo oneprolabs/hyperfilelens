@@ -1,6 +1,7 @@
 package enroll
 
 import (
+	"os/user"
 	"testing"
 
 	"hyperfilelens/agent/internal/model"
@@ -53,6 +54,46 @@ func TestLoadConfigAcceptsSpecifiedUserContinuousSourceAgent(t *testing.T) {
 	}
 	if cfg.InstallationMode != model.InstallationModeAccount || cfg.RunAsUser != "backup-user" {
 		t.Fatalf("specified-user config = mode %q, account %q", cfg.InstallationMode, cfg.RunAsUser)
+	}
+}
+
+func TestLoadConfigInfersSpecifiedUserFromSudoInvoker(t *testing.T) {
+	invokingAccount, err := user.Current()
+	if err != nil || invokingAccount.Username == "root" {
+		t.Skip("requires a non-root local account")
+	}
+	setRequiredEnrollmentEnv(t)
+	t.Setenv("HFL_NODE_ROLE", "agent")
+	t.Setenv("HFL_INSTALLATION_MODE", "account")
+	t.Setenv("HFL_RUN_AS_USER", "")
+	t.Setenv("HFL_RUN_AS_HOME", "")
+	t.Setenv("SUDO_USER", invokingAccount.Username)
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RunAsUser != invokingAccount.Username {
+		t.Fatalf("RunAsUser = %q, want sudo invoker", cfg.RunAsUser)
+	}
+	if cfg.RunAsHome != invokingAccount.HomeDir {
+		t.Fatalf("RunAsHome = %q, want %q", cfg.RunAsHome, invokingAccount.HomeDir)
+	}
+}
+
+func TestLoadConfigDoesNotInferRootAsSpecifiedUser(t *testing.T) {
+	setRequiredEnrollmentEnv(t)
+	t.Setenv("HFL_NODE_ROLE", "agent")
+	t.Setenv("HFL_INSTALLATION_MODE", "account")
+	t.Setenv("HFL_RUN_AS_USER", "")
+	t.Setenv("SUDO_USER", "root")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RunAsUser != "" {
+		t.Fatalf("RunAsUser = %q, root must not be selected", cfg.RunAsUser)
 	}
 }
 
