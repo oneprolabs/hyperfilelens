@@ -125,7 +125,8 @@ grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] \[ OK \] \[sourcelens\] Insight serv
 # A terminal that declares itself as dumb must not receive ANSI styling in
 # auto mode. Explicit HFL_LOG_COLOR=1/always remains an opt-in override.
 dumb_color_result="$({
-	TERM=dumb HFL_LOG_COLOR=auto source "${ROOT_REPO}/tools/lib/logging.sh"
+	export TERM=dumb HFL_LOG_COLOR=auto
+	source "${ROOT_REPO}/tools/lib/logging.sh"
 	if hfl_log_color_enabled; then
 		printf 'enabled'
 	else
@@ -234,5 +235,26 @@ if grep -F 'Password' <<<"${dev_output}" >/dev/null; then
 	echo 'Dev summary advertised credentials while HFL seeding was disabled' >&2
 	exit 1
 fi
+
+# The development target summary identifies the command, source revisions,
+# SourceLens mode, and both host/runtime platforms before lifecycle output.
+target_output="$({
+	source "${ROOT_REPO}/dev/stack.sh"
+	ROOT="${fixture}"
+	CMD=restart
+	restart_force=1
+	WITH_SOURCELENS=1
+	SOURCELENS_GIT_REF=v0.40.0
+	EXTENSION_SOURCES=("https://github.com/example/hyperfilelens-ee.git@v1.2.3")
+	LOG_FILE="${fixture}/build/logs/dev-restart.log"
+	print_dev_target
+} 2>&1)"
+grep -F '  Command        restart --force' <<<"${target_output}" >/dev/null
+grep -F '  Extension      remote Git source configured' <<<"${target_output}" >/dev/null
+grep -F '  Extension rev  v1.2.3' <<<"${target_output}" >/dev/null
+grep -F '  SourceLens     bundled / v0.40.0' <<<"${target_output}" >/dev/null
+grep -F '  Host platform  ' <<<"${target_output}" >/dev/null
+grep -F '  Runtime        linux/amd64' <<<"${target_output}" >/dev/null
+grep -F '  Session log    build/logs/dev-restart.log' <<<"${target_output}" >/dev/null
 
 printf 'Lifecycle output contract checks passed.\n'

@@ -871,30 +871,82 @@ read_env_value_or() {
 	fi
 }
 
+extension_revision() {
+	local source=${1:-} ref location branch commit
+	if [[ "${source}" == git@* ]]; then
+		case "${source}" in
+		*@*@*) ref="${source##*@}" ;;
+		esac
+		printf '%s' "${ref:-default}"
+		return 0
+	fi
+	if [[ "${source}" == http://* || "${source}" == https://* ]]; then
+		if [[ "${source}" == *@* ]]; then
+			ref="${source##*@}"
+		else
+			ref="default"
+		fi
+		printf '%s' "${ref}"
+		return 0
+	fi
+
+	location="${source}"
+	if [[ -d "${location}" ]]; then
+		branch="$(git -C "${location}" branch --show-current 2>/dev/null || true)"
+		commit="$(git -C "${location}" rev-parse --short=12 HEAD 2>/dev/null || true)"
+		if [[ -n "${commit}" ]]; then
+			printf '%s' "${branch:-detached} (${commit})"
+		else
+			printf '%s' "unversioned"
+		fi
+	else
+		printf '%s' "unknown"
+	fi
+}
+
 print_dev_target() {
-	local edition="Community" branch commit source display
+	local edition="Community" branch commit source display ext_label ext_rev
+	local command="${CMD:-unknown}" sourcelens_mode sourcelens_ref
+	local host_platform runtime_platform
 	[[ ${#EXTENSION_SOURCES[@]} -eq 0 ]] || edition="Enterprise"
 	branch="$(git -C "${ROOT}" branch --show-current 2>/dev/null || true)"
 	commit="$(git -C "${ROOT}" rev-parse --short=12 HEAD 2>/dev/null || true)"
+	if [[ "${command}" == "restart" && "${restart_force:-0}" == "1" ]]; then
+		command="restart --force"
+	fi
+	host_platform="$(uname -s | tr '[:upper:]' '[:lower:]')/$(uname -m)"
+	runtime_platform="${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
 	hfl_print_section "Target"
+	hfl_print_value "Command" "${command}"
 	hfl_print_value "Edition" "${edition}"
 	hfl_print_value "OSS source" "${ROOT}"
 	hfl_print_value "OSS revision" "${branch:-detached} (${commit:-unknown})"
 	if [[ ${#EXTENSION_SOURCES[@]} -eq 0 ]]; then
-		hfl_print_value "Extensions" "none"
+		hfl_print_value "Extension" "none"
 	else
 		for source in "${EXTENSION_SOURCES[@]}"; do
+			ext_label="Extension"
+			ext_rev="Extension rev"
 			if [[ "${source}" == http://* || "${source}" == https://* ]]; then
 				display="remote Git source configured"
 			else
 				display="${source}"
 			fi
-			hfl_print_value "Extension" "${display}"
+			hfl_print_value "${ext_label}" "${display}"
+			hfl_print_value "${ext_rev}" "$(extension_revision "${source}")"
 		done
 	fi
-	hfl_print_value "SourceLens" "$([[ "${WITH_SOURCELENS}" -eq 1 ]] && printf '%s' "${SOURCELENS_GIT_REF}" || printf 'disabled')"
-	hfl_print_value "Platform" "$(uname -s | tr '[:upper:]' '[:lower:]')/$(uname -m)"
-	hfl_print_value "Log file" "${LOG_FILE#${ROOT}/}"
+	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
+		sourcelens_mode="$(read_env_value_or SOURCELENS_MODE bundled "${ROOT}/.env" | tr 'A-Z' 'a-z')"
+		sourcelens_ref="${SOURCELENS_GIT_REF:-v0.40.0}"
+		hfl_print_value "SourceLens" "${sourcelens_mode} / ${sourcelens_ref}"
+	else
+		hfl_print_value "SourceLens" "disabled"
+	fi
+	hfl_print_value "Host platform" "${host_platform}"
+	hfl_print_value "Runtime" "${runtime_platform}"
+	hfl_print_value "Session log" "${LOG_FILE#${ROOT}/}"
+	printf '\n'
 }
 
 print_urls() {
