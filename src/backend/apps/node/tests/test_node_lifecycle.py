@@ -505,6 +505,70 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(len(preview["eligible"]), 1)
         self.assertEqual(preview["eligible"][0]["target_version"], "1.2.0")
 
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
+    def test_preview_batch_upgrade_reports_required_free_space(self, _routable):
+        self.node.metadata = {
+            "capabilities": ["detached_uninstall_v2"],
+            "disk_total_bytes": 100 * 1024**3,
+            "disk_free_bytes": 400 * 1024**2,
+        }
+        self.node.save(update_fields=["metadata", "updated_at"])
+
+        preview = preview_batch_operations(
+            org=self.org,
+            node_ids=[self.node.id],
+            kind="upgrade",
+        )
+
+        self.assertEqual(preview["eligible"], [])
+        self.assertEqual(len(preview["skipped_disk_full"]), 1)
+        self.assertEqual(
+            preview["skipped_disk_full"][0],
+            {
+                "node_id": self.node.id,
+                "name": self.node.name,
+                "reason": "disk_full",
+                "failure_type": "minimum_free_bytes",
+                "disk_free_bytes": 400 * 1024**2,
+                "required_free_bytes": 512 * 1024**2,
+                "disk_used_percent": 99.6,
+                "max_disk_used_percent": 90.0,
+                "check_scope": "agent_storage",
+            },
+        )
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
+    def test_preview_batch_upgrade_reports_disk_usage_limit(self, _routable):
+        self.node.metadata = {
+            "capabilities": ["detached_uninstall_v2"],
+            "disk_total_bytes": 100 * 1024**3,
+            "disk_free_bytes": 5 * 1024**3,
+        }
+        self.node.save(update_fields=["metadata", "updated_at"])
+
+        preview = preview_batch_operations(
+            org=self.org,
+            node_ids=[self.node.id],
+            kind="upgrade",
+        )
+
+        self.assertEqual(preview["eligible"], [])
+        self.assertEqual(preview["skipped_disk_full"][0]["failure_type"], "maximum_used_percent")
+        self.assertEqual(preview["skipped_disk_full"][0]["disk_used_percent"], 95.0)
+        self.assertEqual(preview["skipped_disk_full"][0]["disk_free_bytes"], 5 * 1024**3)
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
+    @patch("apps.node.services.internal.node_lifecycle.validate_agent_upgrade", return_value="1.2.0")
+    def test_preview_batch_upgrade_ignores_missing_disk_metrics(self, _validate, _routable):
+        preview = preview_batch_operations(
+            org=self.org,
+            node_ids=[self.node.id],
+            kind="upgrade",
+        )
+
+        self.assertEqual(len(preview["eligible"]), 1)
+        self.assertEqual(preview["skipped_disk_full"], [])
+
     def test_upgrade_success_clears_lifecycle_when_version_differs(self):
         """Lifecycle is always cleared on SUCCESS — version was already verified
         by _advance_upgrade_verify before marking the task SUCCESS. A redundant

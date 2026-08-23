@@ -14,6 +14,7 @@ import type { NodeLifecycleScope } from '../lib/nodeApi'
 import { apiErrorMessage } from '../lib/api'
 import { parseSemver, semverCompare } from '../lib/agentVersion'
 import { logger } from '../lib/logger'
+import { buildUpgradeDiskSkipDetails } from '../lib/nodeLifecycleUpgradeConfirm'
 import type { ApiNode, NodeRole } from '../types/node'
 import type {
   LifecycleQueueItem,
@@ -470,7 +471,10 @@ export function useNodeLifecycleOps(options: {
 
   function explainIneligiblePreview(preview: NodeOperationBatchPreview) {
     if (preview.skipped_disk_full?.length) {
-      return t('nodeLifecycle.nothingEligibleDiskFull', { n: preview.skipped_disk_full.length })
+      return [
+        t('nodeLifecycle.nothingEligibleDiskFull', { n: preview.skipped_disk_full.length }),
+        ...buildUpgradeDiskSkipDetails(t, preview),
+      ].join(' ')
     }
     if (preview.skipped_proxy_bound.length) {
       return t('nodeLifecycle.nothingEligibleProxyBound', {
@@ -503,7 +507,15 @@ export function useNodeLifecycleOps(options: {
       ...fromRows(preview.skipped_in_progress || [], 'lifecycle_in_progress'),
       ...fromRows(preview.skipped_not_upgradeable || [], 'not_upgradeable'),
       ...fromRows(preview.skipped_proxy_bound || [], 'proxy_has_bindings'),
-      ...fromRows(preview.skipped_disk_full || [], 'disk_full'),
+      ...(preview.skipped_disk_full || []).map((item) => ({
+        node_id: item.node_id,
+        name: item.name,
+        code: item.reason || 'disk_full',
+        error: buildUpgradeDiskSkipDetails(t, {
+          ...preview,
+          skipped_disk_full: [item],
+        })[0],
+      })),
       ...(preview.missing_node_ids || []).map((nodeId) => ({
         node_id: nodeId,
         code: 'node_not_found',

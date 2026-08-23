@@ -88,7 +88,17 @@ export type NodeOperationBatchPreview = {
   skipped_in_progress: Array<{ node_id: number; name: string; reason: string }>
   skipped_not_upgradeable: Array<{ node_id: number; name: string; reason: string; message?: string }>
   skipped_proxy_bound: Array<{ node_id: number; name: string; reason: string }>
-  skipped_disk_full?: Array<{ node_id: number; name: string; reason: string }>
+  skipped_disk_full?: Array<{
+    node_id: number
+    name: string
+    reason: string
+    failure_type?: 'minimum_free_bytes' | 'maximum_used_percent' | string
+    disk_free_bytes?: number | null
+    required_free_bytes?: number | null
+    disk_used_percent?: number | null
+    max_disk_used_percent?: number | null
+    check_scope?: string
+  }>
   missing_node_ids: number[]
   max_concurrent: number
 }
