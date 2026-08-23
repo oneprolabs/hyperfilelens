@@ -76,6 +76,26 @@ func PlanInstall(
 	hasNode := strings.TrimSpace(state.NodeID) != ""
 
 	dl, releaseVer, releaseErr := release.FetchDownloadURL(ctx, cfg.AgentConfig())
+	// A legacy machine-wide installation is a supported upgrade boundary. Do
+	// not classify a healthy, same-version Gateway as already enrolled: the
+	// installer must migrate agent.env/agent.db and install the unified paths
+	// before Gateway sidecar setup reads the node identity.
+	if legacyLayoutRequiresMigration(state, mode) {
+		releaseLabel := strings.TrimSpace(releaseVer)
+		if releaseLabel == "" {
+			releaseLabel = "the current console release"
+		}
+		return ReinstallPlan{
+			Action:         ActionUpgrade,
+			NeedsConfirm:   true,
+			ReleaseVersion: releaseVer,
+			DownloadURL:    dl,
+			ConfirmMessage: fmt.Sprintf(
+				"Migrate the existing Agent to the unified installation layout using %s? The service will be interrupted briefly.",
+				releaseLabel,
+			),
+		}, nil
+	}
 	if mode == InstallModeUpgrade || mode == InstallModeReinstall {
 		if releaseErr != nil {
 			return ReinstallPlan{}, releaseErr
@@ -148,4 +168,8 @@ func PlanInstall(
 		NeedsConfirm:   true,
 		ConfirmMessage: "The agent is installed but not registered with the console. Bind this host now?",
 	}, nil
+}
+
+func legacyLayoutRequiresMigration(state InstallState, mode InstallMode) bool {
+	return state.Installed && state.LegacyLayout && mode == InstallModeAuto
 }

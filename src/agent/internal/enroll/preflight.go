@@ -476,9 +476,13 @@ func accountConstraint(cfg Config) error {
 		return nil
 	}
 	if strings.TrimSpace(cfg.RunAsUser) == "" {
-		// The native installer prompts for the target account after the
-		// elevated installation boundary is established.
-		return nil
+		// The enrollment bootstrap is non-interactive (normally `curl | sudo
+		// bash -s`), so there is no safe stdin prompt at this stage. The
+		// bootstrap must be launched by the ordinary account it is intended to
+		// protect, allowing SUDO_USER to identify that account.
+		return fmt.Errorf(
+			"the account to protect could not be determined; run the enrollment command as that ordinary user with sudo",
+		)
 	}
 	if runtime.GOOS == "windows" {
 		return nil

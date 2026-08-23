@@ -50,12 +50,15 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 		return err
 	}
 	commitInstallLog()
-	if credential := readEnvKey(EnvFilePath(), "HFL_NODE_CREDENTIAL"); credential != "" {
+	// During the first old-system-to-unified-root migration, the old env file
+	// remains authoritative until the installer has copied the identity.
+	envPath := installedEnvPath()
+	if credential := readEnvKey(envPath, "HFL_NODE_CREDENTIAL"); credential != "" {
 		cfg.NodeToken = credential
 	}
 	printPhase("Installing AI engine")
 
-	nodeID := strings.TrimSpace(ReadNodeID(EnvFilePath()))
+	nodeID := strings.TrimSpace(ReadNodeID(envPath))
 	if nodeID == "" {
 		logFail("Agent registered but node_id is missing from agent.env", 5)
 	}

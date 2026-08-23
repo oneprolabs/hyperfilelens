@@ -74,6 +74,14 @@ func TestUserSessionLifecycleConstraintDoesNotAffectSystemMode(t *testing.T) {
 	}
 }
 
+func TestAccountConstraintRequiresAResolvedAccount(t *testing.T) {
+	if err := accountConstraint(Config{
+		InstallationMode: model.InstallationModeAccount,
+	}); err == nil {
+		t.Fatal("expected account mode without a resolved account to be rejected")
+	}
+}
+
 func TestRequiredCommandsForWindows(t *testing.T) {
 	if commands := requiredCommandsFor("windows"); len(commands) != 0 {
 		t.Fatalf("Windows required commands=%v, want none", commands)
@@ -148,5 +156,40 @@ func TestPlanInstallRejectsProtectionModeSwitchInPlace(t *testing.T) {
 	plan, err := PlanInstall(context.Background(), cfg, state, InstallModeAuto)
 	if err == nil || plan.Action != "" {
 		t.Fatalf("mode switch plan = %#v, err=%v; want a rejected in-place switch", plan, err)
+	}
+}
+
+func TestLegacyLayoutIsMarkedForMigration(t *testing.T) {
+	tests := []struct {
+		name  string
+		state InstallState
+		mode  InstallMode
+		want  bool
+	}{
+		{
+			name:  "automatic enrollment migrates legacy system layout",
+			state: InstallState{Installed: true, LegacyLayout: true},
+			mode:  InstallModeAuto,
+			want:  true,
+		},
+		{
+			name:  "explicit repair does not silently migrate",
+			state: InstallState{Installed: true, LegacyLayout: true},
+			mode:  InstallModeRepair,
+			want:  false,
+		},
+		{
+			name:  "canonical layout does not migrate",
+			state: InstallState{Installed: true},
+			mode:  InstallModeAuto,
+			want:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := legacyLayoutRequiresMigration(tt.state, tt.mode); got != tt.want {
+				t.Fatalf("legacyLayoutRequiresMigration() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

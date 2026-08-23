@@ -56,9 +56,7 @@ const props = withDefaults(
     maintenanceOnly: false,
     initialServiceAction: 'status',
     generateOnDemand: false,
-    // Prefer the least-privileged option when a new Agent has no existing mode.
-    // Maintenance views pass the recorded node mode explicitly.
-    installationMode: 'user',
+    installationMode: undefined,
   },
 )
 
@@ -85,7 +83,13 @@ const copied = ref(false)
 const installGenerated = ref(false)
 const purgeAll = ref(false)
 const serviceAction = ref<'status' | 'start' | 'stop' | 'restart'>(props.initialServiceAction)
-const selectedInstallationMode = ref<NodeInstallationMode>(props.installationMode)
+const defaultInstallationModeForOs = (os: EnrollmentOs): NodeInstallationMode => (
+  os === 'linux' ? 'system' : 'user'
+)
+const selectedInstallationMode = ref<NodeInstallationMode>(
+  props.installationMode ?? defaultInstallationModeForOs(props.os),
+)
+const installationModeTouched = ref(props.installationMode != null)
 const effectiveInstallationMode = computed<NodeInstallationMode>(() => (
   props.role === 'agent' ? selectedInstallationMode.value : 'system'
 ))
@@ -259,6 +263,7 @@ const installationModeOptions = computed(() => [
     runtime: t('nodeLifecycle.installationModeUserRuntime'),
     permission: t('nodeLifecycle.installationModeUserPermission'),
     recommendation: t(`nodeLifecycle.installationModeUserRecommendation.${props.os}`),
+    recommended: defaultInstallationModeForOs(props.os) === 'user',
   },
   {
     value: 'account' as NodeInstallationMode,
@@ -268,6 +273,7 @@ const installationModeOptions = computed(() => [
     runtime: t('nodeLifecycle.installationModeAccountRuntime'),
     permission: t('nodeLifecycle.installationModeAccountPermission'),
     recommendation: t(`nodeLifecycle.installationModeAccountRecommendation.${props.os}`),
+    recommended: false,
   },
   {
     value: 'system' as NodeInstallationMode,
@@ -277,6 +283,7 @@ const installationModeOptions = computed(() => [
     runtime: t('nodeLifecycle.installationModeSystemRuntime'),
     permission: t('nodeLifecycle.installationModeSystemPermission'),
     recommendation: t(`nodeLifecycle.installationModeSystemRecommendation.${props.os}`),
+    recommended: defaultInstallationModeForOs(props.os) === 'system',
   },
 ])
 
@@ -475,7 +482,19 @@ watch(
 watch(
   () => props.installationMode,
   (mode) => {
-    selectedInstallationMode.value = mode
+    if (mode) {
+      selectedInstallationMode.value = mode
+      installationModeTouched.value = true
+    }
+  },
+)
+
+watch(
+  () => props.os,
+  (os) => {
+    if (!installationModeTouched.value && props.role === 'agent') {
+      selectedInstallationMode.value = defaultInstallationModeForOs(os)
+    }
   },
 )
 
@@ -883,6 +902,7 @@ defineExpose({ clearInstallCommand })
               v-model="selectedInstallationMode"
               class="installation-mode-grid"
               :aria-label="t('nodeLifecycle.installationModeStep')"
+              @change="installationModeTouched = true"
             >
               <ElRadio
                 v-for="option in installationModeOptions"
@@ -892,7 +912,15 @@ defineExpose({ clearInstallCommand })
                 class="installation-mode-card !mr-0"
               >
                 <span class="installation-mode-card__content">
-                  <strong class="installation-mode-card__title">{{ option.title }}</strong>
+                  <span class="installation-mode-card__title-row">
+                    <strong class="installation-mode-card__title">{{ option.title }}</strong>
+                    <span
+                      v-if="option.recommended"
+                      class="installation-mode-card__badge"
+                    >
+                      {{ t('nodeLifecycle.installationModeRecommended') }}
+                    </span>
+                  </span>
                   <span class="installation-mode-card__description">{{ option.description }}</span>
                   <span class="installation-mode-card__recommendation">{{ option.recommendation }}</span>
                   <span class="installation-mode-card__details">
@@ -1341,6 +1369,24 @@ defineExpose({ clearInstallCommand })
   color: var(--color-text-primary);
   font-size: 14px;
   line-height: 1.35;
+}
+
+.installation-mode-card__title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.installation-mode-card__badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--color-primary-light, #f2f0fe);
+  color: var(--color-primary, #6d5ef6);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .installation-mode-card__description,
