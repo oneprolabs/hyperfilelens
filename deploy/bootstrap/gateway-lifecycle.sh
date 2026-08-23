@@ -3,7 +3,7 @@
 # Published under /media/gateway-bootstrap/; invoked by hfl-enroll or detached agent scripts.
 set -euo pipefail
 
-ENV_FILE="${HFL_AGENT_ENV_FILE:-/var/lib/hyperfilelens-agent/agent.env}"
+ENV_FILE="${HFL_AGENT_ENV_FILE:-/opt/hyperfilelens-agent/config/agent.env}"
 LENS_ENV_FILE="${HFL_LENS_ENV_FILE:-/etc/hyperfilelens/lensnode.env}"
 COMPOSE_DIR="${HFL_GATEWAY_COMPOSE_DIR:-/etc/hyperfilelens/lensnode}"
 GATEWAY_BOOTSTRAP_BASE=""

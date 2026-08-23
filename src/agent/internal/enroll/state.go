@@ -35,7 +35,11 @@ func DetectInstallState() InstallState {
 	}
 
 	state := InstallState{Installed: true}
-	if data, err := os.ReadFile(filepath.Join(installDir, "INSTALLED_VERSION")); err == nil {
+	versionRoot := filepath.Dir(installDir)
+	if filepath.Base(installDir) != "bin" {
+		versionRoot = installDir
+	}
+	if data, err := os.ReadFile(vfs.AgentInstalledVersionPath(versionRoot)); err == nil {
 		state.Version = strings.TrimSpace(string(data))
 	}
 
@@ -54,6 +58,9 @@ func ConflictingInstallPath() string {
 	var candidate string
 	if vfs.UserInstallation() {
 		candidate = vfs.SystemInstallDir()
+		if !installMarkersPresent(candidate) {
+			candidate = vfs.LegacySystemInstallDir()
+		}
 	} else {
 		home := ""
 		if sudoUser := strings.TrimSpace(os.Getenv("SUDO_USER")); sudoUser != "" {
@@ -66,6 +73,9 @@ func ConflictingInstallPath() string {
 		}
 		if home != "" {
 			candidate = vfs.UserInstallDirForHome(home)
+			if !installMarkersPresent(candidate) {
+				candidate = vfs.LegacyUserInstallDirForHome(home)
+			}
 		}
 	}
 	if candidate == "" {
@@ -78,14 +88,21 @@ func ConflictingInstallPath() string {
 }
 
 func installMarkersPresent(installDir string) bool {
+	paths := []string{}
 	for _, name := range []string{
 		agentBinaryName(),
 		"install.sh",
 		"install.ps1",
 		"install.cmd",
-		"MANIFEST.json",
 	} {
-		info, err := os.Stat(filepath.Join(installDir, name))
+		paths = append(paths, filepath.Join(installDir, name))
+	}
+	root := filepath.Dir(installDir)
+	paths = append(paths, vfs.AgentManifestPath(root), vfs.AgentInstalledVersionPath(root))
+	// Legacy pre-unified installations kept metadata beside the binaries.
+	paths = append(paths, filepath.Join(installDir, "MANIFEST.json"), filepath.Join(installDir, "INSTALLED_VERSION"))
+	for _, path := range paths {
+		info, err := os.Stat(path)
 		if err == nil && !info.IsDir() {
 			return true
 		}

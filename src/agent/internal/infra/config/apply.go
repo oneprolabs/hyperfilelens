@@ -46,6 +46,8 @@ func applyEnvMap(cfg *model.AgentConfig, values map[string]string) error {
 				return fmt.Errorf("%s: %w", env, err)
 			}
 			cfg.InstallationMode = mode
+		case "agent_root":
+			cfg.AgentRoot = val
 		case "run_as_user":
 			cfg.RunAsUser = val
 		case "run_as_home":
@@ -126,6 +128,7 @@ func configToEnvMap(cfg *model.AgentConfig) map[string]string {
 	set("node_id", cfg.NodeID)
 	set("installation_id", cfg.InstallationID)
 	set("installation_mode", string(cfg.InstallationMode))
+	set("agent_root", cfg.AgentRoot)
 	set("run_as_user", cfg.RunAsUser)
 	set("run_as_home", cfg.RunAsHome)
 	set("node_token", cfg.NodeToken)

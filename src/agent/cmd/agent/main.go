@@ -52,7 +52,7 @@ func runDaemon(args []string) error {
 		printConfig  = fs.Bool("print-config", false, "print effective configuration and exit")
 		wssURL       = fs.String("wss-url", "", "control plane WebSocket URL (overrides HFL_WSS_URL)")
 		apiBase      = fs.String("api-base", "", "HTTPS API base for bootstrap (overrides HFL_API_BASE)")
-		dataDir      = fs.String("data-dir", "", "agent state directory (overrides HFL_DATA_DIR)")
+		dataDir      = fs.String("data-dir", "", "unified Agent root (overrides HFL_DATA_DIR)")
 		logDir       = fs.String("log-dir", "", "rolling log directory (overrides HFL_LOG_DIR; default: <data>/logs)")
 		kopiaPath    = fs.String("kopia-path", "", "path to kopia CLI (overrides HFL_KOPIA_PATH)")
 		orgKey       = fs.String("org-key", "", "organization key (overrides HFL_ORG_KEY)")

@@ -6,9 +6,9 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-EnvironmentFile=/var/lib/hyperfilelens-agent/agent.env
-WorkingDirectory=/opt/hyperfilelens-agent
-ExecStart=/opt/hyperfilelens-agent/hfl-agent run
+EnvironmentFile=/opt/hyperfilelens-agent/config/agent.env
+WorkingDirectory=/opt/hyperfilelens-agent/bin
+ExecStart=/opt/hyperfilelens-agent/bin/hfl-agent run
 Restart=always
 RestartSec=5
 TimeoutStopSec=30

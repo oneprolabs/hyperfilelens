@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-DEFAULT_AGENT_DATA_DIR = "/var/lib/hyperfilelens-agent"
+DEFAULT_AGENT_DATA_DIR = "/opt/hyperfilelens-agent"
 
 MOUNTS_DIR = "mounts"
 MOUNT_REPOSITORIES_DIR = "repositories"

@@ -3,7 +3,7 @@ package main
 import "testing"
 
 func TestParseDataDir(t *testing.T) {
-	path := `C:\Users\operator\AppData\Local\HyperFileLens\AgentData`
+	path := `C:\Users\operator\AppData\Local\HyperFileLens\Agent`
 	got, ok := parseDataDir([]string{"-data-dir", path})
 	if !ok || got != path {
 		t.Fatalf("parseDataDir() = %q, %v; want %q, true", got, ok, path)

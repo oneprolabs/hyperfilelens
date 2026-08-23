@@ -357,7 +357,7 @@ func printUninstallContext(
 
 func printUninstallSuccess(state InstallState, purgeAll bool) {
 	dataState := "preserved"
-	logState := filepath.Join(dataDirForAgent(), "logs", "uninstall.log")
+	logState := filepath.Join(vfs.AgentLogDir(dataDirForAgent()), "uninstall.log")
 	if purgeAll {
 		dataState = "removed"
 		logState = "removed with Agent data"
@@ -442,11 +442,11 @@ func printEnrollmentSuccess(info SummaryInfo) {
 	if runtime.GOOS == "windows" {
 		if vfs.UserInstallation() {
 			fmt.Fprintln(os.Stdout, "  Get-ScheduledTask -TaskName HyperFileLensAgent")
-			fmt.Fprintln(os.Stdout, `  & "$env:LOCALAPPDATA\Programs\HyperFileLens\Agent\install.cmd" status`)
+			fmt.Fprintln(os.Stdout, `  & "$env:LOCALAPPDATA\HyperFileLens\Agent\bin\install.cmd" status`)
 		} else {
 			fmt.Fprintln(os.Stdout, "  sc.exe query HyperFileLensAgent")
 			fmt.Fprintln(os.Stdout, "  Get-Service HyperFileLensAgent")
-			fmt.Fprintln(os.Stdout, `  & "$env:ProgramFiles\HyperFileLens\Agent\install.cmd" status`)
+			fmt.Fprintln(os.Stdout, `  & "$env:ProgramData\HyperFileLens\Agent\bin\install.cmd" status`)
 		}
 	} else if runtime.GOOS == "darwin" {
 		if vfs.UserInstallation() {
@@ -454,17 +454,17 @@ func printEnrollmentSuccess(info SummaryInfo) {
 			fmt.Fprintln(os.Stdout, `  "$HOME/Library/Application Support/HyperFileLens/Agent/bin/install.sh" status`)
 		} else {
 			fmt.Fprintln(os.Stdout, "  launchctl print system/com.hyperfilelens.agent")
-			fmt.Fprintln(os.Stdout, "  sudo /opt/hyperfilelens-agent/install.sh status")
+			fmt.Fprintln(os.Stdout, `  sudo "/Library/Application Support/HyperFileLens/Agent/bin/install.sh" status`)
 		}
 	} else {
 		if vfs.UserInstallation() {
 			fmt.Fprintln(os.Stdout, "  systemctl --user status hyperfilelens-agent")
 			fmt.Fprintln(os.Stdout, "  journalctl --user -u hyperfilelens-agent -f")
-			fmt.Fprintln(os.Stdout, `  "$HOME/.local/lib/hyperfilelens-agent/install.sh" status`)
+			fmt.Fprintln(os.Stdout, `  "${XDG_DATA_HOME:-$HOME/.local/share}/hyperfilelens-agent/bin/install.sh" status`)
 		} else {
 			fmt.Fprintln(os.Stdout, "  systemctl status hyperfilelens-agent")
 			fmt.Fprintln(os.Stdout, "  journalctl -u hyperfilelens-agent -f")
-			fmt.Fprintln(os.Stdout, "  sudo /opt/hyperfilelens-agent/install.sh status")
+			fmt.Fprintln(os.Stdout, "  sudo /opt/hyperfilelens-agent/bin/install.sh status")
 		}
 	}
 }
@@ -503,7 +503,7 @@ func printSummaryValue(label, value string) {
 }
 
 func installLogPath() string {
-	return filepath.Join(dataDirForAgent(), "logs", "install.log")
+	return filepath.Join(vfs.AgentLogDir(dataDirForAgent()), "install.log")
 }
 
 func jsonOutput() bool {

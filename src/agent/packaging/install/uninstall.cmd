@@ -2,7 +2,10 @@
 REM HyperFileLens Agent - double-click uninstall (UAC + confirmation dialog).
 setlocal EnableExtensions
 set "INSTALL_DIR=%~dp0"
-set "USER_INSTALL_DIR=%LOCALAPPDATA%\Programs\HyperFileLens\Agent\"
+REM The unified user Agent Root keeps binaries and all runtime siblings below
+REM %LOCALAPPDATA%\HyperFileLens\Agent.  Detect the mode from the installed
+REM bin directory so current-user uninstall does not request elevation.
+set "USER_INSTALL_DIR=%LOCALAPPDATA%\HyperFileLens\Agent\bin\"
 set "HFL_USER_MODE=0"
 if /I "%INSTALL_DIR%"=="%USER_INSTALL_DIR%" (
   set "HFL_USER_MODE=1"
@@ -55,8 +58,8 @@ exit /b %EC%
 :AppendUninstallLog
 set "LOG_MSG=%~1"
 powershell.exe -NoProfile -Command ^
-  "$data=if ($env:HFL_INSTALLATION_MODE -eq 'user') { $env:LOCALAPPDATA + '\HyperFileLens\AgentData' } else { $env:ProgramData + '\HyperFileLens\Agent' };" ^
-  "$envFile=Join-Path $data 'agent.env';" ^
+  "$data=if ($env:HFL_INSTALLATION_MODE -eq 'user') { $env:LOCALAPPDATA + '\HyperFileLens\Agent' } else { $env:ProgramData + '\HyperFileLens\Agent' };" ^
+  "$envFile=Join-Path (Join-Path $data 'config') 'agent.env';" ^
   "if (Test-Path -LiteralPath $envFile) { Get-Content -LiteralPath $envFile | ForEach-Object { if ($_ -match '^\s*HFL_DATA_DIR=(.+)$') { $data=$Matches[1].Trim() } } };" ^
   "$logDir=Join-Path $data 'logs';" ^
   "New-Item -ItemType Directory -Force -Path $logDir | Out-Null;" ^

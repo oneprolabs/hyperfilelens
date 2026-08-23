@@ -32,7 +32,10 @@ func ClearNodeTokenJSONOverride(dataDir string) error {
 	if dataDir == "" {
 		return fmt.Errorf("data directory is required")
 	}
-	path := jsonConfigPath(dataDir)
+	return clearNodeTokenJSONOverridePath(jsonConfigPath(dataDir))
+}
+
+func clearNodeTokenJSONOverridePath(path string) error {
 	update, err := readIdentityFile(path)
 	if err != nil || !update.exists {
 		return err

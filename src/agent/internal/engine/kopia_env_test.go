@@ -12,8 +12,8 @@ import (
 
 func TestManagedRepositoryCacheDirIsStableAndConfigScoped(t *testing.T) {
 	cfg := &model.AgentConfig{DataDir: t.TempDir()}
-	firstConfig := filepath.Join(cfg.DataDir, "kopia", "repositories", "repo-10.config")
-	secondConfig := filepath.Join(cfg.DataDir, "kopia", "repositories", "repo-11.config")
+	firstConfig := filepath.Join(cfg.DataDir, "cache", "repositories", "repo-10.config")
+	secondConfig := filepath.Join(cfg.DataDir, "cache", "repositories", "repo-11.config")
 
 	first := managedRepositoryCacheDir(cfg, firstConfig)
 	if repeated := managedRepositoryCacheDir(cfg, firstConfig); repeated != first {

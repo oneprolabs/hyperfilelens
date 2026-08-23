@@ -12,6 +12,7 @@ import (
 	agentconfig "hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/platform/atomicfile"
 	"hyperfilelens/agent/internal/platform/install"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 var managedSentryEnvKeys = []string{
@@ -193,6 +194,10 @@ func WriteEnrollmentEnv(cfg Config) error {
 	envPath := EnvFilePath()
 	dataDir := dataDirForAgent()
 	kopiaPath := bundledKopiaPath()
+	agentRoot := strings.TrimSpace(os.Getenv("HFL_AGENT_ROOT"))
+	if agentRoot == "" {
+		agentRoot = vfs.AgentRootForMode(cfg.InstallationMode)
+	}
 	insecure := "1"
 	if !cfg.InsecureTLS {
 		insecure = "0"
@@ -203,6 +208,7 @@ func WriteEnrollmentEnv(cfg Config) error {
 		"HFL_ORG_KEY=" + cfg.OrgKey,
 		"HFL_NODE_TOKEN=" + cfg.NodeToken,
 		"HFL_DATA_DIR=" + dataDir,
+		"HFL_AGENT_ROOT=" + agentRoot,
 		"HFL_NODE_ROLE=" + string(cfg.NodeRole),
 		"HFL_INSTALLATION_MODE=" + string(cfg.InstallationMode),
 		"HFL_KOPIA_PATH=" + kopiaPath,
@@ -234,6 +240,10 @@ func syncEnrollmentConsoleSettings(cfg Config) error {
 func syncEnrollmentConsoleSettingsAt(envPath string, cfg Config) error {
 	dataDir := dataDirForAgent()
 	kopiaPath := bundledKopiaPath()
+	agentRoot := strings.TrimSpace(os.Getenv("HFL_AGENT_ROOT"))
+	if agentRoot == "" {
+		agentRoot = vfs.AgentRootForMode(cfg.InstallationMode)
+	}
 	insecure := "1"
 	if !cfg.InsecureTLS {
 		insecure = "0"
@@ -243,6 +253,7 @@ func syncEnrollmentConsoleSettingsAt(envPath string, cfg Config) error {
 		"HFL_API_BASE":          cfg.APIBase,
 		"HFL_ORG_KEY":           cfg.OrgKey,
 		"HFL_DATA_DIR":          dataDir,
+		"HFL_AGENT_ROOT":        agentRoot,
 		"HFL_NODE_ROLE":         string(cfg.NodeRole),
 		"HFL_INSTALLATION_MODE": string(cfg.InstallationMode),
 		"HFL_KOPIA_PATH":        kopiaPath,

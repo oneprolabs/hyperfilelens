@@ -5,6 +5,7 @@ import {
   buildLocalUninstallCommand,
   buildLocalUpgradeCommand,
   defaultPackagePath,
+  installPathsSummary,
 } from './nodeInstallCommands'
 
 describe('node upgrade download TLS policy', () => {
@@ -51,6 +52,21 @@ describe('node upgrade download TLS policy', () => {
 })
 
 describe('manual node maintenance commands', () => {
+  it('shows unified machine Agent Roots for system installs', () => {
+    expect(installPathsSummary('windows')).toMatchObject({
+      installDir: 'C:\\ProgramData\\HyperFileLens\\Agent\\bin',
+      dataDir: 'C:\\ProgramData\\HyperFileLens\\Agent',
+    })
+    expect(installPathsSummary('macos')).toMatchObject({
+      installDir: '/Library/Application Support/HyperFileLens/Agent/bin',
+      dataDir: '/Library/Application Support/HyperFileLens/Agent',
+    })
+    expect(installPathsSummary('linux')).toMatchObject({
+      installDir: '/opt/hyperfilelens-agent/bin',
+      dataDir: '/opt/hyperfilelens-agent',
+    })
+  })
+
   it('uses administrator installation for specified-user continuous mode', () => {
     const command = buildLocalUpgradeCommand(
       'linux', '/tmp/hfl-agent.tar.gz', true,
@@ -70,7 +86,7 @@ describe('manual node maintenance commands', () => {
   it('restarts both Data Gateway services', () => {
     const command = buildLocalServiceCommand('linux', 'restart', 'gateway')
 
-    expect(command).toContain('/opt/hyperfilelens-agent/install.sh restart')
+    expect(command).toContain('/opt/hyperfilelens-agent/bin/install.sh restart')
     expect(command).toContain('docker compose -p hyperfilelens-gateway')
     expect(command).toContain('up -d')
   })
@@ -102,14 +118,14 @@ describe('manual node maintenance commands', () => {
   it('preserves local data unless purge is explicitly selected', () => {
     expect(buildLocalUninstallCommand('linux', false, 'agent')).not.toContain('--purge-all')
     expect(buildLocalUninstallCommand('linux', false, 'gateway')).toBe(
-      'sudo /opt/hyperfilelens-agent/install.sh uninstall',
+      'sudo /opt/hyperfilelens-agent/bin/install.sh uninstall',
     )
   })
 
   it.each([
     {
       os: 'linux' as const,
-      installScript: '"$HOME/.local/lib/hyperfilelens-agent/install.sh"',
+      installScript: '"${XDG_DATA_HOME:-$HOME/.local/share}/hyperfilelens-agent/bin/install.sh"',
     },
     {
       os: 'macos' as const,
@@ -152,8 +168,8 @@ describe('manual node maintenance commands', () => {
     const service = buildLocalServiceCommand('windows', 'restart', 'agent', 'user')
 
     for (const command of [upgrade, uninstall, service]) {
-      expect(command).toContain('$env:LOCALAPPDATA\\Programs\\HyperFileLens\\Agent\\install.cmd')
-      expect(command).not.toContain('$env:ProgramFiles')
+      expect(command).toContain('$env:LOCALAPPDATA\\HyperFileLens\\Agent\\bin\\install.cmd')
+      expect(command).not.toContain('$env:ProgramData')
       expect(command).not.toContain('Start-Service')
       expect(command).not.toContain('Restart-Service')
     }
@@ -168,7 +184,7 @@ describe('manual node maintenance commands', () => {
       buildLocalServiceCommand('windows', 'restart', 'agent', 'account'),
     ]
 
-    expect(commands.every((command) => command.includes('$env:ProgramFiles\\HyperFileLens\\Agent\\install.cmd'))).toBe(true)
+    expect(commands.every((command) => command.includes('$env:ProgramData\\HyperFileLens\\Agent\\bin\\install.cmd'))).toBe(true)
     expect(commands.join('\n')).not.toContain('Start-Service')
     expect(commands.join('\n')).not.toContain('Restart-Service')
   })

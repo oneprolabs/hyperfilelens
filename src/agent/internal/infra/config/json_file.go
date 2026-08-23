@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 const configJSONName = "config.json"
@@ -23,7 +25,7 @@ type JSONOverlay struct {
 }
 
 func jsonConfigPath(dataDir string) string {
-	return filepath.Join(dataDir, configJSONName)
+	return filepath.Join(vfs.AgentConfigDir(dataDir), configJSONName)
 }
 
 func readJSONOverlay(path string) (JSONOverlay, error) {

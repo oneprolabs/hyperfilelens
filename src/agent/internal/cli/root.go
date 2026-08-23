@@ -76,13 +76,13 @@ Config:
   hfl-agent config paths
   hfl-agent config retire-installation --data-dir PATH
 
-Repo registry (local SQLite at {HFL_DATA_DIR}/agent.db):
+Repo registry (local SQLite at {HFL_DATA_DIR}/data/agent.db):
   hfl-agent repo list [--json]
   hfl-agent repo connect <name> --config-file PATH [--description TEXT]
   hfl-agent repo disconnect <name>
   hfl-agent repo show <name> [--verify] [--json]
 
-Tasks (local SQLite at {HFL_DATA_DIR}/agent.db):
+Tasks (local SQLite at {HFL_DATA_DIR}/data/agent.db):
   hfl-agent tasks list [--status running|failed|...] [--unreported] [--json] [--limit N]
   hfl-agent tasks get <task-id> [--json]
   hfl-agent tasks set <task-id> --status failed --error "reason" [--result-json '{}'] [--reported true|false]
@@ -91,7 +91,7 @@ Tasks (local SQLite at {HFL_DATA_DIR}/agent.db):
   hfl-agent tasks flush [--mark-reported]   Report all unreported terminal tasks via WebSocket
 
 Environment:
-  Uses HFL_* variables and {HFL_DATA_DIR}/agent.env (same as the daemon).
+  Uses HFL_* variables and {HFL_DATA_DIR}/config/agent.env (same as the daemon).
   HFL_WSS_URL is optional at install; daemon waits idle until configured.
   Kopia CLI must be installed (PATH or HFL_KOPIA_PATH).
 `

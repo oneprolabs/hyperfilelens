@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"hyperfilelens/agent/internal/platform/process"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 const repositoryServerStartupTimeout = 15 * time.Second
@@ -288,7 +289,7 @@ func (e *Engine) repositoryServerSessionDir(sessionID string) string {
 	if base == "" {
 		base = os.TempDir()
 	}
-	return filepath.Join(base, "kopia", "server-sessions", sanitizeSessionToken(sessionID))
+	return filepath.Join(vfs.AgentRuntimeDir(base), "workspace", "server-sessions", sanitizeSessionToken(sessionID))
 }
 
 func (e *Engine) repositoryServerSessionStatePath(sessionID string) string {

@@ -260,12 +260,13 @@ function Test-SafeAgentDataPath {
     }
     if ($userInstall) {
       $expected = [System.IO.Path]::GetFullPath(
-        (Join-Path $env:LOCALAPPDATA 'HyperFileLens\AgentData')
+        (Join-Path $env:LOCALAPPDATA 'HyperFileLens\Agent')
       ).TrimEnd('\')
       return $full.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)
     }
-    $base = $env:ProgramData
-    $allowedRoot = Join-Path ([System.IO.Path]::GetFullPath($base).TrimEnd('\')) 'HyperFileLens'
+    $allowedRoot = [System.IO.Path]::GetFullPath(
+      (Join-Path $env:ProgramData 'HyperFileLens\Agent')
+    ).TrimEnd('\')
     return $full.StartsWith(
       $allowedRoot.TrimEnd('\') + '\',
       [System.StringComparison]::OrdinalIgnoreCase

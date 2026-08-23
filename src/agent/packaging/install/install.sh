@@ -11,14 +11,16 @@ BUNDLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLATION_MODE="${HFL_INSTALLATION_MODE:-}"
 RUN_AS_USER="${HFL_RUN_AS_USER:-}"
 RUN_AS_HOME="${HFL_RUN_AS_HOME:-}"
+USER_DATA_HOME="${XDG_DATA_HOME:-}"
+[[ "${USER_DATA_HOME}" == /* ]] || USER_DATA_HOME="${HOME:-}/.local/share"
 if [[ -z "${INSTALLATION_MODE}" ]]; then
-	if [[ "${BUNDLE_ROOT}" == "/opt/hyperfilelens-agent" ]]; then
+	if [[ "${BUNDLE_ROOT}" == "/opt/hyperfilelens-agent" || "${BUNDLE_ROOT}" == "/opt/hyperfilelens-agent/bin" ]]; then
 		INSTALLATION_MODE="system"
 	else
 		case "${BUNDLE_ROOT}" in
-		"${HOME:-/nonexistent}"/.local/lib/hyperfilelens-agent | "${HOME:-/nonexistent}"/Library/Application\ Support/HyperFileLens/Agent/bin)
+		"${USER_DATA_HOME}/hyperfilelens-agent/bin" | "${HOME:-/nonexistent}"/.local/share/hyperfilelens-agent/bin | "${HOME:-/nonexistent}"/Library/Application\ Support/HyperFileLens/Agent/bin)
 			INSTALLATION_MODE="user"
-			;;
+		;;
 		*) INSTALLATION_MODE="system" ;;
 		esac
 	fi
@@ -26,10 +28,25 @@ fi
 # Commands launched from an installed machine-wide script must retain the
 # persisted account mode. Bootstrap installs pass HFL_INSTALLATION_MODE
 # explicitly, so this only applies to local start/status/upgrade/uninstall.
-if [[ -z "${HFL_INSTALLATION_MODE:-}" && "${BUNDLE_ROOT}" == "/opt/hyperfilelens-agent" ]]; then
-	PERSISTED_ENV="/var/lib/hyperfilelens-agent/agent.env"
+unquote_env_value() {
+	local value="$1"
+	value="${value%$'\r'}"
+	if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+		value="${value:1:${#value}-2}"
+		value="${value//\\\"/\"}"
+		value="${value//\\\\/\\}"
+	fi
+	printf '%s' "${value}"
+}
+if [[ -z "${HFL_INSTALLATION_MODE:-}" && ( "${BUNDLE_ROOT}" == "/opt/hyperfilelens-agent" || "${BUNDLE_ROOT}" == "/opt/hyperfilelens-agent/bin" || "${BUNDLE_ROOT}" == "/Library/Application Support/HyperFileLens/Agent/bin" ) ]]; then
+	PERSISTED_ENV="/opt/hyperfilelens-agent/config/agent.env"
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		PERSISTED_ENV="/Library/Application Support/HyperFileLens/Agent/config/agent.env"
+	fi
+	[[ -f "${PERSISTED_ENV}" ]] || PERSISTED_ENV="/var/lib/hyperfilelens-agent/agent.env"
 	if [[ -f "${PERSISTED_ENV}" ]]; then
 		while IFS='=' read -r key value; do
+			value="$(unquote_env_value "${value}")"
 			case "${key}" in
 			HFL_INSTALLATION_MODE) INSTALLATION_MODE="${value}" ;;
 			HFL_RUN_AS_USER) RUN_AS_USER="${value}" ;;
@@ -41,35 +58,96 @@ fi
 [[ "${INSTALLATION_MODE}" == "system" || "${INSTALLATION_MODE}" == "user" || "${INSTALLATION_MODE}" == "account" ]] \
 	|| { echo "ERROR: HFL_INSTALLATION_MODE must be system, user, or account" >&2; exit 2; }
 
-# Unix paths use product slug "hyperfilelens-agent" (see internal/platform/vfs/paths.go).
+# New installations use one Agent Root. Product directories are direct
+# siblings below it; there is no state/ wrapper directory.
 if [[ "${INSTALLATION_MODE}" == "user" && "$(uname -s)" == "Darwin" ]]; then
-	INSTALL_DIR="${HOME}/Library/Application Support/HyperFileLens/Agent/bin"
-	DEFAULT_DATA="${HOME}/Library/Application Support/HyperFileLens/Agent"
+	AGENT_ROOT="${HOME}/Library/Application Support/HyperFileLens/Agent"
+	INSTALL_DIR="${AGENT_ROOT}/bin"
+	DEFAULT_DATA="${AGENT_ROOT}"
 	UNIT_DST=""
 	LAUNCHD_PLIST="${HOME}/Library/LaunchAgents/com.hyperfilelens.agent.plist"
 	LAUNCHD_DOMAIN="gui/$(id -u)"
 elif [[ "${INSTALLATION_MODE}" == "user" ]]; then
-	USER_STATE_HOME="${XDG_STATE_HOME:-}"
-	[[ "${USER_STATE_HOME}" == /* ]] || USER_STATE_HOME="${HOME}/.local/state"
+	AGENT_ROOT="${XDG_DATA_HOME:-}"
+	[[ "${AGENT_ROOT}" == /* ]] || AGENT_ROOT="${HOME}/.local/share"
+	AGENT_ROOT="${AGENT_ROOT}/hyperfilelens-agent"
 	USER_CONFIG_HOME="${XDG_CONFIG_HOME:-}"
 	[[ "${USER_CONFIG_HOME}" == /* ]] || USER_CONFIG_HOME="${HOME}/.config"
-	INSTALL_DIR="${HOME}/.local/lib/hyperfilelens-agent"
-	DEFAULT_DATA="${USER_STATE_HOME}/hyperfilelens-agent"
+	INSTALL_DIR="${AGENT_ROOT}/bin"
+	DEFAULT_DATA="${AGENT_ROOT}"
 	UNIT_DST="${USER_CONFIG_HOME}/systemd/user/hyperfilelens-agent.service"
 	LAUNCHD_PLIST=""
 	LAUNCHD_DOMAIN=""
+elif [[ "$(uname -s)" == "Darwin" ]]; then
+	AGENT_ROOT="/Library/Application Support/HyperFileLens/Agent"
+	INSTALL_DIR="${AGENT_ROOT}/bin"
+	DEFAULT_DATA="${AGENT_ROOT}"
+	UNIT_DST=""
+	LAUNCHD_PLIST="/Library/LaunchDaemons/com.hyperfilelens.agent.plist"
+	LAUNCHD_DOMAIN="system"
 else
-	INSTALL_DIR="/opt/hyperfilelens-agent"
-	DEFAULT_DATA="/var/lib/hyperfilelens-agent"
+	AGENT_ROOT="/opt/hyperfilelens-agent"
+	INSTALL_DIR="${AGENT_ROOT}/bin"
+	DEFAULT_DATA="${AGENT_ROOT}"
 	UNIT_DST="/etc/systemd/system/hyperfilelens-agent.service"
 	LAUNCHD_PLIST="/Library/LaunchDaemons/com.hyperfilelens.agent.plist"
 	LAUNCHD_DOMAIN="system"
 fi
 GATEWAY_RESOURCE_DROPIN="/etc/systemd/system/hyperfilelens-agent.service.d/20-gateway-resources.conf"
-INSTALLED_VERSION_FILE="${INSTALL_DIR}/INSTALLED_VERSION"
+CONFIG_DIR="${AGENT_ROOT}/config"
+DATA_STORE_DIR="${AGENT_ROOT}/data"
+LOG_DIR="${AGENT_ROOT}/logs"
+CACHE_DIR="${AGENT_ROOT}/cache"
+MOUNTS_DIR="${AGENT_ROOT}/mounts"
+RUNTIME_DIR="${AGENT_ROOT}/runtime"
+LIFECYCLE_DIR="${AGENT_ROOT}/lifecycle"
+BACKUP_DIR="${AGENT_ROOT}/backup"
+INSTALLED_VERSION_FILE="${AGENT_ROOT}/INSTALLED_VERSION"
+MANIFEST_FILE="${AGENT_ROOT}/MANIFEST.json"
 LAUNCHD_LABEL="com.hyperfilelens.agent"
 RUN_AGENT_SCRIPT="${INSTALL_DIR}/run-agent.sh"
 GATEWAY_LIFECYCLE_SCRIPT="${INSTALL_DIR}/libexec/gateway-lifecycle.sh"
+LEGACY_INSTALL_DIR="/opt/hyperfilelens-agent"
+LEGACY_DATA_DIR="/var/lib/hyperfilelens-agent"
+LEGACY_MIGRATION_DIR=""
+LEGACY_ENV_SOURCE=""
+LEGACY_SERVICE_WAS_ACTIVE=0
+
+# The installer historically called the product root DATA_DIR. Keep that
+# argument for CLI compatibility while mapping each concern to its sibling
+# directory in the unified root.
+agent_config_dir() { printf '%s/config' "${1%/}"; }
+agent_data_store_dir() { printf '%s/data' "${1%/}"; }
+agent_logs_dir() { printf '%s/logs' "${1%/}"; }
+agent_cache_dir() { printf '%s/cache' "${1%/}"; }
+agent_mounts_dir() { printf '%s/mounts' "${1%/}"; }
+agent_runtime_dir() { printf '%s/runtime' "${1%/}"; }
+agent_lifecycle_dir() { printf '%s/lifecycle' "${1%/}"; }
+agent_backup_dir() { printf '%s/backup' "${1%/}"; }
+agent_env_file() { printf '%s/agent.env' "$(agent_config_dir "$1")"; }
+agent_config_json() { printf '%s/config.json' "$(agent_config_dir "$1")"; }
+
+# Create the complete long-lived Agent Root layout up front. Keeping these
+# directories as fixed siblings makes upgrades, diagnostics, and uninstall
+# independent of which feature first touches a path.
+ensure_agent_layout() {
+	local root="${1%/}"
+	mkdir -p \
+		"${root}/bin" \
+		"${root}/config" \
+		"${root}/data" \
+		"${root}/logs" \
+		"${root}/cache/repositories" \
+		"${root}/mounts/repositories" \
+		"${root}/mounts/sources" \
+		"${root}/mounts/custom" \
+		"${root}/runtime/workspace" \
+		"${root}/runtime/download" \
+		"${root}/lifecycle/upgrade" \
+		"${root}/lifecycle/uninstall" \
+		"${root}/backup/rollback" \
+		"${root}/backup/legacy"
+}
 
 if [[ $# -eq 0 ]]; then
 	CMD="install"
@@ -144,17 +222,17 @@ Options:
 
   upgrade:
     --from PATH         Path to new package directory or hfl-agent-*.tar.gz (required)
-                        Extracts to DATA_DIR/runtime/workspace, merges missing agent.env keys,
+						Extracts to DATA_DIR/runtime/workspace, merges missing config/agent.env keys,
                         migrates agent.db schema, overwrites binaries; removes workspace on success
     --yes               Non-interactive: continue when target version equals installed version
 
   uninstall:
-    --purge-all                   Remove data directory and agent.env (unmounts NAS shares first)
+	--purge-all                   Remove Agent Root and config/agent.env (unmounts NAS shares first)
     --keep-installation-identity  Keep agent.env installation identity (incomplete-install rollback)
 
 Install paths:
   ${INSTALL_DIR}  Binaries and installer scripts
-  ${DEFAULT_DATA}  Runtime data, backup, and configuration
+  ${DEFAULT_DATA}  Unified Agent Root (config/, data/, logs/, cache/, mounts/, runtime/, lifecycle/, backup/)
   ${lifecycle}  Managed startup lifecycle
 
 Examples:
@@ -260,9 +338,13 @@ require_root() {
 
 require_agent_installed() {
 	if ! is_installed; then
-		local command_prefix=""
-		[[ "${INSTALLATION_MODE}" == "system" ]] && command_prefix="sudo "
-		log_fail "The agent is not installed. Run ${command_prefix}./install.sh install first." 2
+		if legacy_layout_present; then
+			log_fail "A legacy Agent installation was found. Run ./install.sh upgrade --from <package.tar.gz> to migrate it to the unified Agent Root." 2
+		else
+			local command_prefix=""
+			[[ "${INSTALLATION_MODE}" == "system" ]] && command_prefix="sudo "
+			log_fail "The agent is not installed. Run ${command_prefix}./install.sh install first." 2
+		fi
 	fi
 }
 
@@ -334,6 +416,10 @@ ENV_FILE=${quoted_env_file}
 if [[ -f "\$ENV_FILE" ]]; then
 	while IFS='=' read -r key value; do
 		[[ "\$key" =~ ^[A-Za-z_][A-Za-z0-9_]*\$ ]] || continue
+		if [[ "\${value:0:1}" == '"' && "\${value: -1}" == '"' ]]; then
+			value="\${value#\"}"
+			value="\${value%\"}"
+		fi
 		export "\$key=\$value"
 	done <"\$ENV_FILE"
 fi
@@ -354,8 +440,8 @@ xml_escape() {
 install_launchd_plist() {
 	local env_file="$1"
 	local data_dir log_dir stdout stderr plist_script plist_install plist_stdout plist_stderr
-	data_dir="$(dirname "${env_file}")"
-	log_dir="${data_dir}/logs"
+	data_dir="${DEFAULT_DATA}"
+	log_dir="$(agent_logs_dir "${data_dir}")"
 	stdout="${log_dir}/launchd.stdout.log"
 	stderr="${log_dir}/launchd.stderr.log"
 	plist_script="$(xml_escape "${RUN_AGENT_SCRIPT}")"
@@ -429,7 +515,7 @@ remove_launchd_plist() {
 }
 
 start_launchd_service() {
-	local env_file="${1:-${DEFAULT_DATA}/agent.env}"
+	local env_file="${1:-$(agent_env_file "${DEFAULT_DATA}")}"
 	write_run_agent_script "${env_file}"
 	install_launchd_plist "${env_file}"
 	stop_launchd_service
@@ -447,13 +533,13 @@ start_launchd_service() {
 
 start_launchd_service_only() {
 	if [[ ! -f "${LAUNCHD_PLIST}" ]]; then
-		start_launchd_service "${DEFAULT_DATA}/agent.env"
+		start_launchd_service "$(agent_env_file "${DEFAULT_DATA}")"
 		return 0
 	fi
 	if launchctl kickstart -k "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" 2>/dev/null; then
 		log_ok "started launchd service ${LAUNCHD_LABEL} ($(launchd_service_status_line))"
 	else
-		start_launchd_service "${DEFAULT_DATA}/agent.env"
+		start_launchd_service "$(agent_env_file "${DEFAULT_DATA}")"
 	fi
 }
 
@@ -606,7 +692,7 @@ finish_detail_log_capture() {
 
 begin_install_log() {
 	local data_dir="$1" operation="${2:-install}"
-	local log_file="${data_dir}/logs/install.log"
+	local log_file="$(agent_logs_dir "${data_dir}")/install.log"
 	mkdir -p "$(dirname "${log_file}")"
 	HFL_ACTIVE_LOG_FILE="${log_file}"
 	HFL_ACTIVE_LOG_KIND="${operation}"
@@ -620,6 +706,9 @@ begin_install_log() {
 
 finish_install_log() {
 	local rc="$1"
+	if [[ "${rc}" -ne 0 ]]; then
+		restore_legacy_service_on_error || true
+	fi
 	finish_detail_log_capture
 	if [[ "${rc}" -eq 0 ]]; then
 		log_info "Install session finished successfully."
@@ -635,7 +724,7 @@ finish_install_log() {
 
 begin_uninstall_log() {
 	local data_dir="$1"
-	local log_file="${data_dir}/logs/uninstall.log"
+	local log_file="$(agent_logs_dir "${data_dir}")/uninstall.log"
 	mkdir -p "$(dirname "${log_file}")"
 	HFL_ACTIVE_LOG_FILE="${log_file}"
 	HFL_ACTIVE_LOG_KIND="uninstall"
@@ -701,7 +790,7 @@ hfl_print_install_success() {
 	hfl_print_value "Service state" "${service}"
 	hfl_print_value "Install path" "${INSTALL_DIR}"
 	hfl_print_value "Data path" "${data_dir}"
-	hfl_print_value "Log file" "${data_dir}/logs/install.log"
+	hfl_print_value "Log file" "$(agent_logs_dir "${data_dir}")/install.log"
 }
 
 hfl_print_upgrade_success() {
@@ -718,7 +807,7 @@ hfl_print_upgrade_success() {
 	hfl_print_value "Service state" "${service}"
 	hfl_print_value "Install path" "${INSTALL_DIR}"
 	hfl_print_value "Data path" "${data_dir}"
-	hfl_print_value "Log file" "${data_dir}/logs/install.log"
+	hfl_print_value "Log file" "$(agent_logs_dir "${data_dir}")/install.log"
 }
 
 bundle_agent() { echo "${BUNDLE_ROOT}/bin/hfl-agent"; }
@@ -733,8 +822,8 @@ bundle_version_from() {
 	local manifest=""
 	if [[ -f "${root}/MANIFEST.json" ]]; then
 		manifest="${root}/MANIFEST.json"
-	elif [[ -f "${INSTALL_DIR}/MANIFEST.json" ]]; then
-		manifest="${INSTALL_DIR}/MANIFEST.json"
+	elif [[ -f "${MANIFEST_FILE}" ]]; then
+		manifest="${MANIFEST_FILE}"
 	fi
 	if [[ -n "$manifest" ]]; then
 		local ver
@@ -787,7 +876,7 @@ assert_agent_package_root() {
 
 upgrade_workspace_dir() {
 	local data_dir="$1"
-	echo "${data_dir}/runtime/workspace"
+	echo "$(agent_runtime_dir "${data_dir}")/workspace"
 }
 
 cleanup_upgrade_workspace() {
@@ -831,13 +920,13 @@ prepare_upgrade_source() {
 backup_agent_config_and_db() {
 	local data_dir="$1"
 	local prev_ver="${2:-unknown}"
-	local state_dir="${data_dir}/backup/state"
+	local state_dir="$(agent_backup_dir "${data_dir}")/rollback"
 	local archive="${state_dir}/latest.tar.gz"
-	local meta="${data_dir}/backup/meta.json"
+	local meta="${state_dir}/meta.json"
 	local -a items=()
 	mkdir -p "${state_dir}"
-	[[ -f "${data_dir}/agent.env" ]] && items+=("agent.env")
-	[[ -f "${data_dir}/agent.db" ]] && items+=("agent.db")
+	[[ -f "$(agent_config_dir "${data_dir}")/agent.env" ]] && items+=("config/agent.env")
+	[[ -f "$(agent_data_store_dir "${data_dir}")/agent.db" ]] && items+=("data/agent.db")
 	if ((${#items[@]} == 0)); then
 		log_skip "backup agent.env/agent.db (nothing to back up)"
 		return 0
@@ -848,7 +937,7 @@ backup_agent_config_and_db() {
 {
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "previous_version": "${prev_ver}",
-  "state_archive": "backup/state/latest.tar.gz"
+  "state_archive": "backup/rollback/latest.tar.gz"
 }
 EOF
 	log_ok "wrote ${meta}"
@@ -879,12 +968,12 @@ upgrade_preflight() {
 
 backup_upgrade_binaries() {
 	local data_dir="$1"
-	UPGRADE_BIN_BACKUP="${data_dir}/backup/rollback/bin"
-	rm -rf "${data_dir}/backup/rollback"
+	UPGRADE_BIN_BACKUP="$(agent_backup_dir "${data_dir}")/rollback/bin"
+	rm -rf "$(agent_backup_dir "${data_dir}")/rollback"
 	mkdir -p "${UPGRADE_BIN_BACKUP}"
 	[[ -f "${INSTALL_DIR}/hfl-agent" ]] && cp -a "${INSTALL_DIR}/hfl-agent" "${UPGRADE_BIN_BACKUP}/"
 	[[ -f "${INSTALL_DIR}/kopia" ]] && cp -a "${INSTALL_DIR}/kopia" "${UPGRADE_BIN_BACKUP}/"
-	[[ -f "${INSTALL_DIR}/MANIFEST.json" ]] && cp -a "${INSTALL_DIR}/MANIFEST.json" "${UPGRADE_BIN_BACKUP}/"
+	[[ -f "${MANIFEST_FILE}" ]] && cp -a "${MANIFEST_FILE}" "${UPGRADE_BIN_BACKUP}/"
 	[[ -f "${INSTALLED_VERSION_FILE}" ]] && cp -a "${INSTALLED_VERSION_FILE}" "${UPGRADE_BIN_BACKUP}/"
 	[[ -d "${INSTALL_DIR}/libexec" ]] && cp -a "${INSTALL_DIR}/libexec" "${UPGRADE_BIN_BACKUP}/"
 	log_ok "backed up binaries -> ${UPGRADE_BIN_BACKUP}"
@@ -894,7 +983,7 @@ restore_upgrade_binaries() {
 	[[ -n "${UPGRADE_BIN_BACKUP}" && -d "${UPGRADE_BIN_BACKUP}" ]] || return 0
 	[[ -f "${UPGRADE_BIN_BACKUP}/hfl-agent" ]] && cp -a "${UPGRADE_BIN_BACKUP}/hfl-agent" "${INSTALL_DIR}/"
 	[[ -f "${UPGRADE_BIN_BACKUP}/kopia" ]] && cp -a "${UPGRADE_BIN_BACKUP}/kopia" "${INSTALL_DIR}/"
-	[[ -f "${UPGRADE_BIN_BACKUP}/MANIFEST.json" ]] && cp -a "${UPGRADE_BIN_BACKUP}/MANIFEST.json" "${INSTALL_DIR}/"
+	[[ -f "${UPGRADE_BIN_BACKUP}/MANIFEST.json" ]] && cp -a "${UPGRADE_BIN_BACKUP}/MANIFEST.json" "${MANIFEST_FILE}"
 	[[ -f "${UPGRADE_BIN_BACKUP}/INSTALLED_VERSION" ]] && cp -a "${UPGRADE_BIN_BACKUP}/INSTALLED_VERSION" "${INSTALLED_VERSION_FILE}"
 	rm -rf "${INSTALL_DIR}/libexec"
 	if [[ -d "${UPGRADE_BIN_BACKUP}/libexec" ]]; then
@@ -917,7 +1006,7 @@ upgrade_rollback_on_error() {
 
 cleanup_upgrade_rollback() {
 	local data_dir="$1"
-	local rollback="${data_dir}/backup/rollback"
+	local rollback="$(agent_backup_dir "${data_dir}")/rollback"
 	if [[ -d "${rollback}" ]]; then
 		rm -rf "${rollback}"
 		log_ok "removed ${rollback} (upgrade succeeded; state snapshot retained)"
@@ -928,8 +1017,8 @@ merge_agent_env() {
 	local env_file="$1"
 	local data_dir="$2"
 	local kopia_path="${INSTALL_DIR}/kopia"
-	local -a keys=(HFL_DATA_DIR HFL_INSTALLATION_MODE HFL_KOPIA_PATH HFL_INSECURE_TLS)
-	local -a vals=("${data_dir}" "${INSTALLATION_MODE}" "${kopia_path}" "1")
+	local -a keys=(HFL_DATA_DIR HFL_AGENT_ROOT HFL_INSTALLATION_MODE HFL_KOPIA_PATH HFL_INSECURE_TLS)
+	local -a vals=("${data_dir}" "${AGENT_ROOT}" "${INSTALLATION_MODE}" "${kopia_path}" "1")
 	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
 		keys+=(HFL_RUN_AS_USER HFL_RUN_AS_HOME)
 		vals+=("${RUN_AS_USER}" "${RUN_AS_HOME}")
@@ -967,6 +1056,19 @@ merge_agent_env() {
 	else
 		log_ok "agent.env unchanged (no missing keys)"
 	fi
+	# Existing legacy files retain identity, console, and credential fields, but
+	# their installer-owned paths must always move to the unified Agent Root.
+	set_agent_env_key "${env_file}" HFL_DATA_DIR "${data_dir}"
+	set_agent_env_key "${env_file}" HFL_AGENT_ROOT "${AGENT_ROOT}"
+	set_agent_env_key "${env_file}" HFL_INSTALLATION_MODE "${INSTALLATION_MODE}"
+	set_agent_env_key "${env_file}" HFL_KOPIA_PATH "${kopia_path}"
+	set_agent_env_key "${env_file}" HFL_INSECURE_TLS "1"
+	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
+		set_agent_env_key "${env_file}" HFL_RUN_AS_USER "${RUN_AS_USER}"
+		set_agent_env_key "${env_file}" HFL_RUN_AS_HOME "${RUN_AS_HOME}"
+	fi
+	chmod 600 "${env_file}"
+	log_ok "updated unified Agent Root paths in ${env_file}"
 }
 
 migrate_agent_db() {
@@ -987,6 +1089,152 @@ is_installed() {
 	[[ -x "${INSTALL_DIR}/hfl-agent" ]]
 }
 
+legacy_layout_present() {
+	[[ "${INSTALLATION_MODE}" != "user" ]] || return 1
+	if [[ -x "${LEGACY_INSTALL_DIR}/hfl-agent" && ! -x "${INSTALL_DIR}/hfl-agent" ]]; then
+		return 0
+	fi
+	if [[ -f "${LEGACY_DATA_DIR}/agent.env" && ! -f "$(agent_env_file "${DEFAULT_DATA}")" ]]; then
+		return 0
+	fi
+	# A partially initialized unified root may already contain config/agent.env
+	# while the legacy flat SQLite database is still waiting to be migrated.
+	# Treat that state as legacy as well; otherwise the new Agent would start
+	# with an empty database and silently lose local task/repository state.
+	if [[ -f "${LEGACY_DATA_DIR}/agent.db" && ! -f "$(agent_data_store_dir "${DEFAULT_DATA}")/agent.db" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+copy_legacy_entry() {
+	local src="$1" dst="$2"
+	[[ -e "${src}" ]] || return 0
+	if [[ -d "${src}" ]]; then
+		mkdir -p "${dst}"
+		cp -a "${src}/." "${dst}/"
+	else
+		mkdir -p "$(dirname "${dst}")"
+		cp -a "${src}" "${dst}"
+	fi
+}
+
+migrate_legacy_layout() {
+	legacy_layout_present || return 0
+	local stamp legacy_root legacy_program legacy_data entry
+	stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+	LEGACY_MIGRATION_DIR="$(agent_backup_dir "${DEFAULT_DATA}")/legacy/${stamp}"
+	legacy_program="${LEGACY_MIGRATION_DIR}/program"
+	legacy_data="${LEGACY_MIGRATION_DIR}/state"
+	mkdir -p "${legacy_program}" "${legacy_data}" "${DATA_DIR}"
+
+	# Stop the old service before copying SQLite and mounted runtime state.
+	if agent_manages_service; then
+		case "$(service_status_line 2>/dev/null || true)" in
+			active*|running*|loaded*) LEGACY_SERVICE_WAS_ACTIVE=1 ;;
+		esac
+		stop_service || true
+	fi
+
+	if [[ -d "${LEGACY_INSTALL_DIR}" ]]; then
+		for entry in hfl-agent kopia install.sh install.cmd install.ps1 uninstall.cmd MANIFEST.json INSTALLED_VERSION run-agent.sh libexec; do
+			copy_legacy_entry "${LEGACY_INSTALL_DIR}/${entry}" "${legacy_program}/${entry}"
+		done
+		# The Linux legacy program root is also the new Agent Root. Its backup
+		# directory was created by this installer, so archiving it here would
+		# recursively copy backup/legacy into itself.
+		if [[ "${LEGACY_INSTALL_DIR}" != "${AGENT_ROOT}" ]]; then
+			copy_legacy_entry "${LEGACY_INSTALL_DIR}/backup" "${legacy_program}/backup"
+		fi
+	fi
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		copy_legacy_entry "/Library/LaunchDaemons/com.hyperfilelens.agent.plist" "${legacy_program}/com.hyperfilelens.agent.plist"
+	else
+		copy_legacy_entry "/etc/systemd/system/hyperfilelens-agent.service" "${legacy_program}/hyperfilelens-agent.service"
+	fi
+	if [[ -d "${LEGACY_DATA_DIR}" ]]; then
+		for entry in agent.env agent.db agent.db-wal agent.db-shm config.json logs cache mounts backup runtime lifecycle install.lock; do
+			copy_legacy_entry "${LEGACY_DATA_DIR}/${entry}" "${legacy_data}/${entry}"
+		done
+	fi
+	LEGACY_ENV_SOURCE="${LEGACY_DATA_DIR}/agent.env"
+
+	# Map the legacy flat state directory into the finalized sibling layout.
+	if [[ -d "${LEGACY_DATA_DIR}" ]]; then
+		copy_legacy_entry "${LEGACY_DATA_DIR}/agent.env" "$(agent_config_dir "${DATA_DIR}")/agent.env"
+		copy_legacy_entry "${LEGACY_DATA_DIR}/config.json" "$(agent_config_dir "${DATA_DIR}")/config.json"
+		for entry in agent.db agent.db-wal agent.db-shm; do
+			copy_legacy_entry "${LEGACY_DATA_DIR}/${entry}" "$(agent_data_store_dir "${DATA_DIR}")/${entry}"
+		done
+		for entry in logs cache mounts runtime lifecycle; do
+			copy_legacy_entry "${LEGACY_DATA_DIR}/${entry}" "${DATA_DIR}/${entry}"
+		done
+		# The pre-unified installer kept upgrade snapshots in backup/state.
+		# Promote those snapshots into the finalized backup/rollback location;
+		# the complete original tree is already retained under backup/legacy.
+		copy_legacy_entry "${LEGACY_DATA_DIR}/backup/rollback" "$(agent_backup_dir "${DATA_DIR}")/rollback"
+		copy_legacy_entry "${LEGACY_DATA_DIR}/backup/state" "$(agent_backup_dir "${DATA_DIR}")/rollback"
+		copy_legacy_entry "${LEGACY_DATA_DIR}/backup/meta.json" "$(agent_backup_dir "${DATA_DIR}")/rollback/meta.json"
+		copy_legacy_entry "${LEGACY_DATA_DIR}/install.lock" "$(agent_lifecycle_dir "${DATA_DIR}")/install.lock"
+	fi
+	# The old program is installed directly under /opt on Unix. It is copied
+	# into the new bin directory by deploy_binaries; no old binary is reused.
+	mkdir -p "$(agent_lifecycle_dir "${DATA_DIR}")"
+	printf 'HFL_INSTALLATION_MODE=system\n' >"$(agent_lifecycle_dir "${DATA_DIR}")/.legacy-migration"
+	chmod 600 "$(agent_lifecycle_dir "${DATA_DIR}")/.legacy-migration"
+	log_warn "migrated legacy Agent layout into ${AGENT_ROOT}; old files are archived under ${LEGACY_MIGRATION_DIR}"
+}
+
+restore_legacy_service_on_error() {
+	[[ "${LEGACY_SERVICE_WAS_ACTIVE}" -eq 1 ]] || return 0
+	[[ -x "${LEGACY_INSTALL_DIR}/hfl-agent" ]] || return 0
+	if agent_uses_launchd; then
+		local old_plist="${LEGACY_MIGRATION_DIR}/program/com.hyperfilelens.agent.plist"
+		if [[ -f "${old_plist}" ]]; then
+			cp -f "${old_plist}" "${LAUNCHD_PLIST}"
+		fi
+		launchctl bootstrap "${LAUNCHD_DOMAIN}" "${LAUNCHD_PLIST}" 2>/dev/null || true
+	elif command -v systemctl >/dev/null 2>&1; then
+		local old_unit="${LEGACY_MIGRATION_DIR}/program/hyperfilelens-agent.service"
+		if [[ -f "${old_unit}" ]]; then
+			cp -f "${old_unit}" "/etc/systemd/system/hyperfilelens-agent.service"
+			hfl_systemctl daemon-reload 2>/dev/null || true
+		fi
+		hfl_systemctl start hyperfilelens-agent.service 2>/dev/null || true
+	fi
+	LEGACY_SERVICE_WAS_ACTIVE=0
+}
+
+cleanup_legacy_layout() {
+	[[ -n "${LEGACY_MIGRATION_DIR}" ]] || return 0
+	local status
+	status="$(service_status_line 2>/dev/null || true)"
+	case "${status}" in
+		active*|running*|loaded*) ;;
+		*) log_warn "legacy layout retained because the new service is not healthy (${status})"; return 0 ;;
+	esac
+	# Keep a rollback archive under the new Agent Root; remove only the old
+	# active paths after the service has started successfully.
+	if [[ -d "${LEGACY_INSTALL_DIR}" && "${LEGACY_INSTALL_DIR}" != "${AGENT_ROOT}" ]]; then
+		rm -rf "${LEGACY_INSTALL_DIR}"
+	fi
+	if [[ -d "${LEGACY_DATA_DIR}" && "${LEGACY_DATA_DIR}" != "${DEFAULT_DATA}" ]]; then
+		rm -rf "${LEGACY_DATA_DIR}"
+	fi
+	# When the old program root equals the new Agent Root, remove only legacy
+	# top-level program files; the finalized sibling directories and root
+	# metadata remain managed by the new layout.
+	if [[ "${LEGACY_INSTALL_DIR}" == "${AGENT_ROOT}" ]]; then
+		local entry
+		for entry in hfl-agent kopia install.sh install.cmd install.ps1 uninstall.cmd run-agent.sh libexec; do
+			rm -rf "${AGENT_ROOT}/${entry}"
+		done
+	fi
+	rm -f "$(agent_lifecycle_dir "${DEFAULT_DATA}")/.legacy-migration"
+	LEGACY_SERVICE_WAS_ACTIVE=0
+	log_ok "removed legacy Agent directories after successful migration"
+}
+
 read_env_value() {
 	local f="$1" key="$2"
 	[[ -f "$f" ]] || return 1
@@ -995,7 +1243,48 @@ read_env_value() {
 	[[ -z "$line" ]] && return 1
 	val="${line#${key}=}"
 	val="${val%$'\r'}"
+	if [[ "${val:0:1}" == '"' && "${val: -1}" == '"' ]]; then
+		val="${val:1:${#val}-2}"
+		val="${val//\\\"/\"}"
+		val="${val//\\\\/\\}"
+	fi
 	printf '%s' "$val"
+}
+
+# Keep agent.env readable by the Go parser, systemd, and the generated
+# launchd wrapper. Values containing spaces are double-quoted; simple values
+# retain the historical KEY=value representation.
+env_value_for_file() {
+	local value="$1"
+	if [[ "${value}" == *[[:space:]#\"\']* ]]; then
+		value="${value//\\/\\\\}"
+		value="${value//\"/\\\"}"
+		printf '"%s"' "${value}"
+	else
+		printf '%s' "${value}"
+	fi
+}
+
+set_agent_env_key() {
+	local env_file="$1" key="$2" value="$3" tmp line replaced=0
+	tmp="${env_file}.tmp.$$"
+	value="$(env_value_for_file "${value}")"
+	if [[ -f "${env_file}" ]]; then
+		while IFS= read -r line || [[ -n "${line}" ]]; do
+			if [[ "${line}" == "${key}="* ]]; then
+				if [[ "${replaced}" -eq 0 ]]; then
+					printf '%s=%s\n' "${key}" "${value}" >>"${tmp}"
+					replaced=1
+				fi
+			else
+				printf '%s\n' "${line}" >>"${tmp}"
+			fi
+		done <"${env_file}"
+	fi
+	if [[ "${replaced}" -eq 0 ]]; then
+		printf '%s=%s\n' "${key}" "${value}" >>"${tmp}"
+	fi
+	mv -f "${tmp}" "${env_file}"
 }
 
 read_env_data_dir() {
@@ -1018,7 +1307,7 @@ service_status_line() {
 }
 
 resolve_data_dir() {
-	local env_file="${DEFAULT_DATA}/agent.env"
+	local env_file="$(agent_env_file "${DEFAULT_DATA}")"
 	local val=""
 	val="$(read_env_data_dir "$env_file" || true)"
 	if [[ -n "$val" ]]; then
@@ -1038,14 +1327,15 @@ data_dir_allowed_for_removal() {
 	p="${parent%/}/${leaf}"
 	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
 		local install_root data_root
-		install_root="$(cd -P -- "$(dirname -- "${INSTALL_DIR}")" 2>/dev/null && pwd -P)/$(basename -- "${INSTALL_DIR}")" || return 1
-		data_root="$(cd -P -- "$(dirname -- "${DEFAULT_DATA}")" 2>/dev/null && pwd -P)/$(basename -- "${DEFAULT_DATA}")" || return 1
+		install_root="$(cd -P -- "$(dirname -- "${AGENT_ROOT}")" 2>/dev/null && pwd -P)/$(basename -- "${AGENT_ROOT}")" || return 1
+		data_root="${install_root}"
 		[[ "$p" == "$install_root" || "$p" == "$data_root" ]]
 		return
 	fi
 	case "$p" in
-		/var/lib/hyperfilelens-agent|/var/lib/hyperfilelens-agent/*) return 0 ;;
 		/opt/hyperfilelens-agent|/opt/hyperfilelens-agent/*) return 0 ;;
+		/var/lib/hyperfilelens-agent|/var/lib/hyperfilelens-agent/*) return 0 ;;
+		/Library/Application\ Support/HyperFileLens/Agent|/Library/Application\ Support/HyperFileLens/Agent/*) return 0 ;;
 		*) return 1 ;;
 	esac
 }
@@ -1206,8 +1496,8 @@ deploy_admin_scripts() {
 	install -m 755 "$src_script" "${INSTALL_DIR}/install.sh"
 	log_ok "deployed ${INSTALL_DIR}/install.sh"
 	if [[ -f "$src_manifest" ]]; then
-		install -m 644 "$src_manifest" "${INSTALL_DIR}/MANIFEST.json"
-		log_ok "deployed ${INSTALL_DIR}/MANIFEST.json"
+		install -m 644 "$src_manifest" "${MANIFEST_FILE}"
+		log_ok "deployed ${MANIFEST_FILE}"
 	fi
 	if [[ "$(uname -s)" == "Linux" && -f "${src_gateway_lifecycle}" ]]; then
 		install -d -m 755 "${INSTALL_DIR}/libexec"
@@ -1244,26 +1534,30 @@ deploy_binaries() {
 write_agent_env() {
 	local env_file="$1"
 	local kopia_path="${INSTALL_DIR}/kopia"
-	local name
+	local name existing_value
 	mkdir -p "$(dirname "$env_file")"
 	umask 077
-	{
-		[[ -n "${WSS_URL}" ]] && echo "HFL_WSS_URL=${WSS_URL}"
-		[[ -n "${API_BASE}" ]] && echo "HFL_API_BASE=${API_BASE}"
-		[[ -n "${ORG_KEY}" ]] && echo "HFL_ORG_KEY=${ORG_KEY}"
-		[[ -n "${NODE_TOKEN}" ]] && echo "HFL_NODE_TOKEN=${NODE_TOKEN}"
-		[[ -n "${NODE_ID}" ]] && echo "HFL_NODE_ID=${NODE_ID}"
-		echo "HFL_DATA_DIR=${DATA_DIR}"
-		echo "HFL_NODE_ROLE=${NODE_ROLE}"
-		echo "HFL_INSTALLATION_MODE=${INSTALLATION_MODE}"
-		[[ -z "${RUN_AS_USER}" ]] || echo "HFL_RUN_AS_USER=${RUN_AS_USER}"
-		[[ -z "${RUN_AS_HOME}" ]] || echo "HFL_RUN_AS_HOME=${RUN_AS_HOME}"
-		echo "HFL_KOPIA_PATH=${kopia_path}"
-		echo "HFL_INSECURE_TLS=${HFL_INSECURE_TLS:-1}"
-		for name in SENTRY_ENABLED SENTRY_BACKEND_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE HFL_SENTRY_LENSNODE_RELEASE; do
-			[[ -z "${!name:-}" ]] || echo "${name}=${!name}"
-		done
-	} >"${env_file}"
+	if [[ ! -f "${env_file}" && -n "${LEGACY_ENV_SOURCE}" && -f "${LEGACY_ENV_SOURCE}" ]]; then
+		cp -p "${LEGACY_ENV_SOURCE}" "${env_file}"
+	fi
+	[[ -n "${WSS_URL}" ]] && set_agent_env_key "${env_file}" HFL_WSS_URL "${WSS_URL}"
+	[[ -n "${API_BASE}" ]] && set_agent_env_key "${env_file}" HFL_API_BASE "${API_BASE}"
+	[[ -n "${ORG_KEY}" ]] && set_agent_env_key "${env_file}" HFL_ORG_KEY "${ORG_KEY}"
+	[[ -n "${NODE_TOKEN}" ]] && set_agent_env_key "${env_file}" HFL_NODE_TOKEN "${NODE_TOKEN}"
+	[[ -n "${NODE_ID}" ]] && set_agent_env_key "${env_file}" HFL_NODE_ID "${NODE_ID}"
+	set_agent_env_key "${env_file}" HFL_DATA_DIR "${DATA_DIR}"
+	set_agent_env_key "${env_file}" HFL_AGENT_ROOT "${AGENT_ROOT}"
+	existing_value="$(read_env_value "${env_file}" HFL_NODE_ROLE || true)"
+	[[ -n "${existing_value}" && "${NODE_ROLE}" == "agent" ]] && NODE_ROLE="${existing_value}"
+	set_agent_env_key "${env_file}" HFL_NODE_ROLE "${NODE_ROLE}"
+	set_agent_env_key "${env_file}" HFL_INSTALLATION_MODE "${INSTALLATION_MODE}"
+	[[ -z "${RUN_AS_USER}" ]] || set_agent_env_key "${env_file}" HFL_RUN_AS_USER "${RUN_AS_USER}"
+	[[ -z "${RUN_AS_HOME}" ]] || set_agent_env_key "${env_file}" HFL_RUN_AS_HOME "${RUN_AS_HOME}"
+	set_agent_env_key "${env_file}" HFL_KOPIA_PATH "${kopia_path}"
+	set_agent_env_key "${env_file}" HFL_INSECURE_TLS "${HFL_INSECURE_TLS:-1}"
+	for name in SENTRY_ENABLED SENTRY_BACKEND_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE HFL_SENTRY_LENSNODE_RELEASE; do
+		[[ -z "${!name:-}" ]] || set_agent_env_key "${env_file}" "${name}" "${!name}"
+	done
 	chmod 600 "${env_file}"
 	log_ok "wrote ${env_file}"
 }
@@ -1487,10 +1781,10 @@ remove_service_unit() {
 
 start_service() {
 	if agent_uses_launchd; then
-		local env_file="${DEFAULT_DATA}/agent.env"
+		local env_file="$(agent_env_file "${DEFAULT_DATA}")"
 		local resolved
 		resolved="$(resolve_data_dir)"
-		[[ -f "${resolved}/agent.env" ]] && env_file="${resolved}/agent.env"
+		[[ -f "$(agent_env_file "${resolved}")" ]] && env_file="$(agent_env_file "${resolved}")"
 		start_launchd_service "${env_file}"
 		return 0
 	fi
@@ -1555,16 +1849,41 @@ cmd_install() {
 	fi
 
 	DATA_DIR="${DATA_DIR:-$DEFAULT_DATA}"
+	ensure_agent_layout "${DATA_DIR}"
 	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
 		[[ "${DATA_DIR}" == "${DEFAULT_DATA}" ]] \
 			|| log_fail "User-level installation uses the fixed data directory ${DEFAULT_DATA}; --data-dir is not supported." 2
-		mkdir -p "${DATA_DIR}"
-		chmod 700 "${DATA_DIR}"
+		chmod 700 "${AGENT_ROOT}" "${DATA_DIR}"
 	fi
 	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
-		mkdir -p "${DATA_DIR}"
-		chown -R "${RUN_AS_USER}:" "${DATA_DIR}" 2>/dev/null || chown -R "${RUN_AS_USER}" "${DATA_DIR}"
-		chmod 700 "${DATA_DIR}"
+		chmod 755 "${AGENT_ROOT}" "${INSTALL_DIR}"
+		chown -R "${RUN_AS_USER}:" "$(agent_config_dir "${DATA_DIR}")" "$(agent_data_store_dir "${DATA_DIR}")" \
+			"$(agent_logs_dir "${DATA_DIR}")" "$(agent_cache_dir "${DATA_DIR}")" \
+			"$(agent_mounts_dir "${DATA_DIR}")" "$(agent_runtime_dir "${DATA_DIR}")" \
+			"$(agent_lifecycle_dir "${DATA_DIR}")" "$(agent_backup_dir "${DATA_DIR}")" 2>/dev/null \
+			|| chown -R "${RUN_AS_USER}" "$(agent_config_dir "${DATA_DIR}")" "$(agent_data_store_dir "${DATA_DIR}")" \
+			"$(agent_logs_dir "${DATA_DIR}")" "$(agent_cache_dir "${DATA_DIR}")" "$(agent_mounts_dir "${DATA_DIR}")" \
+			"$(agent_runtime_dir "${DATA_DIR}")" "$(agent_lifecycle_dir "${DATA_DIR}")" "$(agent_backup_dir "${DATA_DIR}")"
+		chmod 700 "$(agent_config_dir "${DATA_DIR}")" "$(agent_data_store_dir "${DATA_DIR}")" \
+			"$(agent_logs_dir "${DATA_DIR}")" "$(agent_cache_dir "${DATA_DIR}")" "$(agent_mounts_dir "${DATA_DIR}")" \
+			"$(agent_runtime_dir "${DATA_DIR}")" "$(agent_lifecycle_dir "${DATA_DIR}")" "$(agent_backup_dir "${DATA_DIR}")"
+	elif [[ "${INSTALLATION_MODE}" == "system" ]]; then
+		chmod 755 "${AGENT_ROOT}" "${INSTALL_DIR}"
+		chmod 700 "$(agent_config_dir "${DATA_DIR}")" "$(agent_data_store_dir "${DATA_DIR}")" \
+			"$(agent_logs_dir "${DATA_DIR}")" "$(agent_cache_dir "${DATA_DIR}")" "$(agent_mounts_dir "${DATA_DIR}")" \
+			"$(agent_runtime_dir "${DATA_DIR}")" "$(agent_lifecycle_dir "${DATA_DIR}")" "$(agent_backup_dir "${DATA_DIR}")"
+	fi
+	migrate_legacy_layout
+	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
+		chown -R "${RUN_AS_USER}:" "$(agent_config_dir "${DATA_DIR}")" "$(agent_data_store_dir "${DATA_DIR}")" \
+			"$(agent_logs_dir "${DATA_DIR}")" "$(agent_cache_dir "${DATA_DIR}")" "$(agent_mounts_dir "${DATA_DIR}")" \
+			"$(agent_runtime_dir "${DATA_DIR}")" "$(agent_lifecycle_dir "${DATA_DIR}")" "$(agent_backup_dir "${DATA_DIR}")" 2>/dev/null \
+			|| chown -R "${RUN_AS_USER}" "$(agent_config_dir "${DATA_DIR}")" "$(agent_data_store_dir "${DATA_DIR}")" \
+			"$(agent_logs_dir "${DATA_DIR}")" "$(agent_cache_dir "${DATA_DIR}")" "$(agent_mounts_dir "${DATA_DIR}")" \
+			"$(agent_runtime_dir "${DATA_DIR}")" "$(agent_lifecycle_dir "${DATA_DIR}")" "$(agent_backup_dir "${DATA_DIR}")"
+		chmod 700 "$(agent_config_dir "${DATA_DIR}")" "$(agent_data_store_dir "${DATA_DIR}")" \
+			"$(agent_logs_dir "${DATA_DIR}")" "$(agent_cache_dir "${DATA_DIR}")" "$(agent_mounts_dir "${DATA_DIR}")" \
+			"$(agent_runtime_dir "${DATA_DIR}")" "$(agent_lifecycle_dir "${DATA_DIR}")" "$(agent_backup_dir "${DATA_DIR}")"
 	fi
 	begin_install_log "${DATA_DIR}"
 	trap 'finish_install_log $?' RETURN
@@ -1593,23 +1912,23 @@ cmd_install() {
 	gateway_resource_preflight "${NODE_ROLE}" "${DATA_DIR}"
 	install_nas_deps "${NODE_ROLE}"
 	deploy_binaries
-	write_agent_env "${DATA_DIR}/agent.env"
+	write_agent_env "$(agent_env_file "${DATA_DIR}")"
 	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
-		chown "${RUN_AS_USER}" "${DATA_DIR}/agent.env" "${DATA_DIR}" 2>/dev/null || true
-		chown -R "${RUN_AS_USER}" "${DATA_DIR}/logs" 2>/dev/null || true
+		chown "${RUN_AS_USER}" "$(agent_env_file "${DATA_DIR}")" 2>/dev/null || true
+		chown -R "${RUN_AS_USER}" "$(agent_logs_dir "${DATA_DIR}")" 2>/dev/null || true
 	fi
 
 	if agent_uses_launchd; then
 		if [[ $NO_START -eq 1 ]]; then
-			write_run_agent_script "${DATA_DIR}/agent.env"
-			install_launchd_plist "${DATA_DIR}/agent.env"
+			write_run_agent_script "$(agent_env_file "${DATA_DIR}")"
+			install_launchd_plist "$(agent_env_file "${DATA_DIR}")"
 			if [[ $QUIET_FOOTER -eq 0 ]]; then
 				log_skip "Launchd service ${LAUNCHD_LABEL} was not started (--no-start)."
 				hfl_print_install_success "$(hfl_role_display_name "${NODE_ROLE}" "${HFL_GATEWAY_SCOPE:-}")" "$(bundle_version)" "not started" "${DATA_DIR}"
 			fi
 			return 0
 		fi
-		start_launchd_service "${DATA_DIR}/agent.env"
+		start_launchd_service "$(agent_env_file "${DATA_DIR}")"
 		if [[ $QUIET_FOOTER -eq 0 ]]; then
 			hfl_print_install_success "$(hfl_role_display_name "${NODE_ROLE}" "${HFL_GATEWAY_SCOPE:-}")" "$(bundle_version)" "$(launchd_service_status_line)" "${DATA_DIR}"
 		fi
@@ -1624,7 +1943,7 @@ cmd_install() {
 		return 0
 	fi
 
-	install_systemd_unit_logged "${DATA_DIR}/agent.env"
+	install_systemd_unit_logged "$(agent_env_file "${DATA_DIR}")"
 	if [[ $NO_START -eq 1 ]]; then
 		hfl_systemctl daemon-reload 2>/dev/null || true
 		log_ok "Systemd was reloaded successfully."
@@ -1636,6 +1955,7 @@ cmd_install() {
 	fi
 
 	start_service
+	cleanup_legacy_layout
 	if [[ $QUIET_FOOTER -eq 0 ]]; then
 		hfl_print_install_success "$(hfl_role_display_name "${NODE_ROLE}" "${HFL_GATEWAY_SCOPE:-}")" "$(bundle_version)" "$(service_status_line)" "${DATA_DIR}"
 	fi
@@ -1648,7 +1968,13 @@ cmd_upgrade() {
 
 	[[ -n "${UPGRADE_FROM}" ]] || log_fail "Upgrade requires --from <directory-or.tar.gz>." 2
 
-	if ! is_installed; then
+	local legacy_upgrade=0
+	if ! is_installed && legacy_layout_present; then
+		DATA_DIR="${DEFAULT_DATA}"
+		ensure_agent_layout "${DATA_DIR}"
+		legacy_upgrade=1
+	fi
+	if ! is_installed && [[ "${legacy_upgrade}" -eq 0 ]]; then
 		local command_prefix=""
 		[[ "${INSTALLATION_MODE}" == "system" ]] && command_prefix="sudo "
 		log_fail "The agent is not installed. Run ${command_prefix}./install.sh install first." 2
@@ -1656,15 +1982,22 @@ cmd_upgrade() {
 
 	local data_dir prev_ver src_root new_ver env_file upgrade_ws
 	data_dir="$(resolve_data_dir)"
-	env_file="${data_dir}/agent.env"
+	env_file="$(agent_env_file "${data_dir}")"
 	upgrade_ws="$(upgrade_workspace_dir "${data_dir}")"
 	prev_ver="unknown"
-	[[ -f "$INSTALLED_VERSION_FILE" ]] && prev_ver="$(tr -d ' \t\r\n' <"$INSTALLED_VERSION_FILE")"
+	if [[ -f "$INSTALLED_VERSION_FILE" ]]; then
+		prev_ver="$(tr -d ' \t\r\n' <"$INSTALLED_VERSION_FILE")"
+	elif [[ "${legacy_upgrade}" -eq 1 && -f "${LEGACY_INSTALL_DIR}/INSTALLED_VERSION" ]]; then
+		prev_ver="$(tr -d ' \t\r\n' <"${LEGACY_INSTALL_DIR}/INSTALLED_VERSION")"
+	fi
 	begin_install_log "${data_dir}" "upgrade"
 	trap 'finish_install_log $?' RETURN
 
 	trap 'rc=$?; cleanup_upgrade_workspace "$upgrade_ws"; hfl_finalize_active_log "$rc"' EXIT
 	src_root="$(prepare_upgrade_source "${UPGRADE_FROM}" "${data_dir}")"
+	if [[ "${legacy_upgrade}" -eq 1 ]]; then
+		migrate_legacy_layout
+	fi
 	new_ver="$(bundle_version_from "${src_root}")"
 
 	if [[ "${new_ver}" == "${prev_ver}" ]]; then
@@ -1726,6 +2059,7 @@ cmd_upgrade() {
 
 	if agent_manages_service; then
 		start_service
+		cleanup_legacy_layout
 	fi
 
 	if [[ $QUIET_FOOTER -eq 0 ]]; then
@@ -1901,7 +2235,7 @@ cmd_uninstall() {
 
 	local resolved_data env_file
 	resolved_data="$(resolve_data_dir)"
-	env_file="${resolved_data}/agent.env"
+	env_file="$(agent_env_file "${resolved_data}")"
 	if [[ "${PURGE_ALL}" -eq 1 ]] \
 		&& ! data_dir_allowed_for_removal "${resolved_data}"; then
 		log_fail "Refusing purge-all for unexpected data directory ${resolved_data}." 2
@@ -1946,15 +2280,15 @@ cmd_uninstall() {
 	remove_install_file "${INSTALL_DIR}/kopia"
 	remove_install_file "${INSTALL_DIR}/run-agent.sh"
 	remove_install_file "${INSTALL_DIR}/install.sh"
-	remove_install_file "${INSTALL_DIR}/MANIFEST.json"
+	remove_install_file "${MANIFEST_FILE}"
 	remove_install_file "${INSTALLED_VERSION_FILE}"
 	if data_dir_allowed_for_removal "${INSTALL_DIR}" && [[ -e "${INSTALL_DIR}" ]]; then
 		rm -rf "${INSTALL_DIR}"
 		log_ok "Install directory removed (${INSTALL_DIR}, including backup artifacts)."
 	else
-		if [[ -d "${INSTALL_DIR}/backup" ]]; then
-			rm -rf "${INSTALL_DIR}/backup"
-			log_ok "Removed ${INSTALL_DIR}/backup."
+		if [[ -d "$(agent_backup_dir "${resolved_data}")" ]]; then
+			rm -rf "$(agent_backup_dir "${resolved_data}")"
+			log_ok "Removed $(agent_backup_dir "${resolved_data}")."
 		fi
 		if rmdir "${INSTALL_DIR}" 2>/dev/null; then
 			log_ok "Install directory removed (${INSTALL_DIR})."
@@ -2001,14 +2335,14 @@ cmd_uninstall() {
 	hfl_print_value "Data path" "$([[ "${PURGE_ALL}" -eq 1 ]] && echo removed || echo preserved)"
 	hfl_print_value "Console record" "not changed by local uninstall"
 	if [[ "${PURGE_ALL}" -eq 0 ]]; then
-		hfl_print_value "Log file" "${resolved_data}/logs/uninstall.log"
+		hfl_print_value "Log file" "$(agent_logs_dir "${resolved_data}")/uninstall.log"
 	fi
 	finish_uninstall_log 0
 	trap - EXIT
 }
 
 cmd_status() {
-	local installed="unknown" env_file="${DEFAULT_DATA}/agent.env"
+	local installed="unknown" env_file="$(agent_env_file "${DEFAULT_DATA}")"
 	local node_id="" wss="" svc_line
 
 	log_info "HyperFileLens agent status report."
