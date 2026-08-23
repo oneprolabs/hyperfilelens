@@ -66,7 +66,7 @@ func TestInstallationIDGeneratesWithoutPersistedState(t *testing.T) {
 func TestRetiredInstallationIdentityCreatesNewInstallIdentity(t *testing.T) {
 	t.Parallel()
 	dataDir := t.TempDir()
-	envPath := filepath.Join(dataDir, "agent.env")
+	envPath := filepath.Join(dataDir, "config", "agent.env")
 	if err := WriteInstallationID(envPath, "hfli_uninstalled"); err != nil {
 		t.Fatal(err)
 	}
