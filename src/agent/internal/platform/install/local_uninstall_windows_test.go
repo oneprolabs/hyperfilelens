@@ -258,6 +258,8 @@ func TestWriteWindowsUserUpgradeScriptStopsScheduledTask(t *testing.T) {
 	for _, expected := range []string{
 		"$userInstall = $true",
 		"Stop-ScheduledTask -TaskName HyperFileLensAgent",
+		"$scheduledTaskName = 'HyperFileLensAgent.DetachedRunner'",
+		"Unregister-ScheduledTask -TaskName $scheduledTaskName",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("user upgrade script missing %q", expected)

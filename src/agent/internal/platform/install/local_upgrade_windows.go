@@ -74,6 +74,7 @@ func writeWindowsUpgradeScript(
 $install = %q
 $archive = %q
 $pending = %q
+$scheduledTaskName = 'HyperFileLensAgent.DetachedRunner'
 $userInstall = %s
 $SLEEP_SECONDS = %d
 
@@ -120,6 +121,7 @@ try {
   }
   Log "install.ps1 upgrade succeeded"
   Remove-Item -Recurse -Force -LiteralPath $pending -ErrorAction SilentlyContinue
+	Unregister-ScheduledTask -TaskName $scheduledTaskName -Confirm:$false -ErrorAction SilentlyContinue
   Log "detached upgrade script finished"
   exit 0
 } catch {

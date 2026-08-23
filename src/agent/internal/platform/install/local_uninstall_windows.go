@@ -107,6 +107,7 @@ $install = %q
 $data = %q
 $keep = %s
 $userInstall = %s
+$scheduledTaskName = 'HyperFileLensAgent.DetachedRunner'
 $SLEEP_SECONDS = %d
 $callbackUrl = %q
 $callbackToken = %q
@@ -465,6 +466,7 @@ try {
 }
 
 Report-UninstallCompletion
+Unregister-ScheduledTask -TaskName $scheduledTaskName -Confirm:$false -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 if ($cleanupFailures.Count -eq 0) {
   exit 0
