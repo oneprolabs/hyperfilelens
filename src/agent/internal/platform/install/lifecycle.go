@@ -21,6 +21,30 @@ func RunUpgrade(ctx context.Context, archivePath string) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s upgrade: %w", script, err)
 	}
+	// The upgrade command may have been executed by the previous release's
+	// installer. Run the newly deployed installer once so a first upgrade can
+	// reconcile legacy paths without requiring a second user-triggered upgrade.
+	if err := RunReconcileLegacyLayout(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: legacy Agent reconciliation was deferred: %v\n", err)
+	}
+	return nil
+}
+
+// RunReconcileLegacyLayout asks the newly installed lifecycle script to finish
+// a pending old-layout migration. It is intentionally best-effort: failure
+// preserves the old paths and must not turn a healthy binary upgrade into a
+// failed Agent upgrade.
+func RunReconcileLegacyLayout(ctx context.Context) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	script := filepath.Join(DefaultInstallDir(), "install.sh")
+	cmd := exec.CommandContext(ctx, script, "reconcile-legacy", "--quiet-footer")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s reconcile-legacy: %w", script, err)
+	}
 	return nil
 }
 

@@ -160,7 +160,7 @@ grep -F 'refresh_website_web_mount' <<<"${cmd_up_body}" >/dev/null
 grep -F 'refresh_website_web_mount' <<<"${cmd_restart_body}" >/dev/null
 for command_body in "${cmd_up_body}" "${cmd_restart_body}"; do
 	gate_line="$(grep -nF 'run_dev_migration_gate' <<<"${command_body}" | cut -d: -f1)"
-	application_line="$(grep -nF 'compose up -d --no-build --pull never' <<<"${command_body}" | cut -d: -f1 | tail -n 1)"
+	application_line="$(grep -nE 'compose(_logged)? up -d --no-build --pull never' <<<"${command_body}" | cut -d: -f1 | tail -n 1)"
 	[[ -n "${gate_line}" ]]
 	[[ -n "${application_line}" ]]
 	((gate_line < application_line))
@@ -190,8 +190,8 @@ compose() {
 	return 42
 }
 repair_existing_multimodal_model >/dev/null
-backend_stop_line="$(grep -nF 'compose stop api worker scheduler' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
-data_services_line="$(grep -nF 'compose up -d --wait --no-build --pull never postgres redis' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
+backend_stop_line="$(grep -nE 'compose(_logged)? stop api worker scheduler' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
+data_services_line="$(grep -nE 'compose(_logged)? up -d --wait --no-build --pull never postgres redis' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
 migration_line="$(grep -nF 'compose --profile tools run --rm --no-deps migration' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
 [[ -n "${backend_stop_line}" ]]
 [[ -n "${data_services_line}" ]]

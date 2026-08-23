@@ -207,6 +207,7 @@ Commands:
   restart       Stop then start ${lifecycle}
   status        Show installed version, paths, and service state
   upgrade       In-place upgrade from another release package directory or .tar.gz
+  reconcile-legacy  Complete a pending legacy-layout cleanup after an upgrade
   uninstall     Stop service and remove install dir (keeps data dir by default)
 
 Options:
@@ -302,6 +303,16 @@ parse_upgrade_flags() {
 		echo "ERROR: --agent-only and --kopia-only are mutually exclusive" >&2
 		exit 2
 	fi
+}
+
+parse_reconcile_flags() {
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--quiet-footer) QUIET_FOOTER=1; shift ;;
+			-h|--help) usage; exit 0 ;;
+			*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+		esac
+	done
 }
 
 parse_uninstall_flags() {
@@ -556,10 +567,40 @@ hfl_finish_sentence() {
 	esac
 }
 
+hfl_terminal_color_enabled() {
+	local stream="${1:-stdout}" fd
+	[[ -z "${NO_COLOR:-}" && "${HFL_COLOR:-auto}" != "0" ]] || return 1
+	[[ "${TERM:-}" != "dumb" ]] || return 1
+	case "${stream}" in
+		stdout) if [[ -t 3 ]]; then fd=3; else fd=1; fi ;;
+		stderr) if [[ -t 4 ]]; then fd=4; else fd=2; fi ;;
+		[0-9]*) fd="${stream}" ;;
+		*) return 1 ;;
+	esac
+	[[ -t "${fd}" ]]
+}
+
+hfl_color_level() {
+	local level="$1" stream="${2:-stderr}"
+	if ! hfl_terminal_color_enabled "${stream}"; then
+		printf '%s' "${level}"
+		return 0
+	fi
+	case "${level}" in
+		'....') printf '\033[38;5;141m%s\033[0m' "${level}" ;;
+		'INFO '|INFO) printf '\033[38;5;214m%s\033[0m' "${level}" ;;
+		' OK ') printf '\033[38;5;114m%s\033[0m' "${level}" ;;
+		WARN) printf '\033[38;5;214m%s\033[0m' "${level}" ;;
+		FAIL) printf '\033[38;5;203m%s\033[0m' "${level}" ;;
+		SKIP) printf '\033[38;5;183m%s\033[0m' "${level}" ;;
+		*) printf '%s' "${level}" ;;
+	esac
+}
+
 _hfl_emit_raw() {
 	local level="$1"
 	shift
-	local message display_level log_dir
+	local message display_level display_level_colored log_dir output_stream
 	message="$(hfl_finish_sentence "$*")"
 	display_level="$(printf '%s' "${level}" | sed 's/^ *//; s/ *$//')"
 	case "${display_level}" in
@@ -579,9 +620,13 @@ _hfl_emit_raw() {
 	fi
 	if [[ "${QUIET_FOOTER}" -eq 0 || "${display_level}" == "FAIL" ]]; then
 		if [[ "${display_level}" == "WARN" || "${display_level}" == "FAIL" ]]; then
-			printf '  [%s] %s\n' "${display_level}" "${message}" >&4
+			output_stream=stderr
+			display_level_colored="$(hfl_color_level "${display_level}" "${output_stream}")"
+			printf '  [%s] %s\n' "${display_level_colored}" "${message}" >&4
 		else
-			printf '  [%s] %s\n' "${display_level}" "${message}" >&3
+			output_stream=stdout
+			display_level_colored="$(hfl_color_level "${display_level}" "${output_stream}")"
+			printf '  [%s] %s\n' "${display_level_colored}" "${message}" >&3
 		fi
 	fi
 }
@@ -603,7 +648,9 @@ log_fail() {
 
 hfl_detail_log_stream() {
 	local log_file="$1" line
-	while IFS= read -r line || [[ -n "${line}" ]]; do
+	# Keep the durable transcript portable when nested tools emit terminal
+	# styling. ANSI is only useful on the live terminal, never in install.log.
+	sed $'s/\033\[[0-9;]*m//g' | while IFS= read -r line || [[ -n "${line}" ]]; do
 		printf '[%s] [DETAIL] %s\n' "$(hfl_now)" "${line}" >>"${log_file}" 2>/dev/null || true
 	done
 }
@@ -639,6 +686,9 @@ hfl_emit_display_line() {
 hfl_print_banner() {
 	local role="$1" operation="$2"
 	[[ "${QUIET_FOOTER}" -eq 0 ]] || return 0
+	if hfl_terminal_color_enabled stdout; then
+		printf '\033[1;35m' >&3
+	fi
 	while IFS= read -r line; do
 		hfl_emit_display_line "${line}"
 	done <<'BANNER'
@@ -649,6 +699,9 @@ hfl_print_banner() {
 |_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/
        |___/|_|                     INSTALLER
 BANNER
+	if hfl_terminal_color_enabled stdout; then
+		printf '\033[0m' >&3
+	fi
 	printf '\n' >&3
 	hfl_emit_display_line "HyperFileLens ${role} ${operation}"
 	hfl_emit_display_line '----------------------------------------------------------------'
@@ -1091,6 +1144,19 @@ is_installed() {
 
 legacy_layout_present() {
 	[[ "${INSTALLATION_MODE}" != "user" ]] || return 1
+	# A unified Agent Root may already contain the new bin/ tree while files
+	# from the pre-unified layout are still present. Treat that partial state as
+	# legacy too, so upgrades can archive and remove it after the new service is
+	# verified healthy.
+	if [[ "${LEGACY_INSTALL_DIR}" == "${AGENT_ROOT}" ]]; then
+		local entry
+		for entry in hfl-agent kopia install.sh install.cmd install.ps1 uninstall.cmd run-agent.sh libexec; do
+			[[ -e "${AGENT_ROOT}/${entry}" ]] && return 0
+		done
+	fi
+	if [[ "${LEGACY_DATA_DIR}" != "${DEFAULT_DATA}" && -d "${LEGACY_DATA_DIR}" ]]; then
+		return 0
+	fi
 	if [[ -x "${LEGACY_INSTALL_DIR}/hfl-agent" && ! -x "${INSTALL_DIR}/hfl-agent" ]]; then
 		return 0
 	fi
@@ -1120,8 +1186,24 @@ copy_legacy_entry() {
 }
 
 migrate_legacy_layout() {
+	local archive_only="${1:-0}" stop_service_for_archive="${2:-1}"
 	legacy_layout_present || return 0
-	local stamp legacy_root legacy_program legacy_data entry
+	local marker stamp legacy_root legacy_program legacy_data entry existing_archive
+	marker="$(agent_lifecycle_dir "${DEFAULT_DATA}")/.legacy-migration"
+	if [[ -f "${marker}" ]]; then
+		existing_archive="$(read_env_value "${marker}" HFL_LEGACY_MIGRATION_DIR || true)"
+		if [[ -n "${existing_archive}" && -d "${existing_archive}" ]]; then
+			LEGACY_MIGRATION_DIR="${existing_archive}"
+			if [[ "${stop_service_for_archive}" == "1" ]] && agent_manages_service; then
+				case "$(service_status_line 2>/dev/null || true)" in
+					active*|running*|loaded*) LEGACY_SERVICE_WAS_ACTIVE=1 ;;
+				esac
+				stop_service || true
+			fi
+			log_warn "reusing legacy Agent archive at ${LEGACY_MIGRATION_DIR}"
+			return 0
+		fi
+	fi
 	stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 	LEGACY_MIGRATION_DIR="$(agent_backup_dir "${DEFAULT_DATA}")/legacy/${stamp}"
 	legacy_program="${LEGACY_MIGRATION_DIR}/program"
@@ -1129,7 +1211,7 @@ migrate_legacy_layout() {
 	mkdir -p "${legacy_program}" "${legacy_data}" "${DATA_DIR}"
 
 	# Stop the old service before copying SQLite and mounted runtime state.
-	if agent_manages_service; then
+	if [[ "${stop_service_for_archive}" == "1" ]] && agent_manages_service; then
 		case "$(service_status_line 2>/dev/null || true)" in
 			active*|running*|loaded*) LEGACY_SERVICE_WAS_ACTIVE=1 ;;
 		esac
@@ -1159,8 +1241,10 @@ migrate_legacy_layout() {
 	fi
 	LEGACY_ENV_SOURCE="${LEGACY_DATA_DIR}/agent.env"
 
-	# Map the legacy flat state directory into the finalized sibling layout.
-	if [[ -d "${LEGACY_DATA_DIR}" ]]; then
+	# Map the legacy flat state directory into the finalized sibling layout only
+	# when the new root is not already authoritative. During a later upgrade,
+	# archive-only mode prevents stale legacy state from overwriting valid data.
+	if [[ "${archive_only}" != "1" && -d "${LEGACY_DATA_DIR}" ]]; then
 		copy_legacy_entry "${LEGACY_DATA_DIR}/agent.env" "$(agent_config_dir "${DATA_DIR}")/agent.env"
 		copy_legacy_entry "${LEGACY_DATA_DIR}/config.json" "$(agent_config_dir "${DATA_DIR}")/config.json"
 		for entry in agent.db agent.db-wal agent.db-shm; do
@@ -1180,9 +1264,14 @@ migrate_legacy_layout() {
 	# The old program is installed directly under /opt on Unix. It is copied
 	# into the new bin directory by deploy_binaries; no old binary is reused.
 	mkdir -p "$(agent_lifecycle_dir "${DATA_DIR}")"
-	printf 'HFL_INSTALLATION_MODE=system\n' >"$(agent_lifecycle_dir "${DATA_DIR}")/.legacy-migration"
+	printf 'HFL_INSTALLATION_MODE=system\nHFL_LEGACY_MIGRATION_DIR=%s\n' \
+		"${LEGACY_MIGRATION_DIR}" >"$(agent_lifecycle_dir "${DATA_DIR}")/.legacy-migration"
 	chmod 600 "$(agent_lifecycle_dir "${DATA_DIR}")/.legacy-migration"
-	log_warn "migrated legacy Agent layout into ${AGENT_ROOT}; old files are archived under ${LEGACY_MIGRATION_DIR}"
+	if [[ "${archive_only}" == "1" ]]; then
+		log_warn "found legacy Agent residue; current unified state was kept and old files were archived under ${LEGACY_MIGRATION_DIR}"
+	else
+		log_warn "migrated legacy Agent layout into ${AGENT_ROOT}; old files are archived under ${LEGACY_MIGRATION_DIR}"
+	fi
 }
 
 restore_legacy_service_on_error() {
@@ -1207,12 +1296,28 @@ restore_legacy_service_on_error() {
 
 cleanup_legacy_layout() {
 	[[ -n "${LEGACY_MIGRATION_DIR}" ]] || return 0
-	local status
+	local status data_dir="${DATA_DIR:-${DEFAULT_DATA}}" agent="${INSTALL_DIR}/hfl-agent"
 	status="$(service_status_line 2>/dev/null || true)"
 	case "${status}" in
-		active*|running*|loaded*) ;;
-		*) log_warn "legacy layout retained because the new service is not healthy (${status})"; return 0 ;;
+		active*|running*) ;;
+		loaded*)
+			[[ "$(uname -s)" == "Darwin" ]] || {
+				log_warn "legacy layout retained because the new service is not active (${status})"
+				return 0
+			}
+			;;
+	*) log_warn "legacy layout retained because the new service is not healthy (${status})"; return 0 ;;
 	esac
+	# A running service alone is not sufficient: verify that the new binary can
+	# open the authoritative local task database before deleting old state.
+	if [[ ! -x "${agent}" ]]; then
+		log_warn "legacy layout retained because the new Agent binary is missing"
+		return 0
+	fi
+	if ! HFL_DATA_DIR="${data_dir}" "${agent}" tasks list --data-dir "${data_dir}" --limit 1 >/dev/null 2>&1; then
+		log_warn "legacy layout retained because the new Agent database could not be opened"
+		return 0
+	fi
 	# Keep a rollback archive under the new Agent Root; remove only the old
 	# active paths after the service has started successfully.
 	if [[ -d "${LEGACY_INSTALL_DIR}" && "${LEGACY_INSTALL_DIR}" != "${AGENT_ROOT}" ]]; then
@@ -1961,6 +2066,26 @@ cmd_install() {
 	fi
 }
 
+cmd_reconcile_legacy() {
+	parse_reconcile_flags "$@"
+	require_root
+	require_service_manager
+	DATA_DIR="$(resolve_data_dir)"
+	ensure_agent_layout "${DATA_DIR}"
+	begin_install_log "${DATA_DIR}" "migration"
+	trap 'finish_install_log $?' RETURN
+
+	if ! legacy_layout_present; then
+		log_skip "no legacy Agent layout requires reconciliation"
+		return 0
+	fi
+	# The caller has already started and health-checked the new service. Archive
+	# old inactive paths without stopping that service a second time, then apply
+	# the normal guarded cleanup.
+	migrate_legacy_layout 1 0
+	cleanup_legacy_layout
+}
+
 cmd_upgrade() {
 	parse_upgrade_flags "$@"
 	require_root
@@ -1968,11 +2093,16 @@ cmd_upgrade() {
 
 	[[ -n "${UPGRADE_FROM}" ]] || log_fail "Upgrade requires --from <directory-or.tar.gz>." 2
 
-	local legacy_upgrade=0
+	local legacy_upgrade=0 legacy_residue=0
 	if ! is_installed && legacy_layout_present; then
 		DATA_DIR="${DEFAULT_DATA}"
 		ensure_agent_layout "${DATA_DIR}"
 		legacy_upgrade=1
+	elif is_installed && legacy_layout_present; then
+		# The new bin/ tree may be active while the old flat program/data paths
+		# remain from an earlier migration. Archive those paths, but never copy
+		# them over the already authoritative unified state during an upgrade.
+		legacy_residue=1
 	fi
 	if ! is_installed && [[ "${legacy_upgrade}" -eq 0 ]]; then
 		local command_prefix=""
@@ -1982,8 +2112,17 @@ cmd_upgrade() {
 
 	local data_dir prev_ver src_root new_ver env_file upgrade_ws
 	data_dir="$(resolve_data_dir)"
+	# Legacy reconciliation still uses the installer-wide DATA_DIR variable.
+	# Keep it synchronized with the resolved authoritative Agent Root before
+	# archiving any residue; otherwise a partially migrated root would issue
+	# `mkdir -p ""` and abort under `set -u`.
+	[[ -n "${data_dir}" && "${data_dir}" == /* ]] \
+		|| log_fail "Upgrade could not resolve a valid Agent Root data directory." 2
+	DATA_DIR="${data_dir}"
 	env_file="$(agent_env_file "${data_dir}")"
 	upgrade_ws="$(upgrade_workspace_dir "${data_dir}")"
+	[[ -n "${upgrade_ws}" && "${upgrade_ws}" == /* ]] \
+		|| log_fail "Upgrade could not resolve its workspace directory." 2
 	prev_ver="unknown"
 	if [[ -f "$INSTALLED_VERSION_FILE" ]]; then
 		prev_ver="$(tr -d ' \t\r\n' <"$INSTALLED_VERSION_FILE")"
@@ -1993,11 +2132,11 @@ cmd_upgrade() {
 	begin_install_log "${data_dir}" "upgrade"
 	trap 'finish_install_log $?' RETURN
 
-	trap 'rc=$?; cleanup_upgrade_workspace "$upgrade_ws"; hfl_finalize_active_log "$rc"' EXIT
+	# EXIT traps run after this function's local variables leave scope. Use a
+	# default expansion so a failure before workspace assignment cannot trigger
+	# a secondary `set -u` error and hide the original upgrade failure.
+	trap 'rc=$?; cleanup_upgrade_workspace "${upgrade_ws:-}"; hfl_finalize_active_log "$rc"' EXIT
 	src_root="$(prepare_upgrade_source "${UPGRADE_FROM}" "${data_dir}")"
-	if [[ "${legacy_upgrade}" -eq 1 ]]; then
-		migrate_legacy_layout
-	fi
 	new_ver="$(bundle_version_from "${src_root}")"
 
 	if [[ "${new_ver}" == "${prev_ver}" ]]; then
@@ -2024,6 +2163,13 @@ cmd_upgrade() {
 	fi
 
 	upgrade_preflight "${data_dir}"
+	# Do not mutate or stop a running legacy service until the requested target
+	# version has passed confirmation and downgrade checks.
+	if [[ "${legacy_upgrade}" -eq 1 ]]; then
+		migrate_legacy_layout
+	elif [[ "${legacy_residue}" -eq 1 ]]; then
+		migrate_legacy_layout 1
+	fi
 	hfl_print_section "Upgrading Agent"
 	backup_upgrade_binaries "${data_dir}"
 	trap upgrade_rollback_on_error ERR
@@ -2060,6 +2206,14 @@ cmd_upgrade() {
 	if agent_manages_service; then
 		start_service
 		cleanup_legacy_layout
+	fi
+	# The upgrade command may have been launched by the previous release's
+	# installer. That old process has just deployed the new installer, so run
+	# the new reconciliation command once to clean legacy paths on the first
+	# upgrade instead of requiring a second user-triggered upgrade.
+	if [[ "${NO_RESTART}" -eq 0 && -x "${INSTALL_DIR}/install.sh" ]]; then
+		"${INSTALL_DIR}/install.sh" reconcile-legacy --quiet-footer || \
+			log_warn "legacy Agent reconciliation was deferred; old paths were preserved"
 	fi
 
 	if [[ $QUIET_FOOTER -eq 0 ]]; then
@@ -2397,6 +2551,7 @@ cmd_restart() {
 
 case "$CMD" in
 	install) cmd_install "$@" ;;
+	reconcile-legacy) cmd_reconcile_legacy "$@" ;;
 	start) cmd_start "$@" ;;
 	stop) cmd_stop "$@" ;;
 	restart) cmd_restart "$@" ;;

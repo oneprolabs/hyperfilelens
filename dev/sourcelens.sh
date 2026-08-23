@@ -200,7 +200,11 @@ require_docker() {
 
 sourcelens_compose_logged() {
 	local status=0
-	sourcelens_dev_compose "$@" 2>&1 | tr '\r' '\n' | hfl_log_output_line docker \
+	if hfl_native_terminal_available; then
+		sourcelens_dev_compose_native "$@"
+		return $?
+	fi
+	sourcelens_dev_compose "$@" 2>&1 | hfl_normalize_native_stream | hfl_log_output_block docker \
 		|| status="${PIPESTATUS[0]}"
 	return "${status}"
 }

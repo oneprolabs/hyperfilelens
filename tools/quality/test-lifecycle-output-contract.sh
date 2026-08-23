@@ -122,6 +122,58 @@ grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] \[\.\.\.\.\] \[sourcelens\] Preparin
 grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] \[OUT \] \[docker\] Container sourcelens-api Started$' <<<"${timestamp_output}" >/dev/null
 grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] \[ OK \] \[sourcelens\] Insight services are prepared$' <<<"${timestamp_output}" >/dev/null
 
+# Native Docker/Compose builds must keep their interactive renderer when the
+# dev session has an original terminal. npm runs inside those BuildKit stages;
+# it must remain native output rather than being wrapped line-by-line.
+grep -F 'hfl_run_native_command env' "${ROOT_REPO}/tools/sourcelens/common.sh" >/dev/null
+grep -F 'BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-auto}"' \
+	"${ROOT_REPO}/tools/sourcelens/common.sh" >/dev/null
+grep -F 'hfl_run_native_command env' "${ROOT_REPO}/dev/stack.sh" >/dev/null
+grep -F 'hfl_run_native_command "${ROOT}/website/build.sh"' \
+	"${ROOT_REPO}/dev/stack.sh" >/dev/null
+grep -F 'hfl_run_native_command docker build' "${ROOT_REPO}/dev/stack.sh" >/dev/null
+grep -F 'npm config set audit false' "${ROOT_REPO}/tools/sourcelens/common.sh" >/dev/null
+grep -F 'npm config set fetch-retries 5' "${ROOT_REPO}/tools/sourcelens/common.sh" >/dev/null
+
+# Long structured messages wrap only in the terminal copy. The persisted
+# record remains one complete line, with no truncation or repeated prefix.
+wrapped_terminal="${fixture}/wrapped-terminal.log"
+wrapped_session="${fixture}/wrapped-session.log"
+wrapped_message='[2026-08-23T02:43:53.000Z] [INFO] [sourcelens] SourceLens app images already built; compose build skipped; source_stamp=v3:0.40.0:80ff6ba7d96015f3f65dea6db729b285bf6e4296:6e8dbf651a5a7ea7709fe7c6f810978b5aa051de441a1a1da4f44e81346dda47'
+HFL_LOG_TERMINAL_WRAP_COLUMNS=70 HFL_WRAPPED_MESSAGE="${wrapped_message}" \
+	bash -c '
+set -euo pipefail
+source "$1/tools/lib/logging.sh"
+exec 5>"$2"
+printf "%s\n" "$HFL_WRAPPED_MESSAGE" | hfl_log_capture_stream "$3" 5
+exec 5>&-
+' _ "${ROOT_REPO}" "${wrapped_terminal}" "${wrapped_session}"
+grep -Fx "${wrapped_message}" "${wrapped_session}" >/dev/null
+grep -F 'source_stamp=v3:0.40.0:' "${wrapped_terminal}" >/dev/null
+grep -E '^ +source_stamp=' "${wrapped_terminal}" >/dev/null
+[[ "$(wc -l <"${wrapped_terminal}")" -gt 1 ]]
+
+git_output="$({
+	source "${ROOT_REPO}/tools/sourcelens/common.sh"
+	export HFL_LOG_TERMINAL_TIMESTAMPS=1 HFL_LOG_COLOR=0
+	sourcelens_git_output_command printf '%s\n' 'Synchronizing submodule url for test'
+} 2>&1)"
+grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] \[OUT \] \[git\] Synchronizing submodule url for test$' \
+	<<<"${git_output}" >/dev/null
+
+git_block_without_timestamp="$({
+	source "${ROOT_REPO}/tools/sourcelens/common.sh"
+	export HFL_LOG_TERMINAL_TIMESTAMPS=0 HFL_LOG_COLOR=0
+	printf 'From https://example.test\n * [new branch]      feat/x -> origin/feat/x\n   abc..def          main -> origin/main\n' \
+		| hfl_log_output_block git
+} 2>&1)"
+grep -Fx '[OUT ] From https://example.test' <<<"${git_block_without_timestamp}" >/dev/null
+grep -E '^ +\* \[new branch\]' <<<"${git_block_without_timestamp}" >/dev/null
+if grep -F '[git]' <<<"${git_block_without_timestamp}" >/dev/null; then
+	echo 'timestamp-free native output must not add a component field' >&2
+	exit 1
+fi
+
 # A terminal that declares itself as dumb must not receive ANSI styling in
 # auto mode. Explicit HFL_LOG_COLOR=1/always remains an opt-in override.
 dumb_color_result="$({
@@ -230,7 +282,7 @@ dev_output="$({
 	LOG_FILE="${dev_fixture}/dev.log"
 	print_urls
 } 2>&1)"
-grep -F 'no seeded account (SEED_INITIAL_DATA=0)' <<<"${dev_output}" >/dev/null
+grep -F 'Not configured (SEED_INITIAL_DATA=0)' <<<"${dev_output}" >/dev/null
 if grep -F 'Password' <<<"${dev_output}" >/dev/null; then
 	echo 'Dev summary advertised credentials while HFL seeding was disabled' >&2
 	exit 1

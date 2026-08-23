@@ -160,24 +160,57 @@ hfl_finish_sentence() {
 	esac
 }
 
-log() { printf '[INFO ] %s\n' "$(hfl_finish_sentence "$*")" >&2; }
-step() { printf '[....] %s\n' "$(hfl_finish_sentence "$*")" >&2; }
-ok() { printf '[ OK ] %s\n' "$(hfl_finish_sentence "$*")" >&2; }
-skip() { printf '[SKIP] %s\n' "$(hfl_finish_sentence "$*")" >&2; }
+hfl_terminal_color_enabled() {
+	local stream="${1:-stderr}" fd
+	[[ "${HFL_COLOR:-auto}" != "0" && -z "${NO_COLOR:-}" ]] || return 1
+	[[ "${TERM:-}" != "dumb" ]] || return 1
+	case "${stream}" in
+		stdout)
+			if [[ -t 3 ]]; then fd=3; else fd=1; fi
+			;;
+		*)
+			if [[ -t 4 ]]; then fd=4; else fd=2; fi
+			;;
+	esac
+	[[ -t "${fd}" ]]
+}
+
+hfl_color_level() {
+	local level="$1" stream="${2:-stderr}"
+	if ! hfl_terminal_color_enabled "${stream}"; then
+		printf '%s' "${level}"
+		return 0
+	fi
+	case "${level}" in
+		'....') printf '\033[38;5;141m%s\033[0m' "${level}" ;;
+		'INFO ') printf '\033[38;5;214m%s\033[0m' "${level}" ;;
+		' OK ') printf '\033[38;5;114m%s\033[0m' "${level}" ;;
+		WARN) printf '\033[38;5;214m%s\033[0m' "${level}" ;;
+		FAIL) printf '\033[38;5;203m%s\033[0m' "${level}" ;;
+		SKIP) printf '\033[38;5;183m%s\033[0m' "${level}" ;;
+		DEBUG) printf '\033[38;5;245m%s\033[0m' "${level}" ;;
+		*) printf '%s' "${level}" ;;
+	esac
+}
+
+log() { printf '[%s] %s\n' "$(hfl_color_level 'INFO ')" "$(hfl_finish_sentence "$*")" >&2; }
+step() { printf '[%s] %s\n' "$(hfl_color_level '....')" "$(hfl_finish_sentence "$*")" >&2; }
+ok() { printf '[%s] %s\n' "$(hfl_color_level ' OK ')" "$(hfl_finish_sentence "$*")" >&2; }
+skip() { printf '[%s] %s\n' "$(hfl_color_level 'SKIP')" "$(hfl_finish_sentence "$*")" >&2; }
 warn() {
 	local message
 	message="$(hfl_finish_sentence "$*")"
 	SESSION_WARNINGS+=("${message}")
-	printf '[WARN] %s\n' "${message}" >&2
+	printf '[%s] %s\n' "$(hfl_color_level WARN)" "${message}" >&2
 }
-debug() { [[ "${VERBOSE}" == "1" ]] && printf '[DEBUG] %s\n' "$(hfl_finish_sentence "$*")" >&2 || true; }
-die() { local message=$1 code=${2:-1}; printf '[FAIL] %s\n' "$(hfl_finish_sentence "${message}")" >&2; exit "${code}"; }
+debug() { [[ "${VERBOSE}" == "1" ]] && printf '[%s] %s\n' "$(hfl_color_level DEBUG)" "$(hfl_finish_sentence "$*")" >&2 || true; }
+die() { local message=$1 code=${2:-1}; printf '[%s] %s\n' "$(hfl_color_level FAIL)" "$(hfl_finish_sentence "${message}")" >&2; exit "${code}"; }
 
 timestamp_log_stream() {
 	local log_file=$1 line timestamp
 	local TZ=UTC
 	export TZ
-	while IFS= read -r line || [[ -n "${line}" ]]; do
+	sed $'s/\033\[[0-9;]*m//g' | while IFS= read -r line || [[ -n "${line}" ]]; do
 		printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
 		printf '[%s] %s\n' "${timestamp}" "${line}" >>"${log_file}"
 	done
@@ -220,6 +253,9 @@ configure_logging() {
 print_banner() {
 	local title=$1
 	[[ "${HFL_NO_BANNER:-0}" != "1" ]] || return 0
+	if hfl_terminal_color_enabled stdout; then
+		printf '\033[1;35m'
+	fi
 	cat <<'BANNER'
  _   _                       _____ _ _      _
 | | | |_   _ _ __   ___ _ _|  ___(_) | ___| |    ___ _ __  ___
@@ -228,6 +264,9 @@ print_banner() {
 |_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/
        |___/|_|                     INSTALLER
 BANNER
+	if hfl_terminal_color_enabled stdout; then
+		printf '\033[0m'
+	fi
 	printf '\n%s\n%s\n' "${title}" '----------------------------------------------------------------'
 }
 

@@ -55,6 +55,7 @@ source "${ROOT}/tools/lib/docker-images.sh"
 source "${ROOT}/tools/kopia/common.sh"
 
 COMPOSE=()
+EXTENSION_COMPOSE_MATERIALIZED=0
 
 MIRROR_GITHUB_DOWNLOAD=""
 MIRROR_GITHUB_TOKEN=""
@@ -356,28 +357,40 @@ require_docker() {
 	COMPOSE=(docker compose)
 }
 
-compose() {
-	local files=(-f docker-compose.yml)
+prepare_compose_files() {
+	COMPOSE_FILES=(-f docker-compose.yml)
 	local compose_overlay ext_token
 	# CLI --extension-source only; never read prepare sources from .env.
 	compose_overlay="${ROOT}/build/docker-compose.extensions.yml"
 	if [[ -n "${EXTENSION_SOURCES_CSV:-}" ]]; then
 		ext_token="${HFL_EXTENSION_GIT_TOKEN:-${MIRROR_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}}"
-		HFL_EXTENSION_GIT_TOKEN="${ext_token}" \
-			python3 "${ROOT}/tools/extensions/materialize_extensions.py" \
-			--repo-root "${ROOT}" \
-			--sources "${EXTENSION_SOURCES_CSV}" \
-			--compose-out "${compose_overlay}" \
-			|| die "failed to materialize --extension-source"
+		if [[ "${EXTENSION_COMPOSE_MATERIALIZED}" -eq 0 ]]; then
+			local materialize_status=0
+			HFL_EXTENSION_GIT_TOKEN="${ext_token}" \
+				python3 "${ROOT}/tools/extensions/materialize_extensions.py" \
+				--repo-root "${ROOT}" \
+				--sources "${EXTENSION_SOURCES_CSV}" \
+				--compose-out "${compose_overlay}" 2>&1 \
+				| hfl_normalize_native_stream \
+				| hfl_log_output_block extensions \
+				|| materialize_status="${PIPESTATUS[0]}"
+			[[ "${materialize_status}" -eq 0 ]] \
+				|| die "failed to materialize --extension-source" "${materialize_status}"
+			EXTENSION_COMPOSE_MATERIALIZED=1
+		fi
 		[[ -f "${compose_overlay}" ]] \
 			|| die "extension compose overlay missing after materialize: ${compose_overlay}"
-		files+=(-f "${compose_overlay}")
+		COMPOSE_FILES+=(-f "${compose_overlay}")
 	elif [[ -f "${compose_overlay}" ]]; then
 		rm -f "${compose_overlay}"
 	fi
+}
+
+compose() {
+	prepare_compose_files
 	(
 		cd "${ROOT}"
-		"${COMPOSE[@]}" --env-file "${ROOT}/.env" "${files[@]}" "$@"
+		"${COMPOSE[@]}" --env-file "${ROOT}/.env" "${COMPOSE_FILES[@]}" "$@"
 	)
 }
 
@@ -385,10 +398,95 @@ compose() {
 # the Agent installer. Command substitutions continue to use compose() so
 # machine-readable values are never prefixed or altered.
 compose_logged() {
-	local status=0
-	compose "$@" 2>&1 | tr '\r' '\n' | hfl_log_output_line docker \
-		|| status="${PIPESTATUS[0]}"
+	local status=0 output_file
+	if hfl_native_terminal_available; then
+		prepare_compose_files
+		(
+			cd "${ROOT}"
+			hfl_run_native_command env \
+				DOCKER_BUILDKIT=1 \
+				BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-auto}" \
+				"${COMPOSE[@]}" --env-file "${ROOT}/.env" \
+				"${COMPOSE_FILES[@]}" "$@"
+		)
+		return $?
+	fi
+	output_file="$(mktemp "${TMPDIR:-/tmp}/hfl-compose-output.XXXXXX")" \
+		|| return 1
+	compose "$@" >"${output_file}" 2>&1 || status=$?
+	hfl_normalize_native_stream <"${output_file}" | hfl_log_output_block docker
+	rm -f -- "${output_file}"
 	return "${status}"
+}
+
+compose_logged_section() {
+	local status=0 output_file
+	output_file="$(mktemp "${TMPDIR:-/tmp}/hfl-compose-output.XXXXXX")" \
+		|| return 1
+	compose "$@" >"${output_file}" 2>&1 || status=$?
+	hfl_normalize_native_stream <"${output_file}" | hfl_log_output_section docker
+	rm -f -- "${output_file}"
+	return "${status}"
+}
+
+# Render the migration job's compact event stream. The migration container
+# still writes its complete transcript to data/logs/migration.log; the terminal
+# receives only stage results and genuinely unstructured Docker/error output.
+render_migration_stream() {
+	local line marker level message
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		[[ -n "${line}" ]] || continue
+		if [[ "${line}" == HFL_MIGRATION_EVENT$'\t'* ]]; then
+			marker="${line%%$'\t'*}"
+			line="${line#*$'\t'}"
+			level="${line%%$'\t'*}"
+			message="${line#*$'\t'}"
+			message="${message#"${message%%[![:space:]]*}"}"
+			[[ "${marker}" == HFL_MIGRATION_EVENT ]] || continue
+			hfl_log_emit_with_component "${level}" migration "${message}"
+			continue
+		fi
+		case "${line}" in
+		Container\ *\ Creating|Container\ *\ Created)
+			[[ "${line}" == *Creating ]] && hfl_log_emit_with_component 'OUT ' docker "Migration container created"
+			;;
+		Network\ *\ Creating|Network\ *\ Created|Volume\ *\ Creating|Volume\ *\ Created)
+			;;
+		'[entrypoint]'*)
+			# Compact entrypoint events replace these routine labels.
+			;;
+		*)
+			# Failed/non-blocking Django commands may surface their native records.
+			# Keep one HFL envelope and remove the nested timestamp/INFO prefix.
+			if [[ "${line}" =~ ^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+Z\][[:space:]]+(.*)$ ]]; then
+				line="${BASH_REMATCH[1]}"
+			fi
+			case "${line}" in
+				'[INFO] '*) line="${line#'[INFO] '}" ;;
+				'[INFO ] '*) line="${line#'[INFO ] '}" ;;
+			esac
+			# Django's management commands indent ordinary summaries for their
+			# own console. The HFL envelope already provides the hierarchy, so
+			# normalize that presentation padding in the compact stream. The
+			# complete, indented transcript remains in migration.log.
+			line="${line#"${line%%[![:space:]]*}"}"
+			case "${line}" in
+				*Django\ Admin:\ auto-registered\ *|*QuotaProvider\ registered\ *|*AuthzProvider\ registered\ *)
+					continue
+					;;
+				'[WARN]'*|'[WARNING]'*)
+					hfl_log_emit_with_component WARN migration "${line#*] }"
+					;;
+				'[ERROR]'*|Traceback*)
+					hfl_log_emit_with_component FAIL migration "${line#*] }"
+					;;
+				*)
+					hfl_log_emit_with_component 'OUT ' migration "${line}"
+					;;
+			esac
+			;;
+		esac
+	done
 }
 
 ensure_bridge_network() {
@@ -591,7 +689,7 @@ prepare_website_static() {
 		[[ -z "${OPT_NPM_REGISTRY}" ]] || args+=(--npm-registry "${OPT_NPM_REGISTRY}")
 		[[ "${force}" -eq 0 ]] || args+=(--no-cache)
 		[[ "${FORCE_PULL}" -eq 0 ]] || args+=(--pull)
-		"${ROOT}/website/build.sh" "${args[@]}"
+		hfl_run_native_command "${ROOT}/website/build.sh" "${args[@]}"
 		WEBSITE_ARTIFACT_REBUILT=1
 		cache_update website-static "${fingerprint}"
 	else
@@ -680,25 +778,42 @@ prepare_dev_language_packs() {
 		[[ "${force}" -eq 0 ]] || build_args+=(--no-cache)
 		build_args+=("${ROOT}")
 		log "Building language-pack toolchain"
-		docker build "${build_args[@]}"
+		hfl_run_native_command docker build "${build_args[@]}"
 		cache_update language-pack-builder "${fingerprint}"
 	fi
 
 	version="$(read_project_version)"
 	(
 		source "${ROOT}/deploy/installer/install.sh"
+		# The installer is sourced only for its language-pack lifecycle helpers.
+		# It also defines its own short log()/step()/ok() functions, which would
+		# otherwise leak unstructured installer output into the dev session. Keep
+		# the shared dev envelope for this nested operation.
+		log() { hfl_log_info "$@"; }
+		step() { hfl_log_step "$@"; }
+		ok() { hfl_log_ok "$@"; }
+		skip() { hfl_log_skip "$@"; }
+		warn() { hfl_log_warn "$@"; }
+		debug() { hfl_log_debug "$@"; }
+		die() { hfl_die "$@"; }
 		ROOT="${ROOT}"
 		HFL_BUNDLED_LANGUAGE_PACKS_DIR="${LANGUAGE_PACK_BUILD_OUTPUT}/dist"
 		acquire_installation_lock
 		mkdir -p "${LANGUAGE_PACK_BUILD_OUTPUT}"
 		log "Building development language packs for application ${version}"
+		local run_status=0
 		docker run --rm --platform linux/amd64 \
 			--user "$(id -u):$(id -g)" \
 			--mount "type=bind,src=${ROOT}/language-packs,dst=/workspace/language-packs,readonly" \
 			--mount "type=bind,src=${ROOT}/src/backend,dst=/workspace/src/backend,readonly" \
 			--mount "type=bind,src=${ROOT}/src/frontend/src/locales,dst=/workspace/src/frontend/src/locales,readonly" \
 			--mount "type=bind,src=${LANGUAGE_PACK_BUILD_OUTPUT},dst=/workspace/build/language-packs" \
-			"${LANGUAGE_PACK_BUILDER_IMAGE}" --version "${version}"
+			"${LANGUAGE_PACK_BUILDER_IMAGE}" --version "${version}" 2>&1 \
+			| hfl_normalize_native_stream \
+			| sed -E 's/^\[language-packs\] //' \
+			| hfl_log_output_block language-packs \
+			|| run_status="${PIPESTATUS[0]}"
+		[[ "${run_status}" -eq 0 ]] || die "development language-pack build failed" "${run_status}"
 		sync_bundled_language_packs
 	)
 }
@@ -837,7 +952,20 @@ prepare_dev() {
 	apply_mirror_env_defaults
 	apply_ubuntu2404_arch_default
 	log "Checking the English source boundary"
-	python3 "${ROOT}/tools/quality/check-english-source.py"
+	local check_output check_status
+	check_output="$(mktemp "${TMPDIR:-/tmp}/hfl-english-source-check.XXXXXX")"
+	if python3 "${ROOT}/tools/quality/check-english-source.py" >"${check_output}" 2>&1; then
+		check_status=0
+	else
+		check_status=$?
+	fi
+	if [[ "${check_status}" -ne 0 ]]; then
+		hfl_log_output_block quality <"${check_output}"
+		rm -f -- "${check_output}"
+		die "English source boundary check failed" "${check_status}"
+	fi
+	rm -f -- "${check_output}"
+	hfl_log_ok "English source boundary check passed"
 	require_docker
 	ensure_env_file
 	sync_dev_product_version
@@ -954,8 +1082,9 @@ print_urls() {
 	local sl_env="${ROOT}/data/sourcelens/config/.env"
 	local seed seed_email seed_pass seed_org sourcelens_mode sourcelens_console_port
 	local website_bind website_port tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
-	local pg_user pg_pass pg_db frontend_url lens_base lens_gw lens_email lens_pass insight_access
+	local pg_user pg_pass pg_db frontend_url lens_base lens_gw lens_email lens_pass
 	local sl_user sl_email sl_pass
+	local gateway_env gateway_node_id gateway_org gateway_version gateway_service gateway_lensnode gateway_log
 
 	seed="$(read_env_value_or SEED_INITIAL_DATA 1 "${env_file}")"
 	seed_email="$(read_env_value_or SEED_ADMIN_EMAIL admin@hyperfilelens.com "${env_file}")"
@@ -983,60 +1112,6 @@ print_urls() {
 	lens_email="$(read_env_value_or LENS_BRIDGE_EMAIL admin@example.com "${env_file}")"
 	lens_pass="$(read_env_value_or LENS_BRIDGE_PASSWORD adminpassword "${env_file}")"
 	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
-		insight_access="https://localhost:${sourcelens_console_port}/  (${sourcelens_console_bind})"
-	elif [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "external" ]]; then
-		insight_access="${lens_base} (external)"
-	else
-		insight_access="not started"
-	fi
-
-	cat <<EOF
-
-================================================================
-Development stack is ready
-================================================================
-
-Access
-  Website          https://localhost:${website_port}/en/  (${website_bind})
-  Tenant           https://localhost:${tenant_port}/  (${tenant_bind})
-  Platform Ops     https://localhost:${admin_port}/  (${admin_bind})
-  Django Admin     https://localhost:${admin_port}/admin/
-  Insight Console  ${insight_access}
-  API / Swagger    https://localhost:${tenant_port}/swagger
-EOF
-
-	if [[ "${seed}" == "1" ]]; then
-		cat <<EOF
-
-Development credentials
-  HyperFileLens
-    Email          ${seed_email}
-    Password       ${seed_pass}
-    Applies to     Tenant, Platform Ops and Django Admin
-    Organization   ${seed_org}
-    Seeding        enabled (worker creates admin on first startup)
-EOF
-	else
-		cat <<EOF
-
-Development credentials
-  HyperFileLens    no seeded account (SEED_INITIAL_DATA=${seed})
-EOF
-	fi
-
-	cat <<EOF
-
-Development services
-  PostgreSQL       postgres:5432/${pg_db} (private)
-  Database user    ${pg_user}
-  Database pass    ${pg_pass}
-  Agent releases   https://localhost:${tenant_port}/media/agent-releases/
-  AI engine bundle https://localhost:${tenant_port}/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz
-  Config           ${env_file#${ROOT}/}
-  Log file         ${LOG_FILE#${ROOT}/}
-EOF
-
-	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
 		if [[ -f "${sl_env}" ]]; then
 			sl_user="$(read_env_value_or DJANGO_SUPERUSER_USERNAME admin "${sl_env}")"
 			sl_email="$(read_env_value_or DJANGO_SUPERUSER_EMAIL admin@example.com "${sl_env}")"
@@ -1044,35 +1119,205 @@ EOF
 		else
 			sl_user=admin
 			sl_email=admin@example.com
-			sl_pass=adminpassword
+	sl_pass=adminpassword
 		fi
+	fi
+	gateway_env="/opt/hyperfilelens-agent/config/agent.env"
+	gateway_node_id=""
+	gateway_org="platform_lens"
+	gateway_version="unknown"
+	gateway_service="not installed"
+	gateway_lensnode="not installed"
+	gateway_log="/opt/hyperfilelens-agent/logs/install.log"
+	if [[ -r "${gateway_env}" ]]; then
+		gateway_node_id="$(grep -E '^HFL_NODE_ID=' "${gateway_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
+		gateway_org="$(grep -E '^HFL_ORG_KEY=' "${gateway_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
+		[[ -n "${gateway_org}" ]] || gateway_org=platform_lens
+		if [[ -r "/opt/hyperfilelens-agent/INSTALLED_VERSION" ]]; then
+			gateway_version="$(head -1 /opt/hyperfilelens-agent/INSTALLED_VERSION | tr -d '\r' || true)"
+		fi
+		if command -v systemctl >/dev/null 2>&1; then
+			gateway_service="$(systemctl is-active hyperfilelens-agent 2>/dev/null || true)"
+		else
+			gateway_service="unknown"
+		fi
+		[[ -n "${gateway_service}" ]] || gateway_service=inactive
+		if command -v docker >/dev/null 2>&1; then
+			gateway_lensnode="$(docker inspect --format '{{.State.Status}}' hyperfilelens-gateway-lensnode-1 2>/dev/null || true)"
+		fi
+		[[ -n "${gateway_lensnode}" ]] || gateway_lensnode=unknown
+	fi
+	cat <<EOF
 
+================================================================
+Development stack is ready
+================================================================
+
+User access
+
+  Website
+    URL              https://localhost:${website_port}/en/
+    Purpose          Main HyperFileLens website
+    Listen           ${website_bind}:${website_port}
+
+  Tenant workspace
+    URL              https://localhost:${tenant_port}/
+    Purpose          Tenant operations, backup and restore
+EOF
+
+	if [[ "${seed}" == "1" ]]; then
+		cat <<EOF
+    Email            ${seed_email}
+    Password         ${seed_pass}
+    Organization     ${seed_org}
+EOF
+	else
+		cat <<EOF
+    Login            Not configured (SEED_INITIAL_DATA=${seed})
+EOF
+	fi
+
+	cat <<EOF
+    Listen           ${tenant_bind}:${tenant_port}
+
+  Platform Operations
+    URL              https://localhost:${admin_port}/
+    Purpose          Platform-level administration and operations
+EOF
+
+	if [[ "${seed}" == "1" ]]; then
+		cat <<EOF
+    Email            ${seed_email}
+    Password         ${seed_pass}
+    Organization     ${seed_org}
+EOF
+	else
+		cat <<EOF
+    Login            Not configured (SEED_INITIAL_DATA=${seed})
+EOF
+	fi
+
+	cat <<EOF
+    Listen           ${admin_bind}:${admin_port}
+
+  Django Admin
+    URL              https://localhost:${admin_port}/admin/
+    Purpose          Django administration and troubleshooting
+EOF
+
+	if [[ "${seed}" == "1" ]]; then
+		cat <<EOF
+    Email            ${seed_email}
+    Password         ${seed_pass}
+EOF
+	else
+		cat <<EOF
+    Login            Not configured (SEED_INITIAL_DATA=${seed})
+EOF
+	fi
+
+	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
 		cat <<EOF
 
   Insight Console
-    Username       ${sl_user}
-    Email          ${sl_email}
-    Password       ${sl_pass}
+    URL              https://localhost:${sourcelens_console_port}/
+    Purpose          SourceLens administration and insight configuration
+    Username         ${sl_user}
+    Email            ${sl_email}
+    Password         ${sl_pass}
+    Listen           ${sourcelens_console_bind}:${sourcelens_console_port}
+EOF
+	elif [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "external" ]]; then
+		cat <<EOF
 
-Service endpoints
-  Insight API      https://localhost:${tenant_port}/sourcelens/api/
-  Insight WSS      wss://localhost:${tenant_port}/sourcelens/ws/lens/lensnodes/
-  Insight network  hyperfilelens-bridge (private)
-  HFL bridge       ${lens_base}
-  Gateway URL      ${lens_gw}
-  Bridge account   ${lens_email} / ${lens_pass}  (LENS_BRIDGE_* in .env)
+  Insight Console
+    URL              ${lens_base}
+    Purpose          External SourceLens console (not managed by stack.sh)
+EOF
+	else
+		cat <<EOF
+
+  Insight Console
+    Status           Not started (SourceLens disabled)
+EOF
+	fi
+
+	cat <<EOF
+
+Port map
+EOF
+	printf '  %-18s %s\n' "${website_port}" 'Website'
+	printf '  %-18s %s\n' "${tenant_port}" 'Tenant / API / Swagger / SourceLens Gateway'
+	printf '  %-18s %s\n' "${admin_port}" 'Platform Operations / Django Admin'
+	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
+		printf '  %-18s %s\n' "${sourcelens_console_port}" 'SourceLens Insight Console'
+	elif [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "external" ]]; then
+		printf '  %-18s %s\n' "${sourcelens_console_port}" 'Unused by external SourceLens'
+	else
+		printf '  %-18s %s\n' "${sourcelens_console_port}" 'SourceLens disabled'
+	fi
+	printf '\n'
+
+cat <<EOF
+Developer endpoints
+  API / Swagger      https://localhost:${tenant_port}/swagger
+EOF
+
+	cat <<EOF
+
+Development services
+  PostgreSQL         postgres:5432/${pg_db} (private)
+  Database user      ${pg_user}
+  Database password  ${pg_pass}
+  Agent packages     https://localhost:${tenant_port}/media/agent-releases/
+  AI engine bundle   https://localhost:${tenant_port}/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz
+  Configuration      ${env_file#${ROOT}/}
+  Session log        ${LOG_FILE#${ROOT}/}
+  Migration log      data/logs/migration.log
+EOF
+
+	if [[ -n "${gateway_node_id}" ]]; then
+		gateway_org="${gateway_org#__}"
+		gateway_org="${gateway_org%__}"
+		cat <<EOF
+
+Platform Data Gateway
+  Console            https://localhost:${tenant_port}
+  Gateway route      https://localhost:${tenant_port}/sourcelens
+  Organization       ${gateway_org}
+  Node ID            ${gateway_node_id}
+  Agent version      ${gateway_version}
+  Agent service      ${gateway_service}
+  AI engine          ${gateway_lensnode}
+  Console state      online
+  Install path       /opt/hyperfilelens-agent/bin
+  Data path          /opt/hyperfilelens-agent
+  Install log        ${gateway_log}
+EOF
+	fi
+
+	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
+		cat <<EOF
+
+SourceLens integration
+  Insight API        https://localhost:${tenant_port}/sourcelens/api/
+  Insight WSS        wss://localhost:${tenant_port}/sourcelens/ws/lens/lensnodes/
+  Insight network    hyperfilelens-bridge (private)
+  HFL bridge         ${lens_base}
+  Gateway URL        ${lens_gw}
+  Bridge account     ${lens_email} / ${lens_pass} (internal only; not a user login)
 EOF
 		if [[ -f "${sl_env}" ]]; then
-			echo "  SL config        data/sourcelens/config/.env"
+			printf '  %-18s %s\n' 'SL configuration' 'data/sourcelens/config/.env'
 		fi
 	elif [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "external" ]]; then
 		cat <<EOF
 
-Service endpoints
-  Insight mode     external (not managed by stack.sh)
-  Insight base URL ${lens_base}
-  Gateway URL      ${lens_gw}
-  Bridge account   ${lens_email} / ${lens_pass}  (LENS_BRIDGE_* in .env)
+SourceLens integration
+  Insight mode       external (not managed by stack.sh)
+  Insight base URL   ${lens_base}
+  Gateway URL        ${lens_gw}
+  Bridge account     ${lens_email} / ${lens_pass} (internal only; not a user login)
 EOF
 	fi
 
@@ -1251,9 +1496,11 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 	local agent_bin="/opt/hyperfilelens-agent/bin/hfl-agent"
 	if [[ "${UPGRADE_GATEWAY}" -eq 1 && -e "${agent_bin}" ]]; then
 		gateway_args+=(--reinstall)
-		log "Forcing local Data Gateway host Agent upgrade to the newest published release"
+		hfl_log_info "Refreshing local Platform Data Gateway host Agent (upgrade requested)"
 	fi
 
+	hfl_log_info "Running local Platform Data Gateway installer"
+	local -a gateway_pipeline_status
 	set +e
 	env \
 		-u SENTRY_ENABLED \
@@ -1270,9 +1517,18 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		HFL_WSS_URL="${wss_url}" \
 		HFL_INSECURE_TLS=1 \
 		HFL_FORCE_SIDECAR_INSTALL=1 \
+		HFL_OUTPUT=json \
+		HFL_ENROLL_NO_COLOR=1 \
 		HFL_NO_BANNER=1 \
-		"${helper}" gateway-install "${gateway_args[@]}"
-	command_status=$?
+		"${helper}" gateway-install "${gateway_args[@]}" 2>&1 \
+		| hfl_normalize_native_stream \
+		| if hfl_native_terminal_available; then
+			HFL_RENDER_COLOR=1 python3 "${ROOT}/tools/dev/render-enrollment-json.py"
+		else
+			python3 "${ROOT}/tools/dev/render-enrollment-json.py"
+		fi
+	gateway_pipeline_status=("${PIPESTATUS[@]}")
+	command_status="${gateway_pipeline_status[0]:-1}"
 	set -e
 	if [[ "${command_status}" -ne 0 ]]; then
 		warn "Local platform Gateway host install failed (exit ${command_status}); the dev stack remains available"
@@ -1282,7 +1538,7 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		warn "Local public Data Gateway installed but is not Copilot-ready yet; the dev stack remains available"
 		return 0
 	fi
-	log "Local public Data Gateway auto-deploy finished (online and usable)"
+	hfl_log_ok "Local Platform Data Gateway is online and usable"
 }
 
 wait_for_local_platform_gateway_ready_dev() {
@@ -1306,6 +1562,67 @@ wait_for_local_platform_gateway_ready_dev() {
 	done
 }
 
+persist_dev_command_output() {
+	local output="$1"
+	[[ -n "${output}" && -n "${LOG_FILE:-}" ]] || return 0
+	printf '%s\n' "${output}" \
+		| hfl_normalize_native_stream \
+		| hfl_log_timestamp_stream "${LOG_FILE}"
+}
+
+render_backend_result() {
+	local operation="$1" output="$2" line value status
+	persist_dev_command_output "${output}"
+	if [[ "${VERBOSE}" -eq 1 ]]; then
+		printf '%s\n' "${output}" | hfl_log_output_section backend
+		return 0
+	fi
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		line="${line#"${line%%[![:space:]]*}"}"
+		[[ -n "${line}" ]] || continue
+		# These are framework/plugin startup records emitted by every manage.py
+		# process. They remain in the session log but are not user-facing results.
+		case "${line}" in
+			*Django\ Admin:\ auto-registered\ *|*QuotaProvider\ registered\ *|*AuthzProvider\ registered\ *)
+				continue
+				;;
+		esac
+		case "${line}" in
+			Email\ sign-up:*)
+				value="${line#Email sign-up: }"
+				hfl_log_emit_with_component ' OK ' identity "Email sign-up ${value}"
+				;;
+			Google\ OAuth:*)
+				value="${line#Google OAuth: }"
+				hfl_log_emit_with_component ' OK ' identity "Google OAuth ${value}"
+				;;
+			HFL_IDENTITY_STATUS=applied)
+				;;
+			HFL_IDENTITY_STATUS=warning)
+				hfl_log_emit_with_component WARN identity "Deployment identity has warnings"
+				;;
+			HFL_GOOGLE_OAUTH_STATUS=disabled|HFL_GOOGLE_OAUTH_STATUS=ready)
+				# The human-readable Google OAuth line above is sufficient.
+				;;
+			HFL_GOOGLE_OAUTH_STATUS=*)
+				value="${line#HFL_GOOGLE_OAUTH_STATUS=}"
+				hfl_log_emit_with_component WARN identity "Google OAuth status: ${value}"
+				;;
+			HFL_AI_MODEL_REPAIRED=true)
+				;;
+			HFL_AI_MODEL_REPAIRED=false)
+				hfl_log_emit_with_component WARN ai-model "Multimodal model capability was not changed"
+				;;
+			'[WARN]'*|WARN\ *|*'WARNING'*)
+				hfl_log_emit_with_component WARN "${operation}" "${line#\[WARN\] }"
+				;;
+			'[ERROR]'*|ERROR\ *|*'Traceback (most recent call last)'*)
+				hfl_log_emit_with_component FAIL "${operation}" "${line#\[ERROR\] }"
+				;;
+			esac
+	done <<<"${output}"
+}
+
 sync_optional_identity_settings() {
 	local output command_status
 	if ! wait_for_api_healthy; then
@@ -1313,31 +1630,31 @@ sync_optional_identity_settings() {
 		return 0
 	fi
 
-	log "Synchronizing optional identity and email settings"
+	hfl_log_step "Synchronizing deployment identity"
 	set +e
 	output="$(compose exec -T api python manage.py ensure_deployment_identity_settings 2>&1)"
 	command_status=$?
 	set -e
-	if [[ -n "${output}" ]]; then
-		printf '%s\n' "${output}"
-	fi
+	render_backend_result identity "${output}"
 	if [[ "${command_status}" -ne 0 ]]; then
+		hfl_log_emit_with_component FAIL identity "Deployment identity synchronization failed"
+		[[ "${VERBOSE}" -eq 1 ]] || printf '%s\n' "${output}" | hfl_log_output_section backend
 		warn "Optional identity or email settings could not be synchronized; the dev stack remains available"
 		return 0
 	elif grep -F 'HFL_IDENTITY_STATUS=warning' <<<"${output}" >/dev/null; then
 		warn "Invalid optional identity or email settings were preserved"
 	else
-		log "Optional identity and email settings synchronized"
+		hfl_log_ok "Deployment identity synchronized"
 	fi
 
 	set +e
 	output="$(compose exec -T api python manage.py check_google_oauth_readiness 2>&1)"
 	command_status=$?
 	set -e
-	if [[ -n "${output}" ]]; then
-		printf '%s\n' "${output}"
-	fi
+	render_backend_result identity "${output}"
 	if [[ "${command_status}" -ne 0 ]]; then
+		hfl_log_emit_with_component FAIL identity "Google OAuth readiness check failed"
+		[[ "${VERBOSE}" -eq 1 ]] || printf '%s\n' "${output}" | hfl_log_output_section backend
 		warn "Google OAuth local route or generated callback is not ready; the dev stack remains available"
 	fi
 }
@@ -1353,7 +1670,7 @@ repair_existing_multimodal_model() {
 		return 0
 	fi
 
-	log "Reconciling the existing multimodal model capability"
+	hfl_log_step "Checking multimodal model capability"
 	set +e
 	output="$(
 		printf '%s\n' '{"role":"multimodal","repair_existing":true}' \
@@ -1361,23 +1678,32 @@ repair_existing_multimodal_model() {
 	)"
 	command_status=$?
 	set -e
-	if [[ -n "${output}" ]]; then
-		printf '%s\n' "${output}"
-	fi
+	render_backend_result ai-model "${output}"
 	if [[ "${command_status}" -ne 0 ]]; then
+		hfl_log_emit_with_component FAIL ai-model "Multimodal model capability check failed"
+		[[ "${VERBOSE}" -eq 1 ]] || printf '%s\n' "${output}" | hfl_log_output_section backend
 		warn "Existing multimodal model capability could not be reconciled; the dev stack remains available"
 		return 0
 	fi
-	log "Existing multimodal model capability reconciled"
+	hfl_log_ok "Multimodal model capability is ready"
 }
 
 run_dev_migration_gate() {
+	local output_file status=0
 	log "Stopping backend services before database migration"
 	compose_logged stop api worker scheduler
 	log "Starting development data services"
 	compose_logged up -d --wait --no-build --pull never postgres redis
-	log "Applying backend database migrations"
-	compose_logged --profile tools run --rm --no-deps migration
+	hfl_log_step "Applying database migrations"
+	HFL_MIGRATION_OUTPUT=compact
+	export HFL_MIGRATION_OUTPUT
+	output_file="$(mktemp "${TMPDIR:-/tmp}/hfl-migration-output.XXXXXX")" \
+		|| { unset HFL_MIGRATION_OUTPUT; return 1; }
+	compose --profile tools run --rm --no-deps migration >"${output_file}" 2>&1 || status=$?
+	hfl_normalize_native_stream <"${output_file}" | render_migration_stream
+	rm -f -- "${output_file}"
+	unset HFL_MIGRATION_OUTPUT
+	return "${status}"
 }
 
 cmd_up() {

@@ -1435,7 +1435,20 @@ main() {
 	hfl_logging_start
 	preflight
 	log "Checking the English source boundary"
-	python3 "${ROOT}/tools/quality/check-english-source.py"
+	local check_output check_status
+	check_output="$(mktemp "${TMPDIR:-/tmp}/hfl-english-source-check.XXXXXX")"
+	if python3 "${ROOT}/tools/quality/check-english-source.py" >"${check_output}" 2>&1; then
+		check_status=0
+	else
+		check_status=$?
+	fi
+	if [[ "${check_status}" -ne 0 ]]; then
+		hfl_log_output_block quality <"${check_output}"
+		rm -f -- "${check_output}"
+		die "English source boundary check failed" "${check_status}"
+	fi
+	rm -f -- "${check_output}"
+	hfl_log_ok "English source boundary check passed"
 	local version commit_full commit7 release_commit pkg_name pkg_root images_dir tar_path tar_basename edition edition_suffix
 	version="$(read_version)"
 	HFL_VERSION="${version}"

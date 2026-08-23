@@ -188,6 +188,29 @@ func TestInstallShellDoesNotArchiveTheNewRootIntoItself(t *testing.T) {
 	}
 }
 
+func TestInstallShellCleansPartiallyMigratedSystemRootAfterHealthCheck(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	for _, want := range []string{
+		`A unified Agent Root may already contain the new bin/ tree`,
+		`elif is_installed && legacy_layout_present; then`,
+		`migrate_legacy_layout 1`,
+		`archive-only mode prevents stale legacy state from overwriting valid data`,
+		`HFL_LEGACY_MIGRATION_DIR=%s`,
+		`reusing legacy Agent archive at`,
+		`tasks list --data-dir`,
+		`legacy layout retained because the new Agent database could not be opened`,
+		`reconcile-legacy) cmd_reconcile_legacy`,
+		`migrate_legacy_layout 1 0`,
+		`previous release's`,
+		`DATA_DIR="${data_dir}"`,
+		`cleanup_upgrade_workspace "${upgrade_ws:-}"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh missing partial-migration safety contract %q", want)
+		}
+	}
+}
+
 func TestInstallShellKeepsSpecifiedUserOutOfUserManager(t *testing.T) {
 	body := readPackagingInstallShell(t)
 	start := strings.Index(body, "hfl_systemctl() {")

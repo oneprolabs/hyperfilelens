@@ -180,6 +180,16 @@ sourcelens_git() {
 	fi
 }
 
+sourcelens_git_output_command() {
+	local status=0
+	# Git/Submodule output remains verbatim, but gets the same stream envelope
+	# as other native tools. Callers use this only for human-facing commands;
+	# machine-readable git queries continue to use sourcelens_git directly.
+	"$@" 2>&1 | hfl_normalize_native_stream | hfl_log_output_block git \
+		|| status="${PIPESTATUS[0]}"
+	return "${status}"
+}
+
 sourcelens_git_mirror_enabled() {
 	[[ -n "${GITHUB_DOWNLOAD_MIRROR:-}" && "${SOURCELENS_GIT_URL}" == https://github.com/* ]]
 }
@@ -189,16 +199,16 @@ sourcelens_git_network_once() {
 	shift 2
 	case "${route}" in
 	mirror)
-		timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
+		sourcelens_git_output_command timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
 			-c "url.${GITHUB_DOWNLOAD_MIRROR}/https://github.com/.insteadOf=https://github.com/" "$@"
 		;;
 	official)
 		if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-			timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
+			sourcelens_git_output_command timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
 				-c "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf=https://github.com/" \
 				-c "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf=git@github.com:" "$@"
 		else
-			timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
+			sourcelens_git_output_command timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
 				-c "url.https://github.com/.insteadOf=https://github.com/" "$@"
 		fi
 		;;
@@ -250,9 +260,10 @@ sourcelens_git_network() {
 
 sourcelens_sync_submodules() {
 	sourcelens_log "Synchronizing SourceLens submodules with forced worktree recovery"
-	sourcelens_git submodule sync --recursive
+	sourcelens_git_output_command sourcelens_git submodule sync --recursive
 	if [[ "${SOURCELENS_OFFLINE}" -eq 1 ]]; then
-		sourcelens_git submodule update --init --recursive --force --no-fetch
+		sourcelens_git_output_command sourcelens_git \
+			submodule update --init --recursive --force --no-fetch
 	else
 		sourcelens_git_network submodule update --init --recursive --force
 	fi
@@ -390,17 +401,17 @@ sourcelens_sync_source() {
 			sourcelens_log "SourceLens fetch failed; using the existing local source cache"
 		fi
 		if sourcelens_git show-ref --verify --quiet "refs/heads/${SOURCELENS_GIT_REF}"; then
-			sourcelens_git checkout "${SOURCELENS_GIT_REF}"
+			sourcelens_git_output_command sourcelens_git checkout "${SOURCELENS_GIT_REF}"
 			if [[ "${fetch_succeeded}" -eq 1 ]]; then
 				sourcelens_git_network pull --ff-only origin "${SOURCELENS_GIT_REF}" || true
 			fi
 		elif sourcelens_git show-ref --verify --quiet "refs/tags/${SOURCELENS_GIT_REF}"; then
-			sourcelens_git checkout "${SOURCELENS_GIT_REF}"
+			sourcelens_git_output_command sourcelens_git checkout "${SOURCELENS_GIT_REF}"
 		else
-			sourcelens_git checkout "${SOURCELENS_GIT_REF}"
+			sourcelens_git_output_command sourcelens_git checkout "${SOURCELENS_GIT_REF}"
 		fi
 		sourcelens_sync_submodules
-		sourcelens_git submodule foreach --recursive \
+		sourcelens_git_output_command sourcelens_git submodule foreach --recursive \
 			'git reset --hard HEAD >/dev/null && git clean -fdx >/dev/null'
 	)
 	sourcelens_restore_source_dockerfiles "${SOURCELENS_SOURCE_CACHE}"
@@ -989,11 +1000,14 @@ for line in lines:
         and "npm config set registry" not in text
     ):
         out.append(
-            'RUN if [ -n "${NPM_REGISTRY}" ]; then \\\n'
+            'RUN npm config set audit false; \\\n'
+            '    npm config set fund false; \\\n'
+            '    npm config set update-notifier false; \\\n'
+            '    npm config set fetch-retries 5; \\\n'
+            '    npm config set fetch-retry-mintimeout 20000; \\\n'
+            '    npm config set fetch-retry-maxtimeout 120000; \\\n'
+            '    if [ -n "${NPM_REGISTRY}" ]; then \\\n'
             '      npm config set registry "${NPM_REGISTRY}"; \\\n'
-            '      npm config set fetch-retries 5; \\\n'
-            '      npm config set fetch-retry-mintimeout 20000; \\\n'
-            '      npm config set fetch-retry-maxtimeout 120000; \\\n'
             '    fi\n'
         )
         inserted_run = True
@@ -1003,6 +1017,9 @@ for line in lines:
         and "fetch-retries" not in text
     ):
         out.append(line.rstrip("\n").rstrip("\\").rstrip() + " ; \\\n")
+        out.append("      npm config set audit false; \\\n")
+        out.append("      npm config set fund false; \\\n")
+        out.append("      npm config set update-notifier false; \\\n")
         out.append("      npm config set fetch-retries 5; \\\n")
         out.append("      npm config set fetch-retry-mintimeout 20000; \\\n")
         out.append("      npm config set fetch-retry-maxtimeout 120000; \\\n")
@@ -1341,7 +1358,10 @@ sourcelens_build_app_images() {
 		# shellcheck disable=SC2206
 		local -a services=(${requested_services})
 		build_args+=("${services[@]}")
-		DOCKER_BUILDKIT=1 "${SOURCELENS_COMPOSE[@]}" \
+		hfl_run_native_command env \
+			DOCKER_BUILDKIT=1 \
+			BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-auto}" \
+			"${SOURCELENS_COMPOSE[@]}" \
 			-f "${SOURCELENS_BUILD_COMPOSE_FILE}" "${build_args[@]}"
 	)
 	if [[ "${full_build}" -eq 0 ]]; then
@@ -1710,22 +1730,49 @@ sourcelens_dev_compose() {
 	)
 }
 
+sourcelens_dev_compose_native() {
+	sourcelens_ensure_compose
+	(
+		cd "${SOURCELENS_DEV_DIR}"
+		hfl_run_native_command env \
+			DOCKER_BUILDKIT=1 \
+			BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-auto}" \
+			"${SOURCELENS_COMPOSE[@]}" --env-file "${SOURCELENS_DEV_ENV_FILE}" \
+			-p "${SOURCELENS_COMPOSE_PROJECT}" -f docker-compose.yml "$@"
+	)
+}
+
 sourcelens_manage() {
 	sourcelens_dev_compose exec -T --workdir /opt/backend \
 		api /opt/venv/bin/python manage.py "$@"
 }
 
+sourcelens_manage_logged() {
+	local status=0 output_file
+	output_file="$(mktemp "${TMPDIR:-/tmp}/hfl-sourcelens-manage.XXXXXX")" || return 1
+	# Keep the command invocation in the current shell. Besides preserving the
+	# exact exit code, this matters for callers that provide a compose wrapper
+	# (and avoids hiding its bookkeeping in a pipeline subshell).
+	sourcelens_manage "$@" >"${output_file}" 2>&1 || status=$?
+	hfl_normalize_native_stream <"${output_file}" | hfl_log_output_block sourcelens
+	rm -f -- "${output_file}"
+	return "${status}"
+}
+
 sourcelens_ensure_database_initialized() {
-	if ! sourcelens_manage migrate --check >/dev/null; then
+	if ! sourcelens_manage migrate --check >/dev/null 2>&1; then
 		sourcelens_log "Initializing SourceLens database (missing or pending migrations)"
-		sourcelens_manage sourcelens_init --skip-collectstatic
+		sourcelens_manage_logged sourcelens_init --skip-collectstatic \
+			|| sourcelens_die "SourceLens database initialization failed"
 	else
 		sourcelens_log "SourceLens database migrations are current"
 	fi
 
 	sourcelens_log "Collecting SourceLens static assets"
 	sourcelens_dev_compose exec -T api mkdir -p /opt/backend/core/staticfiles
-	sourcelens_manage collectstatic --noinput
+	sourcelens_manage_logged collectstatic --noinput \
+		|| sourcelens_die "SourceLens static asset collection failed"
+	hfl_log_ok "SourceLens static assets are ready"
 }
 
 sourcelens_configure_hfl_env() {
@@ -1771,8 +1818,8 @@ def set_key(name: str, value: str) -> None:
 for key, value in updates.items():
     set_key(key, value)
 env_path.write_text(text, encoding="utf-8")
-print(f"[sourcelens] configured {', '.join(updates.keys())} in {env_path}")
 PY
+	sourcelens_log "Configured LENS_BASE_URL, LENS_GATEWAY_BASE_URL, NO_PROXY, SOURCELENS_GIT_REF in ${hfl_env}"
 }
 
 sourcelens_wait_for_health() {

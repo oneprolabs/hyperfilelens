@@ -21,6 +21,17 @@ hfl_log_timestamp() {
 	date -u '+%Y-%m-%dT%H:%M:%S.000Z'
 }
 
+# Convert terminal carriage-return refreshes into ordinary log lines without
+# turning CRLF into an extra blank line. Perl is available on supported dev
+# hosts; the tr fallback keeps the logger usable in minimal environments.
+hfl_normalize_native_stream() {
+	if command -v perl >/dev/null 2>&1; then
+		perl -pe 's/\r\n/\n/g; s/\r/\n/g'
+	else
+		tr '\r' '\n'
+	fi
+}
+
 hfl_log_component_name() {
 	local component="${HFL_LOG_COMPONENT:-hfl}"
 	case "${component}" in
@@ -47,7 +58,8 @@ hfl_log_status_token() {
 	esac
 }
 
-hfl_log_color_enabled() {
+hfl_log_color_enabled_for() {
+	local fd="${1:-2}"
 	[[ "${HFL_LOG_COLOR}" != "0" && -z "${NO_COLOR:-}" ]] || return 1
 	if [[ "${HFL_LOG_COLOR}" == "1" || "${HFL_LOG_COLOR}" == "always" ]]; then
 		return 0
@@ -58,12 +70,39 @@ hfl_log_color_enabled() {
 	[[ "${TERM:-}" != "dumb" ]] || return 1
 	# Dev logging mirrors stderr through a process substitution, so the live
 	# terminal is kept on fd 4. Fall back to stderr for standalone callers.
-	[[ -t 4 || -t 2 ]]
+	[[ -t "${fd}" ]]
+}
+
+hfl_log_output_fd() {
+	local stream="${1:-stderr}"
+	case "${stream}" in
+	stdout)
+		if [[ -t 3 || "${HFL_LOG_TEE_ACTIVE:-0}" == "1" ]]; then
+			printf '3'
+		else
+			printf '1'
+		fi
+		;;
+	*)
+		if [[ -t 4 || "${HFL_LOG_TEE_ACTIVE:-0}" == "1" ]]; then
+			printf '4'
+		else
+			printf '2'
+		fi
+		;;
+	esac
+}
+
+hfl_log_color_enabled() {
+	local fd
+	fd="$(hfl_log_output_fd stderr)"
+	hfl_log_color_enabled_for "${fd}"
 }
 
 hfl_log_color_status() {
-	local token="$1"
-	if ! hfl_log_color_enabled; then
+	local token="$1" stream="${2:-stderr}" fd
+	fd="$(hfl_log_output_fd "${stream}")"
+	if ! hfl_log_color_enabled_for "${fd}"; then
 		printf '%s' "${token}"
 		return 0
 	fi
@@ -84,7 +123,7 @@ hfl_log_emit() {
 	component="$(hfl_log_component_name)"
 	if [[ "${HFL_LOG_TERMINAL_TIMESTAMPS}" == "1" ]]; then
 		printf '[%s] [%s] [%s] %s\n' \
-			"$(hfl_log_timestamp)" "$(hfl_log_color_status "${tag}")" "${component}" "$*" >&2
+			"$(hfl_log_timestamp)" "$(hfl_log_color_status "${tag}" stderr)" "${component}" "$*" >&2
 	else
 		case "${level}" in
 		INFO) legacy_tag='INFO ' ;;
@@ -126,12 +165,204 @@ hfl_log_emit_with_component() {
 	tag="$(hfl_log_status_token "${level}")"
 	if [[ "${HFL_LOG_TERMINAL_TIMESTAMPS}" == "1" ]]; then
 		printf '[%s] [%s] [%s] %s\n' \
-			"$(hfl_log_timestamp)" "$(hfl_log_color_status "${tag}")" "${component}" "${message}" >&2
+			"$(hfl_log_timestamp)" "$(hfl_log_color_status "${tag}" stderr)" "${component}" "${message}" >&2
 	else
 		legacy_tag="${tag}"
 		[[ "${level}" == "INFO" ]] && legacy_tag='INFO '
 		printf '[%s] %s\n' "${legacy_tag}" "${message}" >&2
 	fi
+}
+
+# Emit a native command's multi-line output as one visual block. The first
+# line carries the HFL envelope; continuation lines retain the tool's original
+# text and align below the message column. This is especially useful for
+# `git fetch`, whose `From` header and ref updates are one operation but several
+# physical lines. The persisted session log still receives every line.
+hfl_log_output_block() {
+	local source="${1:-${HFL_LOG_COMPONENT:-hfl}}" line tag raw_prefix prefix prefix_width timestamp
+	local first=1
+	tag="$(hfl_log_status_token 'OUT ')"
+	if [[ "${HFL_LOG_TERMINAL_TIMESTAMPS}" == "1" ]]; then
+		timestamp="$(hfl_log_timestamp)"
+		printf -v raw_prefix '[%s] [%s] [%s] ' "${timestamp}" "${tag}" "${source}"
+		printf -v prefix '[%s] [%s] [%s] ' \
+			"${timestamp}" "$(hfl_log_color_status "${tag}" stderr)" "${source}"
+	else
+		printf -v raw_prefix '[%s] ' "${tag}"
+		prefix="${raw_prefix}"
+	fi
+	prefix_width="${#raw_prefix}"
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		# Native tools sometimes emit a blank separator between their logger and
+		# the command result. Stage boundaries already provide visual separation;
+		# do not surface an otherwise empty line in the HFL output block.
+		[[ -n "${line}" ]] || continue
+		# Git and extension materialization output use leading spaces for a
+		# standalone terminal. The block prefix already provides the alignment;
+		# remove that presentation padding so continuation payloads share one
+		# start column. Compose also indents its own Container/Network/Volume
+		# status rows, but indentation in Django/application diagnostics remains
+		# meaningful and is intentionally preserved.
+		if [[ -n "${line}" ]]; then
+			local trimmed_line="${line#"${line%%[![:space:]]*}"}"
+			local original_trimmed_line="${trimmed_line}"
+			# Backend/container applications may already prefix records with an
+			# ISO timestamp. The HFL block supplies the single timestamp for this
+			# output record; remove the nested prefix so it is not shown twice.
+			if [[ "${source}" == "backend" || "${source}" == "docker" || "${source}" == "sourcelens" ]] \
+				&& [[ "${trimmed_line}" =~ ^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+Z\][[:space:]]+(.*)$ ]]; then
+				trimmed_line="${BASH_REMATCH[1]}"
+			fi
+			if [[ "${source}" == "backend" || "${source}" == "docker" || "${source}" == "sourcelens" ]]; then
+				case "${trimmed_line}" in
+				'[INFO] '*) trimmed_line="${trimmed_line#'[INFO] '}" ;;
+				'[INFO ] '*) trimmed_line="${trimmed_line#'[INFO ] '}" ;;
+				esac
+			fi
+			if [[ "${source}" == "git" || "${source}" == "extensions" \
+				|| "${source}" == "backend" || "${source}" == "sourcelens" ]]; then
+				line="${trimmed_line}"
+			elif [[ "${source}" == "docker" ]]; then
+				case "${original_trimmed_line}" in
+				Container\ * | Network\ * | Volume\ * | Image\ * | '[INFO] '* | '[INFO ] '*)
+					line="${trimmed_line}"
+					;;
+				esac
+			fi
+		fi
+		if [[ "${first}" -eq 1 ]]; then
+			printf '%s%s\n' "${prefix}" "${line}" >&2
+			first=0
+		else
+			printf '%*s%s\n' "${prefix_width}" '' "${line}" >&2
+		fi
+	done
+}
+
+# Emit a nested installer or helper transcript as a compact section. Unlike an
+# output block, continuation lines use a small fixed indent instead of aligning
+# under the long HFL envelope. This keeps detailed Agent/Gateway transcripts
+# readable while preserving their native status markers and hierarchy.
+hfl_log_output_section() {
+	local source="${1:-${HFL_LOG_COMPONENT:-hfl}}" line tag prefix first=1 timestamp
+	tag="$(hfl_log_status_token 'OUT ')"
+	if [[ "${HFL_LOG_TERMINAL_TIMESTAMPS}" == "1" ]]; then
+		timestamp="$(hfl_log_timestamp)"
+		printf -v prefix '[%s] [%s] [%s] ' "${timestamp}" "${tag}" "${source}"
+	else
+		prefix="[${tag}] "
+	fi
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		[[ -n "${line}" ]] || continue
+		if [[ -n "${line}" ]]; then
+			local trimmed_line="${line#"${line%%[![:space:]]*}"}"
+			local original_trimmed_line="${trimmed_line}"
+			if [[ "${source}" == "backend" || "${source}" == "docker" || "${source}" == "sourcelens" ]] \
+				&& [[ "${trimmed_line}" =~ ^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+Z\][[:space:]]+(.*)$ ]]; then
+				trimmed_line="${BASH_REMATCH[1]}"
+			fi
+			if [[ "${source}" == "backend" || "${source}" == "docker" || "${source}" == "sourcelens" ]]; then
+				case "${trimmed_line}" in
+				'[INFO] '*) trimmed_line="${trimmed_line#'[INFO] '}" ;;
+				'[INFO ] '*) trimmed_line="${trimmed_line#'[INFO ] '}" ;;
+				esac
+			fi
+			if [[ "${source}" == "backend" || "${source}" == "sourcelens" ]]; then
+				line="${trimmed_line}"
+			fi
+			if [[ "${source}" == "docker" ]]; then
+				case "${original_trimmed_line}" in
+				Container\ * | Network\ * | Volume\ * | Image\ * | '[INFO] '* | '[INFO ] '*)
+					line="${trimmed_line}"
+					;;
+				esac
+			fi
+		fi
+		if [[ "${first}" -eq 1 ]]; then
+			printf '%s%s\n' "${prefix}" "${line}" >&2
+			first=0
+		else
+			printf '  %s\n' "${line}" >&2
+		fi
+	done
+}
+
+hfl_log_terminal_columns() {
+	local console_fd=$1 columns="${HFL_LOG_TERMINAL_WRAP_COLUMNS:-}"
+	if [[ "${columns}" =~ ^[1-9][0-9]*$ ]]; then
+		printf '%s' "${columns}"
+		return 0
+	fi
+	if [[ -t "${console_fd}" ]]; then
+		columns="$(stty size <"/dev/fd/${console_fd}" 2>/dev/null | awk '{print $2}')"
+	fi
+	if [[ "${columns}" =~ ^[1-9][0-9]*$ ]]; then
+		printf '%s' "${columns}"
+	else
+		printf '0'
+	fi
+}
+
+hfl_log_terminal_wrap_stream() {
+	local console_fd=$1 columns
+	columns="$(hfl_log_terminal_columns "${console_fd}")"
+	if [[ ! "${columns}" =~ ^[1-9][0-9]*$ || "${columns}" -lt 40 ]]; then
+		cat >&"${console_fd}"
+		return 0
+	fi
+	awk -v width="${columns}" '
+function strip_ansi(value) {
+	gsub(/\033\[[0-9;]*m/, "", value)
+	return value
+}
+function emit_wrapped(prefix, message,    prefix_width, available, indent, rest, part, cut, i, first) {
+	prefix_width = length(strip_ansi(prefix))
+	available = width - prefix_width
+	# Do not corrupt embedded ANSI sequences in a message. Such output is
+	# uncommon for structured records and remains available in the full log.
+	if (available < 8 || length(strip_ansi(prefix message)) <= width || index(message, "\033") > 0) {
+		print prefix message
+		return
+	}
+	indent = sprintf("%*s", prefix_width, "")
+	rest = message
+	first = 1
+	while (length(rest) > 0) {
+		part = substr(rest, 1, available)
+		if (length(rest) <= available) {
+			if (first) print prefix part
+			else print indent part
+			break
+		}
+		cut = 0
+		for (i = length(part); i > 0; i--) {
+			if (substr(part, i, 1) ~ /[[:space:]]/) {
+				cut = i
+				break
+			}
+		}
+		if (cut > 0) {
+			part = substr(rest, 1, cut)
+			rest = substr(rest, cut + 1)
+			sub(/^[[:space:]]+/, "", rest)
+		} else {
+			rest = substr(rest, available + 1)
+		}
+		if (first) print prefix part
+		else print indent part
+		first = 0
+	}
+}
+{
+	structured = "^\\[[^]]+\\] \\[[^]]+\\] \\[[^]]+\\] "
+	if (match($0, structured)) {
+		prefix = substr($0, 1, RLENGTH)
+		emit_wrapped(prefix, substr($0, RLENGTH + 1))
+	} else {
+		print
+	}
+}
+' >&"${console_fd}"
 }
 
 hfl_die() {
@@ -167,12 +398,91 @@ hfl_log_timestamp_stream() {
 }
 
 hfl_log_capture_stream() {
-	local log_file=$1 console_fd=$2
-	# tee keeps carriage-return progress output live on the terminal; the second
-	# stream is normalized into complete timestamped lines for the session log.
-	tee "/dev/fd/${console_fd}" \
-		| tr '\r' '\n' \
-		| hfl_log_timestamp_stream "${log_file}"
+	local log_file=$1 console_fd=$2 terminal_dir terminal_fifo terminal_pid status
+	# A FIFO keeps both copies streaming: the terminal renderer may wrap long
+	# structured messages, while the log-file copy remains one complete,
+	# lossless record. This avoids process-substitution races at stream end.
+	terminal_dir="$(mktemp -d "${TMPDIR:-/tmp}/hyperfilelens-log-terminal.XXXXXX")" || return 1
+	terminal_fifo="${terminal_dir}/stream"
+	if ! mkfifo "${terminal_fifo}"; then
+		rmdir "${terminal_dir}" 2>/dev/null || true
+		return 1
+	fi
+	hfl_log_terminal_wrap_stream "${console_fd}" <"${terminal_fifo}" >&"${console_fd}" &
+	terminal_pid=$!
+	if tee "${terminal_fifo}" \
+		| hfl_normalize_native_stream \
+		| hfl_log_timestamp_stream "${log_file}"; then
+		status=0
+	else
+		status="${PIPESTATUS[0]}"
+	fi
+	wait "${terminal_pid}" 2>/dev/null || true
+	rm -f -- "${terminal_fifo}"
+	rmdir "${terminal_dir}" 2>/dev/null || true
+	return "${status}"
+}
+
+hfl_native_terminal_available() {
+	[[ -t 3 || -t 4 || ( -t 1 && -t 2 ) ]]
+}
+
+# Run a long-lived native tool through a real pseudo-terminal when the caller
+# started from an interactive terminal. Docker BuildKit (and tools such as
+# npm running inside a Docker build) use the terminal capability to select
+# their compact, live progress renderer. The normal dev log capture redirects
+# stdout/stderr through pipes, which otherwise makes BuildKit fall back to its
+# verbose plain renderer. The command output is copied byte-for-byte to the
+# original terminal and normalized only in the persisted log file.
+hfl_run_native_command() {
+	local console_fd="" command status errexit_was_set=0
+	local -a pipeline_status
+
+	if [[ -t 3 ]]; then
+		console_fd=3
+	elif [[ -t 4 ]]; then
+		console_fd=4
+	elif [[ -t 1 && -t 2 ]]; then
+		"$@"
+		return $?
+	else
+		"$@"
+		return $?
+	fi
+
+	# Without a configured session log, the caller is already interactive and
+	# does not need a PTY proxy. This also keeps standalone helper usage simple.
+	if [[ -z "${HFL_LOG_FILE:-}" ]] || ! command -v script >/dev/null 2>&1; then
+		"$@"
+		return $?
+	fi
+
+	printf -v command '%q ' "$@"
+	command="${command% }"
+	case "$-" in
+	*e*) errexit_was_set=1 ;;
+	esac
+	set +e
+	script -qefc "${command}" /dev/null 2>&1 \
+		| tee "/dev/fd/${console_fd}" \
+		| hfl_normalize_native_stream \
+		| hfl_log_timestamp_stream "${HFL_LOG_FILE}"
+	pipeline_status=("${PIPESTATUS[@]}")
+	if [[ "${errexit_was_set}" -eq 1 ]]; then
+		set -e
+	else
+		set +e
+	fi
+
+	# The native command is authoritative. A logging-side failure must not mask
+	# its exit code, but a successful command still reports a broken log stream.
+	status="${pipeline_status[0]:-1}"
+	if [[ "${status}" -eq 0 ]]; then
+		for status in "${pipeline_status[@]}"; do
+			[[ "${status}" -eq 0 ]] || return "${status}"
+		done
+	fi
+	return "${status}"
 }
 
 hfl_logging_configure() {
@@ -234,6 +544,9 @@ hfl_logging_finish() {
 hfl_print_banner() {
 	local title=${1:-"HyperFileLens"}
 	[[ "${HFL_NO_BANNER:-0}" != "1" ]] || return 0
+	if hfl_log_color_enabled_for "$(hfl_log_output_fd stdout)"; then
+		printf '\033[1;35m'
+	fi
 	cat <<'BANNER'
  _   _                       _____ _ _      _
 | | | |_   _ _ __   ___ _ _|  ___(_) | ___| |    ___ _ __  ___
@@ -242,6 +555,9 @@ hfl_print_banner() {
 |_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/
        |___/|_|                     INSTALLER
 BANNER
+	if hfl_log_color_enabled_for "$(hfl_log_output_fd stdout)"; then
+		printf '\033[0m'
+	fi
 	printf '\n%s\n%s\n' "${title}" '----------------------------------------------------------------'
 }
 

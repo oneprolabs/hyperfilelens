@@ -16,18 +16,83 @@ import (
 )
 
 // RunBundleUpgrade upgrades an installed agent from a downloaded release archive.
+// It is kept as a compatibility wrapper for callers that only have the
+// archive path. Enrollment upgrades should prefer RunBundleUpgradeFromBundle
+// so the newly verified installer is used even when the installed installer is
+// from an older layout release.
 func RunBundleUpgrade(ctx context.Context, archivePath string) error {
+	return runBundleUpgrade(ctx, archivePath, "")
+}
+
+// RunBundleUpgradeFromBundle runs the installer shipped in the already
+// extracted and validated release bundle. This avoids bootstrapping an
+// upgrade through the previous installed install.sh, which may fail before it
+// can deploy the new installer (notably during the unified Agent Root
+// migration).
+func RunBundleUpgradeFromBundle(ctx context.Context, archivePath, bundleRoot string, cfg Config) error {
+	return runBundleUpgrade(ctx, archivePath, bundleRoot, cfg)
+}
+
+// RunBundleUpgradeFromArchive is the safe entry point for standalone upgrade
+// commands. It validates the archive before selecting its installer, so an
+// older installed installer cannot block the first upgrade to the current
+// package layout.
+func RunBundleUpgradeFromArchive(ctx context.Context, archivePath string, cfg Config) error {
+	workDir, err := os.MkdirTemp("", "hfl-upgrade-")
+	if err != nil {
+		return fmt.Errorf("upgrade temp dir: %w", err)
+	}
+	defer os.RemoveAll(workDir)
+	extractDir := filepath.Join(workDir, "extract")
+	if err := install.ExtractArchive(ctx, archivePath, extractDir); err != nil {
+		return fmt.Errorf("upgrade archive extract: %w", err)
+	}
+	bundleRoot, err := install.FindBundleRoot(extractDir)
+	if err != nil {
+		return fmt.Errorf("upgrade archive validation: %w", err)
+	}
+	if err := validateAgentPackage(bundleRoot, cfg.NodeRole, ""); err != nil {
+		return fmt.Errorf("upgrade package validation: %w", err)
+	}
+	return RunBundleUpgradeFromBundle(ctx, archivePath, bundleRoot, cfg)
+}
+
+func runBundleUpgrade(ctx context.Context, archivePath, bundleRoot string, cfg ...Config) error {
 	installDir := install.DefaultInstallDir()
+	commandEnv := os.Environ()
+	if len(cfg) > 0 {
+		commandEnv = append(commandEnv,
+			"HFL_INSTALLATION_MODE="+string(cfg[0].InstallationMode),
+			"HFL_RUN_AS_USER="+cfg[0].RunAsUser,
+			"HFL_RUN_AS_HOME="+cfg[0].RunAsHome,
+		)
+	}
 	if runtime.GOOS == "windows" {
 		script := filepath.Join(installDir, "install.ps1")
+		if bundleRoot != "" {
+			candidate := filepath.Join(bundleRoot, "install.ps1")
+			if _, err := os.Stat(candidate); err == nil {
+				script = candidate
+			}
+		}
 		args := []string{
 			"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script,
 			"upgrade", "-From", archivePath, "-NoRestart", "-QuietFooter",
 		}
 		cmd := exec.CommandContext(ctx, "powershell.exe", args...)
+		if bundleRoot != "" {
+			cmd.Dir = bundleRoot
+		}
+		cmd.Env = commandEnv
 		return runStreamingCommand(cmd, "Agent upgrade")
 	}
 	script := filepath.Join(installDir, "install.sh")
+	if bundleRoot != "" {
+		candidate := filepath.Join(bundleRoot, "install.sh")
+		if _, err := os.Stat(candidate); err == nil {
+			script = candidate
+		}
+	}
 	cmd := exec.CommandContext(
 		ctx,
 		script,
@@ -38,6 +103,10 @@ func RunBundleUpgrade(ctx context.Context, archivePath string) error {
 		"--no-restart",
 		"--quiet-footer",
 	)
+	if bundleRoot != "" {
+		cmd.Dir = bundleRoot
+	}
+	cmd.Env = commandEnv
 	return runStreamingCommand(cmd, "Agent upgrade")
 }
 

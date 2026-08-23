@@ -53,13 +53,8 @@ func RunGatewayUpgrade(ctx context.Context, fromArchive string) error {
 
 	fromArchive = strings.TrimSpace(fromArchive)
 	if fromArchive != "" {
-		installDir := vfs.DefaultInstallDir()
-		installScript := filepath.Join(installDir, "install.sh")
 		printPhase("Upgrading Agent")
-		cmd := exec.CommandContext(ctx, "/bin/bash", installScript, "upgrade", "--from", fromArchive, "--yes", "--quiet-footer")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		if err := RunBundleUpgradeFromArchive(ctx, fromArchive, cfg); err != nil {
 			return fmt.Errorf("agent upgrade: %w", err)
 		}
 	} else {

@@ -110,6 +110,28 @@ grep -F 'NPM_REGISTRY: ${NPM_REGISTRY:-}' \
 grep -F 'CODEGRAPH_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}' \
 	"${tmp}/docker-compose.standalone.yml" >/dev/null
 
+mkdir -p "${tmp}/frontend"
+cat >"${tmp}/frontend/Dockerfile" <<'DOCKERFILE'
+FROM node:22-alpine
+ARG VITE_GA_ID
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --only=production=false
+DOCKERFILE
+printf '{}\n' >"${tmp}/frontend/package.json"
+printf '{}\n' >"${tmp}/frontend/package-lock.json"
+sourcelens_patch_frontend_dockerfile_npm_registry "${tmp}"
+sourcelens_patch_frontend_dockerfile_npm_registry "${tmp}"
+[[ "$(grep -Fc 'ARG NPM_REGISTRY' "${tmp}/frontend/Dockerfile")" -eq 1 ]] || {
+	printf 'ERROR: SourceLens frontend npm ARG patch is not idempotent\n' >&2
+	exit 1
+}
+grep -F 'npm config set audit false' "${tmp}/frontend/Dockerfile" >/dev/null
+grep -F 'npm config set fund false' "${tmp}/frontend/Dockerfile" >/dev/null
+grep -F 'npm config set update-notifier false' "${tmp}/frontend/Dockerfile" >/dev/null
+grep -F 'npm config set fetch-retries 5' "${tmp}/frontend/Dockerfile" >/dev/null
+grep -F 'npm config set registry "${NPM_REGISTRY}"' "${tmp}/frontend/Dockerfile" >/dev/null
+
 cat >"${tmp}/nginx.conf" <<'NGINX'
 server {
     listen 443 ssl;

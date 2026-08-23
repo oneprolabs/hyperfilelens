@@ -240,7 +240,16 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			rememberIssuedCredential,
 			markEnrollmentComplete,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		// finishEnrollment has restarted the Agent and confirmed the node is
+		// online. Reconcile legacy paths only now, so cleanup is gated by the
+		// same service/Console health that users see after an upgrade.
+		if reconcileErr := install.RunReconcileLegacyLayout(ctx); reconcileErr != nil {
+			logWarn("Legacy Agent reconciliation was deferred; old paths were preserved: " + reconcileErr.Error())
+		}
+		return nil
 
 	case ActionRebind:
 		stageExistingConfig()
@@ -534,7 +543,7 @@ func upgradeAgentPackage(ctx context.Context, cfg Config, downloadURL, releaseVe
 	logOK(label + " verified")
 
 	logStep("Upgrading agent binaries.")
-	if err := RunBundleUpgrade(ctx, archivePath); err != nil {
+	if err := RunBundleUpgradeFromBundle(ctx, archivePath, bundleRoot, cfg); err != nil {
 		return err
 	}
 	logOK("Agent binaries were upgraded successfully.")

@@ -31,7 +31,7 @@ xgettext \
 	--from-code=UTF-8 \
 	--keyword=_ \
 	--keyword=gettext_noop \
-	--sort-output \
+	--sort-by-file \
 	--no-wrap \
 	--output="${source_catalog}" \
 	"${source_files[@]}"

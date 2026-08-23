@@ -17,26 +17,193 @@ ensure_log_dir() {
 wait_for_postgres() {
   host="${POSTGRES_HOST:-postgres}"
   port="${POSTGRES_PORT:-5432}"
-  echo "[entrypoint] waiting for postgres at ${host}:${port}"
+  if [ "${HFL_MIGRATION_OUTPUT:-verbose}" = "compact" ]; then
+    printf 'HFL_MIGRATION_EVENT\tSTEP\tWaiting for PostgreSQL at %s:%s\n' "${host}" "${port}"
+  else
+    echo "[entrypoint] waiting for postgres at ${host}:${port}"
+  fi
   until python -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('${host}', int('${port}'))); s.close()" 2>/dev/null; do
     sleep 2
   done
-  echo "[entrypoint] postgres is reachable"
+  if [ "${HFL_MIGRATION_OUTPUT:-verbose}" = "compact" ]; then
+    printf 'HFL_MIGRATION_EVENT\tOK\tPostgreSQL is reachable\n'
+  else
+    echo "[entrypoint] postgres is reachable"
+  fi
+}
+
+emit_migration_event() {
+  level="$1"
+  message="$2"
+  if [ "${HFL_MIGRATION_OUTPUT:-verbose}" = "compact" ]; then
+    printf 'HFL_MIGRATION_EVENT\t%s\t%s\n' "${level}" "${message}"
+  else
+    printf '%s\n' "${message}"
+  fi
+}
+
+emit_migration_command_failure() {
+  label="$1"
+  output_file="$2"
+  emit_migration_event FAIL "${label} failed"
+  # Successful compact runs are intentionally quiet. A failed command keeps
+  # the complete Django/entrypoint transcript for diagnosis.
+  cat "${output_file}"
+}
+
+persist_migration_output() {
+  output_file="$1"
+  if [ -n "${LOG_FILE:-}" ] && [ -f "${output_file}" ]; then
+    cat "${output_file}" >>"${LOG_FILE}" 2>/dev/null || true
+  fi
 }
 
 run_migrations_and_register() {
-  echo "[entrypoint] migrate"
-  python manage.py migrate --noinput
-  echo "[entrypoint] collectstatic (Django Admin assets only; SPA uses /assets/)"
-  python manage.py collectstatic --noinput --clear || python manage.py collectstatic --noinput
-  echo "[entrypoint] register periodic tasks"
-  python manage.py register_periodic_tasks || true
+  compact="${HFL_MIGRATION_OUTPUT:-verbose}"
+  if [ "${compact}" = "compact" ]; then
+    emit_migration_event STEP "Applying database migrations"
+  else
+    echo "[entrypoint] migrate"
+  fi
+
+  migrate_output="$(mktemp)"
+  if python manage.py migrate --noinput >"${migrate_output}" 2>&1; then
+    persist_migration_output "${migrate_output}"
+    if [ "${compact}" = "compact" ]; then
+      if grep -F "No migrations to apply" "${migrate_output}" >/dev/null 2>&1; then
+        emit_migration_event OK "Database schema is current · no migrations pending"
+      else
+        applied_count="$(grep -cE 'Applying .*\.\.\. OK$' "${migrate_output}" 2>/dev/null || true)"
+        if [ "${applied_count}" -gt 0 ] 2>/dev/null; then
+          emit_migration_event OK "Database migrations applied · ${applied_count} migration(s)"
+        else
+          emit_migration_event OK "Database migrations completed"
+        fi
+      fi
+    else
+      cat "${migrate_output}"
+    fi
+  else
+    persist_migration_output "${migrate_output}"
+    emit_migration_command_failure "Database migration" "${migrate_output}"
+    rm -f "${migrate_output}"
+    return 1
+  fi
+  rm -f "${migrate_output}"
+
+  if [ "${compact}" = "compact" ]; then
+    emit_migration_event STEP "Collecting Django Admin assets"
+  else
+    echo "[entrypoint] collectstatic (Django Admin assets only; SPA uses /assets/)"
+  fi
+  collectstatic_output="$(mktemp)"
+  if python manage.py collectstatic --noinput --clear >"${collectstatic_output}" 2>&1; then
+    persist_migration_output "${collectstatic_output}"
+    # Clearing stale admin assets is intentional, but printing every removed
+    # filename makes development and upgrade logs unreadable. Keep the final
+    # copy summary and suppress only routine successful deletion details.
+    if [ "${compact}" = "compact" ]; then
+      static_summary="$(grep -E '[0-9]+ static files copied to' "${collectstatic_output}" | tail -1 || true)"
+      if [ -n "${static_summary}" ]; then
+        static_summary="${static_summary%% to *}"
+        emit_migration_event OK "Django Admin assets are ready · ${static_summary}"
+      else
+        emit_migration_event OK "Django Admin assets are ready"
+      fi
+    else
+      sed '/^[[:space:]]*Deleting /d' "${collectstatic_output}"
+    fi
+    rm -f "${collectstatic_output}"
+  else
+    persist_migration_output "${collectstatic_output}"
+    if [ "${compact}" = "compact" ]; then
+      emit_migration_event WARN "Django Admin asset cleanup could not be completed; retrying without cleanup"
+    else
+      cat "${collectstatic_output}"
+    fi
+    rm -f "${collectstatic_output}"
+    if [ "${compact}" = "compact" ]; then
+      collectstatic_retry_output="$(mktemp)"
+      if python manage.py collectstatic --noinput >"${collectstatic_retry_output}" 2>&1; then
+        persist_migration_output "${collectstatic_retry_output}"
+        static_summary="$(grep -E '[0-9]+ static files copied to' "${collectstatic_retry_output}" | tail -1 || true)"
+        if [ -n "${static_summary}" ]; then
+          static_summary="${static_summary%% to *}"
+          emit_migration_event OK "Django Admin assets are ready · ${static_summary}"
+        else
+          emit_migration_event OK "Django Admin assets are ready"
+        fi
+        rm -f "${collectstatic_retry_output}"
+      else
+        persist_migration_output "${collectstatic_retry_output}"
+        emit_migration_command_failure "Django Admin asset collection" "${collectstatic_retry_output}"
+        rm -f "${collectstatic_retry_output}"
+        return 1
+      fi
+    fi
+    if [ "${compact}" != "compact" ]; then
+      python manage.py collectstatic --noinput
+    fi
+  fi
+
+  if [ "${compact}" = "compact" ]; then
+    emit_migration_event STEP "Registering periodic tasks"
+  else
+    echo "[entrypoint] register periodic tasks"
+  fi
+  periodic_output="$(mktemp)"
+  if python manage.py register_periodic_tasks >"${periodic_output}" 2>&1; then
+    persist_migration_output "${periodic_output}"
+    if [ "${compact}" = "compact" ]; then
+      periodic_summary="$(grep -E 'Registered [0-9]+ periodic task' "${periodic_output}" | tail -1 || true)"
+      if [ -n "${periodic_summary}" ]; then
+        emit_migration_event OK "${periodic_summary%.}"
+      else
+        emit_migration_event OK "Periodic tasks are ready"
+      fi
+    else
+      cat "${periodic_output}"
+    fi
+  else
+    persist_migration_output "${periodic_output}"
+    if [ "${compact}" = "compact" ]; then
+      emit_migration_event WARN "Periodic task registration was not completed"
+      cat "${periodic_output}"
+    else
+      cat "${periodic_output}"
+    fi
+  fi
+  rm -f "${periodic_output}"
+
   if [ "${SEED_INITIAL_DATA:-0}" = "1" ]; then
-    echo "[entrypoint] seed initial data"
-    python manage.py seed_initial_data \
+    if [ "${compact}" = "compact" ]; then
+      emit_migration_event STEP "Synchronizing initial data"
+    else
+      echo "[entrypoint] seed initial data"
+    fi
+    seed_output="$(mktemp)"
+    if python manage.py seed_initial_data \
       --org-name "${SEED_ORG_NAME:-HyperFileLens}" \
       --admin-email "${SEED_ADMIN_EMAIL:-admin@hyperfilelens.com}" \
-      --admin-password "${SEED_ADMIN_PASSWORD:-Admin@123}" || true
+      --admin-password "${SEED_ADMIN_PASSWORD:-Admin@123}" >"${seed_output}" 2>&1; then
+      persist_migration_output "${seed_output}"
+      if [ "${compact}" = "compact" ]; then
+        emit_migration_event OK "Initial data is synchronized · ${SEED_ORG_NAME:-HyperFileLens}"
+      else
+        cat "${seed_output}"
+      fi
+    else
+      persist_migration_output "${seed_output}"
+      if [ "${compact}" = "compact" ]; then
+        emit_migration_event WARN "Initial data synchronization was not completed"
+        cat "${seed_output}"
+      else
+        cat "${seed_output}"
+      fi
+    fi
+    rm -f "${seed_output}"
+  elif [ "${compact}" = "compact" ]; then
+    emit_migration_event OK "Initial data synchronization not requested"
   fi
 }
 
@@ -162,7 +329,11 @@ case "${1:-api}" in
     ensure_log_dir
     wait_for_postgres
     run_migrations_and_register
-    echo "[entrypoint] migrations complete"
+    if [ "${HFL_MIGRATION_OUTPUT:-verbose}" = "compact" ]; then
+      emit_migration_event OK "Database initialization completed"
+    else
+      echo "[entrypoint] migrations complete"
+    fi
     exit 0
     ;;
   api)

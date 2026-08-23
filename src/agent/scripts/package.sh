@@ -283,17 +283,18 @@ def log(level: str, message: str) -> None:
     message = message.rstrip()
     if message and message[-1] not in ".?!":
         message += "."
+    tags = {
+        "STEP ": "....",
+        " OK  ": " OK ",
+        "WARN ": "WARN",
+        "SKIP ": "SKIP",
+        "FAIL ": "FAIL",
+    }
+    tag = tags.get(level, level.strip())
     if os.environ.get("HFL_LOG_TERMINAL_TIMESTAMPS", "1") != "1":
-        tags = {
-            "STEP ": "....",
-            " OK  ": " OK ",
-            "WARN ": "WARN",
-            "SKIP ": "SKIP",
-            "FAIL ": "FAIL",
-        }
-        print(f"[{tags.get(level, level.strip())}] {message}", file=sys.stderr, flush=True)
+        print(f"[{tag}] {message}", file=sys.stderr, flush=True)
     else:
-        print(f"[{timestamp}] [{level}] {message}", file=sys.stderr, flush=True)
+        print(f"[{timestamp}] [{tag}] [agent] {message}", file=sys.stderr, flush=True)
 
 
 def sha256_file(path: Path) -> str:

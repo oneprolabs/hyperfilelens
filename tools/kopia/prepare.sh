@@ -6,6 +6,11 @@ umask 022
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
+# shellcheck source=../lib/logging.sh
+source "${SCRIPT_DIR}/../lib/logging.sh"
+
+HFL_LOG_COMPONENT=kopia
+export HFL_LOG_COMPONENT
 
 MATRIX="${KOPIA_MATRIX:-${KOPIA_DEFAULT_MATRIX}}"
 FORCE=0
@@ -14,8 +19,8 @@ PRINT_CONFIG=0
 GITHUB_DOWNLOAD_MIRROR="${GITHUB_DOWNLOAD_MIRROR:-}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
-die() { printf 'ERROR: %s\n' "$1" >&2; exit "${2:-1}"; }
-log() { printf '[kopia] %s\n' "$*" >&2; }
+die() { hfl_log_fail "$1"; exit "${2:-1}"; }
+log() { hfl_log_info "$@"; }
 require_value() {
 	[[ $# -ge 2 && -n "${2:-}" && "${2:0:1}" != - ]] || die "$1 requires a value" 2
 }
@@ -63,12 +68,18 @@ parse_args() {
 }
 
 git_with_auth() {
+	local status=0
 	if [[ -n "${GITHUB_TOKEN}" ]]; then
-		GIT_TERMINAL_PROMPT=0 git \
-			-c "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf=https://github.com/" "$@"
+		env GIT_TERMINAL_PROMPT=0 git \
+			-c "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf=https://github.com/" "$@" \
+			2>&1 | hfl_normalize_native_stream | hfl_log_output_block git \
+			|| status="${PIPESTATUS[0]}"
 	else
-		GIT_TERMINAL_PROMPT=0 git "$@"
+		env GIT_TERMINAL_PROMPT=0 git "$@" \
+			2>&1 | hfl_normalize_native_stream | hfl_log_output_block git \
+			|| status="${PIPESTATUS[0]}"
 	fi
+	return "${status}"
 }
 
 github_git_mirror_url() {

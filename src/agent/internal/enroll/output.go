@@ -266,6 +266,11 @@ func printPhase(title string) {
 		return
 	}
 	if jsonOutput() {
+		emitJSON(os.Stdout, map[string]any{
+			"type":    "install_phase",
+			"status":  "STEP",
+			"message": title,
+		})
 		return
 	}
 	fmt.Fprintln(os.Stdout)
