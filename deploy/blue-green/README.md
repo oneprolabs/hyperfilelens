@@ -84,6 +84,11 @@ separate lifecycles. The release manifest supplies the Backend and Frontend
 image references, while `HFL_GATEWAY_VERSION` pins the stable Nginx image
 present at first installation (or the first blue/green upgrade). A later
 `install.sh start` therefore cannot unexpectedly replace the public entry.
-Updating that gateway image requires a separately planned entry-layer
-maintenance action; zero-downtime gateway-image replacement requires an
-external load balancer or a host-level dual-entry driver.
+The generated active upstreams use Docker's embedded resolver (`127.0.0.11`)
+and shared Nginx zones, so a continuously running gateway follows address
+changes when Compose recreates the active API or Web pool. Blue/green cutover
+still performs an explicit `nginx -t` and graceful reload so route changes are
+validated before traffic moves. Updating the gateway image itself requires a
+separately planned entry-layer maintenance action; zero-downtime gateway-image
+replacement requires an external load balancer or a host-level dual-entry
+driver.

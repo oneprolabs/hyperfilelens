@@ -892,8 +892,32 @@ fi
 [[ "$(grep -Fc '${HFL_TENANT_PORT:-11443}:11443' "${release_compose}")" -eq 1 ]]
 grep -F 'include /etc/nginx/snippets/hfl-active-upstreams.conf;' \
 	"${ROOT}/deploy/nginx/default.conf" >/dev/null
-grep -F 'api-blue:8000' \
+grep -F 'resolver 127.0.0.11 valid=10s ipv6=off;' \
+	"${ROOT}/deploy/nginx/default.conf" >/dev/null
+grep -F 'zone hfl_api_http 64k;' \
 	"${ROOT}/deploy/nginx/snippets/hfl-active-upstreams.conf" >/dev/null
+grep -F 'server api-blue:8000 resolve;' \
+	"${ROOT}/deploy/nginx/snippets/hfl-active-upstreams.conf" >/dev/null
+[[ "$(grep -Ec 'server (api-blue|web-blue):[0-9]+ resolve;' \
+	"${ROOT}/deploy/nginx/snippets/hfl-active-upstreams.conf")" -eq 5 ]]
+[[ "$(grep -Fc 'zone hfl_' \
+	"${ROOT}/deploy/nginx/snippets/hfl-active-upstreams.conf")" -eq 5 ]]
+for expected in \
+	'zone hfl_api_http 64k;' \
+	'zone hfl_api_ws 64k;' \
+	'zone hfl_web_tenant 64k;' \
+	'zone hfl_web_ops 64k;' \
+	'zone hfl_website 64k;' \
+	'server ${api_service}:8000 resolve;' \
+	'server ${api_service}:8001 resolve;' \
+	'server web-${web_color}:8080 resolve;' \
+	'server web-${web_color}:8081 resolve;' \
+	'server web-${web_color}:8082 resolve;'; do
+	grep -F "${expected}" "${ROOT}/deploy/installer/install.sh" >/dev/null || {
+		printf 'ERROR: release upstream renderer is missing: %s\n' "${expected}" >&2
+		exit 1
+	}
+done
 grep -F 'location ~ ^/api/v1/lens/copilot/sessions/[0-9]+/attachments/?$ {' \
 	"${ROOT}/deploy/nginx/snippets/hfl-tenant-locations.conf" >/dev/null
 grep -F 'client_max_body_size 26m;' \
