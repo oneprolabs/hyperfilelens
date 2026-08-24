@@ -245,7 +245,11 @@ def _dispatch_automatic_repository_observation_locked(
         and repository.bind_node_id
     ):
         claim = _observable_repository_claim(repository)
-        if claim is None:
+        has_claims = RepositoryLocationClaim.objects.filter(
+            repository=repository,
+            scope=RepositoryLocationClaim.Scope.REPOSITORY,
+        ).exists()
+        if claim is None and has_claims:
             Repository.objects.filter(pk=repository.id).update(
                 health=Repository.Health.UNVERIFIED,
                 health_failures=0,
@@ -269,8 +273,9 @@ def _dispatch_automatic_repository_observation_locked(
             repository_subdir = ""
             repository_payload = proxy_fs_repository_payload(repository)
             legacy_location = repository_has_legacy_location(repository)
-        legacy_adoption = (
-            claim.ownership_verified_at is None
+        legacy_adoption = bool(
+            claim is not None
+            and claim.ownership_verified_at is None
             and claim.legacy_adoption_required
         )
         return [
@@ -331,13 +336,6 @@ def _dispatch_automatic_repository_observation_locked(
             state=RepositoryLocationClaim.State.OWNED,
             owner_node_id__isnull=False,
         )
-        .filter(
-            Q(ownership_verified_at__isnull=False)
-            | Q(
-                ownership_verified_at__isnull=True,
-                legacy_adoption_required=True,
-            )
-        )
         .values_list("owner_node_id", "root_path")
     }
     active_keys = {
@@ -388,12 +386,6 @@ def _dispatch_automatic_repository_observation_locked(
             state=RepositoryLocationClaim.State.OWNED,
             owner_node_id=node.id,
             root_path=repository_subdir,
-        ).filter(
-            Q(ownership_verified_at__isnull=False)
-            | Q(
-                ownership_verified_at__isnull=True,
-                legacy_adoption_required=True,
-            )
         ).order_by("-id").first()
         if claim is None:
             continue
@@ -728,6 +720,18 @@ def _observation_claim_is_current(
     # do not require a new marker from an Agent that cannot produce one.
     if persisted.get("legacy_compatibility_allowed") is True:
         return claims.exists()
+    # Repositories created before durable location claims were introduced do
+    # not have a claim row. Preserve their existing observation behavior; a
+    # newly-created or explicitly invalidated claim is still checked below.
+    if not claims.exists():
+        return not RepositoryLocationClaim.objects.filter(
+            repository=repository,
+            scope=(
+                RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT
+                if persisted.get("direct_nas") is True
+                else RepositoryLocationClaim.Scope.REPOSITORY
+            ),
+        ).exists()
     return claims.filter(
         Q(ownership_verified_at__isnull=False)
         | Q(
