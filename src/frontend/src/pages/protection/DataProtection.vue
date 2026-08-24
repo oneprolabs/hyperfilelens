@@ -142,6 +142,7 @@ import {
 } from '../../lib/storageRepositoryApi'
 import { storageRepositoryLocation } from '../../lib/storageRepositoryDisplay'
 import { startProtectionBackupTasks, cancelProtectionBackupTask } from '../../lib/protectionBackupTaskApi'
+import { backupStartResultMessage } from '../../lib/protectionBackupTaskPresentation'
 import { cancelProtectionRestoreTask } from '../../lib/protectionRestoreTaskApi'
 import {
   type ProtectionStopConfirmItem,
@@ -4771,7 +4772,7 @@ async function startSelectedBackupTasks() {
     }
     const failed = result.results.find((item) => item.status === 'failed' || item.status === 'skipped')
     if (failed?.message) {
-      ElMessage.warning({ message: failed.message, grouping: true })
+      ElMessage.warning({ message: backupStartResultMessage(failed, t), grouping: true })
       return
     }
     ElMessage.warning({ message: t('protection.backupsPage.msgSourceNoBackupConfig'), grouping: true })

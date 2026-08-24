@@ -25,6 +25,7 @@ export type StartBackupTaskResultItem = {
   source_snapshot_id: number | null
   source_snapshot_status: string | null
   status: 'created' | 'skipped' | 'conflict' | 'failed'
+  error_code?: string | null
   message: string
 }
 

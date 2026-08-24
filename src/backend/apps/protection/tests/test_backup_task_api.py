@@ -131,6 +131,36 @@ class ProtectionBackupTaskApiTests(TestCase):
     def _headers(self):
         return {"HTTP_X_ORG_KEY": self.org.key}
 
+    def test_start_backup_task_returns_storage_validation_error(self):
+        BackupConfig.objects.filter(id=self.config.id).update(
+            status=BackupConfig.Status.PROVISION_FAILED,
+            provisioning_error_code="NAS_REPOSITORY_READ_ONLY",
+            provisioning_error_message=(
+                "NAS repository is mounted read-only. Enable write access and "
+                "retry storage validation."
+            ),
+        )
+
+        response = self.client.post(
+            "/api/v1/protection/backup-tasks/",
+            {
+                "source_ids": [f"agent:{self.agent.id}"],
+                "trigger_type": "manual",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.content
+        )
+        self.assertEqual(response.data["created_count"], 0)
+        result = response.data["results"][0]
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["error_code"], "NAS_REPOSITORY_READ_ONLY")
+        self.assertIn("mounted read-only", result["message"])
+        self.assertFalse(BackupSourceSnapshot.objects.exists())
+
     @patch("apps.protection.tasks.backup.advance_backup_task.delay")
     def test_policy_prepare_result_immediately_queues_backup_advance(self, mock_delay):
         task, snapshot = self._create_backup_task_and_snapshot(
