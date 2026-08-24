@@ -683,6 +683,29 @@ def start_backup_tasks(
         for config in configs:
             if config.status != BackupConfig.Status.ACTIVE:
                 skipped_count += 1
+                provisioning_error_code = (
+                    str(config.provisioning_error_code or "").strip() or None
+                )
+                if config.status == BackupConfig.Status.PROVISIONING:
+                    status_message = "Target storage validation is still running."
+                    provisioning_error_code = None
+                elif config.status == BackupConfig.Status.PROVISION_FAILED:
+                    provisioning_error_message = str(
+                        config.provisioning_error_message or ""
+                    ).strip()
+                    status_message = (
+                        provisioning_error_message
+                        or (
+                            "Target storage validation failed. Resolve the issue "
+                            "and retry validation."
+                        )
+                    )
+                else:
+                    provisioning_error_code = None
+                    status_message = (
+                        "Target storage validation failed. Resolve the issue "
+                        "and retry validation."
+                    )
                 results.append(
                     {
                         "source_type": source.source_type,
@@ -693,11 +716,8 @@ def start_backup_tasks(
                         "source_snapshot_id": None,
                         "source_snapshot_status": None,
                         "status": "skipped",
-                        "message": (
-                            "Target storage validation is still running."
-                            if config.status == BackupConfig.Status.PROVISIONING
-                            else "Target storage validation failed. Resolve the issue and retry validation."
-                        ),
+                        "error_code": provisioning_error_code,
+                        "message": status_message,
                     }
                 )
                 continue
