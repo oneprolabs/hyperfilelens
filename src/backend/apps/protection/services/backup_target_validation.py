@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from django.core.exceptions import ValidationError
 from django.db import close_old_connections
+from django.db.models import Q
 
 from apps.node import agent_paths
 from apps.node.models import NodeTask
@@ -28,8 +29,11 @@ from apps.protection.services.source_execution import (
     ExecutionTarget,
     resolve_source_execution_target,
 )
-from apps.storage.repositories.models import Repository
-from apps.storage.services.internal.nas_repository import nas_repository_payload
+from apps.storage.repositories.models import Repository, RepositoryLocationClaim
+from apps.storage.services.internal.nas_repository import (
+    nas_agent_repository_subdir,
+    nas_repository_payload,
+)
 from apps.storage.services.internal.repository_access import (
     explicit_repository_server_host,
     repository_uses_bound_proxy,
@@ -81,6 +85,13 @@ _NAS_MOUNT_HELPER_RESULTS = {
         "cifs-utils",
         "mount.cifs",
     ),
+}
+_NAS_WRITE_FAILURE_REMEDIATIONS = {
+    "NAS_MOUNT_READ_ONLY": "enable_write_access",
+    "NAS_REPOSITORY_READ_ONLY": "enable_write_access",
+    "NAS_MOUNT_SOURCE_MISMATCH": "remount_nas",
+    "NAS_WRITE_PERMISSION_DENIED": "grant_write_access",
+    "NAS_REPOSITORY_WRITE_DENIED": "grant_write_access",
 }
 
 
@@ -424,6 +435,92 @@ def _validate_direct_nas_route(
     cleanup_deadline: float,
 ) -> TargetValidationResult:
     repository = assignment.repository
+    repository_subdir = nas_agent_repository_subdir(assignment.target.node.id)
+    existing_claim = (
+        RepositoryLocationClaim.objects.filter(
+            repository=repository,
+            scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+            owner_node_id=assignment.target.node.id,
+            root_path=repository_subdir,
+            state__in=(
+                RepositoryLocationClaim.State.RESERVED,
+                RepositoryLocationClaim.State.INITIALIZING,
+                RepositoryLocationClaim.State.OWNED,
+                RepositoryLocationClaim.State.RESIDUAL,
+            ),
+        )
+        .order_by("-id")
+        .first()
+    )
+    claim = (
+        RepositoryLocationClaim.objects.filter(
+            repository=repository,
+            scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+            state=RepositoryLocationClaim.State.OWNED,
+            owner_node_id=assignment.target.node.id,
+            root_path=repository_subdir,
+        )
+        .filter(
+            Q(ownership_verified_at__isnull=False)
+            | Q(
+                ownership_verified_at__isnull=True,
+                legacy_adoption_required=True,
+            )
+        )
+        .order_by("-id")
+        .first()
+    )
+    if existing_claim is not None and claim is None:
+        return TargetValidationResult(
+            status="failed",
+            code="REPOSITORY_OWNERSHIP_INVALID",
+            message=(
+                "The existing NAS repository location is not ready for use. "
+                "Repair or complete repository initialization, then retry validation."
+            ),
+            details={
+                "stage": "repository_ownership",
+                "remediation": "repair_repository_ownership",
+                "execution_node_name": str(assignment.target.node.name or "").strip(),
+                "execution_node_address": str(
+                    assignment.target.node.ip_address or ""
+                ).strip(),
+            },
+        )
+    if claim is not None:
+        try:
+            outcome = _execute_agent_task(
+                organization_id=organization_id,
+                node_id=assignment.target.node.id,
+                kind="repo.status",
+                payload={
+                    "repository": nas_repository_payload(
+                        repository=repository,
+                        subdir=repository_subdir,
+                        node_id=assignment.target.node.id,
+                    ),
+                    "probe": "backup_target_validation",
+                    "health_only": True,
+                    "repair_mount": True,
+                    "allow_ownership_adoption": (
+                        claim.ownership_verified_at is None
+                        and claim.legacy_adoption_required
+                    ),
+                },
+                request_id=request_id,
+                registry=registry,
+                deadline=validation_deadline,
+                max_wait_seconds=TARGET_VALIDATION_AGENT_SECONDS,
+            )
+            return _nas_outcome_result(
+                outcome,
+                repository=repository,
+                execution_node_name=assignment.target.node.name,
+                execution_node_address=assignment.target.node.ip_address,
+            )
+        except Exception as exc:
+            return _validation_exception_result(exc, repository=repository)
+
     mount_point = agent_paths.validation_mount_point(
         request_id,
         repository.id,
@@ -442,6 +539,7 @@ def _validate_direct_nas_route(
             "nas": nas_payload,
             **nas_payload,
             "cleanup_after_test": True,
+            "require_write": True,
         }
         outcome = _execute_agent_task(
             organization_id=organization_id,
@@ -526,6 +624,7 @@ def _validate_proxy_repository_group(
                     "repository": repository_access.repository_payload,
                     "probe": "backup_target_validation",
                     "health_only": True,
+                    "repair_mount": True,
                 },
                 request_id=request_id,
                 registry=registry,
@@ -595,6 +694,7 @@ def _validate_proxy_repository_group(
                 "public_host": host,
                 "public_host_source": _host_source,
                 "repository": repository_access.repository_payload,
+                "repair_mount": True,
             },
             request_id=request_id,
             registry=registry,
@@ -949,6 +1049,23 @@ def _outcome_result(
             code="VALIDATION_TIMEOUT",
             message="Backup target validation timed out. Try again.",
         )
+    specific_code = str(outcome.result.get("error_code") or "").strip()
+    if specific_code in _NAS_WRITE_FAILURE_REMEDIATIONS:
+        return TargetValidationResult(
+            status="failed",
+            code=specific_code,
+            message=_sanitize_message(
+                outcome.message or "NAS target is not writable.",
+                repository=repository,
+            ),
+            details={
+                "stage": "write_precheck",
+                "remediation": str(
+                    outcome.result.get("remediation")
+                    or _NAS_WRITE_FAILURE_REMEDIATIONS[specific_code]
+                ).strip(),
+            },
+        )
     return TargetValidationResult(
         status="failed",
         code=failure_code,
@@ -971,7 +1088,25 @@ def _nas_outcome_result(
         failure_code="NAS_MOUNT_FAILED",
         repository=repository,
     )
-    if result.status != "failed" or result.code != "NAS_MOUNT_FAILED":
+    if result.status != "failed":
+        return result
+    if result.code in _NAS_WRITE_FAILURE_REMEDIATIONS:
+        details = dict(result.details)
+        details.update(
+            {
+                "execution_node_name": str(execution_node_name or "").strip(),
+                "execution_node_address": str(
+                    execution_node_address or ""
+                ).strip(),
+            }
+        )
+        return TargetValidationResult(
+            status="failed",
+            code=result.code,
+            message=result.message,
+            details=details,
+        )
+    if result.code != "NAS_MOUNT_FAILED":
         return result
 
     helper_result = (

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -148,6 +149,142 @@ func TestFilesystemRepositoryOwnershipMatchesInterruptedInitialization(t *testin
 	foreign.Ownership = &foreignOwnership
 	if _, err := filesystemRepositoryOwnershipMatches(foreign); err == nil {
 		t.Fatal("expected a foreign ownership marker to be rejected")
+	}
+}
+
+func TestClaimFilesystemRepositoryOwnershipRecoversOnlyKopiaProbeResidue(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("HFL_DATA_DIR", dataDir)
+	mountPoint := vfs.RepositoryMountPoint(dataDir, 42, 14)
+	repositoryPath := filepath.Join(mountPoint, "hp-repos", "agent-14")
+	if err := os.MkdirAll(repositoryPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(repositoryPath, ".shards"),
+		[]byte(`{"default":[3,3],"maxNonShardedLength":20}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	spec := repositorySpec{
+		ID:     42,
+		Type:   "nas",
+		Subdir: "hp-repos/agent-14",
+		TargetNAS: mustNASSpec(t, map[string]any{
+			"protocol": "nfs", "server": "10.0.0.15",
+			"export_path": "/volume1/backup", "mount_point": mountPoint,
+		}),
+		Ownership: &repositoryOwnership{
+			DeploymentUUID: "deployment-1",
+			RepositoryUUID: "repository-42",
+			LocationDigest: "location-42",
+			MarkerPath:     repositoryOwnershipMarkerPath,
+			FormatVersion:  1,
+			Signature:      "signature-42",
+		},
+	}
+
+	if err := claimFilesystemRepositoryOwnership(spec); err != nil {
+		t.Fatalf("claim ownership after safe probe residue: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repositoryPath, ".shards")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected probe residue to be removed, err=%v", err)
+	}
+	if matches, err := filesystemRepositoryOwnershipMatches(spec); err != nil || !matches {
+		t.Fatalf("expected ownership marker after recovery: matches=%v err=%v", matches, err)
+	}
+}
+
+func TestClaimFilesystemRepositoryOwnershipRejectsUnknownRepositoryData(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("HFL_DATA_DIR", dataDir)
+	mountPoint := vfs.RepositoryMountPoint(dataDir, 42, 14)
+	repositoryPath := filepath.Join(mountPoint, "hp-repos", "agent-14")
+	if err := os.MkdirAll(repositoryPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shardsPath := filepath.Join(repositoryPath, ".shards")
+	if err := os.WriteFile(shardsPath, []byte(`{"default":[3,3],"maxNonShardedLength":20}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unknownPath := filepath.Join(repositoryPath, "backup-data")
+	if err := os.WriteFile(unknownPath, []byte("must be preserved"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := repositorySpec{
+		ID:     42,
+		Type:   "nas",
+		Subdir: "hp-repos/agent-14",
+		TargetNAS: mustNASSpec(t, map[string]any{
+			"protocol": "nfs", "server": "10.0.0.15",
+			"export_path": "/volume1/backup", "mount_point": mountPoint,
+		}),
+		Ownership: &repositoryOwnership{
+			DeploymentUUID: "deployment-1",
+			RepositoryUUID: "repository-42",
+			LocationDigest: "location-42",
+			MarkerPath:     repositoryOwnershipMarkerPath,
+			FormatVersion:  1,
+			Signature:      "signature-42",
+		},
+	}
+
+	err := claimFilesystemRepositoryOwnership(spec)
+	if !errors.Is(err, errRepositoryDirectoryContainsData) {
+		t.Fatalf("expected unknown data rejection, got %v", err)
+	}
+	if _, err := os.Stat(shardsPath); err != nil {
+		t.Fatalf("unknown repository data must be preserved: %v", err)
+	}
+	if _, err := os.Stat(unknownPath); err != nil {
+		t.Fatalf("unknown repository data must be preserved: %v", err)
+	}
+}
+
+func TestManagedRepositoryStatusDoesNotConnectWithoutOwnership(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tempDir := t.TempDir()
+	basePath := filepath.Join(tempDir, "repositories")
+	repositoryPath := filepath.Join(basePath, "hfl-repo-42")
+	commandLog := filepath.Join(tempDir, "commands.log")
+	kopiaPath := filepath.Join(tempDir, "kopia")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nexit 0\n", commandLog)
+	if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir:   filepath.Join(tempDir, "data"),
+		KopiaPath: kopiaPath,
+	}})
+	payload := ParsePayload(map[string]any{"repository": map[string]any{
+		"id": 42, "type": "proxy_fs", "path": repositoryPath,
+		"base_path": basePath, "layout": "managed_subdir_v1",
+		"kopia_password": "repo-pass",
+		"ownership": map[string]any{
+			"deployment_uuid": "deployment-1", "repository_uuid": "repository-42",
+			"location_digest": "location-42", "format_version": 1,
+			"signature": "signature-42", "marker_path": repositoryOwnershipMarkerPath,
+		},
+	}})
+
+	status, result, message := engine.runManagedRepositoryStatus(
+		context.Background(), ReporterSink{}, "task-1", payload,
+	)
+	if status != "failed" || !strings.Contains(message, "ownership marker is missing") {
+		t.Fatalf("unexpected status result=%q message=%q payload=%#v", status, message, result)
+	}
+	if result["error_code"] != "REPOSITORY_OWNERSHIP_INVALID" {
+		t.Fatalf("unexpected error code: %#v", result)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(commands), "repository connect") {
+		t.Fatalf("status probe must not connect an unowned location: %q", commands)
 	}
 }
 
@@ -296,14 +433,26 @@ func TestRepositoryCreateAlreadyExists(t *testing.T) {
 }
 
 func TestRepositoryCommandFailureMessage(t *testing.T) {
-	if got := repositoryCommandFailureMessage(process.Result{Stderr: "access denied"}, fmt.Errorf("exit 1")); got != "access denied" {
+	if got := repositoryCommandFailureMessage(process.Result{Stderr: "access denied"}, fmt.Errorf("exit 1"), repositorySpec{}, Payload{}); got != "access denied" {
 		t.Fatalf("expected stderr reason, got %q", got)
 	}
-	if got := repositoryCommandFailureMessage(process.Result{Stdout: "repository unavailable"}, fmt.Errorf("exit 1")); got != "repository unavailable" {
+	if got := repositoryCommandFailureMessage(process.Result{Stdout: "repository unavailable"}, fmt.Errorf("exit 1"), repositorySpec{}, Payload{}); got != "repository unavailable" {
 		t.Fatalf("expected stdout reason, got %q", got)
 	}
-	if got := repositoryCommandFailureMessage(process.Result{}, fmt.Errorf("exit 1")); got != "exit 1" {
+	if got := repositoryCommandFailureMessage(process.Result{}, fmt.Errorf("exit 1"), repositorySpec{}, Payload{}); got != "exit 1" {
 		t.Fatalf("expected fallback error, got %q", got)
+	}
+	spec := repositorySpec{KopiaPassword: "repo-secret"}
+	if got := repositoryCommandFailureMessage(process.Result{Stderr: "failed for repo-secret"}, nil, spec, Payload{}); got != "failed for <redacted>" {
+		t.Fatalf("expected repository command output to be redacted, got %q", got)
+	}
+	redacted := redactedRepositoryCommandResult(
+		process.Result{Stderr: "failed for repo-secret"},
+		spec,
+		Payload{},
+	)
+	if got := redacted["stderr_tail"]; got != "failed for <redacted>" {
+		t.Fatalf("expected repository result output to be redacted, got %#v", got)
 	}
 }
 

@@ -516,6 +516,18 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	configFile string,
 	mode repositoryPrepareMode,
 ) (string, map[string]string, map[string]any, repositorySpec, string) {
+	allowOwnershipAdoption := false
+	repairMount := false
+	if value, present := p.Extra["allow_ownership_adoption"]; present {
+		if parsed, valid := payloadBoolValue(value); valid {
+			allowOwnershipAdoption = parsed
+		}
+	}
+	if value, present := p.Extra["repair_mount"]; present {
+		if parsed, valid := payloadBoolValue(value); valid {
+			repairMount = parsed
+		}
+	}
 	env := map[string]string{
 		"KOPIA_CHECK_FOR_UPDATES": "false",
 	}
@@ -552,32 +564,53 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	}
 	if spec.Type == "nas" {
 		nassvc.LogSpec("repository_mount_ensure_begin", *spec.TargetNAS, "task_id", taskID)
-		if err := nassvc.NewService().EnsureMounted(ctx, *spec.TargetNAS); err != nil {
-			nassvc.LogSpec("repository_mount_ensure_failed", *spec.TargetNAS, "task_id", taskID, "err", err.Error())
-			return "", nil, nasRepositoryMountErrorResult(err), repositorySpec{}, err.Error()
+		mountService := nassvc.NewService()
+		var mountErr error
+		if mode == repositoryPrepareInitialize || repairMount {
+			mountErr = mountService.EnsureMountedForWrite(ctx, *spec.TargetNAS)
+		} else {
+			mountErr = mountService.EnsureMounted(ctx, *spec.TargetNAS)
+		}
+		if mountErr != nil {
+			nassvc.LogSpec("repository_mount_ensure_failed", *spec.TargetNAS, "task_id", taskID, "err", mountErr.Error())
+			return "", nil, nasRepositoryMountErrorResult(mountErr), repositorySpec{}, mountErr.Error()
 		}
 		nassvc.LogSpec("repository_mount_ensure_ok", *spec.TargetNAS, "task_id", taskID)
 		repoPath, pathErr := repositoryNASPath(spec)
 		if pathErr != nil {
 			return "", nil, nil, repositorySpec{}, pathErr.Error()
 		}
-		nassvc.LogSpec("repository_mkdir_begin", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath)
-		if mkErr := runWithTimeout(ctx, managedRepositoryFSOperationTimeout, func() error {
-			return os.MkdirAll(repoPath, 0o755)
-		}); mkErr != nil {
-			nassvc.LogSpec("repository_mkdir_failed", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath, "err", mkErr.Error())
-			if result, message, classified := classifyNASRepositoryWriteError(*spec.TargetNAS, mkErr, "repository_directory_create"); classified {
-				return "", nil, result, repositorySpec{}, message
+		// An existing, ownership-bound repository must be verified before any
+		// write-intent probe.  A database claim is not by itself permission to
+		// modify whatever currently appears at the NAS path; the durable marker
+		// is the physical boundary.  Initialization is different: it owns the
+		// empty path only after the write precheck below succeeds.
+		if mode == repositoryPrepareConnect && spec.Ownership != nil && !allowOwnershipAdoption {
+			if ownershipErr := verifyFilesystemRepositoryOwnership(spec, false); ownershipErr != nil {
+				return "", nil, map[string]any{
+					"error_code": "REPOSITORY_OWNERSHIP_INVALID",
+				}, spec, ownershipErr.Error()
 			}
-			return "", nil, nil, repositorySpec{}, mkErr.Error()
 		}
-		nassvc.LogSpec("repository_mkdir_ok", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath)
-		if probeErr := probeNASRepositoryWritable(repoPath); probeErr != nil {
-			nassvc.LogSpec("repository_write_probe_failed", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath, "err", probeErr.Error())
-			if result, message, classified := classifyNASRepositoryWriteError(*spec.TargetNAS, probeErr, "repository_write_probe"); classified {
-				return "", nil, result, repositorySpec{}, message
+		if mode == repositoryPrepareInitialize || repairMount {
+			nassvc.LogSpec("repository_mkdir_begin", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath)
+			if mkErr := runWithTimeout(ctx, managedRepositoryFSOperationTimeout, func() error {
+				return os.MkdirAll(repoPath, 0o755)
+			}); mkErr != nil {
+				nassvc.LogSpec("repository_mkdir_failed", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath, "err", mkErr.Error())
+				if result, message, classified := classifyNASRepositoryWriteError(*spec.TargetNAS, mkErr, "repository_directory_create"); classified {
+					return "", nil, result, repositorySpec{}, message
+				}
+				return "", nil, nil, repositorySpec{}, mkErr.Error()
 			}
-			return "", nil, nil, repositorySpec{}, probeErr.Error()
+			nassvc.LogSpec("repository_mkdir_ok", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath)
+			if probeErr := probeNASRepositoryWritable(repoPath); probeErr != nil {
+				nassvc.LogSpec("repository_write_probe_failed", *spec.TargetNAS, "task_id", taskID, "repo_path", repoPath, "err", probeErr.Error())
+				if result, message, classified := classifyNASRepositoryWriteError(*spec.TargetNAS, probeErr, "repository_write_probe"); classified {
+					return "", nil, result, repositorySpec{}, message
+				}
+				return "", nil, nil, repositorySpec{}, probeErr.Error()
+			}
 		}
 		spec.Path = repoPath
 	}
@@ -604,8 +637,13 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	}
 	if mode == repositoryPrepareInitialize && spec.Type != "s3" && spec.Ownership != nil {
 		if ownershipErr := claimFilesystemRepositoryOwnership(spec); ownershipErr != nil {
+			if errors.Is(ownershipErr, errRepositoryDirectoryContainsData) {
+				return "", nil, map[string]any{
+					"error_code": repositoryAlreadyExistsCode,
+				}, spec, repositoryAlreadyExistsMessage
+			}
 			return "", nil, map[string]any{
-				"error_code": repositoryAlreadyExistsCode,
+				"error_code": "REPOSITORY_OWNERSHIP_INVALID",
 			}, spec, ownershipErr.Error()
 		}
 	}
@@ -632,14 +670,15 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		}
 		result["ownership_verified"] = true
 	}
-	allowOwnershipAdoption := false
-	if value, present := p.Extra["allow_ownership_adoption"]; present {
-		if parsed, valid := payloadBoolValue(value); valid {
-			allowOwnershipAdoption = parsed
-		}
-	}
 	if spec.Type != "s3" && spec.Ownership != nil {
-		if ownershipErr := checkFilesystemRepositoryOwnershipIfPresent(spec); ownershipErr != nil {
+		var ownershipErr error
+		if mode == repositoryPrepareConnect && !allowOwnershipAdoption {
+			ownershipErr = verifyFilesystemRepositoryOwnership(spec, false)
+		} else {
+			ownershipErr = checkFilesystemRepositoryOwnershipIfPresent(spec)
+		}
+		if ownershipErr != nil {
+			result["error_code"] = "REPOSITORY_OWNERSHIP_INVALID"
 			return "", nil, result, spec, ownershipErr.Error()
 		}
 	}
@@ -653,7 +692,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		statusRes, statusErr := runProcessWithTimeout(
 			ctx, managedRepositoryKopiaCommandTimeout, bin, statusArgs, env, "",
 		)
-		result["repository_status"] = commandResult(statusRes)
+		result["repository_status"] = redactedRepositoryCommandResult(statusRes, spec, p)
 		slog.Info("managed_repository", "event", event+"_finished", "task_id", taskID, "repo_type", spec.Type, "duration_ms", time.Since(started).Milliseconds(), "ok", statusErr == nil)
 		return statusRes, statusErr
 	}
@@ -664,7 +703,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		connectRes, connectErr := runProcessWithTimeout(
 			ctx, managedRepositoryKopiaCommandTimeout, bin, connectArgs, env, "",
 		)
-		result["repository_connect"] = commandResult(connectRes)
+		result["repository_connect"] = redactedRepositoryCommandResult(connectRes, spec, p)
 		slog.Info("managed_repository", "event", event+"_finished", "task_id", taskID, "repo_type", spec.Type, "duration_ms", time.Since(started).Milliseconds(), "ok", connectErr == nil)
 		return connectRes, connectErr
 	}
@@ -675,16 +714,16 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		started := time.Now()
 		slog.Info("managed_repository", "event", "create_begin", "task_id", taskID, "repo_type", spec.Type)
 		createRes, createErr := runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, createArgs, env, "")
-		result["repository_create"] = commandResult(createRes)
+		result["repository_create"] = redactedRepositoryCommandResult(createRes, spec, p)
 		if createErr != nil {
 			if repositoryCreateAlreadyExists(createRes) && ownershipExistedBeforeInitialize {
 				slog.Info("managed_repository", "event", "create_retry_owned_repository", "task_id", taskID, "repo_type", spec.Type)
 				if connectRes, connectErr := runConnect("connect_owned_retry"); connectErr != nil {
-					return "", nil, result, spec, repositoryCommandFailureMessage(connectRes, connectErr)
+					return "", nil, result, spec, repositoryCommandFailureMessage(connectRes, connectErr, spec, p)
 				}
 				statusRes, statusErr := runStatus("status_owned_retry")
 				if statusErr != nil {
-					return "", nil, result, spec, repositoryCommandFailureMessage(statusRes, statusErr)
+					return "", nil, result, spec, repositoryCommandFailureMessage(statusRes, statusErr, spec, p)
 				}
 				statusVerified = true
 			} else if repositoryCreateAlreadyExists(createRes) {
@@ -693,7 +732,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 				return "", nil, result, spec, repositoryAlreadyExistsMessage
 			} else {
 				slog.Warn("managed_repository", "event", "create_failed", "task_id", taskID, "repo_type", spec.Type, "err", createErr.Error())
-				return "", nil, result, spec, repositoryCommandFailureMessage(createRes, createErr)
+				return "", nil, result, spec, repositoryCommandFailureMessage(createRes, createErr, spec, p)
 			}
 		}
 		slog.Info("managed_repository", "event", "create_ok", "task_id", taskID, "repo_type", spec.Type, "duration_ms", time.Since(started).Milliseconds())
@@ -718,14 +757,14 @@ func (e *Engine) prepareManagedRepositoryLocked(
 			return "", nil, result, spec, statErr.Error()
 		}
 
-		_, connectErr := runConnect("connect")
+		connectRes, connectErr := runConnect("connect")
 		if connectErr != nil {
 			if _, statusErr := runStatus("status_after_connect_error"); statusErr == nil {
 				slog.Info("managed_repository", "event", "connect_failed_status_ok", "task_id", taskID, "repo_type", spec.Type, "err", connectErr.Error())
 				statusVerified = true
 			} else {
 				slog.Warn("managed_repository", "event", "connect_failed", "task_id", taskID, "repo_type", spec.Type, "err", connectErr.Error())
-				return "", nil, result, spec, connectErr.Error()
+				return "", nil, result, spec, repositoryCommandFailureMessage(connectRes, connectErr, spec, p)
 			}
 		}
 	}
@@ -737,18 +776,18 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	if statusErr != nil {
 		if mode == repositoryPrepareInitialize {
 			slog.Warn("managed_repository", "event", "status_failed_after_create", "task_id", taskID, "repo_type", spec.Type, "err", statusErr.Error())
-			return "", nil, result, spec, repositoryCommandFailureMessage(statusRes, statusErr)
+			return "", nil, result, spec, repositoryCommandFailureMessage(statusRes, statusErr, spec, p)
 		}
 		slog.Info("managed_repository", "event", "status_failed_reconnect_begin", "task_id", taskID, "repo_type", spec.Type, "err", statusErr.Error())
-		_, connectErr := runConnect("reconnect")
+		connectRes, connectErr := runConnect("reconnect")
 		if connectErr != nil {
 			slog.Warn("managed_repository", "event", "reconnect_failed", "task_id", taskID, "repo_type", spec.Type, "err", connectErr.Error())
-			return "", nil, result, spec, connectErr.Error()
+			return "", nil, result, spec, repositoryCommandFailureMessage(connectRes, connectErr, spec, p)
 		}
 		statusRes, statusErr = runStatus("status_after_reconnect")
 		if statusErr != nil {
 			slog.Warn("managed_repository", "event", "status_failed", "task_id", taskID, "repo_type", spec.Type, "err", statusErr.Error())
-			return "", nil, result, spec, statusErr.Error()
+			return "", nil, result, spec, repositoryCommandFailureMessage(statusRes, statusErr, spec, p)
 		}
 	}
 	slog.Info("managed_repository", "event", "status_ok", "task_id", taskID, "repo_type", spec.Type)
@@ -3488,16 +3527,39 @@ func commandResult(res process.Result) map[string]any {
 	return out
 }
 
-func repositoryCommandFailureMessage(res process.Result, fallback error) string {
+func repositoryCommandFailureMessage(
+	res process.Result,
+	fallback error,
+	spec repositorySpec,
+	p Payload,
+) string {
+	message := ""
 	for _, output := range []string{res.Stderr, res.Stdout} {
-		if message := strings.TrimSpace(output); message != "" {
-			return tailLines(message, 20)
+		if candidate := strings.TrimSpace(output); candidate != "" {
+			message = candidate
+			break
 		}
 	}
-	if fallback != nil {
-		return fallback.Error()
+	if message == "" && fallback != nil {
+		message = fallback.Error()
 	}
-	return "repository command failed"
+	if message == "" {
+		message = "repository command failed"
+	}
+	return redactManagedRestoreSecrets(tailLines(message, 20), spec, p)
+}
+
+func redactedRepositoryCommandResult(
+	res process.Result,
+	spec repositorySpec,
+	p Payload,
+) map[string]any {
+	result := commandResult(res)
+	redacted, ok := redactManagedRestoreValue(result, spec, p).(map[string]any)
+	if ok {
+		return redacted
+	}
+	return result
 }
 
 func repositoryCreateAlreadyExists(res process.Result) bool {

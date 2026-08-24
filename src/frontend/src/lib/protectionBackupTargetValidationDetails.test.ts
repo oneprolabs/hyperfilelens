@@ -17,6 +17,12 @@ const messages: Record<string, string> = {
   'protection.backupsPage.targetValidationMountHelperRepair': "On {node}, repair or reinstall {dependency} using the operating system's package manager.",
   'protection.backupsPage.targetValidationMountHelperVerifyAvailable': 'Verify that {helper} is available and executable.',
   'protection.backupsPage.targetValidationMountHelperVerifyUsable': 'Verify that {helper} starts successfully.',
+  'protection.backupsPage.targetValidationNasWriteSummary': 'The NAS target is not writable.',
+  'protection.backupsPage.targetValidationNasGrantWrite': 'Grant write access for {node}.',
+  'protection.backupsPage.targetValidationNasVerifySource': 'Verify the NAS target on {node}.',
+  'protection.backupsPage.targetValidationNasRetryRemount': 'Retry to refresh the mount.',
+  'protection.backupsPage.targetValidationNasOwnershipSummary': 'The NAS repository location is not ready.',
+  'protection.backupsPage.targetValidationNasOwnershipRepair': 'Complete or repair repository initialization.',
   'protection.backupsPage.targetValidationClockSkewSummary': 'Source host time is out of sync.',
   'protection.backupsPage.targetValidationClockSkewTitle': 'Source host time differs from S3.',
   'protection.backupsPage.targetValidationClockSkewIssue': '{source} differs too much from S3.',
@@ -164,6 +170,54 @@ describe('backup target validation failure details', () => {
     expect(details.issue).toBe(result.message)
     expect(details.reasons).toEqual([result.message])
     expect(details.resolutions).toContain('Check settings on host-a.')
+  })
+
+  it('explains NAS write failures using the execution node and remount flow', () => {
+    const result: BackupTargetValidationResult = {
+      key: 'host:agent:11',
+      status: 'failed',
+      code: 'NAS_REPOSITORY_WRITE_DENIED',
+      message: 'The NAS share is mounted, but the repository directory is not writable.',
+      details: {
+        stage: 'write_precheck',
+        remediation: 'grant_write_access',
+        execution_node_name: 'agent-a',
+        execution_node_address: '10.0.0.20',
+      },
+    }
+
+    const details = backupTargetValidationFailureDetails({ result, sourceName: 'source-a', t })
+
+    expect(details.summary).toBe('The NAS target is not writable.')
+    expect(details.issue).toBe(result.message)
+    expect(details.resolutions).toEqual([
+      'Grant write access for agent-a (10.0.0.20).',
+      'Retry to refresh the mount.',
+      'Retry validation.',
+    ])
+    expect(details.rawDetail).toMatchObject({
+      remediation: 'grant_write_access',
+      execution_node_name: 'agent-a',
+      execution_node_address: '10.0.0.20',
+    })
+  })
+
+  it('explains an unverified existing NAS repository location', () => {
+    const result: BackupTargetValidationResult = {
+      key: 'host:agent:11',
+      status: 'failed',
+      code: 'REPOSITORY_OWNERSHIP_INVALID',
+      message: 'The existing NAS repository location is not ready for use.',
+      details: { stage: 'repository_ownership', remediation: 'repair_repository_ownership' },
+    }
+
+    const details = backupTargetValidationFailureDetails({ result, sourceName: 'source-a', t })
+
+    expect(details.summary).toBe('The NAS repository location is not ready.')
+    expect(details.resolutions).toEqual([
+      'Complete or repair repository initialization.',
+      'Retry validation.',
+    ])
   })
 
   it.each([

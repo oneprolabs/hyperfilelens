@@ -23,7 +23,12 @@ from apps.protection.services.backup_target_validation import (
 )
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
-from apps.storage.repositories.models import Repository
+from apps.storage.repositories.models import Repository, RepositoryLocationClaim
+from apps.storage.services.internal.repository_location import (
+    mark_repository_location_owned,
+    mark_repository_location_ownership_verified,
+    reserve_direct_nas_location,
+)
 
 
 class BackupTargetValidationApiTests(TransactionTestCase):
@@ -164,6 +169,44 @@ class BackupTargetValidationApiTests(TransactionTestCase):
                     self.assertEqual(result.details["helper"], helper)
                 else:
                     self.assertEqual(result.details, {})
+
+    def test_nas_write_precheck_returns_actionable_error(self):
+        result = _nas_outcome_result(
+            _AgentOutcome(
+                ok=False,
+                status="failed",
+                message="NAS share write probe failed: permission denied",
+                result={
+                    "error_code": "NAS_WRITE_PERMISSION_DENIED",
+                    "remediation": "grant_write_access",
+                },
+            ),
+            repository=self.s3_repository,
+            execution_node_name="agent-a",
+            execution_node_address="10.0.0.20",
+        )
+
+        self.assertEqual(result.code, "NAS_WRITE_PERMISSION_DENIED")
+        self.assertEqual(result.details["stage"], "write_precheck")
+        self.assertEqual(result.details["remediation"], "grant_write_access")
+        self.assertEqual(result.details["execution_node_name"], "agent-a")
+
+    def test_nas_repository_write_precheck_preserves_repository_error(self):
+        result = _nas_outcome_result(
+            _AgentOutcome(
+                ok=False,
+                status="failed",
+                message="The NAS repository directory is not writable.",
+                result={"error_code": "NAS_REPOSITORY_WRITE_DENIED"},
+            ),
+            repository=self.s3_repository,
+            execution_node_name="agent-a",
+            execution_node_address="10.0.0.20",
+        )
+
+        self.assertEqual(result.code, "NAS_REPOSITORY_WRITE_DENIED")
+        self.assertEqual(result.details["stage"], "write_precheck")
+        self.assertEqual(result.details["remediation"], "grant_write_access")
 
     @mock.patch(
         "apps.protection.api.views.backup_target_validation.validate_backup_targets"
@@ -345,8 +388,112 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         )
         test_payload = execute.call_args_list[0].kwargs["payload"]
         self.assertTrue(test_payload["cleanup_after_test"])
+        self.assertTrue(test_payload["require_write"])
         self.assertIn("/mounts/validations/", test_payload["mount_point"])
         self.assertNotIn("repository", test_payload)
+
+    @mock.patch(
+        "apps.protection.services.backup_target_validation._execute_agent_task"
+    )
+    def test_direct_nas_owned_location_repairs_persistent_mount(self, execute):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="active-direct-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={
+                "server_address": "10.0.0.30",
+                "share_path": "/backup",
+                "kopia_password": "direct-kopia-password",
+            },
+        )
+        repository_subdir = f"hp-repos/agent-{self.agent.id}"
+        reserve_direct_nas_location(
+            repository=repository,
+            node_id=self.agent.id,
+            repository_subdir=repository_subdir,
+        )
+        mark_repository_location_owned(
+            repository,
+            owner_node_id=self.agent.id,
+            repository_subdir=repository_subdir,
+        )
+        mark_repository_location_ownership_verified(
+            repository,
+            owner_node_id=self.agent.id,
+            repository_subdir=repository_subdir,
+        )
+        execute.return_value = _AgentOutcome(
+            ok=True,
+            status="success",
+            message="",
+            result={"ownership_verified": True},
+        )
+
+        result = validate_backup_targets(
+            organization_id=self.org.id,
+            sources=[
+                {
+                    "key": "direct-row",
+                    "source_type": "agent",
+                    "source_ref_id": self.agent.id,
+                    "repository_id": repository.id,
+                    "repository_endpoint_type": "external",
+                }
+            ],
+        )
+
+        self.assertEqual(result["status"], "success", result)
+        execute.assert_called_once()
+        self.assertEqual(execute.call_args.kwargs["kind"], "repo.status")
+        payload = execute.call_args.kwargs["payload"]
+        self.assertTrue(payload["repair_mount"])
+        self.assertEqual(payload["repository"]["subdir"], repository_subdir)
+
+    def test_direct_nas_unverified_existing_location_does_not_probe_isolated_mount(
+        self,
+    ):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="unverified-direct-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            config={
+                "server_address": "10.0.0.30",
+                "share_path": "/backup",
+                "kopia_password": "direct-kopia-password",
+            },
+        )
+        repository_subdir = f"hp-repos/agent-{self.agent.id}"
+        claim = reserve_direct_nas_location(
+            repository=repository,
+            node_id=self.agent.id,
+            repository_subdir=repository_subdir,
+        )
+        claim.state = RepositoryLocationClaim.State.RESIDUAL
+        claim.save(update_fields=["state", "updated_at"])
+
+        result = validate_backup_targets(
+            organization_id=self.org.id,
+            sources=[
+                {
+                    "key": "direct-row",
+                    "source_type": "agent",
+                    "source_ref_id": self.agent.id,
+                    "repository_id": repository.id,
+                    "repository_endpoint_type": "external",
+                }
+            ],
+        )
+
+        self.assertEqual(result["status"], "failed", result)
+        self.assertEqual(
+            result["results"][0]["code"], "REPOSITORY_OWNERSHIP_INVALID"
+        )
 
     @mock.patch(
         "apps.protection.services.backup_target_validation._execute_agent_task"

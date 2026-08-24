@@ -238,7 +238,18 @@ func nasLeasePaths(p Payload) []string {
 }
 
 func needsExclusiveNASLease(kind string, p Payload) bool {
-	if kind == "nas.unmount" || kind == "nas.mount" || kind == "repository.operation" {
+	if kind == "nas.unmount" || kind == "nas.mount" || kind == "repo.initialize" || kind == "repository.operation" {
+		return true
+	}
+	// Any explicit mount repair may strictly unmount and remount the managed
+	// share. It must wait for active backup/restore readers regardless of the
+	// repository command that requested the repair.
+	repairMount, _ := payloadBoolValue(p.Extra["repair_mount"])
+	if repairMount {
+		return true
+	}
+	requireWrite, _ := payloadBoolValue(p.Extra["require_write"])
+	if kind == "nas.test" && requireWrite {
 		return true
 	}
 	cleanupAfterTest, _ := payloadBoolValue(p.Extra["cleanup_after_test"])

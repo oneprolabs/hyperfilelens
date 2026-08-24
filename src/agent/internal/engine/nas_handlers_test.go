@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +15,8 @@ import (
 type fakeNASTestService struct {
 	info              nas.SpaceInfo
 	testErr           error
+	writeTestErr      error
+	writeTestCalls    int
 	unmountErr        error
 	unmountCalls      int
 	unmountContextErr error
@@ -21,6 +24,11 @@ type fakeNASTestService struct {
 
 func (f *fakeNASTestService) Test(context.Context, nas.Spec) (nas.SpaceInfo, error) {
 	return f.info, f.testErr
+}
+
+func (f *fakeNASTestService) TestForWrite(context.Context, nas.Spec) (nas.SpaceInfo, error) {
+	f.writeTestCalls++
+	return f.info, f.writeTestErr
 }
 
 func (f *fakeNASTestService) Unmount(ctx context.Context, _ string) error {
@@ -155,6 +163,49 @@ func TestRunNASTestWithoutCleanupPreservesExistingBehavior(t *testing.T) {
 	}
 	if _, ok := result["cleanup_status"]; ok {
 		t.Fatalf("unexpected cleanup status: %#v", result)
+	}
+}
+
+func TestRunNASTestUsesWriteProbeWhenRequired(t *testing.T) {
+	service := &fakeNASTestService{info: nas.SpaceInfo{TotalBytes: 1024}}
+	payload := nasValidationTestPayload(t, true)
+	payload.Extra["require_write"] = true
+
+	status, _, message := runNasTestWithService(
+		context.Background(),
+		payload,
+		service,
+	)
+
+	if status != "success" || message != "" {
+		t.Fatalf("status=%q message=%q", status, message)
+	}
+	if service.writeTestCalls != 1 {
+		t.Fatalf("write test calls=%d want 1", service.writeTestCalls)
+	}
+}
+
+func TestRunNASTestClassifiesWriteProbeFailure(t *testing.T) {
+	service := &fakeNASTestService{
+		writeTestErr: &nas.WriteProbeError{Cause: fs.ErrPermission},
+	}
+	payload := nasValidationTestPayload(t, true)
+	payload.Extra["require_write"] = true
+
+	status, result, message := runNasTestWithService(
+		context.Background(),
+		payload,
+		service,
+	)
+
+	if status != "failed" || message == "" {
+		t.Fatalf("status=%q message=%q", status, message)
+	}
+	if result["error_code"] != "NAS_WRITE_PERMISSION_DENIED" {
+		t.Fatalf("unexpected write probe result: %#v", result)
+	}
+	if result["remediation"] != "grant_write_access" {
+		t.Fatalf("unexpected write probe remediation: %#v", result)
 	}
 }
 

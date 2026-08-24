@@ -513,6 +513,10 @@ def _remount_on_new_proxy(
             subdir=nas_proxy_repository_subdir(repository),
             node_id=new_node.id,
         ),
+        # Rebinding is an explicit storage revalidation.  If the new Proxy
+        # has a stale read-only/source-mismatched managed mount, let the Agent
+        # repair it before probing the existing repository.
+        "repair_mount": True,
         "allow_ownership_adoption": RepositoryLocationClaim.objects.filter(
             repository=repository,
             scope=RepositoryLocationClaim.Scope.REPOSITORY,

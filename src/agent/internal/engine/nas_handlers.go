@@ -17,6 +17,7 @@ const nasTestCleanupTimeout = 25 * time.Second
 
 type nasTestService interface {
 	Test(context.Context, nas.Spec) (nas.SpaceInfo, error)
+	TestForWrite(context.Context, nas.Spec) (nas.SpaceInfo, error)
 	Unmount(context.Context, string) error
 }
 
@@ -246,7 +247,14 @@ func runNasTestWithService(ctx context.Context, p Payload, service nasTestServic
 		}
 	}
 	logNasTask(ctx, "test_start", "", spec)
-	info, testErr := service.Test(ctx, spec)
+	requireWrite, _ := payloadBoolValue(p.Extra["require_write"])
+	var info nas.SpaceInfo
+	var testErr error
+	if requireWrite {
+		info, testErr = service.TestForWrite(ctx, spec)
+	} else {
+		info, testErr = service.Test(ctx, spec)
+	}
 	cleanupAfterTest, _ := payloadBoolValue(p.Extra["cleanup_after_test"])
 	var cleanupErr error
 	if cleanupAfterTest {
@@ -327,6 +335,27 @@ func mountHelperFailureResult(err error) map[string]any {
 func nasFailureResult(err error) map[string]any {
 	if result := mountHelperFailureResult(err); result != nil {
 		return result
+	}
+	var readOnlyErr *nas.MountReadOnlyError
+	if errors.As(err, &readOnlyErr) {
+		return map[string]any{
+			"error_code":  "NAS_MOUNT_READ_ONLY",
+			"remediation": "enable_write_access",
+		}
+	}
+	var sourceMismatchErr *nas.MountSourceMismatchError
+	if errors.As(err, &sourceMismatchErr) {
+		return map[string]any{
+			"error_code":  "NAS_MOUNT_SOURCE_MISMATCH",
+			"remediation": "remount_nas",
+		}
+	}
+	var writeProbeErr *nas.WriteProbeError
+	if errors.As(err, &writeProbeErr) {
+		return map[string]any{
+			"error_code":  "NAS_WRITE_PERMISSION_DENIED",
+			"remediation": "grant_write_access",
+		}
 	}
 	return smbCharsetFailureResult(err)
 }

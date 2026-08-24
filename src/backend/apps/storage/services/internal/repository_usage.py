@@ -564,6 +564,7 @@ def _direct_nas_agent_config_groups(repository: Repository) -> dict[int, list[in
         backup_config_model.objects.filter(
             organization_id=repository.organization_id,
             repository_id=repository.id,
+            status=backup_config_model.Status.ACTIVE,
         )
         .order_by("source_ref_id", "id")
         .values_list("id", "source_type", "source_ref_id")
