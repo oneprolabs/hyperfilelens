@@ -40,7 +40,6 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 	for _, want := range []string{
 		`$logFile = ` + fmt.Sprintf("%q", UninstallLogPath(logDir)),
 		`install.cmd uninstall`,
-		`-PurgeAll`,
 		`Stop-HflProcessesForUninstall`,
 		`Start-Sleep -Seconds 3`,
 		`Remove-InstallDirectoryResidue`,
@@ -82,6 +81,10 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 	}
 	if strings.Contains(body, ".install.out") {
 		t.Fatalf("script must not reference separate install output log:\n%s", body)
+	}
+	if strings.Contains(body, `$cmdLine += ' -PurgeAll'`) ||
+		strings.Contains(body, `$uninstallArgs += '-PurgeAll'`) {
+		t.Fatalf("nested Windows uninstall must leave final data-root removal to the detached runner:\n%s", body)
 	}
 	if strings.Contains(body, `$KeepFlag -eq '0'`) {
 		t.Fatalf("general artifact verification must run before final data cleanup:\n%s", body)

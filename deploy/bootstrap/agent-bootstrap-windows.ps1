@@ -107,7 +107,10 @@ function Get-HflEnrollmentBinary {
     [Parameter(Mandatory = $true)][string]$OutFile
   )
   $skipCert = ($env:HFL_INSECURE_TLS -ne '0')
-  $partial = "$OutFile.part"
+  # Keep the incomplete PE away from an executable-looking suffix. Windows
+  # Defender may inspect a partially written .exe and classify the download
+  # before it is complete; only the final atomic rename should use .exe.
+  $partial = "$OutFile.download"
   $started = [DateTime]::UtcNow
   Remove-Item -Force -LiteralPath $partial -ErrorAction SilentlyContinue
 
@@ -216,8 +219,8 @@ finally {
   if (Test-Path -LiteralPath $bin) {
     Remove-Item -Force -LiteralPath $bin -ErrorAction SilentlyContinue
   }
-  if (Test-Path -LiteralPath "$bin.part") {
-    Remove-Item -Force -LiteralPath "$bin.part" -ErrorAction SilentlyContinue
+  if (Test-Path -LiteralPath "$bin.download") {
+    Remove-Item -Force -LiteralPath "$bin.download" -ErrorAction SilentlyContinue
   }
 }
 exit $exitCode

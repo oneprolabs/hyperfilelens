@@ -42,6 +42,11 @@ describe('Production Sites availability presentation', () => {
     ])).toBe(true)
   })
 
+  it('preserves selected hosts while lifecycle polling refreshes the table', () => {
+    expect(hostTable).toContain('reserve-selection')
+    expect(list).toContain('row-key="id"')
+  })
+
   it('places NAS lifecycle status immediately after name and keeps connectivity before registration', () => {
     expect(ordered(nasTable, [
       'colName',
