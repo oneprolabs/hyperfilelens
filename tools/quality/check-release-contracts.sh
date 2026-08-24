@@ -271,9 +271,9 @@ grep -F 'no_cache=1' <<<"${config}" >/dev/null
 grep -F -- '--prebuilt' "${ROOT}/release/build-sourcelens.sh" >/dev/null
 grep -F 'ln "${source_archive}" "${temporary}"' \
 	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
-grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.40.0}"' \
+grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.47.2}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
-grep -F 'SOURCELENS_GIT_REF=v0.40.0' \
+grep -F 'SOURCELENS_GIT_REF=v0.47.2' \
 	"${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
@@ -281,8 +281,14 @@ grep -F 'SOURCELENS_UV_VERSION="${SOURCELENS_UV_VERSION:-0.10.2}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
 grep -F 'set_key("DJANGO_DEBUG", "true")' \
 	"${ROOT}/deploy/installer/sourcelens/patch-env-runtime.py" >/dev/null
-grep -F 'LENSNODE_MAX_CONCURRENT_RUNS: "1"' \
-	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
+for setting in \
+	'LENSNODE_PLANNING_REASONING_EFFORT: "medium"' \
+	'LENSNODE_EXECUTION_BACKEND: "trusted_container"' \
+	'LENSNODE_MAX_CONCURRENT_RUNS: "1"' \
+	'LENSNODE_HEAVY_WORK_CONCURRENCY: "1"'; do
+	grep -F "${setting}" \
+		"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
+done
 grep -F './deploy/nginx/hfl-maintenance:/etc/nginx/hfl-maintenance:ro' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
 grep -F 'map "$request_method:$uri" $hfl_sourcelens_run_creation_blocked' \
@@ -422,7 +428,7 @@ grep -F 'NPM_REGISTRY: ${NPM_REGISTRY:-}' \
 grep -F 'CODEGRAPH_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}' \
 	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 
-grep -F '# SourceLens v0.40.0 requires no HFL functional patches.' \
+grep -F '# SourceLens v0.47.2 requires no HFL functional patches.' \
 	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
 [[ -f "${ROOT}/tools/sourcelens/patches/retired/lensnode-tls-v0.4.0.patch" ]]
 if [[ -e "${ROOT}/deploy/installer/sourcelens/lensnode-tls.patch" \
@@ -481,6 +487,14 @@ grep -F 'stop_grace_period: 270s' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
 grep -F 'LENSNODE_DRAIN_TIMEOUT_S: "240"' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
+for setting in \
+	'LENSNODE_PLANNING_REASONING_EFFORT: "medium"' \
+	'LENSNODE_EXECUTION_BACKEND: "trusted_container"' \
+	'LENSNODE_MAX_CONCURRENT_RUNS: "1"' \
+	'LENSNODE_HEAVY_WORK_CONCURRENCY: "1"'; do
+	grep -F "${setting}" \
+		"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
+done
 grep -F 'LENSNODE_TLS_SKIP_VERIFY: "${HFL_INSECURE_TLS}"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 

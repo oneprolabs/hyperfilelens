@@ -124,7 +124,10 @@ services:
       LENSNODE_AI_GATEWAY_URL: http://api:8000/api/lens/lensnode/ai-gateway/
       LENSNODE_WORKSPACE_PATH: /workspace
       LENSNODE_DRAIN_TIMEOUT_S: "240"
+      LENSNODE_PLANNING_REASONING_EFFORT: "medium"
+      LENSNODE_EXECUTION_BACKEND: "trusted_container"
       LENSNODE_MAX_CONCURRENT_RUNS: "1"
+      LENSNODE_HEAVY_WORK_CONCURRENCY: "1"
       PYTHONPATH: /opt/hfl-sentry
       SENTRY_COMPONENT: sourcelens-lensnode
       SENTRY_RELEASE: ${SENTRY_LENSNODE_RELEASE:-${SENTRY_RELEASE:-}}

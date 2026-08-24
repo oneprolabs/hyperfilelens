@@ -24,7 +24,15 @@ write_bundle() {
   "git_commit": "source-commit",
   "version": "0.20.0",
   "patchset_sha256": "${patchset}",
-  "patches": []
+  "patches": [],
+  "images": {
+    "backend": {
+      "ref": "hyperfilelens-sourcelens-backend:main-fixture-sl0.20.0"
+    },
+    "frontend": {
+      "ref": "hyperfilelens-sourcelens-frontend:main-fixture-sl0.20.0"
+    }
+  }
 }
 JSON
 	printf 'services: {}\n' >"${root}/docker-compose.yml"
