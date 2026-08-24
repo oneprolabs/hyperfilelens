@@ -32,6 +32,10 @@ def apply_runtime_env(text: str) -> str:
     ensure_key("SENTRY_FRONTEND_RELEASE", "")
     set_key("SENTRY_PROFILING_SAMPLE_RATE", "0")
     set_key("SENTRY_SEND_DEFAULT_PII", "false")
+    set_key("LENSNODE_PLANNING_REASONING_EFFORT", "medium")
+    set_key("LENSNODE_EXECUTION_BACKEND", "trusted_container")
+    set_key("LENSNODE_MAX_CONCURRENT_RUNS", "1")
+    set_key("LENSNODE_HEAVY_WORK_CONCURRENCY", "1")
     allowed_hosts_match = re.search(r"^ALLOWED_HOSTS=(.*)$", text, flags=re.M)
     allowed_hosts = []
     if allowed_hosts_match:

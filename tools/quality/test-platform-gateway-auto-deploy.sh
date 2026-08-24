@@ -16,6 +16,8 @@ source <(sed -n '/^platform_gateway_auto_deploy_enabled()/,/^# --- Commands ---/
 ROOT="${tmp}/install"
 LOCAL_PLATFORM_AGENT_INSTALL_DIR="${tmp}/agent-install"
 LOCAL_PLATFORM_AGENT_DATA_DIR="${tmp}/agent-data"
+LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR="${tmp}/legacy-agent-install"
+LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR="${tmp}/legacy-agent-data"
 LOCAL_PLATFORM_LENSNODE_ENV_FILE="${tmp}/lensnode.env"
 LOCAL_PLATFORM_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
 mkdir -p \
@@ -38,11 +40,15 @@ set -euo pipefail
 [[ -z "${SENTRY_BACKEND_DSN+x}" ]]
 [[ -z "${HFL_SENTRY_POLICY_MANAGED+x}" ]]
 [[ "$1" == "gateway-install" && "$2" == "--yes" ]]
-mkdir -p "$TEST_AGENT_INSTALL_DIR" "$TEST_AGENT_DATA_DIR"
-if [[ ! -f "$TEST_AGENT_INSTALL_DIR/INSTALLED_VERSION" ]]; then
-	printf '%s\n' "$TEST_DESIRED_VERSION" >"$TEST_AGENT_INSTALL_DIR/INSTALLED_VERSION"
+mkdir -p \
+	"$TEST_AGENT_INSTALL_DIR" \
+	"$TEST_AGENT_DATA_DIR/config" \
+	"$TEST_AGENT_DATA_DIR/data"
+if [[ ! -f "$TEST_AGENT_DATA_DIR/INSTALLED_VERSION" ]]; then
+	printf '%s\n' "$TEST_DESIRED_VERSION" >"$TEST_AGENT_DATA_DIR/INSTALLED_VERSION"
 fi
-cat >"$TEST_AGENT_DATA_DIR/agent.env" <<EOF
+touch "$TEST_AGENT_DATA_DIR/data/agent.db"
+cat >"$TEST_AGENT_DATA_DIR/config/agent.env" <<EOF
 HFL_ORG_KEY=__platform_lens__
 HFL_NODE_ROLE=gateway
 HFL_NODE_ID=99
@@ -58,7 +64,7 @@ set -euo pipefail
 [[ "$1" == "upgrade" && "$2" == "--from" ]]
 [[ "${TEST_AGENT_UPGRADE_FAIL:-0}" != "1" ]] || exit 42
 printf '%s\n' "$3" >"$TEST_AGENT_UPGRADE_MARKER"
-printf '%s\n' "$TEST_DESIRED_VERSION" >"$TEST_AGENT_INSTALL_DIR/INSTALLED_VERSION"
+printf '%s\n' "$TEST_DESIRED_VERSION" >"$TEST_AGENT_DATA_DIR/INSTALLED_VERSION"
 SH
 chmod 755 "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh"
 
@@ -179,12 +185,14 @@ if (ensure_local_platform_gateway) 2>/dev/null; then
 fi
 ENROLLMENT_ORG=__platform_lens__
 
-sed -i 's/HFL_NODE_ID=99/HFL_NODE_ID=100/' "${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env"
+sed -i 's/HFL_NODE_ID=99/HFL_NODE_ID=100/' \
+	"${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
 if (ensure_local_platform_gateway) 2>/dev/null; then
 	printf 'ERROR: auto-deploy claimed a platform Gateway not managed by the installer\n' >&2
 	exit 1
 fi
-sed -i 's/HFL_NODE_ID=100/HFL_NODE_ID=99/' "${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env"
+sed -i 's/HFL_NODE_ID=100/HFL_NODE_ID=99/' \
+	"${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
 
 # A failed exact upgrade preserves the previous Agent and leaves a retention marker.
 export TEST_DESIRED_VERSION=main-3333333

@@ -19,7 +19,7 @@ SOURCELENS_GIT_REF=""
 load_repo_env_defaults
 # shellcheck source=../sourcelens/defaults.env
 source "${ROOT_REPO}/tools/sourcelens/defaults.env"
-[[ "${SOURCELENS_GIT_REF}" == "v0.40.0" ]]
+[[ "${SOURCELENS_GIT_REF}" == "v0.47.2" ]]
 ROOT="${original_root}"
 
 # Source deployments can persist the same canonical origins used by Release

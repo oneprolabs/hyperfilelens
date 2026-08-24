@@ -111,6 +111,10 @@ python3 "${ROOT}/deploy/installer/sourcelens/patch-env-runtime.py" "${sl_env}"
 grep -Fx 'SENTRY_ENABLED=true' "${sl_env}" >/dev/null
 grep -Fx 'SENTRY_DSN=https://backend@sentry.example.com/41' "${sl_env}" >/dev/null
 grep -Fx 'SENTRY_SEND_DEFAULT_PII=false' "${sl_env}" >/dev/null
+grep -Fx 'LENSNODE_PLANNING_REASONING_EFFORT=medium' "${sl_env}" >/dev/null
+grep -Fx 'LENSNODE_EXECUTION_BACKEND=trusted_container' "${sl_env}" >/dev/null
+grep -Fx 'LENSNODE_MAX_CONCURRENT_RUNS=1' "${sl_env}" >/dev/null
+grep -Fx 'LENSNODE_HEAVY_WORK_CONCURRENCY=1' "${sl_env}" >/dev/null
 printf '%s\n' '{"version":"0.20.0"}' >"${tmp}/BUILD_INFO.json"
 python3 "${ROOT}/deploy/installer/sourcelens/sync-sentry-runtime.py" \
 	--parent-env "${env_file}" \

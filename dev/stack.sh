@@ -1066,7 +1066,7 @@ print_dev_target() {
 	fi
 	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
 		sourcelens_mode="$(read_env_value_or SOURCELENS_MODE bundled "${ROOT}/.env" | tr 'A-Z' 'a-z')"
-		sourcelens_ref="${SOURCELENS_GIT_REF:-v0.40.0}"
+		sourcelens_ref="${SOURCELENS_GIT_REF:-v0.47.2}"
 		hfl_print_value "SourceLens" "${sourcelens_mode} / ${sourcelens_ref}"
 	else
 		hfl_print_value "SourceLens" "disabled"
