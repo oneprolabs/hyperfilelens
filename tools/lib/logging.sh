@@ -463,10 +463,20 @@ hfl_run_native_command() {
 	*e*) errexit_was_set=1 ;;
 	esac
 	set +e
-	script -qefc "${command}" /dev/null 2>&1 \
-		| tee "/dev/fd/${console_fd}" \
-		| hfl_normalize_native_stream \
-		| hfl_log_timestamp_stream "${HFL_LOG_FILE}"
+	# Linux util-linux `script` supports -f/-c, while macOS ships the BSD
+	# implementation which rejects both options. Keep the Linux invocation
+	# unchanged and use its portable command-after-output-file form on Darwin.
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		script -q /dev/null bash -c "${command}" 2>&1 \
+			| tee "/dev/fd/${console_fd}" \
+			| hfl_normalize_native_stream \
+			| hfl_log_timestamp_stream "${HFL_LOG_FILE}"
+	else
+		script -qefc "${command}" /dev/null 2>&1 \
+			| tee "/dev/fd/${console_fd}" \
+			| hfl_normalize_native_stream \
+			| hfl_log_timestamp_stream "${HFL_LOG_FILE}"
+	fi
 	pipeline_status=("${PIPESTATUS[@]}")
 	if [[ "${errexit_was_set}" -eq 1 ]]; then
 		set -e
