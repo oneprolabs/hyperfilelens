@@ -6,6 +6,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=compose-lifecycle.sh
 source "${SCRIPT_DIR}/compose-lifecycle.sh"
+if [[ -n "${HFL_COMPOSE_RUNTIME_FILE:-}" ]]; then
+	COMPOSE_RUNTIME_FILE="${HFL_COMPOSE_RUNTIME_FILE}"
+elif [[ -f "${SCRIPT_DIR}/../compose-runtime.sh" ]]; then
+	COMPOSE_RUNTIME_FILE="${SCRIPT_DIR}/../compose-runtime.sh"
+else
+	COMPOSE_RUNTIME_FILE="${SCRIPT_DIR}/../payload/runtime/compose-runtime.sh"
+fi
+[[ -f "${COMPOSE_RUNTIME_FILE}" ]] || { printf '[FAIL] missing Compose runtime helper: %s\n' "${COMPOSE_RUNTIME_FILE}" >&2; exit 1; }
+# shellcheck disable=SC1090
+source "${COMPOSE_RUNTIME_FILE}"
 
 SOURCELENS_INSTALL_DIR="${SOURCELENS_INSTALL_DIR:-/opt/hyperfilelens/sourcelens}"
 SOURCELENS_DATA_DIR="${SOURCELENS_DATA_DIR:-/opt/hyperfilelens/data/sourcelens}"
@@ -366,10 +376,11 @@ PY
 compose_cmd() {
 	local root=$1
 	shift
-	docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
+	hfl_compose_resolve 2.20.0 \
+		|| die "supported Docker Compose command not found; $(hfl_compose_failure_detail 2.20.0)"
 	(
 		cd "${root}"
-		docker compose -p hyperfilelens-sourcelens "$@"
+		"${HFL_COMPOSE[@]}" -p hyperfilelens-sourcelens "$@"
 	)
 }
 

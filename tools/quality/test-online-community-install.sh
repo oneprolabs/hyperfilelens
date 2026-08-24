@@ -217,6 +217,10 @@ PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--version v1.2.3 \
 		--region global \
 		--output "${candidate}"
+[[ -r "${candidate}/payload/runtime/compose-runtime.sh" ]]
+[[ ! -x "${candidate}/payload/runtime/compose-runtime.sh" ]]
+"${candidate}/install.sh" --help >/dev/null
+"${candidate}/sourcelens/install.sh" --help >/dev/null
 
 python3 - "${candidate}/MANIFEST.json" <<'PY'
 import json

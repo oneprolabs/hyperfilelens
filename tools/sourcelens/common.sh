@@ -24,6 +24,9 @@ SOURCELENS_SHARED_NETWORK="hyperfilelens-bridge"
 
 SOURCELENS_COMPOSE=()
 
+# shellcheck source=../../deploy/installer/compose-runtime.sh
+source "${HFL_ROOT}/deploy/installer/compose-runtime.sh"
+
 # shellcheck source=../lib/logging.sh
 source "${HFL_ROOT}/tools/lib/logging.sh"
 # shellcheck source=../lib/docker-images.sh
@@ -334,11 +337,9 @@ sourcelens_ensure_compose() {
 	if ((${#SOURCELENS_COMPOSE[@]})); then
 		return 0
 	fi
-	if docker compose version >/dev/null 2>&1; then
-		SOURCELENS_COMPOSE=(docker compose)
-	else
-		sourcelens_die "Docker Compose v2 is required"
-	fi
+	hfl_compose_resolve 2.20.0 \
+		|| sourcelens_die "supported Docker Compose command not found; $(hfl_compose_failure_detail 2.20.0)"
+	SOURCELENS_COMPOSE=("${HFL_COMPOSE[@]}")
 }
 
 sourcelens_ensure_shared_network() {

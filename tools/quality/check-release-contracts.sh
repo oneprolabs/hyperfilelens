@@ -1315,7 +1315,7 @@ grep -F 'Preserving existing TLS certificate directory' "${installer}" >/dev/nul
 grep -F 'apply_upgrade_files "${src_root}" "${remove_sourcelens}" "${upgrade_sourcelens}"' "${installer}" >/dev/null
 grep -F 'apply_runtime_configuration' "${installer}" >/dev/null
 backup_body="$(sed -n '/^backup_postgresql_dump()/,/^}/p' "${installer}")"
-grep -F 'COMPOSE=(docker compose)' <<<"${backup_body}" >/dev/null
+grep -F 'COMPOSE=("${HFL_COMPOSE[@]}")' <<<"${backup_body}" >/dev/null
 grep -F 'a complete managed backup cannot be created' <<<"${backup_body}" >/dev/null
 [[ "$(grep -Fc 'sourcelens_compose exec -T postgres' <<<"${backup_body}")" -eq 2 ]]
 if grep -E 'sourcelens_compose (ps -q|exec -T) postgresql' <<<"${backup_body}" >/dev/null; then
@@ -1385,6 +1385,15 @@ grep -F 'cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"' \
 	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
 grep -F 'cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"' \
 	"${ROOT}/release/build.sh" >/dev/null
+grep -F 'cp "${ROOT}/deploy/installer/compose-runtime.sh" "${pkg_root}/payload/runtime/compose-runtime.sh"' \
+	"${ROOT}/release/ci/assemble-release.sh" "${ROOT}/release/ci/assemble-saas-candidate.sh" \
+	"${ROOT}/release/build.sh" >/dev/null
+grep -F '"deploy/installer/compose-runtime.sh": "payload/runtime/compose-runtime.sh"' \
+	"${ROOT}/deploy/online/prepare.py" >/dev/null
+grep -F 'source "${COMPOSE_RUNTIME_FILE}"' \
+	"${ROOT}/deploy/installer/install.sh" "${ROOT}/deploy/installer/sourcelens/install.sh" >/dev/null
+grep -F './tools/quality/test-compose-command-compatibility.sh' \
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F 'cp "${ROOT}/deploy/installer/apply-runtime-config.py" "${pkg_root}/apply-runtime-config.py"' \
 	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
 grep -F 'stage_default_tls_bundle "${pkg_root}"' \

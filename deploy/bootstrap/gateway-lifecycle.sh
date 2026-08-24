@@ -24,6 +24,8 @@ SIDECAR_INSTALL_SCRIPT="gateway-install-lensnode-sidecar.sh"
 COMPOSE_PROJECT="hyperfilelens-gateway"
 DEFAULT_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
 OWNED_LENSNODE_IMAGES=("${DEFAULT_LENSNODE_IMAGE}")
+MIN_COMPOSE_VERSION="${HFL_COMPOSE_MIN_VERSION:-2.20.0}"
+COMPOSE=()
 
 hfl_log() {
 	printf '  [INFO] %s\n' "$*" >&2
@@ -86,6 +88,49 @@ hfl_fail() {
 	HFL_LAST_ERROR=$1
 	printf '  [FAIL] %s\n' "$1" >&2
 	exit "${2:-1}"
+}
+
+compose_version_ge() {
+	local have="${1#v}" want="${2#v}"
+	have="${have#V}"; want="${want#V}"
+	if command -v dpkg >/dev/null 2>&1; then
+		dpkg --compare-versions "${have}" ge "${want}"; return
+	fi
+	[[ "${have}" =~ ^([0-9]+)\.([0-9]+)(\.([0-9]+))?$ ]] || return 1
+	local h1=${BASH_REMATCH[1]} h2=${BASH_REMATCH[2]} h3=${BASH_REMATCH[4]:-0}
+	[[ "${want}" =~ ^([0-9]+)\.([0-9]+)(\.([0-9]+))?$ ]] || return 1
+	local w1=${BASH_REMATCH[1]} w2=${BASH_REMATCH[2]} w3=${BASH_REMATCH[4]:-0}
+	((h1 > w1 || (h1 == w1 && (h2 > w2 || (h2 == w2 && h3 >= w3)))))
+}
+
+compose_candidate_version() {
+	local -a candidate=("$@")
+	local output version
+	version="$("${candidate[@]}" version --short 2>/dev/null || true)"
+	if [[ -z "${version}" ]]; then
+		output="$("${candidate[@]}" version 2>/dev/null || true)"
+		version="$(grep -Eo '[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?' <<<"${output}" | head -1 || true)"
+	fi
+	version="${version#v}"; version="${version#V}"
+	printf '%s' "${version}"
+}
+
+resolve_compose() {
+	local version
+	COMPOSE=()
+	if command -v docker >/dev/null 2>&1; then
+		version="$(compose_candidate_version docker compose)"
+		if [[ -n "${version}" ]] && compose_version_ge "${version}" "${MIN_COMPOSE_VERSION}"; then
+			COMPOSE=(docker compose); return 0
+		fi
+	fi
+	if command -v docker-compose >/dev/null 2>&1; then
+		version="$(compose_candidate_version docker-compose)"
+		if [[ -n "${version}" ]] && compose_version_ge "${version}" "${MIN_COMPOSE_VERSION}"; then
+			COMPOSE=(docker-compose); return 0
+		fi
+	fi
+	return 1
 }
 
 acquire_sidecar_lock() {
@@ -196,17 +241,17 @@ compose_down_sidecar() {
 	local id
 	remove_owned_legacy_gateway_containers
 	if [[ -f "${COMPOSE_DIR}/docker-compose.yml" ]]; then
-		docker compose version >/dev/null 2>&1 \
-			|| hfl_fail "Docker Compose v2 is required to remove the AI engine" 3
+		resolve_compose \
+			|| hfl_fail "Docker Compose v2 >= ${MIN_COMPOSE_VERSION} is required to remove the AI engine" 3
 		while IFS= read -r image; do
 			remember_owned_lensnode_image "${image}"
 		done < <(
 			cd "${COMPOSE_DIR}"
-			docker compose -p "${COMPOSE_PROJECT}" config --images 2>/dev/null || true
+			"${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" config --images 2>/dev/null || true
 		)
 		(
 			cd "${COMPOSE_DIR}"
-			docker compose -p "${COMPOSE_PROJECT}" down --remove-orphans
+			"${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" down --remove-orphans
 		)
 	fi
 	while IFS= read -r id; do

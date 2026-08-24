@@ -1526,6 +1526,8 @@ main() {
 	mkdir -p "${pkg_root}/deploy/blue-green"
 	cp "${ROOT}/deploy/blue-green/active-color" "${pkg_root}/deploy/blue-green/active-color"
 	cp "${ROOT}/deploy/installer/install.sh" "${pkg_root}/install.sh"
+	mkdir -p "${pkg_root}/payload/runtime"
+	cp "${ROOT}/deploy/installer/compose-runtime.sh" "${pkg_root}/payload/runtime/compose-runtime.sh"
 	cp "${ROOT}/deploy/installer/apply-runtime-config.py" "${pkg_root}/apply-runtime-config.py"
 	cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"
 	chmod +x "${pkg_root}/install.sh" "${pkg_root}/apply-runtime-config.py" "${pkg_root}/sync-env.py"

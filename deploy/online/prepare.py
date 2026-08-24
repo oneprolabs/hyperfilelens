@@ -157,13 +157,21 @@ def copy_runtime_files(
 
     copies = {
         "deploy/installer/install.sh": "install.sh",
+        "deploy/installer/compose-runtime.sh": "payload/runtime/compose-runtime.sh",
         "deploy/installer/apply-runtime-config.py": "apply-runtime-config.py",
         "tools/config/sync_env.py": "sync-env.py",
         "LICENSE": "LICENSE",
     }
     for source_name, target_name in copies.items():
-        shutil.copy2(source / source_name, target / target_name)
-        (target / target_name).chmod(0o755 if target_name != "LICENSE" else 0o644)
+        destination = target / target_name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source / source_name, destination)
+        executable = target_name in {
+            "install.sh",
+            "apply-runtime-config.py",
+            "sync-env.py",
+        }
+        destination.chmod(0o755 if executable else 0o644)
 
     for relative in (
         "deploy/nginx/certs",
