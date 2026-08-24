@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import '../../styles/fullscreen-form-styles'
 import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, reactive, ref, watch, type Component } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   Plus,
@@ -105,7 +105,6 @@ import {
   shouldAutoExpandRefreshedDirectory,
 } from '../../lib/backupSourceDirectoryTree'
 import { restoreDirectoryBrowseSourceId } from '../../lib/restoreDirectoryTarget'
-import { useBackupSourcePipeline } from '../../composables/useBackupSourcePipeline'
 import {
   createBackupPolicy,
   createFileFilterRule,
@@ -193,7 +192,9 @@ const props = withDefaults(defineProps<{
 })
 const emit = defineEmits<{
   closed: []
-  completed: [sourceIds: string[]]
+  createCompleted: [payload: { items: Array<{ sourceId: string; config: BackupConfigDetail }> }]
+  createPartial: [payload: { items: Array<{ sourceId: string; config: BackupConfigDetail }> }]
+  editCompleted: [payload: { sourceIds: string[] }]
   conflict: [payload: { sourceIds: string[] }]
   ready: []
 }>()
@@ -228,7 +229,6 @@ const bindProxyLeadItems = computed(() => [
 ])
 const store = useProtectionDemoStore()
 const STEP2_SOURCES_STORAGE_KEY = 'protection-create-wizard-step2-sources'
-const { setPipelineStep } = useBackupSourcePipeline()
 
 function nasRepairMountOptionsHref(repositoryId: number) {
   return router.resolve(buildNasRepairMountOptionsPath(repositoryId)).href
@@ -571,10 +571,10 @@ function sourceHasBackupConfig(sourceId: string) {
   return isRealSourceId(sourceId)
 }
 
-const lastCreatedSourceIds = ref<string[]>([])
+const lastCreatedConfigs = ref<BackupConfigDetail[]>([])
 
-function finishCreateAndGoToStep3(sourceIds?: string[]) {
-  const focusIds = (sourceIds ?? lastCreatedSourceIds.value).filter((id) => sourceHasBackupConfig(id))
+function finishCreateAndGoToStep3(items: Array<{ sourceId: string; config: BackupConfigDetail }>) {
+  const focusIds = items.map((item) => item.sourceId).filter((id) => sourceHasBackupConfig(id))
   if (focusIds.length > 0) {
     const idSet = new Set(focusIds)
     step1Selection.value = step1Selection.value.filter((id) => !idSet.has(id))
@@ -582,7 +582,7 @@ function finishCreateAndGoToStep3(sourceIds?: string[]) {
   }
   createOpen.value = false
   if (props.embedded) {
-    emit('completed', focusIds)
+    emit('createCompleted', { items })
     return
   }
   if (typeof sessionStorage !== 'undefined') {
@@ -592,7 +592,10 @@ function finishCreateAndGoToStep3(sourceIds?: string[]) {
 }
 
 function goToStartBackupFromCreate() {
-  finishCreateAndGoToStep3()
+  finishCreateAndGoToStep3(lastCreatedConfigs.value.map((config) => ({
+    sourceId: `${config.source_type}:${config.source_ref_id}`,
+    config,
+  })))
 }
 
 type BackupPathType = 'directory' | 'file' | 'unknown'
@@ -1201,6 +1204,9 @@ watch(addPolicyForm, () => {
   clearAddPolicyError('retention')
 }, { deep: true })
 const createPhase = ref<'form' | 'waiting' | 'done'>('form')
+const createSubmissionActive = computed(() => createPhase.value === 'waiting')
+type CreateItemState = 'pending' | 'creating' | 'success' | 'failed' | 'unknown' | 'not_attempted'
+const createItemStates = ref<Record<string, CreateItemState>>({})
 const createBootstrapping = ref(true)
 const editorWaitingText = computed(() => {
   if (createBootstrapping.value) {
@@ -3214,7 +3220,16 @@ async function openEditConfigs(configIds: number[], section: BackupConfigEditSec
   }
 }
 
+function preventUnloadDuringCreate(event: BeforeUnloadEvent) {
+  if (!createSubmissionActive.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onBeforeRouteLeave(() => !createSubmissionActive.value)
+
 onMounted(async () => {
+  if (typeof window !== 'undefined') window.addEventListener('beforeunload', preventUnloadDuringCreate)
   try {
     const catalog = await fetchStorageProviderCatalog()
     addTargetS3CatalogProviders.value = catalog.providers.filter((provider) => provider.enabled)
@@ -3288,6 +3303,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   cancelTargetValidation()
+  if (typeof window !== 'undefined') window.removeEventListener('beforeunload', preventUnloadDuringCreate)
   if (typeof document !== 'undefined') document.body.style.overflow = ''
 })
 
@@ -4384,6 +4400,7 @@ watch(
 )
 
 function closeCreate() {
+  if (createSubmissionActive.value) return
   cancelTargetValidation()
   if (props.embedded) {
     createOpen.value = false
@@ -5522,15 +5539,23 @@ async function runCreateBackup() {
   }
   const payload = buildCreateBackupPayload()
   const groupMap = new Map(wizardSourceGroups.value.map((group) => [group.key, group]))
+  const payloadSourceIds = payload.backups.map((backup) => backup.source.id)
+  if (payloadSourceIds.some((sourceId) => createItemStates.value[sourceId] === 'unknown')) {
+    ElMessage.warning({ message: t('protection.backupsPage.createFailed'), grouping: true })
+    return
+  }
+  createItemStates.value = Object.fromEntries(payloadSourceIds.map((sourceId) => [sourceId, 'pending']))
 
   createPhase.value = 'waiting'
-  let allSuccess = true
   let hasProvisioning = false
-  const configuredSourceIds: string[] = []
+  const createdItems: Array<{ sourceId: string; config: BackupConfigDetail }> = []
+  let failedCount = 0
+  let stoppedAfterUnknownResult = false
 
   for (const backup of payload.backups) {
     const group = groupMap.get(backup.key)
     if (!group) continue
+    createItemStates.value[backup.source.id] = 'creating'
 
     const sourceRefId = parseSourceRefId(backup.source.id)
     const repositoryId = parseInt(backup.targetId, 10) || 0
@@ -5591,30 +5616,49 @@ async function runCreateBackup() {
     try {
       const created = await createBackupConfig(apiPayload)
       hasProvisioning = hasProvisioning || created.status === 'provisioning'
-      configuredSourceIds.push(backup.source.id)
+      createdItems.push({ sourceId: backup.source.id, config: created })
+      createItemStates.value[backup.source.id] = 'success'
     } catch (e) {
-      allSuccess = false
+      failedCount += 1
       logger.error('BackupCreateWizard.vue', 4285, 'Failed to create backup config', e)
       showBackupConfigCreateError(e, backup.name, repositoryId)
-      break
+      const normalizedError = normalizeThrownError(e)
+      const errorCode = normalizedError.errorCode
+      if (errorCode === 'NETWORK.UNAVAILABLE' || errorCode === 'NETWORK.TIMEOUT') {
+        createItemStates.value[backup.source.id] = 'unknown'
+        stoppedAfterUnknownResult = true
+        break
+      }
+      createItemStates.value[backup.source.id] = 'failed'
+      if (normalizedError.status === 401 || normalizedError.status === 403) break
     }
   }
+  for (const sourceId of payloadSourceIds) {
+    if (createItemStates.value[sourceId] === 'pending') createItemStates.value[sourceId] = 'not_attempted'
+  }
 
+  const configuredSourceIds = createdItems.map((item) => item.sourceId)
+  if (configuredSourceIds.length > 0) {
+    const configured = new Set(configuredSourceIds)
+    step1Selection.value = step1Selection.value.filter((id) => !configured.has(id))
+    step2Sources.value = step2Sources.value.filter((id) => !configured.has(id))
+    lastCreatedConfigs.value = createdItems.map((item) => item.config)
+  }
+
+  const allSuccess = failedCount === 0 && !stoppedAfterUnknownResult && createdItems.length === payload.backups.length
   if (allSuccess) {
-    if (configuredSourceIds.length > 0) {
-      await setPipelineStep(configuredSourceIds, 3)
-      step2Sources.value = step2Sources.value.filter((id) => !configuredSourceIds.includes(id))
-    }
     ElMessage.success({
       message: hasProvisioning
         ? t('protection.backupsPage.createProvisioning')
         : t('protection.backupsPage.createSuccess'),
       grouping: true,
     })
-    lastCreatedSourceIds.value = configuredSourceIds
     createPhase.value = 'done'
-    nextTick(() => finishCreateAndGoToStep3(configuredSourceIds))
+    nextTick(() => finishCreateAndGoToStep3(createdItems))
   } else {
+    if (createdItems.length > 0 && props.embedded) {
+      emit('createPartial', { items: createdItems })
+    }
     createPhase.value = 'form'
   }
 }
@@ -5755,7 +5799,7 @@ async function runEditBackupConfig() {
     }
     ElMessage.success({ message: t('protection.backupsPage.msgSaveEditDemo'), grouping: true })
     if (props.embedded) {
-      emit('completed', editedSourceIds)
+      emit('editCompleted', { sourceIds: editedSourceIds })
       return
     }
     closeCreate()
@@ -5785,6 +5829,7 @@ watch(createOpen, (v) => {
     createCompletedSteps.value = new Set()
     editConfigs.value = []
     editSection.value = null
+    createItemStates.value = {}
     closeValidationPopover()
   }
 })
@@ -5885,6 +5930,7 @@ function preserveShallowestPathOrder(paths: string[]) {
       :waiting-text="editorWaitingText"
       :bootstrapping="createBootstrapping"
       :busy="targetValidationInProgress"
+      :can-close="!createSubmissionActive"
       :animated="!embedded"
       :result-title="t('protection.backupsPage.resultCreateTitle')"
       :result-subtitle="t('protection.backupsPage.resultCreateSub')"

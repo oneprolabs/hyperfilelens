@@ -56,9 +56,17 @@ describe('backup wizard reset → Backup Configuration list (#362)', () => {
     expect(refreshStep3).not.toContain('step3Ids')
   })
 
+  it('keeps Step 3 auto-refresh active while reset pipeline sources are tracked', () => {
+    const refresh = sourceBetween(
+      'function hasRunningStep3Tasks()',
+      'function stopStep3AutoRefresh',
+    )
+    expect(refresh).toContain('if (pendingResetPipelineSourceIds.value.length > 0) return true')
+  })
+
   it('returns false from refreshBackupConfigs soft-failure so reset completion is not inferred', () => {
     const refreshConfigs = sourceBetween(
-      'async function refreshBackupConfigs(signal?: AbortSignal): Promise<boolean> {',
+      'async function refreshBackupConfigs(',
       'function displayNameForSource(type: string, refId: number, fallback: string)',
     )
     expect(refreshConfigs).toContain('return true')

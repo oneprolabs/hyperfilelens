@@ -202,21 +202,22 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(toolbarRefresh).not.toContain('loadStep3Selectable({ signal: signal ?? undefined })')
   })
 
-  it('reloads the full step 3 list state after backup configuration edits complete', () => {
+  it('separates create and edit completion while reconciling Step 3 in the background', () => {
     const editStart = wizard.indexOf('async function runEditBackupConfig')
     const editEnd = wizard.indexOf('function submitCreateWizard', editStart)
     const editHandler = wizard.slice(editStart, editEnd)
     const handler = sourceBetween(
-      'async function finishCreateAndGoToStep3',
-      'const addSourceOpen',
+      'function finishCreateAndGoToStep3',
+      'function onCreateBackupPartial',
     )
 
     expect(editStart).toBeGreaterThan(-1)
     expect(editEnd).toBeGreaterThan(editStart)
-    expect(editHandler).toContain('emit(\'completed\', editedSourceIds)')
+    expect(editHandler).toContain("emit('editCompleted', { sourceIds: editedSourceIds })")
     expect(editHandler).toContain('`${config.source_type}:${config.source_ref_id}`')
-    expect(page).toContain('@completed="finishCreateAndGoToStep3"')
-    expect(handler).toContain('await refreshStep3AfterMoreAction({ focusIds: requestedFocusIds })')
+    expect(page).toContain('@create-completed="finishCreateAndGoToStep3"')
+    expect(page).toContain('@edit-completed="onEditBackupCompleted"')
+    expect(handler.indexOf('enterStartBackupStep')).toBeLessThan(handler.indexOf('reconcileCreatedBackupConfigs'))
   })
 
   it('reloads the full step 3 list state after stopping backup or restore tasks', () => {
@@ -261,8 +262,8 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(refresh).toContain('pageRequests.nextSignal(scope)')
     expect(refresh).toContain('refreshPipelineStep2PlusIds(signal)')
     expect(refresh).not.toContain('refreshPipelineStep3Ids(signal)')
-    expect(refresh).toContain('await loadStep3SelectableWithPageClamp(signal)')
-    expect(refresh).toContain('await refreshBackupConfigs(signal)')
+    expect(refresh).toContain('await loadStep3SelectableWithPageClamp(signal, {')
+    expect(refresh).toContain('await refreshBackupConfigs(signal, { preserveOnError: options.preserveConfigOnError })')
     expect(refresh).toContain('pageRequests.isCurrentSignal(scope, signal)')
     expect(refresh).toContain('syncStep3TableSelection()')
   })
