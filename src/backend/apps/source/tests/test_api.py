@@ -1883,6 +1883,18 @@ class SourceResourceApiTests(TestCase):
             },
         )
 
+    def test_user_continuous_agent_uses_current_user_directory_scope(self):
+        from apps.source.services.internal.backup_source_directory import (
+            _is_current_user_agent,
+        )
+
+        agent = Node(
+            role=Node.Role.AGENT,
+            installation_mode=Node.InstallationMode.USER_CONTINUOUS,
+        )
+
+        self.assertTrue(_is_current_user_agent(agent))
+
     @patch(
         "apps.source.services.internal.backup_source_directory._try_cached_mount_listing"
     )

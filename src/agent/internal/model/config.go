@@ -17,6 +17,10 @@ const (
 const (
 	InstallationModeSystem InstallationMode = "system"
 	InstallationModeUser   InstallationMode = "user"
+	// InstallationModeUserContinuous keeps the ordinary user's systemd user
+	// service alive on Linux through user lingering. No privileged Agent
+	// process is retained after installation.
+	InstallationModeUserContinuous InstallationMode = "user_continuous"
 	// InstallationModeAccount runs continuously as a selected non-admin account.
 	// The installer is elevated only to register the background service.
 	InstallationModeAccount InstallationMode = "account"
@@ -35,7 +39,7 @@ func ParseRole(s string) (Role, error) {
 // ParseInstallationMode validates installation mode strings.
 func ParseInstallationMode(s string) (InstallationMode, error) {
 	switch InstallationMode(s) {
-	case InstallationModeSystem, InstallationModeUser, InstallationModeAccount:
+	case InstallationModeSystem, InstallationModeUser, InstallationModeUserContinuous, InstallationModeAccount:
 		return InstallationMode(s), nil
 	default:
 		return "", fmt.Errorf("invalid installation mode %q", s)
@@ -45,13 +49,13 @@ func ParseInstallationMode(s string) (InstallationMode, error) {
 // UserScoped reports whether file access must be bounded by the Agent's
 // ordinary-user token rather than the host service identity.
 func (m InstallationMode) UserScoped() bool {
-	return m == InstallationModeUser || m == InstallationModeAccount
+	return m == InstallationModeUser || m == InstallationModeUserContinuous || m == InstallationModeAccount
 }
 
 // Continuous reports whether the Agent is expected to run without an active
 // interactive login session.
 func (m InstallationMode) Continuous() bool {
-	return m == InstallationModeSystem || m == InstallationModeAccount
+	return m == InstallationModeSystem || m == InstallationModeUserContinuous || m == InstallationModeAccount
 }
 
 // AgentConfig holds durable and runtime configuration fields.

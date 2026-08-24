@@ -137,6 +137,15 @@ def _parse_enrollment_query(
             )
         return Response({"error": "invalid enrollment token"}, status=401)
 
+    if (
+        token_row.installation_mode == Node.InstallationMode.USER_CONTINUOUS
+        and script_type not in ("linux", "sh")
+    ):
+        return _bootstrap_error_response(
+            script_type,
+            "Linux user-continuous protection requires the Linux installer",
+        )
+
     return org_key, role, token, api_base, token_row.installation_mode
 
 

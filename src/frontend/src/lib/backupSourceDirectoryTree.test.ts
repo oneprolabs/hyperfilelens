@@ -10,6 +10,24 @@ import {
 } from './backupSourceDirectoryTree'
 
 describe('backup source directory roots', () => {
+  it('keeps Linux user-continuous protection at one user-scoped root', () => {
+    expect(
+      shouldUseSingleDirectoryRoot(
+        { type: 'host', platform: 'linux', installation_mode: 'user_continuous' },
+        '',
+      ),
+    ).toBe(true)
+  })
+
+  it('keeps user-continuous protection user-scoped before Linux inventory arrives', () => {
+    expect(
+      shouldUseSingleDirectoryRoot(
+        { type: 'host', installation_mode: 'user_continuous' },
+        '',
+      ),
+    ).toBe(true)
+  })
+
   it('keeps specified-user continuous Linux and macOS agents at the system root', () => {
     for (const platform of ['linux', 'macos'] as const) {
       expect(

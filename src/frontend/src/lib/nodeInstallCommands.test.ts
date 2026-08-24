@@ -152,6 +152,39 @@ describe('manual node maintenance commands', () => {
     expect(`${upgrade}\n${uninstall}\n${service}`).not.toContain('sudo')
   })
 
+  it('keeps Linux user-continuous maintenance entirely user-scoped', () => {
+    const installScript = '"${XDG_DATA_HOME:-$HOME/.local/share}/hyperfilelens-agent/bin/install.sh"'
+    const upgrade = buildLocalUpgradeCommand(
+      'linux',
+      '/tmp/hfl-agent-linux.tar.gz',
+      true,
+      'https://console.example/hfl-agent-linux.tar.gz',
+      'agent',
+      true,
+      '',
+      'amd64',
+      'user_continuous',
+    )
+    const uninstall = buildLocalUninstallCommand(
+      'linux',
+      true,
+      'agent',
+      'user_continuous',
+    )
+    const service = buildLocalServiceCommand(
+      'linux',
+      'restart',
+      'agent',
+      'user_continuous',
+    )
+
+    expect(upgrade).toContain(`${installScript} upgrade`)
+    expect(uninstall).toContain(`${installScript} uninstall --purge-all`)
+    expect(service).toBe(`${installScript} restart`)
+    expect(`${upgrade}\n${uninstall}\n${service}`).not.toContain('sudo')
+    expect(installPathsSummary('linux', 'agent', 'user_continuous').service).toContain('linger')
+  })
+
   it('uses the current-user Windows install without elevation', () => {
     const upgrade = buildLocalUpgradeCommand(
       'windows',

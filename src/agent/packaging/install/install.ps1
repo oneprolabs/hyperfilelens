@@ -69,7 +69,7 @@ if (-not $env:HFL_INSTALLATION_MODE -and $BundleRoot.TrimEnd('\') -ne (Join-Path
   }
 }
 if ($InstallationMode -notin @("system", "user", "account")) {
-  throw "HFL_INSTALLATION_MODE must be system, user, or account."
+  throw "HFL_INSTALLATION_MODE must be system, user, or account. Linux user_continuous mode is not supported on Windows."
 }
 $ServiceName = "HyperFileLensAgent"
 if ($InstallationMode -eq "user") {

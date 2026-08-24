@@ -150,7 +150,7 @@ func pathWithinHome(path, home string) bool {
 
 // InstallDirForMode returns the new program directory for a persisted Agent mode.
 func InstallDirForMode(mode model.InstallationMode) string {
-	if mode == model.InstallationModeUser {
+	if mode == model.InstallationModeUser || mode == model.InstallationModeUserContinuous {
 		if path, err := UserInstallDir(); err == nil {
 			return path
 		}
@@ -172,7 +172,7 @@ func LifecycleInstallDirForMode(mode model.InstallationMode) string {
 			candidates = append(candidates, filepath.Dir(dir))
 		}
 	}
-	if mode == model.InstallationModeUser {
+	if mode == model.InstallationModeUser || mode == model.InstallationModeUserContinuous {
 		if root, err := UserDataDir(); err == nil {
 			candidates = append(candidates, root)
 		}
@@ -206,7 +206,7 @@ func lifecycleScriptExists(root string) bool {
 // AgentDataDirForMode returns the canonical Agent Root for a persisted mode.
 // The historical DataDir name is kept for CLI and environment compatibility.
 func AgentDataDirForMode(mode model.InstallationMode) string {
-	if mode == model.InstallationModeUser {
+	if mode == model.InstallationModeUser || mode == model.InstallationModeUserContinuous {
 		if path, err := UserDataDir(); err == nil {
 			return path
 		}
@@ -216,7 +216,7 @@ func AgentDataDirForMode(mode model.InstallationMode) string {
 
 // AgentRootForMode returns the unified root for a persisted Agent mode.
 func AgentRootForMode(mode model.InstallationMode) string {
-	if mode == model.InstallationModeUser {
+	if mode == model.InstallationModeUser || mode == model.InstallationModeUserContinuous {
 		if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
 			return UserAgentRootForHome(home)
 		}
@@ -233,14 +233,14 @@ func SystemDataDir() string { return SystemAgentRoot() }
 // UserInstallation reports whether the process is configured for user-level lifecycle.
 func UserInstallation() bool {
 	mode, err := model.ParseInstallationMode(strings.TrimSpace(os.Getenv(installationModeEnv)))
-	return err == nil && mode == model.InstallationModeUser
+	return err == nil && (mode == model.InstallationModeUser || mode == model.InstallationModeUserContinuous)
 }
 
 // DefaultInstallDir returns the platform default program directory.
 func DefaultInstallDir() string {
 	mode := model.InstallationModeSystem
 	configured, err := model.ParseInstallationMode(strings.TrimSpace(os.Getenv(installationModeEnv)))
-	if err == nil && configured == model.InstallationModeUser {
+	if err == nil && (configured == model.InstallationModeUser || configured == model.InstallationModeUserContinuous) {
 		mode = model.InstallationModeUser
 	}
 	return InstallDirForMode(mode)

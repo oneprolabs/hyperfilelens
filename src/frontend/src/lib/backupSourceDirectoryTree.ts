@@ -53,7 +53,7 @@ export function shouldUseSingleDirectoryRoot(
   if (source.type === 'nas') return true
   if (
     source.type === 'host'
-    && source.installation_mode === 'user'
+    && (source.installation_mode === 'user' || source.installation_mode === 'user_continuous')
     && source.platform !== 'windows'
   ) return true
   return source.type === 'host'

@@ -33,7 +33,7 @@ export function linuxInstallScriptPath() {
 }
 
 function installScriptPath(os: EnrollmentOs, installationMode: NodeInstallationMode): string {
-  if (installationMode === 'user') {
+  if (installationMode === 'user' || installationMode === 'user_continuous') {
     return os === 'macos'
       ? `"${MAC_USER_AGENT_ROOT}/bin/install.sh"`
       : '"${XDG_DATA_HOME:-$HOME/.local/share}/hyperfilelens-agent/bin/install.sh"'
@@ -94,7 +94,7 @@ export function buildLocalUpgradeCommand(
   }
   const archive = pkg.endsWith('.tar.gz') ? pkg : '/tmp/hfl-agent.tar.gz'
   const installScript = installScriptPath(os, installationMode)
-  const privilegePrefix = installationMode === 'user' ? '' : 'sudo '
+  const privilegePrefix = installationMode === 'user' || installationMode === 'user_continuous' ? '' : 'sudo '
   if (withDownload && downloadUrl) {
     return `curl ${curlDownloadOptions(tlsVerify)} -o ${archive} '${downloadUrl}'\n${privilegePrefix}${installScript} upgrade --from ${archive}`
   }
@@ -119,7 +119,7 @@ export function buildLocalUninstallCommand(
       : `${installCommand} uninstall`
   }
   const installScript = installScriptPath(os, installationMode)
-  const privilegePrefix = installationMode === 'user' ? '' : 'sudo '
+  const privilegePrefix = installationMode === 'user' || installationMode === 'user_continuous' ? '' : 'sudo '
   return purgeAll
     ? `${privilegePrefix}${installScript} uninstall --purge-all`
     : `${privilegePrefix}${installScript} uninstall`
@@ -153,7 +153,7 @@ export function buildLocalServiceCommand(
     return 'Restart-Service HyperFileLensAgent'
   }
   const installScript = installScriptPath(os, installationMode)
-  return `${installationMode === 'user' ? '' : 'sudo '}${installScript} ${action}`
+  return `${installationMode === 'user' || installationMode === 'user_continuous' ? '' : 'sudo '}${installScript} ${action}`
 }
 
 export function roleDeployNotes(role: NodeRole): string[] {
@@ -187,7 +187,7 @@ export function installPathsSummary(
   role?: NodeRole,
   installationMode: NodeInstallationMode = 'system',
 ) {
-  if (installationMode === 'user') {
+  if (installationMode === 'user' || installationMode === 'user_continuous') {
     if (os === 'windows') {
       return {
         installDir: '%LOCALAPPDATA%\\HyperFileLens\\Agent\\bin',
@@ -205,7 +205,9 @@ export function installPathsSummary(
     return {
       installDir: '${XDG_DATA_HOME:-$HOME/.local/share}/hyperfilelens-agent/bin',
       dataDir: '${XDG_DATA_HOME:-$HOME/.local/share}/hyperfilelens-agent',
-      service: 'hyperfilelens-agent.service (systemd user)',
+      service: installationMode === 'user_continuous'
+        ? 'hyperfilelens-agent.service (systemd user + linger)'
+        : 'hyperfilelens-agent.service (systemd user)',
     }
   }
   if (installationMode === 'account') {

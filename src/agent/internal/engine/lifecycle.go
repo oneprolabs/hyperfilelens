@@ -54,7 +54,7 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 		installDir,
 		stagedArchive,
 		logDir,
-		cfg.InstallationMode == model.InstallationModeUser,
+		cfg.InstallationMode == model.InstallationModeUser || cfg.InstallationMode == model.InstallationModeUserContinuous,
 	); err != nil {
 		slog.Warn("detached upgrade schedule failed", "err", err, "upgrade_log", upgradeLog)
 		_ = os.RemoveAll(filepath.Dir(stagedArchive))
@@ -121,7 +121,7 @@ func (e *Engine) runAgentUninstall(ctx context.Context, rep ReporterSink, taskID
 		dataDir,
 		logDir,
 		keepData,
-		cfg.InstallationMode == model.InstallationModeUser,
+		cfg.InstallationMode == model.InstallationModeUser || cfg.InstallationMode == model.InstallationModeUserContinuous,
 		completion,
 	); err != nil {
 		slog.Warn("detached uninstall schedule failed", "err", err, "uninstall_log", uninstallLog)

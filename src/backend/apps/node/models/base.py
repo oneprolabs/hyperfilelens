@@ -16,10 +16,48 @@ class NodeRole(models.TextChoices):
 
 
 class NodeInstallationMode(models.TextChoices):
-    """Privilege and lifecycle boundary selected for one Agent installation."""
+    """Permission boundary, backup continuity, and lifecycle for one Agent install."""
 
+    # Host-level continuous protection:
+    # an administrator installs the Agent as a system service and the Agent
+    # does not depend on an interactive login, SSH session, or desktop session.
+    # The service can protect host-level paths allowed by policy and provides
+    # the normal online upgrade, rollback, and uninstall lifecycle. This mode
+    # applies to Linux, Windows, and macOS.
     SYSTEM = "system", "System Service"
+
+    # Current-user protection:
+    # an ordinary user installs and runs the Agent, which can access only files
+    # available to that user. On Windows and macOS, locking the screen or
+    # disconnecting a remote desktop normally does not end the user session;
+    # signing out stops the Agent. On Linux, ending the SSH session normally
+    # stops the user service. Installation, upgrade, and uninstall stay within
+    # the user's own files and service scope and do not require a privileged
+    # Agent process.
     USER = "user", "Current User"
+
+    # Linux user-continuous protection:
+    # an ordinary user installs and runs the Agent from the user's own Agent
+    # root, configuration, data, and systemd --user service. User lingering
+    # keeps that user service manager alive after SSH logout or user sign-out,
+    # so file backup continues without an elevated Agent process. Enabling
+    # linger may require one administrator authorization, depending on host
+    # policy. User-scoped upgrade and uninstall remain available. Uninstalling
+    # the Agent deliberately leaves linger unchanged because it is a shared
+    # account setting that may also keep unrelated user services running.
+    USER_CONTINUOUS = "user_continuous", "User Continuous (Linux)"
+
+    # Specified-user continuous protection:
+    # an administrator installs the system service, but the Agent worker runs
+    # as the selected ordinary account and is limited to that account's file
+    # permissions. The worker continues after SSH disconnect, sign-out, or
+    # desktop logout. This mode deliberately does not keep a product-owned
+    # privileged runtime or lifecycle helper. From the customer's perspective,
+    # retaining such a process would make this mode indistinguishable from the
+    # system mode, so online upgrade, rollback, and uninstall are not supported
+    # and must be performed manually on the host with administrator authorization.
+    # The mode is intended for advanced or compatibility deployments that need
+    # continuous backup without running the backup worker as an administrator.
     ACCOUNT = "account", "Specified User Continuous"
 
 

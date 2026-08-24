@@ -122,7 +122,11 @@ def _agent_default_path(node: Node) -> str:
 def _is_current_user_agent(node: Node) -> bool:
     return (
         node.role == NodeRole.AGENT
-        and node.installation_mode == Node.InstallationMode.USER
+        and node.installation_mode
+        in (
+            Node.InstallationMode.USER,
+            Node.InstallationMode.USER_CONTINUOUS,
+        )
     )
 
 

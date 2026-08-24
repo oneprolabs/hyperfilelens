@@ -84,7 +84,7 @@ const installGenerated = ref(false)
 const purgeAll = ref(false)
 const serviceAction = ref<'status' | 'start' | 'stop' | 'restart'>(props.initialServiceAction)
 const defaultInstallationModeForOs = (os: EnrollmentOs): NodeInstallationMode => (
-  os === 'linux' ? 'system' : 'user'
+  os === 'linux' ? 'user_continuous' : 'user'
 )
 const selectedInstallationMode = ref<NodeInstallationMode>(
   props.installationMode ?? defaultInstallationModeForOs(props.os),
@@ -251,7 +251,7 @@ const osPickerOptions = computed(() => [
   { value: 'macos' as EnrollmentOs, label: t('nodesDeploy.osMacos'), meta: t('nodeLifecycle.osMetaMacos') },
 ])
 
-// Keep service-manager details internal. The three choices describe the
+// Keep service-manager details internal. The available choices describe the
 // protection result and lifecycle boundary; the installer selects the native
 // service mechanism for the chosen operating system.
 const installationModeOptions = computed(() => [
@@ -264,6 +264,16 @@ const installationModeOptions = computed(() => [
     permission: t('nodeLifecycle.installationModeUserPermission'),
     recommendation: t(`nodeLifecycle.installationModeUserRecommendation.${props.os}`),
     recommended: defaultInstallationModeForOs(props.os) === 'user',
+  },
+  {
+    value: 'user_continuous' as NodeInstallationMode,
+    title: t('nodeLifecycle.installationModeUserContinuous'),
+    description: t('nodeLifecycle.installationModeUserContinuousDescription'),
+    scope: t('nodeLifecycle.installationModeUserContinuousScope'),
+    runtime: t('nodeLifecycle.installationModeUserContinuousRuntime'),
+    permission: t('nodeLifecycle.installationModeUserContinuousPermission'),
+    recommendation: t(`nodeLifecycle.installationModeUserContinuousRecommendation.${props.os}`),
+    recommended: defaultInstallationModeForOs(props.os) === 'user_continuous',
   },
   {
     value: 'account' as NodeInstallationMode,
@@ -285,10 +295,10 @@ const installationModeOptions = computed(() => [
     recommendation: t(`nodeLifecycle.installationModeSystemRecommendation.${props.os}`),
     recommended: defaultInstallationModeForOs(props.os) === 'system',
   },
-])
+].filter((option) => option.value !== 'user_continuous' || props.os === 'linux'))
 
 const installLeadKey = computed(() => {
-  if (effectiveInstallationMode.value === 'user') return 'nodeLifecycle.installLeadUser'
+  if (effectiveInstallationMode.value === 'user' || effectiveInstallationMode.value === 'user_continuous') return 'nodeLifecycle.installLeadUser'
   if (props.os === 'windows') return 'nodeLifecycle.installLeadWindows'
   if (props.os === 'macos') return 'nodeLifecycle.installLeadMacos'
   return 'nodeLifecycle.installLeadLinux'
@@ -492,6 +502,11 @@ watch(
 watch(
   () => props.os,
   (os) => {
+    if (os !== 'linux' && selectedInstallationMode.value === 'user_continuous') {
+      selectedInstallationMode.value = defaultInstallationModeForOs(os)
+      installationModeTouched.value = false
+      return
+    }
     if (!installationModeTouched.value && props.role === 'agent') {
       selectedInstallationMode.value = defaultInstallationModeForOs(os)
     }
@@ -901,6 +916,7 @@ defineExpose({ clearInstallCommand })
             <ElRadioGroup
               v-model="selectedInstallationMode"
               class="installation-mode-grid"
+              :class="{ 'installation-mode-grid--four': installationModeOptions.length === 4 }"
               :aria-label="t('nodeLifecycle.installationModeStep')"
               @change="installationModeTouched = true"
             >
@@ -935,11 +951,13 @@ defineExpose({ clearInstallCommand })
               class="installation-mode-picker__hint"
               aria-live="polite"
             >
-              {{ selectedInstallationMode === 'user'
-                ? t('nodeLifecycle.installationModeUserHint')
-                : selectedInstallationMode === 'account'
-                  ? t('nodeLifecycle.installationModeAccountHint')
-                  : t('nodeLifecycle.installationModeSystemHint') }}
+              {{ selectedInstallationMode === 'user_continuous'
+                ? t('nodeLifecycle.installationModeUserContinuousHint')
+                : selectedInstallationMode === 'user'
+                  ? t('nodeLifecycle.installationModeUserHint')
+                  : selectedInstallationMode === 'account'
+                    ? t('nodeLifecycle.installationModeAccountHint')
+                    : t('nodeLifecycle.installationModeSystemHint') }}
             </p>
           </div>
         </section>
@@ -1337,6 +1355,10 @@ defineExpose({ clearInstallCommand })
   align-items: stretch;
 }
 
+.installation-mode-grid--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .installation-mode-card {
   display: flex;
   align-items: flex-start;
@@ -1415,7 +1437,8 @@ defineExpose({ clearInstallCommand })
 }
 
 @media (max-width: 920px) {
-  .installation-mode-grid {
+  .installation-mode-grid,
+  .installation-mode-grid--four {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

@@ -104,6 +104,7 @@ class NodeTokenCreateSerializer(serializers.ModelSerializer):
         )
         if installation_mode in (
             NodeInstallationMode.USER,
+            NodeInstallationMode.USER_CONTINUOUS,
             NodeInstallationMode.ACCOUNT,
         ) and role != Node.Role.AGENT:
             raise serializers.ValidationError(

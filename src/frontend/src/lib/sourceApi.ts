@@ -3,6 +3,7 @@ import { unwrapApiPayload, asList } from './parse'
 import { getEffectiveOrgKey } from '../composables/useAuth'
 import type { BackupConfigDetail } from './protectionBackupConfigApi'
 import type { BackupPolicy, FileFilterRule } from './protectionPolicyApi'
+import type { NodeInstallationMode } from '../types/node'
 
 export type BackupSelectableRepositoryPreview = {
   id: string
@@ -125,7 +126,7 @@ export type BackupSelectableSource = {
   protocol?: 'nfs' | 'smb'
   mount_options?: string
   platform?: 'linux' | 'windows' | 'macos'
-  installation_mode?: 'system' | 'user' | 'account'
+  installation_mode?: NodeInstallationMode
   connection_uri?: string
   bound_node_id?: number | null
   mount_status?: string

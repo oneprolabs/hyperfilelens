@@ -27,6 +27,14 @@ hfl_ok() {
 	printf '  [ OK ] %s\n' "$1"
 }
 
+# Keep compatibility with both old systemd (key/value output) and newer
+# loginctl output. CentOS 7 ships systemd 219, where `--value` is unavailable.
+hfl_user_linger_state() {
+	local raw
+	raw="$(loginctl show-user "$(id -u)" --property=Linger 2>/dev/null)" || return 1
+	printf '%s\n' "${raw}" | sed -n 's/^Linger=//p' | tr -d '[:space:]'
+}
+
 hfl_format_bytes() {
 	awk -v bytes="$1" 'BEGIN {
 		split("B KiB MiB GiB TiB", units, " ")
@@ -188,20 +196,37 @@ aarch64 | arm64) HFL_ARCH=arm64 ;;
 	;;
 esac
 
-if [[ "${HFL_INSTALLATION_MODE}" == "user" ]]; then
+if [[ "${HFL_INSTALLATION_MODE}" == "user" || "${HFL_INSTALLATION_MODE}" == "user_continuous" ]]; then
 	if [[ "$(id -u)" -eq 0 ]]; then
 		hfl_fail "User-level installation must run as the current user without sudo." 1
 	fi
-	if ! command -v systemctl >/dev/null 2>&1 \
-		|| ! systemctl --user show-environment >/dev/null 2>&1; then
+	command -v systemctl >/dev/null 2>&1 \
+		|| hfl_fail "systemctl is required for user-level installation." 2
+	command -v loginctl >/dev/null 2>&1 \
+		|| hfl_fail "loginctl is required for user-level installation." 2
+	HFL_USER_LINGER="$(hfl_user_linger_state)" \
+		|| hfl_fail "Unable to verify the current user's systemd sign-out behavior." 2
+	[[ "${HFL_USER_LINGER}" == "yes" || "${HFL_USER_LINGER}" == "no" ]] \
+		|| hfl_fail "Unable to parse the current user's systemd linger state." 2
+	if [[ "${HFL_INSTALLATION_MODE}" == "user_continuous" && "${HFL_USER_LINGER}" != "yes" ]]; then
+		command -v sudo >/dev/null 2>&1 \
+			|| hfl_fail "Administrator authorization is required once to enable systemd user lingering (sudo is not available)." 2
+		hfl_step "Enabling systemd user lingering for $(id -un)."
+		sudo loginctl enable-linger "$(id -un)" \
+			|| hfl_fail "Could not enable systemd user lingering. Ask an administrator to run: sudo loginctl enable-linger $(id -un)" 2
+		HFL_USER_LINGER="$(hfl_user_linger_state)" \
+			|| hfl_fail "Unable to verify the current user's systemd linger state after authorization." 2
+		[[ "${HFL_USER_LINGER}" == "yes" || "${HFL_USER_LINGER}" == "no" ]] \
+			|| hfl_fail "Unable to parse the current user's systemd linger state after authorization." 2
+		[[ "${HFL_USER_LINGER}" == "yes" ]] \
+			|| hfl_fail "systemd user lingering is still disabled after administrator authorization." 2
+		hfl_ok "systemd user lingering is enabled."
+	fi
+	if ! systemctl --user show-environment >/dev/null 2>&1; then
 		hfl_fail "A working systemd user service manager is required for user-level installation." 2
 	fi
-	command -v loginctl >/dev/null 2>&1 \
-		|| hfl_fail "loginctl is required to verify that current-user mode stops after sign-out." 2
-	HFL_USER_LINGER="$(loginctl show-user "$(id -u)" --property=Linger --value 2>/dev/null)" \
-		|| hfl_fail "Unable to verify the current user's systemd sign-out behavior." 2
-	if [[ "${HFL_USER_LINGER}" == "yes" ]]; then
-		hfl_fail "Current-user protection must pause after sign-out, but systemd user lingering is enabled. Disable lingering or choose Host files continuous protection." 2
+	if [[ "${HFL_INSTALLATION_MODE}" == "user" && "${HFL_USER_LINGER}" == "yes" ]]; then
+		hfl_fail "Current-user protection must pause after sign-out, but systemd user lingering is enabled. Choose User files continuous protection, or disable linger only if no other user services depend on it." 2
 	fi
 else
 	if [[ "$(id -u)" -ne 0 ]]; then

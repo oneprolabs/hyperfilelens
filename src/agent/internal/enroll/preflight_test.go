@@ -53,6 +53,18 @@ func TestUserLifecycleManagerConstraint(t *testing.T) {
 	}
 }
 
+func TestUserContinuousLifecycleManagerConstraint(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		if err := lifecycleManagerConstraint("systemd-user", model.InstallationModeUserContinuous); err == nil {
+			t.Fatal("expected user-continuous mode to be rejected outside Linux")
+		}
+		return
+	}
+	if err := lifecycleManagerConstraint("systemd-user", model.InstallationModeUserContinuous); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSpecifiedUserContinuousUsesSystemLifecycleManager(t *testing.T) {
 	manager := map[string]string{
 		"linux": "systemd", "darwin": "launchd", "windows": "windows-task",
@@ -71,6 +83,36 @@ func TestUserSessionLifecycleConstraintDoesNotAffectSystemMode(t *testing.T) {
 		model.InstallationModeSystem,
 	); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestParseLingerStateSupportsOldAndNewLoginctlOutput(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "systemd 219 key value yes", value: "Linger=yes\n", want: true},
+		{name: "systemd 219 key value no", value: "Linger=no\n", want: false},
+		{name: "new bare yes", value: "yes\n", want: true},
+		{name: "new bare no", value: "no\n", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseLingerState(tc.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("parseLingerState(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseLingerStateRejectsUnexpectedOutput(t *testing.T) {
+	if _, err := parseLingerState("Linger=maybe\n"); err == nil {
+		t.Fatal("expected unexpected Linger value to be rejected")
 	}
 }
 

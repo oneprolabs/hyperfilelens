@@ -462,7 +462,7 @@ function buildPosixEnrollmentInstallCommand(
   const tlsOptions = tlsVerify
     ? "--proto '=https' --tlsv1.2"
     : '-k'
-  const shell = installationMode === 'user' ? 'bash -s' : 'sudo bash -s'
+  const shell = installationMode === 'user' || installationMode === 'user_continuous' ? 'bash -s' : 'sudo bash -s'
   return `cd / && curl ${tlsOptions} --fail --silent --show-error --location '${url}' | ${shell}`
 }
 

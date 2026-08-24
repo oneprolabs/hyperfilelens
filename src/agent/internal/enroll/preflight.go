@@ -79,7 +79,9 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 	}
 
 	if report.PrivilegesOK {
-		if cfg.InstallationMode == model.InstallationModeUser {
+		if cfg.InstallationMode == model.InstallationModeUserContinuous {
+			logOKDetail("Running as the current user", "systemd user service; user lingering keeps the Agent running after sign-out")
+		} else if cfg.InstallationMode == model.InstallationModeUser {
 			logOKDetail("Running as the current user", currentUserPrivilegeDetail())
 		} else if cfg.InstallationMode == model.InstallationModeAccount {
 			logOKDetail("Running with administrator privileges", "the Agent will run as "+cfg.RunAsUser)
@@ -87,7 +89,7 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 			logOKDetail("Running with administrator privileges", adminPrivilegeDetail())
 		}
 	} else {
-		if cfg.InstallationMode == model.InstallationModeUser {
+		if cfg.InstallationMode == model.InstallationModeUser || cfg.InstallationMode == model.InstallationModeUserContinuous {
 			failures.add(
 				"User-level installation must not be elevated",
 				"re-run the command as the current user without sudo or UAC elevation",
@@ -337,13 +339,16 @@ func lifecycleManagerConstraint(
 	manager string,
 	mode model.InstallationMode,
 ) error {
+	if mode == model.InstallationModeUserContinuous && runtime.GOOS != "linux" {
+		return fmt.Errorf("user-continuous protection is supported on Linux only")
+	}
 	if mode == model.InstallationModeAccount && runtime.GOOS == "windows" {
 		if manager != "windows-task" {
 			return fmt.Errorf("Windows Task Scheduler is required for specified-user continuous protection")
 		}
 		return nil
 	}
-	if mode == model.InstallationModeUser {
+	if mode == model.InstallationModeUser || mode == model.InstallationModeUserContinuous {
 		switch runtime.GOOS {
 		case "linux":
 			if manager != "systemd-user" {
@@ -391,7 +396,7 @@ func detectLifecycleManager(
 		}
 		return "none"
 	}
-	if mode != model.InstallationModeUser {
+	if mode != model.InstallationModeUser && mode != model.InstallationModeUserContinuous {
 		return detectServiceManager(ctx)
 	}
 	switch runtime.GOOS {
@@ -425,7 +430,7 @@ func detectLifecycleManager(
 }
 
 func privilegeConstraint(mode model.InstallationMode) error {
-	if mode != model.InstallationModeUser {
+	if mode != model.InstallationModeUser && mode != model.InstallationModeUserContinuous {
 		return requireAdmin()
 	}
 	if runtime.GOOS == "windows" {
@@ -458,17 +463,43 @@ func userSessionLifecycleConstraint(
 		"show-user",
 		strconv.Itoa(os.Geteuid()),
 		"--property=Linger",
-		"--value",
 	).Output()
 	if err != nil {
 		return fmt.Errorf("unable to verify the current user's systemd sign-out behavior")
 	}
-	if strings.EqualFold(strings.TrimSpace(string(out)), "yes") {
+	linger, err := parseLingerState(string(out))
+	if err != nil {
+		return fmt.Errorf("unable to verify the current user's systemd sign-out behavior: %w", err)
+	}
+	if linger {
 		return fmt.Errorf(
-			"current-user protection must pause after sign-out, but systemd user lingering is enabled; disable lingering or choose Host files continuous protection",
+			"current-user protection must pause after sign-out, but systemd user lingering is enabled; choose User files continuous protection, or disable linger only if no other user services depend on it",
 		)
 	}
 	return nil
+}
+
+// parseLingerState accepts both the key/value output emitted by older
+// systemd releases and the bare value emitted by newer loginctl versions.
+func parseLingerState(value string) (bool, error) {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "=") {
+		for _, line := range strings.Split(value, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "Linger=") {
+				value = strings.TrimSpace(strings.TrimPrefix(line, "Linger="))
+				break
+			}
+		}
+	}
+	switch strings.ToLower(value) {
+	case "yes", "true", "1":
+		return true, nil
+	case "no", "false", "0":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected Linger value %q", value)
+	}
 }
 
 func accountConstraint(cfg Config) error {
