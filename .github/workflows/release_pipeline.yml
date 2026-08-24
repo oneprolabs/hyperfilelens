@@ -430,6 +430,7 @@ jobs:
           ./tools/quality/test-bootstrap-download-progress.sh
           HFL_TEST_BASH42=1 ./tools/quality/test-bootstrap-curl-tls-nounset.sh
           ./tools/quality/test-gateway-bootstrap-health.sh
+          ./tools/quality/test-compose-command-compatibility.sh
           ./tools/quality/test-gateway-lifecycle-upgrade.sh
           ./tools/quality/test-platform-gateway-auto-deploy.sh
           ./tools/quality/test-agent-gateway-uninstall.sh

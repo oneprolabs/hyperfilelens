@@ -9,6 +9,8 @@ COMPOSE_PROJECT="hyperfilelens-gateway"
 DEFAULT_LENSNODE_IMAGE="${LENSNODE_IMAGE:-hyperfilelens-sourcelens-lensnode:latest}"
 SENTRY_PRIVACY_FILE="${COMPOSE_DIR}/hfl-sentry-sitecustomize.py"
 SIDECAR_LOCK_FILE="${HFL_GATEWAY_SIDECAR_LOCK_FILE:-/run/lock/hyperfilelens-gateway-sidecar.lock}"
+MIN_COMPOSE_VERSION="${HFL_COMPOSE_MIN_VERSION:-2.20.0}"
+COMPOSE=()
 
 hfl_step() {
 	printf '  [....] %s\n' "$1"
@@ -25,6 +27,49 @@ hfl_warn() {
 hfl_fail() {
 	printf '  [FAIL] %s\n' "$1" >&2
 	exit "${2:-1}"
+}
+
+# The sidecar script is downloaded and executed on its own, so keep this
+# resolver local instead of assuming the main release installer is present.
+compose_version_ge() {
+	local have="${1#v}" want="${2#v}"
+	have="${have#V}"; want="${want#V}"
+	command -v dpkg >/dev/null 2>&1 && dpkg --compare-versions "${have}" ge "${want}" && return 0
+	[[ "${have}" =~ ^([0-9]+)\.([0-9]+)(\.([0-9]+))?$ ]] || return 1
+	local h1=${BASH_REMATCH[1]} h2=${BASH_REMATCH[2]} h3=${BASH_REMATCH[4]:-0}
+	[[ "${want}" =~ ^([0-9]+)\.([0-9]+)(\.([0-9]+))?$ ]] || return 1
+	local w1=${BASH_REMATCH[1]} w2=${BASH_REMATCH[2]} w3=${BASH_REMATCH[4]:-0}
+	((h1 > w1 || (h1 == w1 && (h2 > w2 || (h2 == w2 && h3 >= w3)))))
+}
+
+compose_candidate_version() {
+	local -a candidate=("$@")
+	local output version
+	version="$("${candidate[@]}" version --short 2>/dev/null || true)"
+	if [[ -z "${version}" ]]; then
+		output="$("${candidate[@]}" version 2>/dev/null || true)"
+		version="$(grep -Eo '[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?' <<<"${output}" | head -1 || true)"
+	fi
+	version="${version#v}"; version="${version#V}"
+	printf '%s' "${version}"
+}
+
+resolve_compose() {
+	local version
+	COMPOSE=()
+	if command -v docker >/dev/null 2>&1; then
+		version="$(compose_candidate_version docker compose)"
+		if [[ -n "${version}" ]] && compose_version_ge "${version}" "${MIN_COMPOSE_VERSION}"; then
+			COMPOSE=(docker compose); return 0
+		fi
+	fi
+	if command -v docker-compose >/dev/null 2>&1; then
+		version="$(compose_candidate_version docker-compose)"
+		if [[ -n "${version}" ]] && compose_version_ge "${version}" "${MIN_COMPOSE_VERSION}"; then
+			COMPOSE=(docker-compose); return 0
+		fi
+	fi
+	return 1
 }
 
 acquire_sidecar_lock() {
@@ -266,11 +311,11 @@ EOF
 	chmod 0600 "${compose_temporary}"
 	mv -f "${compose_temporary}" "${compose_file}"
 	chmod 0600 "${compose_file}"
-	if docker compose version >/dev/null 2>&1; then
+	if resolve_compose; then
 		remove_owned_legacy_gateway_containers
 		(
 			cd "${COMPOSE_DIR}"
-			current_container="$(docker compose -p "${COMPOSE_PROJECT}" ps -q lensnode 2>/dev/null || true)"
+			current_container="$("${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" ps -q lensnode 2>/dev/null || true)"
 			current_image_id=""
 			desired_image_id="$(docker image inspect --format '{{.Id}}' "${image}")"
 			if [[ -n "${current_container}" ]]; then
@@ -281,10 +326,10 @@ EOF
 				hfl_step "Recreating the AI engine because its loaded image ID changed."
 				compose_args+=(--force-recreate)
 			fi
-			docker compose -p "${COMPOSE_PROJECT}" "${compose_args[@]}"
+			"${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" "${compose_args[@]}"
 		)
 	else
-		hfl_fail "Docker Compose v2 is required when using the AI engine container image." 3
+		hfl_fail "Docker Compose v2 >= ${MIN_COMPOSE_VERSION} is required when using the AI engine container image." 3
 	fi
 	hfl_ok "AI engine container started."
 }

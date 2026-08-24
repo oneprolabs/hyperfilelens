@@ -35,7 +35,10 @@ const (
 	gatewayMinDockerCompose    = "2.20.0"
 )
 
-var sourceLensHealthOK = regexp.MustCompile(`"health"\s*:\s*"OK"`)
+var (
+	sourceLensHealthOK     = regexp.MustCompile(`"health"\s*:\s*"OK"`)
+	dockerComposeVersionRE = regexp.MustCompile(`[vV]?[0-9]+\.[0-9]+(?:\.[0-9]+)?`)
+)
 
 func checkSourceLensHealthViaConsole(ctx context.Context, cfg Config) error {
 	base := strings.TrimRight(strings.TrimSpace(cfg.APIBase), "/")
@@ -291,11 +294,28 @@ func dockerRuntimeReady() bool {
 }
 
 func dockerComposeVersion() string {
-	out, err := exec.Command("docker", "compose", "version", "--short").Output()
-	if err != nil {
-		return ""
+	for _, candidate := range [][]string{{"docker", "compose"}, {"docker-compose"}} {
+		version := dockerComposeCandidateVersion(candidate)
+		if version != "" && dockerVersionGE(version, gatewayMinDockerCompose) {
+			return version
+		}
 	}
-	return strings.TrimSpace(string(out))
+	return ""
+}
+
+func dockerComposeCandidateVersion(candidate []string) string {
+	for _, suffix := range [][]string{{"version", "--short"}, {"version"}} {
+		args := append(append([]string{}, candidate[1:]...), suffix...)
+		out, err := exec.Command(candidate[0], args...).Output()
+		if err != nil {
+			continue
+		}
+		version := dockerComposeVersionRE.FindString(string(out))
+		if version != "" {
+			return normalizeDockerVersion(version)
+		}
+	}
+	return ""
 }
 
 func dockerEngineVersion() string {
@@ -307,8 +327,15 @@ func dockerEngineVersion() string {
 }
 
 func dockerVersionGE(have, want string) bool {
+	have = normalizeDockerVersion(have)
+	want = normalizeDockerVersion(want)
 	cmd := exec.Command("dpkg", "--compare-versions", have, "ge", want)
 	return cmd.Run() == nil
+}
+
+func normalizeDockerVersion(value string) string {
+	value = strings.TrimSpace(value)
+	return strings.TrimPrefix(strings.TrimPrefix(value, "v"), "V")
 }
 
 func lensSidecarHealthy() bool {

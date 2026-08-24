@@ -12,6 +12,7 @@ HFL_GATEWAY_BOOTSTRAP_BASE="${HFL_GATEWAY_BOOTSTRAP_BASE:-${HFL_API_BASE:-}/medi
 DOCKER_DEBS_ARCHIVE=""
 MIN_ENGINE_VERSION="${HFL_DOCKER_MIN_ENGINE:-24.0.0}"
 MIN_COMPOSE_VERSION="${HFL_COMPOSE_MIN_VERSION:-2.20.0}"
+COMPOSE=()
 
 hfl_step() {
 	printf '  [....] %s\n' "$1"
@@ -162,18 +163,44 @@ docker_engine_version() {
 }
 
 docker_compose_version() {
-	if docker compose version >/dev/null 2>&1; then
-		docker compose version --short 2>/dev/null || docker compose version 2>/dev/null | awk '{print $NF}'
-		return 0
+	local -a candidate=("$@")
+	local output version
+	if ((${#candidate[@]} == 0)); then candidate=("${COMPOSE[@]}"); fi
+	((${#candidate[@]})) || { printf ''; return 0; }
+	version="$("${candidate[@]}" version --short 2>/dev/null || true)"
+	if [[ -z "${version}" ]]; then
+		output="$("${candidate[@]}" version 2>/dev/null || true)"
+		version="$(grep -Eo '[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?' <<<"${output}" | head -1 || true)"
 	fi
-	printf ''
+	version="${version#v}"; version="${version#V}"
+	printf '%s' "${version}"
+}
+
+resolve_compose() {
+	local version
+	COMPOSE=()
+	if command -v docker >/dev/null 2>&1; then
+		version="$(docker_compose_version docker compose)"
+		if [[ -n "${version}" ]] && docker_version_ge "${version}" "${MIN_COMPOSE_VERSION}"; then
+			COMPOSE=(docker compose); return 0
+		fi
+	fi
+	if command -v docker-compose >/dev/null 2>&1; then
+		version="$(docker_compose_version docker-compose)"
+		if [[ -n "${version}" ]] && docker_version_ge "${version}" "${MIN_COMPOSE_VERSION}"; then
+			COMPOSE=(docker-compose); return 0
+		fi
+	fi
+	return 1
 }
 
 docker_version_ge() {
 	local have="$1"
 	local want="$2"
 	[[ -n "${have}" && -n "${want}" ]] || return 1
-	dpkg --compare-versions "${have#v}" ge "${want#v}"
+	have="${have#v}"; have="${have#V}"
+	want="${want#v}"; want="${want#V}"
+	dpkg --compare-versions "${have}" ge "${want}"
 }
 
 docker_runtime_ready() {
@@ -184,7 +211,8 @@ docker_runtime_ready() {
 	engine="$(docker_engine_version)"
 	[[ -n "${engine}" ]] || return 1
 	docker_version_ge "${engine}" "${min_version}" || return 1
-	compose="$(docker_compose_version)"
+	resolve_compose || return 1
+	compose="$(docker_compose_version "${COMPOSE[@]}")"
 	[[ -n "${compose}" ]] || return 1
 	docker_version_ge "${compose}" "${MIN_COMPOSE_VERSION}" || return 1
 	return 0

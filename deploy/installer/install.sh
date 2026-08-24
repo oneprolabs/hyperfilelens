@@ -3,6 +3,21 @@
 # Layout: <package-root>/install.sh  →  runtime install dir: /opt/hyperfilelens
 set -euo pipefail
 
+INSTALLER_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -n "${HFL_COMPOSE_RUNTIME_FILE:-}" ]]; then
+	COMPOSE_RUNTIME_FILE="${HFL_COMPOSE_RUNTIME_FILE}"
+elif [[ -f "${INSTALLER_SCRIPT_DIR}/compose-runtime.sh" ]]; then
+	# Source-tree layout.
+	COMPOSE_RUNTIME_FILE="${INSTALLER_SCRIPT_DIR}/compose-runtime.sh"
+else
+	# Release layout. Keeping the helper in payload/ lets an older installer
+	# carry it forward while applying the first compatibility upgrade.
+	COMPOSE_RUNTIME_FILE="${INSTALLER_SCRIPT_DIR}/payload/runtime/compose-runtime.sh"
+fi
+[[ -f "${COMPOSE_RUNTIME_FILE}" ]] || { printf 'ERROR: missing Compose runtime helper: %s\n' "${COMPOSE_RUNTIME_FILE}" >&2; exit 1; }
+# shellcheck disable=SC1090
+source "${COMPOSE_RUNTIME_FILE}"
+
 INSTALL_DIR="/opt/hyperfilelens"
 SOURCELENS_INSTALL_DIR="${SOURCELENS_INSTALL_DIR:-${INSTALL_DIR}/sourcelens}"
 HFL_BRIDGE_NETWORK="hyperfilelens-bridge"
@@ -594,11 +609,8 @@ docker_engine_version() {
 }
 
 docker_compose_version() {
-	if docker compose version >/dev/null 2>&1; then
-		docker compose version --short 2>/dev/null || docker compose version 2>/dev/null | awk '{print $NF}'
-		return 0
-	fi
-	printf ''
+	hfl_compose_resolve 2.20.0 || return 1
+	printf '%s' "${HFL_COMPOSE_VERSION}"
 }
 
 docker_version_ge() {
@@ -752,8 +764,9 @@ init_existing_install_root() {
 require_docker() {
 	command -v docker >/dev/null 2>&1 || die "docker command not found"
 	docker info >/dev/null 2>&1 || die "cannot connect to Docker daemon"
-	docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
-	COMPOSE=(docker compose)
+	hfl_compose_resolve 2.20.0 \
+		|| die "supported Docker Compose command not found; $(hfl_compose_failure_detail 2.20.0)"
+	COMPOSE=("${HFL_COMPOSE[@]}")
 }
 
 compose_in_root() {
@@ -2743,12 +2756,12 @@ backup_postgresql_dump() {
 	[[ -f "${ROOT}/.env" ]] || return 0
 	if ! command -v docker >/dev/null 2>&1 \
 		|| ! docker info >/dev/null 2>&1 \
-		|| ! docker compose version >/dev/null 2>&1; then
+		|| ! hfl_compose_resolve 2.20.0; then
 		warn "Docker Compose is unavailable; a complete managed backup cannot be created"
 		BACKUP_DATABASES_COMPLETE=0
 		return 0
 	fi
-	COMPOSE=(docker compose)
+	COMPOSE=("${HFL_COMPOSE[@]}")
 	local cid
 	if ! cid="$(compose_in_root ps -q postgres 2>/dev/null | head -1)"; then
 		warn "Unable to inspect PostgreSQL; a complete managed backup cannot be created"
@@ -3622,7 +3635,7 @@ sourcelens_compose() {
 	require_docker
 	(
 		cd "${SOURCELENS_INSTALL_DIR}"
-		docker compose "$@"
+		"${COMPOSE[@]}" "$@"
 	)
 }
 
