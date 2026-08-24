@@ -34,10 +34,12 @@ const props = withDefaults(defineProps<{
   goToStartBackupLabel: string
   bootstrapping?: boolean
   busy?: boolean
+  canClose?: boolean
   animated?: boolean
   showSteps?: boolean
 }>(), {
   animated: true,
+  canClose: true,
   showSteps: true,
 })
 
@@ -96,6 +98,7 @@ watch(
           <button
             type="button"
             class="fullscreen-form-header__back"
+            :disabled="!canClose"
             @click="emit('close')"
           >
             <ArrowLeft

@@ -475,7 +475,10 @@ function parseEndpointUiId(id: string): { type: 'agent' | 'nas' | 'proxy'; refId
   return { type, refId }
 }
 
-async function refreshBackupConfigs(signal?: AbortSignal): Promise<boolean> {
+async function refreshBackupConfigs(
+  signal?: AbortSignal,
+  options: { preserveOnError?: boolean } = {},
+): Promise<boolean> {
   try {
     const result = await listBackupConfigs({ page: 1, page_size: 200 }, { signal })
     backupConfigRows.value = result.results
@@ -547,15 +550,17 @@ async function refreshBackupConfigs(signal?: AbortSignal): Promise<boolean> {
         : apiErrorMessage(e, t('protection.backupsPage.backupConfigLoadFailed')),
       grouping: true,
     })
-    backupConfigRows.value = []
-    backupConfigSourceIds.value = new Set()
-    backupConfigDetailById.value = new Map()
-    backupSnapshotRows.value = []
-    backupTaskRows.value = []
-    resetTaskRows.value = []
-    provisionTaskRows.value = []
-    restoreTaskRows.value = []
-    restoreRecordRows.value = []
+    if (!options.preserveOnError) {
+      backupConfigRows.value = []
+      backupConfigSourceIds.value = new Set()
+      backupConfigDetailById.value = new Map()
+      backupSnapshotRows.value = []
+      backupTaskRows.value = []
+      resetTaskRows.value = []
+      provisionTaskRows.value = []
+      restoreTaskRows.value = []
+      restoreRecordRows.value = []
+    }
     return false
   }
 }
@@ -1484,7 +1489,7 @@ async function loadStep2Selectable(options: { signal?: AbortSignal } = {}) {
   rememberSelectableRows(rows)
 }
 
-async function loadStep3Selectable(options: { signal?: AbortSignal } = {}) {
+async function loadStep3Selectable(options: { signal?: AbortSignal; syncExpanded?: boolean } = {}) {
   const signal = options.signal
   const list = await listBackupSelectableSources({
     page: flowStep2Pager.page,
@@ -1510,8 +1515,10 @@ async function loadStep3Selectable(options: { signal?: AbortSignal } = {}) {
   step3SelectableCount.value = list.count
   rememberSelectableRows(rows)
   reconcileBackupStartAwaitingRuntime(rows.map((row) => row.id))
-  const configs = syncExpandedStep3Rows(rows)
-  await ensureRepositoryDetailsForConfigs(configs, signal)
+  if (options.syncExpanded !== false) {
+    const configs = syncExpandedStep3Rows(rows)
+    await ensureRepositoryDetailsForConfigs(configs, signal)
+  }
 }
 
 async function refreshStep3State(signal?: AbortSignal) {
@@ -1984,7 +1991,6 @@ function enterStartBackupStep(opts?: { requireReady?: boolean; focusIds?: string
   }
 }
 
-const lastCreatedSourceIds = ref<string[]>([])
 const setupDrCreateOpen = ref(false)
 const setupDrOpening = ref(false)
 const setupDrCreateSources = ref<string[]>([])
@@ -2000,12 +2006,15 @@ function closeCreate() {
   setupDrEditSection.value = undefined
 }
 
-async function loadStep3SelectableWithPageClamp(signal?: AbortSignal) {
-  await loadStep3Selectable({ signal })
+async function loadStep3SelectableWithPageClamp(
+  signal?: AbortSignal,
+  options: { syncExpanded?: boolean } = {},
+) {
+  await loadStep3Selectable({ signal, syncExpanded: options.syncExpanded })
   const maxPage = Math.max(1, Math.ceil(step3SelectableCount.value / flowStep2Pager.pageSize) || 1)
   if (flowStep2Pager.page <= maxPage) return
   flowStep2Pager.page = maxPage
-  await loadStep3Selectable({ signal })
+  await loadStep3Selectable({ signal, syncExpanded: options.syncExpanded })
 }
 
 function latestStep3SourceRow(sourceId: string) {
@@ -2018,6 +2027,9 @@ async function refreshStep3AfterMoreAction(options: {
   focusIds?: string[]
   preserveSelection?: boolean
   closeMissingDetail?: boolean
+  showLoading?: boolean
+  preserveConfigOnError?: boolean
+  preserveExpandedState?: boolean
 } = {}) {
   const scope = flowStepScope(2)
   const signal = pageRequests.nextSignal(scope)
@@ -2026,15 +2038,17 @@ async function refreshStep3AfterMoreAction(options: {
   const selectedSourceIds = options.preserveSelection === false
     ? []
     : step3SourceSelection.value.map((row) => row.id)
-  const showLoading = flowMainStep.value === 2
+  const showLoading = options.showLoading ?? flowMainStep.value === 2
   step3ActionRefreshInFlight = true
   if (showLoading) setFlowStepDataLoading(2, true)
   try {
     await refreshPipelineStep2PlusIds(signal)
     if (!pageRequests.isCurrentSignal(scope, signal)) return []
-    await loadStep3SelectableWithPageClamp(signal)
+    await loadStep3SelectableWithPageClamp(signal, {
+      syncExpanded: options.preserveExpandedState !== true,
+    })
     if (!pageRequests.isCurrentSignal(scope, signal)) return []
-    await refreshBackupConfigs(signal)
+    await refreshBackupConfigs(signal, { preserveOnError: options.preserveConfigOnError })
     if (!pageRequests.isCurrentSignal(scope, signal)) return []
 
     if (activeSourceId) {
@@ -2069,21 +2083,64 @@ async function refreshStep3AfterMoreAction(options: {
   }
 }
 
-async function finishCreateAndGoToStep3(sourceIds?: string[]) {
-  const requestedFocusIds = sourceIds ?? lastCreatedSourceIds.value
-  closeCreate()
-  const focusIds = await refreshStep3AfterMoreAction({ focusIds: requestedFocusIds })
-  if (focusIds.length > 0) {
-    const idSet = new Set(focusIds)
-    step1Selection.value = step1Selection.value.filter((id) => !idSet.has(id))
+type BackupCreateResultPayload = {
+  items: Array<{ sourceId: string; config: BackupConfigDetail }>
+}
+
+function mergeCreatedBackupConfigs({ items }: BackupCreateResultPayload) {
+  if (!items.length) return []
+  const sourceIds = normalizeSourceIdList(items.map((item) => item.sourceId))
+  const configsById = new Map(backupConfigRows.value.map((config) => [config.id, config]))
+  const detailsById = new Map(backupConfigDetailById.value)
+  for (const { config } of items) {
+    configsById.set(config.id, config)
+    detailsById.set(config.id, config)
   }
-  nextTick(() => {
-    if (focusIds.length > 0) {
-      enterStartBackupStep({ focusIds, refresh: false })
-      return
-    }
-    enterStartBackupStep({ refresh: false })
+  backupConfigRows.value = Array.from(configsById.values())
+  backupConfigDetailById.value = detailsById
+  backupConfigSourceIds.value = new Set([
+    ...backupConfigSourceIds.value,
+    ...sourceIds,
+  ])
+  pipelineStep2Ids.value = pipelineStep2Ids.value.filter((id) => !sourceIds.includes(id))
+  pipelineStep3Ids.value = normalizeSourceIdList([...pipelineStep3Ids.value, ...sourceIds])
+  pipelineStep2Count.value = pipelineStep2Ids.value.length
+  pipelineStep3Count.value = pipelineStep3Ids.value.length
+  syncRealBackupConfigsToDemoStore(items.map((item) => item.config), backupSnapshotRows.value)
+  return sourceIds
+}
+
+let skipNextFlowStepRefresh = false
+
+function reconcileCreatedBackupConfigs(sourceIds: string[]) {
+  void refreshStep3AfterMoreAction({
+    focusIds: sourceIds,
+    showLoading: false,
+    preserveConfigOnError: true,
+    preserveExpandedState: true,
+  }).catch((err) => {
+    if (!pageRequests.isAbortError(err)) showApiError(err)
   })
+}
+
+function finishCreateAndGoToStep3(payload: BackupCreateResultPayload) {
+  const sourceIds = mergeCreatedBackupConfigs(payload)
+  closeCreate()
+  const idSet = new Set(sourceIds)
+  step1Selection.value = step1Selection.value.filter((id) => !idSet.has(id))
+  skipNextFlowStepRefresh = flowMainStep.value !== 2
+  enterStartBackupStep({ focusIds: sourceIds, refresh: false })
+  reconcileCreatedBackupConfigs(sourceIds)
+}
+
+function onCreateBackupPartial(payload: BackupCreateResultPayload) {
+  mergeCreatedBackupConfigs(payload)
+  void refreshPipelineStep2PlusIds().catch(showApiError)
+}
+
+function onEditBackupCompleted(payload: { sourceIds: string[] }) {
+  closeCreate()
+  reconcileCreatedBackupConfigs(payload.sourceIds)
 }
 
 
@@ -2551,7 +2608,11 @@ watch(flowMainStep, (step) => {
   nextTick(() => {
     updateFlowTableMaxHeight()
     if (!flowBootstrapping.value) {
-      void refreshFlowStepData(step)
+      if (skipNextFlowStepRefresh) {
+        skipNextFlowStepRefresh = false
+      } else {
+        void refreshFlowStepData(step)
+      }
     }
     if (step === 0) syncSourceTableSelection()
     if (step === 1) syncStep2TableSelection()
@@ -2932,6 +2993,10 @@ function sourceProvisionState(sourceId: string): 'provisioning' | 'provision_fai
   if (configs.some((config) => config.status === 'provision_failed')) return 'provision_failed'
   if (configs.some((config) => config.status === 'provisioning')) return 'provisioning'
   return ''
+}
+
+function sourceHasRunnableBackupConfig(sourceId: string) {
+  return sourceBackupConfigs(sourceId).some((config) => String(config.status || '').toLowerCase() === 'active')
 }
 
 function sourceProvisionStatusLabel(sourceId: string) {
@@ -4060,6 +4125,7 @@ let step3ActionRefreshInFlight = false
 let step3ActionRefreshSeq = 0
 
 function hasRunningStep3Tasks() {
+  if (pendingResetPipelineSourceIds.value.length > 0) return true
   return step3SourceList.value.some((row) =>
     sourceBackupRuntime(row.id).running
     || sourceProvisionState(row.id) === 'provisioning'
@@ -4441,6 +4507,10 @@ const step3SourceActionsEnabled = computed(() => {
   if (step3SelectionHasActiveBackup.value) return false
   return step3SourceSelection.value.some((row) => flowSourceCanOperate(row))
 })
+const step3StartBackupEnabled = computed(() =>
+  step3SourceActionsEnabled.value
+  && step3SourceSelection.value.every((row) => sourceHasRunnableBackupConfig(row.id)),
+)
 const step3LifecycleActionsEnabled = computed(() => {
   if (!step3SourceSelection.value.length) return false
   if (step3SourceSelection.value.some((row) => sourceResetRunning(row.id))) return false
@@ -4668,8 +4738,8 @@ async function startSelectedBackupTasks() {
       ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
       return
     }
-    const runnableSources = sources.filter((source) => sourceHasBackupConfig(source.id))
-    if (!runnableSources.length) {
+    const runnableSources = sources.filter((source) => sourceHasRunnableBackupConfig(source.id))
+    if (runnableSources.length !== sources.length) {
       ElMessage.warning({ message: t('protection.backupsPage.msgSourceNoBackupConfig'), grouping: true })
       return
     }
@@ -9518,7 +9588,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         type="primary"
                         plain
                         class="hfl-btn-with-icon dp-flow-step3-action-btn shrink-0"
-                        :disabled="!step3SourceActionsEnabled || startBackupSubmitting || step3StopActionBusy"
+                        :disabled="!step3StartBackupEnabled || startBackupSubmitting || step3StopActionBusy"
                         :loading="startBackupSubmitting"
                         @click="startSelectedBackupTasks"
                       >
@@ -13845,7 +13915,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       :initial-edit-section="setupDrEditSection"
       @ready="setupDrOpening = false"
       @closed="closeCreate"
-      @completed="finishCreateAndGoToStep3"
+      @create-completed="finishCreateAndGoToStep3"
+      @create-partial="onCreateBackupPartial"
+      @edit-completed="onEditBackupCompleted"
       @conflict="onBackupSourceConflict"
     />
     <Teleport to="body">
