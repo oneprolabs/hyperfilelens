@@ -992,11 +992,32 @@ render_active_upstreams() {
 	[[ "${api_color}" == "legacy" ]] && api_service="api"
 	cat > "${temporary}" <<EOF
 # Installer-managed execution cache. Do not edit while an upgrade is running.
-upstream hfl_api_http { server ${api_service}:8000; keepalive 32; }
-upstream hfl_api_ws { server ${api_service}:8001; }
-upstream hfl_web_tenant { server web-${web_color}:8080; keepalive 16; }
-upstream hfl_web_ops { server web-${web_color}:8081; keepalive 16; }
-upstream hfl_website { server web-${web_color}:8082; keepalive 8; }
+# Shared zones and Docker DNS resolution let a continuously running gateway
+# follow Compose container recreation without requiring a gateway restart.
+upstream hfl_api_http {
+    zone hfl_api_http 64k;
+    server ${api_service}:8000 resolve;
+    keepalive 32;
+}
+upstream hfl_api_ws {
+    zone hfl_api_ws 64k;
+    server ${api_service}:8001 resolve;
+}
+upstream hfl_web_tenant {
+    zone hfl_web_tenant 64k;
+    server web-${web_color}:8080 resolve;
+    keepalive 16;
+}
+upstream hfl_web_ops {
+    zone hfl_web_ops 64k;
+    server web-${web_color}:8081 resolve;
+    keepalive 16;
+}
+upstream hfl_website {
+    zone hfl_website 64k;
+    server web-${web_color}:8082 resolve;
+    keepalive 8;
+}
 EOF
 	mv "${temporary}" "${output}"
 }
