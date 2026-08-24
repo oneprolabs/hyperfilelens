@@ -944,7 +944,7 @@ onMounted(async () => {
 
 .login-box-title__copy {
   min-width: 0;
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1.35;
   overflow-wrap: normal;
 }
