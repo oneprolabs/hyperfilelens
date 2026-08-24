@@ -1207,6 +1207,18 @@ const createPhase = ref<'form' | 'waiting' | 'done'>('form')
 const createSubmissionActive = computed(() => createPhase.value === 'waiting')
 type CreateItemState = 'pending' | 'creating' | 'success' | 'failed' | 'unknown' | 'not_attempted'
 const createItemStates = ref<Record<string, CreateItemState>>({})
+const createIdempotencyKeys = ref<Record<string, string>>({})
+
+function createIdempotencyKey(sourceId: string) {
+  const existing = createIdempotencyKeys.value[sourceId]
+  if (existing) return existing
+  const nonce = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const key = `backup-config:${nonce}`
+  createIdempotencyKeys.value[sourceId] = key
+  return key
+}
 const createBootstrapping = ref(true)
 const editorWaitingText = computed(() => {
   if (createBootstrapping.value) {
@@ -5540,10 +5552,6 @@ async function runCreateBackup() {
   const payload = buildCreateBackupPayload()
   const groupMap = new Map(wizardSourceGroups.value.map((group) => [group.key, group]))
   const payloadSourceIds = payload.backups.map((backup) => backup.source.id)
-  if (payloadSourceIds.some((sourceId) => createItemStates.value[sourceId] === 'unknown')) {
-    ElMessage.warning({ message: t('protection.backupsPage.createFailed'), grouping: true })
-    return
-  }
   createItemStates.value = Object.fromEntries(payloadSourceIds.map((sourceId) => [sourceId, 'pending']))
 
   createPhase.value = 'waiting'
@@ -5614,7 +5622,7 @@ async function runCreateBackup() {
     }
 
     try {
-      const created = await createBackupConfig(apiPayload)
+      const created = await createBackupConfig(apiPayload, createIdempotencyKey(backup.source.id))
       hasProvisioning = hasProvisioning || created.status === 'provisioning'
       createdItems.push({ sourceId: backup.source.id, config: created })
       createItemStates.value[backup.source.id] = 'success'
@@ -5830,6 +5838,7 @@ watch(createOpen, (v) => {
     editConfigs.value = []
     editSection.value = null
     createItemStates.value = {}
+    createIdempotencyKeys.value = {}
     closeValidationPopover()
   }
 })

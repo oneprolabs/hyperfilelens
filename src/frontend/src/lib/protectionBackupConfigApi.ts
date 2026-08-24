@@ -346,7 +346,7 @@ export function parseSourceRefId(sourceId: string): number {
 }
 
 /** Create a backup config. */
-export async function createBackupConfig(payload: BackupConfigCreatePayload) {
+export async function createBackupConfig(payload: BackupConfigCreatePayload, idempotencyKey = '') {
   logger.info('protectionBackupConfigApi.ts', 269, 'backup config create', {
     source_type: payload.source_type,
     source_ref_id: payload.source_ref_id,
@@ -358,7 +358,10 @@ export async function createBackupConfig(payload: BackupConfigCreatePayload) {
     await api<unknown>(`${configBase}/`, {
       method: 'POST',
       body: JSON.stringify(payload),
-      headers: orgHeaders(),
+      headers: {
+        ...orgHeaders(),
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+      },
     }),
   ))
 }

@@ -27,6 +27,10 @@ from apps.protection import services as protection_services
 from apps.protection.services.directory_size_estimate import (
     backup_config_needs_directory_estimate_refresh,
 )
+from apps.protection.services.backup_config_idempotency import (
+    BackupConfigCreateIdempotencyConflict,
+    execute_idempotent_backup_config_create,
+)
 from apps.protection.tasks.directory_size_estimate import (
     refresh_backup_config_directory_estimates_task,
 )
@@ -55,6 +59,17 @@ def _update_touches_directory_estimate_inputs(data: dict) -> bool:
         field in data
         for field in ("directories", "source_type", "source_ref_id")
     )
+
+
+def _idempotency_key(request) -> str:
+    raw = str(request.headers.get("Idempotency-Key") or "")
+    if not raw:
+        return ""
+    if raw != raw.strip() or len(raw) > 128 or any(ord(char) < 33 or ord(char) > 126 for char in raw):
+        raise ValidationError(
+            {"idempotency_key": "Must be at most 128 visible ASCII characters without surrounding whitespace."}
+        )
+    return raw
 
 
 class BackupConfigViewSet(viewsets.ModelViewSet):
@@ -100,28 +115,52 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
         org = require_org(request)
         serializer = BackupConfigWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            config = protection_services.backup_config.create_backup_config(
-                organization_id=org.id,
-                data=serializer.validated_data,
-            )
-        except DjangoValidationError as exc:
-            raise _validation_error(exc) from exc
-        if config.status == BackupConfig.Status.ACTIVE:
-            transaction.on_commit(
-                lambda config_id=config.id: sync_backup_config_repository_policy_task.delay(
-                    config_id=config_id
+        idempotency_key = _idempotency_key(request)
+
+        def create_result() -> tuple[BackupConfig, dict, int]:
+            try:
+                config = protection_services.backup_config.create_backup_config(
+                    organization_id=org.id,
+                    data=serializer.validated_data,
                 )
-            )
-            _queue_directory_estimate_precache(config)
-        return Response(
-            BackupConfigDetailSerializer(config).data,
-            status=(
+            except DjangoValidationError as exc:
+                raise _validation_error(exc) from exc
+            if config.status == BackupConfig.Status.ACTIVE:
+                transaction.on_commit(
+                    lambda config_id=config.id: sync_backup_config_repository_policy_task.delay(
+                        config_id=config_id
+                    )
+                )
+                _queue_directory_estimate_precache(config)
+            response_status = (
                 status.HTTP_202_ACCEPTED
                 if config.status == BackupConfig.Status.PROVISIONING
                 else status.HTTP_201_CREATED
-            ),
-        )
+            )
+            return config, dict(BackupConfigDetailSerializer(config).data), response_status
+
+        if not idempotency_key:
+            _config, payload, response_status = create_result()
+            return Response(payload, status=response_status)
+
+        try:
+            result = execute_idempotent_backup_config_create(
+                organization_id=org.id,
+                idempotency_key=idempotency_key,
+                data=dict(serializer.validated_data),
+                create=create_result,
+            )
+        except BackupConfigCreateIdempotencyConflict as exc:
+            return Response(
+                {
+                    "detail": str(exc),
+                    "error_code": "BACKUP_CONFIG.IDEMPOTENCY_CONFLICT",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        response = Response(result.payload, status=result.status_code)
+        response["Idempotency-Replayed"] = "true" if result.replayed else "false"
+        return response
 
     def retrieve(self, request, *args, **kwargs):
         config = self.get_object()
