@@ -2272,6 +2272,7 @@ onUnmounted(() => {
               type="selection"
               width="35"
               fixed="left"
+              reserve-selection
             />
             <el-table-column
               :label="t('protection.sourceResources.colName')"
