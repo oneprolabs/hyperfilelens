@@ -264,9 +264,9 @@ def repository_cleanup_preflight(
             {
                 "code": "repository_initialization_in_progress",
                 "detail": (
-                    f"Repository has {initializing_claim_count} physical location(s) "
-                    "whose initialization has not reached a terminal state. Wait for "
-                    "initialization to finish or retry it before cleanup."
+                    f"Repository data setup is still in progress for {initializing_claim_count} "
+                    "backup source connection(s). Wait for setup to finish or retry it "
+                    "before deleting the repository."
                 ),
                 "count": initializing_claim_count,
             }
@@ -276,9 +276,9 @@ def repository_cleanup_preflight(
         item = {
             "code": "repository_ownership_unverified",
             "detail": (
-                f"Repository has {residual_claim_count} physical location(s) whose "
-                "ownership cannot be verified. Physical data must be retained for "
-                "manual review."
+                "HyperFileLens cannot verify ownership of repository data left by "
+                f"{residual_claim_count} backup source connection(s). The data will not "
+                "be deleted and must be reviewed manually."
             ),
             "count": residual_claim_count,
         }
@@ -291,9 +291,9 @@ def repository_cleanup_preflight(
         item = {
             "code": "historical_direct_nas_locations",
             "detail": (
-                f"Bound NAS repository still has {historical_direct_count} historical "
-                "Direct NAS physical location(s). Physical data must be retained "
-                "for manual review."
+                f"This NAS repository still has data from {historical_direct_count} "
+                "previous direct backup source connection(s). The data will not be "
+                "deleted and must be reviewed manually."
             ),
             "count": historical_direct_count,
         }
@@ -1551,8 +1551,8 @@ def _execute_physical_cleanup(
         ).exists()
     ):
         raise ValidationError(
-            "This bound NAS repository still has historical Direct NAS physical "
-            "locations. Physical data must be retained for manual review."
+            "This NAS repository still has data from previous direct backup source "
+            "connections. The data will not be deleted and must be reviewed manually."
         )
     direct_nas_target = (
         repository.repo_type == Repository.Type.NAS and repository.bind_node_id is None
@@ -2144,8 +2144,8 @@ def _execute_direct_nas_repository_cleanup(
                     {
                         "code": "REPOSITORY_OWNERSHIP_UNVERIFIED",
                         "detail": (
-                            "A previous Direct NAS initialization left an unverified "
-                            "physical location. Physical data was retained."
+                            "A previous direct NAS backup source setup left repository "
+                            "data whose ownership could not be verified. The data was retained."
                         ),
                     }
                 ],
@@ -2209,8 +2209,8 @@ def _execute_direct_nas_repository_cleanup(
             {
                 "code": "REPOSITORY_OWNERSHIP_UNVERIFIED",
                 "detail": (
-                    "One or more Direct NAS physical locations could not be "
-                    "verified and were retained."
+                    "Repository data left by one or more direct NAS backup source "
+                    "connections could not be verified and was retained."
                 ),
             }
         )

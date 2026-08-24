@@ -149,6 +149,8 @@ class RepositoryCleanupTests(TestCase):
             strict["blockers"][0]["code"],
             "repository_initialization_in_progress",
         )
+        self.assertNotIn("physical location", strict["blockers"][0]["detail"])
+        self.assertIn("backup source connection", strict["blockers"][0]["detail"])
         self.assertFalse(forced["allowed"])
         self.assertEqual(
             forced["blockers"][0]["code"],
@@ -549,6 +551,13 @@ class RepositoryCleanupTests(TestCase):
             "historical_direct_nas_locations",
             {item["code"] for item in strict_preflight["blockers"]},
         )
+        historical_blocker = next(
+            item
+            for item in strict_preflight["blockers"]
+            if item["code"] == "historical_direct_nas_locations"
+        )
+        self.assertNotIn("physical location", historical_blocker["detail"])
+        self.assertIn("backup source connection", historical_blocker["detail"])
         repository_task = create_repository_cleanup_task(
             repository=repository,
             force=True,

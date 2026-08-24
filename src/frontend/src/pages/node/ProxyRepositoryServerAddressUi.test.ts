@@ -16,6 +16,10 @@ const editProxyFs = readFileSync(
   fileURLToPath(new URL('./EditProxyFsRepo.vue', import.meta.url)),
   'utf8',
 )
+const editNas = readFileSync(
+  fileURLToPath(new URL('./RepairNasRepository.vue', import.meta.url)),
+  'utf8',
+)
 
 describe('Proxy Repository Server Address UI', () => {
   it('edits the optional Proxy-level override and explains the automatic Host IP default', () => {
@@ -42,5 +46,6 @@ describe('Proxy Repository Server Address UI', () => {
   it('does not expose the legacy Repository-level address in create or edit forms', () => {
     expect(addProxyFs).not.toContain('proxy_repository_server_host')
     expect(editProxyFs).not.toContain('proxy_repository_server_host')
+    expect(editNas).not.toContain('proxy_repository_server_host')
   })
 })

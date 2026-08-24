@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { use } from 'echarts/core'
-import { LineChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent } from 'echarts/components'
+import { LineChart, ScatterChart } from 'echarts/charts'
+import { DataZoomComponent, GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 import { ChartSpline } from 'lucide-vue-next'
@@ -13,10 +13,13 @@ import {
   type StorageRepositoryUsageHistory,
   type StorageRepositoryUsageHistoryRange,
 } from '../lib/storageRepositoryApi'
-import { repositoryCapacitySeries } from '../lib/repositoryUsageHistory'
+import {
+  repositoryCapacityIsolatedSeries,
+  repositoryCapacityLineSeries,
+} from '../lib/repositoryUsageHistory'
 import { formatAppDateTime } from '../lib/dateTime'
 
-use([CanvasRenderer, LineChart, GridComponent, TooltipComponent])
+use([CanvasRenderer, LineChart, ScatterChart, DataZoomComponent, GridComponent, TooltipComponent])
 
 const props = defineProps<{
   repositoryId: number
@@ -55,7 +58,7 @@ const validPoints = computed(() => history.value?.points.filter(point => point.u
 const latestPoint = computed(() => validPoints.value[validPoints.value.length - 1] || null)
 const chartOption = computed(() => ({
   animation: false,
-  grid: { left: 12, right: 18, top: 24, bottom: 18, containLabel: true },
+  grid: { left: 12, right: 18, top: 24, bottom: 54, containLabel: true },
   tooltip: {
     trigger: 'axis',
     valueFormatter: (value: unknown) => formatBytes(typeof value === 'number' ? value : Number(value)),
@@ -65,6 +68,20 @@ const chartOption = computed(() => ({
     boundaryGap: false,
     axisLabel: { hideOverlap: true },
   },
+  dataZoom: [{
+    type: 'inside',
+    xAxisIndex: 0,
+    filterMode: 'none',
+    zoomOnMouseWheel: true,
+    moveOnMouseMove: true,
+    moveOnMouseWheel: false,
+  }, {
+    type: 'slider',
+    xAxisIndex: 0,
+    filterMode: 'none',
+    height: 18,
+    bottom: 10,
+  }],
   yAxis: {
     type: 'value',
     min: 0,
@@ -76,14 +93,20 @@ const chartOption = computed(() => ({
   series: [{
     name: t('repositoriesPage.capacityOccupied'),
     type: 'line',
-    showSymbol: validPoints.value.length === 1,
-    symbolSize: 7,
+    showSymbol: false,
     connectNulls: false,
     smooth: false,
-    data: repositoryCapacitySeries(history.value?.points || []),
+    data: repositoryCapacityLineSeries(history.value?.points || []),
     lineStyle: { width: 2, color: '#165fff' },
     itemStyle: { color: '#165fff' },
     areaStyle: { color: 'rgba(22, 95, 255, 0.08)' },
+  }, {
+    name: t('repositoriesPage.capacityOccupied'),
+    type: 'scatter',
+    symbolSize: 4,
+    data: repositoryCapacityIsolatedSeries(history.value?.points || []),
+    itemStyle: { color: '#165fff' },
+    z: 3,
   }],
 }))
 

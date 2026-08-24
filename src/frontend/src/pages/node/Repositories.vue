@@ -32,6 +32,7 @@ import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import { remainingLimitExceedsAvailableStorage, repositoryCapacityParts, repositoryStorageParts } from '../../lib/repositoryCapacityDisplay'
 import { repositoryQuotaDisplay } from '../../lib/repositoryQuota'
 import { isRemovedRepositoryWithResidualLocation } from '../../lib/repositoryResidualState'
+import { repositoryCleanupMessage } from '../../lib/repositoryCleanupPresentation'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
@@ -838,8 +839,8 @@ const deletePreflightMessages = computed(() => {
   const preflight = activeDeletePreflight.value
   if (!preflight) return []
   return [
-    ...preflight.blockers.map(item => item.detail),
-    ...preflight.warnings.map(item => item.detail),
+    ...preflight.blockers.map(item => repositoryCleanupMessage(item, t)),
+    ...preflight.warnings.map(item => repositoryCleanupMessage(item, t)),
   ]
 })
 const deleteConfirmDisabled = computed(() => (
@@ -1052,7 +1053,7 @@ async function showRepositoryCleanupBlocked(
     }
     return {
       repository: row,
-      blockers: preflight.blockers.map((item) => item.detail),
+      blockers: preflight.blockers.map((item) => repositoryCleanupMessage(item, t)),
       associations,
       associationCount,
     }

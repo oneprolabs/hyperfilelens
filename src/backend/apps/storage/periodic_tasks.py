@@ -35,7 +35,9 @@ def register_periodic_tasks():
         task="apps.storage.tasks.reconcile_storage_repositories",
         schedule=crontab(minute="*/15"),
         args=(),
-        kwargs={"limit": 200, "stale_after_seconds": 900},
+        # Every run owns a new logical 15-minute history slot. Do not reuse the
+        # interactive refresh staleness gate, which is based on completion time.
+        kwargs={"limit": 200, "force": True, "stale_after_seconds": None},
         queue=None,
         enabled=True,
     )

@@ -4,6 +4,7 @@ import os
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest import mock
+from uuid import uuid4
 
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase, TestCase
@@ -29,6 +30,7 @@ from apps.storage.services.internal.repository_initializer import (
 from apps.storage.services.internal.nas_repository import (
     NASRepositoryError,
     check_proxy_nas_repository,
+    nas_repository_payload,
     nas_agent_repository_subdir,
     nas_proxy_repository_subdir,
 )
@@ -124,6 +126,45 @@ class RepositoryHealthConfigurationTests(SimpleTestCase):
             timedelta(seconds=60),
         )
         self.assertTrue(recovery_call.kwargs["enabled"])
+
+
+class RepositoryHealthPathTests(TestCase):
+    def test_bound_proxy_payload_uses_node_inventory_root(self):
+        node = SimpleNamespace(
+            id=17,
+            metadata={"inventory": {"root_path": "/var/lib/hyperfilelens-agent"}},
+        )
+        repository = SimpleNamespace(
+            id=30,
+            repository_uuid=uuid4(),
+            config={"server_address": "192.0.2.1", "share_path": "/share"},
+            nas_protocol="smb",
+            organization_id=1,
+        )
+        node_queryset = SimpleNamespace(
+            only=lambda *_: SimpleNamespace(first=lambda: node)
+        )
+        with (
+            mock.patch(
+                "apps.storage.services.internal.nas_repository.Node.objects.filter",
+                return_value=node_queryset,
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_ownership."
+                "ownership_payload_for_node",
+                return_value={},
+            ),
+        ):
+            payload = nas_repository_payload(
+                repository=repository,
+                subdir="hp-repos/storage-30",
+                node_id=17,
+                secrets_payload={},
+            )
+        self.assertEqual(
+            payload["nas"]["mount_point"],
+            "/var/lib/hyperfilelens-agent/mounts/repositories/repo-30-node-17",
+        )
 
 
 class RepositoryHealthTaskTests(TestCase):
