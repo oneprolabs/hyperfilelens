@@ -34,6 +34,40 @@ const loginUrl = computed(() => `${appOrigin.value || '#'}${appOrigin.value ? '/
 const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
 const sourceLensUrl = 'https://github.com/HyperBDR/sourcelens'
 const communityVersion = 'v0.2.8'
+const installCommand = [
+  'curl -fsSL \\',
+  `  https://gitee.com/oneprolabs/hyperfilelens/raw/${communityVersion}/deploy/online/install.sh \\`,
+  `  | sudo bash -s -- ${communityVersion} \\`,
+  '      --region cn \\',
+  '      --download-source gitee \\',
+  '      --yes',
+].join('\n')
+const copied = ref(false)
+let copyResetTimer: number | undefined
+
+async function copyInstallCommand() {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(installCommand)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = installCommand
+      textarea.setAttribute('readonly', '')
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      const copySucceeded = document.execCommand('copy')
+      textarea.remove()
+      if (!copySucceeded) throw new Error('Copy command failed')
+    }
+    copied.value = true
+    window.clearTimeout(copyResetTimer)
+    copyResetTimer = window.setTimeout(() => { copied.value = false }, 2200)
+  } catch {
+    copied.value = false
+  }
+}
 
 function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
   const target = loginUrl.value
@@ -82,6 +116,9 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       </symbol>
       <symbol id="icon-check" viewBox="0 0 24 24">
         <path d="m5 12 4 4L19 6" />
+      </symbol>
+      <symbol id="icon-copy" viewBox="0 0 24 24">
+        <rect x="8" y="8" width="11" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2" />
       </symbol>
       <symbol id="icon-building" viewBox="0 0 24 24">
         <path d="M4 21V5l8-3 8 3v16M8 8h2M14 8h2M8 12h2M14 12h2M8 16h2M14 16h2M2 21h20" />
@@ -238,10 +275,10 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           <div class="open-source-copy">
             <p class="section-kicker dark-kicker">社区版</p>
             <h2 id="open-source-title">开源社区版 一条命令部署</h2>
-            <p>在安装了 Docker 的 Ubuntu 主机上一条命令运行 Community。海外使用 GitHub 和 Docker Hub，中国大陆使用 Gitee 和阿里云。</p>
+            <p>在安装了 Docker 的 Ubuntu 主机上一条命令运行 Community。当前提供稳定的 Gitee 在线安装入口。</p>
             <div class="open-source-callout">
               <svg aria-hidden="true"><use href="#icon-check" /></svg>
-              <p>社区版免费开源——自带 S3 兼容存储和 AI 模型或 API Key；需要企业治理能力时，再升级到企业版。</p>
+              <p>社区版免费开源，自带 S3 兼容存储和 AI 模型或 API Key；企业版能力将在后续版本提供。</p>
             </div>
             <div class="open-source-actions">
               <a class="button button-light" :href="githubUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>查看 GitHub 仓库</a>
@@ -253,15 +290,29 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             </div>
             <p class="beta-note">HyperFileLens 目前处于公测阶段。</p>
           </div>
-          <div class="terminal-card" aria-label="Community 在线安装命令示例">
-            <div class="terminal-bar"><span><i></i><i></i><i></i></span><b>安装 · bash</b></div>
-            <pre><code><span class="terminal-comment"># Community 在线安装 · {{ communityVersion }}</span>
-<span class="terminal-prompt">$</span> curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/{{ communityVersion }}/deploy/online/install.sh \
-  | sudo bash -s -- {{ communityVersion }} --region cn --download-source gitee --yes
-
-<span class="terminal-success">✓</span> 环境校验通过
-<span class="terminal-success">✓</span> 已拉取公开镜像
-<span class="terminal-success">✓</span> HyperFileLens 已就绪</code></pre>
+          <div class="terminal-card" aria-label="Community 在线安装命令">
+            <div class="terminal-bar">
+              <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+              <div class="terminal-title"><strong>Community</strong><span>{{ communityVersion }}</span></div>
+              <button
+                type="button"
+                class="copy-command"
+                :aria-label="copied ? '已复制安装命令' : '复制安装命令'"
+                @click="copyInstallCommand"
+              >
+                <svg aria-hidden="true"><use :href="copied ? '#icon-check' : '#icon-copy'" /></svg>
+                <span>{{ copied ? '已复制' : '复制命令' }}</span>
+              </button>
+            </div>
+            <div class="terminal-body">
+              <p class="terminal-context">在 Ubuntu 主机上运行</p>
+              <pre><code><span class="terminal-comment"># 在线安装 Community · {{ communityVersion }}</span>
+<span class="terminal-prompt">$</span> {{ installCommand }}</code></pre>
+            </div>
+            <div class="terminal-summary">
+              <strong>安装程序自动完成</strong>
+              <span>环境检查 · 镜像拉取 · 服务启动</span>
+            </div>
           </div>
         </div>
       </section>

@@ -1,48 +1,46 @@
 ---
-title: HyperFileLens 用户文档
-description: 从部署到首次备份、恢复和智能洞察，完成 HyperFileLens 的主要使用流程。
+title: 快速开始
+description: 使用官方 SaaS 或安装 HyperFileLens Community，完成首次备份、验证和恢复。
 ---
 
-# HyperFileLens 用户文档
+# 快速开始
 
-<p class="hfl-doc-lead">保护生产数据，并基于隔离的备份副本完成恢复和智能洞察。本手册以实际任务为主线，不要求你先了解全部产品概念。</p>
+<p class="hfl-doc-lead">选择官方 SaaS 或 Community，然后用一小组测试文件完成备份、验证和恢复。走完这条流程，才表示第一条数据保护链路真正可用。</p>
 
 <div class="hfl-doc-grid">
-  <a class="hfl-doc-card" href="/zh/docs/getting-started/">
-    <small>快速开始</small>
-    <strong>从安装到首次备份</strong>
-    <span>准备控制平面，注册备份源，选择目标存储并生成第一个可用快照。</span>
+  <a class="hfl-doc-card" href="/zh/docs/getting-started/saas">
+    <small>无需部署</small>
+    <strong>使用官方 SaaS</strong>
+    <span>注册或登录后直接进入控制台，适合快速体验完整业务流程。</span>
   </a>
-  <a class="hfl-doc-card" href="/zh/docs/backup-restore/">
-    <small>数据保护</small>
-    <strong>备份、快照与恢复</strong>
-    <span>建立持续保护任务，验证快照，并把选定文件或目录恢复到可用节点。</span>
-  </a>
-  <a class="hfl-doc-card" href="/zh/docs/insights/">
-    <small>智能洞察</small>
-    <strong>从备份数据创建 Copilot 会话</strong>
-    <span>选择快照和数据范围，通过 Data Gateway 准备数据并进行有依据的问答。</span>
-  </a>
-  <a class="hfl-doc-card" href="/zh/docs/deployment/">
-    <small>部署与运维</small>
-    <strong>管理 Agent、Proxy 与 Data Gateway</strong>
-    <span>了解节点职责、支持平台、安装入口，以及版本升级和运行状态检查。</span>
+  <a class="hfl-doc-card" href="/zh/docs/getting-started/install">
+    <small>自托管</small>
+    <strong>安装 Community</strong>
+    <span>在自己的 Ubuntu 主机上安装当前公开版本，再进入控制台。</span>
   </a>
 </div>
 
-## 建议阅读顺序
+## 完成一次核心业务流程
 
-第一次使用时，按下面的顺序完成一条最短闭环：
+两种方式只在进入产品前不同。登录控制台后，按照同一条主线操作：
 
-1. 查看[部署要求](/zh/docs/getting-started/requirements)，准备控制平面主机和备份存储。
-2. [安装 HyperFileLens](/zh/docs/getting-started/install)，使用安装程序输出的地址登录。
-3. [完成首次备份](/zh/docs/getting-started/first-backup)，确认至少产生一个成功或部分成功的快照。
-4. [恢复文件和目录](/zh/docs/backup-restore/restore)，验证备份数据可以实际使用。
-5. 如需对备份内容提问，继续完成[智能洞察](/zh/docs/insights/)流程。
+1. [登录并完成初始设置](/zh/docs/getting-started/sign-in)。
+2. [添加一个备份源](/zh/docs/getting-started/add-source)。
+3. [配置一处目标存储](/zh/docs/getting-started/add-target)。
+4. [创建并运行首次备份](/zh/docs/getting-started/first-backup)。
+5. [检查任务和备份快照](/zh/docs/getting-started/verify-backup)。
+6. [恢复一个测试文件](/zh/docs/getting-started/first-restore)。
 
-## 文档边界
+首次操作请使用内容和大小都容易确认的测试目录，不要直接选择整个系统盘或大规模生产目录。
 
-本手册面向 HyperFileLens Community 当前公开版本，介绍用户可见的产品行为和受支持流程。开发环境搭建、源码构建和贡献规范仍以仓库根目录的 README 为准；企业版授权、平台级治理和 SaaS 运营不属于本手册范围。
+## 完成标准
 
-当界面、版本发布说明与本文档存在差异时，应先确认运行版本，并以该版本的发布说明和实际产品行为为准。
+同时满足下面的结果，才表示首次使用完成：
+
+- 备份源在线并且能够浏览测试目录。
+- 目标存储验证通过。
+- 备份任务完成并生成可浏览的快照。
+- 能够把快照中的测试文件恢复到独立目录，并确认内容正确。
+
+完成后，可按需查阅[备份与恢复](/zh/docs/backup-restore/)、[智能洞察](/zh/docs/insights/)和[部署与运维](/zh/docs/deployment/)。
 

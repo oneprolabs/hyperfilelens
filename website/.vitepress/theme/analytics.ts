@@ -6,6 +6,7 @@ export type WebsiteOpenAppPlacement =
   | 'hero'
   | 'hosted_service'
   | 'cta'
+  | 'docs_header'
   | 'footer'
 
 declare global {

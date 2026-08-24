@@ -20,6 +20,24 @@ export default defineConfig({
     logo: '/logo-mark.svg',
     siteTitle: 'HyperFileLens',
     i18nRouting: false,
+    nav: [
+      {
+        text: 'Quick Start',
+        link: '/en/docs/',
+        activeMatch: '^/en/docs/(?:$|getting-started/)',
+      },
+      { text: 'Backup & Restore', link: '/en/docs/backup-restore/' },
+      { text: 'Insights', link: '/en/docs/insights/' },
+      { text: 'Deployment & Operations', link: '/en/docs/deployment/' },
+      {
+        text: 'Reference & Troubleshooting',
+        link: '/en/docs/reference/',
+        activeMatch: '^/en/docs/(reference|troubleshooting)/',
+      },
+    ],
+    socialLinks: [
+      { icon: 'github', link: 'https://github.com/oneprolabs/hyperfilelens' },
+    ],
     search: {
       provider: 'local',
       options: {

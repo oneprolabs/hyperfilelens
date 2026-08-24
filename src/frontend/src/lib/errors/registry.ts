@@ -90,7 +90,7 @@ export const ERROR_CODE_FALLBACK_EN: Record<string, string> = {
   'SERVER.INTERNAL_ERROR': 'Service is temporarily unavailable. Please try again later.',
   'AGENT.TIMEOUT': 'Agent timed out. Confirm the node is online and try again.',
   'AGENT.UNREACHABLE': 'Agent is unreachable. Confirm the node is online.',
-  'AGENT.PATH_PERMISSION_DENIED': 'The Agent does not have permission to access this path. Choose a readable path or use Host files · continuous protection when broader host access is required.',
+  'AGENT.PATH_PERMISSION_DENIED': 'The Agent does not have permission to access this path. Choose a readable path or use Host files · continuous when broader host access is required.',
   'AGENT.EXPLORER_LIST_FAILED': 'Failed to browse directory. Confirm the node is online and try again.',
   'AGENT.PATH_VALIDATE_FAILED': 'Path validation failed. Check the path and try again.',
   'AGENT.NAS_MOUNT_FAILED': 'NAS mount operation failed. Check connection settings.',

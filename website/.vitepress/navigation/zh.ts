@@ -1,54 +1,18 @@
 import type { DefaultTheme } from 'vitepress'
 
-const overview: DefaultTheme.SidebarItem[] = [
+const quickStart: DefaultTheme.SidebarItem[] = [
   {
-    text: '文档概览',
+    text: '快速开始',
     items: [
-      { text: '用户文档', link: '/zh/docs/' },
-      { text: '开始使用', link: '/zh/docs/getting-started/' },
-      { text: '部署与节点', link: '/zh/docs/deployment/' },
-      { text: '备份与恢复', link: '/zh/docs/backup-restore/' },
-      { text: '智能洞察', link: '/zh/docs/insights/' },
-      { text: '概念与能力', link: '/zh/docs/reference/' },
-      { text: '常见问题与排障', link: '/zh/docs/troubleshooting/' },
-    ],
-  },
-]
-
-const gettingStarted: DefaultTheme.SidebarItem[] = [
-  {
-    text: '开始使用',
-    items: [
-      { text: '概览', link: '/zh/docs/getting-started/' },
-      { text: '部署要求', link: '/zh/docs/getting-started/requirements' },
-      { text: '安装 HyperFileLens', link: '/zh/docs/getting-started/install' },
-      { text: '完成首次备份', link: '/zh/docs/getting-started/first-backup' },
-    ],
-  },
-  {
-    text: '下一步',
-    items: [
-      { text: '备份与恢复', link: '/zh/docs/backup-restore/' },
-      { text: '智能洞察', link: '/zh/docs/insights/' },
-    ],
-  },
-]
-
-const deployment: DefaultTheme.SidebarItem[] = [
-  {
-    text: '部署与节点',
-    items: [
-      { text: '概览', link: '/zh/docs/deployment/' },
-      { text: 'Agent 与 Proxy', link: '/zh/docs/deployment/nodes' },
-      { text: 'Data Gateway', link: '/zh/docs/deployment/data-gateway' },
-      { text: '升级、备份与回退', link: '/zh/docs/deployment/lifecycle' },
-    ],
-  },
-  {
-    text: '相关参考',
-    items: [
-      { text: '支持范围', link: '/zh/docs/reference/support-matrix' },
-      { text: '安装与节点排障', link: '/zh/docs/troubleshooting/installation-nodes' },
+      { text: '概览', link: '/zh/docs/' },
+      { text: '使用官方 SaaS', link: '/zh/docs/getting-started/saas' },
+      { text: '安装 Community', link: '/zh/docs/getting-started/install' },
+      { text: '登录与初始设置', link: '/zh/docs/getting-started/sign-in' },
+      { text: '添加备份源', link: '/zh/docs/getting-started/add-source' },
+      { text: '配置目标存储', link: '/zh/docs/getting-started/add-target' },
+      { text: '创建首次备份', link: '/zh/docs/getting-started/first-backup' },
+      { text: '验证备份结果', link: '/zh/docs/getting-started/verify-backup' },
+      { text: '恢复测试文件', link: '/zh/docs/getting-started/first-restore' },
     ],
   },
 ]
@@ -58,17 +22,27 @@ const protection: DefaultTheme.SidebarItem[] = [
     text: '备份与恢复',
     items: [
       { text: '概览', link: '/zh/docs/backup-restore/' },
-      { text: '准备备份源和目标存储', link: '/zh/docs/backup-restore/prepare' },
+    ],
+  },
+  {
+    text: '备份源与目标',
+    items: [
+      { text: '管理备份源', link: '/zh/docs/backup-restore/sources' },
+      { text: '管理目标存储', link: '/zh/docs/backup-restore/targets' },
+    ],
+  },
+  {
+    text: '备份配置',
+    items: [
       { text: '创建并运行备份', link: '/zh/docs/backup-restore/create-backup' },
-      { text: '查看任务与验证快照', link: '/zh/docs/backup-restore/snapshots' },
-      { text: '恢复文件和目录', link: '/zh/docs/backup-restore/restore' },
       { text: '策略、保留与恢复计划', link: '/zh/docs/backup-restore/policies' },
     ],
   },
   {
-    text: '故障排查',
+    text: '任务与恢复',
     items: [
-      { text: '备份、存储与恢复', link: '/zh/docs/troubleshooting/protection' },
+      { text: '查看任务与验证快照', link: '/zh/docs/backup-restore/snapshots' },
+      { text: '恢复文件和目录', link: '/zh/docs/backup-restore/restore' },
     ],
   },
 ]
@@ -78,22 +52,49 @@ const insights: DefaultTheme.SidebarItem[] = [
     text: '智能洞察',
     items: [
       { text: '概览', link: '/zh/docs/insights/' },
-      { text: '准备快照和 Data Gateway', link: '/zh/docs/insights/prepare' },
-      { text: '创建和使用 Copilot 会话', link: '/zh/docs/insights/copilot' },
-      { text: '会话、引用与数据边界', link: '/zh/docs/insights/privacy' },
+      { text: '准备快照与模型', link: '/zh/docs/insights/prepare' },
+      { text: '创建 Copilot 会话', link: '/zh/docs/insights/copilot' },
+      { text: '连接 Private Data Gateway', link: '/zh/docs/insights/data-gateway' },
+      { text: '查看 AI 使用量', link: '/zh/docs/insights/usage' },
+      { text: '会话与数据边界', link: '/zh/docs/insights/privacy' },
+    ],
+  },
+]
+
+const operations: DefaultTheme.SidebarItem[] = [
+  {
+    text: '基础部署',
+    items: [
+      { text: '概览', link: '/zh/docs/deployment/' },
+      { text: '系统要求', link: '/zh/docs/deployment/requirements' },
+      { text: '部署后检查', link: '/zh/docs/deployment/post-install' },
+      { text: '网络与端口要求', link: '/zh/docs/deployment/network' },
     ],
   },
   {
-    text: '故障排查',
+    text: '组件部署',
     items: [
-      { text: 'Data Gateway 与 Copilot', link: '/zh/docs/troubleshooting/insights' },
+      { text: 'Agent 与 Proxy', link: '/zh/docs/deployment/nodes' },
+      { text: 'Private Data Gateway', link: '/zh/docs/deployment/data-gateway' },
+    ],
+  },
+  {
+    text: '系统维护',
+    items: [
+      { text: '升级、备份与回退', link: '/zh/docs/deployment/lifecycle' },
+    ],
+  },
+  {
+    text: '日常运维',
+    items: [
+      { text: '任务、告警与日志', link: '/zh/docs/deployment/operations' },
     ],
   },
 ]
 
 const reference: DefaultTheme.SidebarItem[] = [
   {
-    text: '概念与能力',
+    text: '产品参考',
     items: [
       { text: '核心概念', link: '/zh/docs/reference/' },
       { text: '支持范围', link: '/zh/docs/reference/support-matrix' },
@@ -103,7 +104,7 @@ const reference: DefaultTheme.SidebarItem[] = [
   {
     text: '常见问题与排障',
     items: [
-      { text: '排障入口', link: '/zh/docs/troubleshooting/' },
+      { text: '总览', link: '/zh/docs/troubleshooting/' },
       { text: '安装与节点', link: '/zh/docs/troubleshooting/installation-nodes' },
       { text: '备份、存储与恢复', link: '/zh/docs/troubleshooting/protection' },
       { text: 'Data Gateway 与 Copilot', link: '/zh/docs/troubleshooting/insights' },
@@ -118,10 +119,14 @@ export const zhThemeConfig: DefaultTheme.Config = {
   siteTitle: 'HyperFileLens',
   i18nRouting: false,
   nav: [
-    { text: '开始使用', link: '/zh/docs/getting-started/' },
-    { text: '部署', link: '/zh/docs/deployment/' },
+    {
+      text: '快速开始',
+      link: '/zh/docs/',
+      activeMatch: '^/zh/docs/(?:$|getting-started/)',
+    },
     { text: '备份与恢复', link: '/zh/docs/backup-restore/' },
     { text: '智能洞察', link: '/zh/docs/insights/' },
+    { text: '部署与运维', link: '/zh/docs/deployment/' },
     {
       text: '参考与排障',
       link: '/zh/docs/reference/',
@@ -129,13 +134,13 @@ export const zhThemeConfig: DefaultTheme.Config = {
     },
   ],
   sidebar: {
-    '/zh/docs/getting-started/': gettingStarted,
-    '/zh/docs/deployment/': deployment,
     '/zh/docs/backup-restore/': protection,
     '/zh/docs/insights/': insights,
+    '/zh/docs/deployment/': operations,
     '/zh/docs/reference/': reference,
     '/zh/docs/troubleshooting/': reference,
-    '/zh/docs/': overview,
+    '/zh/docs/getting-started/': quickStart,
+    '/zh/docs/': quickStart,
   },
   outline: { label: '本页内容', level: [2, 3] },
   docFooter: { prev: '上一页', next: '下一页' },
@@ -153,14 +158,25 @@ export const zhThemeConfig: DefaultTheme.Config = {
   search: {
     provider: 'local',
     options: {
+      detailedView: false,
       locales: {
         zh: {
           translations: {
             button: { buttonText: '搜索文档', buttonAriaLabel: '搜索文档' },
             modal: {
+              displayDetails: '显示详细列表',
+              backButtonTitle: '关闭搜索',
               noResultsText: '未找到相关内容',
               resetButtonTitle: '清除查询',
-              footer: { selectText: '选择', navigateText: '切换', closeText: '关闭' },
+              footer: {
+                selectText: '选择',
+                selectKeyAriaLabel: '打开结果',
+                navigateText: '切换',
+                navigateUpKeyAriaLabel: '上一个结果',
+                navigateDownKeyAriaLabel: '下一个结果',
+                closeText: '关闭',
+                closeKeyAriaLabel: '关闭搜索',
+              },
             },
           },
         },

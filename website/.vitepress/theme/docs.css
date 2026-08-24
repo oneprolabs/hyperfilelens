@@ -7,24 +7,75 @@
   --vp-c-divider: var(--hfl-line);
   --vp-c-text-1: var(--hfl-ink);
   --vp-c-text-2: var(--hfl-muted);
-  --vp-font-family-base: Inter, "SF Pro Text", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --vp-font-family-base: Inter, "SF Pro Text", "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --hfl-doc-card-radius: 10px;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.Layout {
+  --vp-font-family-base: Inter, "SF Pro Text", "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --hfl-doc-rail-shift: 29px;
+  --hfl-doc-aside-width: 187px;
+  font-family: var(--vp-font-family-base);
+}
+
+.hfl-coming-soon {
+  min-height: calc(100vh - var(--vp-nav-height, 64px) - 2px);
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  padding: 64px 24px;
+  text-align: center;
+}
+
+.hfl-coming-soon-kicker {
+  margin: 0 0 16px;
+  color: var(--vp-c-brand-1);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.hfl-coming-soon h1 {
+  max-width: 620px;
+  margin: 0;
+  color: var(--vp-c-text-1);
+  font-size: clamp(30px, 4vw, 44px);
+  letter-spacing: -.035em;
+}
+
+.hfl-coming-soon > p:last-child {
+  max-width: 520px;
+  margin: 18px 0 0;
+  color: var(--vp-c-text-2);
+  font-size: 16px;
+  line-height: 1.7;
 }
 
 .dark {
-  --vp-c-brand-1: #6ea1ff;
-  --vp-c-brand-2: #8ab4ff;
-  --vp-c-brand-3: #a8c7ff;
-  --vp-c-brand-soft: rgba(64, 120, 230, .18);
-  --vp-c-bg: var(--hfl-navy);
-  --vp-c-bg-alt: var(--hfl-navy-soft);
-  --vp-c-bg-elv: #132238;
-  --vp-c-bg-soft: #122036;
-  --vp-c-divider: rgba(173, 192, 220, .18);
-  --vp-c-text-1: #f1f6fd;
-  --vp-c-text-2: #b2c0d3;
+  /* GitHub Dark tritanopia-inspired neutrals and accessible blue accents. */
+  --hfl-navy: #0d1117;
+  --hfl-navy-soft: #151b23;
+  --vp-c-brand-1: #71b7ff;
+  --vp-c-brand-2: #9ecbff;
+  --vp-c-brand-3: #b6d7ff;
+  --vp-c-brand-soft: rgba(56, 139, 253, .18);
+  --vp-c-bg: #0d1117;
+  --vp-c-bg-alt: #151b23;
+  --vp-c-bg-elv: #161b22;
+  --vp-c-bg-soft: #212830;
+  --vp-c-divider: #3d444d;
+  --vp-c-text-1: #f0f6fc;
+  --vp-c-text-2: #9198a1;
 }
 
 .dark .Layout {
+  color-scheme: dark;
   color: var(--vp-c-text-1);
   background: var(--vp-c-bg);
 }
@@ -35,9 +86,412 @@
   backdrop-filter: blur(18px);
 }
 
+/* Use one uninterrupted divider below the document header. VitePress normally
+   draws separate title and content segments, which leaves visible gaps. */
+.Layout .VPNavBar.has-sidebar .divider {
+  padding-left: 0 !important;
+}
+
+.Layout .VPNavBar.has-sidebar .divider-line {
+  background: var(--vp-c-divider) !important;
+}
+
+.Layout .VPNavBar.has-sidebar .VPNavBarTitle .title {
+  border-bottom-color: transparent;
+}
+
+.VPNavBar .container,
+.VPNavBarTitle,
+.VPNavBarAppearance,
+.VPNavBarSearch,
+.VPNavBarMenu,
+.VPNavBarHamburger {
+  min-width: 0;
+}
+
+/* Keep the document header in one reading order: brand, sections, search, utilities. */
+@media (min-width: 960px) {
+  .VPNavBar .content-body {
+    justify-content: flex-start;
+  }
+
+  .VPNavBarMenu {
+    order: 1;
+    margin-left: auto;
+  }
+
+  .VPNavBarSearch {
+    order: 2;
+    flex: 0 0 auto;
+    width: auto;
+  }
+
+  .VPNavBarTranslations {
+    order: 3;
+  }
+
+  .VPNavBarAppearance {
+    order: 4;
+  }
+
+  .VPNavBarSocialLinks {
+    order: 5;
+  }
+
+  .hfl-doc-trial--bar {
+    order: 6;
+  }
+
+  body .Layout .VPSidebar {
+    top: calc(var(--vp-layout-top-height, 0px) + var(--vp-nav-height));
+    padding-top: 0;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  body .Layout .VPSidebar .curtain {
+    display: none;
+  }
+
+  .VPSidebar::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .VPSidebar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .VPSidebar::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: transparent;
+  }
+
+  .VPSidebar:hover,
+  .VPSidebar:focus-within {
+    scrollbar-color: color-mix(in srgb, var(--vp-c-text-2) 48%, transparent) transparent;
+  }
+
+  .VPSidebar:hover::-webkit-scrollbar-thumb,
+  .VPSidebar:focus-within::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--vp-c-text-2) 48%, transparent);
+  }
+}
+
+.hfl-doc-trial {
+  min-height: 42px;
+  padding: 0 18px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hfl-navy);
+  border-radius: 10px;
+  color: #fff;
+  background: var(--hfl-navy);
+  font-size: 14px;
+  font-weight: 720;
+  line-height: 1;
+  text-decoration: none;
+  transition: background .18s ease, transform .18s ease;
+}
+
+.hfl-doc-trial:hover {
+  border-color: var(--hfl-blue);
+  background: var(--hfl-blue);
+  transform: translateY(-1px);
+}
+
+.hfl-doc-trial:focus-visible {
+  outline: 3px solid var(--vp-c-brand-soft);
+  outline-offset: 2px;
+}
+
+.hfl-doc-trial--bar {
+  display: none;
+}
+
+.hfl-doc-trial--screen {
+  display: flex;
+  min-height: 44px;
+  margin: 18px 24px 0;
+}
+
+/* Keep the desktop CTA outside the flex calculation so adding it does not move
+   the search/outline alignment. The utility buttons use compact but complete
+   44px hit areas, matching the homepage's right-side action group. */
+@media (min-width: 1200px) {
+  .VPNavBar:has(.hfl-doc-trial--bar) .content-body {
+    position: relative;
+  }
+
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarTranslations,
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarAppearance,
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSocialLinks {
+    flex: 0 0 44px;
+    width: 44px;
+    justify-content: center;
+    transform: none;
+  }
+
+  /* The compact utility hit areas free 63px for the CTA. Reserve that space
+     after GitHub so search and the outline rail keep their established x-axis. */
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSocialLinks {
+    margin-right: 63px;
+  }
+
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarTranslations .button,
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarAppearance button,
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSocialLinks a {
+    width: 44px;
+    justify-content: center;
+  }
+
+  .hfl-doc-trial--bar {
+    position: absolute;
+    right: -41px;
+    display: flex;
+    align-self: center;
+  }
+}
+
+@media (min-width: 960px) {
+  .hfl-doc-trial--screen {
+    display: none;
+  }
+}
+
+@media (min-width: 960px) and (max-width: 1199px) {
+  .VPNavBar:has(.hfl-doc-trial--bar) .content-body {
+    position: relative;
+  }
+
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSearch {
+    width: 44px;
+    margin-right: 104px;
+    padding-left: 0;
+  }
+
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSearch .DocSearch-Button {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSearch .DocSearch-Button-Container {
+    margin: 0;
+  }
+
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSearch .DocSearch-Button-Placeholder,
+  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSearch .DocSearch-Button-Keys {
+    display: none;
+  }
+
+  .hfl-doc-trial--bar {
+    position: absolute;
+    right: 0;
+    display: flex;
+    align-self: center;
+  }
+}
+
+/* Use a quiet page scrollbar on documentation routes; the sidebar has its own scroll area. */
+html:has(.Layout) {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--vp-c-text-2) 42%, transparent) transparent;
+}
+
+html:has(.Layout)::-webkit-scrollbar {
+  width: 8px;
+}
+
+html:has(.Layout)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html:has(.Layout)::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+html:has(.Layout)::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vp-c-text-2) 42%, transparent);
+  background-clip: padding-box;
+}
+
+html:has(.Layout)::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--vp-c-text-2) 62%, transparent);
+  background-clip: padding-box;
+}
+
+.VPNavBarTitle .title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .VPNavBarTitle .title {
   font-weight: 780;
   letter-spacing: -.025em;
+}
+
+/* Local search is mounted directly under body, outside .Layout. Re-apply the
+   documentation colors so dark-mode results do not inherit the website ink. */
+.VPLocalSearchBox {
+  color: var(--vp-c-text-1);
+  font-family: var(--vp-font-family-base);
+}
+
+body .VPLocalSearchBox .shell {
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(16, 29, 48, .22);
+}
+
+.VPLocalSearchBox .search-input,
+.VPLocalSearchBox .result {
+  color: var(--vp-c-text-1);
+}
+
+.VPLocalSearchBox .search-input::placeholder {
+  color: var(--vp-c-text-2);
+}
+
+@media (min-width: 768px) {
+  .VPLocalSearchBox .shell {
+    width: min(760px, calc(100vw - 32px)) !important;
+    max-height: min(calc(100vh - 128px), 680px) !important;
+  }
+}
+
+@media (max-width: 767px) {
+  body .VPLocalSearchBox .shell {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+body .VPLocalSearchBox .search-bar {
+  min-height: 46px;
+  border-color: var(--vp-c-divider);
+  border-radius: 8px;
+  background: var(--vp-c-bg);
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+
+body .VPLocalSearchBox .search-bar:focus-within {
+  border-color: var(--vp-c-brand-1);
+  box-shadow: 0 0 0 3px var(--vp-c-brand-soft);
+}
+
+body .VPLocalSearchBox .results {
+  gap: 0;
+}
+
+body .VPLocalSearchBox .results:has(.result) {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+  background: var(--vp-c-bg);
+}
+
+body .VPLocalSearchBox .results li:not(:last-child) .result {
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+body .VPLocalSearchBox .result {
+  position: relative;
+  min-height: 48px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  transition: background-color .15s ease;
+}
+
+body .VPLocalSearchBox .result > div {
+  margin: 0;
+  padding: 12px 14px;
+}
+
+body .VPLocalSearchBox .result.selected {
+  border-color: transparent;
+  background: var(--vp-c-brand-soft);
+  box-shadow: inset 3px 0 0 var(--vp-c-brand-1);
+}
+
+body .VPLocalSearchBox .result.selected .titles {
+  color: var(--vp-c-text-1) !important;
+}
+
+body .VPLocalSearchBox .title-icon {
+  display: none;
+}
+
+body .VPLocalSearchBox .titles {
+  gap: 5px;
+  padding: 0;
+  line-height: 1.45;
+}
+
+body .VPLocalSearchBox .title:not(.main) {
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+}
+
+body .VPLocalSearchBox .title.main {
+  color: var(--vp-c-text-1);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+body .VPLocalSearchBox .title .local-search-icon {
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  opacity: .55;
+}
+
+body .VPLocalSearchBox .titles mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  color: var(--vp-c-brand-1);
+  background: var(--vp-c-brand-soft);
+}
+
+body .VPLocalSearchBox .search-keyboard-shortcuts {
+  gap: 14px;
+  padding: 2px 4px 0;
+  color: var(--vp-c-text-2);
+  opacity: .72;
+}
+
+body .VPLocalSearchBox .search-keyboard-shortcuts kbd {
+  min-width: auto;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.VPLocalSearchBox .results {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--vp-c-text-2) 48%, transparent) transparent;
+}
+
+.VPLocalSearchBox .results::-webkit-scrollbar {
+  width: 6px;
+}
+
+.VPLocalSearchBox .results::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.VPLocalSearchBox .results::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vp-c-text-2) 48%, transparent);
 }
 
 .VPNavBarMenuLink,
@@ -76,6 +530,20 @@
   word-break: normal;
 }
 
+/* Keep permalink affordances after the heading. VitePress positions the hash
+   in the left gutter by default, which looks like part of Chinese headings. */
+.VPDoc h1 .header-anchor,
+.VPDoc h2 .header-anchor,
+.VPDoc h3 .header-anchor {
+  position: static !important;
+  margin-right: 0 !important;
+  margin-left: .3em !important;
+  display: inline-block;
+  font-size: .65em;
+  text-decoration: none !important;
+  vertical-align: .08em;
+}
+
 .VPDoc h1 {
   margin: 0 0 22px;
   font-size: clamp(32px, 4vw, 42px);
@@ -96,6 +564,47 @@
   font-size: 18px;
   line-height: 1.4;
   letter-spacing: -.01em;
+}
+
+/* Keep long-form documentation readable while using wide desktop space efficiently. */
+@media (min-width: 1280px) {
+  .Layout .VPDoc.has-aside .content-container {
+    max-width: 760px;
+  }
+}
+
+/* On wide screens, reclaim equal space from both document rails. The outline
+   border then aligns with the navbar divider between search and language. */
+@media (min-width: 1440px) {
+  .Layout .VPNavBar.has-sidebar > .wrapper > .container > .title,
+  .Layout .VPSidebar {
+    padding-left: max(
+      32px,
+      calc((100vw - (var(--vp-layout-max-width) - 64px)) / 2 - var(--hfl-doc-rail-shift))
+    ) !important;
+    width: calc(
+      (100vw - (var(--vp-layout-max-width) - 64px)) / 2 + var(--vp-sidebar-width) - 32px - var(--hfl-doc-rail-shift)
+    ) !important;
+  }
+
+  .Layout .VPContent.has-sidebar {
+    padding-left: calc(
+      (100vw - var(--vp-layout-max-width)) / 2 + var(--vp-sidebar-width) - var(--hfl-doc-rail-shift)
+    ) !important;
+  }
+
+  .Layout .VPDoc > .container > .aside {
+    max-width: calc(var(--hfl-doc-aside-width) + 32px);
+  }
+
+  .Layout .VPDoc > .container > .aside .aside-container,
+  .Layout .VPDoc > .container > .aside .aside-curtain {
+    width: var(--hfl-doc-aside-width);
+  }
+
+  .Layout .VPDoc.has-aside .content-container {
+    max-width: 826px;
+  }
 }
 
 .vp-doc p,
@@ -120,6 +629,10 @@
   text-decoration-color: currentColor;
 }
 
+.vp-doc :not(pre) > code {
+  color: var(--vp-c-brand-2);
+}
+
 .VPNav svg,
 .VPSidebar svg,
 .VPLocalNav svg,
@@ -134,10 +647,27 @@
 .vp-doc table {
   display: table;
   width: 100%;
+  border-spacing: 0;
 }
 
 .vp-doc div[class*='language-'] {
   border: 1px solid var(--vp-c-divider);
+}
+
+.vp-doc [class*='language-'] > span.lang {
+  color: var(--vp-c-text-2);
+}
+
+.vp-doc [class*='language-'] pre {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.vp-doc table {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
 }
 
 .hfl-doc-lead {
@@ -159,7 +689,7 @@
   min-height: 156px;
   padding: 24px;
   border: 1px solid var(--vp-c-divider);
-  border-radius: 16px;
+  border-radius: var(--hfl-doc-card-radius);
   color: var(--vp-c-text-1) !important;
   background: var(--vp-c-bg);
   box-shadow: 0 10px 28px rgba(31, 56, 88, .06);
@@ -241,6 +771,92 @@
   .vp-doc table {
     display: block;
     overflow-x: auto;
+    max-width: 100%;
+    margin-block: 16px;
+    padding-bottom: 2px;
+  }
+}
+
+@media (max-width: 767px) {
+  .VPNavBarTitle .title {
+    font-size: 15px;
+  }
+
+  .VPLocalNavOutlineDropdown,
+  .VPNavBarSearch .DocSearch-Button,
+  .VPNavBarHamburger {
+    min-height: 44px;
+  }
+
+  .VPSidebar {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .VPDoc h1 {
+    font-size: clamp(30px, 8.5vw, 36px);
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+
+  .VPDoc h2 {
+    margin-top: 36px;
+    font-size: 22px;
+    line-height: 1.35;
+  }
+
+  .VPDoc h3 {
+    margin-top: 26px;
+    font-size: 17px;
+  }
+
+  .vp-doc p,
+  .vp-doc li {
+    font-size: 15px;
+    line-height: 1.72;
+  }
+
+  .hfl-doc-lead {
+    margin-bottom: 24px !important;
+    font-size: 16px !important;
+    line-height: 1.72 !important;
+  }
+
+  .hfl-doc-card {
+    padding: 18px;
+  }
+
+  .vp-doc [class*='language-'] code {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .vp-doc [class*='language-'] > button.copy {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .vp-doc table th,
+  .vp-doc table td {
+    padding: 10px 12px;
+  }
+
+  .VPDocFooter {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .VPDocFooter .pager-link {
+    min-height: 64px;
+    padding: 13px 14px 14px;
+  }
+}
+
+@media (max-width: 380px) {
+  .VPNavBarTitle .title {
+    font-size: 14px;
+  }
+
+  .VPDoc h1 {
+    font-size: 30px;
   }
 }
 
