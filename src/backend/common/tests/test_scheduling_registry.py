@@ -97,6 +97,53 @@ class TaskRegistryTests(TestCase):
         task = PeriodicTask.objects.get(name="test_non_coalesced_task")
         self.assertFalse(json.loads(task.headers)[PERIODIC_WAKEUP_COALESCE_HEADER])
 
+    def test_sync_existing_kwargs_updates_code_managed_definition(self) -> None:
+        registry = TaskRegistry()
+        registry.add(
+            name="test_sync_kwargs",
+            task="tests.sync-kwargs",
+            schedule=10,
+            kwargs={"force": False},
+            sync_existing_kwargs=True,
+        )
+        registry.apply()
+        PeriodicTask.objects.filter(name="test_sync_kwargs").update(
+            kwargs=json.dumps({"force": True}),
+        )
+
+        registry.add(
+            name="test_sync_kwargs",
+            task="tests.sync-kwargs",
+            schedule=10,
+            kwargs={"force": False, "stale_after_seconds": None},
+            sync_existing_kwargs=True,
+        )
+        registry.apply()
+
+        task = PeriodicTask.objects.get(name="test_sync_kwargs")
+        self.assertEqual(
+            json.loads(task.kwargs),
+            {"force": False, "stale_after_seconds": None},
+        )
+
+    def test_existing_kwargs_are_preserved_without_explicit_sync(self) -> None:
+        registry = TaskRegistry()
+        registry.add(
+            name="test_preserve_kwargs",
+            task="tests.preserve-kwargs",
+            schedule=10,
+            kwargs={"force": False},
+        )
+        registry.apply()
+        PeriodicTask.objects.filter(name="test_preserve_kwargs").update(
+            kwargs=json.dumps({"operator": "custom"}),
+        )
+
+        registry.apply()
+
+        task = PeriodicTask.objects.get(name="test_preserve_kwargs")
+        self.assertEqual(json.loads(task.kwargs), {"operator": "custom"})
+
     def test_expiry_must_be_positive(self) -> None:
         registry = TaskRegistry()
 

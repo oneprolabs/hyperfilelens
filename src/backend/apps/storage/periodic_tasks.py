@@ -40,6 +40,7 @@ def register_periodic_tasks():
         kwargs={"limit": 200, "force": True, "stale_after_seconds": None},
         queue=None,
         enabled=True,
+        sync_existing_kwargs=True,
     )
     TASK_REGISTRY.add(
         name="storage_reconcile_repository_operations",

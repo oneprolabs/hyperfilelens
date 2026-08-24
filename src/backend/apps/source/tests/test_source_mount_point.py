@@ -19,6 +19,7 @@ from apps.source.services.internal.nas_agent import (
     build_nas_agent_payload,
     dispatch_nas_agent_task,
 )
+from apps.source.services.interface import test_draft_connection
 
 MOUNTS_ROOT = agent_paths.agent_mounts_dir()
 
@@ -79,6 +80,85 @@ class SourceMountPointResolutionTests(SimpleTestCase):
         )
         payload = build_nas_agent_payload(resource=resource)
         self.assertEqual(payload["mount_point"], agent_paths.source_mount_point(15))
+
+    def test_build_payload_uses_bound_proxy_agent_root(self):
+        node = Node(
+            metadata={"inventory": {"root_path": "/var/lib/hyperfilelens-agent"}},
+        )
+        resource = SourceResource(
+            id=32,
+            bound_node=node,
+            config={
+                "protocol": "nfs",
+                "server": "192.168.8.82",
+                "export_path": "/nfs-share1",
+            },
+        )
+        payload = build_nas_agent_payload(resource=resource)
+        self.assertEqual(
+            payload["mount_point"],
+            agent_paths.source_mount_point(
+                32, data_dir="/var/lib/hyperfilelens-agent"
+            ),
+        )
+
+    def test_invalid_bound_proxy_inventory_uses_default_agent_root(self):
+        resource = SourceResource(
+            id=33,
+            bound_node=Node(metadata={"inventory": "legacy-value"}),
+            config={"protocol": "nfs"},
+        )
+
+        self.assertEqual(
+            resource.effective_mount_point(),
+            agent_paths.source_mount_point(33),
+        )
+
+
+class DraftConnectionMountPointTests(SimpleTestCase):
+    @mock.patch("apps.source.services.interface.run_connection_test")
+    @mock.patch("apps.source.services.interface.Node.objects.filter")
+    def test_uses_bound_proxy_agent_root(self, node_filter, run_connection_test):
+        node_filter.return_value.first.return_value = SimpleNamespace(
+            id=17,
+            role=NodeRole.PROXY,
+            metadata={"inventory": {"root_path": "/var/lib/hfl-agent"}},
+        )
+        run_connection_test.return_value = {"success": True}
+
+        result = test_draft_connection(
+            organization_id=3,
+            bound_node_id=17,
+            resource_type=ResourceType.NAS,
+        )
+
+        self.assertTrue(result["success"])
+        mount_point = run_connection_test.call_args.kwargs["mount_point_override"]
+        self.assertTrue(mount_point.startswith("/var/lib/hfl-agent/mounts/"))
+
+    @mock.patch("apps.source.services.interface.run_connection_test")
+    @mock.patch("apps.source.services.interface.Node.objects.filter")
+    def test_invalid_inventory_uses_default_agent_root(
+        self,
+        node_filter,
+        run_connection_test,
+    ):
+        node_filter.return_value.first.return_value = SimpleNamespace(
+            id=18,
+            role=NodeRole.PROXY,
+            metadata={"inventory": ["legacy-value"]},
+        )
+        run_connection_test.return_value = {"success": True}
+
+        result = test_draft_connection(
+            organization_id=3,
+            bound_node_id=18,
+            resource_type=ResourceType.NAS,
+        )
+
+        self.assertTrue(result["success"])
+        mount_point = run_connection_test.call_args.kwargs["mount_point_override"]
+        self.assertTrue(mount_point.startswith(agent_paths.agent_mounts_dir()))
 
 
 class ExplainNasMountPointErrorTests(SimpleTestCase):
