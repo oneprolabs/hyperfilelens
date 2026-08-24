@@ -1677,9 +1677,12 @@ const step3SourceList = computed(() => {
 
 const step3ReadyCount = computed(() => step3SelectableCount.value)
 
-const step2PendingCount = computed(() => step2SelectableCount.value)
+// The wizard summary represents the organization-wide pipeline state. Keep it
+// separate from step2SelectableCount, which is the filtered API count used by
+// the Step 2 table pager.
+const step2GlobalPendingCount = computed(() => pipelineStep2Count.value)
 
-const step2AllSourcesConfigured = computed(() => step2PendingCount.value === 0 && step3ReadyCount.value > 0)
+const step2AllSourcesConfigured = computed(() => step2GlobalPendingCount.value === 0 && step3ReadyCount.value > 0)
 
 const step3TableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const step3SourceSelection = ref<FlowSourceRow[]>([])
@@ -9298,7 +9301,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   aria-hidden="true"
                 />
                 <span class="dp-flow-card__meta-text">
-                  {{ t('protection.backupsPage.flowStepBackupMetricPending', { n: step2PendingCount }) }}
+                  {{ t('protection.backupsPage.flowStepBackupMetricPending', { n: step2GlobalPendingCount }) }}
                 </span>
               </div>
             </div>
