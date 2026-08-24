@@ -24,12 +24,22 @@ func (e *MountSourceMismatchError) Error() string {
 	return fmt.Sprintf("NAS mount source mismatch: expected %s, found %s", e.Expected, e.Actual)
 }
 
-// MountReadOnlyError reports an active mount that cannot host repository data.
+// MountReadOnlyError reports an active mount that cannot accept writes.
 type MountReadOnlyError struct{ Source string }
 
 func (e *MountReadOnlyError) Error() string {
-	return fmt.Sprintf("NAS repository mount is read-only: %s", e.Source)
+	return fmt.Sprintf("NAS mount is read-only: %s", e.Source)
 }
+
+// WriteProbeError reports that a mounted share could not create and write a
+// short-lived validation file.
+type WriteProbeError struct{ Cause error }
+
+func (e *WriteProbeError) Error() string {
+	return fmt.Sprintf("NAS share write probe failed: %v", e.Cause)
+}
+
+func (e *WriteProbeError) Unwrap() error { return e.Cause }
 
 // SpaceInfo describes filesystem usage for a mounted NAS path.
 type SpaceInfo struct {
@@ -132,6 +142,19 @@ func (s *Service) CleanupUnmountedMountPoint(mountPoint string) (bool, error) {
 
 // EnsureMounted mounts the NAS share when the mount point is not active yet.
 func (s *Service) EnsureMounted(ctx context.Context, spec Spec) error {
+	return s.ensureMounted(ctx, spec, false)
+}
+
+// EnsureMountedForWrite repairs one stale Agent-managed mount before an
+// explicit write-intent probe. Normal health checks use EnsureMounted and are
+// deliberately read-only: only initialization or explicit revalidation may
+// detach a read-only or source-mismatched mount and mount the requested share
+// again.
+func (s *Service) EnsureMountedForWrite(ctx context.Context, spec Spec) error {
+	return s.ensureMounted(ctx, spec, true)
+}
+
+func (s *Service) ensureMounted(ctx context.Context, spec Spec, repair bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -140,12 +163,27 @@ func (s *Service) EnsureMounted(ctx context.Context, spec Spec) error {
 		return fmt.Errorf("invalid mount_point")
 	}
 	if s.isMounted(spec.MountPoint) {
-		return validateMountedShare(spec)
+		validationErr := validateMountedShare(spec)
+		if validationErr == nil || !repair || !recoverableMountValidationError(validationErr) {
+			return validationErr
+		}
+		// ResolvedMountPoint has already proved this is below the Agent mount
+		// root. Use strict unmount semantics: never kill processes or lazily
+		// detach a busy mount during validation.
+		if _, err := s.UnmountWithOptions(ctx, spec.MountPoint, UnmountOptions{}); err != nil {
+			return fmt.Errorf("repair stale NAS mount: %w", err)
+		}
 	}
 	if _, err := s.Mount(ctx, spec); err != nil {
 		return err
 	}
 	return validateMountedShare(spec)
+}
+
+func recoverableMountValidationError(err error) bool {
+	var readOnly *MountReadOnlyError
+	var mismatch *MountSourceMismatchError
+	return errors.As(err, &readOnly) || errors.As(err, &mismatch)
 }
 
 // Mount creates the mount point and mounts the NAS share.
@@ -377,6 +415,49 @@ func parseNetUseRemote(text string) (string, bool) {
 // Test mounts the share when needed and returns space information.
 func (s *Service) Test(ctx context.Context, spec Spec) (SpaceInfo, error) {
 	return s.Mount(ctx, spec)
+}
+
+// TestForWrite mounts (and, when necessary, repairs) the share and verifies
+// that the Agent can create, write, and remove a temporary file.  The probe is
+// intentionally scoped to explicit backup-target validation; normal health
+// checks remain read-only.
+func (s *Service) TestForWrite(ctx context.Context, spec Spec) (SpaceInfo, error) {
+	if err := s.EnsureMountedForWrite(ctx, spec); err != nil {
+		return SpaceInfo{}, err
+	}
+	info, err := s.spaceInfo(spec.MountPoint)
+	if err != nil {
+		return SpaceInfo{}, err
+	}
+	probe, err := os.CreateTemp(spec.MountPoint, ".hfl-write-probe-*")
+	if err != nil {
+		return SpaceInfo{}, &WriteProbeError{Cause: err}
+	}
+	probePath := probe.Name()
+	removeProbe := true
+	defer func() {
+		if removeProbe {
+			_ = os.Remove(probePath)
+		}
+	}()
+	if _, err := probe.WriteString("hfl-write-probe\n"); err != nil {
+		_ = probe.Close()
+		return SpaceInfo{}, &WriteProbeError{Cause: err}
+	}
+	if err := probe.Sync(); err != nil {
+		_ = probe.Close()
+		return SpaceInfo{}, &WriteProbeError{Cause: err}
+	}
+	if err := probe.Close(); err != nil {
+		return SpaceInfo{}, &WriteProbeError{Cause: err}
+	}
+	if err := os.Remove(probePath); err != nil {
+		return SpaceInfo{}, &WriteProbeError{
+			Cause: fmt.Errorf("remove validation file: %w", err),
+		}
+	}
+	removeProbe = false
+	return info, nil
 }
 
 func (s *Service) spaceInfo(path string) (SpaceInfo, error) {

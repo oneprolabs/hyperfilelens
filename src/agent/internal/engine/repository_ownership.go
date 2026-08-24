@@ -14,6 +14,10 @@ import (
 
 const repositoryOwnershipMarkerPath = ".hyperfilelens/repository-owner-v1.json"
 
+var errRepositoryDirectoryContainsData = errors.New(
+	"the selected repository directory already contains data",
+)
+
 type repositoryOwnershipMarker struct {
 	DeploymentUUID string `json:"deployment_uuid"`
 	RepositoryUUID string `json:"repository_uuid"`
@@ -67,7 +71,20 @@ func claimFilesystemRepositoryOwnership(spec repositorySpec) error {
 		return err
 	}
 	if len(entries) != 0 {
-		return fmt.Errorf("the selected repository directory already contains data")
+		recovered, recoveryErr := removeKopiaProbeResidue(repositoryPath, entries)
+		if recoveryErr != nil {
+			return recoveryErr
+		}
+		if !recovered {
+			return errRepositoryDirectoryContainsData
+		}
+		entries, err = os.ReadDir(repositoryPath)
+		if err != nil {
+			return err
+		}
+		if len(entries) != 0 {
+			return errRepositoryDirectoryContainsData
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(markerPath), 0o700); err != nil {
 		return err
@@ -115,6 +132,45 @@ func claimFilesystemRepositoryOwnership(spec repositorySpec) error {
 		return fmt.Errorf("repository ownership marker is not durable")
 	}
 	return requireMatchingRepositoryOwner(*persisted, *spec.Ownership)
+}
+
+// removeKopiaProbeResidue removes only the exact metadata file that a legacy
+// Kopia filesystem connect could create while probing an empty directory.  It
+// deliberately rejects every other file, directory, symlink, or shard layout:
+// those may belong to a real repository and must never be adopted implicitly.
+func removeKopiaProbeResidue(repositoryPath string, entries []os.DirEntry) (bool, error) {
+	if len(entries) != 1 || entries[0].Name() != ".shards" {
+		return false, nil
+	}
+	path := filepath.Join(repositoryPath, ".shards")
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() > 1024 {
+		return false, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	var metadata struct {
+		Default             []int `json:"default"`
+		MaxNonShardedLength int   `json:"maxNonShardedLength"`
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &metadata) != nil || json.Unmarshal(raw, &fields) != nil {
+		return false, nil
+	}
+	if len(fields) != 2 || len(metadata.Default) != 2 ||
+		metadata.Default[0] != 3 || metadata.Default[1] != 3 ||
+		metadata.MaxNonShardedLength != 20 {
+		return false, nil
+	}
+	if err := os.Remove(path); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func verifyFilesystemRepositoryOwnership(spec repositorySpec, adoptMissing bool) error {

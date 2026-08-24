@@ -310,3 +310,17 @@ func TestBusyUnmountErrorRecognizesTargetBusy(t *testing.T) {
 		t.Fatal("target-is-busy error was not recognized")
 	}
 }
+
+func TestRecoverableMountValidationErrorIsNarrow(t *testing.T) {
+	if !recoverableMountValidationError(&MountReadOnlyError{Source: "server:/share"}) {
+		t.Fatal("read-only mount should be repairable during explicit validation")
+	}
+	if !recoverableMountValidationError(&MountSourceMismatchError{
+		Expected: "server:/new", Actual: "server:/old",
+	}) {
+		t.Fatal("stale managed mount source should be repairable during explicit validation")
+	}
+	if recoverableMountValidationError(errors.New("permission denied")) {
+		t.Fatal("ordinary mount failures must not trigger a remount")
+	}
+}

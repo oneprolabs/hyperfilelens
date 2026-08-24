@@ -8,6 +8,7 @@ from uuid import uuid4
 from django.apps import apps
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -243,6 +244,13 @@ def _dispatch_automatic_repository_observation_locked(
         and repository.bind_node_type == Repository.BindNodeType.PROXY
         and repository.bind_node_id
     ):
+        claim = _observable_repository_claim(repository)
+        if claim is None:
+            Repository.objects.filter(pk=repository.id).update(
+                health=Repository.Health.UNVERIFIED,
+                health_failures=0,
+            )
+            return []
         if repository.repo_type == Repository.Type.NAS:
             node = validate_proxy_for_repository(repository)
             repository_subdir = nas_proxy_repository_subdir(repository)
@@ -261,13 +269,10 @@ def _dispatch_automatic_repository_observation_locked(
             repository_subdir = ""
             repository_payload = proxy_fs_repository_payload(repository)
             legacy_location = repository_has_legacy_location(repository)
-        legacy_adoption = RepositoryLocationClaim.objects.filter(
-            repository=repository,
-            scope=RepositoryLocationClaim.Scope.REPOSITORY,
-            state=RepositoryLocationClaim.State.OWNED,
-            ownership_verified_at__isnull=True,
-            legacy_adoption_required=True,
-        ).exists()
+        legacy_adoption = (
+            claim.ownership_verified_at is None
+            and claim.legacy_adoption_required
+        )
         return [
             _dispatch_repository_observation_task(
                 repository=repository,
@@ -325,7 +330,15 @@ def _dispatch_automatic_repository_observation_locked(
             scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
             state=RepositoryLocationClaim.State.OWNED,
             owner_node_id__isnull=False,
-        ).values_list("owner_node_id", "root_path")
+        )
+        .filter(
+            Q(ownership_verified_at__isnull=False)
+            | Q(
+                ownership_verified_at__isnull=True,
+                legacy_adoption_required=True,
+            )
+        )
+        .values_list("owner_node_id", "root_path")
     }
     active_keys = {
         (int(node_id), nas_agent_repository_subdir(int(node_id)))
@@ -372,9 +385,16 @@ def _dispatch_automatic_repository_observation_locked(
         claim = RepositoryLocationClaim.objects.filter(
             repository=repository,
             scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+            state=RepositoryLocationClaim.State.OWNED,
             owner_node_id=node.id,
             root_path=repository_subdir,
-        ).first()
+        ).filter(
+            Q(ownership_verified_at__isnull=False)
+            | Q(
+                ownership_verified_at__isnull=True,
+                legacy_adoption_required=True,
+            )
+        ).order_by("-id").first()
         if claim is None:
             continue
         legacy_adoption = (
@@ -516,6 +536,16 @@ def _project_automatic_repository_health(
         )
         if node_task.node_id not in {node.id for node in current_nodes}:
             return False
+    # A task can finish after cleanup, rebinding, or ownership invalidation.
+    # Re-check the physical claim immediately before projecting a successful
+    # result; otherwise a stale success could restore an invalid location to
+    # Online.
+    if not _observation_claim_is_current(
+        repository=repository,
+        node_task=node_task,
+        persisted=persisted,
+    ):
+        return False
 
     outcome = AgentTaskSyncResult(
         task=node_task,
@@ -666,6 +696,45 @@ def _project_repository_observation_success(
                 health_failures=0,
             )
     return True
+
+
+def _observation_claim_is_current(
+    *,
+    repository: Repository,
+    node_task: NodeTask,
+    persisted: dict[str, Any],
+) -> bool:
+    """Return whether an automatic observation still owns its target claim."""
+
+    claims = RepositoryLocationClaim.objects.filter(
+        repository=repository,
+        state=RepositoryLocationClaim.State.OWNED,
+    )
+    if persisted.get("direct_nas") is True:
+        claims = claims.filter(
+            scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
+            owner_node_id=node_task.node_id,
+            root_path=str(persisted.get("repository_subdir") or ""),
+        )
+    else:
+        claims = claims.filter(scope=RepositoryLocationClaim.Scope.REPOSITORY)
+        if repository.repo_type == Repository.Type.NAS:
+            claims = claims.filter(
+                owner_node_id=node_task.node_id,
+                root_path=str(persisted.get("repository_subdir") or ""),
+            )
+    # A pre-ownership Agent is explicitly allowed to use the already-migrated
+    # legacy location.  That compatibility bit is persisted with the task;
+    # do not require a new marker from an Agent that cannot produce one.
+    if persisted.get("legacy_compatibility_allowed") is True:
+        return claims.exists()
+    return claims.filter(
+        Q(ownership_verified_at__isnull=False)
+        | Q(
+            ownership_verified_at__isnull=True,
+            legacy_adoption_required=True,
+        )
+    ).exists()
 
 
 def _project_repository_observation_failure(
@@ -822,7 +891,9 @@ def _finalize_direct_nas_health_group(
         }
         if any(task.status not in terminal for task in tasks):
             return True
-        if any(_observation_task_proves_online(task) for task in tasks):
+        if any(
+            _observation_task_proves_online(repository, task) for task in tasks
+        ):
             Repository.objects.filter(pk=repository.id).update(
                 health=Repository.Health.ONLINE,
                 health_failures=0,
@@ -872,14 +943,22 @@ def _mark_health_group_projected(
     leader.save(update_fields=["payload"])
 
 
-def _observation_task_proves_online(node_task: NodeTask) -> bool:
+def _observation_task_proves_online(
+    repository: Repository,
+    node_task: NodeTask,
+) -> bool:
     if node_task.status != NodeTask.Status.SUCCESS:
         return False
     result = node_task.result if isinstance(node_task.result, dict) else {}
     persisted = node_task.payload if isinstance(node_task.payload, dict) else {}
-    return bool(
+    has_ownership_proof = bool(
         result.get("ownership_verified") is True
         or persisted.get("legacy_compatibility_allowed") is True
+    )
+    return has_ownership_proof and _observation_claim_is_current(
+        repository=repository,
+        node_task=node_task,
+        persisted=persisted,
     )
 
 
@@ -968,6 +1047,7 @@ def _unbound_nas_execution_nodes(
         backup_config_model.objects.filter(
             organization_id=repository.organization_id,
             repository_id=repository.id,
+            status=backup_config_model.Status.ACTIVE,
         )
         .order_by("id")
         .values_list("source_type", "source_ref_id")
@@ -1023,19 +1103,52 @@ def _unbound_nas_execution_nodes(
         for node_id, root_path in RepositoryLocationClaim.objects.filter(
             repository=repository,
             scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
-            state__in=[
-                RepositoryLocationClaim.State.INITIALIZING,
-                RepositoryLocationClaim.State.OWNED,
-                RepositoryLocationClaim.State.RESIDUAL,
-            ],
+            state=RepositoryLocationClaim.State.OWNED,
             owner_node_id__in=execution_node_ids,
-        ).values_list("owner_node_id", "root_path")
+        )
+        .filter(
+            Q(ownership_verified_at__isnull=False)
+            | Q(
+                ownership_verified_at__isnull=True,
+                legacy_adoption_required=True,
+            )
+        )
+        .values_list("owner_node_id", "root_path")
         if str(root_path) == nas_agent_repository_subdir(int(node_id))
     }
     return (
         True,
         bool(claimed_node_ids),
         [nodes[node_id] for node_id in sorted(nodes) if node_id in claimed_node_ids],
+    )
+
+
+def _observable_repository_claim(
+    repository: Repository,
+) -> RepositoryLocationClaim | None:
+    """Return a claim that is safe for a normal repository observation.
+
+    Initialization and residual cleanup own all non-``OWNED`` states.  The
+    automatic health/usage path may observe only a location whose physical
+    ownership has already been verified, apart from the explicit one-time
+    legacy adoption path.
+    """
+
+    return (
+        RepositoryLocationClaim.objects.filter(
+            repository=repository,
+            scope=RepositoryLocationClaim.Scope.REPOSITORY,
+            state=RepositoryLocationClaim.State.OWNED,
+        )
+        .filter(
+            Q(ownership_verified_at__isnull=False)
+            | Q(
+                ownership_verified_at__isnull=True,
+                legacy_adoption_required=True,
+            )
+        )
+        .order_by("id")
+        .first()
     )
 
 

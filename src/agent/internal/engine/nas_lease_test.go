@@ -212,3 +212,25 @@ func TestNASLeasePathsIncludeFlatNASPayload(t *testing.T) {
 		t.Fatalf("lease paths=%v want=[%s]", paths, mountPoint)
 	}
 }
+
+func TestRepairingMountRequiresExclusiveNASLease(t *testing.T) {
+	payload := Payload{Extra: map[string]any{
+		"repair_mount": true,
+	}}
+	for _, kind := range []string{"repo.status", "repository.server.start"} {
+		if !needsExclusiveNASLease(kind, payload) {
+			t.Fatalf("%s with mount repair must acquire an exclusive lease", kind)
+		}
+	}
+	if needsExclusiveNASLease("repo.status", Payload{Extra: map[string]any{}}) {
+		t.Fatal("ordinary repository status must remain a shared read lease")
+	}
+	if !needsExclusiveNASLease("nas.test", Payload{Extra: map[string]any{
+		"require_write": true,
+	}}) {
+		t.Fatal("writable NAS validation must acquire an exclusive lease")
+	}
+	if !needsExclusiveNASLease("repo.initialize", Payload{}) {
+		t.Fatal("NAS repository initialization must acquire an exclusive lease")
+	}
+}

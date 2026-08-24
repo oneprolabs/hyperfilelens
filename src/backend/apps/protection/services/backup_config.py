@@ -876,6 +876,10 @@ def _initialize_direct_nas_repository(
             payload={
                 "repository": payload,
                 "allow_ownership_adoption": allow_ownership_adoption,
+                # Repository initialization and explicit retry are write-intent
+                # paths. Revalidate a stale managed mount instead of silently
+                # reusing a read-only mount.
+                "repair_mount": True,
             },
             correlation_type="protection.backup_config",
             correlation_id=correlation_id,
@@ -919,6 +923,7 @@ def _initialize_direct_nas_repository(
                         payload={
                             "repository": payload,
                             "allow_ownership_adoption": allow_ownership_adoption,
+                            "repair_mount": True,
                         },
                         correlation_type="protection.backup_config",
                         correlation_id=correlation_id,

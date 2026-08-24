@@ -731,7 +731,7 @@ class UnboundNASRepositoryHealthTests(TestCase):
             probe_unbound_nas_repository_health(self.repository)
 
     @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
-    def test_residual_location_is_rechecked_without_ownership_adoption(self, run_agent):
+    def test_residual_location_is_not_observed(self, run_agent):
         agent = self._node("agent-a")
         self._agent_config(agent, name="agent-config")
         mark_repository_location_residual(
@@ -747,11 +747,8 @@ class UnboundNASRepositoryHealthTests(TestCase):
 
         health = probe_unbound_nas_repository_health(self.repository)
 
-        self.assertEqual(health, Repository.Health.OFFLINE)
-        run_agent.assert_called_once()
-        self.assertFalse(
-            run_agent.call_args.kwargs["payload"]["allow_ownership_adoption"]
-        )
+        self.assertEqual(health, Repository.Health.UNVERIFIED)
+        run_agent.assert_not_called()
 
 
 class RepositoryHealthResultProjectionTests(TestCase):
@@ -776,7 +773,14 @@ class RepositoryHealthResultProjectionTests(TestCase):
             health_failures=2,
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=self.proxy.id,
+            config={
+                "proxy_node_base_dir": "/var/lib/hyperfilelens",
+                "proxy_node_dir": "/var/lib/hyperfilelens/hfl-repo-1",
+            },
         )
+        reserve_repository_location(self.repository)
+        mark_repository_location_owned(self.repository)
+        mark_repository_location_ownership_verified(self.repository)
 
     def _repo_status_task(self) -> NodeTask:
         return NodeTask.objects.create(
@@ -892,6 +896,29 @@ class RepositoryHealthResultProjectionTests(TestCase):
         task.save(update_fields=["payload", "correlation_type", "updated_at"])
         self.repository.config = {"proxy_node_dir": "/replacement"}
         self.repository.save(update_fields=["config", "updated_at"])
+
+        projected = project_repository_health_from_agent_result(node_task=task)
+
+        self.assertFalse(projected)
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health, Repository.Health.OFFLINE)
+
+    def test_automatic_probe_success_is_ignored_after_claim_becomes_residual(self):
+        task = self._repo_status_task()
+        task.payload = {
+            "automatic_health_probe": True,
+            "repository_id": self.repository.id,
+            "repository_revision": repository_observation_revision(self.repository),
+            "retry_attempt": 0,
+            "repository_subdir": "",
+            "legacy_compatibility_allowed": False,
+            "direct_nas": False,
+        }
+        task.correlation_type = REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE
+        task.save(update_fields=["payload", "correlation_type", "updated_at"])
+        RepositoryLocationClaim.objects.filter(repository=self.repository).update(
+            state=RepositoryLocationClaim.State.RESIDUAL,
+        )
 
         projected = project_repository_health_from_agent_result(node_task=task)
 
@@ -1038,6 +1065,60 @@ class AutomaticDirectNASObservationTests(TestCase):
         for call in run_async.call_args_list:
             self.assertFalse(call.kwargs["payload"]["health_only"])
 
+    @mock.patch(
+        "apps.storage.services.internal.repository_health.run_agent_task_async"
+    )
+    def test_provision_failed_config_is_not_observed(self, run_async):
+        node = self._node("failed-agent")
+        BackupConfig.objects.filter(
+            organization_id=self.organization.id,
+            source_ref_id=node.id,
+        ).update(status=BackupConfig.Status.PROVISION_FAILED)
+
+        tasks = dispatch_automatic_repository_observation(
+            repository=self.repository,
+            include_usage=True,
+        )
+
+        self.assertEqual(tasks, [])
+        run_async.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_health.run_agent_task_async"
+    )
+    def test_initializing_claim_is_not_observed(self, run_async):
+        node = self._node("initializing-agent")
+        RepositoryLocationClaim.objects.filter(
+            repository=self.repository,
+            owner_node_id=node.id,
+        ).update(state=RepositoryLocationClaim.State.INITIALIZING)
+
+        tasks = dispatch_automatic_repository_observation(
+            repository=self.repository,
+            include_usage=True,
+        )
+
+        self.assertEqual(tasks, [])
+        run_async.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_health.run_agent_task_async"
+    )
+    def test_residual_claim_is_not_observed(self, run_async):
+        node = self._node("residual-agent")
+        RepositoryLocationClaim.objects.filter(
+            repository=self.repository,
+            owner_node_id=node.id,
+        ).update(state=RepositoryLocationClaim.State.RESIDUAL)
+
+        tasks = dispatch_automatic_repository_observation(
+            repository=self.repository,
+            include_usage=True,
+        )
+
+        self.assertEqual(tasks, [])
+        run_async.assert_not_called()
+
     def test_direct_nas_results_project_per_shard_and_aggregate(self):
         node_a = self._node("agent-a")
         node_b = self._node("agent-b")
@@ -1101,6 +1182,72 @@ class AutomaticDirectNASObservationTests(TestCase):
             ).count(),
             2,
         )
+
+    @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
+    def test_direct_nas_group_ignores_success_after_its_claim_is_residual(
+        self,
+        apply_async,
+    ):
+        node_a = self._node("stale-success-agent")
+        node_b = self._node("failed-agent")
+        group_id = "stale-success-group"
+        revision = repository_observation_revision(self.repository)
+
+        def create_task(node: Node, *, status: str, result: dict) -> NodeTask:
+            return NodeTask.objects.create(
+                organization=self.organization,
+                node=node,
+                kind="repo.status",
+                correlation_type=REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE,
+                correlation_id=str(self.repository.id),
+                payload={
+                    "automatic_health_probe": True,
+                    "repository_id": self.repository.id,
+                    "repository_revision": revision,
+                    "repository_subdir": nas_agent_repository_subdir(node.id),
+                    "legacy_compatibility_allowed": False,
+                    "direct_nas": True,
+                    "include_usage": False,
+                    "failure_affects_health": True,
+                    "usage_active": True,
+                    "observation_group_id": group_id,
+                    "expected_node_ids": [node_a.id, node_b.id],
+                    "transport_unknown": False,
+                    "retry_attempt": 0,
+                },
+                status=status,
+                accepted_at=timezone.now(),
+                result=result,
+                watchdog_deadline_at=timezone.now(),
+            )
+
+        successful = create_task(
+            node_a,
+            status=NodeTask.Status.SUCCESS,
+            result={"ownership_verified": True},
+        )
+        failed = create_task(
+            node_b,
+            status=NodeTask.Status.FAILED,
+            result={"error_code": "REPOSITORY_STATUS_FAILED"},
+        )
+        self.assertTrue(
+            project_repository_health_from_agent_result(node_task=successful)
+        )
+        mark_repository_location_residual(
+            self.repository,
+            owner_node_id=node_a.id,
+            repository_subdir=nas_agent_repository_subdir(node_a.id),
+        )
+        Repository.objects.filter(pk=self.repository.id).update(
+            health=Repository.Health.OFFLINE,
+        )
+
+        self.assertTrue(project_repository_health_from_agent_result(node_task=failed))
+
+        self.repository.refresh_from_db()
+        self.assertNotEqual(self.repository.health, Repository.Health.ONLINE)
+        apply_async.assert_called_once()
 
     @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
     def test_offline_peer_keeps_all_failure_result_transport_unknown(

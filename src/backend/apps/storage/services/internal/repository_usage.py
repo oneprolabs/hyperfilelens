@@ -564,6 +564,7 @@ def _direct_nas_agent_config_groups(repository: Repository) -> dict[int, list[in
         backup_config_model.objects.filter(
             organization_id=repository.organization_id,
             repository_id=repository.id,
+            status=backup_config_model.Status.ACTIVE,
         )
         .order_by("source_ref_id", "id")
         .values_list("id", "source_type", "source_ref_id")
@@ -698,7 +699,15 @@ def _sync_direct_nas_agent_usage_shards(repository: Repository) -> tuple[int | N
             scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
             state=RepositoryLocationClaim.State.OWNED,
             owner_node_id__isnull=False,
-        ).values_list("owner_node_id", "root_path")
+        )
+        .filter(
+            Q(ownership_verified_at__isnull=False)
+            | Q(
+                ownership_verified_at__isnull=True,
+                legacy_adoption_required=True,
+            )
+        )
+        .values_list("owner_node_id", "root_path")
     }
     active_keys: set[tuple[int, str]] = {
         (node_id, nas_agent_repository_subdir(node_id))

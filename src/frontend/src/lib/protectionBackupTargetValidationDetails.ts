@@ -21,6 +21,14 @@ const mountHelperRemediations = new Set([
   'install_nas_mount_helper',
   'repair_nas_mount_helper',
 ])
+const nasWriteFailureCodes = new Set([
+  'NAS_MOUNT_READ_ONLY',
+  'NAS_REPOSITORY_READ_ONLY',
+  'NAS_MOUNT_SOURCE_MISMATCH',
+  'NAS_WRITE_PERMISSION_DENIED',
+  'NAS_REPOSITORY_WRITE_DENIED',
+])
+const nasOwnershipFailureCode = 'REPOSITORY_OWNERSHIP_INVALID'
 
 function mountHelperNodeLabel(
   details: NonNullable<BackupTargetValidationResult['details']>,
@@ -101,6 +109,51 @@ export function backupTargetValidationFailureDetails({
         repair
           ? t('protection.backupsPage.targetValidationMountHelperVerifyUsable', { helper })
           : t('protection.backupsPage.targetValidationMountHelperVerifyAvailable', { helper }),
+        t('protection.backupsPage.targetValidationRetryStep'),
+      ],
+      rawDetail: {
+        source: sourceName,
+        error_code: result.code,
+        ...mountDetails,
+        agent_message: message,
+      },
+    }
+  }
+
+  if (nasWriteFailureCodes.has(String(result.code || ''))) {
+    const node = mountHelperNodeLabel(mountDetails, t)
+    const sourceMismatch = result.code === 'NAS_MOUNT_SOURCE_MISMATCH'
+    return {
+      title: t('protection.backupsPage.targetValidationFailedTitle'),
+      summary: t('protection.backupsPage.targetValidationNasWriteSummary'),
+      errorCode: result.code || undefined,
+      issue: message,
+      reasons: [message],
+      resolutions: [
+        sourceMismatch
+          ? t('protection.backupsPage.targetValidationNasVerifySource', { node })
+          : t('protection.backupsPage.targetValidationNasGrantWrite', { node }),
+        t('protection.backupsPage.targetValidationNasRetryRemount'),
+        t('protection.backupsPage.targetValidationRetryStep'),
+      ],
+      rawDetail: {
+        source: sourceName,
+        error_code: result.code,
+        ...mountDetails,
+        agent_message: message,
+      },
+    }
+  }
+
+  if (result.code === nasOwnershipFailureCode) {
+    return {
+      title: t('protection.backupsPage.targetValidationFailedTitle'),
+      summary: t('protection.backupsPage.targetValidationNasOwnershipSummary'),
+      errorCode: result.code,
+      issue: message,
+      reasons: [message],
+      resolutions: [
+        t('protection.backupsPage.targetValidationNasOwnershipRepair'),
         t('protection.backupsPage.targetValidationRetryStep'),
       ],
       rawDetail: {
