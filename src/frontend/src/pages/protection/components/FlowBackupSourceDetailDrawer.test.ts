@@ -94,7 +94,7 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(restoreGuard).toContain("t('protection.backupsPage.msgBackupActiveBlocksActions')")
   })
 
-  it('shows reference storage metrics in the list and expanded snapshot summary', () => {
+  it('shows storage metrics without the reference explanation header', () => {
     const snapshotTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',
@@ -104,17 +104,36 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
       '<el-table v-if="selectedSnapshotDirectories.length"',
     )
 
-    expect(snapshotTab).toContain("t('protection.backupsPage.snapshotNewStorage')")
+    expect(snapshotTab).toContain("t('protection.backupsPage.snapshotListSize')")
     expect(snapshotTab).toContain("t('protection.backupsPage.snapshotRecoverableData')")
     expect(snapshotTab).toContain('fmtReferenceBytes(row.new_packed_content_bytes)')
-    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotStorageEfficiencyTitle')")
+    expect(expandedSummary).not.toContain('snapshot-efficiency-summary__header')
+    expect(expandedSummary).not.toContain("t('protection.backupsPage.snapshotStorageEfficiencyTitle')")
+    expect(expandedSummary).not.toContain("t('protection.backupsPage.snapshotStorageEfficiencyLead')")
+    expect(expandedSummary).not.toContain("t('protection.backupsPage.snapshotStorageReferenceHint')")
     expect(expandedSummary).toContain('selectedSnapshot.new_original_content_bytes')
     expect(expandedSummary).toContain('selectedSnapshot.new_packed_content_bytes')
     expect(expandedSummary).toContain('selectedSnapshot.data_reuse_ratio')
     expect(expandedSummary).toContain('selectedSnapshot.compression_savings_ratio')
     expect(expandedSummary).toContain('fmtCombinedReduction(selectedSnapshot)')
-    expect(enProtectionPages.backupsPage.snapshotNewStorage).toBe('New Storage')
-    expect(enProtectionPages.backupsPage.snapshotRecoverableData).toBe('Recoverable Data')
+    expect(expandedSummary.match(/snapshot-efficiency-summary__metric-info/g)).toHaveLength(6)
+    expect(expandedSummary.match(/append-to="body"/g)).toHaveLength(6)
+    expect(expandedSummary.match(/:z-index="3600"/g)).toHaveLength(6)
+    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotRecoverableDataHint')")
+    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotNewOriginalDataHint')")
+    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotNewStorageHint')")
+    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotDataReuseHint')")
+    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotCompressionSavingsHint')")
+    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotCombinedReductionHint')")
+    expect(drawer).toContain('Math.max(0, Number(value))')
+    expect(drawer).toContain('return `${value.toFixed(2)} : 1`')
+    expect(enProtectionPages.backupsPage.snapshotListSize).toBe('Size')
+    expect(enProtectionPages.backupsPage.snapshotRecoverableData).toBe('Restore Size')
+    expect(enProtectionPages.backupsPage.snapshotNewOriginalData).toBe('New Data')
+    expect(enProtectionPages.backupsPage.snapshotNewStorage).toBe('Snapshot Size')
+    expect(enProtectionPages.backupsPage.snapshotDataReuse).toBe('Reuse Rate')
+    expect(enProtectionPages.backupsPage.snapshotCompressionSavings).toBe('Compression Savings')
+    expect(enProtectionPages.backupsPage.snapshotCombinedReduction).toBe('Reduction Ratio')
     expect(enProtectionPages.backupsPage.snapshotStorageFullyReused).toBe('Fully reused')
   })
 
@@ -142,15 +161,31 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(enProtectionPages.backupsPage.snapshotBrowserBrowse).toBe('Browse')
   })
 
-  it('allocates enough width for both snapshot timestamps', () => {
+  it('keeps snapshot columns compact and places status before timestamps', () => {
     const snapshotTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',
     )
 
     expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colSnapId\')" width="140" fixed>')
-    expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colSnapStart\')" width="160">')
-    expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colSnapEnd\')" width="160">')
+    expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colSnapStart\')" width="150">')
+    expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colSnapEnd\')" width="150">')
+    expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupsPage.snapshotListSize\')" width="88" align="right">')
+    expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupsPage.snapshotRecoverableData\')" width="105" align="right">')
+    expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.sourceResources.colActions\')" width="171"')
+    expect(drawer).toContain('gap: 6px;')
+    expect(drawer).toContain('padding: 0 3px;')
+    expect(drawer).toContain('padding: 3px 8px;')
+    expect(snapshotTab.indexOf("t('protection.backupDetail.labelStatus')"))
+      .toBeLessThan(snapshotTab.indexOf("t('protection.backupDetail.colSnapStart')"))
+  })
+
+  it('keeps expanded snapshot details pinned to the main table viewport', () => {
+    expect(drawer).toContain('class="hfl-list-table snapshot-points-table"')
+    expect(drawer).toContain('.snapshot-points-table { container-type: inline-size; }')
+    expect(drawer).toContain('.snapshot-directory-expand-panel { position: sticky; left: 35px;')
+    expect(drawer).toContain('width: calc(100cqw - 49px);')
+    expect(drawer).toContain('.snapshot-directory-table { width: 100%; min-width: 0; }')
   })
 
   it('preserves loaded snapshot details when the active tab refreshes its list', () => {

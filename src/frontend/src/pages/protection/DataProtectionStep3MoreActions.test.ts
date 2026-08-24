@@ -190,14 +190,15 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(refresh).not.toContain('ElMessage.success')
   })
 
-  it('loads restore records whenever Step 3 loads its source rows', () => {
+  it('hydrates Step 3 from the paged aggregate without a global history refresh', () => {
     const refresh = sourceBetween('async function refreshFlowStepData', 'function flowRowFromSourceId')
     const loadStep3Index = refresh.indexOf('await loadStep3Selectable({ signal })')
-    const configsIndex = refresh.indexOf('await refreshBackupConfigs(signal)')
     const toolbarRefresh = functionSource('refreshTaskLists', 'syncStep3TableSelection')
 
     expect(loadStep3Index).toBeGreaterThan(-1)
-    expect(configsIndex).toBeGreaterThan(loadStep3Index)
+    expect(refresh).not.toContain('await refreshBackupConfigs(signal)')
+    expect(page).toContain('restoreRecordRows.value = expandedRestoreRecords(rows)')
+    expect(page).toContain('const raw = recordValue(recordValue(row.runtime).restore).latest_record')
     expect(toolbarRefresh).toContain('await refreshFlowStepData()')
     expect(toolbarRefresh).not.toContain('loadStep3Selectable({ signal: signal ?? undefined })')
   })
@@ -256,15 +257,22 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(unregister).toContain('monitorPendingUnregister(monitoredSourceIds, monitoredTaskUuids)')
   })
 
-  it('refreshes source rows, pipeline membership, configurations, and pagination through one helper', () => {
+  it('refreshes source rows, aggregate configuration state, pipeline membership, and pagination through one helper', () => {
     const refresh = functionSource('refreshStep3AfterMoreAction', 'finishCreateAndGoToStep3')
 
     expect(refresh).toContain('pageRequests.nextSignal(scope)')
     expect(refresh).toContain('refreshPipelineStep2PlusIds(signal)')
     expect(refresh).not.toContain('refreshPipelineStep3Ids(signal)')
     expect(refresh).toContain('await loadStep3SelectableWithPageClamp(signal, {')
-    expect(refresh).toContain('await refreshBackupConfigs(signal, { preserveOnError: options.preserveConfigOnError })')
+    expect(refresh).not.toContain('refreshBackupConfigs(')
     expect(refresh).toContain('pageRequests.isCurrentSignal(scope, signal)')
     expect(refresh).toContain('syncStep3TableSelection()')
+  })
+
+  it('uses repository details embedded in the Step 3 aggregate', () => {
+    const repositories = functionSource('expandedRepositories', 'expandedPolicies')
+
+    expect(repositories).toContain("repo_type: String(repo.repo_type || '')")
+    expect(repositories).not.toContain("repo_type: ''")
   })
 })

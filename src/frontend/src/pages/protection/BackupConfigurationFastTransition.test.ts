@@ -42,7 +42,6 @@ describe('backup configuration fast transition', () => {
     const reconcile = sourceBetween(page, 'function reconcileCreatedBackupConfigs', 'function finishCreateAndGoToStep3')
 
     expect(refresh).toContain('if (!options.preserveOnError)')
-    expect(reconcile).toContain('preserveConfigOnError: true')
     expect(reconcile).toContain('preserveExpandedState: true')
   })
 

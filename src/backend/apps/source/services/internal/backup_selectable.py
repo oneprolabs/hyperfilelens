@@ -480,6 +480,30 @@ def _task_payload(task: Task | None) -> dict[str, Any] | None:
     }
 
 
+def _restore_record_payload(record: RestoreRecord | None) -> dict[str, Any] | None:
+    if record is None:
+        return None
+    return {
+        "id": record.id,
+        "restore_uid": record.restore_uid,
+        "source_mode": record.source_mode,
+        "plan_id": record.plan_id,
+        "task_id": record.task_id,
+        "task_uuid": str(record.task_uuid),
+        "source_type": record.source_type,
+        "source_ref_id": record.source_ref_id,
+        "backup_config_id": record.backup_config_id,
+        "source_snapshot_id": record.source_snapshot_id,
+        "target_type": record.target_type,
+        "target_ref_id": record.target_ref_id,
+        "target_path": record.target_path,
+        "scope": record.scope,
+        "conflict_mode": record.conflict_mode,
+        "created_at": _iso(record.created_at),
+        "updated_at": _iso(record.updated_at),
+    }
+
+
 def _empty_runtime() -> dict[str, Any]:
     return {
         "backup": {
@@ -503,6 +527,7 @@ def _empty_runtime() -> dict[str, Any]:
             "total": 0,
             "running_count": 0,
             "latest_task": None,
+            "latest_record": None,
         },
         "latest_snapshot": None,
         "has_restorable_snapshot": False,
@@ -1007,6 +1032,7 @@ def _attach_runtime_expansion(
         if latest_restore_pair:
             record, task = latest_restore_pair
             runtime["restore"]["latest_task"] = _task_payload(task)
+            runtime["restore"]["latest_record"] = _restore_record_payload(record)
             runtime["restore"]["last_restore_at"] = _iso(
                 (task.finished_at if task else None)
                 or record.updated_at

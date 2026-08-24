@@ -795,10 +795,24 @@ function restoreRecordIsRunning(record: RestoreRecord) {
   return restoreRecordFlowStatus(record, restoreRecordTaskRow(record, restoreTaskRows.value)) === 'running'
 }
 
-async function refreshRestoreRecords(signal?: AbortSignal) {
-  const records = await listRestoreRecords({ page: 1, page_size: 500 }, { signal })
-  restoreRecordRows.value = records.results
-  syncRestoreRecordsToFlowTasks(records.results, restoreTaskRows.value)
+async function refreshRestoreRecords(sourceId: string, signal?: AbortSignal) {
+  const endpoint = parseEndpointUiId(sourceId)
+  if (!endpoint || endpoint.type === 'proxy') return
+  const records = await listRestoreRecords({
+    page: 1,
+    page_size: 100,
+    source_type: endpoint.type,
+    source_ref_id: endpoint.refId,
+  }, { signal })
+  const sourceConfigIds = new Set(sourceBackupConfigIds(sourceId))
+  restoreRecordRows.value = [
+    ...restoreRecordRows.value.filter((record) => (
+      endpointUiId(record.source_type, record.source_ref_id) !== sourceId
+      && !sourceConfigIds.has(Number(record.backup_config_id || 0))
+    )),
+    ...records.results,
+  ]
+  syncRestoreRecordsToFlowTasks(restoreRecordRows.value, restoreTaskRows.value)
 }
 
 async function refreshStep3RuntimeRows(signal?: AbortSignal) {
@@ -824,6 +838,8 @@ async function refreshStep3RuntimeRows(signal?: AbortSignal) {
   syncCurrentBackupSnapshotsToDemoStore(backupSnapshotRows.value)
   backupTaskRows.value = expandedTasks(rows, 'backup')
   restoreTaskRows.value = expandedTasks(rows, 'restore')
+  restoreRecordRows.value = expandedRestoreRecords(rows)
+  syncRestoreRecordsToFlowTasks(restoreRecordRows.value, restoreTaskRows.value)
 }
 
 function normalizeSourceIdList(ids: string[]) {
@@ -1207,6 +1223,39 @@ function expandedTasks(rows: FlowSourceRow[], taskType: 'backup' | 'restore'): T
     .filter((task): task is TaskRow => Boolean(task && typeof task === 'object'))
 }
 
+function expandedRestoreRecords(rows: FlowSourceRow[]): RestoreRecord[] {
+  return rows.flatMap((row) => {
+    const raw = recordValue(recordValue(row.runtime).restore).latest_record
+    if (!raw || typeof raw !== 'object') return []
+    const record = raw as Partial<RestoreRecord>
+    const id = Number(record.id || 0)
+    if (!id) return []
+    return [{
+      ...record,
+      id,
+      restore_uid: String(record.restore_uid || id),
+      source_mode: record.source_mode || 'manual',
+      plan_id: record.plan_id ?? null,
+      task_id: Number(record.task_id || 0),
+      task_uuid: String(record.task_uuid || ''),
+      source_type: record.source_type || 'agent',
+      source_ref_id: Number(record.source_ref_id || 0),
+      backup_config_id: record.backup_config_id ?? null,
+      source_snapshot_id: Number(record.source_snapshot_id || 0),
+      source_snapshot_uid: '',
+      target_type: record.target_type || 'agent',
+      target_ref_id: Number(record.target_ref_id || 0),
+      target_path: String(record.target_path || ''),
+      scope: record.scope || 'paths',
+      conflict_mode: record.conflict_mode || 'overwrite',
+      created_at: String(record.created_at || ''),
+      updated_at: String(record.updated_at || ''),
+      items: [],
+      task_summary: null,
+    } as RestoreRecord]
+  })
+}
+
 function expandedRepositories(rows: FlowSourceRow[]): StorageRepository[] {
   const repos = new Map<number, StorageRepository>()
   for (const row of rows) {
@@ -1218,7 +1267,7 @@ function expandedRepositories(rows: FlowSourceRow[]): StorageRepository[] {
         id,
         organization_id: 0,
         name: String(repo.name || `#${id}`),
-        repo_type: '',
+        repo_type: String(repo.repo_type || ''),
         status: String(repo.status || ''),
         health: String(repo.health || ''),
         config: {
@@ -1348,6 +1397,8 @@ function syncExpandedStep3Rows(rows: FlowSourceRow[]) {
   backupSnapshotRows.value = expandedSnapshots(rows)
   backupTaskRows.value = expandedTasks(rows, 'backup')
   restoreTaskRows.value = expandedTasks(rows, 'restore')
+  restoreRecordRows.value = expandedRestoreRecords(rows)
+  syncRestoreRecordsToFlowTasks(restoreRecordRows.value, restoreTaskRows.value)
   if (configs.length) syncRealBackupConfigsToDemoStore(configs, backupSnapshotRows.value)
   return configs
 }
@@ -1525,9 +1576,6 @@ async function loadStep3Selectable(options: { signal?: AbortSignal; syncExpanded
 async function refreshStep3State(signal?: AbortSignal) {
   if (flowMainStep.value === 2) {
     await loadStep3Selectable({ signal })
-    // Step 3 task links navigate through restore records, which are not part
-    // of the selectable-source runtime expansion.
-    await refreshBackupConfigs(signal)
     return
   }
   await Promise.all([
@@ -1590,9 +1638,6 @@ async function refreshFlowStepData(
     }
 
     await loadStep3Selectable({ signal })
-    // Step 3 task links navigate through restore records, which are not part
-    // of the selectable-source runtime expansion.
-    await refreshBackupConfigs(signal)
   } catch (e) {
     if (!pageRequests.isAbortError(e)) {
       showApiError(e)
@@ -2029,7 +2074,6 @@ async function refreshStep3AfterMoreAction(options: {
   preserveSelection?: boolean
   closeMissingDetail?: boolean
   showLoading?: boolean
-  preserveConfigOnError?: boolean
   preserveExpandedState?: boolean
 } = {}) {
   const scope = flowStepScope(2)
@@ -2049,9 +2093,6 @@ async function refreshStep3AfterMoreAction(options: {
       syncExpanded: options.preserveExpandedState !== true,
     })
     if (!pageRequests.isCurrentSignal(scope, signal)) return []
-    await refreshBackupConfigs(signal, { preserveOnError: options.preserveConfigOnError })
-    if (!pageRequests.isCurrentSignal(scope, signal)) return []
-
     if (activeSourceId) {
       const latestActiveSource = latestStep3SourceRow(activeSourceId)
       if (latestActiveSource && sourceHasBackupConfig(activeSourceId)) {
@@ -2117,7 +2158,6 @@ function reconcileCreatedBackupConfigs(sourceIds: string[]) {
   void refreshStep3AfterMoreAction({
     focusIds: sourceIds,
     showLoading: false,
-    preserveConfigOnError: true,
     preserveExpandedState: true,
   }).catch((err) => {
     if (!pageRequests.isAbortError(err)) showApiError(err)
@@ -3568,7 +3608,7 @@ function openRestoreTaskStatusDrawer(row: FlowSourceRow) {
   })
   const scope = 'restore-task-drawer'
   const signal = pageRequests.nextSignal(scope)
-  void refreshRestoreRecords(signal)
+  void refreshRestoreRecords(row.id, signal)
     .catch((e) => {
       showApiError(e)
     })
