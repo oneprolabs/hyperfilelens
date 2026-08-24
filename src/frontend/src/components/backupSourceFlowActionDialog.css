@@ -71,7 +71,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  padding: 10px 20px;
+  padding: 10px 20px 18px;
   margin: 0;
   border-top: 1px solid var(--el-border-color-extra-light, rgba(15, 23, 42, 0.06));
   background: var(--el-fill-color-blank, #fafafa);
