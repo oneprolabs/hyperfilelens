@@ -82,6 +82,7 @@ class TaskRegistry:
         enabled: bool = True,
         expire_seconds: int | None = None,
         coalesce_wakeup: bool = True,
+        sync_existing_kwargs: bool = False,
     ) -> None:
         if expire_seconds is not None and int(expire_seconds) < 1:
             raise ValueError("expire_seconds must be positive when configured")
@@ -96,6 +97,7 @@ class TaskRegistry:
                 int(expire_seconds) if expire_seconds is not None else None
             ),
             "coalesce_wakeup": bool(coalesce_wakeup),
+            "sync_existing_kwargs": bool(sync_existing_kwargs),
         }
 
     def _apply_one(self, name: str, entry: dict) -> bool:
@@ -147,6 +149,12 @@ class TaskRegistry:
                 headers.get(PERIODIC_WAKEUP_COALESCE_HEADER)
                 is not expected_coalescing
             )
+            kwargs_changed = (
+                entry["sync_existing_kwargs"]
+                and obj.kwargs != defaults["kwargs"]
+            )
+            if kwargs_changed:
+                obj.kwargs = defaults["kwargs"]
             if headers_changed:
                 headers[PERIODIC_WAKEUP_COALESCE_HEADER] = expected_coalescing
                 obj.headers = json.dumps(headers)
@@ -155,10 +163,12 @@ class TaskRegistry:
                 expire_seconds is not None
                 and obj.expire_seconds != expire_seconds
             )
-            if not headers_changed and not expiry_changed:
+            if not headers_changed and not expiry_changed and not kwargs_changed:
                 logger.debug("Periodic task exists, skipping update: %s", name)
                 return False
             update_fields = ["headers"] if headers_changed else []
+            if kwargs_changed:
+                update_fields.append("kwargs")
             if expiry_changed:
                 obj.expire_seconds = expire_seconds
                 update_fields.append("expire_seconds")

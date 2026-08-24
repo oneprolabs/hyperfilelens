@@ -49,6 +49,14 @@ from apps.source.services.internal.source_credentials import (
 logger = logging.getLogger(__name__)
 
 
+def _node_agent_data_dir(node: Node) -> str | None:
+    metadata = node.metadata if isinstance(node.metadata, dict) else {}
+    inventory = metadata.get("inventory")
+    if not isinstance(inventory, dict):
+        return None
+    return str(inventory.get("root_path") or "").strip() or None
+
+
 def _cancel_active_connection_probe(resource: SourceResource) -> None:
     if resource.connection_test_status not in ConnectionTestStatus.ACTIVE:
         return
@@ -427,6 +435,7 @@ def test_draft_connection(
     validation_mount_point = agent_paths.source_validation_mount_point(
         str(uuid4()),
         node.id,
+        data_dir=_node_agent_data_dir(node),
     )
     return public_connection_result(run_connection_test(
         bound_node=node,

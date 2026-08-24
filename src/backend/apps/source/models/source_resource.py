@@ -121,20 +121,29 @@ class SourceResource(OrganizationScopedModel):
     def requires_mount(self) -> bool:
         return self.resource_type in ResourceType.REQUIRES_MOUNT
 
+    def agent_data_dir(self) -> str | None:
+        """Return the bound proxy's advertised Agent data root, if known."""
+        node = self.bound_node
+        metadata = node.metadata if node and isinstance(node.metadata, dict) else {}
+        inventory = metadata.get("inventory") if isinstance(metadata, dict) else {}
+        root_path = inventory.get("root_path") if isinstance(inventory, dict) else ""
+        return str(root_path or "").strip() or None
+
     def effective_mount_point(self) -> str:
+        data_dir = self.agent_data_dir()
         config_path = str((self.config or {}).get("path") or "").strip()
         if config_path:
             try:
-                return agent_paths.require_agent_mount_path(config_path)
+                return agent_paths.require_agent_mount_path(config_path, data_dir=data_dir)
             except ValueError:
                 pass
         stored = str(self.mount_point or "").strip()
         if stored:
             try:
-                return agent_paths.require_agent_mount_path(stored)
+                return agent_paths.require_agent_mount_path(stored, data_dir=data_dir)
             except ValueError:
                 pass
-        return agent_paths.source_mount_point(self.id)
+        return agent_paths.source_mount_point(self.id, data_dir=data_dir)
 
     def resolved_credentials(self) -> dict:
         from apps.source.services.internal.source_credentials import (
