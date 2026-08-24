@@ -135,6 +135,7 @@ describe('useCopilotSelectionPreview', () => {
 
   it('reuses a still-running Reader task when automatic polling resumes', async () => {
     vi.useFakeTimers()
+    const translate = vi.fn((key: string) => `translated:${key}`)
     mocks.cancelCopilotScopePreview.mockResolvedValue(undefined)
     mocks.startCopilotScopePreview.mockResolvedValue({
       task_id: 'scope-task-1',
@@ -150,6 +151,7 @@ describe('useCopilotSelectionPreview', () => {
       gatewayLinkId: computed(() => 23),
       gatewayMode: ref('auto'),
       scopes: computed(() => scopes.value),
+      translate,
     }))
     if (!preview) throw new Error('preview scope was not created')
 
@@ -157,6 +159,9 @@ describe('useCopilotSelectionPreview', () => {
     await nextTick()
 
     expect(preview.calculationStatus.value).toBe('waiting')
+    expect(preview.stateForScope('nested').error).toBe(
+      'translated:insight.copilot.waitingForReader',
+    )
     expect(mocks.startCopilotScopePreview).toHaveBeenCalledTimes(1)
     expect(mocks.cancelCopilotScopePreview).not.toHaveBeenCalled()
 
