@@ -1,7 +1,21 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { I18nT, useI18n } from 'vue-i18n'
-import { Copy, Check, TriangleAlert, RefreshCw, ChevronDown, Info, Cpu, MemoryStick, HardDrive } from 'lucide-vue-next'
+import {
+  Copy,
+  Check,
+  TriangleAlert,
+  RefreshCw,
+  ChevronDown,
+  Info,
+  Cpu,
+  MemoryStick,
+  HardDrive,
+  Folder,
+  Clock3,
+  UserRoundCheck,
+  Server,
+} from 'lucide-vue-next'
 import AgentPlatformBrandIcon from './agent-deploy/AgentPlatformBrandIcon.vue'
 import UbuntuBrandIcon from './agent-deploy/UbuntuBrandIcon.vue'
 import {
@@ -87,9 +101,10 @@ const defaultInstallationModeForOs = (os: EnrollmentOs): NodeInstallationMode =>
   os === 'linux' ? 'user_continuous' : 'user'
 )
 const selectedInstallationMode = ref<NodeInstallationMode>(
-  props.installationMode ?? defaultInstallationModeForOs(props.os),
+  props.role === 'agent' && props.nodeId == null
+    ? defaultInstallationModeForOs(props.os)
+    : props.installationMode ?? defaultInstallationModeForOs(props.os),
 )
-const installationModeTouched = ref(props.installationMode != null)
 const effectiveInstallationMode = computed<NodeInstallationMode>(() => (
   props.role === 'agent' ? selectedInstallationMode.value : 'system'
 ))
@@ -254,48 +269,84 @@ const osPickerOptions = computed(() => [
 // Keep service-manager details internal. The available choices describe the
 // protection result and lifecycle boundary; the installer selects the native
 // service mechanism for the chosen operating system.
-const installationModeOptions = computed(() => [
-  {
-    value: 'user' as NodeInstallationMode,
-    title: t('nodeLifecycle.installationModeUser'),
-    description: t('nodeLifecycle.installationModeUserDescription'),
-    scope: t('nodeLifecycle.installationModeUserScope'),
-    runtime: t('nodeLifecycle.installationModeUserRuntime'),
-    permission: t('nodeLifecycle.installationModeUserPermission'),
-    recommendation: t(`nodeLifecycle.installationModeUserRecommendation.${props.os}`),
-    recommended: defaultInstallationModeForOs(props.os) === 'user',
-  },
-  {
-    value: 'user_continuous' as NodeInstallationMode,
-    title: t('nodeLifecycle.installationModeUserContinuous'),
-    description: t('nodeLifecycle.installationModeUserContinuousDescription'),
-    scope: t('nodeLifecycle.installationModeUserContinuousScope'),
-    runtime: t('nodeLifecycle.installationModeUserContinuousRuntime'),
-    permission: t('nodeLifecycle.installationModeUserContinuousPermission'),
-    recommendation: t(`nodeLifecycle.installationModeUserContinuousRecommendation.${props.os}`),
-    recommended: defaultInstallationModeForOs(props.os) === 'user_continuous',
-  },
-  {
-    value: 'account' as NodeInstallationMode,
-    title: t('nodeLifecycle.installationModeAccount'),
-    description: t('nodeLifecycle.installationModeAccountDescription'),
-    scope: t('nodeLifecycle.installationModeAccountScope'),
-    runtime: t('nodeLifecycle.installationModeAccountRuntime'),
-    permission: t('nodeLifecycle.installationModeAccountPermission'),
-    recommendation: t(`nodeLifecycle.installationModeAccountRecommendation.${props.os}`),
-    recommended: false,
-  },
-  {
-    value: 'system' as NodeInstallationMode,
-    title: t('nodeLifecycle.installationModeSystem'),
-    description: t('nodeLifecycle.installationModeSystemDescription'),
-    scope: t('nodeLifecycle.installationModeSystemScope'),
-    runtime: t('nodeLifecycle.installationModeSystemRuntime'),
-    permission: t('nodeLifecycle.installationModeSystemPermission'),
-    recommendation: t(`nodeLifecycle.installationModeSystemRecommendation.${props.os}`),
-    recommended: defaultInstallationModeForOs(props.os) === 'system',
-  },
-].filter((option) => option.value !== 'user_continuous' || props.os === 'linux'))
+//
+// Product exposure is intentionally narrower than backend/installer support:
+// new agent enrollment offers exactly two modes per operating system. The
+// account mode and Linux user mode remain supported for compatibility and
+// existing-node maintenance, but are hidden from the new-install workflow
+// until their product workflows are finalized. Do not remove either mode from
+// shared types or lifecycle implementations when changing this page policy.
+const isNewAgentInstallation = computed(() => props.role === 'agent' && props.nodeId == null)
+
+const installationModeOptions = computed(() => {
+  const options = [
+    {
+      value: 'user' as NodeInstallationMode,
+      icon: Folder,
+      title: t('nodeLifecycle.installationModeUser'),
+      scope: t('nodeLifecycle.installationModeUserScope'),
+      runtimeTag: t('nodeLifecycle.installationModeUserRuntimeTag'),
+      permissionTag: t('nodeLifecycle.installationModeUserPermissionTag'),
+      recommended: defaultInstallationModeForOs(props.os) === 'user',
+    },
+    {
+      value: 'user_continuous' as NodeInstallationMode,
+      icon: Clock3,
+      title: t('nodeLifecycle.installationModeUserContinuous'),
+      scope: t('nodeLifecycle.installationModeUserContinuousScope'),
+      runtimeTag: t('nodeLifecycle.installationModeUserContinuousRuntimeTag'),
+      permissionTag: t('nodeLifecycle.installationModeUserContinuousPermissionTag'),
+      recommended: defaultInstallationModeForOs(props.os) === 'user_continuous',
+    },
+    {
+      value: 'account' as NodeInstallationMode,
+      icon: UserRoundCheck,
+      title: t('nodeLifecycle.installationModeAccount'),
+      scope: t('nodeLifecycle.installationModeAccountScope'),
+      runtimeTag: t('nodeLifecycle.installationModeAccountRuntimeTag'),
+      permissionTag: t('nodeLifecycle.installationModeAccountPermissionTag'),
+      recommended: false,
+    },
+    {
+      value: 'system' as NodeInstallationMode,
+      icon: Server,
+      title: t('nodeLifecycle.installationModeSystem'),
+      scope: t('nodeLifecycle.installationModeSystemScope'),
+      runtimeTag: t('nodeLifecycle.installationModeSystemRuntimeTag'),
+      permissionTag: t('nodeLifecycle.installationModeSystemPermissionTag'),
+      recommended: defaultInstallationModeForOs(props.os) === 'system',
+    },
+  ]
+
+  if (!isNewAgentInstallation.value) {
+    return options.filter((option) => option.value !== 'user_continuous' || props.os === 'linux')
+  }
+
+  return options.filter((option) => {
+    if (option.value === 'account') return false
+    if (props.os === 'linux') {
+      return option.value === 'user_continuous' || option.value === 'system'
+    }
+    return option.value === 'user' || option.value === 'system'
+  })
+})
+
+const selectedInstallationModeTitle = computed(() => (
+  installationModeOptions.value.find((option) => option.value === selectedInstallationMode.value)?.title ?? ''
+))
+
+const selectedInstallationModeHint = computed(() => {
+  if (selectedInstallationMode.value === 'user_continuous') {
+    return t('nodeLifecycle.installationModeUserContinuousHint')
+  }
+  if (selectedInstallationMode.value === 'user') {
+    return t('nodeLifecycle.installationModeUserHint')
+  }
+  if (selectedInstallationMode.value === 'account') {
+    return t('nodeLifecycle.installationModeAccountHint')
+  }
+  return t('nodeLifecycle.installationModeSystemHint')
+})
 
 const installLeadKey = computed(() => {
   if (effectiveInstallationMode.value === 'user' || effectiveInstallationMode.value === 'user_continuous') return 'nodeLifecycle.installLeadUser'
@@ -478,6 +529,13 @@ watch(
     if (isLinuxOnlyRole(props.role) && props.os !== 'linux') {
       emit('update:os', 'linux')
     }
+    if (isNewAgentInstallation.value) {
+      const defaultMode = defaultInstallationModeForOs(props.os)
+      if (selectedInstallationMode.value !== defaultMode) {
+        selectedInstallationMode.value = defaultMode
+        return
+      }
+    }
     const staleTokenId = enrollmentTokenId.value
     const staleTokenIsPlatform = enrollmentTokenIsPlatform.value
     clearInstallCommand()
@@ -492,23 +550,10 @@ watch(
 watch(
   () => props.installationMode,
   (mode) => {
-    if (mode) {
+    if (mode && (!isNewAgentInstallation.value || mode === defaultInstallationModeForOs(props.os))) {
       selectedInstallationMode.value = mode
-      installationModeTouched.value = true
-    }
-  },
-)
-
-watch(
-  () => props.os,
-  (os) => {
-    if (os !== 'linux' && selectedInstallationMode.value === 'user_continuous') {
-      selectedInstallationMode.value = defaultInstallationModeForOs(os)
-      installationModeTouched.value = false
-      return
-    }
-    if (!installationModeTouched.value && props.role === 'agent') {
-      selectedInstallationMode.value = defaultInstallationModeForOs(os)
+    } else if (isNewAgentInstallation.value) {
+      selectedInstallationMode.value = defaultInstallationModeForOs(props.os)
     }
   },
 )
@@ -916,18 +961,27 @@ defineExpose({ clearInstallCommand })
             <ElRadioGroup
               v-model="selectedInstallationMode"
               class="installation-mode-grid"
-              :class="{ 'installation-mode-grid--four': installationModeOptions.length === 4 }"
               :aria-label="t('nodeLifecycle.installationModeStep')"
-              @change="installationModeTouched = true"
             >
               <ElRadio
                 v-for="option in installationModeOptions"
                 :key="option.value"
                 :value="option.value"
                 border
+                :data-mode="option.value"
                 class="installation-mode-card !mr-0"
               >
                 <span class="installation-mode-card__content">
+                  <span
+                    class="installation-mode-card__icon"
+                    aria-hidden="true"
+                  >
+                    <component
+                      :is="option.icon"
+                      :size="17"
+                      :stroke-width="1.8"
+                    />
+                  </span>
                   <span class="installation-mode-card__title-row">
                     <strong class="installation-mode-card__title">{{ option.title }}</strong>
                     <span
@@ -937,12 +991,10 @@ defineExpose({ clearInstallCommand })
                       {{ t('nodeLifecycle.installationModeRecommended') }}
                     </span>
                   </span>
-                  <span class="installation-mode-card__description">{{ option.description }}</span>
-                  <span class="installation-mode-card__recommendation">{{ option.recommendation }}</span>
-                  <span class="installation-mode-card__details">
-                    <span><b>{{ t('nodeLifecycle.installationModeScopeLabel') }}</b>{{ option.scope }}</span>
-                    <span><b>{{ t('nodeLifecycle.installationModeRuntimeLabel') }}</b>{{ option.runtime }}</span>
-                    <span><b>{{ t('nodeLifecycle.installationModePermissionLabel') }}</b>{{ option.permission }}</span>
+                  <span class="installation-mode-card__scope">{{ option.scope }}</span>
+                  <span class="installation-mode-card__meta">
+                    <span>{{ option.runtimeTag }}</span>
+                    <span>{{ option.permissionTag }}</span>
                   </span>
                 </span>
               </ElRadio>
@@ -951,13 +1003,14 @@ defineExpose({ clearInstallCommand })
               class="installation-mode-picker__hint"
               aria-live="polite"
             >
-              {{ selectedInstallationMode === 'user_continuous'
-                ? t('nodeLifecycle.installationModeUserContinuousHint')
-                : selectedInstallationMode === 'user'
-                  ? t('nodeLifecycle.installationModeUserHint')
-                  : selectedInstallationMode === 'account'
-                    ? t('nodeLifecycle.installationModeAccountHint')
-                    : t('nodeLifecycle.installationModeSystemHint') }}
+              <span
+                class="installation-mode-picker__hint-dot"
+                aria-hidden="true"
+              />
+              <span>
+                <strong>{{ t('nodeLifecycle.installationModeSelected', { mode: selectedInstallationModeTitle }) }}</strong>
+                {{ selectedInstallationModeHint }}
+              </span>
             </p>
           </div>
         </section>
@@ -1350,23 +1403,20 @@ defineExpose({ clearInstallCommand })
 
 .installation-mode-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   align-items: stretch;
 }
 
-.installation-mode-grid--four {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
 .installation-mode-card {
+  position: relative;
   display: flex;
   align-items: flex-start;
   min-width: 0;
-  min-height: 224px;
+  min-height: 142px;
   height: 100%;
   margin: 0;
-  padding: 14px 16px;
+  padding: 14px 14px 13px;
   white-space: normal;
 }
 
@@ -1375,16 +1425,36 @@ defineExpose({ clearInstallCommand })
   min-width: 0;
   width: 100%;
   height: 100%;
-  padding-left: 8px;
+  padding-left: 0;
   white-space: normal;
+}
+
+.installation-mode-card :deep(.el-radio__input) {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 1;
 }
 
 .installation-mode-card__content {
   display: grid;
-  gap: 6px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-rows: auto auto 1fr auto;
+  column-gap: 10px;
   height: 100%;
   min-width: 0;
-  grid-template-rows: auto auto auto 1fr;
+}
+
+.installation-mode-card__icon {
+  display: grid;
+  grid-column: 1;
+  grid-row: 1;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--color-primary-light, #f2f0fe);
+  color: var(--color-primary, #6d5ef6);
 }
 
 .installation-mode-card__title {
@@ -1395,9 +1465,13 @@ defineExpose({ clearInstallCommand })
 
 .installation-mode-card__title-row {
   display: flex;
+  grid-column: 2;
+  grid-row: 1;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
+  min-width: 0;
+  padding-right: 24px;
 }
 
 .installation-mode-card__badge {
@@ -1411,34 +1485,36 @@ defineExpose({ clearInstallCommand })
   line-height: 1.4;
 }
 
-.installation-mode-card__description,
-.installation-mode-card__recommendation,
-.installation-mode-card__details {
+.installation-mode-card__scope {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin-top: 10px;
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.5;
 }
 
-.installation-mode-card__recommendation {
-  color: var(--color-info);
-  font-weight: 600;
+.installation-mode-card__meta {
+  display: flex;
+  grid-column: 1 / -1;
+  grid-row: 4;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 12px;
 }
 
-.installation-mode-card__details {
-  display: grid;
-  gap: 2px;
-  padding-top: 4px;
-  border-top: 1px solid var(--color-border-light);
-}
-
-.installation-mode-card__details b {
-  color: var(--color-text-secondary);
-  font-weight: 600;
+.installation-mode-card__meta span {
+  padding: 4px 7px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 5px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 @media (max-width: 920px) {
-  .installation-mode-grid,
-  .installation-mode-grid--four {
+  .installation-mode-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1454,10 +1530,27 @@ defineExpose({ clearInstallCommand })
 }
 
 .installation-mode-picker__hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   margin: 0;
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.installation-mode-picker__hint strong {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.installation-mode-picker__hint-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--color-primary, #6d5ef6);
 }
 
 .agent-install-wizard--maintenance {

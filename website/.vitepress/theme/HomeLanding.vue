@@ -35,6 +35,40 @@ const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
 const sourceLensUrl = 'https://github.com/HyperBDR/sourcelens'
 const communityInstallGuideUrl = 'https://github.com/oneprolabs/hyperfilelens#community-online-installation'
 const communityVersion = 'v0.2.8'
+const installCommand = [
+  'curl -fsSL \\',
+  `  https://gitee.com/oneprolabs/hyperfilelens/raw/${communityVersion}/deploy/online/install.sh \\`,
+  `  | sudo bash -s -- ${communityVersion} \\`,
+  '      --region cn \\',
+  '      --download-source gitee \\',
+  '      --yes',
+].join('\n')
+const copied = ref(false)
+let copyResetTimer: number | undefined
+
+async function copyInstallCommand() {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(installCommand)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = installCommand
+      textarea.setAttribute('readonly', '')
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      const copySucceeded = document.execCommand('copy')
+      textarea.remove()
+      if (!copySucceeded) throw new Error('Copy command failed')
+    }
+    copied.value = true
+    window.clearTimeout(copyResetTimer)
+    copyResetTimer = window.setTimeout(() => { copied.value = false }, 2200)
+  } catch {
+    copied.value = false
+  }
+}
 
 function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
   const target = loginUrl.value
@@ -84,6 +118,9 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       <symbol id="icon-check" viewBox="0 0 24 24">
         <path d="m5 12 4 4L19 6" />
       </symbol>
+      <symbol id="icon-copy" viewBox="0 0 24 24">
+        <rect x="8" y="8" width="11" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2" />
+      </symbol>
       <symbol id="icon-building" viewBox="0 0 24 24">
         <path d="M4 21V5l8-3 8 3v16M8 8h2M14 8h2M8 12h2M14 12h2M8 16h2M14 16h2M2 21h20" />
       </symbol>
@@ -104,6 +141,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <nav aria-label="Main navigation">
           <a href="#use-cases">Use Cases</a>
           <a href="#how-it-works">How It Works</a>
+          <a href="/en/docs/">User Docs</a>
           <a href="#open-source">Open Source</a>
           <a href="#contact">Contact</a>
         </nav>
@@ -237,11 +275,11 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <div class="open-source-grid">
           <div class="open-source-copy">
             <p class="section-kicker dark-kicker">Community</p>
-            <h2 id="open-source-title">Open source. One-command install.</h2>
-            <p>Run the Community edition on Ubuntu with Docker in one command. Global users use GitHub and Docker Hub; users in mainland China use Gitee and Alibaba Cloud.</p>
+            <h2 id="open-source-title">Open source.<br />One-command install.</h2>
+            <p>Run the Community edition on an Ubuntu host with Docker in one command. The current public installer is hosted on Gitee.</p>
             <div class="open-source-callout">
               <svg aria-hidden="true"><use href="#icon-check" /></svg>
-              <p>Community is free and open source — bring your own S3-compatible storage and AI model or API key, then move to Enterprise when you need commercial governance.</p>
+              <p>Community is free and open source, with S3-compatible storage and an AI model or API key. Enterprise capabilities will be available in a later release.</p>
             </div>
             <div class="open-source-actions">
               <a class="button button-light" :href="githubUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>View on GitHub</a>
@@ -253,15 +291,29 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             </div>
             <p class="beta-note">HyperFileLens is currently in public beta.</p>
           </div>
-          <div class="terminal-card" aria-label="Example Community online installation command">
-            <div class="terminal-bar"><span><i></i><i></i><i></i></span><b>install · bash</b></div>
-            <pre><code><span class="terminal-comment"># Community online install · {{ communityVersion }}</span>
-<span class="terminal-prompt">$</span> curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/{{ communityVersion }}/deploy/online/install.sh \
-  | sudo bash -s -- {{ communityVersion }} --region global --download-source github --yes
-
-<span class="terminal-success">✓</span> Environment validated
-<span class="terminal-success">✓</span> Public images pulled
-<span class="terminal-success">✓</span> HyperFileLens is ready</code></pre>
+          <div class="terminal-card" aria-label="Community online installation command">
+            <div class="terminal-bar">
+              <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+              <div class="terminal-title"><strong>Community</strong><span>{{ communityVersion }}</span></div>
+              <button
+                type="button"
+                class="copy-command"
+                :aria-label="copied ? 'Installation command copied' : 'Copy installation command'"
+                @click="copyInstallCommand"
+              >
+                <svg aria-hidden="true"><use :href="copied ? '#icon-check' : '#icon-copy'" /></svg>
+                <span>{{ copied ? 'Copied' : 'Copy command' }}</span>
+              </button>
+            </div>
+            <div class="terminal-body">
+              <p class="terminal-context">Run on an Ubuntu host</p>
+              <pre><code><span class="terminal-comment"># Community online install · {{ communityVersion }}</span>
+<span class="terminal-prompt">$</span> {{ installCommand }}</code></pre>
+            </div>
+            <div class="terminal-summary">
+              <strong>Installer handles the rest</strong>
+              <span>Environment check · Image pull · Service startup</span>
+            </div>
           </div>
         </div>
       </section>

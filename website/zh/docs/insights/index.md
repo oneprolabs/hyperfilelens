@@ -1,30 +1,19 @@
 ---
 title: 智能洞察
-description: 从 HyperFileLens 备份快照创建 AI Copilot 会话。
+description: 从 HyperFileLens 备份快照创建和使用 AI Copilot 会话。
 ---
 
 # 智能洞察
 
-HyperFileLens Insights 基于已经生成的备份快照工作。它通过 Data Gateway 准备用户明确选择的文件或目录，再由 AI Copilot 进行读取、检索和推理，不直接访问生产目录。
+智能洞察基于已经生成的备份快照工作。它通过 Data Gateway 准备用户明确选择的文件或目录，再由 AI Copilot 进行读取、检索和分析，不直接读取生产目录。
 
-## 使用条件
+## 使用流程
 
-- 至少一个包含可用目录的成功或部分成功快照。
-- 一个在线且可用的公共或私有 Data Gateway。
-- 平台管理员已配置默认 Agent 模型；处理图片时还需要可用的多模态模型。
-- 当前用户有权访问所选备份源、快照和会话。
+1. [准备备份数据](/zh/docs/insights/prepare)，确认快照、模型和 Data Gateway 可用。
+2. [使用 AI Copilot](/zh/docs/insights/copilot)，选择数据范围并创建会话。
+3. 必要时[连接 Private Data Gateway](/zh/docs/insights/data-gateway)。
+4. [查看 AI 使用量](/zh/docs/insights/usage)。
+5. 理解[会话与数据边界](/zh/docs/insights/privacy)，并核对重要回答的原始依据。
 
-## 完整流程
-
-1. [准备快照和 Data Gateway](/zh/docs/insights/prepare)。
-2. [创建和使用 Copilot 会话](/zh/docs/insights/copilot)。
-3. 核对回答中的依据，理解[会话、引用与数据边界](/zh/docs/insights/privacy)。
-
-适合的任务包括从文档中查找事实、梳理变更、总结制度或分析一组源码。AI 回答可能不完整或错误，涉及合同、财务、安全和生产操作时必须回到原始文件核实。
-
-## 与生产数据的关系
-
-新快照不会自动改变已有会话的数据范围。需要分析最新内容时，应新建或按产品允许的方式更新会话，并明确选择新的快照。
-
-删除生产文件也不会自动删除历史快照和已有会话中的处理结果；应按照备份保留和会话清理策略分别管理。
+适合的任务包括从文档中查找事实、梳理变更、总结制度或分析一组源码。涉及合同、财务、安全和生产操作时，必须回到原始文件复核。
 

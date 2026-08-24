@@ -1,28 +1,25 @@
 ---
-title: 部署与节点
-description: 理解并部署 HyperFileLens Agent、Proxy 和 Data Gateway。
+title: 部署与运维
+description: 安装和维护 HyperFileLens Community，以及管理 Agent、Proxy 和 Private Data Gateway。
 ---
 
-# 部署与节点
+# 部署与运维
 
-HyperFileLens 使用不同节点承担生产数据访问、共享存储接入和智能洞察执行。选择节点角色时，应以它需要访问的数据和网络边界为依据。
+本节主要面向 Community 自托管用户。官方 SaaS 的控制平面由官方维护，SaaS 用户只需按业务需要部署 Agent、Proxy 或 Private Data Gateway。
 
-## 节点职责
+## Community 部署
 
-| 角色 | 主要职责 | 典型位置 |
-| --- | --- | --- |
-| Agent | 读取所在主机的文件，执行备份和恢复 | 需要保护的 Linux、Windows 或 macOS 主机 |
-| Proxy | 访问 NAS、提供本地磁盘目标或协助跨节点存储访问 | 能连接共享存储和源端网络的 Linux 主机 |
-| Data Gateway | 为 Copilot 准备并访问选定的备份数据 | 能访问备份仓库且满足 AI 引擎要求的隔离主机 |
+1. 查看[系统要求](/zh/docs/deployment/requirements)。
+2. 使用当前公开方式[安装 Community](/zh/docs/getting-started/install)。
+3. 完成[安装后检查](/zh/docs/deployment/post-install)。
+4. 根据实际环境配置[网络与端口](/zh/docs/deployment/network)。
 
-同一主机可以按部署方式运行相关组件，但每个角色的职责和连通条件仍需分别验证。不要因为主机上已安装 Agent，就假定它自动具备 Proxy 或 Data Gateway 的网络和运行条件。
+## 组件部署
 
-## 部署原则
+- [Agent 与 Proxy](/zh/docs/deployment/nodes)：保护主机文件、连接 NAS 或提供本地目标存储。
+- [Private Data Gateway](/zh/docs/deployment/data-gateway)：在可控网络中准备智能洞察所选的备份数据。
 
-- 从产品界面生成当前注册命令，不复用过期截图中的令牌或命令。
-- 先确认节点时间、DNS、证书信任和到控制平面的 HTTPS 连接。
-- NAS 和本地磁盘使用专用路径，避免与其他应用共用目录。
-- Data Gateway 只处理用户明确选定的备份快照和范围，不直接读取生产目录。
-- 升级前检查控制平面与节点版本兼容性，并保留安装程序生成的受管备份。
+## 系统维护
 
-继续阅读：[Agent 与 Proxy](/zh/docs/deployment/nodes)、[Data Gateway](/zh/docs/deployment/data-gateway)和[升级、备份与回退](/zh/docs/deployment/lifecycle)。
+- 使用受支持的安装程序完成[升级、备份与回退](/zh/docs/deployment/lifecycle)。
+- 在[任务、告警与日志](/zh/docs/deployment/operations)中检查日常运行状态。
