@@ -13,6 +13,7 @@ from apps.iam.models import Membership, Organization
 from apps.node.models import Node, NodeTask
 from apps.protection.models import (
     BackupConfig,
+    BackupConfigCreateRequest,
     BackupConfigDirectory,
     BackupPolicy,
     BackupSourceSnapshot,
@@ -385,6 +386,216 @@ class ProtectionBackupConfigApiTests(TestCase):
         )
         self.assertEqual(step2_after.status_code, status.HTTP_200_OK)
         self.assertNotIn(source_key, {row["id"] for row in step2_after.data["results"]})
+
+    def test_create_backup_config_idempotent_replay_returns_original_result(self):
+        headers = {**self._headers(), "HTTP_IDEMPOTENCY_KEY": "backup-config-agent-1"}
+
+        first = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(),
+            format="json",
+            **headers,
+        )
+        second = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(),
+            format="json",
+            **headers,
+        )
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.content)
+        self.assertEqual(second.status_code, status.HTTP_201_CREATED, second.content)
+        self.assertEqual(first.data, second.data)
+        self.assertEqual(first.headers["Idempotency-Replayed"], "false")
+        self.assertEqual(second.headers["Idempotency-Replayed"], "true")
+        self.assertEqual(BackupConfig.objects.count(), 1)
+        request_record = BackupConfigCreateRequest.objects.get(
+            organization_id=self.org.id,
+            idempotency_key="backup-config-agent-1",
+        )
+        self.assertEqual(request_record.backup_config_id, first.data["id"])
+        self.assertEqual(request_record.response_status, status.HTTP_201_CREATED)
+
+    def test_create_backup_config_rejects_idempotency_key_payload_conflict(self):
+        headers = {**self._headers(), "HTTP_IDEMPOTENCY_KEY": "backup-config-conflict"}
+        first = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(),
+            format="json",
+            **headers,
+        )
+        conflicting_payload = self._payload(name="Different config")
+
+        second = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            conflicting_payload,
+            format="json",
+            **headers,
+        )
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.content)
+        self.assertEqual(second.status_code, status.HTTP_409_CONFLICT, second.content)
+        self.assertEqual(
+            second.data["error_code"],
+            "BACKUP_CONFIG.IDEMPOTENCY_CONFLICT",
+        )
+        self.assertEqual(BackupConfig.objects.count(), 1)
+
+    def test_failed_create_does_not_consume_idempotency_key(self):
+        headers = {**self._headers(), "HTTP_IDEMPOTENCY_KEY": "backup-config-retry"}
+        invalid_payload = self._payload()
+        invalid_payload["repository_id"] = 999999
+
+        failed = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            invalid_payload,
+            format="json",
+            **headers,
+        )
+        succeeded = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(),
+            format="json",
+            **headers,
+        )
+
+        self.assertEqual(failed.status_code, status.HTTP_400_BAD_REQUEST, failed.content)
+        self.assertEqual(succeeded.status_code, status.HTTP_201_CREATED, succeeded.content)
+        self.assertEqual(
+            BackupConfigCreateRequest.objects.filter(
+                organization_id=self.org.id,
+                idempotency_key="backup-config-retry",
+            ).count(),
+            1,
+        )
+
+    def test_create_without_idempotency_key_preserves_legacy_behavior(self):
+        response = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertFalse(BackupConfigCreateRequest.objects.exists())
+
+    def test_direct_nas_idempotent_replay_does_not_duplicate_provision_task(self):
+        repository = self._direct_nas_repository(name="idempotent-direct-nas")
+        payload = self._payload(name="Idempotent Direct NAS")
+        payload["repository_id"] = repository.id
+        headers = {**self._headers(), "HTTP_IDEMPOTENCY_KEY": "backup-config-direct-nas"}
+
+        first = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            payload,
+            format="json",
+            **headers,
+        )
+        BackupConfig.objects.filter(id=first.data["id"]).update(
+            status=BackupConfig.Status.ACTIVE
+        )
+        second = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            payload,
+            format="json",
+            **headers,
+        )
+
+        self.assertEqual(first.status_code, status.HTTP_202_ACCEPTED, first.content)
+        self.assertEqual(second.status_code, status.HTTP_202_ACCEPTED, second.content)
+        self.assertEqual(first.data, second.data)
+        self.assertEqual(second.data["status"], BackupConfig.Status.PROVISIONING)
+        self.assertEqual(
+            BackupConfig.objects.get(id=first.data["id"]).status,
+            BackupConfig.Status.ACTIVE,
+        )
+        self.assertEqual(BackupConfig.objects.count(), 1)
+        self.assertEqual(
+            Task.objects.filter(task_type=Task.Type.BACKUP_CONFIG_PROVISION).count(),
+            1,
+        )
+
+    def test_backup_config_idempotency_key_is_isolated_by_organization(self):
+        other_org = Organization.objects.create(
+            key="backup-config-other-org",
+            name="Backup Config Other Org",
+        )
+        Membership.objects.create(
+            user=self.user,
+            organization=other_org,
+            role=Membership.Role.ADMIN,
+        )
+        other_agent = Node.objects.create(
+            organization=other_org,
+            name="other-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.99",
+            os_name="linux",
+            metadata={"inventory": {"capabilities": ["repository_ownership_v1"]}},
+        )
+        other_repository = Repository.objects.create(
+            organization_id=other_org.id,
+            name="other-repository",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.CUSTOM,
+            s3_bucket="other-backup-config-bucket",
+            config={
+                "endpoint": "s3.example.internal:9000",
+                "region": "cn-test-1",
+                "prefix": "kopia/other",
+                "access_key_id": "ak-test",
+                "secret_access_key": "sk-test",
+                "kopia_password": "123456",
+                "use_tls": False,
+            },
+        )
+        self._mark_repository_owned(other_repository)
+        key_header = {"HTTP_IDEMPOTENCY_KEY": "shared-across-organizations"}
+
+        first = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(),
+            format="json",
+            **self._headers(),
+            **key_header,
+        )
+        second = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            {
+                **self._payload(source_ref_id=other_agent.id, name="Other org config"),
+                "repository_id": other_repository.id,
+            },
+            format="json",
+            HTTP_X_ORG_KEY=other_org.key,
+            **key_header,
+        )
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.content)
+        self.assertEqual(second.status_code, status.HTTP_201_CREATED, second.content)
+        self.assertEqual(
+            BackupConfigCreateRequest.objects.filter(
+                idempotency_key="shared-across-organizations"
+            ).count(),
+            2,
+        )
+
+    def test_create_backup_config_rejects_invalid_idempotency_key(self):
+        response = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(),
+            format="json",
+            **self._headers(),
+            HTTP_IDEMPOTENCY_KEY="x" * 129,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(BackupConfig.objects.exists())
+        self.assertFalse(BackupConfigCreateRequest.objects.exists())
 
     def test_distinct_s3_endpoints_require_explicit_selection(self):
         repository = self._distinct_endpoint_repository()

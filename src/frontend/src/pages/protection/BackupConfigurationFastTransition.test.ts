@@ -18,10 +18,11 @@ describe('backup configuration fast transition', () => {
   it('uses the authoritative create response without repeating the pipeline update', () => {
     const create = sourceBetween(wizard, 'async function runCreateBackup', 'function editableGroupPayloads')
 
-    expect(create).toContain('const created = await createBackupConfig(apiPayload)')
+    expect(create).toContain('const created = await createBackupConfig(apiPayload, createIdempotencyKey(backup.source.id))')
     expect(create).toContain('createdItems.push({ sourceId: backup.source.id, config: created })')
     expect(create).not.toContain('setPipelineStep(')
     expect(wizard).not.toContain('useBackupSourcePipeline')
+    expect(wizard).toContain('const existing = createIdempotencyKeys.value[sourceId]')
   })
 
   it('enters Step 3 before starting non-blocking reconciliation', () => {
@@ -51,6 +52,7 @@ describe('backup configuration fast transition', () => {
     expect(create).toContain("emit('createPartial', { items: createdItems })")
     expect(create).toContain("errorCode === 'NETWORK.UNAVAILABLE' || errorCode === 'NETWORK.TIMEOUT'")
     expect(create).toContain("createItemStates.value[backup.source.id] = 'unknown'")
+    expect(create).not.toContain("createItemStates.value[sourceId] === 'unknown'")
     expect(create).toContain('normalizedError.status === 401 || normalizedError.status === 403')
     expect(create).toContain("createItemStates.value[sourceId] = 'not_attempted'")
     expect(wizard).toContain("emit('editCompleted', { sourceIds: editedSourceIds })")
