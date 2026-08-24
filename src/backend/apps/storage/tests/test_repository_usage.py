@@ -1,6 +1,8 @@
+from datetime import timedelta
+from unittest import mock
+
 from django.test import TestCase
 from django.utils import timezone
-from unittest import mock
 
 from apps.iam.models import Organization
 from apps.node.models import Node
@@ -22,6 +24,7 @@ from apps.storage.services.internal.repository_usage import (
     capacity_bytes_from_config,
     kopia_estimated_usage_from_packed,
     parse_kopia_content_stats,
+    sync_all_repositories,
     sync_organization_repositories,
     sync_repository_usage,
 )
@@ -51,6 +54,36 @@ class RepositoryUsageTests(TestCase):
         self.assertEqual(capacity_bytes_from_config({"quota_gb": 10}), 10 * 1024**3)
         self.assertEqual(capacity_bytes_from_config({"quota_gb": 0}), 0)
         self.assertEqual(capacity_bytes_from_config(None), 0)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage.sync_repository_usage"
+    )
+    def test_scheduled_usage_prioritizes_oldest_repository(self, sync_usage):
+        org = Organization.objects.create(
+            key="scheduled-usage-priority-org",
+            name="Scheduled Usage Priority Org",
+        )
+        newer = Repository.objects.create(
+            organization_id=org.id,
+            name="newer-repository",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            last_checked_at=timezone.now() - timedelta(minutes=20),
+        )
+        older = Repository.objects.create(
+            organization_id=org.id,
+            name="older-repository",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            last_checked_at=timezone.now() - timedelta(minutes=30),
+        )
+
+        result = sync_all_repositories(limit=1, force=True)
+
+        self.assertEqual(result["repositories_synced"], 1)
+        sync_usage.assert_called_once()
+        self.assertEqual(sync_usage.call_args.args[0].id, older.id)
+        self.assertNotEqual(sync_usage.call_args.args[0].id, newer.id)
 
     @mock.patch(
         "apps.storage.services.internal.repository_health."

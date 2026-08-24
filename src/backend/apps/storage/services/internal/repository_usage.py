@@ -10,7 +10,7 @@ from typing import Any
 from django.apps import apps
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
 
@@ -1054,7 +1054,9 @@ def _repository_usage_queryset(
     cutoff = _stale_cutoff(force=force, stale_after_seconds=stale_after_seconds)
     if cutoff is not None:
         qs = qs.filter(Q(last_checked_at__isnull=True) | Q(last_checked_at__lt=cutoff))
-    return qs.order_by("id")[: max(1, int(limit or 1))]
+    return qs.order_by(F("last_checked_at").asc(nulls_first=True), "id")[
+        : max(1, int(limit or 1))
+    ]
 
 
 def sync_organization_repositories(

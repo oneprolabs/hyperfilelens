@@ -55,7 +55,16 @@ def nas_proxy_repository_subdir(repository: Repository) -> str:
 
 
 def nas_mount_point(repository: Repository, *, node_id: int | None = None) -> str:
-    return agent_paths.repository_mount_point(repository.id, node_id=node_id)
+    data_dir = None
+    if node_id:
+        node = Node.objects.filter(pk=node_id).only("metadata").first()
+        metadata = node.metadata if node and isinstance(node.metadata, dict) else {}
+        inventory = metadata.get("inventory") if isinstance(metadata, dict) else {}
+        if isinstance(inventory, dict):
+            data_dir = str(inventory.get("root_path") or "").strip() or None
+    return agent_paths.repository_mount_point(
+        repository.id, node_id=node_id, data_dir=data_dir
+    )
 
 
 def nas_repository_payload(

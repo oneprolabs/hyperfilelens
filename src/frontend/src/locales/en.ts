@@ -1997,14 +1997,22 @@ export const en = {
     cleanupBlockedForceHint:
       'Force Cleanup cannot bypass active tasks or live resource relationships. Resolve the blockers below before deleting this repository.',
     cleanupBlockedAssociations: '{n} linked backup configuration(s):',
+    cleanupInitializationInProgress:
+      'Repository data setup is still in progress for {n} backup source connection(s). Wait for setup to finish or retry it before deleting the repository.',
+    cleanupOwnershipUnverified:
+      'The ownership of repository data left by {n} backup source connection(s) cannot be verified. The data will not be deleted and must be reviewed manually.',
+    cleanupHistoricalDirectNasData:
+      'This NAS repository still has data from {n} previous direct backup source connection(s). The data will not be deleted and must be reviewed manually.',
+    cleanupDirectNasData:
+      'Repository data used by {n} backup source connection(s) will be cleaned up before the NAS repository is deleted.',
     cleanupFailed: 'Repository cleanup failed. Review the task details and retry.',
     cleanupAcceptedCount: '{accepted} cleanup task(s) accepted; {failed} failed.',
     cleanupForcePrompt:
-      'Every physical cleanup step will be attempted. Failures are recorded as residue while repository removal continues. Type FORCE CLEANUP to confirm.',
+      'Every repository data cleanup step will be attempted. Data that cannot be safely deleted is retained for review while repository removal continues. Type FORCE CLEANUP to confirm.',
     cleanupForceConfirm: 'Force Cleanup',
     cleanupForceOption: 'Use Force Cleanup for this repository',
     cleanupForceOptionHint:
-      'Continue through all cleanup steps, record any retained physical resources, and finalize repository removal.',
+      'Continue through all cleanup steps, record any retained repository data, and finalize repository removal.',
     retryInitialization: 'Retry Initialization',
     retryInitializationAccepted: 'Repository initialization retry accepted.',
     releaseResidualLocation: 'Release Residual Location',
@@ -2060,7 +2068,7 @@ export const en = {
     connectivityNotApplicable: 'Not applicable',
     residualAttentionTitle: 'Residual storage location requires attention',
     residualAttentionDescription:
-      'The repository record has been removed from HyperFileLens, but physical storage cleanup could not be confirmed. Remove or otherwise handle the retained data on the storage system before releasing this location.',
+      'The repository record has been removed from HyperFileLens, but cleanup of its stored data could not be confirmed. Remove or otherwise handle the retained data on the storage system before releasing this location.',
     residualReviewAction: 'Review and resolve',
     colUsage: 'Estimated Used / Capacity',
     colRepositoryUsage: 'Repository Usage',

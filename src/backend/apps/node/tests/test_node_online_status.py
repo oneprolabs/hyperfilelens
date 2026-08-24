@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from unittest import mock
 
 from django.test import TestCase
 from django.utils import timezone
@@ -21,6 +22,7 @@ from apps.node.services.internal.node_registry import (
     reconcile_stale_online_nodes,
 )
 from apps.node.ws.uplink import on_agent_connected, on_agent_disconnected
+from apps.storage.repositories.models import Repository
 
 
 class _FakeRedis:
@@ -133,6 +135,39 @@ class AgentNodeOnlineStatusTests(TestCase):
         self.assertEqual(
             effective_agent_node_status(self.node),
             Node.Availability.ONLINE,
+        )
+
+    @mock.patch("apps.source.services.internal.availability.project_node_availability")
+    @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
+    def test_online_transition_probes_bound_unhealthy_repositories(
+        self,
+        apply_async,
+        project_availability,
+    ):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="offline-bound-repository",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.OFFLINE,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=self.node.id,
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            changed = record_node_availability(
+                node_id=self.node.id,
+                availability=Node.Availability.ONLINE,
+            )
+
+        self.assertTrue(changed)
+        project_availability.assert_called_once_with(
+            node_id=self.node.id,
+            transitioned=True,
+        )
+        apply_async.assert_called_once_with(
+            kwargs={"repository_id": repository.id},
+            countdown=2,
         )
 
     def test_ws_connect_updates_connection_ip_without_overwriting_host_ip(self):

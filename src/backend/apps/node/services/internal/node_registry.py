@@ -163,6 +163,32 @@ def record_node_availability(
                 )
 
         transaction.on_commit(_project)
+        if transitioned and availability == Node.Availability.ONLINE:
+
+            def _probe_bound_repositories() -> None:
+                try:
+                    from apps.storage.repositories.models import Repository
+                    from apps.storage.tasks import check_storage_repository_health
+
+                    repository_ids = list(
+                        Repository.objects.filter(
+                            bind_node_id=node.id,
+                            health__in=[Repository.Health.OFFLINE, Repository.Health.UNVERIFIED],
+                            status=Repository.Status.CREATED,
+                        ).values_list("id", flat=True)
+                    )
+                    for repository_id in repository_ids:
+                        check_storage_repository_health.apply_async(
+                            kwargs={"repository_id": repository_id}, countdown=2
+                        )
+                except Exception:
+                    logger.warning(
+                        "bound repository health recovery dispatch failed node_id=%s",
+                        node.id,
+                        exc_info=True,
+                    )
+
+            transaction.on_commit(_probe_bound_repositories)
         return True
 
 
