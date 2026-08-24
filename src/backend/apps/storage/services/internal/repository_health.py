@@ -1109,15 +1109,7 @@ def _unbound_nas_execution_nodes(
             scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
             state=RepositoryLocationClaim.State.OWNED,
             owner_node_id__in=execution_node_ids,
-        )
-        .filter(
-            Q(ownership_verified_at__isnull=False)
-            | Q(
-                ownership_verified_at__isnull=True,
-                legacy_adoption_required=True,
-            )
-        )
-        .values_list("owner_node_id", "root_path")
+        ).values_list("owner_node_id", "root_path")
         if str(root_path) == nas_agent_repository_subdir(int(node_id))
     }
     return (
