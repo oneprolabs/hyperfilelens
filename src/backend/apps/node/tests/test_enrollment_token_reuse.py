@@ -233,6 +233,19 @@ class EnrollmentTokenReuseTests(TestCase):
 
         self.assertEqual(row.installation_mode, NodeInstallationMode.USER)
 
+    def test_create_serializer_accepts_user_continuous_source_agent(self):
+        ser = NodeTokenCreateSerializer(
+            data={
+                "role": NodeRole.AGENT,
+                "installation_mode": NodeInstallationMode.USER_CONTINUOUS,
+            }
+        )
+        self.assertTrue(ser.is_valid(), ser.errors)
+
+        row = ser.save(organization=self.org)
+
+        self.assertEqual(row.installation_mode, NodeInstallationMode.USER_CONTINUOUS)
+
     def test_create_serializer_rejects_user_level_infrastructure_role(self):
         for role in (NodeRole.PROXY, NodeRole.GATEWAY):
             with self.subTest(role=role):

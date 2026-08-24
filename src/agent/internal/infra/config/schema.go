@@ -18,7 +18,7 @@ var Registry = []Field{
 	{Env: "HFL_ORG_KEY", Key: "org_key", Persistent: true, Description: "Organization enrollment key"},
 	{Env: "HFL_NODE_ID", Key: "node_id", Persistent: true, Description: "Known node ID"},
 	{Env: "HFL_INSTALLATION_ID", Key: "installation_id", Persistent: true, Description: "Current installation identity"},
-	{Env: "HFL_INSTALLATION_MODE", Key: "installation_mode", Persistent: true, ReadOnly: true, Description: "Installer-owned Agent mode: system|user|account"},
+	{Env: "HFL_INSTALLATION_MODE", Key: "installation_mode", Persistent: true, ReadOnly: true, Description: "Installer-owned Agent mode: system|user|user_continuous|account"},
 	{Env: "HFL_AGENT_ROOT", Key: "agent_root", Persistent: true, ReadOnly: true, Description: "Installer-owned unified Agent root"},
 	{Env: "HFL_RUN_AS_USER", Key: "run_as_user", Persistent: true, ReadOnly: true, Description: "Installer-owned selected ordinary account for continuous user protection"},
 	{Env: "HFL_RUN_AS_HOME", Key: "run_as_home", Persistent: true, ReadOnly: true, Description: "Installer-owned profile root for the selected account"},

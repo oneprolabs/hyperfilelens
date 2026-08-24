@@ -1,7 +1,7 @@
 import type { NodeLifecycleInfo, NodeWorkloadInfo } from './nodeLifecycle'
 
 export type NodeRole = 'agent' | 'proxy' | 'gateway'
-export type NodeInstallationMode = 'system' | 'user' | 'account'
+export type NodeInstallationMode = 'system' | 'user' | 'user_continuous' | 'account'
 export type NodeStatus =
   | 'active'
   | 'upgrading'

@@ -47,6 +47,20 @@ class BootstrapViewTests(TestCase):
         self.assertIn('HFL_INSECURE_TLS="1"', body)
         self.assertIn('HFL_ENROLL_ARGS=(--yes "$@")', body)
 
+    def test_linux_user_continuous_bootstrap_enables_linger_before_enrollment(self):
+        self.token_row.installation_mode = NodeInstallationMode.USER_CONTINUOUS
+        self.token_row.save(update_fields=["installation_mode"])
+
+        response = self._get("linux")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        enable_linger = 'sudo loginctl enable-linger "$(id -un)"'
+        run_enrollment = '"${BIN}" install "${HFL_ENROLL_ARGS[@]}"'
+        self.assertIn(enable_linger, body)
+        self.assertIn(run_enrollment, body)
+        self.assertLess(body.index(enable_linger), body.index(run_enrollment))
+
     def test_bootstrap_uses_mode_bound_to_token(self):
         self.token_row.installation_mode = NodeInstallationMode.USER
         self.token_row.save(update_fields=["installation_mode"])
@@ -89,6 +103,16 @@ class BootstrapViewTests(TestCase):
         body = response.content.decode("utf-8")
         self.assertIn("$bin install", body)
         self.assertIn("bootstrap-token-abc", body)
+
+    def test_user_continuous_token_rejects_non_linux_bootstrap(self):
+        self.token_row.installation_mode = NodeInstallationMode.USER_CONTINUOUS
+        self.token_row.save(update_fields=["installation_mode"])
+
+        response = self._get("windows")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("Linux user-continuous protection requires the Linux installer", body)
 
     @override_settings(
         HFL_INSECURE_TLS=False,

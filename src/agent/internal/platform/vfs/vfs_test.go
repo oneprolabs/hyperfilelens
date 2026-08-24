@@ -56,6 +56,27 @@ func TestUserLevelLinuxLayoutHonorsXDGDataHome(t *testing.T) {
 	}
 }
 
+func TestUserContinuousLinuxLayoutMatchesCurrentUserLayout(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux layout assertion")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("HFL_INSTALLATION_MODE", "user_continuous")
+
+	if !UserInstallation() {
+		t.Fatal("user-continuous mode must use the per-user lifecycle")
+	}
+	wantRoot := filepath.Join(home, ".local", "share", UnixProductSlug)
+	if got := DefaultInstallDir(); got != filepath.Join(wantRoot, "bin") {
+		t.Fatalf("DefaultInstallDir() = %q, want %q", got, filepath.Join(wantRoot, "bin"))
+	}
+	if got := DefaultAgentDataDir(); got != wantRoot {
+		t.Fatalf("DefaultAgentDataDir() = %q, want %q", got, wantRoot)
+	}
+}
+
 func TestSpecifiedUserContinuousUsesMachineLifecycleLayout(t *testing.T) {
 	t.Setenv("HFL_INSTALLATION_MODE", "account")
 	if UserInstallation() {

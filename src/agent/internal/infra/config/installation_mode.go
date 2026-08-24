@@ -28,6 +28,9 @@ func installationModeForExecutable(configured model.InstallationMode) model.Inst
 	}
 	executable = canonicalExistingPath(executable)
 	if userRoot, userErr := vfs.UserInstallDir(); userErr == nil && pathWithinRoot(executable, canonicalExistingPath(userRoot)) {
+		if configured == model.InstallationModeUserContinuous {
+			return configured
+		}
 		return model.InstallationModeUser
 	}
 	if pathWithinRoot(executable, canonicalExistingPath(vfs.SystemInstallDir())) {

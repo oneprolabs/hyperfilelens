@@ -55,8 +55,33 @@ if [[ -z "${HFL_INSTALLATION_MODE:-}" && ( "${BUNDLE_ROOT}" == "/opt/hyperfilele
 		done <"${PERSISTED_ENV}"
 	fi
 fi
-[[ "${INSTALLATION_MODE}" == "system" || "${INSTALLATION_MODE}" == "user" || "${INSTALLATION_MODE}" == "account" ]] \
-	|| { echo "ERROR: HFL_INSTALLATION_MODE must be system, user, or account" >&2; exit 2; }
+if [[ -z "${HFL_INSTALLATION_MODE:-}" && "${INSTALLATION_MODE}" == "user" ]]; then
+	user_mode_env="${USER_DATA_HOME}/hyperfilelens-agent/config/agent.env"
+	if [[ -f "${user_mode_env}" ]]; then
+		while IFS='=' read -r key value; do
+			value="$(unquote_env_value "${value}")"
+			[[ "${key}" == "HFL_INSTALLATION_MODE" ]] && INSTALLATION_MODE="${value}"
+		done <"${user_mode_env}"
+	fi
+fi
+[[ "${INSTALLATION_MODE}" == "system" || "${INSTALLATION_MODE}" == "user" || "${INSTALLATION_MODE}" == "user_continuous" || "${INSTALLATION_MODE}" == "account" ]] \
+	|| { echo "ERROR: HFL_INSTALLATION_MODE must be system, user, user_continuous, or account" >&2; exit 2; }
+
+is_user_mode() {
+	[[ "${INSTALLATION_MODE}" == "user" || "${INSTALLATION_MODE}" == "user_continuous" ]]
+}
+
+# Keep compatibility with both old systemd (key/value output) and newer
+# loginctl output. CentOS 7 ships systemd 219, where `--value` is unavailable.
+user_linger_state() {
+	local raw
+	raw="$(loginctl show-user "$(id -u)" --property=Linger 2>/dev/null)" || return 1
+	printf '%s\n' "${raw}" | sed -n 's/^Linger=//p' | tr -d '[:space:]'
+}
+if [[ "${INSTALLATION_MODE}" == "user_continuous" && "$(uname -s)" != "Linux" ]]; then
+	echo "ERROR: HFL_INSTALLATION_MODE=user_continuous is supported on Linux only" >&2
+	exit 2
+fi
 
 # New installations use one Agent Root. Product directories are direct
 # siblings below it; there is no state/ wrapper directory.
@@ -67,7 +92,7 @@ if [[ "${INSTALLATION_MODE}" == "user" && "$(uname -s)" == "Darwin" ]]; then
 	UNIT_DST=""
 	LAUNCHD_PLIST="${HOME}/Library/LaunchAgents/com.hyperfilelens.agent.plist"
 	LAUNCHD_DOMAIN="gui/$(id -u)"
-elif [[ "${INSTALLATION_MODE}" == "user" ]]; then
+elif is_user_mode; then
 	AGENT_ROOT="${XDG_DATA_HOME:-}"
 	[[ "${AGENT_ROOT}" == /* ]] || AGENT_ROOT="${HOME}/.local/share"
 	AGENT_ROOT="${AGENT_ROOT}/hyperfilelens-agent"
@@ -189,7 +214,7 @@ exec 3>&1 4>&2
 
 usage() {
 	local command_prefix="" lifecycle="hyperfilelens-agent.service"
-	if [[ "${INSTALLATION_MODE}" != "user" ]]; then
+	if ! is_user_mode; then
 		command_prefix="sudo "
 	fi
 	if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -247,7 +272,7 @@ USAGE
 }
 
 hfl_systemctl() {
-	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+	if is_user_mode; then
 		PYTHONWARNINGS=ignore::SyntaxWarning systemctl --user "$@"
 	else
 		PYTHONWARNINGS=ignore::SyntaxWarning systemctl "$@"
@@ -336,7 +361,7 @@ parse_uninstall_flags() {
 }
 
 require_root() {
-	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+	if is_user_mode; then
 		if [[ "$(id -u)" -eq 0 ]]; then
 			log_fail "User-level installation must run as the current user without sudo." 1
 		fi
@@ -385,7 +410,7 @@ require_service_manager() {
 		fi
 		return 0
 	fi
-	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+	if is_user_mode; then
 		if ! command -v systemctl >/dev/null 2>&1 \
 		|| ! hfl_systemctl show-environment >/dev/null 2>&1; then
 			log_fail "A working systemd user service manager is required for user-level installation." 2
@@ -393,10 +418,32 @@ require_service_manager() {
 		command -v loginctl >/dev/null 2>&1 \
 			|| log_fail "loginctl is required to verify that current-user mode stops after sign-out." 2
 		local user_linger
-		user_linger="$(loginctl show-user "$(id -u)" --property=Linger --value 2>/dev/null)" \
+		user_linger="$(user_linger_state)" \
 			|| log_fail "Unable to verify the current user's systemd sign-out behavior." 2
-		if [[ "${user_linger}" == "yes" ]]; then
-			log_fail "Current-user protection must pause after sign-out, but systemd user lingering is enabled. Disable lingering or choose Host files continuous protection." 2
+		[[ "${user_linger}" == "yes" || "${user_linger}" == "no" ]] \
+			|| log_fail "Unable to parse the current user's systemd linger state." 2
+		if [[ "${INSTALLATION_MODE}" == "user_continuous" ]]; then
+			if [[ "${user_linger}" != "yes" ]]; then
+				if [[ "${CMD}" == "install" ]]; then
+					# Linger is the one-time host authorization boundary. The Agent,
+					# service unit, and all lifecycle commands remain user-scoped.
+					command -v sudo >/dev/null 2>&1 \
+						|| log_fail "Administrator authorization is required once to enable systemd user lingering (sudo is not available)." 2
+					log_step "Enabling systemd user lingering for $(id -un)."
+					sudo loginctl enable-linger "$(id -un)" \
+						|| log_fail "Could not enable systemd user lingering. Ask an administrator to run: sudo loginctl enable-linger $(id -un)" 2
+					user_linger="$(user_linger_state)" \
+						|| log_fail "Unable to verify the current user's systemd linger state after authorization." 2
+					[[ "${user_linger}" == "yes" ]] \
+						|| log_fail "systemd user lingering is still disabled after administrator authorization." 2
+				else
+					log_warn "systemd user lingering is not enabled; the Agent may stop after sign-out until an administrator runs: sudo loginctl enable-linger $(id -un)"
+				fi
+			fi
+			# Linger is a shared per-user systemd setting. Uninstalling this Agent
+			# must not disable it because unrelated user services may depend on it.
+		elif [[ "${user_linger}" == "yes" ]]; then
+			log_fail "Current-user protection must pause after sign-out, but systemd user lingering is enabled. Choose User files continuous protection, or disable linger only if no other user services depend on it." 2
 		fi
 		return 0
 	fi
@@ -1143,7 +1190,9 @@ is_installed() {
 }
 
 legacy_layout_present() {
-	[[ "${INSTALLATION_MODE}" != "user" ]] || return 1
+	if is_user_mode; then
+		return 1
+	fi
 	# A unified Agent Root may already contain the new bin/ tree while files
 	# from the pre-unified layout are still present. Treat that partial state as
 	# legacy too, so upgrades can archive and remove it after the new service is
@@ -1430,7 +1479,7 @@ data_dir_allowed_for_removal() {
 	leaf="$(basename -- "$p")"
 	parent="$(cd -P -- "$parent" 2>/dev/null && pwd -P)" || return 1
 	p="${parent%/}/${leaf}"
-	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+	if is_user_mode; then
 		local install_root data_root
 		install_root="$(cd -P -- "$(dirname -- "${AGENT_ROOT}")" 2>/dev/null && pwd -P)/$(basename -- "${AGENT_ROOT}")" || return 1
 		data_root="${install_root}"
@@ -1679,7 +1728,7 @@ install_systemd_unit() {
 	local src_root="${2:-${BUNDLE_ROOT}}"
 	local unit_src="${src_root}/systemd/hyperfilelens-agent.service"
 	mkdir -p "$(dirname "${UNIT_DST}")"
-	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+	if is_user_mode; then
 		local unit_env_file unit_working_dir unit_agent
 		unit_env_file="$(systemd_escape_unit_value "${env_file}")"
 		unit_working_dir="$(systemd_escape_unit_value "${INSTALL_DIR}")"
@@ -1960,7 +2009,7 @@ cmd_install() {
 
 	DATA_DIR="${DATA_DIR:-$DEFAULT_DATA}"
 	ensure_agent_layout "${DATA_DIR}"
-	if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+	if is_user_mode; then
 		[[ "${DATA_DIR}" == "${DEFAULT_DATA}" ]] \
 			|| log_fail "User-level installation uses the fixed data directory ${DEFAULT_DATA}; --data-dir is not supported." 2
 		chmod 700 "${AGENT_ROOT}" "${DATA_DIR}"
@@ -2010,7 +2059,7 @@ cmd_install() {
 		hfl_print_value "Install path" "${INSTALL_DIR}"
 		hfl_print_value "Data path" "${DATA_DIR}"
 		hfl_print_section "Preflight checks"
-		if [[ "${INSTALLATION_MODE}" == "user" ]]; then
+		if is_user_mode; then
 			log_ok "Current-user privileges and user service manager are available."
 		else
 			log_ok "Administrator privileges and service manager are available."

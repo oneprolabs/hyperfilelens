@@ -66,10 +66,28 @@ func TestInstallShellDefinesUserLifecycleForLinuxAndMacOS(t *testing.T) {
 		`ExecStart="${unit_agent}" run`,
 		`systemd_escape_unit_value`,
 		`An active macOS user session is required for user-level installation.`,
-		`systemd user lingering is enabled. Disable lingering or choose Host files continuous protection.`,
+		`systemd user lingering is enabled. Choose User files continuous protection, or disable linger only if no other user services depend on it.`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("install.sh missing user lifecycle rule %q", want)
+		}
+	}
+}
+
+func TestInstallShellDefinesLinuxUserContinuousLifecycle(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	for _, want := range []string{
+		`"user_continuous"`,
+		`sudo loginctl enable-linger "$(id -un)"`,
+		`--property=Linger 2>/dev/null`,
+		`sed -n 's/^Linger=//p'`,
+		`The Agent,`,
+		`service unit, and all lifecycle commands remain user-scoped.`,
+		`Uninstalling this Agent`,
+		`must not disable it because unrelated user services may depend on it.`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh missing Linux user-continuous contract %q", want)
 		}
 	}
 }
