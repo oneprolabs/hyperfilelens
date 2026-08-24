@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vitepress'
 import { trackWebsiteOpenApp } from './analytics'
+import { siteTrialLabels } from './languages'
 
 const props = defineProps<{
   placement: 'bar' | 'screen'
@@ -10,7 +11,7 @@ const props = defineProps<{
 const route = useRoute()
 const appOrigin = ref('')
 const isDocs = computed(() => route.path.startsWith('/zh/docs') || route.path.startsWith('/en/docs'))
-const label = computed(() => route.path.startsWith('/zh/docs') ? '免费试用' : 'Try free')
+const label = computed(() => route.path.startsWith('/zh/docs') ? siteTrialLabels.zh : siteTrialLabels.en)
 
 function validOrigin(value: string): string {
   try {
