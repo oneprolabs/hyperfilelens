@@ -12,6 +12,11 @@ import { en } from '../../locales/en'
 import type { LensCopilotGatewayOption } from '../../lib/lensApi'
 import NewCopilotChat from './NewCopilotChat.vue'
 
+const zhHans = JSON.parse(readFileSync(
+  resolve(process.cwd(), '../../language-packs/packs/zh-hans/frontend/messages.json'),
+  'utf8',
+))
+
 const componentSource = readFileSync(
   resolve(process.cwd(), 'src/pages/insight/NewCopilotChat.vue'),
   'utf8',
@@ -92,6 +97,7 @@ type FormScenario = {
 }
 
 type MountScenario = FormScenario & {
+  locale?: 'en' | 'zh-hans'
   agentModelReady?: boolean
   gatewayResponse?: Promise<LensCopilotGatewayOption[]> | LensCopilotGatewayOption[]
   selectionStatus?: 'idle' | 'calculating' | 'waiting' | 'error' | 'ready'
@@ -164,6 +170,7 @@ function deferred<T>() {
 }
 
 async function mountNewChat({
+  locale = 'en',
   agentModelReady = true,
   gatewayResponse = [],
   sourceReady = true,
@@ -215,8 +222,8 @@ async function mountNewChat({
 
   const i18n = createI18n({
     legacy: false,
-    locale: 'en',
-    messages: { en },
+    locale,
+    messages: { en, 'zh-hans': zhHans },
     missingWarn: false,
     fallbackWarn: false,
   })
@@ -274,6 +281,23 @@ describe('New Chat Public Data Gateway warning', () => {
     await flushPromises()
 
     expect(wrapper.get('.new-chat-gateway-warning').attributes('role')).toBe('alert')
+    wrapper.unmount()
+  })
+
+  it('uses the Chinese locale for the new Chat form while preserving dynamic names', async () => {
+    const wrapper = await mountNewChat({ locale: 'zh-hans', gatewayResponse: [publicGateway] })
+
+    expect(wrapper.text()).toContain(zhHans.insight.copilot.newChat)
+    expect(wrapper.text()).toContain(zhHans.insight.copilot.detailsDataSource)
+    expect(wrapper.text()).toContain(zhHans.insight.copilot.bindingBackupSource)
+    expect(wrapper.text()).toContain(zhHans.insight.copilot.detailsFilesFolders)
+    expect(wrapper.text()).toContain(zhHans.insight.copilot.advancedOptions)
+    expect(wrapper.text()).toContain(zhHans.insight.copilot.dataPrivacy)
+    expect(wrapper.text()).toContain(zhHans.insight.copilot.pathCountOne.replace('{count}', '1'))
+    expect(wrapper.text()).toContain('public-dg-01')
+    expect(wrapper.text()).not.toContain('Data Source')
+    expect(wrapper.text()).not.toContain('Backup Source')
+    expect(wrapper.text()).not.toContain('Advanced options')
     wrapper.unmount()
   })
 
@@ -354,6 +378,8 @@ describe('New Chat Public Data Gateway warning', () => {
 
     expect(wrapper.find('.new-chat-gateway-warning').exists()).toBe(false)
     expect(footerHint(wrapper).exists()).toBe(false)
+    expect(wrapper.text()).toContain('1 path')
+    expect(wrapper.text()).not.toContain('1 paths')
     expect(startChatButton(wrapper).attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })

@@ -1,5 +1,6 @@
 import { computed, onScopeDispose, ref, watch, type ComputedRef, type Ref } from 'vue'
 
+import { i18n } from '../i18n'
 import { apiErrorMessage } from '../lib/api'
 import {
   cancelCopilotScopePreview,
@@ -34,6 +35,7 @@ type PreviewOptions = {
   gatewayLinkId: ComputedRef<number | null>
   gatewayMode: Ref<'auto' | 'manual'>
   scopes: ComputedRef<CopilotSelectionScope[]>
+  translate?: (key: string) => string
 }
 
 // Check once immediately after dispatch, then use a short bounded backoff.
@@ -121,6 +123,7 @@ function isRetryableError(error: unknown): boolean {
 }
 
 export function useCopilotSelectionPreview(options: PreviewOptions) {
+  const translate = options.translate ?? ((key: string) => i18n.global.t(key))
   const scopeStates = ref<Record<string, CopilotSelectionScopeState>>({})
   const admission = ref<LensAdmissionPreview | null>(null)
   const admissionLoading = ref(false)
@@ -256,7 +259,7 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
           ...current,
           status: 'client_timeout',
           retryable: false,
-          error: 'Selected data calculation is taking longer than expected.',
+          error: translate('insight.copilot.selectionCalculationSlow'),
         }
       }
       if (polls > 0) {
@@ -359,7 +362,7 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
           setScopeState(scope.key, {
             status: 'waiting',
             summary: null,
-            error: 'Selected data calculation is still running. The system will check it again automatically.',
+            error: translate('insight.copilot.selectionStillRunning'),
             retryable: true,
           })
           return
@@ -368,7 +371,7 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
           setScopeState(scope.key, {
             status: 'waiting',
             summary: null,
-            error: task.error || 'Waiting for the Repository Reader. Calculation will resume automatically.',
+            error: task.error || translate('insight.copilot.waitingForReader'),
             retryable: true,
           })
           return
@@ -388,7 +391,7 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
           setScopeState(scope.key, {
             status: 'error',
             summary: null,
-            error: task.error || 'Unable to calculate the selected data.',
+            error: task.error || translate('insight.copilot.selectionUnavailable'),
             retryable: false,
           })
           return
@@ -405,7 +408,7 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
           setScopeState(scope.key, {
             status: 'waiting',
             summary: null,
-            error: 'Waiting for the Repository Reader. Calculation will resume automatically.',
+            error: translate('insight.copilot.waitingForReader'),
             retryable: true,
           })
           return
@@ -415,7 +418,7 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
           setScopeState(scope.key, {
             status: 'error',
             summary: null,
-            error: 'Unable to start the selected data calculation after automatic recovery attempts.',
+            error: translate('insight.copilot.selectionStartRecoveryFailed'),
             retryable: false,
           })
           return
@@ -423,7 +426,7 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
         setScopeState(scope.key, {
           status: 'error',
           summary: null,
-          error: (error as { message?: string })?.message || 'Unable to calculate the selected data.',
+          error: apiErrorMessage(error, translate('insight.copilot.selectionUnavailable')),
           retryable: false,
         })
         return
@@ -433,7 +436,7 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
     setScopeState(scope.key, {
       status: 'error',
       summary: null,
-      error: 'Unable to calculate the selected data after automatic recovery attempts.',
+      error: translate('insight.copilot.selectionRecoveryFailed'),
       retryable: false,
     })
   }
@@ -512,7 +515,10 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
         && generation === currentGeneration.value
         && !controller.signal.aborted
       ) {
-        admissionError.value = apiErrorMessage(error, 'Unable to verify Chat capacity.')
+        admissionError.value = apiErrorMessage(
+          error,
+          translate('insight.copilot.capacityVerificationFailed'),
+        )
         admissionRetryable.value = isRetryableError(error)
       }
     } finally {
@@ -554,7 +560,7 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
         nextStates[key] = {
           ...state,
           status: 'error',
-          error: 'Unable to calculate the selected data after automatic recovery attempts.',
+          error: translate('insight.copilot.selectionRecoveryFailed'),
           retryable: false,
         }
       }
@@ -565,7 +571,7 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
       recoverOnExternalSignal = true
       admission.value = null
       admissionRetryable.value = false
-      admissionError.value = 'Unable to verify organization capacity after automatic recovery attempts.'
+      admissionError.value = translate('insight.copilot.organizationCapacityRecoveryFailed')
     }
   }
 

@@ -35,7 +35,7 @@ import {
 } from '../../lib/lensApi'
 
 const router = useRouter()
-const { t } = useI18n()
+const { n, t } = useI18n()
 
 type SubmitBlockCode =
   | 'agent_model'
@@ -149,6 +149,7 @@ const {
   gatewayLinkId: snapshotGatewayLinkId,
   gatewayMode,
   scopes: previewScopes,
+  translate: t,
 })
 const agentModelReady = computed(() => Boolean(readiness.value?.default_agent_model_ref))
 const visualModelReady = computed(() => Boolean(readiness.value?.default_multimodal_model_ref))
@@ -177,8 +178,8 @@ const selectedSnapshot = computed(() => snapshotsForSelectedBackupSource.value.f
 ) ?? null)
 const selectedScopeSummary = computed(() => sourceScopes.value.length > 0
   ? selectionTotals.value
-    ? `${sourceScopes.value.length} paths · ${selectionTotals.value.fileCount.toLocaleString()} files · ${formatBytes(selectionTotals.value.sizeBytes)}`
-    : `${sourceScopes.value.length} selected`
+    ? `${pathCountLabel(sourceScopes.value.length)} · ${fileCountLabel(selectionTotals.value.fileCount)} · ${formatBytes(selectionTotals.value.sizeBytes)}`
+    : pathCountLabel(sourceScopes.value.length)
   : '—')
 const canCreate = computed(() => Boolean(
   effectiveSnapshotId.value
@@ -193,25 +194,25 @@ const submitBlocker = computed<SubmitBlocker | null>(() => {
   if (!agentModelReady.value) {
     return {
       code: 'agent_model',
-      message: 'No default Agent model is configured. Contact your administrator.',
+      message: t('insight.copilot.noDefaultAgentModel'),
     }
   }
   if (!selectedBackupSource.value) {
     return {
       code: 'backup_source',
-      message: 'Select a backup source to continue.',
+      message: t('insight.copilot.selectBackupSourceToContinue'),
     }
   }
   if (!effectiveSnapshotId.value) {
     return {
       code: 'snapshot',
-      message: 'Select a snapshot to continue.',
+      message: t('insight.copilot.selectSnapshotToContinue'),
     }
   }
   if (sourceScopes.value.length === 0) {
     return {
       code: 'source_scope',
-      message: 'Select at least one file or folder to continue.',
+      message: t('insight.copilot.selectScopeToContinue'),
     }
   }
   if (!selectedGateway.value) {
@@ -231,13 +232,13 @@ const submitBlocker = computed<SubmitBlocker | null>(() => {
   if (selectionCalculationStatus.value === 'calculating') {
     return {
       code: 'selection_preview',
-      message: 'Calculating the selected file count and size…',
+      message: t('insight.copilot.calculatingSelection'),
     }
   }
   if (selectionCalculationStatus.value === 'waiting') {
     return {
       code: 'selection_preview',
-      message: 'Waiting for the Repository Reader. Calculation will resume automatically.',
+      message: t('insight.copilot.waitingForReader'),
     }
   }
   if (selectionCalculationStatus.value === 'error') {
@@ -246,13 +247,13 @@ const submitBlocker = computed<SubmitBlocker | null>(() => {
       .find((row) => row.status === 'error')
     return {
       code: 'selection_preview',
-      message: failed?.error || 'Unable to calculate the selected data.',
+      message: failed?.error || t('insight.copilot.selectionUnavailable'),
     }
   }
   if (selectionAdmissionLoading.value) {
     return {
       code: 'selection_preview',
-      message: 'Verifying organization capacity…',
+      message: t('insight.copilot.verifyingCapacity'),
     }
   }
   if (selectionAdmissionError.value) {
@@ -265,25 +266,25 @@ const submitBlocker = computed<SubmitBlocker | null>(() => {
   if (reasons.includes('selection_file_limit')) {
     return {
       code: 'selection_preview',
-      message: 'The selected data exceeds the per-Chat file limit.',
+      message: t('insight.copilot.selectionFileLimitExceeded'),
     }
   }
   if (reasons.includes('selection_size_limit')) {
     return {
       code: 'selection_preview',
-      message: 'The selected data exceeds the per-Chat size limit.',
+      message: t('insight.copilot.selectionSizeLimitExceeded'),
     }
   }
   if (reasons.includes('organization_capacity')) {
     return {
       code: 'selection_preview',
-      message: 'The organization does not have enough Public Data Gateway capacity for this Chat.',
+      message: t('insight.copilot.organizationCapacityExceeded'),
     }
   }
   if (reasons.includes('organization_capacity_unavailable')) {
     return {
       code: 'selection_preview',
-      message: 'Organization capacity is temporarily unavailable. The system will update automatically.',
+      message: t('insight.copilot.organizationCapacityUnavailable'),
     }
   }
   return null
@@ -302,15 +303,29 @@ function snapshotOptionLabel(row: { finished_at?: string | null; started_at?: st
 function modelLabel(row: { name?: string; provider?: string; config?: { model?: string }; uuid: string }): string {
   const configuredName = String(row.name || '').trim()
   if (configuredName) return configuredName
-  const provider = String(row.provider || 'Model').trim()
+  const provider = String(row.provider || t('insight.copilot.modelLabel')).trim()
   const model = String(row.config?.model || row.uuid).trim()
   return `${provider} · ${model}`
 }
 
 function analysisModeLabel(mode: LensAnalysisMode): string {
-  if (mode === 'fast') return 'Fast'
-  if (mode === 'deep') return 'Deep'
-  return 'Standard (recommended)'
+  if (mode === 'fast') return t('insight.copilot.analysisModeFast')
+  if (mode === 'deep') return t('insight.copilot.analysisModeDeep')
+  return t('insight.copilot.analysisModeStandard')
+}
+
+function pathCountLabel(count: number): string {
+  return t(
+    count === 1 ? 'insight.copilot.pathCountOne' : 'insight.copilot.pathCountMany',
+    { count: n(count) },
+  )
+}
+
+function fileCountLabel(count: number): string {
+  return t(
+    count === 1 ? 'insight.copilot.fileCountOne' : 'insight.copilot.fileCountMany',
+    { count: n(count) },
+  )
 }
 
 function isBackupScopePickerOpen(entryId: string) {
@@ -323,43 +338,43 @@ function handleBackupScopeNodeClick(entryId: string, data: BackupScopePickerNode
 
 function scopeDataSummary(entryId: string): string {
   const state = selectionStateForScope(entryId)
-  if (state.status === 'covered') return `Included by ${state.coveredBy}`
-  if (state.status === 'calculating') return 'Calculating…'
-  if (state.status === 'waiting') return 'Waiting for Reader…'
-  if (state.status === 'error') return 'Unavailable'
+  if (state.status === 'covered') return t('insight.copilot.includedBy', { name: state.coveredBy })
+  if (state.status === 'calculating') return t('insight.copilot.calculating')
+  if (state.status === 'waiting') return t('insight.copilot.waitingReader')
+  if (state.status === 'error') return t('insight.copilot.unavailable')
   if (state.summary) {
-    return `${state.summary.file_count.toLocaleString()} files · ${formatBytes(state.summary.size_bytes)}`
+    return `${fileCountLabel(state.summary.file_count)} · ${formatBytes(state.summary.size_bytes)}`
   }
   return '—'
 }
 
 function quotaCount(value: number | undefined): string {
-  if (value == null) return 'Unavailable'
-  return value < 0 ? 'Unlimited' : value.toLocaleString()
+  if (value == null) return t('insight.copilot.unavailable')
+  return value < 0 ? t('insight.copilot.unlimited') : n(value)
 }
 
 function quotaBytes(value: number | undefined): string {
-  if (value == null) return 'Unavailable'
-  return value < 0 ? 'Unlimited' : formatBytes(value)
+  if (value == null) return t('insight.copilot.unavailable')
+  return value < 0 ? t('insight.copilot.unlimited') : formatBytes(value)
 }
 
 function organizationCapacityBytes(
   value: number | null | undefined,
   capacity: LensAdmissionPreview['organization_capacity'] | undefined,
 ): string {
-  if (!capacity || capacity.limit_available === false) return 'Unavailable'
-  if (capacity.limit_bytes == null || capacity.limit_bytes < 0) return 'Unlimited'
-  if (capacity.usage_incomplete) return 'Unavailable'
-  return value == null ? 'Unavailable' : formatBytes(value)
+  if (!capacity || capacity.limit_available === false) return t('insight.copilot.unavailable')
+  if (capacity.limit_bytes == null || capacity.limit_bytes < 0) return t('insight.copilot.unlimited')
+  if (capacity.usage_incomplete) return t('insight.copilot.unavailable')
+  return value == null ? t('insight.copilot.unavailable') : formatBytes(value)
 }
 
 function organizationUsedBytes(
   capacity: LensAdmissionPreview['organization_capacity'] | undefined,
 ): string {
   if (!capacity || capacity.limit_available === false || capacity.usage_incomplete) {
-    return 'Unavailable'
+    return t('insight.copilot.unavailable')
   }
-  return capacity.used_bytes == null ? 'Unavailable' : formatBytes(capacity.used_bytes)
+  return capacity.used_bytes == null ? t('insight.copilot.unavailable') : formatBytes(capacity.used_bytes)
 }
 
 function syncBackupScopePickerWidth() {
@@ -418,7 +433,7 @@ async function load() {
       }),
     ])
   } catch (error) {
-    ElMessage.error({ message: apiErrorMessage(error, 'Unable to load chat options.'), grouping: true })
+    ElMessage.error({ message: apiErrorMessage(error, t('insight.copilot.loadChatOptionsFailed')), grouping: true })
   }
 }
 
@@ -454,7 +469,7 @@ async function createChat() {
       createIdempotencyKey = null
       createRequestFingerprint = ''
     }
-    ElMessage.error({ message: apiErrorMessage(error, 'Unable to start chat.'), grouping: true })
+    ElMessage.error({ message: apiErrorMessage(error, t('insight.copilot.startChatFailed')), grouping: true })
   } finally {
     submitting.value = false
   }
@@ -483,7 +498,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
         <button
           type="button"
           class="fullscreen-form-header__back"
-          aria-label="Back to Copilot"
+          :aria-label="t('insight.copilot.newChatBack')"
           @click="router.push('/insight/copilot')"
         >
           <ArrowLeft
@@ -493,10 +508,10 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
         </button>
         <div class="fullscreen-form-header__content">
           <h1 class="fullscreen-form-header__title">
-            New Chat
+            {{ t('insight.copilot.newChat') }}
           </h1>
           <p class="fullscreen-form-header__desc">
-            Choose the backup data you want AI Copilot to analyze.
+            {{ t('insight.copilot.newChatDescription') }}
           </p>
         </div>
       </div>
@@ -512,7 +527,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                 <div class="new-chat-section-head">
                   <div class="new-chat-section-head__copy">
                     <h2 class="fullscreen-form-section__title">
-                      <span class="fullscreen-form-section__indicator" />Data Source
+                      <span class="fullscreen-form-section__indicator" />{{ t('insight.copilot.detailsDataSource') }}
                     </h2>
                   </div>
                 </div>
@@ -521,12 +536,12 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     <label
                       for="copilot-backup-source"
                       class="fullscreen-form-field__label"
-                    >Backup Source <span class="fullscreen-form-field__required">*</span></label>
+                    >{{ t('insight.copilot.bindingBackupSource') }} <span class="fullscreen-form-field__required">*</span></label>
                     <ElSelect
                       id="copilot-backup-source"
                       v-model="selectedBackupConfigId"
                       filterable
-                      placeholder="Select a backup source"
+                      :placeholder="t('insight.copilot.backupSourcePlaceholder')"
                     >
                       <ElOption
                         v-for="row in backupSourceOptions"
@@ -536,23 +551,23 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       />
                     </ElSelect>
                     <p class="fullscreen-form-field__hint">
-                      Choose the backup source that contains the data you want to analyze.
+                      {{ t('insight.copilot.backupSourceHint') }}
                     </p>
                   </div>
                   <div class="fullscreen-form-field">
                     <label
                       for="copilot-snapshot"
                       class="fullscreen-form-field__label"
-                    >Snapshot <span class="fullscreen-form-field__required">*</span></label>
+                    >{{ t('insight.copilot.bindingSnapshot') }} <span class="fullscreen-form-field__required">*</span></label>
                     <ElSelect
                       id="copilot-snapshot"
                       v-model="snapshotPickerValue"
                       :loading="snapshotLoading"
                       :disabled="!selectedBackupConfigId"
-                      placeholder="Select a snapshot"
+                      :placeholder="t('insight.copilot.snapshotPlaceholder')"
                     >
                       <ElOption
-                        label="Latest available snapshot"
+                        :label="t('insight.copilot.latestSnapshot')"
                         :value="SNAPSHOT_PICKER_LATEST"
                       />
                       <ElOption
@@ -563,7 +578,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       />
                     </ElSelect>
                     <p class="fullscreen-form-field__hint">
-                      Choose the backup snapshot you want to analyze.
+                      {{ t('insight.copilot.snapshotHint') }}
                     </p>
                   </div>
                 </div>
@@ -571,7 +586,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                 <div class="new-chat-source-subsection">
                   <div class="new-chat-source-subsection__head">
                     <h3 class="fullscreen-form-field__label">
-                      Files and Folders <span class="fullscreen-form-field__required">*</span>
+                      {{ t('insight.copilot.detailsFilesFolders') }} <span class="fullscreen-form-field__required">*</span>
                     </h3>
                   </div>
                   <div
@@ -582,7 +597,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       class="new-chat-scope-stack__header"
                       aria-hidden="true"
                     >
-                      <span /><span>Path</span><span>Selected data</span><span>Actions</span>
+                      <span /><span>{{ t('insight.copilot.path') }}</span><span>{{ t('insight.copilot.selectedData') }}</span><span>{{ t('insight.copilot.actions') }}</span>
                     </div>
                     <div
                       v-for="(scopeEntry, scopeIndex) in backupScopeEntries"
@@ -604,7 +619,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                             class="new-chat-scope-input"
                             :model-value="scopeEntry.path"
                             clearable
-                            placeholder="Select a file or folder"
+                            :placeholder="t('insight.copilot.selectFileFolder')"
                             :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0"
                             @update:model-value="updateBackupScopeEntryInput(scopeEntry.id, $event)"
                             @blur="validateBackupScopeEntryOnBlur(scopeEntry.id)"
@@ -615,7 +630,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                             </template>
                             <template #append>
                               <ElButton
-                                aria-label="Browse backup content"
+                                :aria-label="t('insight.copilot.browseBackupContent')"
                                 :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0"
                                 @click.stop="setBackupScopePickerOpen(scopeEntry.id, !isBackupScopePickerOpen(scopeEntry.id))"
                               >
@@ -679,7 +694,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                         type="danger"
                         class="new-chat-scope-row__remove"
                         :disabled="backupScopeEntries.length <= 1"
-                        aria-label="Remove scope"
+                        :aria-label="t('insight.copilot.removeScope')"
                         @click="removeBackupScopeEntry(scopeEntry.id)"
                       >
                         <Trash2 :size="14" />
@@ -691,7 +706,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                         :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0"
                         @click="addBackupScopeEntry"
                       >
-                        <CirclePlus :size="16" /> Add File or Folder
+                        <CirclePlus :size="16" /> {{ t('insight.copilot.addFileFolder') }}
                       </button>
                     </div>
                   </div>
@@ -699,19 +714,19 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     v-if="!effectiveSnapshotId"
                     class="fullscreen-form-field__hint new-chat-scope-hint"
                   >
-                    Select a snapshot to browse its files and folders.
+                    {{ t('insight.copilot.selectSnapshotBrowseHint') }}
                   </p>
                   <p
                     v-else-if="snapshotDirectories.length === 0"
                     class="fullscreen-form-field__hint new-chat-scope-hint new-chat-hint--warn"
                   >
-                    No files or folders are available in this snapshot.
+                    {{ t('insight.copilot.noSnapshotEntries') }}
                   </p>
                   <p
                     v-else
                     class="fullscreen-form-field__hint new-chat-scope-hint"
                   >
-                    Select one or more files or folders for this chat.
+                    {{ t('insight.copilot.selectScopesHint') }}
                   </p>
                   <p class="fullscreen-form-field__hint new-chat-scope-hint">
                     {{ t('insight.copilot.documentFormatHint') }}
@@ -725,31 +740,31 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     aria-live="polite"
                   >
                     <div class="new-chat-selection-summary__head">
-                      <strong>Selected data</strong>
-                      <span>{{ sourceScopes.length }} paths</span>
+                      <strong>{{ t('insight.copilot.selectedData') }}</strong>
+                      <span>{{ pathCountLabel(sourceScopes.length) }}</span>
                     </div>
                     <dl>
                       <div>
-                        <dt>Files</dt>
+                        <dt>{{ t('insight.copilot.files') }}</dt>
                         <dd>
-                          {{ selectionTotals ? selectionTotals.fileCount.toLocaleString() : 'Calculating…' }}
+                          {{ selectionTotals ? n(selectionTotals.fileCount) : t('insight.copilot.calculating') }}
                           / {{ quotaCount(selectionAdmission?.selection_limits.max_files) }}
                         </dd>
                       </div>
                       <div>
-                        <dt>Selected size</dt>
+                        <dt>{{ t('insight.copilot.selectedSize') }}</dt>
                         <dd>
-                          {{ selectionTotals ? formatBytes(selectionTotals.sizeBytes) : 'Calculating…' }}
+                          {{ selectionTotals ? formatBytes(selectionTotals.sizeBytes) : t('insight.copilot.calculating') }}
                           / {{ quotaBytes(selectionAdmission?.selection_limits.max_bytes) }}
                         </dd>
                       </div>
                       <template v-if="selectionAdmission?.organization_capacity.applicable">
                         <div>
-                          <dt>Organization used</dt>
+                          <dt>{{ t('insight.copilot.organizationUsed') }}</dt>
                           <dd>{{ organizationUsedBytes(selectionAdmission.organization_capacity) }}</dd>
                         </div>
                         <div>
-                          <dt>Available now</dt>
+                          <dt>{{ t('insight.copilot.availableNow') }}</dt>
                           <dd>
                             {{ organizationCapacityBytes(
                               selectionAdmission.organization_capacity.remaining_bytes,
@@ -758,7 +773,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                           </dd>
                         </div>
                         <div>
-                          <dt>Available after creation</dt>
+                          <dt>{{ t('insight.copilot.availableAfterCreation') }}</dt>
                           <dd>
                             {{ organizationCapacityBytes(
                               selectionAdmission.organization_capacity.after_create_bytes,
@@ -792,7 +807,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     :size="16"
                     aria-hidden="true"
                   />
-                  <span>Advanced options</span>
+                  <span>{{ t('insight.copilot.advancedOptions') }}</span>
                 </span>
                 <ChevronDown
                   :size="17"
@@ -810,7 +825,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     <label
                       for="copilot-analysis-mode"
                       class="fullscreen-form-field__label"
-                    >Analysis mode</label>
+                    >{{ t('insight.copilot.analysisModeLabel') }}</label>
                     <ElSelect
                       id="copilot-analysis-mode"
                       v-model="selectedAnalysisMode"
@@ -824,20 +839,20 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       />
                     </ElSelect>
                     <p class="fullscreen-form-field__hint">
-                      Controls analysis depth and expected response time.
+                      {{ t('insight.copilot.analysisModeHint') }}
                     </p>
                   </div>
                   <div class="fullscreen-form-field">
                     <label
                       for="copilot-agent-model"
                       class="fullscreen-form-field__label"
-                    >Conversation model</label>
+                    >{{ t('insight.copilot.conversationModelLabel') }}</label>
                     <ElSelect
                       id="copilot-agent-model"
                       v-model="selectedAgentModelRef"
                       class="new-chat-advanced-select"
                       :disabled="!agentModels.length"
-                      placeholder="Select a conversation model"
+                      :placeholder="t('insight.copilot.conversationModelPlaceholder')"
                     >
                       <ElOption
                         v-for="row in agentModels"
@@ -847,12 +862,12 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       />
                     </ElSelect>
                     <p class="fullscreen-form-field__hint">
-                      Used to generate answers and run the analysis.
+                      {{ t('insight.copilot.conversationModelHint') }}
                     </p>
                   </div>
                 </div>
                 <p class="new-chat-advanced-note">
-                  Image understanding and document conversion use administrator-configured services.
+                  {{ t('insight.copilot.visualDocumentServicesHint') }}
                 </p>
               </div>
             </div>
@@ -862,7 +877,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                 <div class="new-chat-section-head">
                   <div class="new-chat-section-head__copy">
                     <h2 class="fullscreen-form-section__title">
-                      <span class="fullscreen-form-section__indicator" />Data Privacy
+                      <span class="fullscreen-form-section__indicator" />{{ t('insight.copilot.dataPrivacy') }}
                     </h2>
                   </div>
                 </div>
@@ -908,7 +923,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                           >
                             <div class="new-chat-gateway-option">
                               <span class="new-chat-gateway-option__name">{{ row.name }}</span>
-                              <span class="new-chat-gateway-option__status"><span class="new-chat-gateway-option__dot" />Online</span>
+                              <span class="new-chat-gateway-option__status"><span class="new-chat-gateway-option__dot" />{{ t('insight.copilot.online') }}</span>
                             </div>
                           </ElOption>
                         </ElSelect>
@@ -968,19 +983,19 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                 />
               </div><div class="add-form-preview-header__info">
                 <h2 class="add-form-preview-header__name">
-                  New Chat
+                  {{ t('insight.copilot.newChat') }}
                 </h2><p class="add-form-preview-header__type">
-                  AI Copilot
+                  {{ t('insight.copilot.roleAi') }}
                 </p>
               </div>
             </div>
             <div class="add-form-preview-body">
               <section class="add-form-preview-section">
                 <h3 class="add-form-preview-section__title">
-                  Data Source
+                  {{ t('insight.copilot.detailsDataSource') }}
                 </h3>
                 <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">Backup Source</span><span
+                  <span class="add-form-preview-row__label">{{ t('insight.copilot.bindingBackupSource') }}</span><span
                     class="add-form-preview-row__value"
                     :class="{ 'add-form-preview-row__value--empty': !selectedBackupSource }"
                   >{{ selectedBackupSource?.label || '—' }}</span>
@@ -989,13 +1004,13 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                   <span class="add-form-preview-row__label">{{ t('insight.copilot.dataOriginLabel') }}</span><span class="add-form-preview-row__value">{{ t('insight.copilot.dataOriginProtected') }}</span>
                 </div>
                 <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">Snapshot</span><span
+                  <span class="add-form-preview-row__label">{{ t('insight.copilot.bindingSnapshot') }}</span><span
                     class="add-form-preview-row__value"
                     :class="{ 'add-form-preview-row__value--empty': !selectedSnapshot }"
                   >{{ selectedSnapshot ? snapshotOptionLabel(selectedSnapshot) : '—' }}</span>
                 </div>
                 <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">Files and Folders</span><span
+                  <span class="add-form-preview-row__label">{{ t('insight.copilot.detailsFilesFolders') }}</span><span
                     class="add-form-preview-row__value"
                     :class="{ 'add-form-preview-row__value--empty': !sourceScopes.length }"
                   >{{ selectedScopeSummary }}</span>
@@ -1003,21 +1018,21 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
               </section>
               <section class="add-form-preview-section">
                 <h3 class="add-form-preview-section__title">
-                  Execution
+                  {{ t('insight.copilot.execution') }}
                 </h3>
                 <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">Analysis mode</span><span class="add-form-preview-row__value">{{ analysisModeLabel(selectedAnalysisMode) }}</span>
+                  <span class="add-form-preview-row__label">{{ t('insight.copilot.analysisModeLabel') }}</span><span class="add-form-preview-row__value">{{ analysisModeLabel(selectedAnalysisMode) }}</span>
                 </div>
                 <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">Conversation model</span><span
+                  <span class="add-form-preview-row__label">{{ t('insight.copilot.conversationModelLabel') }}</span><span
                     class="add-form-preview-row__value"
                     :class="{ 'add-form-preview-row__value--empty': !selectedAgentModel }"
-                  >{{ selectedAgentModel ? modelLabel(selectedAgentModel) : 'Organization default' }}</span>
+                  >{{ selectedAgentModel ? modelLabel(selectedAgentModel) : t('insight.copilot.organizationDefault') }}</span>
                 </div>
               </section>
               <section class="add-form-preview-section">
                 <h3 class="add-form-preview-section__title">
-                  Data Privacy
+                  {{ t('insight.copilot.dataPrivacy') }}
                 </h3>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('insight.copilot.gatewayTypeLabel') }}</span><span class="add-form-preview-row__value">{{ gatewayMode === 'auto' ? t('insight.copilot.gatewayTypePublic') : t('insight.copilot.gatewayTypePrivate') }}</span>
@@ -1033,7 +1048,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                 v-if="!visualModelReady"
                 class="new-chat-visual-warning"
               >
-                Visual understanding is unavailable. Text documents remain searchable, but images and scanned PDFs may not be readable.
+                {{ t('insight.copilot.visualUnderstandingUnavailable') }}
               </p>
             </div>
           </div>
@@ -1048,7 +1063,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
           {{ footerSubmitBlockReason }}
         </p>
         <ElButton @click="router.push('/insight/copilot')">
-          Cancel
+          {{ t('common.cancel') }}
         </ElButton>
         <ElButton
           type="primary"
@@ -1056,7 +1071,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
           :disabled="!canCreate"
           @click="createChat"
         >
-          {{ submitting ? 'Starting Chat…' : 'Start Chat' }}
+          {{ submitting ? t('insight.copilot.startingChat') : t('insight.copilot.startChat') }}
         </ElButton>
       </footer>
     </div>
