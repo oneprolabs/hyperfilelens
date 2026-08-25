@@ -25,6 +25,7 @@ from apps.storage.services.internal.repository_health import (
     dispatch_automatic_repository_observation,
     is_repository_ownership_failure,
     probe_repository_health,
+    repository_health_lock_key,
 )
 from apps.storage.services.internal.repository_errors import (
     is_repository_health_transport_unconfirmed,
@@ -78,7 +79,7 @@ _REPOSITORY_OPERATION_CONFLICT_RETRY_SECONDS = 3
 
 
 def _repository_health_lock(repository_id: int) -> str:
-    return f"storage:repository-health:repository:{int(repository_id)}"
+    return repository_health_lock_key(repository_id)
 
 
 def _repository_health_startup_dispatch_lock() -> str:

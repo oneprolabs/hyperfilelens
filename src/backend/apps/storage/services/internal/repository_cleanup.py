@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from pathlib import Path
 from typing import Any, Iterable
 
 from django.apps import apps
+from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction
 from django.db.models import Q
@@ -15,6 +17,7 @@ from apps.audit.constants import AuditAction, AuditResult, AuditResourceType
 from apps.audit.services.interface import write_audit_log
 from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
+from apps.node.services.interface import cancel_agent_task
 from apps.node.services.capabilities import node_capabilities
 from apps.storage.repositories.models import (
     Credential,
@@ -58,6 +61,9 @@ from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
     check_s3_repository,
 )
+from apps.storage.services.internal.repository_health import (
+    repository_health_lock_key,
+)
 from apps.storage.services.internal.repository_ownership import (
     RepositoryOwnershipMarkerMissingError,
     ownership_payload_for_node,
@@ -89,9 +95,14 @@ from apps.task.services.recovery import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 ACTIVE_TASK_STATUSES = (Task.Status.PENDING, Task.Status.RUNNING)
+_AUTOMATIC_HEALTH_PROBE_CANCEL_RETRY_SECONDS = 30
 CLEANUP_STEPS = (
     "check_cleanup_dependencies",
+    "waiting_for_system_probe",
     "verify_cleanup_owner",
     "prepare_cleanup_target",
     "delete_physical_repository",
@@ -109,6 +120,67 @@ class RepositoryCleanupBlocked(ValidationError):
     def __init__(self, preflight: dict[str, Any]):
         super().__init__("Repository cleanup is blocked.")
         self.preflight = preflight
+
+
+def _is_automatic_repository_health_probe(
+    *, node_task: NodeTask, repository: Repository
+) -> bool:
+    """Return whether a NodeTask is the system probe we may coordinate.
+
+    A task named ``repo.status`` is not sufficient evidence: users and older
+    versions can create the same command for a real repository operation.  All
+    persisted identity fields must agree before cleanup is allowed to cancel
+    it automatically.
+    """
+    payload = node_task.payload if isinstance(node_task.payload, dict) else {}
+    return bool(
+        node_task.kind == "repo.status"
+        and node_task.correlation_type == "storage.repository_health"
+        and str(node_task.correlation_id or "") == str(repository.id)
+        and payload.get("automatic_health_probe") is True
+        and str(payload.get("repository_id") or "") == str(repository.id)
+    )
+
+
+def _active_automatic_repository_health_probes(
+    *, repository: Repository
+) -> list[NodeTask]:
+    """List only active, explicitly identified automatic health probes."""
+    candidates = (
+        NodeTask.objects.filter(
+            organization_id=repository.organization_id,
+            status__in=[NodeTask.Status.PENDING, NodeTask.Status.RUNNING],
+            kind="repo.status",
+            correlation_type="storage.repository_health",
+            correlation_id=str(repository.id),
+        )
+        .select_related("node")
+        .order_by("created_at", "id")
+    )
+    return [
+        task
+        for task in candidates
+        if _is_automatic_repository_health_probe(
+            node_task=task,
+            repository=repository,
+        )
+    ]
+
+
+def _controller_repository_health_probe_active(
+    *, repository: Repository
+) -> bool:
+    """Return whether the synchronous Controller health probe still holds."""
+    try:
+        return cache.get(repository_health_lock_key(repository.id)) is not None
+    except Exception:
+        # Redis availability is not evidence that the probe stopped. Keep the
+        # cleanup fail-closed and let the durable retry proceed after recovery.
+        logger.exception(
+            "failed to read repository health lock repository_id=%s",
+            repository.id,
+        )
+        return True
 
 
 def repository_active_task_blockers(
@@ -134,6 +206,18 @@ def repository_active_task_blockers(
         )
     remaining = max(0, 50 - len(blockers))
     if remaining:
+        automatic_probe_filter = (
+            Q(
+                kind="repo.status",
+                correlation_type="storage.repository_health",
+                correlation_id=str(repository.id),
+                payload__automatic_health_probe=True,
+            )
+            & (
+                Q(payload__repository_id=repository.id)
+                | Q(payload__repository_id=str(repository.id))
+            )
+        )
         active_node_tasks = (
             NodeTask.objects.filter(
                 organization_id=repository.organization_id,
@@ -151,9 +235,18 @@ def repository_active_task_blockers(
                 | Q(payload__repository__id=repository.id)
                 | Q(payload__repository__id=str(repository.id))
             )
+            .exclude(automatic_probe_filter)
+            .select_related("node")
             .order_by("-created_at", "-id")[:remaining]
         )
         for node_task in active_node_tasks:
+            if _is_automatic_repository_health_probe(
+                node_task=node_task,
+                repository=repository,
+            ):
+                # System health probes are coordinated by the cleanup task;
+                # all user/data operations remain hard blockers below.
+                continue
             blockers.append(
                 {
                     "code": "active_repository_node_task",
@@ -163,8 +256,17 @@ def repository_active_task_blockers(
                     ),
                     "node_task_id": str(node_task.id),
                     "node_task_kind": node_task.kind,
+                    "node_id": node_task.node_id,
+                    "node_name": node_task.node.name,
+                    "node_address": str(
+                        node_task.node.ip_address
+                        or node_task.node.connection_ip_address
+                        or ""
+                    ),
                 }
             )
+            if len(blockers) >= 50:
+                break
     return blockers
 
 
@@ -341,6 +443,42 @@ def repository_cleanup_preflight(
             ignored_task_ids=ignored,
         )
     )
+
+    automatic_probes = _active_automatic_repository_health_probes(
+        repository=repository
+    )
+    controller_probe_active = _controller_repository_health_probe_active(
+        repository=repository
+    )
+    controller_probe_only = controller_probe_active and not automatic_probes
+    if automatic_probes or controller_probe_only:
+        warnings.append(
+            {
+                "code": "automatic_repository_health_probe",
+                "detail": (
+                    f"{len(automatic_probes) + int(controller_probe_only)} "
+                    "background repository health check(s) "
+                    "will be stopped before physical cleanup."
+                ),
+                "count": len(automatic_probes) + int(controller_probe_only),
+                "node_task_ids": [str(item.id) for item in automatic_probes],
+                "tasks": [
+                    {
+                        "node_task_id": str(item.id),
+                        "node_id": item.node_id,
+                        "node_name": item.node.name,
+                        "node_address": str(
+                            item.node.ip_address
+                            or item.node.connection_ip_address
+                            or ""
+                        ),
+                        "status": item.status,
+                    }
+                    for item in automatic_probes
+                ],
+                "controller_probe_active": controller_probe_active,
+            }
+        )
 
     active_cleanup = (
         _logical_cleanup_tasks(repository)
@@ -647,6 +785,89 @@ def create_direct_nas_target_cleanup_task(
         return repository_task
 
 
+def _wait_for_automatic_repository_health_probes(
+    *, repository_task: RepositoryTask, task: Task
+) -> dict[str, Any] | None:
+    """Cancel background probes and schedule a non-blocking follow-up.
+
+    The cleanup worker must never sleep while an Agent acknowledges a cancel
+    request.  Returning ``waiting`` leaves the durable parent task running;
+    the delayed idempotent advance (and the existing reconciliation sweep)
+    resumes it after the Agent reaches a terminal state.
+    """
+    probes = _active_automatic_repository_health_probes(
+        repository=repository_task.repository
+    )
+    controller_probe_active = _controller_repository_health_probe_active(
+        repository=repository_task.repository
+    )
+    if not probes and not controller_probe_active:
+        if task.current_step == "waiting_for_system_probe":
+            _set_cleanup_step(
+                task,
+                "waiting_for_system_probe",
+                TaskStep.Status.SUCCESS,
+                max(10, int(task.progress or 0)),
+            )
+        return None
+
+    for probe in probes:
+        try:
+            cancel_agent_task(
+                task_id=probe.id,
+                reason="Repository cleanup is stopping the background health probe.",
+            )
+        except Exception:
+            # A transient control-plane failure must keep cleanup in the
+            # waiting state; it must never turn into an implicit permission to
+            # delete while the probe may still be using the repository.
+            logger.exception(
+                "failed to cancel automatic repository health probe node_task_id=%s",
+                probe.id,
+            )
+
+    _set_cleanup_step(
+        task,
+        "waiting_for_system_probe",
+        TaskStep.Status.RUNNING,
+        min(7, max(5, int(task.progress or 0))),
+    )
+    append_task_event(
+        task=task,
+        step=task.steps.filter(step_name="waiting_for_system_probe").first(),
+        level=TaskEvent.Level.INFO,
+        message="Waiting for background repository health probes to stop",
+        metadata={
+            "node_task_ids": [str(probe.id) for probe in probes],
+            "node_ids": [probe.node_id for probe in probes],
+            "controller_probe_active": controller_probe_active,
+            "retry_after_seconds": _AUTOMATIC_HEALTH_PROBE_CANCEL_RETRY_SECONDS,
+        },
+    )
+    from apps.storage.tasks import execute_repository_operation
+
+    try:
+        execute_repository_operation.apply_async(
+            kwargs={"repository_task_id": repository_task.id},
+            countdown=_AUTOMATIC_HEALTH_PROBE_CANCEL_RETRY_SECONDS,
+        )
+    except Exception:
+        # The durable parent remains RUNNING so the existing repository
+        # reconciliation sweep can requeue it when the broker recovers.
+        logger.exception(
+            "failed to schedule repository cleanup probe follow-up repository_task_id=%s",
+            repository_task.id,
+        )
+    return {
+        "status": "waiting",
+        "repository_task_id": repository_task.id,
+        "waiting_for": "automatic_repository_health_probe",
+        "node_task_ids": [str(probe.id) for probe in probes],
+        "controller_probe_active": controller_probe_active,
+        "retry_after_seconds": _AUTOMATIC_HEALTH_PROBE_CANCEL_RETRY_SECONDS,
+    }
+
+
 def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
     repository_task = RepositoryTask.objects.select_related(
         "task",
@@ -697,6 +918,12 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
         }
 
     try:
+        probe_wait = _wait_for_automatic_repository_health_probes(
+            repository_task=repository_task,
+            task=task,
+        )
+        if probe_wait is not None:
+            return probe_wait
         resuming_physical_delete = (
             not started_now
             and task.current_step == "delete_physical_repository"
