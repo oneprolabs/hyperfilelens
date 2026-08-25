@@ -36,7 +36,24 @@ hfl_compose_exit_event_container_ids() {
 		| sort -u
 }
 
-hfl_compose_wait_for_container_exit_events() {
+hfl_compose_running_container_ids() {
+	local error_file=$1
+	grep -E \
+		'cannot remove container "?[0-9a-f]{12,64}"?: container is running: stop the container before removing or force remove' \
+		"${error_file}" \
+		| sed -E 's/.*cannot remove container "?([0-9a-f]{12,64})"?:.*/\1/' \
+		| sort -u
+}
+
+hfl_compose_recovery_container_ids() {
+	local error_file=$1
+	{
+		hfl_compose_exit_event_container_ids "${error_file}"
+		hfl_compose_running_container_ids "${error_file}"
+	} | sort -u
+}
+
+hfl_compose_wait_for_container_stop() {
 	local container_ids=$1
 	local wait_seconds="${HFL_COMPOSE_EXIT_EVENT_WAIT_SECONDS:-60}"
 	local poll_seconds="${HFL_COMPOSE_EXIT_EVENT_POLL_SECONDS:-2}"
@@ -134,15 +151,15 @@ hfl_compose_command_with_exit_event_recovery() {
 		return 0
 	fi
 
-	container_ids="$(hfl_compose_exit_event_container_ids "${error_file}" || true)"
+	container_ids="$(hfl_compose_recovery_container_ids "${error_file}" || true)"
 	rm -f -- "${error_file}"
 	if [[ -z "${container_ids}" ]]; then
 		return "${status}"
 	fi
 
 	hfl_compose_lifecycle_warn \
-		"Docker delayed a container exit event; waiting only for the affected container before one Compose retry"
-	if ! hfl_compose_wait_for_container_exit_events "${container_ids}"; then
+		"Docker delayed a container stop; waiting only for the affected container before one Compose retry"
+	if ! hfl_compose_wait_for_container_stop "${container_ids}"; then
 		return "${status}"
 	fi
 

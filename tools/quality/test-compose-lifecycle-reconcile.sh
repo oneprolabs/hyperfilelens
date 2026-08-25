@@ -90,6 +90,15 @@ compose_transient_then_failure() {
 	return 23
 }
 
+compose_running_then_success() {
+	increment_compose_count
+	if [[ "$(cat "${TMP}/compose-count")" -eq 1 ]]; then
+		printf 'Error response from daemon: cannot remove container "abcdef1234567890": container is running: stop the container before removing or force remove\n' >&2
+		return 1
+	fi
+	printf 'compose reconciled\n'
+}
+
 reset_case() {
 	rm -f "${TMP}/compose-count" "${HFL_TEST_DOCKER_COUNT_FILE}"
 }
@@ -124,6 +133,12 @@ fi
 reset_case
 export HFL_TEST_DOCKER_MODE=stopped
 hfl_compose_command_with_exit_event_recovery compose_transient_then_success up -d
+[[ "$(cat "${TMP}/compose-count")" == "2" ]]
+[[ "$(cat "${HFL_TEST_DOCKER_COUNT_FILE}")" == "1" ]]
+
+reset_case
+export HFL_TEST_DOCKER_MODE=stopped
+hfl_compose_command_with_exit_event_recovery compose_running_then_success up -d
 [[ "$(cat "${TMP}/compose-count")" == "2" ]]
 [[ "$(cat "${HFL_TEST_DOCKER_COUNT_FILE}")" == "1" ]]
 
