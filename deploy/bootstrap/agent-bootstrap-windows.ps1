@@ -77,6 +77,17 @@ $env:HFL_ORG_KEY = "__HFL_ORG_KEY__"
 $env:HFL_NODE_ROLE = "__HFL_NODE_ROLE__"
 $env:HFL_NODE_TOKEN = "__HFL_NODE_TOKEN__"
 $env:HFL_INSTALLATION_MODE = "__HFL_INSTALLATION_MODE__"
+if ($env:HFL_INSTALLATION_MODE -eq "auto") {
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  if (Test-HflAdmin) {
+    $env:HFL_INSTALLATION_MODE = "system"
+    Write-HflBootstrapLog "OK" "Execution identity resolved to $($identity.Name) in an elevated session; host-level continuous protection will be installed."
+  }
+  else {
+    $env:HFL_INSTALLATION_MODE = "user"
+    Write-HflBootstrapLog "OK" "Execution identity resolved to $($identity.Name) without elevation; current-user protection will be installed."
+  }
+}
 if ($env:HFL_INSTALLATION_MODE -eq "account" -and -not $env:HFL_RUN_AS_USER) {
   # The elevated installer will confirm the selected account. This default is
   # only a convenience for the account that launched the enrollment command.

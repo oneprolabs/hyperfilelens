@@ -18,6 +18,7 @@ from apps.node.api.views.artifact_release import (
     AgentArtifact,
     AgentReleasesAuthView,
     AgentReleaseView,
+    _automatic_token_allows_artifact_platform,
     _load_release_token,
 )
 from apps.node.api.views.enrollment_helpers import token_usable_for_artifact_download
@@ -45,21 +46,35 @@ class EnrollmentTokenReuseTests(TestCase):
         installation_id: str = "",
         installation_mode: str = NodeInstallationMode.SYSTEM,
         host_fingerprint: str = "",
+        platform: str = "linux",
+        node_id: int | None = None,
+        node_credential: str = "",
     ):
+        payload = {
+            "role": "agent",
+            "name": name,
+            "version": "1.0.0",
+            "os_name": platform,
+            "metadata": {
+                "platform": platform,
+                "hostname": name,
+                "runtime_principal": {
+                    "id": "1001",
+                    "name": "backup-user",
+                },
+            },
+            "installation_id": installation_id,
+            "installation_mode": installation_mode,
+            "host_fingerprint": host_fingerprint,
+        }
+        if node_id is not None:
+            payload["node_id"] = node_id
         request = self.factory.post(
             "/api/v1/node/nodes/heartbeat/",
-            {
-                "role": "agent",
-                "name": name,
-                "version": "1.0.0",
-                "os_name": "linux",
-                "installation_id": installation_id,
-                "installation_mode": installation_mode,
-                "host_fingerprint": host_fingerprint,
-            },
+            payload,
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
-            HTTP_X_NODE_TOKEN=token or self.token_row.token,
+            HTTP_X_NODE_TOKEN=node_credential or token or self.token_row.token,
         )
         return NodeViewSet.as_view({"post": "heartbeat"})(request)
 
@@ -100,6 +115,54 @@ class EnrollmentTokenReuseTests(TestCase):
         self.assertEqual(nodes[1].installation_mode, NodeInstallationMode.USER)
         self.assertEqual(nodes[0].host_fingerprint, fingerprint)
         self.assertEqual(nodes[1].host_fingerprint, fingerprint)
+
+    def test_user_agent_name_keeps_runtime_principal_after_reconnect(self):
+        self.token_row.installation_mode = NodeInstallationMode.USER_CONTINUOUS
+        self.token_row.save(update_fields=["installation_mode"])
+        first = self._heartbeat(
+            name="host-a",
+            installation_id="hfli_user_reconnect",
+            installation_mode=NodeInstallationMode.USER_CONTINUOUS,
+        )
+        self.assertEqual(first.status_code, 200)
+        node = Node.objects.get(pk=first.data["node_id"])
+        self.assertEqual(node.name, "host-a · backup-user")
+
+        second = self._heartbeat(
+            name="host-a",
+            installation_id="hfli_user_reconnect",
+            installation_mode=NodeInstallationMode.USER_CONTINUOUS,
+            node_id=node.id,
+            node_credential=first.data["node_credential"],
+        )
+        self.assertEqual(second.status_code, 200)
+        node.refresh_from_db()
+        self.assertEqual(node.name, "host-a · backup-user")
+
+    def test_user_agent_reconnect_preserves_manual_display_name(self):
+        self.token_row.installation_mode = NodeInstallationMode.USER_CONTINUOUS
+        self.token_row.save(update_fields=["installation_mode"])
+        first = self._heartbeat(
+            name="host-a",
+            installation_id="hfli_user_custom_name",
+            installation_mode=NodeInstallationMode.USER_CONTINUOUS,
+        )
+        self.assertEqual(first.status_code, 200)
+        node = Node.objects.get(pk=first.data["node_id"])
+        node.name = "Finance files"
+        node.save(update_fields=["name", "updated_at"])
+
+        second = self._heartbeat(
+            name="host-a",
+            installation_id="hfli_user_custom_name",
+            installation_mode=NodeInstallationMode.USER_CONTINUOUS,
+            node_id=node.id,
+            node_credential=first.data["node_credential"],
+        )
+
+        self.assertEqual(second.status_code, 200)
+        node.refresh_from_db()
+        self.assertEqual(node.name, "Finance files")
 
     def test_offline_host_record_is_preserved_when_a_new_agent_is_installed(self):
         fingerprint = "c" * 64
@@ -245,6 +308,134 @@ class EnrollmentTokenReuseTests(TestCase):
         row = ser.save(organization=self.org)
 
         self.assertEqual(row.installation_mode, NodeInstallationMode.USER_CONTINUOUS)
+
+    def test_create_serializer_accepts_platform_bound_automatic_source_agent(self):
+        ser = NodeTokenCreateSerializer(
+            data={
+                "role": NodeRole.AGENT,
+                "installation_mode_policy": NodeToken.InstallationModePolicy.AUTO,
+                "target_platform": NodeToken.TargetPlatform.LINUX,
+            }
+        )
+        self.assertTrue(ser.is_valid(), ser.errors)
+
+        row = ser.save(organization=self.org)
+
+        self.assertEqual(
+            row.installation_mode_policy,
+            NodeToken.InstallationModePolicy.AUTO,
+        )
+        self.assertEqual(row.target_platform, NodeToken.TargetPlatform.LINUX)
+
+    def test_automatic_mode_requires_source_agent_and_target_platform(self):
+        for payload in (
+            {
+                "role": NodeRole.AGENT,
+                "installation_mode_policy": NodeToken.InstallationModePolicy.AUTO,
+            },
+            {
+                "role": NodeRole.PROXY,
+                "installation_mode_policy": NodeToken.InstallationModePolicy.AUTO,
+                "target_platform": NodeToken.TargetPlatform.LINUX,
+            },
+        ):
+            with self.subTest(payload=payload):
+                ser = NodeTokenCreateSerializer(data=payload)
+                self.assertFalse(ser.is_valid())
+
+    def test_automatic_token_persists_only_platform_authorized_final_modes(self):
+        allowed_by_platform = {
+            NodeToken.TargetPlatform.LINUX: (
+                NodeInstallationMode.USER_CONTINUOUS,
+                NodeInstallationMode.SYSTEM,
+            ),
+            NodeToken.TargetPlatform.WINDOWS: (
+                NodeInstallationMode.USER,
+                NodeInstallationMode.SYSTEM,
+            ),
+            NodeToken.TargetPlatform.MACOS: (
+                NodeInstallationMode.USER,
+                NodeInstallationMode.SYSTEM,
+            ),
+        }
+        all_modes = set(NodeInstallationMode.values)
+        for platform, allowed_modes in allowed_by_platform.items():
+            for mode in all_modes:
+                with self.subTest(platform=platform, mode=mode):
+                    token = NodeToken.objects.create(
+                        organization=self.org,
+                        role=NodeRole.AGENT,
+                        installation_mode_policy=NodeToken.InstallationModePolicy.AUTO,
+                        target_platform=platform,
+                    )
+                    response = self._heartbeat(
+                        name=f"{platform}-{mode}",
+                        token=token.token,
+                        installation_id=f"hfli-{platform}-{mode}",
+                        installation_mode=mode,
+                        # Go reports runtime.GOOS (darwin), while the public
+                        # enrollment contract uses macos.
+                        platform=("darwin" if platform == "macos" else platform),
+                    )
+                    if mode in allowed_modes:
+                        self.assertEqual(response.status_code, 200)
+                        self.assertEqual(
+                            Node.objects.get(
+                                organization=self.org,
+                                installation_id=f"hfli-{platform}-{mode}",
+                            ).installation_mode,
+                            mode,
+                        )
+                    else:
+                        self.assertEqual(response.status_code, 409)
+
+    def test_automatic_token_rejects_release_for_a_different_platform(self):
+        self.token_row.installation_mode_policy = (
+            NodeToken.InstallationModePolicy.AUTO
+        )
+        self.token_row.target_platform = NodeToken.TargetPlatform.LINUX
+        self.token_row.save(
+            update_fields=["installation_mode_policy", "target_platform"]
+        )
+        request = self.factory.get(
+            "/api/v1/node/enrollment/agent/release",
+            {
+                "org": self.org.key,
+                "role": NodeRole.AGENT,
+                "token": self.token_row.token,
+                "platform": "windows",
+                "arch": "amd64",
+            },
+        )
+
+        response = AgentReleaseView.as_view()(request)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.data["error"],
+            "platform does not match enrollment token",
+        )
+
+    def test_automatic_token_accepts_its_bound_artifact_platform(self):
+        artifact_platform_by_target = {
+            NodeToken.TargetPlatform.LINUX: "linux",
+            NodeToken.TargetPlatform.WINDOWS: "windows",
+            NodeToken.TargetPlatform.MACOS: "darwin",
+        }
+        self.token_row.installation_mode_policy = (
+            NodeToken.InstallationModePolicy.AUTO
+        )
+        for target_platform, artifact_platform in (
+            artifact_platform_by_target.items()
+        ):
+            with self.subTest(target_platform=target_platform):
+                self.token_row.target_platform = target_platform
+                self.assertTrue(
+                    _automatic_token_allows_artifact_platform(
+                        self.token_row,
+                        artifact_platform,
+                    )
+                )
 
     def test_create_serializer_rejects_user_level_infrastructure_role(self):
         for role in (NodeRole.PROXY, NodeRole.GATEWAY):

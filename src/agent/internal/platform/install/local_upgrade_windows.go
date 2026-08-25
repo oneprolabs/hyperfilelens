@@ -74,8 +74,10 @@ func writeWindowsUpgradeScript(
 $install = %q
 $archive = %q
 $pending = %q
-$scheduledTaskName = 'HyperFileLensAgent.DetachedRunner'
 $userInstall = %s
+$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$runtimeTaskName = if ($userInstall) { "HyperFileLensAgent.User.$currentSid" } else { 'HyperFileLensAgent' }
+$scheduledTaskName = if ($userInstall) { "$runtimeTaskName.DetachedRunner" } else { 'HyperFileLensAgent.DetachedRunner' }
 $SLEEP_SECONDS = %d
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $logFile) | Out-Null
@@ -101,11 +103,22 @@ try {
 
   Log "stopping HyperFileLensAgent before install.ps1 upgrade"
   if ($userInstall) {
-    Stop-ScheduledTask -TaskName HyperFileLensAgent -ErrorAction SilentlyContinue
+    Stop-ScheduledTask -TaskName $runtimeTaskName -ErrorAction SilentlyContinue
   } else {
     Stop-Service -Name HyperFileLensAgent -Force -ErrorAction SilentlyContinue
   }
-  Stop-Process -Name hfl-agent -Force -ErrorAction SilentlyContinue
+  # $install is the full path to install.ps1. Match only processes whose
+  # executable lives below this installation's Agent Root.
+  $agentRoot = Split-Path -Parent $install
+  Get-Process -Name hfl-agent -ErrorAction SilentlyContinue | Where-Object {
+    try {
+      $_.Path -and [System.IO.Path]::GetFullPath($_.Path).StartsWith(
+        [System.IO.Path]::GetFullPath($agentRoot).TrimEnd('\') + '\',
+        [System.StringComparison]::OrdinalIgnoreCase
+      )
+    }
+    catch { $false }
+  } | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
 
   Log "running install.ps1 upgrade"

@@ -5,6 +5,7 @@ package enroll
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"golang.org/x/sys/windows"
 
@@ -14,7 +15,14 @@ import (
 func acquireInstallLock(_ context.Context) (func(), error) {
 	mutexName := `Global\HyperFileLensInstaller`
 	if vfs.UserInstallation() {
-		mutexName = `Local\HyperFileLensInstaller`
+		tokenUser, err := windows.GetCurrentProcessToken().GetTokenUser()
+		if err != nil {
+			return nil, fmt.Errorf("resolve current Windows user for installer lock: %w", err)
+		}
+		if tokenUser == nil || tokenUser.User.Sid == nil {
+			return nil, fmt.Errorf("resolve current Windows user for installer lock: SID unavailable")
+		}
+		mutexName = `Global\HyperFileLensInstaller.User.` + tokenUser.User.Sid.String()
 	}
 	name, err := windows.UTF16PtrFromString(mutexName)
 	if err != nil {

@@ -107,7 +107,9 @@ $install = %q
 $data = %q
 $keep = %s
 $userInstall = %s
-$scheduledTaskName = 'HyperFileLensAgent.DetachedRunner'
+$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$runtimeTaskName = if ($userInstall) { "HyperFileLensAgent.User.$currentSid" } else { 'HyperFileLensAgent' }
+$scheduledTaskName = if ($userInstall) { "$runtimeTaskName.DetachedRunner" } else { 'HyperFileLensAgent.DetachedRunner' }
 $SLEEP_SECONDS = %d
 $callbackUrl = %q
 $callbackToken = %q
@@ -192,12 +194,21 @@ function Start-DeferredRemove([string]$target) {
 function Stop-HflProcessesForUninstall {
   Log "stopping HyperFileLensAgent lifecycle and child processes (pre-uninstall)"
   if ($userInstall) {
-    Stop-ScheduledTask -TaskName HyperFileLensAgent -ErrorAction SilentlyContinue
+    Stop-ScheduledTask -TaskName $runtimeTaskName -ErrorAction SilentlyContinue
   } else {
     Stop-Service -Name HyperFileLensAgent -Force -ErrorAction SilentlyContinue
   }
-  foreach ($procName in @('hfl-agent', 'kopia')) {
-    Stop-Process -Name $procName -Force -ErrorAction SilentlyContinue
+  $agentRoot = $install
+  foreach ($procName in @('hfl-agent', 'hfl-agent-user-launcher', 'kopia')) {
+    Get-Process -Name $procName -ErrorAction SilentlyContinue | Where-Object {
+      try {
+        $_.Path -and [System.IO.Path]::GetFullPath($_.Path).StartsWith(
+          [System.IO.Path]::GetFullPath($agentRoot).TrimEnd('\') + '\',
+          [System.StringComparison]::OrdinalIgnoreCase
+        )
+      }
+      catch { $false }
+    } | Stop-Process -Force -ErrorAction SilentlyContinue
   }
   Start-Sleep -Seconds 3
 }
@@ -237,7 +248,7 @@ function Confirm-UninstallArtifacts {
   Start-Sleep -Seconds 6
   $issues = @()
   if ($userInstall) {
-    if ($null -ne (Get-ScheduledTask -TaskName HyperFileLensAgent -ErrorAction SilentlyContinue)) {
+    if ($null -ne (Get-ScheduledTask -TaskName $runtimeTaskName -ErrorAction SilentlyContinue)) {
       $issues += "HyperFileLensAgent current-user task is still registered"
     }
   } elseif ($null -ne (Get-Service -Name HyperFileLensAgent -ErrorAction SilentlyContinue)) {
@@ -427,7 +438,7 @@ try {
     } else {
       Log "install.cmd and install.ps1 missing; running fallback cleanup"
       if ($userInstall) {
-        Unregister-ScheduledTask -TaskName HyperFileLensAgent -Confirm:$false -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $runtimeTaskName -Confirm:$false -ErrorAction SilentlyContinue
       } else {
         sc.exe delete HyperFileLensAgent 2>$null | Out-Null
       }

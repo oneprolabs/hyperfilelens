@@ -75,6 +75,34 @@ class BootstrapViewTests(TestCase):
 
         self.assertEqual(values["HFL_INSTALLATION_MODE"], "user")
 
+    def test_automatic_bootstrap_defers_mode_to_local_process_identity(self):
+        self.token_row.installation_mode_policy = NodeToken.InstallationModePolicy.AUTO
+        self.token_row.target_platform = NodeToken.TargetPlatform.LINUX
+        self.token_row.save(
+            update_fields=["installation_mode_policy", "target_platform"]
+        )
+
+        response = self._get("linux")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn('HFL_INSTALLATION_MODE="auto"', body)
+
+    def test_automatic_bootstrap_rejects_a_different_operating_system(self):
+        self.token_row.installation_mode_policy = NodeToken.InstallationModePolicy.AUTO
+        self.token_row.target_platform = NodeToken.TargetPlatform.LINUX
+        self.token_row.save(
+            update_fields=["installation_mode_policy", "target_platform"]
+        )
+
+        response = self._get("windows")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "issued for a different operating system",
+            response.content.decode("utf-8"),
+        )
+
     @override_settings(
         HFL_INSECURE_TLS=False,
         FRONTEND_URL="https://console.example",
@@ -112,7 +140,9 @@ class BootstrapViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.content.decode("utf-8")
-        self.assertIn("Linux user-continuous protection requires the Linux installer", body)
+        self.assertIn(
+            "Linux user-continuous protection requires the Linux installer", body
+        )
 
     @override_settings(
         HFL_INSECURE_TLS=False,

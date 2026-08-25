@@ -158,6 +158,16 @@ if ! command -v curl >/dev/null 2>&1; then
 	hfl_fail "curl is required but not installed." 2
 fi
 
+if [[ "${HFL_INSTALLATION_MODE}" == "auto" ]]; then
+	if [[ "$(id -u)" -eq 0 ]]; then
+		export HFL_INSTALLATION_MODE="system"
+		hfl_ok "Execution identity resolved to root; host-level continuous protection will be installed."
+	else
+		export HFL_INSTALLATION_MODE="user"
+		hfl_ok "Execution identity resolved to $(id -un) (UID $(id -u)); current-user protection will be installed."
+	fi
+fi
+
 if [[ "${HFL_INSTALLATION_MODE}" == "user" ]]; then
 	if [[ "$(id -u)" -eq 0 ]]; then
 		hfl_fail "User-level installation must run as the current user without sudo." 1

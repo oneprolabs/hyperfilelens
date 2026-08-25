@@ -3836,6 +3836,8 @@
   "nodeLifecycle.installLeadWindows": "951b468fbb188b68af4fe929f182a19c31c940bfe049b27c813243ec2b61306c",
   "nodeLifecycle.installLeadMacos": "b4a18800cc07680033a6efd64a75bfeabce2c4b372937f5dfbf5300b8b17b2dd",
   "nodeLifecycle.installLeadUser": "9a7b4454be3c9bedd72f4afc00bbee82807750287ff8dc70d274c22011b3f2f9",
+  "nodeLifecycle.installLeadAutomatic": "76e1faa6ce0ec305fdaf48d7796225c2365dc923e946bc4cdccece9abdc2f034",
+  "nodeLifecycle.installLeadAutomaticMacos": "bef1efbac738cb901fdee6524ea44d73b6b76ff3503baff66f417bbb5aa091de",
   "nodeLifecycle.installLeadAdministrator": "cbc554f70533b2817c57562d8157472a794c91ce707833f99b00ccb8f5bde13f",
   "nodeLifecycle.installLeadTerminal": "ccb3afc48bd9a28423a1cc8a85ae3c0feb401b3fb4c4f6360aab35362089452c",
   "nodeLifecycle.installFlowLabel": "b57ad7b3b7d0d3b7130bcdc9b7e312ff3737ccf4ebb0525869ab9f22a59f9785",

@@ -196,6 +196,16 @@ aarch64 | arm64) HFL_ARCH=arm64 ;;
 	;;
 esac
 
+if [[ "${HFL_INSTALLATION_MODE}" == "auto" ]]; then
+	if [[ "$(id -u)" -eq 0 ]]; then
+		export HFL_INSTALLATION_MODE="system"
+		hfl_ok "Execution identity resolved to root; host-level continuous protection will be installed."
+	else
+		export HFL_INSTALLATION_MODE="user_continuous"
+		hfl_ok "Execution identity resolved to $(id -un) (UID $(id -u)); user-level continuous protection will be installed."
+	fi
+fi
+
 if [[ "${HFL_INSTALLATION_MODE}" == "user" || "${HFL_INSTALLATION_MODE}" == "user_continuous" ]]; then
 	if [[ "$(id -u)" -eq 0 ]]; then
 		hfl_fail "User-level installation must run as the current user without sudo." 1

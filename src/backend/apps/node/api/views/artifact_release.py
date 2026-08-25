@@ -83,6 +83,21 @@ def _normalize_arch(value: str | None) -> str | None:
     return None
 
 
+def _automatic_token_allows_artifact_platform(
+    token: NodeToken,
+    platform: str | None,
+) -> bool:
+    """Keep automatic enrollment artifacts bound to the selected OS."""
+    if token.installation_mode_policy != NodeToken.InstallationModePolicy.AUTO:
+        return True
+    expected = {
+        NodeToken.TargetPlatform.LINUX: "linux",
+        NodeToken.TargetPlatform.WINDOWS: "windows",
+        NodeToken.TargetPlatform.MACOS: "darwin",
+    }.get(token.target_platform)
+    return bool(expected and platform == expected)
+
+
 def _get_agent_artifact(
     role: str,
     *,
@@ -425,6 +440,17 @@ class AgentReleaseView(APIView):
         )
         if authorization is None:
             return Response({"error": "invalid enrollment token"}, status=401)
+        if (
+            authorization.token is not None
+            and not _automatic_token_allows_artifact_platform(
+                authorization.token,
+                platform,
+            )
+        ):
+            return Response(
+                {"error": "platform does not match enrollment token"},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         artifact = _get_agent_artifact(
             role,

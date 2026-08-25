@@ -3991,6 +3991,8 @@
     "installLeadWindows": "复制并在普通 {cmd} 或 {powershell} 窗口中运行。所选保护方式需要时，安装程序会请求一次管理员授权",
     "installLeadMacos": "复制到{terminal}并使用 {sudo} 运行。安装后，请在系统设置中授予 HyperFileLens Agent“完全磁盘访问权限”；否则只能保护可读取的文件。",
     "installLeadUser": "以当前用户身份复制并运行命令。请勿使用 sudo 或管理员终端。",
+    "installLeadAutomatic": "使用你希望保护的身份复制并运行命令。在 Linux 上，普通用户安装持续的用户级保护；在 Windows 和 macOS 上，普通用户安装当前用户保护。root 或已提升权限的管理员安装主机级保护。安装程序会明确显示检测到的身份，绝不会静默切换模式。",
+    "installLeadAutomaticMacos": "使用你希望保护的身份复制并运行命令。普通用户安装用户级保护；root 安装主机级保护。安装程序会明确显示检测到的身份，绝不会静默切换模式。安装后，请在系统设置中授予 HyperFileLens Agent“完全磁盘访问权限”；否则只能保护可读取的文件。",
     "installLeadAdministrator": "管理员",
     "installLeadTerminal": "终端",
     "installFlowLabel": "此命令的作用",

@@ -80,9 +80,14 @@ func scheduleWindowsTaskRunner(scriptPath string, userInstall bool, logFn func(s
 	if scriptPath == "" {
 		return fmt.Errorf("script path required")
 	}
-	taskName := "HyperFileLensAgent.DetachedRunner"
 	principal := scheduledTaskPrincipal(userInstall)
-	bootstrap := fmt.Sprintf(`$taskName = %s
+	userInstallFlag := "$false"
+	if userInstall {
+		userInstallFlag = "$true"
+	}
+	bootstrap := fmt.Sprintf(`$userInstall = %s
+$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$taskName = if ($userInstall) { "HyperFileLensAgent.User.$currentSid.DetachedRunner" } else { 'HyperFileLensAgent.DetachedRunner' }
 $script = %s
 $actionArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " + [char]34 + $script + [char]34
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $actionArgs
@@ -90,7 +95,7 @@ $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(5)
 %s
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-`, psSingleQuote(taskName), psSingleQuote(scriptPath), principal)
+`, userInstallFlag, psSingleQuote(scriptPath), principal)
 	cmd := exec.Command(
 		"powershell.exe",
 		"-NoProfile",
@@ -106,7 +111,7 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Pr
 		return fmt.Errorf("register one-shot upgrade task: %w", err)
 	}
 	if logFn != nil {
-		logFn(fmt.Sprintf("registered one-shot Task Scheduler upgrade runner task=%s", taskName))
+		logFn("registered instance-scoped one-shot Task Scheduler lifecycle runner")
 	}
 	return nil
 }
