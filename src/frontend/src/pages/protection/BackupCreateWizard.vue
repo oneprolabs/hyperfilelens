@@ -622,6 +622,7 @@ type SourceTreeItem = DemoDirTreeItem & {
   nextCursor?: string
   loading?: boolean
   filenameEncodingSuspected?: boolean
+  protectionReason?: string
 }
 
 type CreateSourceRow = {
@@ -3537,9 +3538,16 @@ function addedDirTreeDisableReason(sourceId: string, path: string) {
   return addedDirBlockReason(sourceId, path)
 }
 
+function sourceTreeProtectionReason(data: SourceTreeItem) {
+  if (!data.protectionReason) return ''
+  return t('protection.backupsPage.dirDisabledAgentInternal')
+}
+
 function warnSourceTreeConflict(sourceId: string, data: SourceTreeItem) {
   if (data.nodeKind === 'loadMore') return false
-  const reason = data.disabledReason || addedDirTreeDisableReason(sourceId, data.path)
+  const reason = sourceTreeProtectionReason(data)
+    || data.disabledReason
+    || addedDirTreeDisableReason(sourceId, data.path)
   if (!reason) return false
   const key = `${sourceId}:${data.path}:${reason}`
   const now = Date.now()
@@ -3606,7 +3614,8 @@ function refreshCreateSourceTreeBlockedState(sourceId: string) {
     const data = node.data
     if (!data?.path) return
     if (data.nodeKind === 'loadMore') return
-    const disabledReason = addedDirTreeDisableReason(sourceId, data.path)
+    const disabledReason = sourceTreeProtectionReason(data)
+      || addedDirTreeDisableReason(sourceId, data.path)
     const disabled = Boolean(disabledReason)
     if (data.disabled === disabled && (data.disabledReason || '') === disabledReason) return
     data.disabled = disabled
@@ -3787,6 +3796,9 @@ function mapSourceDirectoryEntry(
       label: entry.label,
       path: entry.path,
     }),
+    protectionReason: entry.protected
+      ? entry.protection_reason || 'agent_internal_root'
+      : '',
   }
 }
 
@@ -3843,7 +3855,8 @@ function sourceTreeItemsWithLoadMore(sourceId: string, parentPath: string, page:
 
 function sourceTreeItemWithBlockedState(sourceId: string, item: SourceTreeItem): SourceTreeItem {
   if (item.nodeKind === 'loadMore') return item
-  const disabledReason = addedDirTreeDisableReason(sourceId, item.path)
+  const disabledReason = sourceTreeProtectionReason(item)
+    || addedDirTreeDisableReason(sourceId, item.path)
   return {
     ...item,
     disabled: Boolean(disabledReason),
@@ -6176,10 +6189,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                           <div
                             class="create-dir-row create-dir-row--tree"
                             :class="{
-                              'create-dir-row--disabled': Boolean(addedDirTreeDisableReason(row.id, data.path)),
+                              'create-dir-row--disabled': Boolean(sourceTreeProtectionReason(data) || data.disabledReason || addedDirTreeDisableReason(row.id, data.path)),
                               'create-dir-row--filename-encoding-warning': Boolean(data.filenameEncodingSuspected),
                             }"
                             :data-source-path="data.path"
+                            :title="sourceTreeProtectionReason(data) || data.disabledReason || undefined"
                             @click="(event) => onSourceTreeRowClick(row.id, data, event)"
                           >
                             <component
@@ -6199,7 +6213,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                               aria-hidden="true"
                             />
                             <button
-                              v-if="data.path_type === 'directory'"
+                              v-if="data.path_type === 'directory' && !data.protectionReason"
                               type="button"
                               class="hfl-dir-tree-node__refresh"
                               :class="{ 'is-refreshing': isSourceDirectoryRefreshing(row.id, data.path) }"
@@ -6214,10 +6228,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                               />
                             </button>
                             <HflHelpTip
-                              v-if="addedDirTreeDisableReason(row.id, data.path)"
-                              :content="addedDirTreeDisableReason(row.id, data.path)"
+                              v-if="sourceTreeProtectionReason(data) || data.disabledReason"
+                              :content="sourceTreeProtectionReason(data) || data.disabledReason"
                               trigger-class="create-dir-row__disabled-icon"
-                              :aria-label="addedDirTreeDisableReason(row.id, data.path) || undefined"
+                              :aria-label="sourceTreeProtectionReason(data) || data.disabledReason"
                             />
                           </div>
                         </ElTooltip>

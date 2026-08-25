@@ -1586,6 +1586,49 @@ class SourceResourceApiTests(TestCase):
         )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_backup_selectable_marks_agent_internal_directory_unselectable(
+        self, mock_run_task
+    ):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-protected-root",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.46",
+        )
+        mock_run_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=True,
+            task_id="task-agent-protected-root",
+            result={
+                "entries": [
+                    {
+                        "name": "hyperfilelens-agent",
+                        "path": "/opt/hyperfilelens-agent",
+                        "is_dir": True,
+                        "selectable": False,
+                        "protected": True,
+                        "protection_reason": "agent_internal_root",
+                    }
+                ]
+            },
+            task=SimpleNamespace(last_error=""),
+        )
+
+        resp = self.client.get(
+            f"/api/v1/source/backup-selectable/directories/?source_id=agent:{agent.id}&path=/opt",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        entry = resp.data["entries"][0]
+        self.assertFalse(entry["selectable"])
+        self.assertTrue(entry["protected"])
+        self.assertTrue(entry["isLeaf"])
+        self.assertEqual(entry["protection_reason"], "agent_internal_root")
+
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_directory_reports_agent_path_permission(
         self, mock_run_task
     ):
@@ -1787,6 +1830,43 @@ class SourceResourceApiTests(TestCase):
         problem = resp.data["data"]
         self.assertEqual(problem["code"], "AGENT.PATH_PERMISSION_DENIED")
         self.assertEqual(problem["meta"]["path"], "/restricted/file.txt")
+
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_backup_selectable_path_info_reports_agent_protected_path(
+        self, mock_run_task
+    ):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-protected-path",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        mock_run_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=False,
+            result={
+                "path": "/opt/hyperfilelens-agent",
+                "exists": False,
+                "error_code": "AGENT_PATH_FORBIDDEN",
+            },
+            stream_message=None,
+            task=SimpleNamespace(
+                id="task-protected-path",
+                last_error="agent path is protected",
+                status="failed",
+            ),
+        )
+
+        resp = self.client.get(
+            f"/api/v1/source/backup-selectable/path-info/?source_id=agent:{agent.id}&path=/opt/hyperfilelens-agent",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        problem = resp.data["data"]
+        self.assertEqual(problem["code"], "AGENT.PATH_PROTECTED")
+        self.assertEqual(problem["meta"]["path"], "/opt/hyperfilelens-agent")
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_agent_directory_root_uses_mount_listing(

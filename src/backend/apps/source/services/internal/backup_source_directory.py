@@ -343,15 +343,20 @@ def _normalize_entries(
             continue
         seen.add(path)
         name = str(item.get("name") or "").strip() or _basename(path)
+        protected = _safe_bool(item.get("protected", False))
+        selectable = _safe_bool(item.get("selectable", True)) and not protected
         rows.append(
             {
                 "label": name,
                 "path": path,
-                "isLeaf": not is_dir,
+                "isLeaf": not is_dir or not selectable,
                 "is_dir": is_dir,
                 "path_type": "directory" if is_dir else "file",
                 "size": _safe_int(item.get("size")),
                 "mod_time": str(item.get("mod_time") or ""),
+                "selectable": selectable,
+                "protected": protected,
+                "protection_reason": str(item.get("protection_reason") or ""),
             }
         )
     return sorted(

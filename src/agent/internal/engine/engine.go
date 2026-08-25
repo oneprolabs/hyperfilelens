@@ -60,6 +60,18 @@ func (e *Engine) current() *model.AgentConfig {
 	return &model.AgentConfig{}
 }
 
+func (e *Engine) backupPathBoundary(p Payload) (backupPathBoundary, error) {
+	nasSpec, nasSource, err := parseNASSpec(p.Extra["nas"])
+	if err != nil {
+		return backupPathBoundary{}, err
+	}
+	mountPoint := ""
+	if nasSource {
+		mountPoint = nasSpec.MountPoint
+	}
+	return newBackupPathBoundary(e.current(), p.Path, nasSource, mountPoint)
+}
+
 // Run executes a command and reports progress via sink when provided.
 func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Result {
 	if err := ctx.Err(); err != nil {
@@ -114,6 +126,15 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 		}
 		def := []string{"snapshot", "create"}
 		if p.Path != "" {
+			boundary, boundaryErr := e.backupPathBoundary(p)
+			if boundaryErr != nil {
+				status, result, errMsg = "failed", agentPathBoundaryErrorResult(boundaryErr), boundaryErr.Error()
+				break
+			}
+			if len(boundary.patterns()) > 0 {
+				status, result, errMsg = "failed", map[string]any{"error_code": agentPathForbiddenCode}, "raw backup of a parent path must use managed backup policy so the Agent root can be excluded"
+				break
+			}
 			def = append(def, p.Path)
 		}
 		status, result, errMsg = e.runKopia(ctx, rep, cmd.ID, p, def)
@@ -426,6 +447,11 @@ func (e *Engine) runBrowse(
 	if hasNAS && p.Path == "" {
 		p.Path = nasSpec.MountPoint
 	}
+	if p.Path != "" {
+		if _, boundaryErr := e.backupPathBoundary(p); boundaryErr != nil {
+			return "failed", agentPathBoundaryErrorResult(boundaryErr), boundaryErr.Error()
+		}
+	}
 	if p.ListMounts || p.Path == "" {
 		root = ""
 		listing, err = svc.ListMountPoints(ctx, explorer.ListOptions{
@@ -461,13 +487,22 @@ func (e *Engine) runBrowse(
 	entries := listing.Entries
 	rows := make([]map[string]any, 0, len(entries))
 	for _, entry := range entries {
-		rows = append(rows, map[string]any{
-			"name":     entry.Name,
-			"path":     entry.Path,
-			"is_dir":   entry.IsDir,
-			"size":     entry.Size,
-			"mod_time": entry.ModTime,
-		})
+		row := map[string]any{
+			"name":       entry.Name,
+			"path":       entry.Path,
+			"is_dir":     entry.IsDir,
+			"size":       entry.Size,
+			"mod_time":   entry.ModTime,
+			"selectable": true,
+		}
+		candidate := p
+		candidate.Path = entry.Path
+		if _, boundaryErr := e.backupPathBoundary(candidate); errors.Is(boundaryErr, errAgentPathForbidden) {
+			row["selectable"] = false
+			row["protected"] = true
+			row["protection_reason"] = "agent_internal_root"
+		}
+		rows = append(rows, row)
 	}
 	return "success", map[string]any{
 		"path":        root,
@@ -576,6 +611,17 @@ func (e *Engine) runPathInfo(ctx context.Context, p Payload) (string, map[string
 	if err := e.ensureNASMounted(ctx, p); err != nil {
 		return "failed", nil, err.Error()
 	}
+	boundary, boundaryErr := e.backupPathBoundary(p)
+	if boundaryErr != nil {
+		result := map[string]any{
+			"path":   path,
+			"exists": false,
+		}
+		for key, value := range agentPathBoundaryErrorResult(boundaryErr) {
+			result[key] = value
+		}
+		return "failed", result, boundaryErr.Error()
+	}
 	info, statErr := os.Stat(path)
 	if statErr != nil {
 		if errors.Is(statErr, fs.ErrNotExist) {
@@ -608,6 +654,9 @@ func (e *Engine) runPathInfo(ctx context.Context, p Payload) (string, map[string
 		"is_dir":    isDir,
 		"path_type": pathType,
 	}
+	if exclusions := boundary.exclusions(); len(exclusions) > 0 {
+		result["excluded_system_paths"] = exclusions
+	}
 	if p.IncludeMetadata {
 		result["size"] = info.Size()
 		result["mod_time"] = info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00")
@@ -626,11 +675,19 @@ func (e *Engine) runPathSize(ctx context.Context, p Payload) (string, map[string
 	if err := e.ensureNASMounted(ctx, p); err != nil {
 		return "failed", nil, err.Error()
 	}
+	boundary, boundaryErr := e.backupPathBoundary(p)
+	if boundaryErr != nil {
+		result := map[string]any{"path": path}
+		for key, value := range agentPathBoundaryErrorResult(boundaryErr) {
+			result[key] = value
+		}
+		return "failed", result, boundaryErr.Error()
+	}
 	pathType := payloadStringValue(p.Extra["path_type"])
 	if pathType == "" {
 		pathType = "directory"
 	}
-	sizeBytes, sizeErr := pathsize.Estimate(path, pathType)
+	sizeBytes, sizeErr := pathsize.EstimateWithExclusions(path, pathType, boundary.exclusions())
 	if sizeErr != nil {
 		if errors.Is(sizeErr, fs.ErrNotExist) {
 			return "failed", map[string]any{"path": path, "exists": false}, "path not found"
@@ -645,9 +702,10 @@ func (e *Engine) runPathSize(ctx context.Context, p Payload) (string, map[string
 		return "failed", map[string]any{"path": path}, sizeErr.Error()
 	}
 	return "success", map[string]any{
-		"path":       path,
-		"path_type":  pathType,
-		"size_bytes": sizeBytes,
+		"path":                  path,
+		"path_type":             pathType,
+		"size_bytes":            sizeBytes,
+		"excluded_system_paths": boundary.exclusions(),
 	}, ""
 }
 

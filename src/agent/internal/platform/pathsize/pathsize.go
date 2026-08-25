@@ -12,6 +12,13 @@ import (
 
 // Estimate returns logical byte size for a file or directory path.
 func Estimate(path string, pathType string) (uint64, error) {
+	return EstimateWithExclusions(path, pathType, nil)
+}
+
+// EstimateWithExclusions returns a size estimate without traversing the
+// supplied absolute paths. Unix uses du when its exclusion support is
+// available; other platforms and minimal du implementations use WalkDir.
+func EstimateWithExclusions(path string, pathType string, exclusions []string) (uint64, error) {
 	clean := strings.TrimSpace(path)
 	if clean == "" {
 		return 0, os.ErrInvalid
@@ -28,15 +35,22 @@ func Estimate(path string, pathType string) (uint64, error) {
 		return uint64(info.Size()), nil
 	}
 	if runtime.GOOS != "windows" {
-		if size, ok := duBytes(clean); ok {
+		if size, ok := duBytes(clean, exclusions); ok {
 			return size, nil
 		}
 	}
-	return walkBytes(clean)
+	return walkBytes(clean, exclusions)
 }
 
-func duBytes(path string) (uint64, bool) {
-	cmd := exec.Command("du", "-sb", path)
+func duBytes(path string, exclusions []string) (uint64, bool) {
+	args := []string{"-sb"}
+	for _, excluded := range exclusions {
+		if value := strings.TrimSpace(excluded); value != "" {
+			args = append(args, "--exclude="+filepath.Clean(value))
+		}
+	}
+	args = append(args, "--", path)
+	cmd := exec.Command("du", args...)
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, false
@@ -52,9 +66,17 @@ func duBytes(path string) (uint64, bool) {
 	return parsed, true
 }
 
-func walkBytes(root string) (uint64, error) {
+func walkBytes(root string, exclusions []string) (uint64, error) {
 	var total uint64
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		for _, excluded := range exclusions {
+			if sameOrWithin(path, excluded) {
+				if entry == nil || entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -71,4 +93,18 @@ func walkBytes(root string) (uint64, error) {
 		return nil
 	})
 	return total, err
+}
+
+func sameOrWithin(path, root string) bool {
+	path = filepath.Clean(path)
+	root = filepath.Clean(root)
+	if runtime.GOOS == "windows" {
+		path = strings.ToLower(path)
+		root = strings.ToLower(root)
+	}
+	if path == root {
+		return true
+	}
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }

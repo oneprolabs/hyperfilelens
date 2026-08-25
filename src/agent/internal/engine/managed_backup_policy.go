@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -258,13 +259,13 @@ func managedBackupPolicyResetArgs(configFile string, sourcePath string) []string
 	}
 }
 
-func managedBackupPolicyApplyArgs(configFile string, sourcePath string, spec managedBackupPolicySpec) []string {
+func managedBackupPolicyApplyArgs(configFile string, sourcePath string, spec managedBackupPolicySpec, protectedPatterns ...[]string) []string {
 	args := []string{
 		"--config-file=" + configFile,
 		"policy",
 		"set",
 	}
-	for _, pattern := range spec.IgnorePatterns {
+	for _, pattern := range managedIgnorePatterns(spec.IgnorePatterns, protectedPatterns...) {
 		args = append(args, "--add-ignore="+pattern)
 	}
 	args = append(args,
@@ -306,8 +307,10 @@ func applyManagedBackupPolicy(
 	env map[string]string,
 	sourcePath string,
 	spec managedBackupPolicySpec,
+	protectedPatterns ...[]string,
 ) (map[string]any, error) {
 	result := map[string]any{"compression_level": spec.CompressionLevel}
+	protected := protectedPatternValues(protectedPatterns...)
 	resetArgs := managedBackupPolicyResetArgs(configFile, sourcePath)
 	resetResult, resetErr := runManagedPolicyCommand(ctx, managedRepositoryKopiaCommandTimeout, bin, resetArgs, env, "")
 	resetCommandResult := commandResult(resetResult)
@@ -323,16 +326,17 @@ func applyManagedBackupPolicy(
 		return result, fmt.Errorf("reset backup policy: %w", resetErr)
 	}
 
-	applyArgs := managedBackupPolicyApplyArgs(configFile, sourcePath, spec)
+	applyArgs := managedBackupPolicyApplyArgs(configFile, sourcePath, spec, protectedPatterns...)
 	applyResult, applyErr := runManagedPolicyCommand(ctx, managedRepositoryKopiaCommandTimeout, bin, applyArgs, env, "")
 	applyCommandResult := commandResult(applyResult)
 	applyCommandResult["command_summary"] = map[string]any{
-		"operation":             "policy_set",
-		"phase":                 "apply",
-		"source_path":           sourcePath,
-		"compression_level":     spec.CompressionLevel,
-		"ignore_pattern_count":  len(spec.IgnorePatterns),
-		"never_extension_count": len(spec.NeverExtensions),
+		"operation":                   "policy_set",
+		"phase":                       "apply",
+		"source_path":                 sourcePath,
+		"compression_level":           spec.CompressionLevel,
+		"ignore_pattern_count":        len(managedIgnorePatterns(spec.IgnorePatterns, protectedPatterns...)),
+		"system_ignore_pattern_count": len(protected),
+		"never_extension_count":       len(spec.NeverExtensions),
 	}
 	result["policy_apply"] = applyCommandResult
 	if applyErr != nil {
@@ -340,5 +344,102 @@ func applyManagedBackupPolicy(
 		result["policy_phase"] = "apply"
 		return result, fmt.Errorf("apply backup policy: %w", applyErr)
 	}
+	return result, nil
+}
+
+func protectedPatternValues(values ...[]string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var out []string
+	for _, group := range values {
+		for _, value := range group {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func managedIgnorePatterns(userPatterns []string, protectedPatterns ...[]string) []string {
+	values := append(protectedPatternValues(protectedPatterns...), userPatterns...)
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func verifyManagedBackupProtection(
+	ctx context.Context,
+	bin string,
+	configFile string,
+	env map[string]string,
+	sourcePath string,
+	protectedPatterns []string,
+) (map[string]any, error) {
+	required := protectedPatternValues(protectedPatterns)
+	if len(required) == 0 {
+		return nil, nil
+	}
+	result := map[string]any{
+		"system_ignore_pattern_count": len(required),
+	}
+	args := []string{
+		"--config-file=" + configFile,
+		"policy",
+		"show",
+		"--json",
+		sourcePath,
+	}
+	res, err := runManagedPolicyCommand(
+		ctx,
+		managedRepositoryKopiaCommandTimeout,
+		bin,
+		args,
+		env,
+		"",
+	)
+	if err != nil {
+		result["error_code"] = "BACKUP_PROTECTION_POLICY_VERIFY_FAILED"
+		return result, fmt.Errorf("verify Agent backup boundary policy: %w", err)
+	}
+	var policy struct {
+		Files struct {
+			Ignore []string `json:"ignore"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(res.Stdout), &policy); err != nil {
+		result["error_code"] = "BACKUP_PROTECTION_POLICY_VERIFY_FAILED"
+		return result, fmt.Errorf("verify Agent backup boundary policy: invalid Kopia policy response")
+	}
+	applied := make(map[string]struct{}, len(policy.Files.Ignore))
+	for _, pattern := range policy.Files.Ignore {
+		applied[strings.TrimSpace(pattern)] = struct{}{}
+	}
+	for _, pattern := range required {
+		if _, ok := applied[pattern]; !ok {
+			result["error_code"] = "BACKUP_PROTECTION_POLICY_MISSING"
+			return result, fmt.Errorf("required Agent backup boundary policy is missing")
+		}
+	}
+	result["system_ignore_policy_verified"] = true
 	return result, nil
 }

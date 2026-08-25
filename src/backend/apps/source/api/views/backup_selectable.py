@@ -55,6 +55,10 @@ def _agent_path_permission_denied(exc: Exception) -> bool:
     )
 
 
+def _agent_path_protected(exc: Exception) -> bool:
+    return getattr(exc, "agent_error_code", "") == "AGENT_PATH_FORBIDDEN"
+
+
 def _optional_query_bool(params, name: str) -> bool | None:
     if name not in params or str(params.get(name) or "").strip() == "":
         return None
@@ -491,6 +495,13 @@ class BackupSelectableDirectoryView(APIView):
                 meta={"source_id": source_id},
             ) from exc
         except BackupSourceDirectoryError as exc:
+            if _agent_path_protected(exc):
+                raise AppError(
+                    code="AGENT.PATH_PROTECTED",
+                    status=status.HTTP_400_BAD_REQUEST,
+                    diagnostic=str(exc),
+                    meta={"source_id": source_id, "path": path},
+                ) from exc
             if _agent_path_permission_denied(exc):
                 raise AppError(
                     code="AGENT.PATH_PERMISSION_DENIED",
@@ -575,6 +586,13 @@ class BackupSelectablePathInfoView(APIView):
                 meta={"source_id": source_id, "path": path},
             ) from exc
         except BackupSourceDirectoryError as exc:
+            if _agent_path_protected(exc):
+                raise AppError(
+                    code="AGENT.PATH_PROTECTED",
+                    status=status.HTTP_400_BAD_REQUEST,
+                    diagnostic=str(exc),
+                    meta={"source_id": source_id, "path": path},
+                ) from exc
             if _agent_path_permission_denied(exc):
                 raise AppError(
                     code="AGENT.PATH_PERMISSION_DENIED",

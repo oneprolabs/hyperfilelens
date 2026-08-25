@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -101,6 +102,120 @@ func TestManagedBackupPolicyUsesSeparateResetAndApplyArgs(t *testing.T) {
 	if got := applyArgs[len(applyArgs)-1]; got != "/data/projects" {
 		t.Fatalf("expected source path target, got %q", got)
 	}
+}
+
+func TestManagedBackupPolicyKeepsSystemIgnoreAheadOfUserRules(t *testing.T) {
+	spec, err := parseManagedBackupPolicy(balancedManagedPolicyPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := managedBackupPolicyApplyArgs(
+		"/tmp/repo.config",
+		"/",
+		spec,
+		[]string{"opt/hyperfilelens-agent"},
+	)
+	var ignores []string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--add-ignore=") {
+			ignores = append(ignores, strings.TrimPrefix(arg, "--add-ignore="))
+		}
+	}
+	if len(ignores) == 0 || ignores[0] != "opt/hyperfilelens-agent" {
+		t.Fatalf("system boundary must be the first ignore rule: %#v", ignores)
+	}
+	if strings.HasSuffix(ignores[0], "/**") {
+		t.Fatalf("system boundary must exclude the directory entry itself: %#v", ignores)
+	}
+}
+
+func TestManagedBackupPolicyPreservesUserExceptionsWithSystemBoundary(t *testing.T) {
+	payload := balancedManagedPolicyPayload()
+	payload["file_filter"].(map[string]any)["ignore_patterns"] = []any{
+		"*.tmp",
+		"!important.tmp",
+	}
+	spec, err := parseManagedBackupPolicy(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := runManagedPolicyCommand
+	t.Cleanup(func() { runManagedPolicyCommand = original })
+	var calls [][]string
+	runManagedPolicyCommand = func(
+		_ context.Context,
+		_ time.Duration,
+		_ string,
+		args []string,
+		_ map[string]string,
+		_ string,
+	) (process.Result, error) {
+		calls = append(calls, slices.Clone(args))
+		return process.Result{}, nil
+	}
+
+	_, err = applyManagedBackupPolicy(
+		context.Background(),
+		"kopia",
+		"/tmp/repo.config",
+		nil,
+		"/",
+		spec,
+		[]string{"opt/hyperfilelens-agent"},
+	)
+	if err != nil {
+		t.Fatalf("expected policy apply to preserve supported user exceptions: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("expected reset and apply commands, calls=%d", len(calls))
+	}
+	if !slices.Contains(calls[1], "--add-ignore=opt/hyperfilelens-agent") ||
+		!slices.Contains(calls[1], "--add-ignore=!important.tmp") {
+		t.Fatalf("system and user rules must both be applied: %#v", calls[1])
+	}
+}
+
+func TestVerifyManagedBackupProtectionRequiresEffectiveKopiaPolicy(t *testing.T) {
+	original := runManagedPolicyCommand
+	t.Cleanup(func() { runManagedPolicyCommand = original })
+
+	t.Run("present", func(t *testing.T) {
+		runManagedPolicyCommand = func(
+			context.Context,
+			time.Duration,
+			string,
+			[]string,
+			map[string]string,
+			string,
+		) (process.Result, error) {
+			return process.Result{Stdout: `{"files":{"ignore":["opt/hyperfilelens-agent","*.tmp"]}}`}, nil
+		}
+		result, err := verifyManagedBackupProtection(
+			context.Background(), "kopia", "/tmp/repo.config", nil, "/", []string{"opt/hyperfilelens-agent"},
+		)
+		if err != nil || result["system_ignore_policy_verified"] != true {
+			t.Fatalf("expected verified protection, result=%#v err=%v", result, err)
+		}
+	})
+
+	t.Run("missing", func(t *testing.T) {
+		runManagedPolicyCommand = func(
+			context.Context,
+			time.Duration,
+			string,
+			[]string,
+			map[string]string,
+			string,
+		) (process.Result, error) {
+			return process.Result{Stdout: `{"files":{"ignore":["*.tmp"]}}`}, nil
+		}
+		result, err := verifyManagedBackupProtection(
+			context.Background(), "kopia", "/tmp/repo.config", nil, "/", []string{"opt/hyperfilelens-agent"},
+		)
+		if err == nil || result["error_code"] != "BACKUP_PROTECTION_POLICY_MISSING" {
+			t.Fatalf("expected missing protection failure, result=%#v err=%v", result, err)
+		}
+	})
 }
 
 func TestManagedBackupPolicyNoneClearsCompression(t *testing.T) {

@@ -65,3 +65,23 @@ class BackupOrchestratorErrorCodeTests(SimpleTestCase):
 
         self.assertEqual(error_code, "AGENT_UNAVAILABLE")
         self.assertIn("Bring the Agent online", message)
+
+    def test_agent_path_protection_errors_are_preserved(self):
+        expected_messages = {
+            "AGENT_PATH_FORBIDDEN": "cannot be backed up directly",
+            "BACKUP_PROTECTION_POLICY_MISSING": "path exclusion is missing",
+            "BACKUP_PROTECTION_POLICY_VERIFY_FAILED": "could not verify",
+        }
+
+        for error_code, expected_message in expected_messages.items():
+            with self.subTest(error_code=error_code):
+                task = NodeTask(
+                    status=NodeTask.Status.FAILED,
+                    last_error="internal diagnostic",
+                    result={"error_code": error_code},
+                )
+
+                projected_code, message = _node_task_error_code(task)
+
+                self.assertEqual(projected_code, error_code)
+                self.assertIn(expected_message, message)
