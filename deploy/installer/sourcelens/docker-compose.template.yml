@@ -7,6 +7,7 @@ services:
     image: __SOURCELENS_BACKEND_IMAGE__
     pull_policy: never
     restart: unless-stopped
+    stop_grace_period: 60s
     env_file:
       - ./.env
     environment:
