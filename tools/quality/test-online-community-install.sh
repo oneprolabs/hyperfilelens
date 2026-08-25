@@ -72,16 +72,16 @@ fi
 	# shellcheck source=../../tools/sourcelens/common.sh
 	source "${ROOT}/tools/sourcelens/common.sh"
 	sourcelens_load_config
-	SOURCELENS_GIT_REF=v0.47.2
+	SOURCELENS_GIT_REF=v0.47.6
 	SOURCELENS_HFL_VERSION=1.2.3
 	sourcelens_resolve_version
-	[[ "${SOURCELENS_DISTRIBUTION_TAG}" == 1.2.3-sl0.47.2 ]]
+	[[ "${SOURCELENS_DISTRIBUTION_TAG}" == 1.2.3-sl0.47.6 ]]
 )
 (
 	# shellcheck source=../../tools/sourcelens/common.sh
 	source "${ROOT}/tools/sourcelens/common.sh"
 	sourcelens_load_config
-	SOURCELENS_GIT_REF=v0.47.2
+	SOURCELENS_GIT_REF=v0.47.6
 	SOURCELENS_HFL_VERSION=1.2.3
 	SOURCELENS_DISTRIBUTION_TAG_OVERRIDE=1.2.3
 	sourcelens_resolve_version

@@ -139,7 +139,7 @@ grep -F 'npm config set fetch-retries 5' "${ROOT_REPO}/tools/sourcelens/common.s
 # record remains one complete line, with no truncation or repeated prefix.
 wrapped_terminal="${fixture}/wrapped-terminal.log"
 wrapped_session="${fixture}/wrapped-session.log"
-wrapped_message='[2026-08-23T02:43:53.000Z] [INFO] [sourcelens] SourceLens app images already built; compose build skipped; source_stamp=v3:0.47.2:a0819082131c924e27f57125421414288c6f7707:6e8dbf651a5a7ea7709fe7c6f810978b5aa051de441a1a1da4f44e81346dda47'
+wrapped_message='[2026-08-23T02:43:53.000Z] [INFO] [sourcelens] SourceLens app images already built; compose build skipped; source_stamp=v3:0.47.6:3f16494b269c4fbe37a5acd4bdaca3962cdd8a0e:6e8dbf651a5a7ea7709fe7c6f810978b5aa051de441a1a1da4f44e81346dda47'
 HFL_LOG_TERMINAL_WRAP_COLUMNS=70 HFL_WRAPPED_MESSAGE="${wrapped_message}" \
 	bash -c '
 set -euo pipefail
@@ -149,7 +149,7 @@ printf "%s\n" "$HFL_WRAPPED_MESSAGE" | hfl_log_capture_stream "$3" 5
 exec 5>&-
 ' _ "${ROOT_REPO}" "${wrapped_terminal}" "${wrapped_session}"
 grep -Fx "${wrapped_message}" "${wrapped_session}" >/dev/null
-grep -F 'source_stamp=v3:0.47.2:' "${wrapped_terminal}" >/dev/null
+grep -F 'source_stamp=v3:0.47.6:' "${wrapped_terminal}" >/dev/null
 grep -E '^ +source_stamp=' "${wrapped_terminal}" >/dev/null
 [[ "$(wc -l <"${wrapped_terminal}")" -gt 1 ]]
 
@@ -296,7 +296,7 @@ target_output="$({
 	CMD=restart
 	restart_force=1
 	WITH_SOURCELENS=1
-	SOURCELENS_GIT_REF=v0.47.2
+	SOURCELENS_GIT_REF=v0.47.6
 	EXTENSION_SOURCES=("https://github.com/example/hyperfilelens-ee.git@v1.2.3")
 	LOG_FILE="${fixture}/build/logs/dev-restart.log"
 	print_dev_target
@@ -304,7 +304,7 @@ target_output="$({
 grep -F '  Command        restart --force' <<<"${target_output}" >/dev/null
 grep -F '  Extension      remote Git source configured' <<<"${target_output}" >/dev/null
 grep -F '  Extension rev  v1.2.3' <<<"${target_output}" >/dev/null
-grep -F '  SourceLens     bundled / v0.47.2' <<<"${target_output}" >/dev/null
+grep -F '  SourceLens     bundled / v0.47.6' <<<"${target_output}" >/dev/null
 grep -F '  Host platform  ' <<<"${target_output}" >/dev/null
 grep -F '  Runtime        linux/amd64' <<<"${target_output}" >/dev/null
 grep -F '  Session log    build/logs/dev-restart.log' <<<"${target_output}" >/dev/null
