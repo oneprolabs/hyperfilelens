@@ -13,7 +13,15 @@ import (
 	"hyperfilelens/agent/internal/service/nas"
 )
 
-const nasTestCleanupTimeout = 25 * time.Second
+const (
+	nasTestExecutionTimeout = 30 * time.Second
+	nasTestCleanupTimeout   = 25 * time.Second
+)
+
+type nasTestOutcome struct {
+	info nas.SpaceInfo
+	err  error
+}
 
 type nasTestService interface {
 	Test(context.Context, nas.Spec) (nas.SpaceInfo, error)
@@ -248,13 +256,33 @@ func runNasTestWithService(ctx context.Context, p Payload, service nasTestServic
 	}
 	logNasTask(ctx, "test_start", "", spec)
 	requireWrite, _ := payloadBoolValue(p.Extra["require_write"])
+	testCtx, testCancel := context.WithTimeout(ctx, nasTestExecutionTimeout)
+	testResult := make(chan nasTestOutcome, 1)
+	go func() {
+		var outcome nasTestOutcome
+		if requireWrite {
+			outcome.info, outcome.err = service.TestForWrite(testCtx, spec)
+		} else {
+			outcome.info, outcome.err = service.Test(testCtx, spec)
+		}
+		testResult <- outcome
+	}()
 	var info nas.SpaceInfo
 	var testErr error
-	if requireWrite {
-		info, testErr = service.TestForWrite(ctx, spec)
-	} else {
-		info, testErr = service.Test(ctx, spec)
+	select {
+	case outcome := <-testResult:
+		// If the operation completed at the same instant as the deadline,
+		// prefer the deadline outcome.  A successful result must never be
+		// reported after the probe's execution window has elapsed.
+		if deadlineErr := testCtx.Err(); deadlineErr != nil {
+			testErr = deadlineErr
+		} else {
+			info, testErr = outcome.info, outcome.err
+		}
+	case <-testCtx.Done():
+		testErr = testCtx.Err()
 	}
+	testCancel()
 	cleanupAfterTest, _ := payloadBoolValue(p.Extra["cleanup_after_test"])
 	var cleanupErr error
 	if cleanupAfterTest {
@@ -333,6 +361,12 @@ func mountHelperFailureResult(err error) map[string]any {
 }
 
 func nasFailureResult(err error) map[string]any {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return map[string]any{
+			"error_code":  "NAS_CONNECTION_TIMEOUT",
+			"remediation": "retry_nas_connection",
+		}
+	}
 	if result := mountHelperFailureResult(err); result != nil {
 		return result
 	}

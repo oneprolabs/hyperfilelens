@@ -35,6 +35,7 @@ from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import complete_task
 from apps.source.services.internal.backup_source_delete import (
     _create_source_unregister_task,
+    _set_source_nas_removal_status,
     _set_unregister_step,
     reconcile_stuck_source_unregister_tasks,
     run_source_unregister_task,
@@ -3318,6 +3319,103 @@ class BackupSourceBulkDeleteTests(TestCase):
         resource.refresh_from_db()
         self.assertFalse(resource.is_deleted)
         self.assertNotEqual(resource.status, "removing")
+
+    def test_delete_preflight_does_not_block_on_cancelable_automatic_probe(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="automatic-probe-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        resource = SourceResource.objects.create(
+            organization=self.org,
+            name="automatic-probing-source-nas",
+            resource_type="nas",
+            config={
+                "protocol": "nfs",
+                "server": "192.0.2.31",
+                "export_path": "/source",
+            },
+            bound_node=proxy,
+            connection_test_status="running",
+            connection_probe_token=uuid4(),
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            node=proxy,
+            kind="nas.test",
+            correlation_type="source.connection_probe",
+            correlation_id=str(resource.id),
+            status=NodeTask.Status.RUNNING,
+            accepted_at=timezone.now(),
+            watchdog_deadline_at=timezone.now() + timedelta(seconds=30),
+        )
+
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/delete-preflight/",
+            {"ids": [f"nas:{resource.id}"]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn(
+            "source_operation_in_progress",
+            [item["code"] for item in response.data["blocking"]],
+        )
+
+    @patch("apps.source.tasks.connection_probe.cancel_agent_task")
+    def test_removal_fence_cancels_automatic_probe_after_commit(self, cancel_task):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="removal-probe-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        resource = SourceResource.objects.create(
+            organization=self.org,
+            name="removal-probing-source-nas",
+            resource_type="nas",
+            config={
+                "protocol": "nfs",
+                "server": "192.0.2.32",
+                "export_path": "/source",
+            },
+            bound_node=proxy,
+            connection_test_status="running",
+            connection_probe_token=uuid4(),
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=proxy,
+            kind="nas.test",
+            correlation_type="source.connection_probe",
+            correlation_id=str(resource.id),
+            status=NodeTask.Status.RUNNING,
+            accepted_at=timezone.now(),
+            watchdog_deadline_at=timezone.now() + timedelta(seconds=30),
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            _set_source_nas_removal_status(
+                organization_id=self.org.id,
+                ids=[f"nas:{resource.id}"],
+                status="removing",
+                message="Source deregistration is in progress.",
+            )
+
+        resource.refresh_from_db()
+        self.assertEqual(resource.status, "removing")
+        self.assertEqual(resource.connection_test_status, "idle")
+        self.assertIsNone(resource.connection_probe_token)
+        cancel_task.assert_called_once_with(
+            task_id=node_task.id,
+            reason=(
+                "Source deregistration canceled the automatic NAS connection probe"
+            ),
+        )
 
     def test_bulk_delete_422_wraps_reasons_in_problem_meta(self):
         agent_key = "agent:999999999"

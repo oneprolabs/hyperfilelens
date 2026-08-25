@@ -247,7 +247,7 @@ class SourceMountPointAfterProxyChangeTests(TestCase):
 
     @mock.patch("apps.source.services.interface.schedule_remount_after_proxy_change")
     @mock.patch("apps.source.services.internal.connection.dispatch_nas_agent_task")
-    def test_test_connection_after_proxy_change_uses_config_mount_path(
+    def test_test_connection_after_proxy_change_uses_validation_mount_path(
         self,
         mock_dispatch,
         mock_schedule,
@@ -283,7 +283,8 @@ class SourceMountPointAfterProxyChangeTests(TestCase):
             timed_out=False,
             task=None,
             result={
-                "mount_point": custom_path,
+                "mount_status": "unmounted",
+                "cleanup_status": "success",
                 "space_info": {
                     "total_bytes": 1_000,
                     "used_bytes": 100,
@@ -301,7 +302,10 @@ class SourceMountPointAfterProxyChangeTests(TestCase):
 
         _, kwargs = mock_dispatch.call_args
         self.assertEqual(kwargs["node"].id, self.proxy_b.id)
-        self.assertEqual(kwargs["payload"]["mount_point"], custom_path)
+        validation_path = kwargs["payload"]["mount_point"]
+        self.assertIn("/mounts/validations/", validation_path)
+        self.assertNotEqual(validation_path, custom_path)
+        self.assertTrue(kwargs["payload"]["cleanup_after_test"])
 
         resource.refresh_from_db()
-        self.assertEqual(resource.mount_point, custom_path)
+        self.assertEqual(resource.mount_point, "")

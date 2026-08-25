@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"hyperfilelens/agent/internal/platform/vfs"
 	"hyperfilelens/agent/internal/service/nas"
@@ -20,9 +21,14 @@ type fakeNASTestService struct {
 	unmountErr        error
 	unmountCalls      int
 	unmountContextErr error
+	waitForContext    bool
 }
 
-func (f *fakeNASTestService) Test(context.Context, nas.Spec) (nas.SpaceInfo, error) {
+func (f *fakeNASTestService) Test(ctx context.Context, _ nas.Spec) (nas.SpaceInfo, error) {
+	if f.waitForContext {
+		<-ctx.Done()
+		return nas.SpaceInfo{}, ctx.Err()
+	}
 	return f.info, f.testErr
 }
 
@@ -359,5 +365,27 @@ func TestRunNASTestCleanupIgnoresCanceledProbeContext(t *testing.T) {
 	}
 	if result["cleanup_status"] != "success" {
 		t.Fatalf("unexpected cleanup result: %#v", result)
+	}
+}
+
+func TestRunNASTestEnforcesExecutionDeadlineAndCleansUp(t *testing.T) {
+	service := &fakeNASTestService{waitForContext: true}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	status, result, message := runNasTestWithService(
+		ctx,
+		nasValidationTestPayload(t, true),
+		service,
+	)
+
+	if status != "failed" || message == "" {
+		t.Fatalf("status=%q message=%q", status, message)
+	}
+	if result["error_code"] != "NAS_CONNECTION_TIMEOUT" {
+		t.Fatalf("unexpected timeout result: %#v", result)
+	}
+	if service.unmountCalls != 1 || result["cleanup_status"] != "success" {
+		t.Fatalf("cleanup result=%#v calls=%d", result, service.unmountCalls)
 	}
 }

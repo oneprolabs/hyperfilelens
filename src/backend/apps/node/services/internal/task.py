@@ -148,6 +148,27 @@ def _is_protection_backup_task(task: NodeTask) -> bool:
     )
 
 
+def _is_source_nas_probe(*, correlation_type: str, kind: str) -> bool:
+    return correlation_type == "source.connection_probe" and kind == "nas.test"
+
+
+def _source_nas_probe_deadline(*, accepted_at: datetime) -> datetime:
+    return accepted_at + timezone.timedelta(
+        seconds=max(1, node_conf.SOURCE_NAS_PROBE_EXECUTION_TIMEOUT_SECONDS)
+    )
+
+
+def _source_nas_probe_started_at(*, task: NodeTask, fallback: datetime) -> datetime:
+    """Return the probe's immutable execution start for old and new Agents."""
+    return (
+        task.accepted_at
+        or task.dispatched_at
+        or task.last_progress_at
+        or task.created_at
+        or fallback
+    )
+
+
 def _node_capabilities(node: Node) -> set[str]:
     metadata = node.metadata if isinstance(node.metadata, dict) else {}
     inventory = metadata.get("inventory")
@@ -250,6 +271,8 @@ def _initial_watchdog_deadline(
     from_time: datetime | None = None,
     kind: str = "",
 ) -> datetime:
+    if _is_source_nas_probe(correlation_type=correlation_type, kind=kind):
+        return _source_nas_probe_deadline(accepted_at=from_time or timezone.now())
     if correlation_type in {
         "source.connection_probe",
         "storage.repository_health",
@@ -1084,6 +1107,15 @@ def record_task_progress(
         return task
 
     now = timezone.now()
+    source_nas_probe_started_at = None
+    if _is_source_nas_probe(
+        correlation_type=task.correlation_type,
+        kind=task.kind,
+    ):
+        source_nas_probe_started_at = _source_nas_probe_started_at(
+            task=task,
+            fallback=now,
+        )
     task.status = NodeTask.Status.RUNNING
     task.accepted_at = task.accepted_at or now
     task.last_progress_at = now
@@ -1093,6 +1125,21 @@ def record_task_progress(
         # execution goroutine is still running. Renew the activity lease even
         # when Kopia's byte counters or percentage have not changed.
         task.watchdog_deadline_at = _protection_backup_watchdog_deadline(from_time=now)
+        update_fields = [
+            "status",
+            "accepted_at",
+            "last_progress_at",
+            "watchdog_deadline_at",
+            "result",
+            "updated_at",
+        ]
+    elif _is_source_nas_probe(
+        correlation_type=task.correlation_type,
+        kind=task.kind,
+    ):
+        task.watchdog_deadline_at = _source_nas_probe_deadline(
+            accepted_at=source_nas_probe_started_at or now
+        )
         update_fields = [
             "status",
             "accepted_at",
@@ -1537,7 +1584,16 @@ def sweep_watchdog_timeouts(
                 if "result" in message_type.lower()
                 else node_conf.TASK_UPLINK_PROJECTION_GRACE_SECONDS
             )
-            if received_at > 0 and activity_age < projection_grace:
+            bounded_source_probe = _is_source_nas_probe(
+                correlation_type=task.correlation_type,
+                kind=task.kind,
+            )
+            result_projection_pending = "result" in message_type.lower()
+            if (
+                received_at > 0
+                and activity_age < projection_grace
+                and (not bounded_source_probe or result_projection_pending)
+            ):
                 remaining_grace = max(
                     1,
                     int(projection_grace - activity_age),
