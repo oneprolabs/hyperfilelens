@@ -77,6 +77,11 @@ logger = logging.getLogger(__name__)
 REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE = "storage.repository_health"
 
 
+def repository_health_lock_key(repository_id: int) -> str:
+    """Return the shared cache lock key for one health probe generation."""
+    return f"storage:repository-health:repository:{int(repository_id)}"
+
+
 class _AgentProbeState(StrEnum):
     ONLINE = "online"
     CONFIRMED_FAILURE = "confirmed_failure"
@@ -197,18 +202,27 @@ def dispatch_automatic_repository_observation(
                     payload__include_usage=include_usage,
                 ).order_by("created_at", "id")
             )
-        current = Repository.objects.filter(
-            pk=repository.id,
-            organization_id=repository.organization_id,
-            status=Repository.Status.CREATED,
-        ).first()
-        if current is None:
-            return []
-        return _dispatch_automatic_repository_observation_locked(
-            repository=current,
-            retry_attempt=retry_attempt,
-            include_usage=include_usage,
-        )
+        # Serialize the final eligibility check with Repository cleanup. A
+        # health sweep may have read CREATED just before cleanup changes the
+        # row to REMOVING; the row lock prevents it from creating a late probe
+        # after cleanup has passed its coordination gate.
+        with transaction.atomic():
+            current = (
+                Repository.objects.select_for_update()
+                .filter(
+                    pk=repository.id,
+                    organization_id=repository.organization_id,
+                    status=Repository.Status.CREATED,
+                )
+                .first()
+            )
+            if current is None:
+                return []
+            return _dispatch_automatic_repository_observation_locked(
+                repository=current,
+                retry_attempt=retry_attempt,
+                include_usage=include_usage,
+            )
 
 
 def _dispatch_automatic_repository_observation_locked(

@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -126,6 +127,141 @@ class RepositoryCleanupTests(TestCase):
             ]
         )
         return claim
+
+    def _automatic_health_probe(self, repository: Repository) -> NodeTask:
+        node = Node.objects.create(
+            organization=self.org,
+            name="cleanup-health-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        return NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=node,
+            kind="repo.status",
+            correlation_type="storage.repository_health",
+            correlation_id=str(repository.id),
+            payload={
+                "automatic_health_probe": True,
+                "repository_id": repository.id,
+            },
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timedelta(minutes=5),
+        )
+
+    def test_automatic_health_probe_is_coordinated_not_a_hard_blocker(self):
+        repository = self._s3_repository(name="automatic-probe-cleanup")
+        probe = self._automatic_health_probe(repository)
+
+        preflight = repository_cleanup_preflight(repository=repository)
+
+        self.assertTrue(preflight["allowed"])
+        warning = next(
+            item
+            for item in preflight["warnings"]
+            if item["code"] == "automatic_repository_health_probe"
+        )
+        self.assertEqual(warning["node_task_ids"], [str(probe.id)])
+
+    def test_unidentified_repo_status_remains_a_hard_blocker(self):
+        repository = self._s3_repository(name="manual-probe-cleanup")
+        node = Node.objects.create(
+            organization=self.org,
+            name="manual-check-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=node,
+            kind="repo.status",
+            correlation_type="storage_repository",
+            correlation_id=str(repository.id),
+            payload={"repository_id": repository.id},
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timedelta(minutes=5),
+        )
+
+        preflight = repository_cleanup_preflight(repository=repository)
+
+        self.assertFalse(preflight["allowed"])
+        self.assertTrue(
+            any(
+                blocker["code"] == "active_repository_node_task"
+                for blocker in preflight["blockers"]
+            )
+        )
+
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.cancel_agent_task"
+    )
+    def test_cleanup_waits_for_automatic_probe_without_running_physical_delete(
+        self,
+        cancel_agent_task_mock,
+        execute_physical_cleanup_mock,
+        apply_async_mock,
+    ):
+        repository = self._s3_repository(name="wait-for-probe-cleanup")
+        probe = self._automatic_health_probe(repository)
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(
+            result["waiting_for"], "automatic_repository_health_probe"
+        )
+        cancel_agent_task_mock.assert_called_once_with(
+            task_id=probe.id,
+            reason="Repository cleanup is stopping the background health probe.",
+        )
+        apply_async_mock.assert_called_once_with(
+            kwargs={"repository_task_id": repository_task.id},
+            countdown=30,
+        )
+        execute_physical_cleanup_mock.assert_not_called()
+
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.cache.get",
+        return_value="health-probe-lock",
+    )
+    def test_cleanup_waits_for_controller_health_probe(
+        self,
+        cache_get_mock,
+        execute_physical_cleanup_mock,
+        apply_async_mock,
+    ):
+        repository = self._s3_repository(name="wait-for-controller-probe")
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["status"], "waiting")
+        self.assertTrue(result["controller_probe_active"])
+        cache_get_mock.assert_called()
+        apply_async_mock.assert_called_once_with(
+            kwargs={"repository_task_id": repository_task.id},
+            countdown=30,
+        )
+        execute_physical_cleanup_mock.assert_not_called()
 
     def test_initialization_in_progress_is_never_treated_as_unused_storage(self):
         repository = Repository.objects.create(

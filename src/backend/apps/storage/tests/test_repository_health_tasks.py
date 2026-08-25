@@ -1061,6 +1061,23 @@ class AutomaticDirectNASObservationTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_health.run_agent_task_async"
     )
+    def test_removing_repository_does_not_dispatch_a_late_observation(self, run_async):
+        self._node("removing-repository-agent")
+        Repository.objects.filter(pk=self.repository.id).update(
+            status=Repository.Status.REMOVING,
+        )
+
+        tasks = dispatch_automatic_repository_observation(
+            repository=self.repository,
+            include_usage=True,
+        )
+
+        self.assertEqual(tasks, [])
+        run_async.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_health.run_agent_task_async"
+    )
     def test_dispatches_one_durable_task_per_node_without_persisting_secrets(
         self,
         run_async,
