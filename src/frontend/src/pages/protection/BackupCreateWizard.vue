@@ -12,6 +12,7 @@ import {
   RefreshCw,
   LoaderCircle,
   ChevronDown,
+  ChevronRight,
   CloudUpload,
   Trash2,
   Search,
@@ -60,7 +61,7 @@ import { getEffectiveOrgKey } from '../../composables/useAuth'
 import { apiErrorMessage, apiErrorMessageI18n, isAbortError } from '../../lib/api'
 import { normalizeThrownError } from '../../lib/errors'
 import { openErrorDetails } from '../../lib/errors/details'
-import { notifyError } from '../../lib/notify'
+import { notifyError, notifyWarning } from '../../lib/notify'
 import { logger } from '../../lib/logger'
 import {
   createBackupConfig,
@@ -637,6 +638,27 @@ type SourceTreeItem = DemoDirTreeItem & {
   filenameEncodingSuspected?: boolean
 }
 
+type SourceBrowserMode = 'tree' | 'layered'
+
+type LayeredSourceBreadcrumb = {
+  label: string
+  path: string
+}
+
+type LayeredSourceBrowserState = {
+  currentPath: string
+  breadcrumbs: LayeredSourceBreadcrumb[]
+  entries: SourceTreeItem[]
+  hasMore: boolean
+  nextCursor: string
+  loading: boolean
+  loadingMore: boolean
+  selectingAll: boolean
+  loaded: boolean
+  error: string
+  requestToken: number
+}
+
 type CreateSourceRow = {
   id: string
   name: string
@@ -1128,6 +1150,8 @@ const noSourceTreeRoots = ref(false)
 const noSourceTreeRootsBySource = reactive<Record<string, boolean>>({})
 const createSourceTreeErrorBySource = reactive<Record<string, string>>({})
 const createSourceTreeRemountKeyBySource = reactive<Record<string, number>>({})
+const sourceBrowserModeBySource = reactive<Record<string, SourceBrowserMode>>({})
+const layeredSourceBrowserBySource = reactive<Record<string, LayeredSourceBrowserState>>({})
 const refreshingSourceDirectoryByKey = reactive<Record<string, boolean>>({})
 type SourceScopeOperation = {
   sourceId: string
@@ -3136,6 +3160,8 @@ function resetCreateStateForSources(sourceIds: string[], initialStep = 0) {
   Object.keys(noSourceTreeRootsBySource).forEach((key) => delete noSourceTreeRootsBySource[key])
   Object.keys(createSourceTreeErrorBySource).forEach((key) => delete createSourceTreeErrorBySource[key])
   Object.keys(createSourceTreeRemountKeyBySource).forEach((key) => delete createSourceTreeRemountKeyBySource[key])
+  Object.keys(sourceBrowserModeBySource).forEach((key) => delete sourceBrowserModeBySource[key])
+  Object.keys(layeredSourceBrowserBySource).forEach((key) => delete layeredSourceBrowserBySource[key])
   treeRemountKey.value += 1
   sourceTargetMap.value = {}
   sourceEndpointTypeMap.value = {}
@@ -3777,6 +3803,10 @@ function createSourceTreeStore(sourceId: string): CreateSourceLoadedTreeStore | 
 }
 
 function refreshCreateSourceTreeBlockedState(sourceId: string) {
+  const layeredState = layeredSourceBrowserBySource[sourceId]
+  if (layeredState) {
+    layeredState.entries = layeredState.entries.map((entry) => sourceTreeItemWithBlockedState(sourceId, entry))
+  }
   const store = createSourceTreeStore(sourceId)
   if (!store) {
     syncCreateSourceTreeCheckedKeys(sourceId)
@@ -4107,6 +4137,250 @@ async function listRealSourceDirChildren(
     hasMore: Boolean(result.has_more),
     nextCursor: String(result.next_cursor || ''),
     limit,
+  }
+}
+
+const sourceBrowserModeOptions = computed(() => [
+  { label: t('protection.backupsPage.browserModeTree'), value: 'tree' },
+  { label: t('protection.backupsPage.browserModeLayered'), value: 'layered' },
+])
+
+function sourceBrowserMode(sourceId: string): SourceBrowserMode {
+  return sourceBrowserModeBySource[sourceId] || 'tree'
+}
+
+function ensureLayeredSourceBrowser(sourceId: string): LayeredSourceBrowserState {
+  if (!layeredSourceBrowserBySource[sourceId]) {
+    layeredSourceBrowserBySource[sourceId] = {
+      currentPath: '',
+      breadcrumbs: [],
+      entries: [],
+      hasMore: false,
+      nextCursor: '',
+      loading: false,
+      loadingMore: false,
+      selectingAll: false,
+      loaded: false,
+      error: '',
+      requestToken: 0,
+    }
+  }
+  return layeredSourceBrowserBySource[sourceId]
+}
+
+function layeredSourceBrowser(sourceId: string) {
+  return ensureLayeredSourceBrowser(sourceId)
+}
+
+function layeredSourceBreadcrumbs(sourceId: string) {
+  return [
+    { label: t('protection.backupsPage.layeredBrowserRoot'), path: '' },
+    ...ensureLayeredSourceBrowser(sourceId).breadcrumbs,
+  ]
+}
+
+async function loadLayeredSourceDirectory(
+  sourceId: string,
+  path: string,
+  breadcrumbs: LayeredSourceBreadcrumb[],
+  options: { forceRefresh?: boolean } = {},
+) {
+  if (!sourceId) return
+  const state = ensureLayeredSourceBrowser(sourceId)
+  const requestToken = state.requestToken + 1
+  state.requestToken = requestToken
+  state.currentPath = path
+  state.breadcrumbs = breadcrumbs
+  state.loading = true
+  state.error = ''
+  try {
+    const page = await listRealSourceDirChildren(sourceId, path, {
+      includeFiles: true,
+      forceRefresh: options.forceRefresh,
+    })
+    if (state.requestToken !== requestToken) return
+    state.entries = page.entries.map((entry) => sourceTreeItemWithBlockedState(sourceId, entry))
+    state.hasMore = page.hasMore
+    state.nextCursor = page.nextCursor
+    state.loaded = true
+  } catch (err) {
+    if (state.requestToken !== requestToken) return
+    if (!showSourceTreeFilenamePathError(sourceId, path, err)) {
+      state.error = apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed'))
+    }
+  } finally {
+    if (state.requestToken === requestToken) state.loading = false
+  }
+}
+
+async function setSourceBrowserMode(sourceId: string, value: string | number | boolean) {
+  const mode: SourceBrowserMode = value === 'layered' ? 'layered' : 'tree'
+  sourceBrowserModeBySource[sourceId] = mode
+  if (mode === 'tree') {
+    await nextTick()
+    syncCreateSourceTreeCheckedKeys(sourceId)
+    return
+  }
+  const state = ensureLayeredSourceBrowser(sourceId)
+  if (!state.loaded && !state.loading) {
+    await loadLayeredSourceDirectory(sourceId, '', [])
+  }
+}
+
+async function openLayeredSourceDirectory(sourceId: string, entry: SourceTreeItem) {
+  if (entry.path_type !== 'directory' || entry.nodeKind === 'loadMore') return
+  const state = ensureLayeredSourceBrowser(sourceId)
+  if (state.loading || state.selectingAll) return
+  await loadLayeredSourceDirectory(sourceId, entry.path, [
+    ...state.breadcrumbs,
+    { label: entry.label, path: entry.path },
+  ])
+}
+
+async function openLayeredSourceBreadcrumb(sourceId: string, index: number) {
+  const state = ensureLayeredSourceBrowser(sourceId)
+  if (state.loading || state.selectingAll) return
+  if (index === 0) {
+    await loadLayeredSourceDirectory(sourceId, '', [])
+    return
+  }
+  const breadcrumb = state.breadcrumbs[index - 1]
+  if (!breadcrumb) return
+  await loadLayeredSourceDirectory(sourceId, breadcrumb.path, state.breadcrumbs.slice(0, index))
+}
+
+async function refreshLayeredSourceDirectory(sourceId: string) {
+  const state = ensureLayeredSourceBrowser(sourceId)
+  if (state.loading || state.selectingAll) return
+  await loadLayeredSourceDirectory(sourceId, state.currentPath, [...state.breadcrumbs], { forceRefresh: true })
+}
+
+async function loadMoreLayeredSourceEntries(sourceId: string) {
+  const state = ensureLayeredSourceBrowser(sourceId)
+  if (state.loadingMore || !state.hasMore || !state.nextCursor) return
+  const path = state.currentPath
+  const cursor = state.nextCursor
+  const requestToken = state.requestToken
+  state.loadingMore = true
+  try {
+    const page = await listRealSourceDirChildren(sourceId, path, {
+      includeFiles: true,
+      cursor,
+      timeout: 30,
+    })
+    if (state.requestToken !== requestToken || state.currentPath !== path) return
+    const existingPaths = new Set(state.entries.map((entry) => entry.path))
+    state.entries = [
+      ...state.entries,
+      ...page.entries
+        .filter((entry) => !existingPaths.has(entry.path))
+        .map((entry) => sourceTreeItemWithBlockedState(sourceId, entry)),
+    ]
+    state.hasMore = page.hasMore
+    state.nextCursor = page.nextCursor
+  } catch (err) {
+    if (!showSourceTreeFilenamePathError(sourceId, path, err)) {
+      notifyError({
+        message: apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed')),
+        error: err,
+        dedupeKey: `layered-source-load-more:${sourceId}:${path}`,
+      })
+    }
+  } finally {
+    state.loadingMore = false
+  }
+}
+
+function layeredSelectableEntries(sourceId: string) {
+  return ensureLayeredSourceBrowser(sourceId).entries.filter((entry) =>
+    entry.nodeKind !== 'loadMore' && !sourceTreeNodeDisableReason(sourceId, entry.path),
+  )
+}
+
+function isLayeredCurrentLevelSelected(sourceId: string) {
+  const state = ensureLayeredSourceBrowser(sourceId)
+  if (state.hasMore) return false
+  const entries = layeredSelectableEntries(sourceId)
+  const checked = new Set(createSourceCheckedKeys(sourceId))
+  return entries.length > 0 && entries.every((entry) => checked.has(entry.path))
+}
+
+async function loadAllLayeredSourceEntries(sourceId: string) {
+  const state = ensureLayeredSourceBrowser(sourceId)
+  const path = state.currentPath
+  const requestToken = state.requestToken
+  const seenCursors = new Set<string>()
+  const entries = [...state.entries]
+  const paths = new Set(entries.map((entry) => entry.path))
+  let hasMore = state.hasMore
+  let cursor = state.nextCursor
+  while (hasMore && cursor && !seenCursors.has(cursor)) {
+    seenCursors.add(cursor)
+    const page = await listRealSourceDirChildren(sourceId, path, {
+      includeFiles: true,
+      cursor,
+      timeout: 30,
+    })
+    if (state.requestToken !== requestToken || state.currentPath !== path) return null
+    for (const entry of page.entries) {
+      if (paths.has(entry.path)) continue
+      paths.add(entry.path)
+      entries.push(sourceTreeItemWithBlockedState(sourceId, entry))
+    }
+    hasMore = page.hasMore
+    cursor = page.nextCursor
+  }
+  state.entries = entries
+  state.hasMore = hasMore
+  state.nextCursor = cursor
+  return entries
+}
+
+async function toggleLayeredCurrentLevel(sourceId: string) {
+  const state = ensureLayeredSourceBrowser(sourceId)
+  if (state.loading || state.selectingAll) return
+  state.selectingAll = true
+  try {
+    const allEntries = await loadAllLayeredSourceEntries(sourceId)
+    if (!allEntries) return
+    const selectable = allEntries.filter((entry) => !sourceTreeNodeDisableReason(sourceId, entry.path))
+    const selectablePaths = new Set(selectable.map((entry) => entry.path))
+    const current = createSourceCheckedKeys(sourceId)
+    if (selectable.length > 0 && selectable.every((entry) => current.includes(entry.path))) {
+      createSourceDirKeysBySource[sourceId] = current.filter((path) => !selectablePaths.has(path))
+      refreshCreateSourceTreeBlockedState(sourceId)
+      return
+    }
+
+    const next = [...current]
+    let skipped = 0
+    for (const entry of selectable) {
+      if (next.includes(entry.path)) continue
+      const conflict = next.some((path) =>
+        isSameOrAncestorPath(path, entry.path) || isSameOrAncestorPath(entry.path, path),
+      )
+      if (conflict) {
+        skipped += 1
+        continue
+      }
+      next.push(entry.path)
+    }
+    createSourceDirKeysBySource[sourceId] = next
+    refreshCreateSourceTreeBlockedState(sourceId)
+    if (skipped > 0) {
+      notifyWarning({
+        message: t('protection.backupsPage.layeredSelectSkipped', { count: skipped }),
+        dedupeKey: `layered-source-select-skipped:${sourceId}:${state.currentPath}`,
+      })
+    }
+  } catch (err) {
+    notifyError({
+      message: apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed')),
+      error: err,
+      dedupeKey: `layered-source-select-all:${sourceId}:${state.currentPath}`,
+    })
+  } finally {
+    state.selectingAll = false
   }
 }
 
@@ -6531,20 +6805,30 @@ function normalizeComparableSourcePath(path: string) {
                           {{ t('protection.backupsPage.labelBrowsePaths') }}
                         </div>
                       </div>
-                      <ElButton
-                        size="small"
-                        type="primary"
-                        plain
-                        :disabled="!hasCreateSourceAddableSelection(row.id)"
-                        @click="addPickedSourceFor(row.id)"
-                      >
-                        {{ createSourcePendingCount(row.id)
-                          ? t('protection.backupsPage.btnAddPendingPaths', { n: createSourcePendingCount(row.id) })
-                          : t('protection.backupsPage.btnAddSelectedPaths') }}
-                      </ElButton>
+                      <div class="create-source-config-detail__browse-actions">
+                        <ElSegmented
+                          size="small"
+                          :model-value="sourceBrowserMode(row.id)"
+                          :options="sourceBrowserModeOptions"
+                          @change="(value) => setSourceBrowserMode(row.id, value)"
+                        />
+                        <ElButton
+                          size="small"
+                          type="primary"
+                          plain
+                          :disabled="!hasCreateSourceAddableSelection(row.id)"
+                          @click="addPickedSourceFor(row.id)"
+                        >
+                          {{ createSourcePendingCount(row.id)
+                            ? t('protection.backupsPage.btnAddPendingPaths', { n: createSourcePendingCount(row.id) })
+                            : t('protection.backupsPage.btnAddSelectedPaths') }}
+                        </ElButton>
+                      </div>
                     </div>
                     <p class="create-source-config-detail__tree-hint text-xs text-slate-500 m-0">
-                      {{ t('protection.backupsPage.dirTreeHint') }}
+                      {{ sourceBrowserMode(row.id) === 'layered'
+                        ? t('protection.backupsPage.layeredBrowserHint')
+                        : t('protection.backupsPage.dirTreeHint') }}
                     </p>
                     <p
                       v-if="createSourcePendingCount(row.id)"
@@ -6555,13 +6839,13 @@ function normalizeComparableSourcePath(path: string) {
                       {{ t('protection.backupsPage.pendingPathSummary', { n: createSourcePendingCount(row.id) }) }}
                     </p>
                     <p
-                      v-if="noSourceTreeRootsBySource[row.id]"
+                      v-if="sourceBrowserMode(row.id) === 'tree' && noSourceTreeRootsBySource[row.id]"
                       class="dp-create-tree-shell__warn"
                     >
                       {{ t('protection.backupsPage.dirTreeEmptyHost') }}
                     </p>
                     <div
-                      v-if="createSourceTreeErrorBySource[row.id]"
+                      v-if="sourceBrowserMode(row.id) === 'tree' && createSourceTreeErrorBySource[row.id]"
                       class="dp-create-tree-shell__error"
                     >
                       <span>{{ createSourceTreeErrorBySource[row.id] }}</span>
@@ -6581,6 +6865,7 @@ function normalizeComparableSourcePath(path: string) {
                       </ElButton>
                     </div>
                     <el-tree
+                      v-if="sourceBrowserMode(row.id) === 'tree'"
                       :ref="(el) => setCreateSourceTreeRef(row.id, el)"
                       :key="`src-tree-${row.id}-${treeRemountKey}-${createSourceTreeRemountKeyBySource[row.id] ?? 0}`"
                       v-loading="isDirectoryLoading(createSourceDirectoryLoadingKey(row.id))"
@@ -6779,6 +7064,234 @@ function normalizeComparableSourcePath(path: string) {
                         </ElTooltip>
                       </template>
                     </el-tree>
+                    <div
+                      v-else
+                      v-loading="layeredSourceBrowser(row.id).loading"
+                      class="layered-source-browser"
+                    >
+                      <div class="layered-source-browser__toolbar">
+                        <nav
+                          class="layered-source-browser__breadcrumbs"
+                          :aria-label="t('protection.backupsPage.layeredBreadcrumbAria')"
+                        >
+                          <template
+                            v-for="(breadcrumb, index) in layeredSourceBreadcrumbs(row.id)"
+                            :key="`${breadcrumb.path}:${index}`"
+                          >
+                            <ChevronRight
+                              v-if="index > 0"
+                              :size="13"
+                              class="layered-source-browser__breadcrumb-separator"
+                            />
+                            <button
+                              type="button"
+                              class="layered-source-browser__breadcrumb"
+                              :class="{ 'is-current': index === layeredSourceBreadcrumbs(row.id).length - 1 }"
+                              :disabled="layeredSourceBrowser(row.id).loading || layeredSourceBrowser(row.id).selectingAll"
+                              @click="openLayeredSourceBreadcrumb(row.id, index)"
+                            >
+                              {{ breadcrumb.label }}
+                            </button>
+                          </template>
+                        </nav>
+                        <div class="layered-source-browser__toolbar-actions">
+                          <ElButton
+                            size="small"
+                            plain
+                            :loading="layeredSourceBrowser(row.id).selectingAll"
+                            :disabled="layeredSourceBrowser(row.id).loading || (!layeredSelectableEntries(row.id).length && !layeredSourceBrowser(row.id).hasMore)"
+                            @click="toggleLayeredCurrentLevel(row.id)"
+                          >
+                            {{ t(isLayeredCurrentLevelSelected(row.id)
+                              ? 'protection.backupsPage.layeredClearCurrentLevel'
+                              : 'protection.backupsPage.layeredSelectCurrentLevel') }}
+                          </ElButton>
+                          <button
+                            type="button"
+                            class="create-dir-row__button-action create-dir-row__icon-action"
+                            :class="{ 'is-refreshing': layeredSourceBrowser(row.id).loading }"
+                            :disabled="layeredSourceBrowser(row.id).loading || layeredSourceBrowser(row.id).selectingAll"
+                            :aria-label="t('protection.backupsPage.layeredRefreshCurrent')"
+                            :title="t('protection.backupsPage.layeredRefreshCurrent')"
+                            @click="refreshLayeredSourceDirectory(row.id)"
+                          >
+                            <RefreshCw
+                              :size="14"
+                              :class="{ 'is-spinning': layeredSourceBrowser(row.id).loading }"
+                            />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div
+                        v-if="layeredSourceBrowser(row.id).error"
+                        class="dp-create-tree-shell__error"
+                      >
+                        <span>{{ layeredSourceBrowser(row.id).error }}</span>
+                        <ElButton
+                          size="small"
+                          text
+                          type="primary"
+                          @click="refreshLayeredSourceDirectory(row.id)"
+                        >
+                          {{ t('protection.backupsPage.btnReload') }}
+                        </ElButton>
+                      </div>
+
+                      <div
+                        v-else-if="layeredSourceBrowser(row.id).loaded && !layeredSourceBrowser(row.id).entries.length"
+                        class="layered-source-browser__empty"
+                      >
+                        {{ t('protection.backupsPage.layeredEmpty') }}
+                      </div>
+
+                      <ul
+                        v-else
+                        class="layered-source-browser__list list-none m-0 p-0"
+                      >
+                        <li
+                          v-for="entry in layeredSourceBrowser(row.id).entries"
+                          :key="entry.path"
+                          class="create-dir-row create-dir-row--tree create-dir-row--layered"
+                          :class="{
+                            'create-dir-row--disabled': Boolean(sourceTreeNodeDisableReason(row.id, entry.path)),
+                            'create-dir-row--filename-encoding-warning': Boolean(entry.filenameEncodingSuspected),
+                            'is-checked': createSourceCheckedKeys(row.id).includes(entry.path),
+                          }"
+                        >
+                          <ElCheckbox
+                            :model-value="createSourceCheckedKeys(row.id).includes(entry.path)"
+                            :disabled="Boolean(sourceTreeNodeDisableReason(row.id, entry.path))"
+                            :aria-label="t('protection.backupsPage.layeredSelectPath', { path: entry.path })"
+                            @change="(checked) => onSourceDirCheckChange(row.id, entry, Boolean(checked))"
+                          />
+                          <component
+                            :is="entry.path_type === 'file' ? FileIcon : Folder"
+                            :size="15"
+                            class="create-dir-row__icon"
+                            :class="entry.path_type === 'file' ? 'create-dir-row__icon--file' : 'create-dir-row__icon--folder'"
+                          />
+                          <button
+                            v-if="entry.path_type === 'directory'"
+                            type="button"
+                            class="create-dir-row__body layered-source-browser__entry-link"
+                            :aria-label="t('protection.backupsPage.layeredOpenDirectory', { path: entry.path })"
+                            @click="openLayeredSourceDirectory(row.id, entry)"
+                          >
+                            <span class="create-dir-row__label">{{ entry.label }}</span>
+                            <span class="create-dir-row__path">{{ entry.path }}</span>
+                          </button>
+                          <div
+                            v-else
+                            class="create-dir-row__body"
+                          >
+                            <span class="create-dir-row__label">{{ entry.label }}</span>
+                            <span class="create-dir-row__path">{{ entry.path }}</span>
+                          </div>
+                          <span
+                            v-if="createSourceCheckedKeys(row.id).includes(entry.path)"
+                            class="create-dir-row__pending-status"
+                          >
+                            {{ t('protection.backupsPage.pathPending') }}
+                          </span>
+                          <el-tag
+                            v-else-if="sourceAddedDirPaths(row.id).includes(entry.path)"
+                            size="small"
+                            effect="plain"
+                            type="info"
+                          >
+                            {{ t('protection.backupsPage.pathAdded') }}
+                          </el-tag>
+                          <span
+                            v-if="entry.path_type === 'directory'"
+                            class="create-dir-row__add-wrap create-dir-row__action-control"
+                            :title="sourceDirectoryAddDisableReason(row.id, entry.path) || t('protection.backupsPage.addModeButton')"
+                            @click.stop
+                          >
+                            <ElDropdown
+                              trigger="click"
+                              placement="bottom-end"
+                              :disabled="Boolean(sourceDirectoryAddDisableReason(row.id, entry.path))"
+                              @command="(mode) => addSourceDirectoryByMode(row.id, entry, mode)"
+                            >
+                              <button
+                                type="button"
+                                class="create-dir-row__button-action create-dir-row__add-trigger create-dir-row__action-control"
+                                :class="{ 'is-loading': isSourceFileCaptureRunning(row.id, entry.path) }"
+                                :disabled="Boolean(sourceDirectoryAddDisableReason(row.id, entry.path))"
+                                :aria-busy="isSourceFileCaptureRunning(row.id, entry.path)"
+                                :aria-label="t('protection.backupsPage.addModeButtonForPath', { path: entry.path })"
+                                @click.stop
+                              >
+                                <LoaderCircle
+                                  v-if="isSourceFileCaptureRunning(row.id, entry.path)"
+                                  :size="13"
+                                  class="is-spinning"
+                                />
+                                <Plus
+                                  v-else
+                                  :size="13"
+                                />
+                                <span>{{ t('protection.backupsPage.addModeButton') }}</span>
+                                <ChevronDown :size="13" />
+                              </button>
+                              <template #dropdown>
+                                <ElDropdownMenu class="create-dir-add-menu">
+                                  <ElDropdownItem command="dynamic">
+                                    <div class="create-dir-add-menu__item">
+                                      <span class="create-dir-add-menu__title">{{ t('protection.backupsPage.addModeDynamicTitle') }}</span>
+                                      <span class="create-dir-add-menu__description">{{ t('protection.backupsPage.addModeDynamicDescription') }}</span>
+                                    </div>
+                                  </ElDropdownItem>
+                                  <ElDropdownItem
+                                    command="direct"
+                                    divided
+                                  >
+                                    <div class="create-dir-add-menu__item">
+                                      <span class="create-dir-add-menu__title">{{ t('protection.backupsPage.captureDirectFiles') }}</span>
+                                      <span class="create-dir-add-menu__description">{{ t('protection.backupsPage.addModeDirectDescription') }}</span>
+                                    </div>
+                                  </ElDropdownItem>
+                                  <ElDropdownItem command="recursive">
+                                    <div class="create-dir-add-menu__item">
+                                      <span class="create-dir-add-menu__title">{{ t('protection.backupsPage.captureRecursiveFiles') }}</span>
+                                      <span class="create-dir-add-menu__description">{{ t('protection.backupsPage.addModeRecursiveDescription') }}</span>
+                                    </div>
+                                  </ElDropdownItem>
+                                </ElDropdownMenu>
+                              </template>
+                            </ElDropdown>
+                          </span>
+                          <ShieldAlert
+                            v-if="entry.filenameEncodingSuspected"
+                            :size="15"
+                            class="create-dir-row__filename-encoding-icon"
+                            :title="t('protection.backupsPage.dirTreeFilenameEncodingWarningTitle')"
+                          />
+                          <HflHelpTip
+                            v-if="sourceTreeNodeDisableReason(row.id, entry.path)"
+                            :content="sourceTreeNodeDisableReason(row.id, entry.path)"
+                            trigger-class="create-dir-row__disabled-icon"
+                            :aria-label="sourceTreeNodeDisableReason(row.id, entry.path) || undefined"
+                          />
+                        </li>
+                      </ul>
+
+                      <div
+                        v-if="layeredSourceBrowser(row.id).hasMore"
+                        class="layered-source-browser__load-more"
+                      >
+                        <ElButton
+                          size="small"
+                          text
+                          type="primary"
+                          :loading="layeredSourceBrowser(row.id).loadingMore"
+                          @click="loadMoreLayeredSourceEntries(row.id)"
+                        >
+                          {{ t('protection.backupsPage.layeredLoadMore') }}
+                        </ElButton>
+                      </div>
+                    </div>
                   </section>
 
                   <section class="create-source-config-detail__selected">
@@ -11360,6 +11873,13 @@ function normalizeComparableSourcePath(path: string) {
   border-top: 1px solid rgba(226, 232, 240, 0.88);
 }
 
+.create-source-config-detail__browse-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .create-source-config-detail__title-row {
   display: flex;
   align-items: center;
@@ -11389,6 +11909,167 @@ function normalizeComparableSourcePath(path: string) {
   background: transparent;
   box-shadow: none;
   padding: 0;
+}
+
+.layered-source-browser {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--el-bg-color) 96%, var(--el-fill-color-light));
+  overflow: hidden;
+}
+
+.layered-source-browser__toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: var(--el-fill-color-extra-light);
+}
+
+.layered-source-browser__breadcrumbs {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.layered-source-browser__breadcrumb {
+  max-width: 160px;
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.layered-source-browser__breadcrumb:hover,
+.layered-source-browser__breadcrumb:focus-visible {
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--el-bg-color));
+  outline: none;
+}
+
+.layered-source-browser__breadcrumb.is-current {
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+  cursor: default;
+}
+
+.layered-source-browser__breadcrumb:disabled {
+  opacity: 0.72;
+}
+
+.layered-source-browser__breadcrumb-separator {
+  flex: 0 0 auto;
+  color: var(--el-text-color-placeholder);
+}
+
+.layered-source-browser__toolbar-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.layered-source-browser__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px !important;
+}
+
+.create-dir-row--layered {
+  min-height: 40px;
+  border-radius: 5px;
+  padding-block: 4px;
+}
+
+.create-dir-row--layered + .create-dir-row--layered {
+  border-top: 1px solid color-mix(in srgb, var(--el-border-color-lighter) 72%, transparent);
+}
+
+.create-dir-row--layered:hover {
+  background: var(--el-fill-color-light);
+}
+
+.create-dir-row--layered.is-checked {
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--el-bg-color));
+}
+
+.layered-source-browser__entry-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.layered-source-browser__entry-link:hover .create-dir-row__label,
+.layered-source-browser__entry-link:focus-visible .create-dir-row__label {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.layered-source-browser__entry-link:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
+  outline-offset: 2px;
+}
+
+.layered-source-browser__empty {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.layered-source-browser__load-more {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  padding: 4px 8px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+@media (max-width: 900px) {
+  .create-source-config-detail__head--browse,
+  .create-source-config-detail__browse-actions,
+  .layered-source-browser__toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .create-source-config-detail__browse-actions {
+    width: 100%;
+  }
+
+  .layered-source-browser__toolbar-actions {
+    justify-content: flex-end;
+  }
 }
 
 .create-source-tree-title-hint {
