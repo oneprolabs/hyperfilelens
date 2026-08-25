@@ -1681,7 +1681,7 @@ function fmtReferenceBytes(value: number | null | undefined) {
 
 function fmtReferencePercent(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—'
-  return `${(Number(value) * 100).toFixed(1)}%`
+  return `${(Math.max(0, Number(value)) * 100).toFixed(1)}%`
 }
 
 function fmtCombinedReduction(snapshot: BackupSourceSnapshot) {
@@ -1689,7 +1689,7 @@ function fmtCombinedReduction(snapshot: BackupSourceSnapshot) {
   if (snapshot.fully_reused) return t('protection.backupsPage.snapshotStorageFullyReused')
   const value = Number(snapshot.combined_reduction_ratio)
   if (!Number.isFinite(value) || value <= 0) return '—'
-  return `${value.toFixed(2)}:1`
+  return `${value.toFixed(2)} : 1`
 }
 
 function snapshotDisplayDirectories(snapshot: BackupSourceSnapshot) {
@@ -3275,7 +3275,7 @@ function onClosed() {
             :max-height="snapshotTableMaxHeight"
             :expand-row-keys="expandedSnapshotRowKeys"
             :header-cell-style="TABLE_HEADER_STYLE"
-            class="hfl-list-table"
+            class="hfl-list-table snapshot-points-table"
             @expand-change="onSnapshotExpandChange"
           >
             <el-table-column
@@ -3303,49 +3303,119 @@ function onClosed() {
                   </div>
                   <template v-else-if="selectedSnapshotId === row.id && selectedSnapshot">
                     <section class="snapshot-efficiency-summary">
-                      <header class="snapshot-efficiency-summary__header">
-                        <div>
-                          <h4 class="snapshot-efficiency-summary__title">
-                            {{ t('protection.backupsPage.snapshotStorageEfficiencyTitle') }}
-                          </h4>
-                          <p class="snapshot-efficiency-summary__lead">
-                            {{ t('protection.backupsPage.snapshotStorageEfficiencyLead') }}
-                          </p>
-                        </div>
-                        <ElTooltip
-                          :content="t('protection.backupsPage.snapshotStorageReferenceHint')"
-                          placement="top"
-                        >
-                          <Info
-                            :size="16"
-                            class="snapshot-efficiency-summary__info"
-                            aria-hidden="true"
-                          />
-                        </ElTooltip>
-                      </header>
                       <dl class="snapshot-efficiency-summary__metrics">
                         <div class="snapshot-efficiency-summary__metric">
-                          <dt>{{ t('protection.backupsPage.snapshotRecoverableData') }}</dt>
+                          <dt>
+                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotRecoverableData') }}</span>
+                            <ElTooltip
+                              :content="t('protection.backupsPage.snapshotRecoverableDataHint')"
+                              placement="top"
+                              teleported
+                              append-to="body"
+                              :z-index="3600"
+                            >
+                              <Info
+                                :size="13"
+                                class="snapshot-efficiency-summary__metric-info"
+                                aria-hidden="true"
+                              />
+                            </ElTooltip>
+                          </dt>
                           <dd>{{ fmtBytes(snapshotDisplaySize(selectedSnapshot)) }}</dd>
                         </div>
                         <div class="snapshot-efficiency-summary__metric">
-                          <dt>{{ t('protection.backupsPage.snapshotNewOriginalData') }}</dt>
+                          <dt>
+                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotNewOriginalData') }}</span>
+                            <ElTooltip
+                              :content="t('protection.backupsPage.snapshotNewOriginalDataHint')"
+                              placement="top"
+                              teleported
+                              append-to="body"
+                              :z-index="3600"
+                            >
+                              <Info
+                                :size="13"
+                                class="snapshot-efficiency-summary__metric-info"
+                                aria-hidden="true"
+                              />
+                            </ElTooltip>
+                          </dt>
                           <dd>{{ fmtReferenceBytes(selectedSnapshot.new_original_content_bytes) }}</dd>
                         </div>
                         <div class="snapshot-efficiency-summary__metric">
-                          <dt>{{ t('protection.backupsPage.snapshotNewStorage') }}</dt>
+                          <dt>
+                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotNewStorage') }}</span>
+                            <ElTooltip
+                              :content="t('protection.backupsPage.snapshotNewStorageHint')"
+                              placement="top"
+                              teleported
+                              append-to="body"
+                              :z-index="3600"
+                            >
+                              <Info
+                                :size="13"
+                                class="snapshot-efficiency-summary__metric-info"
+                                aria-hidden="true"
+                              />
+                            </ElTooltip>
+                          </dt>
                           <dd>{{ fmtReferenceBytes(selectedSnapshot.new_packed_content_bytes) }}</dd>
                         </div>
                         <div class="snapshot-efficiency-summary__metric">
-                          <dt>{{ t('protection.backupsPage.snapshotDataReuse') }}</dt>
+                          <dt>
+                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotDataReuse') }}</span>
+                            <ElTooltip
+                              :content="t('protection.backupsPage.snapshotDataReuseHint')"
+                              placement="top"
+                              teleported
+                              append-to="body"
+                              :z-index="3600"
+                            >
+                              <Info
+                                :size="13"
+                                class="snapshot-efficiency-summary__metric-info"
+                                aria-hidden="true"
+                              />
+                            </ElTooltip>
+                          </dt>
                           <dd>{{ fmtReferencePercent(selectedSnapshot.data_reuse_ratio) }}</dd>
                         </div>
                         <div class="snapshot-efficiency-summary__metric">
-                          <dt>{{ t('protection.backupsPage.snapshotCompressionSavings') }}</dt>
+                          <dt>
+                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotCompressionSavings') }}</span>
+                            <ElTooltip
+                              :content="t('protection.backupsPage.snapshotCompressionSavingsHint')"
+                              placement="top"
+                              teleported
+                              append-to="body"
+                              :z-index="3600"
+                            >
+                              <Info
+                                :size="13"
+                                class="snapshot-efficiency-summary__metric-info"
+                                aria-hidden="true"
+                              />
+                            </ElTooltip>
+                          </dt>
                           <dd>{{ fmtReferencePercent(selectedSnapshot.compression_savings_ratio) }}</dd>
                         </div>
                         <div class="snapshot-efficiency-summary__metric">
-                          <dt>{{ t('protection.backupsPage.snapshotCombinedReduction') }}</dt>
+                          <dt>
+                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotCombinedReduction') }}</span>
+                            <ElTooltip
+                              :content="t('protection.backupsPage.snapshotCombinedReductionHint')"
+                              placement="top"
+                              teleported
+                              append-to="body"
+                              :z-index="3600"
+                            >
+                              <Info
+                                :size="13"
+                                class="snapshot-efficiency-summary__metric-info"
+                                aria-hidden="true"
+                              />
+                            </ElTooltip>
+                          </dt>
                           <dd>{{ fmtCombinedReduction(selectedSnapshot) }}</dd>
                         </div>
                       </dl>
@@ -3511,8 +3581,22 @@ function onClosed() {
               </template>
             </el-table-column>
             <el-table-column
+              :label="t('protection.backupDetail.labelStatus')"
+              width="92"
+            >
+              <template #default="{ row }">
+                <el-tag
+                  :type="lifecycleStatusTagAttrs(row.status).type"
+                  :class="lifecycleStatusTagAttrs(row.status).class"
+                  size="small"
+                >
+                  {{ snapshotStatusLabel(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column
               :label="t('protection.backupDetail.colSnapStart')"
-              width="160"
+              width="150"
             >
               <template #default="{ row }">
                 <span
@@ -3526,7 +3610,7 @@ function onClosed() {
             </el-table-column>
             <el-table-column
               :label="t('protection.backupDetail.colSnapEnd')"
-              width="160"
+              width="150"
             >
               <template #default="{ row }">
                 <span
@@ -3539,8 +3623,8 @@ function onClosed() {
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('protection.backupsPage.snapshotNewStorage')"
-              width="130"
+              :label="t('protection.backupsPage.snapshotListSize')"
+              width="88"
               align="right"
             >
               <template #default="{ row }">
@@ -3549,7 +3633,7 @@ function onClosed() {
             </el-table-column>
             <el-table-column
               :label="t('protection.backupsPage.snapshotRecoverableData')"
-              width="140"
+              width="105"
               align="right"
             >
               <template #default="{ row }">
@@ -3566,22 +3650,8 @@ function onClosed() {
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('protection.backupDetail.labelStatus')"
-              width="92"
-            >
-              <template #default="{ row }">
-                <el-tag
-                  :type="lifecycleStatusTagAttrs(row.status).type"
-                  :class="lifecycleStatusTagAttrs(row.status).class"
-                  size="small"
-                >
-                  {{ snapshotStatusLabel(row.status) }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column
               :label="t('protection.sourceResources.colActions')"
-              width="200"
+              width="171"
               fixed="right"
               align="center"
               class-name="hfl-table-actions-col"
@@ -5291,11 +5361,17 @@ function onClosed() {
   color: rgb(30 41 59);
 }
 
+.snapshot-points-table {
+  container-type: inline-size;
+}
+
 .snapshot-directory-expand-panel {
+  position: sticky;
+  left: 35px;
   box-sizing: border-box;
-  width: calc(100% - 49px);
+  width: calc(100cqw - 49px);
   min-width: 0;
-  max-width: calc(100% - 49px);
+  max-width: calc(100cqw - 49px);
   overflow-x: auto;
   margin-left: 35px;
   padding: 8px 0 10px 14px;
@@ -5316,46 +5392,6 @@ function onClosed() {
   background: var(--el-fill-color-light);
 }
 
-.snapshot-efficiency-summary__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.snapshot-efficiency-summary__title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 0;
-  color: var(--el-text-color-primary);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.snapshot-efficiency-summary__title::before {
-  width: 3px;
-  height: 14px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: var(--color-primary);
-  content: '';
-}
-
-.snapshot-efficiency-summary__lead {
-  margin: 3px 0 0;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.snapshot-efficiency-summary__info {
-  flex: 0 0 auto;
-  color: var(--el-text-color-secondary);
-  cursor: help;
-}
-
 .snapshot-efficiency-summary__metrics {
   display: grid;
   grid-template-columns: repeat(6, minmax(112px, 1fr));
@@ -5372,12 +5408,27 @@ function onClosed() {
 }
 
 .snapshot-efficiency-summary__metric dt {
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   color: var(--el-text-color-secondary);
   font-size: 11px;
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.snapshot-efficiency-summary__metric-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-efficiency-summary__metric-info {
+  flex: 0 0 auto;
+  color: var(--el-text-color-secondary);
+  cursor: help;
 }
 
 .snapshot-efficiency-summary__metric dd {
@@ -5415,10 +5466,12 @@ function onClosed() {
 
 .snapshot-point-actions {
   display: flex;
+  box-sizing: border-box;
   width: 100%;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
+  padding: 0 3px;
   white-space: nowrap;
 }
 
@@ -5428,9 +5481,9 @@ function onClosed() {
   box-sizing: border-box;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   margin: 0;
-  padding: 4px 10px;
+  padding: 3px 8px;
   border: 1px solid;
   border-radius: 6px;
   background: #fff;
@@ -5545,8 +5598,9 @@ function onClosed() {
 
 @media (max-width: 760px) {
   .snapshot-directory-expand-panel {
-    width: calc(100% - 27px);
-    max-width: calc(100% - 27px);
+    left: 21px;
+    width: calc(100cqw - 27px);
+    max-width: calc(100cqw - 27px);
     margin-left: 21px;
     padding-left: 10px;
   }

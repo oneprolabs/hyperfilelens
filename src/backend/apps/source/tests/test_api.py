@@ -1210,7 +1210,7 @@ class SourceResourceApiTests(TestCase):
             status=Task.Status.RUNNING,
             trigger_type=Task.TriggerType.MANUAL,
         )
-        RestoreRecord.objects.create(
+        user_record = RestoreRecord.objects.create(
             organization_id=self.org.id,
             requesting_organization_id=self.org.id,
             target_execution_organization_id=self.org.id,
@@ -1241,6 +1241,8 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(runtime["running_count"], 1)
         self.assertEqual(runtime["total"], 1)
         self.assertEqual(runtime["latest_task"]["id"], user_task.id)
+        self.assertEqual(runtime["latest_record"]["id"], user_record.id)
+        self.assertEqual(runtime["latest_record"]["task_uuid"], str(user_task.task_uuid))
 
     def test_backup_selectable_runtime_reports_historical_restorable_snapshot(self):
         agent = Node.objects.create(
