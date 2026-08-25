@@ -82,6 +82,29 @@ describe('FlowBackupSourceDetailDrawer source status', () => {
   })
 })
 
+describe('FlowBackupSourceDetailDrawer target validation refresh', () => {
+  it('polls provisioning status only while the overview is open and stops at a terminal result', () => {
+    const loader = sourceBetween(
+      'async function loadOverviewForSource',
+      'async function loadSnapshotsForSource',
+    )
+    const polling = sourceBetween(
+      'function stopProvisionPolling',
+      'async function loadTasksForSource',
+    )
+
+    expect(loader).toContain('options: { silent?: boolean } = {}')
+    expect(loader).toContain('if (!silent)')
+    expect(polling).toContain('PROVISION_POLL_MAX_ATTEMPTS')
+    expect(polling).toContain('provisionPollingInFlight')
+    expect(polling).toContain("activeTab.value !== 'overview'")
+    expect(polling).toContain("currentSourceConfig.value?.status !== 'provisioning'")
+    expect(polling).toContain("emit('config-changed')")
+    expect(polling).toContain('stopProvisionPolling()')
+    expect(drawer).toContain('stopProvisionPolling()')
+  })
+})
+
 describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
   it('blocks snapshot restore actions while the source backup is active', () => {
     const restoreGuard = sourceBetween(

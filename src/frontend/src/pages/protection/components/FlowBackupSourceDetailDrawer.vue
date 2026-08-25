@@ -301,6 +301,9 @@ const appliedRestoreRecordTargetId = ref<number | null>(null)
 const restoreRecordRuntimeById = ref<Map<number, TaskRuntimePayload>>(new Map())
 const restoreRecordRuntimeLoadingIds = ref<Set<number>>(new Set())
 let restoreRecordPollingTimer: ReturnType<typeof setInterval> | null = null
+let provisionPollingTimer: ReturnType<typeof setInterval> | null = null
+let provisionPollingInFlight = false
+let provisionPollingAttempts = 0
 const sourceTaskRows = ref<TaskRow[]>([])
 const sourceTasksLoading = ref(false)
 const sourceTasksError = ref('')
@@ -328,6 +331,8 @@ const {
 const DETAIL_PAGE_SIZE = 10
 const DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100]
 const RESTORE_RECORD_POLL_INTERVAL_MS = 3000
+const PROVISION_POLL_INTERVAL_MS = 3000
+const PROVISION_POLL_MAX_ATTEMPTS = 60
 const HIDDEN_SOURCE_SNAPSHOT_STATUSES = ['failed']
 const snapshotPagination = reactive({ page: 1, pageSize: DETAIL_PAGE_SIZE, count: 0 })
 const restoreRecordPagination = reactive({ page: 1, pageSize: DETAIL_PAGE_SIZE, count: 0 })
@@ -2139,26 +2144,29 @@ async function waitForDownloadArtifact(taskUuid: string) {
   throw new Error(t('protection.backupsPage.snapshotBrowserDownloadTimeout'))
 }
 
-async function loadOverviewForSource() {
+async function loadOverviewForSource(options: { silent?: boolean } = {}) {
+  const silent = options.silent === true
   const id = sourceId.value
-  sourceDetail.value = null
-  sourceDetailError.value = ''
+  if (!silent) {
+    sourceDetail.value = null
+    sourceDetailError.value = ''
+  }
   if (!id) return
   const signal = requests.nextSignal('flow-source-overview')
-  sourceDetailLoading.value = true
+  if (!silent) sourceDetailLoading.value = true
   try {
     const result = await listBackupSelectableSources({
       ids: id,
       expand: 'backup_configs,policies,runtime',
     }, { signal })
     sourceDetail.value = result.results.find((item) => item.id === id) ?? null
-    if (!sourceDetail.value) sourceDetailError.value = t('protection.backupDetail.notFound')
+    if (!sourceDetail.value && !silent) sourceDetailError.value = t('protection.backupDetail.notFound')
   } catch (err) {
     if (requests.isAbortError(err)) return
-    sourceDetailError.value = apiErrorMessage(err)
+    if (!silent) sourceDetailError.value = apiErrorMessage(err)
   } finally {
     requests.releaseSignal('flow-source-overview', signal)
-    if (!signal.aborted) sourceDetailLoading.value = false
+    if (!silent && !signal.aborted) sourceDetailLoading.value = false
   }
 }
 
@@ -2324,6 +2332,43 @@ function syncRestoreRecordPolling() {
   }, RESTORE_RECORD_POLL_INTERVAL_MS)
 }
 
+function stopProvisionPolling() {
+  if (provisionPollingTimer) {
+    clearInterval(provisionPollingTimer)
+    provisionPollingTimer = null
+  }
+  provisionPollingInFlight = false
+  provisionPollingAttempts = 0
+}
+
+async function pollProvisionStatus() {
+  if (provisionPollingInFlight || !props.modelValue || activeTab.value !== 'overview') return
+  if (provisionPollingAttempts >= PROVISION_POLL_MAX_ATTEMPTS) {
+    stopProvisionPolling()
+    return
+  }
+  provisionPollingInFlight = true
+  provisionPollingAttempts += 1
+  try {
+    await loadOverviewForSource({ silent: true })
+    if (currentSourceConfig.value?.status !== 'provisioning') {
+      emit('config-changed')
+      stopProvisionPolling()
+    }
+  } finally {
+    provisionPollingInFlight = false
+  }
+}
+
+function syncProvisionPolling() {
+  stopProvisionPolling()
+  if (!props.modelValue || activeTab.value !== 'overview') return
+  if (currentSourceConfig.value?.status !== 'provisioning') return
+  provisionPollingTimer = setInterval(() => {
+    void pollProvisionStatus()
+  }, PROVISION_POLL_INTERVAL_MS)
+}
+
 async function loadTasksForSource() {
   const endpoint = sourceEndpoint.value
   sourceTaskRows.value = []
@@ -2432,6 +2477,12 @@ watch(activeTab, async () => {
 watch(
   () => [props.modelValue, activeTab.value, hasActiveRestoreRecords.value] as const,
   syncRestoreRecordPolling,
+  { immediate: true },
+)
+
+watch(
+  () => [props.modelValue, activeTab.value, currentSourceConfig.value?.status] as const,
+  syncProvisionPolling,
   { immediate: true },
 )
 
@@ -2569,10 +2620,12 @@ watch(
 onUnmounted(() => {
   if (activeTransferProgressTimer) clearInterval(activeTransferProgressTimer)
   stopRestoreRecordPolling()
+  stopProvisionPolling()
 })
 
 function onClosed() {
   stopRestoreRecordPolling()
+  stopProvisionPolling()
   requests.abortScope('flow-source-overview')
   requests.abortScope('flow-source-snapshots')
   requests.abortScope('flow-source-restore-records')
