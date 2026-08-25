@@ -5,6 +5,7 @@ import logging
 import ntpath
 import posixpath
 import secrets
+from contextlib import nullcontext
 from decimal import Decimal
 from typing import Any
 from uuid import uuid4
@@ -1876,46 +1877,73 @@ def _dispatch_restore_items(
                     **payload,
                     "nas": scrub_source_secrets(payload["nas"]),
                 }
-            handle = run_agent_task_async(
-                organization_id=record.target_execution_organization_id,
-                node_id=node.id,
-                kind="restore.run",
-                payload=payload,
-                persisted_payload=(persisted_payload if target_nas_payload else None),
-                correlation_type="restore.record",
-                correlation_id=str(record.task_uuid),
-                requesting_organization_id=record.requesting_organization_id,
+            from apps.restore.services.direct_nas_mounts import (
+                acquire_for_restore,
+                requires_lease_for_restore,
             )
-            log_agent_dispatch(
-                "restore item",
-                node_id=node.id,
-                kind="restore.run",
-                correlation_type="restore.record",
-                correlation_id=str(record.task_uuid),
-                restore_record_item_id=item.id,
-                node_task_id=str(handle.task.id),
-                kopia_snapshot_id=item.kopia_snapshot_id,
+
+            # Keep the durable lease, NodeTask and item projection in one
+            # transaction. Agent delivery is registered with on_commit(), so
+            # the restore cannot start before its control-plane lease exists.
+            lease_required = requires_lease_for_restore(
+                record=record,
+                repository=repository,
+                reader_node_id=repository_access.node.id,
+                access_mode=repository_access.mode,
+                repository_payload=repository_access.repository_payload,
             )
-            item.node_task_id = handle.task.id
-            item.status = RestoreRecordItem.Status.RUNNING
-            item.save(update_fields=["node_task_id", "status", "updated_at"])
-            append_task_step_event(
-                task=task,
-                step_name="dispatch_agent",
-                message="Restore item dispatched to agent",
-                metadata={
-                    "restore_record_item_id": item.id,
-                    "node_task_id": str(handle.task.id),
-                    "target_node_id": node.id,
-                    "repository_reader_node_id": repository_access.node.id,
-                    "restore_transfer_mode": payload["restore_transfer_mode"],
-                    "kopia_snapshot_id": item.kopia_snapshot_id,
-                    "source_path": item.source_path,
-                    "target_path": item.target_path,
-                    "object_id": item.kopia_snapshot_id,
-                    "object_name": item.source_path,
-                },
-            )
+            dispatch_scope = transaction.atomic() if lease_required else nullcontext()
+            with dispatch_scope:
+                handle = run_agent_task_async(
+                    organization_id=record.target_execution_organization_id,
+                    node_id=node.id,
+                    kind="restore.run",
+                    payload=payload,
+                    persisted_payload=(
+                        persisted_payload if target_nas_payload else None
+                    ),
+                    correlation_type="restore.record",
+                    correlation_id=str(record.task_uuid),
+                    requesting_organization_id=record.requesting_organization_id,
+                )
+                if lease_required:
+                    acquire_for_restore(
+                        record=record,
+                        repository=repository,
+                        reader_node_id=repository_access.node.id,
+                        access_mode=repository_access.mode,
+                        repository_payload=repository_access.repository_payload,
+                    )
+                log_agent_dispatch(
+                    "restore item",
+                    node_id=node.id,
+                    kind="restore.run",
+                    correlation_type="restore.record",
+                    correlation_id=str(record.task_uuid),
+                    restore_record_item_id=item.id,
+                    node_task_id=str(handle.task.id),
+                    kopia_snapshot_id=item.kopia_snapshot_id,
+                )
+                item.node_task_id = handle.task.id
+                item.status = RestoreRecordItem.Status.RUNNING
+                item.save(update_fields=["node_task_id", "status", "updated_at"])
+                append_task_step_event(
+                    task=task,
+                    step_name="dispatch_agent",
+                    message="Restore item dispatched to agent",
+                    metadata={
+                        "restore_record_item_id": item.id,
+                        "node_task_id": str(handle.task.id),
+                        "target_node_id": node.id,
+                        "repository_reader_node_id": repository_access.node.id,
+                        "restore_transfer_mode": payload["restore_transfer_mode"],
+                        "kopia_snapshot_id": item.kopia_snapshot_id,
+                        "source_path": item.source_path,
+                        "target_path": item.target_path,
+                        "object_id": item.kopia_snapshot_id,
+                        "object_name": item.source_path,
+                    },
+                )
         _set_step_status(
             task=task,
             step_name="dispatch_agent",
@@ -2003,6 +2031,9 @@ def _dispatch_restore_items(
             error_code="RESTORE_DISPATCH_FAILED",
             error_message=error_message,
         )
+        from apps.restore.services.direct_nas_mounts import release_for_record
+
+        release_for_record(record=record)
         stop_restore_repository_servers(task=task)
         raise
 
@@ -2379,6 +2410,10 @@ def cancel_restore(
                 task.task_uuid,
             )
 
+    if record is not None:
+        from apps.restore.services.direct_nas_mounts import release_for_record
+
+        release_for_record(record=record)
     stop_restore_repository_servers(task=task)
 
     append_task_step_event(

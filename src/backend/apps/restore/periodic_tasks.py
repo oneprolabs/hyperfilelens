@@ -13,3 +13,12 @@ def register_periodic_tasks() -> None:
         queue=None,
         enabled=True,
     )
+    TASK_REGISTRY.add(
+        name="restore_reconcile_direct_nas_mounts",
+        task="apps.restore.tasks.reconcile_direct_nas_mounts",
+        schedule=60,
+        args=(),
+        kwargs={"limit": 200},
+        queue=None,
+        enabled=True,
+    )

@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from apps.node.models import Node
 
 REPOSITORY_OWNERSHIP_CAPABILITY = "repository_ownership_v1"
+NAS_MOUNT_LIFECYCLE_CAPABILITY = "nas_mount_lifecycle_v1"
 
 
 def node_capabilities(node: Node) -> frozenset[str]:
@@ -46,6 +47,7 @@ def node_supports_capability(node: Node, capability: str) -> bool:
 
 
 __all__ = [
+    "NAS_MOUNT_LIFECYCLE_CAPABILITY",
     "REPOSITORY_OWNERSHIP_CAPABILITY",
     "missing_node_capabilities",
     "node_capabilities",
