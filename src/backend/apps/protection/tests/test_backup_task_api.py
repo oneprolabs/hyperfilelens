@@ -1977,10 +1977,21 @@ class ProtectionBackupTaskApiTests(TestCase):
             kopia_snapshot_id="",
             result={
                 "error_code": "POLICY_APPLY_FAILED",
-                "policy_phase": "apply",
-                "stderr_tail": "policy apply failed",
+                "policy_phase": "reset",
+                "policy_reset": {
+                    "stderr_tail": (
+                        "unable to write diagnostics blob despite 10 retries: "
+                        "Bucket quota exceeded\n"
+                        "error flushing writer: unable to write session marker"
+                    ),
+                    "exit_code": 1,
+                },
+                "repository_status": {
+                    "stdout_tail": "Epoch range-compaction every: 7 epochs",
+                    "exit_code": 0,
+                },
             },
-            last_error="policy apply failed",
+            last_error="reset backup policy: exit 1: exit status 1",
         )
         mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
             [failed_policy, failed_policy]
@@ -2016,6 +2027,16 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(final["status"], Task.Status.FAILED)
         self.assertEqual(row.status, BackupSourceSnapshotDirectory.Status.FAILED)
         self.assertEqual(row.error_code, "POLICY_APPLY_FAILED")
+        expected_message = (
+            "Backup repository quota exceeded. Free storage or increase the "
+            "repository quota before retrying."
+        )
+        self.assertEqual(row.error_message, expected_message)
+        snapshot.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(snapshot.error_message, expected_message)
+        self.assertEqual(task.error_message, expected_message)
+        self.assertNotIn("Epoch range-compaction", task.error_message)
         self.assertEqual(
             [attempt.payload["policy_attempt"] for attempt in attempts], [1, 2]
         )
