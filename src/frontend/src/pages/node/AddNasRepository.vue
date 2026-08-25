@@ -112,8 +112,8 @@ const topologySourceLabels = computed(() => [
 ])
 const submitButtonLabel = computed(() =>
   isDirectNasAccess.value
-    ? 'Save configuration'
-    : 'Submit and initialize',
+    ? t('addNasRepo.btnSaveConfiguration')
+    : t('addNasRepo.btnSubmitInitialize'),
 )
 const validQuotaAlertThreshold = computed(() => {
   const value = Number(quotaAlertThreshold.value || 0)
@@ -440,7 +440,7 @@ watch(enableQuotaAlert, (enabled) => {
                     />
                     <div class="mt-1 text-xs text-[rgb(100_116_139)]">
                       {{ protocol === 'smb'
-                        ? 'If SMB auto-negotiation fails, explicitly set the protocol version or authentication option.'
+                        ? t('addNasRepo.hintSmbMountOptions')
                         : t('addNasRepo.hintMountOptionsNfs') }}
                     </div>
                     <ElAlert
@@ -452,7 +452,7 @@ watch(enableQuotaAlert, (enabled) => {
                     >
                       <div class="text-xs leading-5 text-[rgb(51_65_85)]">
                         <div>
-                          Different NAS devices, SMB servers, and client kernels may support different protocol versions. Copy one example into Mount Options and test:
+                          {{ t('addNasRepo.hintSmbMountOptionsExamples') }}
                         </div>
                         <div class="mt-1 flex flex-wrap gap-1.5">
                           <code
@@ -491,7 +491,7 @@ watch(enableQuotaAlert, (enabled) => {
                           @input="clearFieldError('smbUsername')"
                         />
                         <div class="mt-1 text-xs text-[rgb(100_116_139)]">
-                          SMB user used to access the shared directory, e.g. backup_user.
+                          {{ t('addNasRepo.hintSmbUsername') }}
                         </div>
                       </ElFormItem>
                       <ElFormItem
@@ -509,7 +509,7 @@ watch(enableQuotaAlert, (enabled) => {
                           @input="clearFieldError('smbPassword')"
                         />
                         <div class="mt-1 text-xs text-[rgb(100_116_139)]">
-                          Password for the shared directory; logs and errors are masked.
+                          {{ t('addNasRepo.hintSmbPassword') }}
                         </div>
                       </ElFormItem>
                       <ElFormItem
@@ -521,7 +521,7 @@ watch(enableQuotaAlert, (enabled) => {
                           :placeholder="t('repositoriesPage.phSmbDomain')"
                         />
                         <div class="mt-1 text-xs text-[rgb(100_116_139)]">
-                          Use CORP or WORKGROUP for domain environments; leave empty for local users.
+                          {{ t('addNasRepo.hintSmbDomain') }}
                         </div>
                       </ElFormItem>
                     </div>
@@ -697,7 +697,7 @@ watch(enableQuotaAlert, (enabled) => {
                       @input="clearFieldError('repoName')"
                     />
                     <div class="mt-1 text-xs text-[rgb(100_116_139)]">
-                      Display name used in repository lists and backup configs, e.g. Production NAS backup.
+                      {{ t('addNasRepo.hintRepositoryName') }}
                     </div>
                   </ElFormItem>
                   <div class="fullscreen-form-grid">
