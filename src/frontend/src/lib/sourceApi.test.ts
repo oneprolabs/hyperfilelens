@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   bulkDeleteBackupSources,
+  captureBackupSourceFiles,
   listBackupSelectableSources,
   productionSourceSummary,
   testSourceDraft,
@@ -12,6 +13,45 @@ import {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+describe('captureBackupSourceFiles', () => {
+  it('posts a bounded point-in-time capture request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      capture_id: 'capture-1',
+      source_id: 'agent:2',
+      root_path: '/data',
+      scope_mode: 'static_recursive_files',
+      captured_at: '2026-08-24T09:00:00Z',
+      manifest_hash: 'hash',
+      entry_count: 0,
+      file_count: 0,
+      directory_count: 0,
+      entries: [],
+      files: [],
+      task_id: 'task-1',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await captureBackupSourceFiles({
+      source_id: 'agent:2',
+      path: '/data',
+      mode: 'recursive',
+      timeout: 120,
+      max_files: 10000,
+    })
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(new URL(String(url), window.location.origin).pathname)
+      .toBe('/api/v1/source/backup-selectable/file-capture/')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      source_id: 'agent:2',
+      path: '/data',
+      mode: 'recursive',
+      max_files: 10000,
+    })
+  })
 })
 
 describe('listBackupSelectableSources', () => {

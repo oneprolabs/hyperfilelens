@@ -360,7 +360,7 @@ func TestPreparedManagedBackupDoesNotSnapshotAfterPolicyFailure(t *testing.T) {
 		nil,
 		"/data",
 		spec,
-		map[string]any{},
+		map[string]any{}, false,
 	)
 
 	if status != "failed" || result["error_code"] != "POLICY_APPLY_FAILED" {
@@ -426,7 +426,7 @@ func TestPreparedManagedBackupSerializesSameRepositoryPath(t *testing.T) {
 			nil,
 			"/data",
 			spec,
-			map[string]any{},
+			map[string]any{}, false,
 		)
 		done <- status
 	}

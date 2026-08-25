@@ -52,6 +52,8 @@ def sync_backup_config_repository_policy(*, config_id: int) -> dict[str, Any]:
             file_filter_payload=runtime_policy["file_filter"],
             backup_policy_payload=runtime_policy["backup_policy"],
             compression_payload=runtime_policy["compression"],
+            scope_mode=str(directory.scope_mode or "dynamic"),
+            path_type=str(directory.path_type or "unknown"),
         )
         outcome = run_agent_task_sync(
             organization_id=config.organization_id,

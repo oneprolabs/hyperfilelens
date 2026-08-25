@@ -109,7 +109,7 @@ func TestPreparedSnapshotReturnsPolicyNotFoundToBackendWithoutRetry(t *testing.T
 		"/tmp/prepared-policy-retry.config",
 		nil,
 		"/data",
-		map[string]any{},
+		map[string]any{}, false,
 	)
 
 	if status != "failed" || message != "kopia policy not found" {
@@ -161,7 +161,7 @@ func TestPreparedSnapshotKeepsSingleBoundedCommandSummary(t *testing.T) {
 
 	status, result, message := runPreparedManagedSnapshot(
 		t.Context(), ReporterSink{}, "prepared-bounded", "kopia", "/tmp/bounded.config",
-		nil, "/data", map[string]any{},
+		nil, "/data", map[string]any{}, false,
 	)
 	if status != "success" || message != "" {
 		t.Fatalf("status=%q message=%q result=%#v", status, message, result)
@@ -217,7 +217,7 @@ func TestPreparedSnapshotKeepsSuccessWhenStorageStatsFail(t *testing.T) {
 
 	status, result, message := runPreparedManagedSnapshot(
 		t.Context(), ReporterSink{}, "prepared-reference-failure", "kopia", "/tmp/reference.config",
-		nil, "/data", map[string]any{},
+		nil, "/data", map[string]any{}, false,
 	)
 	if status != "success" || message != "" {
 		t.Fatalf("status=%q message=%q result=%#v", status, message, result)
@@ -264,6 +264,7 @@ func TestPreparedSnapshotAdoptsExistingOperationBeforeCreating(t *testing.T) {
 	status, result, message := runPreparedManagedSnapshot(
 		t.Context(), ReporterSink{}, "prepared-reconcile", "kopia", "/tmp/reconcile.config",
 		nil, "/data", map[string]any{"operation_id": "operation-123", "operation_attempt": 2},
+		false,
 	)
 
 	if status != "success" || message != "" {
@@ -316,6 +317,7 @@ func TestPreparedSnapshotFirstAttemptTagsWithoutReconcileRead(t *testing.T) {
 	status, result, message := runPreparedManagedSnapshot(
 		t.Context(), ReporterSink{}, "prepared-first-attempt", "kopia", "/tmp/reconcile.config",
 		nil, "/data", map[string]any{"operation_id": "operation-123", "operation_attempt": 1},
+		false,
 	)
 
 	if status != "success" || message != "" {
@@ -361,6 +363,7 @@ func TestPreparedSnapshotAdoptsNewestExistingOperationMatch(t *testing.T) {
 	status, result, message := runPreparedManagedSnapshot(
 		t.Context(), ReporterSink{}, "prepared-reconcile-newest", "kopia", "/tmp/reconcile.config",
 		nil, "/data", map[string]any{"operation_id": "operation-123"},
+		false,
 	)
 
 	if status != "success" || message != "" {
@@ -406,6 +409,7 @@ func TestPreparedSnapshotFailsClosedWhenOperationCannotBeReconciled(t *testing.T
 	status, result, message := runPreparedManagedSnapshot(
 		t.Context(), ReporterSink{}, "prepared-reconcile-failed", "kopia", "/tmp/reconcile.config",
 		nil, "/data", map[string]any{"operation_id": "operation-123"},
+		false,
 	)
 
 	if status != "failed" || !strings.Contains(message, "snapshot reconciliation failed") {

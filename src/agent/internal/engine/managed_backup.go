@@ -1276,7 +1276,7 @@ func (e *Engine) runManagedBackup(
 		result["error_code"] = "BACKUP_OPERATION_ID_INVALID"
 		return "failed", result, operationErr.Error()
 	}
-	return runPreparedManagedBackup(ctx, rep, taskID, bin, configFile, env, p.Path, policySpec, result)
+	return runPreparedManagedBackup(ctx, rep, taskID, bin, configFile, env, p.Path, policySpec, result, isFrozenEmptyDirectory(p))
 }
 
 func (e *Engine) runManagedPolicyApply(
@@ -1412,7 +1412,7 @@ func (e *Engine) runManagedPreparedSnapshot(
 	}
 	defer releasePathLock()
 	status, snapshotResult, errMsg := runPreparedManagedSnapshot(
-		ctx, rep, taskID, bin, configFile, env, p.Path, result,
+		ctx, rep, taskID, bin, configFile, env, p.Path, result, isFrozenEmptyDirectory(p),
 	)
 	if status != "success" {
 	}
@@ -1429,6 +1429,7 @@ func runPreparedManagedBackup(
 	sourcePath string,
 	policySpec managedBackupPolicySpec,
 	result map[string]any,
+	frozenEmptyDirectory bool,
 ) (string, map[string]any, string) {
 	releasePathLock, lockErr := managedBackupPathLocks.acquire(ctx, configFile, sourcePath)
 	if lockErr != nil {
@@ -1443,7 +1444,12 @@ func runPreparedManagedBackup(
 	if policyErr != nil {
 		return "failed", result, policyErr.Error()
 	}
-	return runPreparedManagedSnapshot(ctx, rep, taskID, bin, configFile, env, sourcePath, result)
+	return runPreparedManagedSnapshot(ctx, rep, taskID, bin, configFile, env, sourcePath, result, frozenEmptyDirectory)
+}
+
+func isFrozenEmptyDirectory(p Payload) bool {
+	return strings.ToLower(strings.TrimSpace(payloadStringValue(p.Extra["scope_mode"]))) != "dynamic" &&
+		strings.ToLower(strings.TrimSpace(payloadStringValue(p.Extra["path_type"]))) == "directory"
 }
 
 func runPreparedManagedSnapshot(
@@ -1455,6 +1461,7 @@ func runPreparedManagedSnapshot(
 	env map[string]string,
 	sourcePath string,
 	result map[string]any,
+	frozenEmptyDirectory bool,
 ) (string, map[string]any, string) {
 	_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
 		"snapshot_start",
@@ -1499,7 +1506,33 @@ func runPreparedManagedSnapshot(
 		}
 	}
 
-	snapshotArgs := managedBackupSnapshotArgs(configFile, sourcePath, operationID)
+	snapshotSourcePath := sourcePath
+	overrideSourcePath := ""
+	if frozenEmptyDirectory {
+		info, statErr := os.Stat(sourcePath)
+		if statErr != nil {
+			return "failed", result, statErr.Error()
+		}
+		if !info.IsDir() {
+			return "failed", result, "captured empty-directory path is no longer a directory"
+		}
+		temporary, tempErr := os.MkdirTemp("", "hfl-frozen-empty-")
+		if tempErr != nil {
+			return "failed", result, tempErr.Error()
+		}
+		defer os.RemoveAll(temporary)
+		if chmodErr := os.Chmod(temporary, info.Mode().Perm()); chmodErr != nil {
+			return "failed", result, chmodErr.Error()
+		}
+		if chtimesErr := os.Chtimes(temporary, info.ModTime(), info.ModTime()); chtimesErr != nil {
+			return "failed", result, chtimesErr.Error()
+		}
+		snapshotSourcePath = temporary
+		overrideSourcePath = sourcePath
+		result["frozen_empty_directory"] = true
+	}
+
+	snapshotArgs := managedBackupSnapshotArgs(configFile, snapshotSourcePath, operationID, overrideSourcePath)
 	progressState := newKopiaProgressReporter()
 	runCtx, cancelRun := context.WithCancel(ctx)
 	stallSeconds := kopiaProgressStallSeconds()
@@ -1517,7 +1550,7 @@ func runPreparedManagedSnapshot(
 		res, runErr = runManagedSnapshotCommand(
 			runCtx,
 			bin,
-			managedBackupLegacySnapshotArgs(configFile, sourcePath),
+			managedBackupLegacySnapshotArgs(configFile, snapshotSourcePath, overrideSourcePath),
 			env,
 			"",
 			onProgressLine,
@@ -1625,7 +1658,7 @@ func managedSnapshotStructuredProgressUnsupported(res process.Result) bool {
 		(strings.Contains(output, "unknown flag") || strings.Contains(output, "unknown long flag"))
 }
 
-func managedBackupSnapshotArgs(configFile string, sourcePath string, operationID string) []string {
+func managedBackupSnapshotArgs(configFile string, sourcePath string, operationID string, overrideSourcePath string) []string {
 	args := []string{
 		"--config-file=" + configFile,
 		"--progress",
@@ -1638,11 +1671,14 @@ func managedBackupSnapshotArgs(configFile string, sourcePath string, operationID
 	if operationID != "" {
 		args = append(args, "--tags="+backupOperationTagKey+":"+operationID)
 	}
+	if overrideSourcePath != "" {
+		args = append(args, "--override-source="+overrideSourcePath)
+	}
 	return append(args, "--json")
 }
 
-func managedBackupLegacySnapshotArgs(configFile string, sourcePath string) []string {
-	args := managedBackupSnapshotArgs(configFile, sourcePath, "")
+func managedBackupLegacySnapshotArgs(configFile string, sourcePath string, overrideSourcePath string) []string {
+	args := managedBackupSnapshotArgs(configFile, sourcePath, "", overrideSourcePath)
 	legacy := make([]string, 0, len(args)-1)
 	for _, arg := range args {
 		if arg != "--progress-format=hfl-json" {

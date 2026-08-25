@@ -1536,6 +1536,79 @@ class SourceResourceApiTests(TestCase):
         )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_backup_selectable_captures_current_files_as_one_manifest(self, mock_run_task):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-capture",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["explorer_static_tree_capture_v2"]}},
+        )
+        mock_run_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=True,
+            task_id="task-capture",
+            result={
+                "captured_at": "2026-08-24T09:00:00Z",
+                "manifest_hash": "a" * 64,
+                "file_count": 2,
+                "entry_count": 3,
+                "directory_count": 1,
+                "entries": [
+                    {"name": "a.txt", "path": "/data/a.txt", "is_dir": False},
+                    {"name": "b.txt", "path": "/data/sub/b.txt", "is_dir": False},
+                    {"name": "empty", "path": "/data/empty", "is_dir": True},
+                ],
+            },
+            task=SimpleNamespace(last_error=""),
+        )
+
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/file-capture/",
+            {"source_id": f"agent:{agent.id}", "path": "/data", "mode": "recursive"},
+            format="json",
+            secure=True,
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.headers)
+        self.assertEqual(response.data["scope_mode"], "static_recursive_files")
+        self.assertEqual(response.data["file_count"], 2)
+        self.assertEqual(response.data["entry_count"], 3)
+        self.assertEqual(response.data["directory_count"], 1)
+        self.assertEqual(
+            {item["path"] for item in response.data["entries"]},
+            {"/data/a.txt", "/data/sub/b.txt", "/data/empty"},
+        )
+        uuid4_type = type(uuid4())
+        self.assertIsInstance(uuid4_type(response.data["capture_id"]), uuid4_type)
+        _, kwargs = mock_run_task.call_args
+        self.assertEqual(kwargs["kind"], "explorer.capture")
+        self.assertEqual(kwargs["payload"]["mode"], "recursive")
+
+    def test_backup_selectable_capture_requires_agent_capability(self):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-capture-old",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["explorer_static_capture_v1"]}},
+        )
+
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/file-capture/",
+            {"source_id": f"agent:{agent.id}", "path": "/data", "mode": "direct"},
+            format="json",
+            secure=True,
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT, response.headers)
+        self.assertEqual(response.data["data"]["code"], "AGENT.UPGRADE_REQUIRED")
+
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_directory_reports_agent_path_permission(
         self, mock_run_task
     ):

@@ -687,6 +687,8 @@ def _ensure_directory_policy_prepared(
     backup_policy_payload: dict[str, Any] | None,
     compression_payload: dict[str, Any],
     agent_source_path: str,
+    scope_mode: str,
+    path_type: str,
 ) -> str:
     attempts = _policy_prepare_attempts(
         task=task,
@@ -748,6 +750,8 @@ def _ensure_directory_policy_prepared(
         file_filter_payload=file_filter_payload,
         backup_policy_payload=backup_policy_payload,
         compression_payload=compression_payload,
+        scope_mode=scope_mode,
+        path_type=path_type,
     )
     payload["policy_attempt"] = len(attempts) + 1
     handle = run_agent_task_async(
@@ -843,6 +847,8 @@ def _prepare_directory_policies(
             backup_policy_payload=backup_policy_payload,
             compression_payload=compression_payload,
             agent_source_path=agent_source_path,
+            scope_mode=str(getattr(directory, "scope_mode", "dynamic") or "dynamic"),
+            path_type=path_type,
         )
         if state == "waiting":
             return False
@@ -958,6 +964,8 @@ def _dispatch_directory_backup(
             compression_payload=compression_payload if task_kind == "backup.run" else None,
             operation_id=operation_id,
             operation_attempt=operation_attempt,
+            scope_mode=str(getattr(config_directory, "scope_mode", "dynamic") or "dynamic"),
+            path_type=str(getattr(config_directory, "path_type", "unknown") or "unknown"),
         ),
         correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
         correlation_id=str(task.task_uuid),

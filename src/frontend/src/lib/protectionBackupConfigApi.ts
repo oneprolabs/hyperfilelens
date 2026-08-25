@@ -28,6 +28,14 @@ export type BackupConfigDirectoryPayload = {
   path: string
   path_type?: 'directory' | 'file' | 'unknown'
   estimated_size_bytes?: number
+  scope_mode?: 'dynamic' | 'static_direct_files' | 'static_recursive_files'
+  capture_group_id?: string | null
+  capture_root?: string
+  captured_at?: string | null
+  capture_entry_count?: number
+  capture_file_count?: number
+  capture_directory_count?: number
+  capture_manifest_hash?: string
 }
 
 export type BackupConfigRecoveryPlanPayload = {
@@ -65,6 +73,14 @@ export type BackupConfigDirectory = {
   display_name: string
   estimated_size_bytes: number
   sort_order: number
+  scope_mode?: 'dynamic' | 'static_direct_files' | 'static_recursive_files'
+  capture_group_id?: string | null
+  capture_root?: string
+  captured_at?: string | null
+  capture_entry_count?: number
+  capture_file_count?: number
+  capture_directory_count?: number
+  capture_manifest_hash?: string
 }
 
 export type BackupConfigRecoveryPlan = {

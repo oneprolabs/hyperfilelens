@@ -90,6 +90,11 @@ class BackupConfigDirectory(models.Model):
         FILE = "file", "File"
         UNKNOWN = "unknown", "Unknown"
 
+    class ScopeMode(models.TextChoices):
+        DYNAMIC = "dynamic", "Continuous path"
+        STATIC_DIRECT_FILES = "static_direct_files", "Captured direct entries"
+        STATIC_RECURSIVE_FILES = "static_recursive_files", "Captured recursive tree"
+
     organization_id = models.BigIntegerField(db_index=True)
     backup_config = models.ForeignKey(
         BackupConfig,
@@ -102,6 +107,18 @@ class BackupConfigDirectory(models.Model):
         choices=PathType.choices,
         default=PathType.UNKNOWN,
     )
+    scope_mode = models.CharField(
+        max_length=32,
+        choices=ScopeMode.choices,
+        default=ScopeMode.DYNAMIC,
+    )
+    capture_group_id = models.UUIDField(blank=True, null=True, db_index=True)
+    capture_root = models.CharField(max_length=1000, blank=True, default="")
+    captured_at = models.DateTimeField(blank=True, null=True)
+    capture_entry_count = models.PositiveIntegerField(default=0)
+    capture_file_count = models.PositiveIntegerField(default=0)
+    capture_directory_count = models.PositiveIntegerField(default=0)
+    capture_manifest_hash = models.CharField(max_length=64, blank=True, default="")
     display_name = models.CharField(max_length=300, blank=True, default="")
     estimated_size_bytes = models.BigIntegerField(default=0)
     size_estimated_at = models.DateTimeField(blank=True, null=True)

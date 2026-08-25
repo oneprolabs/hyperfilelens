@@ -2,14 +2,20 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/model"
@@ -100,6 +106,8 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 	switch kind {
 	case "browse":
 		status, result, errMsg = e.runBrowse(ctx, rep, cmd.ID, p)
+	case "capture":
+		status, result, errMsg = e.runCapture(ctx, p)
 	case "lens.gateway.browse":
 		status, result, errMsg = e.runLensGatewayBrowse(ctx, p)
 	case "lens.workspace.validate-local":
@@ -307,7 +315,7 @@ func (e *Engine) applyUserInstallationScope(kind string, payload Payload) (Paylo
 	allowMissing := false
 	path := payload.Path
 	switch kind {
-	case "browse":
+	case "browse", "capture":
 		// Windows user mode exposes only fixed drives readable by the Agent
 		// identity. Unix user mode intentionally remains rooted at Home.
 		if runtime.GOOS == "windows" {
@@ -373,6 +381,129 @@ func (e *Engine) applyUserInstallationScope(kind string, payload Payload) (Paylo
 		payload.Extra = extra
 	}
 	return payload, nil
+}
+
+const staticCaptureMaxFiles = 10000
+
+func (e *Engine) runCapture(ctx context.Context, p Payload) (string, map[string]any, string) {
+	if strings.TrimSpace(p.Path) == "" {
+		return "failed", nil, "path is required"
+	}
+	if err := e.ensureNASMounted(ctx, p); err != nil {
+		return "failed", nil, err.Error()
+	}
+	mode := strings.ToLower(payloadStringValue(p.Extra["mode"]))
+	if mode != "direct" && mode != "recursive" {
+		return "failed", nil, "mode must be direct or recursive"
+	}
+	limit := staticCaptureMaxFiles
+	if requested, ok := payloadIntValue(p.Extra["max_files"]); ok && requested > 0 && requested < limit {
+		limit = requested
+	}
+	items, directoryCount, err := captureFilesystemEntries(ctx, p.Path, mode == "recursive", limit)
+	if err != nil {
+		return "failed", nil, err.Error()
+	}
+	hash := sha256.New()
+	entries := make([]map[string]any, 0, len(items))
+	fileCount := 0
+	for _, item := range items {
+		pathType := "file"
+		if item.isDir {
+			pathType = "directory"
+		} else {
+			fileCount++
+		}
+		_, _ = io.WriteString(hash, pathType+"\x00"+item.path+"\n")
+		entries = append(entries, map[string]any{
+			"name": filepath.Base(item.path), "path": item.path,
+			"is_dir": item.isDir, "path_type": pathType,
+		})
+	}
+	return "success", map[string]any{
+		"path": p.Path, "mode": mode, "entries": entries,
+		"entry_count": len(entries), "file_count": fileCount,
+		"directory_count": directoryCount,
+		"manifest_hash":   hex.EncodeToString(hash.Sum(nil)),
+		"captured_at":     time.Now().UTC().Format(time.RFC3339Nano),
+	}, ""
+}
+
+type capturedFilesystemEntry struct {
+	path  string
+	isDir bool
+}
+
+func captureFilesystemEntries(ctx context.Context, root string, recursive bool, limit int) ([]capturedFilesystemEntry, int, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !info.IsDir() {
+		return nil, 0, fmt.Errorf("path is not a directory")
+	}
+	items := make([]capturedFilesystemEntry, 0)
+	directoryCount := 0
+	seenCount := 0
+	add := func(path string, entry fs.DirEntry, includeDirectory bool) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() || entry.Type().IsRegular() {
+			if seenCount >= limit {
+				return fmt.Errorf("static capture exceeds the %d entry limit", limit)
+			}
+			seenCount++
+		}
+		if entry.IsDir() {
+			directoryCount++
+			if includeDirectory {
+				items = append(items, capturedFilesystemEntry{path: filepath.Clean(path), isDir: true})
+			}
+		} else if entry.Type().IsRegular() {
+			items = append(items, capturedFilesystemEntry{path: filepath.Clean(path)})
+		}
+		return nil
+	}
+	if recursive {
+		err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if path == root {
+				return nil
+			}
+			includeDirectory := false
+			if entry.IsDir() {
+				children, readErr := os.ReadDir(path)
+				if readErr != nil {
+					return readErr
+				}
+				includeDirectory = len(children) == 0
+			}
+			return add(path, entry, includeDirectory)
+		})
+	} else {
+		var entries []os.DirEntry
+		entries, err = os.ReadDir(root)
+		if err == nil {
+			for _, entry := range entries {
+				if err = add(filepath.Join(root, entry.Name()), entry, entry.IsDir()); err != nil {
+					break
+				}
+			}
+		}
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].path == items[j].path {
+			return !items[i].isDir && items[j].isDir
+		}
+		return items[i].path < items[j].path
+	})
+	return items, directoryCount, nil
 }
 
 func (e *Engine) nasLeases() *nasLeaseRegistry {

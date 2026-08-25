@@ -137,6 +137,8 @@ describe('object storage validation errors', () => {
     ['STORAGE.S3_TIMEOUT', 'errors.codes.storageS3Timeout'],
     ['STORAGE.S3_TLS_FAILED', 'errors.codes.storageS3TlsFailed'],
     ['STORAGE.S3_VALIDATION_FAILED', 'errors.codes.storageS3ValidationFailed'],
+    ['AGENT.UPGRADE_REQUIRED', 'errors.codes.agentUpgradeRequired'],
+    ['AGENT.EXPLORER_CAPTURE_FAILED', 'errors.codes.agentExplorerCaptureFailed'],
     ['AGENT.PATH_PERMISSION_DENIED', 'errors.codes.agentPathPermissionDenied'],
   ])('maps %s without exposing the backend diagnostic', (errorCode, expectedKey) => {
     const message = apiErrorMessageI18n(

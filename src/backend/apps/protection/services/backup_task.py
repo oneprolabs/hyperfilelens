@@ -1161,12 +1161,17 @@ def _agent_backup_payload(
     compression_payload: dict[str, Any] | None = None,
     operation_id: str = "",
     operation_attempt: int = 0,
+    scope_mode: str = "dynamic",
+    path_type: str = "unknown",
 ) -> dict[str, Any]:
     payload = {
         "source_path": source_path,
         "backup_config_dir_id": backup_config_dir_id,
         "repository": repository_payload,
     }
+    if scope_mode != "dynamic":
+        payload["scope_mode"] = scope_mode
+        payload["path_type"] = path_type
     if nas_payload:
         payload["nas"] = nas_payload
     if file_filter_payload:

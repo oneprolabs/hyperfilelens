@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import ntpath
 import posixpath
+import uuid
 from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
@@ -126,6 +129,16 @@ def _persist_backup_config_rows(
             path_type=directory.get(
                 "path_type", BackupConfigDirectory.PathType.UNKNOWN
             ),
+            scope_mode=directory.get(
+                "scope_mode", BackupConfigDirectory.ScopeMode.DYNAMIC
+            ),
+            capture_group_id=directory.get("capture_group_id"),
+            capture_root=directory.get("capture_root", ""),
+            captured_at=directory.get("captured_at"),
+            capture_entry_count=max(0, int(directory.get("capture_entry_count", 0) or 0)),
+            capture_file_count=max(0, int(directory.get("capture_file_count", 0) or 0)),
+            capture_directory_count=max(0, int(directory.get("capture_directory_count", 0) or 0)),
+            capture_manifest_hash=directory.get("capture_manifest_hash", ""),
             display_name=directory.get("display_name", ""),
             estimated_size_bytes=max(
                 0, int(directory.get("estimated_size_bytes", 0) or 0)
@@ -448,6 +461,11 @@ def _config_payload(
                 source_ref_id=source_ref_id,
                 directories=directories,
             )
+            # Share-relative, export-prefixed, and legacy mount paths may
+            # normalize to the same path (or to overlapping parent/child
+            # paths). Re-run the authoritative validation after conversion so
+            # the database never receives an ambiguous backup scope.
+            directories = _validate_directories(directories)
         result["directories"] = directories
     if "recovery_plans" in data:
         result["recovery_plans"] = _validate_recovery_plans(
@@ -1289,6 +1307,12 @@ def _normalize_nas_directory_paths(
             export_path=export_path,
             user_path=str(row.get("path") or ""),
         )
+        if row.get("capture_root"):
+            row["capture_root"] = normalize_user_share_path(
+                mount_root=mount_root,
+                export_path=export_path,
+                user_path=str(row.get("capture_root") or ""),
+            )
         normalized.append(row)
     return normalized
 
@@ -1298,6 +1322,7 @@ def _validate_directories(directories: Any) -> list[dict[str, Any]]:
         raise ValidationError({"directories": "At least one source path is required."})
     seen_paths: set[str] = set()
     result: list[dict[str, Any]] = []
+    capture_groups: dict[str, list[dict[str, Any]]] = {}
     for item in directories:
         if not isinstance(item, dict):
             raise ValidationError(
@@ -1321,17 +1346,140 @@ def _validate_directories(directories: Any) -> list[dict[str, Any]]:
                 path, existing
             ):
                 raise ValidationError(
-                    {"directories": f"Parent/child source path conflict: {path}."}
+                    {
+                        "directories": (
+                            "Parent/child source path conflict: "
+                            f"{existing} and {path}."
+                        )
+                    }
                 )
         seen_paths.add(path)
-        result.append(
-            {
-                "path": path,
-                "path_type": path_type,
-                "display_name": str(item.get("display_name") or "").strip(),
-                "estimated_size_bytes": _int(item, "estimated_size_bytes"),
-            }
+        scope_mode = str(item.get("scope_mode") or "dynamic").strip().lower()
+        if scope_mode not in {
+            choice for choice, _ in BackupConfigDirectory.ScopeMode.choices
+        }:
+            raise ValidationError(
+                {"directories": f"Unsupported scope mode: {scope_mode}."}
+            )
+        row = {
+            "path": path,
+            "path_type": path_type,
+            "display_name": str(item.get("display_name") or "").strip(),
+            "estimated_size_bytes": _int(item, "estimated_size_bytes"),
+            "scope_mode": scope_mode,
+        }
+        if scope_mode != BackupConfigDirectory.ScopeMode.DYNAMIC:
+            if path_type not in {
+                BackupConfigDirectory.PathType.FILE,
+                BackupConfigDirectory.PathType.DIRECTORY,
+            }:
+                raise ValidationError(
+                    {"directories": "Captured scopes may contain files or empty directory entries only."}
+                )
+            try:
+                group_id = str(uuid.UUID(str(item.get("capture_group_id") or "")))
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise ValidationError(
+                    {
+                        "directories": (
+                            "Captured entries require a valid capture_group_id."
+                        )
+                    }
+                ) from exc
+            capture_root = _clean_dir_path(str(item.get("capture_root") or ""))
+            if not capture_root or not _is_absolute_source_path(capture_root):
+                raise ValidationError(
+                    {"directories": "Captured entries require an absolute capture_root."}
+                )
+            if not _same_or_ancestor_path(capture_root, path):
+                raise ValidationError(
+                    {
+                        "directories": (
+                            f"Captured entry is outside capture root: {path}."
+                        )
+                    }
+                )
+            captured_at = parse_datetime(str(item.get("captured_at") or ""))
+            if captured_at is None:
+                raise ValidationError(
+                    {"directories": "Captured entries require captured_at."}
+                )
+            row.update(
+                {
+                    "capture_group_id": group_id,
+                    "capture_root": capture_root,
+                    "captured_at": captured_at,
+                    "capture_entry_count": (
+                        _int(item, "capture_entry_count")
+                        or _int(item, "capture_file_count")
+                    ),
+                    "capture_file_count": _int(item, "capture_file_count"),
+                    "capture_directory_count": _int(item, "capture_directory_count"),
+                    "capture_manifest_hash": str(
+                        item.get("capture_manifest_hash") or ""
+                    )
+                    .strip()
+                    .lower(),
+                }
+            )
+            capture_groups.setdefault(group_id, []).append(row)
+        result.append(row)
+    for group_id, rows in capture_groups.items():
+        expected = len(rows)
+        modes = {row["scope_mode"] for row in rows}
+        roots = {row["capture_root"] for row in rows}
+        timestamps = {row["captured_at"] for row in rows}
+        declared_entry_counts = {row["capture_entry_count"] for row in rows}
+        declared_file_counts = {row["capture_file_count"] for row in rows}
+        declared_directory_counts = {row["capture_directory_count"] for row in rows}
+        actual_file_count = sum(
+            row["path_type"] == BackupConfigDirectory.PathType.FILE for row in rows
         )
+        explicit_directory_count = expected - actual_file_count
+        if (
+            len(modes) != 1
+            or len(roots) != 1
+            or len(timestamps) != 1
+            or declared_entry_counts != {expected}
+            or declared_file_counts != {actual_file_count}
+            or len(declared_directory_counts) != 1
+            or next(iter(declared_directory_counts), 0) < explicit_directory_count
+        ):
+            raise ValidationError(
+                {
+                    "directories": (
+                        f"Captured tree group is inconsistent: {group_id}."
+                    )
+                }
+            )
+        manifest_hash = hashlib.sha256(
+            "".join(
+                f"{row['path_type']}\0{row['path']}\n"
+                for row in sorted(
+                    rows, key=lambda value: (value["path"], value["path_type"])
+                )
+            ).encode()
+        ).hexdigest()
+        supplied_hashes = {
+            row["capture_manifest_hash"]
+            for row in rows
+            if row["capture_manifest_hash"]
+        }
+        legacy_file_hash = ""
+        if actual_file_count == expected:
+            legacy_file_hash = hashlib.sha256(
+                "".join(
+                    f"{row['path']}\n"
+                    for row in sorted(rows, key=lambda value: value["path"])
+                ).encode()
+            ).hexdigest()
+        if supplied_hashes and supplied_hashes not in (
+            {manifest_hash},
+            {legacy_file_hash} if legacy_file_hash else set(),
+        ):
+            raise ValidationError({"directories": f"Captured tree manifest changed: {group_id}."})
+        for row in rows:
+            row["capture_manifest_hash"] = manifest_hash
     return result
 
 
@@ -1626,6 +1774,24 @@ def _sync_backup_config_directories(
                 incoming_path_type or BackupConfigDirectory.PathType.UNKNOWN
             )
         directory.display_name = directory_data.get("display_name", "")
+        directory.scope_mode = directory_data.get(
+            "scope_mode", BackupConfigDirectory.ScopeMode.DYNAMIC
+        )
+        directory.capture_group_id = directory_data.get("capture_group_id")
+        directory.capture_root = directory_data.get("capture_root", "")
+        directory.captured_at = directory_data.get("captured_at")
+        directory.capture_entry_count = max(
+            0, int(directory_data.get("capture_entry_count", 0) or 0)
+        )
+        directory.capture_file_count = max(
+            0, int(directory_data.get("capture_file_count", 0) or 0)
+        )
+        directory.capture_directory_count = max(
+            0, int(directory_data.get("capture_directory_count", 0) or 0)
+        )
+        directory.capture_manifest_hash = directory_data.get(
+            "capture_manifest_hash", ""
+        )
         # Preserve cached du estimates when the client omits/zeros the field on
         # unchanged paths. New paths, explicit directory<->file changes, and
         # verified positive->zero changes invalidate the cache so async
@@ -1792,7 +1958,16 @@ def update_backup_config(
         if effective_directories is None:
             effective_directories = list(
                 config.directories.order_by("sort_order", "id").values(
-                    "path", "path_type"
+                    "path",
+                    "path_type",
+                    "scope_mode",
+                    "capture_group_id",
+                    "capture_root",
+                    "captured_at",
+                    "capture_entry_count",
+                    "capture_file_count",
+                    "capture_directory_count",
+                    "capture_manifest_hash",
                 )
             )
         _validate_no_repository_self_backup(

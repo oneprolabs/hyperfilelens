@@ -9,12 +9,15 @@ from apps.iam.permissions_org import IsOrgOperator, IsOrgStaffReader
 from apps.source.constants import PipelineStep
 from common.errors import AppError
 from apps.source.services.internal.backup_source_directory import (
+    BackupSourceAgentUpgradeRequired,
     BackupSourceDirectoryError,
     BackupSourceDirectoryForbidden,
     BackupSourceDirectoryInvalid,
     BackupSourceDirectoryNotFound,
     BackupSourceDirectoryTimeout,
     DEFAULT_DIRECTORY_LIMIT,
+    STATIC_CAPTURE_MAX_FILES,
+    capture_backup_source_files,
     get_backup_source_path_info,
     list_backup_source_directories,
 )
@@ -506,6 +509,83 @@ class BackupSelectableDirectoryView(APIView):
                 meta={"source_id": source_id},
             ) from exc
 
+        return Response(result)
+
+
+class BackupSelectableFileCaptureView(APIView):
+    """Capture the files that exist under one directory at this moment."""
+
+    permission_classes = [IsAuthenticated, IsOrgOperator]
+
+    def post(self, request):
+        org = require_org(request)
+        data = request.data if isinstance(request.data, dict) else {}
+        source_id = str(data.get("source_id") or "").strip()
+        path = str(data.get("path") or "").strip()
+        mode = str(data.get("mode") or "direct").strip().lower()
+        if not source_id:
+            raise ValidationError({"source_id": "This field is required."})
+        if not path:
+            raise ValidationError({"path": "This field is required."})
+        if mode not in {"direct", "recursive"}:
+            raise ValidationError({"mode": "Must be direct or recursive."})
+        try:
+            timeout = max(3, min(int(data.get("timeout") or 60), 120))
+            max_files = max(
+                1,
+                min(
+                    int(data.get("max_files") or STATIC_CAPTURE_MAX_FILES),
+                    STATIC_CAPTURE_MAX_FILES,
+                ),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"detail": "timeout and max_files must be integers."}) from exc
+        try:
+            result = capture_backup_source_files(
+                organization_id=org.id,
+                source_id=source_id,
+                path=path,
+                recursive=mode == "recursive",
+                wait_timeout_seconds=timeout,
+                max_files=max_files,
+            )
+        except BackupSourceDirectoryNotFound as exc:
+            raise AppError(
+                code="RESOURCE.NOT_FOUND",
+                status=status.HTTP_404_NOT_FOUND,
+                diagnostic=str(exc),
+            ) from exc
+        except BackupSourceDirectoryForbidden as exc:
+            raise AppError(
+                code="AUTH.FORBIDDEN",
+                status=status.HTTP_403_FORBIDDEN,
+                diagnostic=str(exc),
+            ) from exc
+        except BackupSourceAgentUpgradeRequired as exc:
+            raise AppError(
+                code="AGENT.UPGRADE_REQUIRED",
+                status=status.HTTP_409_CONFLICT,
+                diagnostic=str(exc),
+                meta={"source_id": source_id},
+            ) from exc
+        except BackupSourceDirectoryInvalid as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        except BackupSourceDirectoryTimeout as exc:
+            raise AppError(
+                code="AGENT.TIMEOUT",
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+                retryable=True,
+                diagnostic=str(exc),
+                meta={"source_id": source_id, "path": path},
+            ) from exc
+        except BackupSourceDirectoryError as exc:
+            raise AppError(
+                code="AGENT.EXPLORER_CAPTURE_FAILED",
+                status=status.HTTP_502_BAD_GATEWAY,
+                retryable=True,
+                diagnostic=str(exc),
+                meta={"source_id": source_id, "path": path},
+            ) from exc
         return Response(result)
 
 

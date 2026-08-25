@@ -10,6 +10,7 @@ import {
   X,
   Database,
   RefreshCw,
+  LoaderCircle,
   ChevronDown,
   CloudUpload,
   Trash2,
@@ -20,6 +21,7 @@ import {
   ClipboardCheck,
   Archive,
   Camera,
+  ListTree,
   Cloud,
   Folder,
   File as FileIcon,
@@ -84,6 +86,7 @@ import {
   backupTargetValidationFailureSummary,
 } from '../../lib/protectionBackupTargetValidationDetails'
 import {
+  captureBackupSourceFiles,
   createSourceResource,
   listBackupSourceDirectories,
   getBackupSourcePathInfo,
@@ -580,6 +583,7 @@ function finishCreateAndGoToStep3(items: Array<{ sourceId: string; config: Backu
     step1Selection.value = step1Selection.value.filter((id) => !idSet.has(id))
     step2Sources.value = step2Sources.value.filter((id) => !idSet.has(id))
   }
+  allowCreateLeave.value = true
   createOpen.value = false
   if (props.embedded) {
     emit('createCompleted', { items })
@@ -599,6 +603,7 @@ function goToStartBackupFromCreate() {
 }
 
 type BackupPathType = 'directory' | 'file' | 'unknown'
+type BackupScopeMode = 'dynamic' | 'static_direct_files' | 'static_recursive_files'
 
 type BackupDirEntry = {
   key: string
@@ -609,6 +614,14 @@ type BackupDirEntry = {
   platform?: EnrollmentOs
   path: string
   pathType: BackupPathType
+  scopeMode?: BackupScopeMode
+  captureGroupId?: string
+  captureRoot?: string
+  capturedAt?: string
+  captureEntryCount?: number
+  captureFileCount?: number
+  captureDirectoryCount?: number
+  captureManifestHash?: string
 }
 
 type SourceTreeItem = DemoDirTreeItem & {
@@ -1099,6 +1112,8 @@ const createSourcePathTypeBySource = reactive<Record<string, Record<string, Back
 const manualSourcePathBySource = reactive<Record<string, string>>({})
 const manualSourcePathValidatingBySource = reactive<Record<string, boolean>>({})
 const manualSourcePathErrorBySource = reactive<Record<string, string>>({})
+const backupScopeBaseline = ref('')
+const allowCreateLeave = ref(false)
 const createExpandedSourceIds = ref<string[]>([])
 const createSourceValidationAttempted = ref(false)
 const highlightedCreateSourceId = ref('')
@@ -1114,6 +1129,13 @@ const noSourceTreeRootsBySource = reactive<Record<string, boolean>>({})
 const createSourceTreeErrorBySource = reactive<Record<string, string>>({})
 const createSourceTreeRemountKeyBySource = reactive<Record<string, number>>({})
 const refreshingSourceDirectoryByKey = reactive<Record<string, boolean>>({})
+type SourceScopeOperation = {
+  sourceId: string
+  path: string
+  token: string
+}
+
+const capturingSourceFilesByKey = reactive<Record<string, SourceScopeOperation>>({})
 const sourceDirectoryExpansionRevisionByKey = new Map<string, number>()
 const directoryLoadingByKey = reactive<Record<string, number>>({})
 const sourceTreeConflictWarnedAt = reactive<Record<string, number>>({})
@@ -3102,6 +3124,12 @@ function resetCreateStateForSources(sourceIds: string[], initialStep = 0) {
   createSourceDirKeys.value = []
   createSourceTreeRefs.clear()
   Object.keys(createSourceDirKeysBySource).forEach((key) => delete createSourceDirKeysBySource[key])
+  Object.keys(manualSourcePathBySource).forEach((key) => delete manualSourcePathBySource[key])
+  Object.keys(manualSourcePathValidatingBySource).forEach((key) => delete manualSourcePathValidatingBySource[key])
+  Object.keys(manualSourcePathErrorBySource).forEach((key) => delete manualSourcePathErrorBySource[key])
+  Object.keys(capturingSourceFilesByKey).forEach((key) => delete capturingSourceFilesByKey[key])
+  backupScopeBaseline.value = ''
+  allowCreateLeave.value = false
   Object.keys(directoryLoadingByKey).forEach((key) => delete directoryLoadingByKey[key])
   Object.keys(sourceTreeConflictWarnedAt).forEach((key) => delete sourceTreeConflictWarnedAt[key])
   noSourceTreeRoots.value = false
@@ -3156,6 +3184,14 @@ function applyEditConfigToWizard(config: BackupConfigDetail, section: BackupConf
     platform: source?.platform,
     path: directory.path,
     pathType: normalizeBackupPathType(directory.path_type),
+    scopeMode: directory.scope_mode || 'dynamic',
+    captureGroupId: directory.capture_group_id || undefined,
+    captureRoot: directory.capture_root || undefined,
+    capturedAt: directory.captured_at || undefined,
+    captureEntryCount: directory.capture_entry_count || undefined,
+    captureFileCount: directory.capture_file_count || undefined,
+    captureDirectoryCount: directory.capture_directory_count || undefined,
+    captureManifestHash: directory.capture_manifest_hash || undefined,
   }))
   wizardDirEntries.value = [...wizardDirEntries.value, ...entries]
   sourceTargetMap.value = { ...sourceTargetMap.value, [groupKey]: String(config.repository_id) }
@@ -3208,7 +3244,6 @@ function applyEditConfigToWizard(config: BackupConfigDetail, section: BackupConf
   recoveryPlanCheckedGroupKeys.value = [...new Set([...recoveryPlanCheckedGroupKeys.value, groupKey])]
   filterPolicyAssignmentCheckedGroupKeys.value = [...new Set([...filterPolicyAssignmentCheckedGroupKeys.value, groupKey])]
   targetAssignmentCheckedGroupKeys.value = [...new Set([...targetAssignmentCheckedGroupKeys.value, groupKey])]
-  createSourceDirKeysBySource[sourceId] = config.directories.map((directory) => directory.path)
   createStep.value = editStepForSection(section)
 }
 
@@ -3230,15 +3265,41 @@ async function openEditConfigs(configIds: number[], section: BackupConfigEditSec
   for (const config of configs) {
     applyEditConfigToWizard(config, section)
   }
+  backupScopeBaseline.value = backupScopeSignature()
 }
 
 function preventUnloadDuringCreate(event: BeforeUnloadEvent) {
-  if (!createSubmissionActive.value) return
+  if (allowCreateLeave.value) return
+  if (!createSubmissionActive.value && !hasBackupScopeDraft()) return
   event.preventDefault()
   event.returnValue = ''
 }
 
-onBeforeRouteLeave(() => !createSubmissionActive.value)
+async function confirmDiscardBackupScopeDraft() {
+  if (!hasBackupScopeDraft()) return true
+  try {
+    await ElMessageBox.confirm(
+      t('protection.backupsPage.discardPendingMessage'),
+      t('protection.backupsPage.discardPendingTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('protection.backupsPage.discardPendingConfirm'),
+        cancelButtonText: t('common.cancel'),
+      },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+onBeforeRouteLeave(async () => {
+  if (allowCreateLeave.value) return true
+  if (createSubmissionActive.value) return false
+  const confirmed = await confirmDiscardBackupScopeDraft()
+  if (confirmed) allowCreateLeave.value = true
+  return confirmed
+})
 
 onMounted(async () => {
   if (typeof window !== 'undefined') window.addEventListener('beforeunload', preventUnloadDuringCreate)
@@ -3356,6 +3417,12 @@ function openCreate() {
   createSourceDirKeys.value = []
   createSourceTreeRefs.clear()
   Object.keys(createSourceDirKeysBySource).forEach((key) => delete createSourceDirKeysBySource[key])
+  Object.keys(manualSourcePathBySource).forEach((key) => delete manualSourcePathBySource[key])
+  Object.keys(manualSourcePathValidatingBySource).forEach((key) => delete manualSourcePathValidatingBySource[key])
+  Object.keys(manualSourcePathErrorBySource).forEach((key) => delete manualSourcePathErrorBySource[key])
+  Object.keys(capturingSourceFilesByKey).forEach((key) => delete capturingSourceFilesByKey[key])
+  backupScopeBaseline.value = ''
+  allowCreateLeave.value = false
   Object.keys(directoryLoadingByKey).forEach((key) => delete directoryLoadingByKey[key])
   Object.keys(sourceTreeConflictWarnedAt).forEach((key) => delete sourceTreeConflictWarnedAt[key])
   noSourceTreeRoots.value = false
@@ -3425,7 +3492,27 @@ function createSourceCheckedKeys(sourceId: string) {
 }
 
 function createSourceAddableCheckedKeys(sourceId: string) {
-  return preserveShallowestPathOrder(createSourceCheckedKeys(sourceId).filter((path) => !isPathBlockedByAddedDir(sourceId, path)))
+  return createSourceCheckedKeys(sourceId)
+    .filter((path) => !isPathBlockedByAddedDir(sourceId, path))
+    .map(normalizeComparableSourcePath)
+}
+
+function createSourcePendingConflict(sourceId: string) {
+  const paths = createSourceAddableCheckedKeys(sourceId)
+  for (let leftIndex = 0; leftIndex < paths.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < paths.length; rightIndex += 1) {
+      const left = paths[leftIndex]
+      const right = paths[rightIndex]
+      if (isSameOrAncestorPath(left, right) || isSameOrAncestorPath(right, left)) {
+        return { left, right }
+      }
+    }
+  }
+  return null
+}
+
+function createSourcePendingCount(sourceId: string) {
+  return createSourceAddableCheckedKeys(sourceId).length
 }
 
 function hasCreateSourceAddableSelection(sourceId: string) {
@@ -3434,6 +3521,88 @@ function hasCreateSourceAddableSelection(sourceId: string) {
 
 function sourceSelectedEntries(sourceId: string) {
   return wizardDirEntries.value.filter((entry) => entry.sourceId === sourceId)
+}
+
+type BackupScopeDisplayEntry = BackupDirEntry & { captureSummary?: boolean }
+
+function sourceSelectedScopeEntries(sourceId: string): BackupScopeDisplayEntry[] {
+  const rows: BackupScopeDisplayEntry[] = []
+  const seenCaptureGroups = new Set<string>()
+  for (const entry of sourceSelectedEntries(sourceId)) {
+    if (!entry.captureGroupId) {
+      rows.push(entry)
+      continue
+    }
+    if (seenCaptureGroups.has(entry.captureGroupId)) continue
+    seenCaptureGroups.add(entry.captureGroupId)
+    rows.push({
+      ...entry,
+      key: `capture:${entry.captureGroupId}`,
+      path: entry.captureRoot || entry.path,
+      pathType: 'directory',
+      captureSummary: true,
+    })
+  }
+  return rows
+}
+
+function captureTimeLabel(value?: string) {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return new Intl.DateTimeFormat(locale.value === 'en' ? 'en-US' : locale.value, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(parsed)
+}
+
+function backupScopeEntrySummary(entry: BackupScopeDisplayEntry) {
+  if (entry.captureSummary) {
+    return t(entry.scopeMode === 'static_recursive_files'
+      ? 'protection.backupsPage.captureRecursiveSummary'
+      : 'protection.backupsPage.captureDirectSummary', {
+      files: entry.captureFileCount || 0,
+      directories: entry.captureDirectoryCount || 0,
+      time: captureTimeLabel(entry.capturedAt),
+    })
+  }
+  if (entry.pathType === 'directory') return t('protection.backupsPage.pathDynamicSummary')
+  if (entry.pathType === 'file') return t('protection.backupsPage.pathSingleFile')
+  return t('protection.backupsPage.pathUnknownType')
+}
+
+function backupScopeEntryTooltip(entry: BackupScopeDisplayEntry) {
+  return `${entry.path}\n${backupScopeEntrySummary(entry)}`
+}
+
+function backupScopeSignature() {
+  return wizardDirEntries.value
+    .map((entry) => `${entry.backupConfigId ?? ''}|${entry.sourceId}|${normalizeComparableSourcePath(entry.path)}|${entry.pathType}|${entry.scopeMode || 'dynamic'}|${entry.captureGroupId || ''}`)
+    .sort()
+    .join('\n')
+}
+
+function hasPendingSourcePaths() {
+  return Object.values(createSourceDirKeysBySource).some((paths) => paths.length > 0)
+}
+
+function hasInFlightSourceScopeOperations() {
+  return Object.keys(capturingSourceFilesByKey).length > 0
+}
+
+function isSourceScopeOperationRunningForSource(sourceId: string) {
+  return Object.values(capturingSourceFilesByKey).some((operation) => operation.sourceId === sourceId)
+}
+
+function hasUncommittedManualPath() {
+  return Object.values(manualSourcePathBySource).some((path) => String(path || '').trim().length > 0)
+}
+
+function hasBackupScopeDraft() {
+  return hasPendingSourcePaths()
+    || hasInFlightSourceScopeOperations()
+    || hasUncommittedManualPath()
+    || backupScopeSignature() !== backupScopeBaseline.value
 }
 
 function clearManualSourcePathError(sourceId: string) {
@@ -3534,12 +3703,30 @@ function addedDirBlockReason(sourceId: string, path: string) {
 }
 
 function addedDirTreeDisableReason(sourceId: string, path: string) {
-  return addedDirBlockReason(sourceId, path)
+  const addedReason = addedDirBlockReason(sourceId, path)
+  if (addedReason) return addedReason
+  const pending = createSourceCheckedKeys(sourceId).find((item) =>
+    item !== path && (isSameOrAncestorPath(item, path) || isSameOrAncestorPath(path, item)),
+  )
+  if (!pending) return ''
+  if (isSameOrAncestorPath(pending, path)) {
+    return t('protection.backupsPage.dirDisabledChildOfPending')
+  }
+  return t('protection.backupsPage.dirDisabledParentOfPending')
+}
+
+function sourceTreeNodeDisableReason(sourceId: string, path: string) {
+  const selectionReason = addedDirTreeDisableReason(sourceId, path)
+  if (selectionReason) return selectionReason
+  const operation = sourceScopeOperationForPath(sourceId, path)
+  return operation
+    ? t('protection.backupsPage.addModeOperationRunning', { path: operation.path })
+    : ''
 }
 
 function warnSourceTreeConflict(sourceId: string, data: SourceTreeItem) {
   if (data.nodeKind === 'loadMore') return false
-  const reason = data.disabledReason || addedDirTreeDisableReason(sourceId, data.path)
+  const reason = data.disabledReason || sourceTreeNodeDisableReason(sourceId, data.path)
   if (!reason) return false
   const key = `${sourceId}:${data.path}:${reason}`
   const now = Date.now()
@@ -3555,8 +3742,7 @@ function sourceAddedDirPaths(sourceId: string) {
 }
 
 function createSourceTreeCheckedKeys(sourceId: string) {
-  const pendingKeys = createSourceCheckedKeys(sourceId).filter((path) => !isPathBlockedByAddedDir(sourceId, path))
-  return shallowestPaths([...sourceAddedDirPaths(sourceId), ...pendingKeys])
+  return createSourceCheckedKeys(sourceId).filter((path) => !isPathBlockedByAddedDir(sourceId, path))
 }
 
 function syncCreateSourceTreeCheckedKeys(sourceId: string) {
@@ -3606,7 +3792,7 @@ function refreshCreateSourceTreeBlockedState(sourceId: string) {
     const data = node.data
     if (!data?.path) return
     if (data.nodeKind === 'loadMore') return
-    const disabledReason = addedDirTreeDisableReason(sourceId, data.path)
+    const disabledReason = sourceTreeNodeDisableReason(sourceId, data.path)
     const disabled = Boolean(disabledReason)
     if (data.disabled === disabled && (data.disabledReason || '') === disabledReason) return
     data.disabled = disabled
@@ -3616,7 +3802,7 @@ function refreshCreateSourceTreeBlockedState(sourceId: string) {
 }
 
 function sourceSelectedCount(sourceId: string) {
-  return sourceSelectedEntries(sourceId).length
+  return sourceSelectedScopeEntries(sourceId).length
 }
 
 
@@ -3677,6 +3863,39 @@ function createSourceDirIssue(sourceId: string) {
 
 function missingCreateSourceRows() {
   return createSourceRows.value.filter((row) => isCreateSourceDirsMissing(row.id))
+}
+
+function unresolvedCreateSourceRow() {
+  return createSourceRows.value.find((row) =>
+    createSourcePendingCount(row.id) > 0
+    || Boolean(String(manualSourcePathBySource[row.id] || '').trim())
+    || isManualSourcePathValidating(row.id)
+    || isSourceScopeOperationRunningForSource(row.id),
+  )
+}
+
+function focusUnresolvedCreateSourcePaths() {
+  const row = unresolvedCreateSourceRow()
+  if (!row) return false
+  highlightedCreateSourceId.value = row.id
+  resetCreateSourceSearch()
+  createExpandedSourceIds.value = [...new Set([...createExpandedSourceIds.value, row.id])]
+  const hasPending = createSourcePendingCount(row.id) > 0
+  const hasScopeOperation = isSourceScopeOperationRunningForSource(row.id)
+  ElMessage.warning({
+    message: hasScopeOperation
+      ? t('protection.backupsPage.msgScopeOperationMustFinish')
+      : hasPending
+      ? t('protection.backupsPage.msgPendingPathsMustBeResolved')
+      : t('protection.backupsPage.msgManualPathsMustBeResolved'),
+    grouping: true,
+  })
+  void nextTick(() => {
+    createSourceTableRef.value?.doLayout?.()
+    const rowElement = document.querySelector<HTMLElement>('.create-source-config-table .create-source-row--highlighted')
+    rowElement?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+  })
+  return true
 }
 
 function createSourceRowClassName({ row }: { row: CreateSourceRow }) {
@@ -3987,6 +4206,205 @@ function isSourceDirectoryRefreshing(sourceId: string, path: string) {
   return Boolean(refreshingSourceDirectoryByKey[createSourceDirectoryRefreshKey(sourceId, path)])
 }
 
+function sourceFileCaptureKey(sourceId: string, path: string) {
+  return `${sourceId}\0${normalizeComparableSourcePath(path)}`
+}
+
+function isSourceFileCaptureRunning(sourceId: string, path: string) {
+  return Boolean(capturingSourceFilesByKey[sourceFileCaptureKey(sourceId, path)])
+}
+
+function sourceScopeOperationForPath(sourceId: string, path: string) {
+  const normalizedPath = normalizeComparableSourcePath(path)
+  return Object.values(capturingSourceFilesByKey).find((operation) =>
+    operation.sourceId === sourceId && (
+      isSameOrAncestorPath(operation.path, normalizedPath)
+      || isSameOrAncestorPath(normalizedPath, operation.path)
+    ),
+  )
+}
+
+function sourceScopePathConflict(sourceId: string, path: string) {
+  const normalizedPath = normalizeComparableSourcePath(path)
+  const pendingPath = createSourceCheckedKeys(sourceId).find((candidate) =>
+    isSameOrAncestorPath(candidate, normalizedPath)
+    || isSameOrAncestorPath(normalizedPath, candidate),
+  )
+  if (pendingPath) return { path: pendingPath, state: 'pending' as const }
+  const addedEntry = sourceSelectedEntries(sourceId).find((entry) =>
+    isSameOrAncestorPath(entry.path, normalizedPath)
+    || isSameOrAncestorPath(normalizedPath, entry.path),
+  )
+  if (addedEntry) return { path: addedEntry.path, state: 'added' as const }
+  return null
+}
+
+function sourceScopePathConflictReason(sourceId: string, path: string) {
+  const conflict = sourceScopePathConflict(sourceId, path)
+  if (!conflict) return ''
+  return conflict.state === 'pending'
+    ? t('protection.backupsPage.addModePendingConflict', { path: conflict.path })
+    : t('protection.backupsPage.addModeAddedConflict', { path: conflict.path })
+}
+
+function sourceDirectoryAddDisableReason(sourceId: string, path: string) {
+  const conflictReason = sourceScopePathConflictReason(sourceId, path)
+  if (conflictReason) return conflictReason
+  const operation = sourceScopeOperationForPath(sourceId, path)
+  return operation
+    ? t('protection.backupsPage.addModeOperationRunning', { path: operation.path })
+    : ''
+}
+
+function showSourceDirectoryAddBlocked(sourceId: string, path: string) {
+  const reason = sourceDirectoryAddDisableReason(sourceId, path)
+  if (!reason) return false
+  ElMessage.warning({ message: reason, grouping: true })
+  return true
+}
+
+function addDynamicSourceDirectory(sourceId: string, data: SourceTreeItem) {
+  if (!sourceId || !data.path || data.path_type !== 'directory') return
+  if (showSourceDirectoryAddBlocked(sourceId, data.path)) return
+  const source = realSourceById.value.get(sourceId)
+  const backupConfigId = isEditMode.value ? editBackupConfigIdForSource(sourceId) : undefined
+  const entry: BackupDirEntry = {
+    key: wizardDirEntryKey(sourceId, data.path, backupConfigId),
+    backupConfigId,
+    sourceId,
+    sourceName: getSourceName(sourceId),
+    sourceType: getSourceType(sourceId),
+    platform: source?.platform,
+    path: data.path,
+    pathType: 'directory',
+    scopeMode: 'dynamic',
+  }
+  wizardDirEntries.value = [entry, ...wizardDirEntries.value]
+  setSourcePathType(sourceId, data.path, 'directory')
+  const groupKey = sourceGroupKey(entry)
+  if (!nasTargetModes[groupKey]) nasTargetModes[groupKey] = 'per_directory_repo'
+  refreshCreateSourceTreeBlockedState(sourceId)
+  ElMessage.success({
+    message: t('protection.backupsPage.addModeDynamicAdded', { path: data.path }),
+    grouping: true,
+  })
+}
+
+function addSourceDirectoryByMode(
+  sourceId: string,
+  data: SourceTreeItem,
+  mode: unknown,
+) {
+  if (mode === 'dynamic') {
+    addDynamicSourceDirectory(sourceId, data)
+    return
+  }
+  if (mode === 'direct' || mode === 'recursive') {
+    void captureCurrentSourceFiles(sourceId, data, mode)
+  }
+}
+
+async function captureCurrentSourceFiles(
+  sourceId: string,
+  data: SourceTreeItem,
+  mode: 'direct' | 'recursive',
+) {
+  if (!sourceId || !data.path || data.path_type !== 'directory') return
+  const key = sourceFileCaptureKey(sourceId, data.path)
+  if (showSourceDirectoryAddBlocked(sourceId, data.path)) return
+  const recursive = mode === 'recursive'
+  try {
+    await ElMessageBox.confirm(
+      t(recursive
+        ? 'protection.backupsPage.captureRecursiveConfirm'
+        : 'protection.backupsPage.captureDirectConfirm', { path: data.path }),
+      t('protection.backupsPage.captureCurrentFiles'),
+      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') },
+    )
+  } catch {
+    return
+  }
+
+  if (showSourceDirectoryAddBlocked(sourceId, data.path)) return
+  const operation: SourceScopeOperation = {
+    sourceId,
+    path: normalizeComparableSourcePath(data.path),
+    token: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  }
+  capturingSourceFilesByKey[key] = operation
+  refreshCreateSourceTreeBlockedState(sourceId)
+  try {
+    const capture = await captureBackupSourceFiles({
+      source_id: sourceId,
+      path: data.path,
+      mode,
+      timeout: 120,
+      max_files: 10000,
+    })
+    if (capturingSourceFilesByKey[key]?.token !== operation.token) return
+    if (!createOpen.value || createStep.value !== 0) return
+    if (capture.entry_count === 0) {
+      ElMessage.info({ message: t('protection.backupsPage.captureNoFiles'), grouping: true })
+      return
+    }
+    const conflictReason = sourceScopePathConflictReason(sourceId, data.path)
+    if (conflictReason) {
+      ElMessage.warning({
+        message: conflictReason,
+        grouping: true,
+      })
+      return
+    }
+    const source = realSourceById.value.get(sourceId)
+    const backupConfigId = isEditMode.value ? editBackupConfigIdForSource(sourceId) : undefined
+    const entries: BackupDirEntry[] = capture.entries.map((item) => ({
+      key: wizardDirEntryKey(sourceId, item.path, backupConfigId),
+      backupConfigId,
+      sourceId,
+      sourceName: getSourceName(sourceId),
+      sourceType: getSourceType(sourceId),
+      platform: source?.platform,
+      path: item.path,
+      pathType: item.path_type,
+      scopeMode: capture.scope_mode,
+      captureGroupId: capture.capture_id,
+      captureRoot: capture.root_path,
+      capturedAt: capture.captured_at,
+      captureEntryCount: capture.entry_count,
+      captureFileCount: capture.file_count,
+      captureDirectoryCount: capture.directory_count,
+      captureManifestHash: capture.manifest_hash,
+    }))
+    entries.forEach((entry) => setSourcePathType(sourceId, entry.path, entry.pathType))
+    wizardDirEntries.value = [...entries, ...wizardDirEntries.value]
+    const groupKey = sourceGroupKey(entries[0])
+    if (!nasTargetModes[groupKey]) nasTargetModes[groupKey] = 'per_directory_repo'
+    refreshCreateSourceTreeBlockedState(sourceId)
+    ElMessage.success({
+      message: t('protection.backupsPage.captureAdded', {
+        files: capture.file_count,
+        directories: capture.directory_count,
+      }),
+      grouping: true,
+    })
+  } catch (err) {
+    if (capturingSourceFilesByKey[key]?.token !== operation.token) return
+    const message = apiErrorMessageI18n(err, t, t('protection.backupsPage.captureFailed'))
+    notifyError({
+      title: t('protection.backupsPage.captureFailed'),
+      message,
+      error: err,
+      showDetails: true,
+      dedupeKey: `backup-file-capture:${sourceId}:${data.path}:${mode}`,
+    })
+  } finally {
+    if (capturingSourceFilesByKey[key]?.token === operation.token) {
+      delete capturingSourceFilesByKey[key]
+      refreshCreateSourceTreeBlockedState(sourceId)
+    }
+  }
+}
+
 function onSourceDirectoryExpansionChange(sourceId: string, data: SourceTreeItem) {
   if (!data.path || data.nodeKind === 'loadMore') return
   const key = createSourceDirectoryRefreshKey(sourceId, data.path)
@@ -4127,15 +4545,23 @@ function onSourceDirCheckChange(sourceId: string, data: SourceTreeItem, checked:
   const next = createSourceCheckedKeys(sourceId)
   if (!checked) {
     createSourceDirKeysBySource[sourceId] = next.filter((path) => path !== data.path)
+    refreshCreateSourceTreeBlockedState(sourceId)
+    return
+  }
+  const conflict = next.find((path) =>
+    isSameOrAncestorPath(path, data.path) || isSameOrAncestorPath(data.path, path),
+  )
+  if (conflict) {
+    ElMessage.warning({
+      message: t('protection.backupsPage.msgPathSelectionConflict'),
+      grouping: true,
+    })
     syncCreateSourceTreeCheckedKeys(sourceId)
     return
   }
-  const withoutOverlaps = next.filter((path) =>
-    !(isSameOrAncestorPath(path, data.path) || isSameOrAncestorPath(data.path, path)),
-  )
-  createSourceDirKeysBySource[sourceId] = preserveShallowestPathOrder([...withoutOverlaps, data.path])
+  createSourceDirKeysBySource[sourceId] = [...next, data.path]
     .filter((path) => !isPathBlockedByAddedDir(sourceId, path))
-  syncCreateSourceTreeCheckedKeys(sourceId)
+  refreshCreateSourceTreeBlockedState(sourceId)
 }
 
 function onSourceTreeNodeClick(sourceId: string, data: SourceTreeItem) {
@@ -4151,13 +4577,13 @@ function onSourceTreeRowClick(sourceId: string, data: SourceTreeItem, event: Mou
 
 function onSourceTreeClickCapture(sourceId: string, event: MouseEvent) {
   const target = event.target instanceof HTMLElement ? event.target : null
-  if (target?.closest('.hfl-dir-tree-node__refresh')) return
+  if (target?.closest('.create-dir-row__action-control')) return
   const nodeContent = target?.closest('.el-tree-node__content')
   if (!nodeContent) return
   const row = nodeContent.querySelector<HTMLElement>('.create-dir-row--tree[data-source-path]')
   const path = row?.dataset.sourcePath
   if (!path) return
-  const reason = addedDirTreeDisableReason(sourceId, path)
+  const reason = sourceTreeNodeDisableReason(sourceId, path)
   if (!reason) return
   const warned = warnSourceTreeConflict(sourceId, {
     label: basenamePath(path),
@@ -4197,6 +4623,18 @@ function addPickedSourcesFor(sourceIds: string[]) {
   const validSourceIds = normalizeSourceIdList(sourceIds)
   if (validSourceIds.length === 0) {
     ElMessage.warning({ message: t('protection.backupsPage.msgPickDirThenAdd'), grouping: true })
+    return
+  }
+  for (const sourceId of validSourceIds) {
+    const conflict = createSourcePendingConflict(sourceId)
+    if (!conflict) continue
+    ElMessage.warning({
+      message: t('protection.backupsPage.msgPendingPathConflictDetail', {
+        first: conflict.left,
+        second: conflict.right,
+      }),
+      grouping: true,
+    })
     return
   }
   const existingKeys = new Set(wizardDirEntries.value.map((entry) => entry.key))
@@ -4240,6 +4678,10 @@ function addPickedSourcesFor(sourceIds: string[]) {
   validSourceIds.forEach((sourceId) => {
     createSourceDirKeysBySource[sourceId] = []
     refreshCreateSourceTreeBlockedState(sourceId)
+  })
+  ElMessage.success({
+    message: t('protection.backupsPage.pendingPathsAdded', { n: added }),
+    grouping: true,
   })
 }
 
@@ -4323,11 +4765,19 @@ function removeWizardDirEntry(key: string) {
   const removed = wizardDirEntries.value.find((entry) => entry.key === key)
   wizardDirEntries.value = wizardDirEntries.value.filter((x) => x.key !== key)
   if (removed) {
-    if (!sourceSelectedEntries(removed.sourceId).length) {
-      createSourceDirKeysBySource[removed.sourceId] = []
-    }
     nextTick(() => refreshCreateSourceTreeBlockedState(removed.sourceId))
   }
+}
+
+function removeWizardScopeEntry(entry: BackupScopeDisplayEntry) {
+  if (!entry.captureGroupId) {
+    removeWizardDirEntry(entry.key)
+    return
+  }
+  wizardDirEntries.value = wizardDirEntries.value.filter(
+    (item) => item.captureGroupId !== entry.captureGroupId,
+  )
+  nextTick(() => refreshCreateSourceTreeBlockedState(entry.sourceId))
 }
 
 watch(
@@ -4411,8 +4861,10 @@ watch(
   { immediate: true },
 )
 
-function closeCreate() {
+async function closeCreate() {
   if (createSubmissionActive.value) return
+  if (!await confirmDiscardBackupScopeDraft()) return
+  allowCreateLeave.value = true
   cancelTargetValidation()
   if (props.embedded) {
     createOpen.value = false
@@ -4464,6 +4916,9 @@ function resetCreateCompletedFrom(step: number) {
 
 function validateCreateStep(step: number) {
   if (step === 0) {
+    if (focusUnresolvedCreateSourcePaths()) {
+      return false
+    }
     if (focusIncompleteCreateSourceDirs()) {
       return false
     }
@@ -4536,6 +4991,14 @@ function buildCreateBackupPayload() {
         pathItems: group.entries.map((entry) => ({
           path: entry.path,
           path_type: entry.pathType,
+          scope_mode: entry.scopeMode || 'dynamic',
+          capture_group_id: entry.captureGroupId || null,
+          capture_root: entry.captureRoot || '',
+          captured_at: entry.capturedAt || null,
+          capture_entry_count: entry.captureEntryCount || 0,
+          capture_file_count: entry.captureFileCount || 0,
+          capture_directory_count: entry.captureDirectoryCount || 0,
+          capture_manifest_hash: entry.captureManifestHash || '',
         })),
       },
       targetId: sourceTargetMap.value[group.key] || '',
@@ -5613,9 +6076,17 @@ async function runCreateBackup() {
       file_filter_rule_id: filterId,
       compression_level: (backup.compression as BackupConfigCreatePayload['compression_level']) || 'balanced',
       directories: (backup.source.pathItems || backup.source.paths.map((path: string) => ({ path, path_type: 'unknown' })))
-        .map((item: { path: string; path_type?: BackupPathType }) => ({
+        .map((item) => ({
           path: item.path,
           path_type: item.path_type || 'unknown',
+          scope_mode: item.scope_mode || 'dynamic',
+          capture_group_id: item.capture_group_id || null,
+          capture_root: item.capture_root || '',
+          captured_at: item.captured_at || null,
+          capture_entry_count: item.capture_entry_count || 0,
+          capture_file_count: item.capture_file_count || 0,
+          capture_directory_count: item.capture_directory_count || 0,
+          capture_manifest_hash: item.capture_manifest_hash || '',
         })),
       recovery_plan_enabled: recoveryPlanEnabled,
       recovery_plans: recoveryPlanEnabled ? recoveryPlans : undefined,
@@ -5687,6 +6158,14 @@ function directoryPayloadFromGroup(group: WizardSourceGroup) {
   return group.entries.map((entry) => ({
     path: entry.path,
     path_type: entry.pathType || 'unknown',
+    scope_mode: entry.scopeMode || 'dynamic',
+    capture_group_id: entry.captureGroupId || null,
+    capture_root: entry.captureRoot || '',
+    captured_at: entry.capturedAt || null,
+    capture_entry_count: entry.captureEntryCount || 0,
+    capture_file_count: entry.captureFileCount || 0,
+    capture_directory_count: entry.captureDirectoryCount || 0,
+    capture_manifest_hash: entry.captureManifestHash || '',
   }))
 }
 
@@ -5806,6 +6285,8 @@ async function runEditBackupConfig() {
       }
     }
     ElMessage.success({ message: t('protection.backupsPage.msgSaveEditDemo'), grouping: true })
+    backupScopeBaseline.value = backupScopeSignature()
+    allowCreateLeave.value = true
     if (props.embedded) {
       emit('editCompleted', { sourceIds: editedSourceIds })
       return
@@ -5892,30 +6373,6 @@ function normalizeComparableSourcePath(path: string) {
   return stripped || trimmed
 }
 
-function shallowestPaths(paths: string[]) {
-  const sorted = normalizeSourceIdList(paths)
-    .map(normalizeComparableSourcePath)
-    .sort((a, b) => a.length - b.length)
-  const picked: string[] = []
-  for (const path of sorted) {
-    if (picked.some((parent) => isSameOrAncestorPath(parent, path))) continue
-    picked.push(path)
-  }
-  return picked
-}
-
-function preserveShallowestPathOrder(paths: string[]) {
-  const picked: string[] = []
-  for (const path of normalizeSourceIdList(paths).map(normalizeComparableSourcePath)) {
-    if (picked.some((parent) => isSameOrAncestorPath(parent, path))) continue
-    for (let index = picked.length - 1; index >= 0; index -= 1) {
-      if (isSameOrAncestorPath(path, picked[index])) picked.splice(index, 1)
-    }
-    picked.push(path)
-  }
-  return picked
-}
-
 </script>
 
 <template>
@@ -5986,7 +6443,7 @@ function preserveShallowestPathOrder(paths: string[]) {
 
         <div
           v-if="createStep === 0"
-          class="dp-wizard-pane"
+          class="dp-wizard-pane dp-wizard-pane--source-step"
         >
           <p class="text-sm text-slate-500 mb-3">
             {{ t('protection.backupsPage.createStep0Lead') }}
@@ -6081,9 +6538,22 @@ function preserveShallowestPathOrder(paths: string[]) {
                         :disabled="!hasCreateSourceAddableSelection(row.id)"
                         @click="addPickedSourceFor(row.id)"
                       >
-                        {{ t('protection.backupsPage.btnAddSelectedPaths') }}
+                        {{ createSourcePendingCount(row.id)
+                          ? t('protection.backupsPage.btnAddPendingPaths', { n: createSourcePendingCount(row.id) })
+                          : t('protection.backupsPage.btnAddSelectedPaths') }}
                       </ElButton>
                     </div>
+                    <p class="create-source-config-detail__tree-hint text-xs text-slate-500 m-0">
+                      {{ t('protection.backupsPage.dirTreeHint') }}
+                    </p>
+                    <p
+                      v-if="createSourcePendingCount(row.id)"
+                      class="create-source-config-detail__pending text-xs text-slate-600"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      {{ t('protection.backupsPage.pendingPathSummary', { n: createSourcePendingCount(row.id) }) }}
+                    </p>
                     <p
                       v-if="noSourceTreeRootsBySource[row.id]"
                       class="dp-create-tree-shell__warn"
@@ -6121,7 +6591,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                       node-key="path"
                       show-checkbox
                       :check-strictly="true"
-                      :check-on-click-node="true"
+                      :check-on-click-node="false"
                       :expand-on-click-node="false"
                       :default-checked-keys="createSourceTreeCheckedKeys(row.id)"
                       @click.capture="(event) => onSourceTreeClickCapture(row.id, event)"
@@ -6176,7 +6646,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                           <div
                             class="create-dir-row create-dir-row--tree"
                             :class="{
-                              'create-dir-row--disabled': Boolean(addedDirTreeDisableReason(row.id, data.path)),
+                              'create-dir-row--disabled': Boolean(sourceTreeNodeDisableReason(row.id, data.path)),
                               'create-dir-row--filename-encoding-warning': Boolean(data.filenameEncodingSuspected),
                             }"
                             :data-source-path="data.path"
@@ -6192,16 +6662,102 @@ function preserveShallowestPathOrder(paths: string[]) {
                               <span class="create-dir-row__label">{{ data.label }}</span>
                               <span class="create-dir-row__path">{{ data.path }}</span>
                             </div>
+                            <span
+                              v-if="createSourceCheckedKeys(row.id).includes(data.path)"
+                              class="create-dir-row__pending-status"
+                            >
+                              {{ t('protection.backupsPage.pathPending') }}
+                            </span>
+                            <el-tag
+                              v-else-if="sourceAddedDirPaths(row.id).includes(data.path)"
+                              size="small"
+                              effect="plain"
+                              type="info"
+                            >
+                              {{ t('protection.backupsPage.pathAdded') }}
+                            </el-tag>
                             <ShieldAlert
                               v-if="data.filenameEncodingSuspected"
                               :size="15"
                               class="create-dir-row__filename-encoding-icon"
                               aria-hidden="true"
                             />
+                            <span
+                              v-if="data.path_type === 'directory'"
+                              class="create-dir-row__add-wrap create-dir-row__action-control"
+                              :title="sourceDirectoryAddDisableReason(row.id, data.path) || t('protection.backupsPage.addModeButton')"
+                              @click.stop
+                            >
+                              <ElDropdown
+                                trigger="click"
+                                placement="bottom-end"
+                                :disabled="Boolean(sourceDirectoryAddDisableReason(row.id, data.path))"
+                                @command="(mode) => addSourceDirectoryByMode(row.id, data, mode)"
+                              >
+                                <button
+                                  type="button"
+                                  class="create-dir-row__button-action create-dir-row__add-trigger create-dir-row__action-control"
+                                  :class="{ 'is-loading': isSourceFileCaptureRunning(row.id, data.path) }"
+                                  :disabled="Boolean(sourceDirectoryAddDisableReason(row.id, data.path))"
+                                  :aria-busy="isSourceFileCaptureRunning(row.id, data.path)"
+                                  :aria-label="t('protection.backupsPage.addModeButtonForPath', { path: data.path })"
+                                  @click.stop
+                                >
+                                  <LoaderCircle
+                                    v-if="isSourceFileCaptureRunning(row.id, data.path)"
+                                    :size="13"
+                                    class="is-spinning"
+                                  />
+                                  <Plus
+                                    v-else
+                                    :size="13"
+                                  />
+                                  <span>{{ t('protection.backupsPage.addModeButton') }}</span>
+                                  <ChevronDown :size="13" />
+                                </button>
+                                <template #dropdown>
+                                  <ElDropdownMenu class="create-dir-add-menu">
+                                    <ElDropdownItem command="dynamic">
+                                      <div class="create-dir-add-menu__item">
+                                        <span class="create-dir-add-menu__title">
+                                          {{ t('protection.backupsPage.addModeDynamicTitle') }}
+                                        </span>
+                                        <span class="create-dir-add-menu__description">
+                                          {{ t('protection.backupsPage.addModeDynamicDescription') }}
+                                        </span>
+                                      </div>
+                                    </ElDropdownItem>
+                                    <ElDropdownItem
+                                      command="direct"
+                                      divided
+                                    >
+                                      <div class="create-dir-add-menu__item">
+                                        <span class="create-dir-add-menu__title">
+                                          {{ t('protection.backupsPage.captureDirectFiles') }}
+                                        </span>
+                                        <span class="create-dir-add-menu__description">
+                                          {{ t('protection.backupsPage.addModeDirectDescription') }}
+                                        </span>
+                                      </div>
+                                    </ElDropdownItem>
+                                    <ElDropdownItem command="recursive">
+                                      <div class="create-dir-add-menu__item">
+                                        <span class="create-dir-add-menu__title">
+                                          {{ t('protection.backupsPage.captureRecursiveFiles') }}
+                                        </span>
+                                        <span class="create-dir-add-menu__description">
+                                          {{ t('protection.backupsPage.addModeRecursiveDescription') }}
+                                        </span>
+                                      </div>
+                                    </ElDropdownItem>
+                                  </ElDropdownMenu>
+                                </template>
+                              </ElDropdown>
+                            </span>
                             <button
                               v-if="data.path_type === 'directory'"
                               type="button"
-                              class="hfl-dir-tree-node__refresh"
+                              class="create-dir-row__button-action create-dir-row__icon-action create-dir-row__refresh-action create-dir-row__action-control"
                               :class="{ 'is-refreshing': isSourceDirectoryRefreshing(row.id, data.path) }"
                               :disabled="isSourceDirectoryRefreshing(row.id, data.path)"
                               :aria-label="t('protection.backupsPage.ariaRefreshDirectory', { path: data.path })"
@@ -6214,10 +6770,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                               />
                             </button>
                             <HflHelpTip
-                              v-if="addedDirTreeDisableReason(row.id, data.path)"
-                              :content="addedDirTreeDisableReason(row.id, data.path)"
+                              v-if="sourceTreeNodeDisableReason(row.id, data.path)"
+                              :content="sourceTreeNodeDisableReason(row.id, data.path)"
                               trigger-class="create-dir-row__disabled-icon"
-                              :aria-label="addedDirTreeDisableReason(row.id, data.path) || undefined"
+                              :aria-label="sourceTreeNodeDisableReason(row.id, data.path) || undefined"
                             />
                           </div>
                         </ElTooltip>
@@ -6226,7 +6782,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                   </section>
 
                   <section class="create-source-config-detail__selected">
-                    <div class="create-source-config-detail__head create-source-config-detail__head--compact">
+                    <div class="create-source-config-detail__head create-source-config-detail__head--compact create-source-config-detail__head--scope">
                       <div class="create-source-config-detail__title-row">
                         <div class="text-sm font-semibold text-slate-900">
                           {{ t('protection.backupsPage.labelAddedPaths') }}
@@ -6235,9 +6791,12 @@ function preserveShallowestPathOrder(paths: string[]) {
                           {{ t('protection.backupsPage.addedCount', { n: sourceSelectedCount(row.id) }) }}
                         </div>
                       </div>
+                      <p class="text-xs text-slate-500 m-0">
+                        {{ t('protection.backupsPage.backupScopeHint') }}
+                      </p>
                     </div>
                     <div
-                      v-if="!sourceSelectedEntries(row.id).length"
+                      v-if="!sourceSelectedScopeEntries(row.id).length"
                       class="dp-added-dir-empty text-xs py-8 text-center border border-dashed rounded-md"
                       :class="{ 'dp-added-dir-empty--error': Boolean(createSourceDirIssue(row.id)) }"
                     >
@@ -6262,25 +6821,31 @@ function preserveShallowestPathOrder(paths: string[]) {
                       class="dp-added-dir-list list-none m-0 p-0"
                     >
                       <li
-                        v-for="entry in sourceSelectedEntries(row.id)"
+                        v-for="entry in sourceSelectedScopeEntries(row.id)"
                         :key="entry.key"
                         class="create-dir-row create-dir-row--added"
                       >
                         <component
-                          :is="entry.pathType === 'file' ? FileIcon : Folder"
+                          :is="entry.captureSummary ? ListTree : entry.pathType === 'file' ? FileIcon : Folder"
                           :size="15"
                           class="create-dir-row__icon"
                           :class="entry.pathType === 'file' ? 'create-dir-row__icon--file' : 'create-dir-row__icon--folder'"
                         />
                         <div class="create-dir-row__body">
                           <span class="create-dir-row__path">{{ entry.path }}</span>
+                          <span
+                            v-overflow-title="backupScopeEntryTooltip(entry)"
+                            class="create-dir-row__label"
+                          >
+                            {{ backupScopeEntrySummary(entry) }}
+                          </span>
                         </div>
                         <ElButton
                           text
                           type="danger"
                           class="create-dir-row__action"
                           :aria-label="t('protection.backupsPage.ariaRemove')"
-                          @click="removeWizardDirEntry(entry.key)"
+                          @click="removeWizardScopeEntry(entry)"
                         >
                           <X :size="16" />
                         </ElButton>
@@ -10767,6 +11332,10 @@ function preserveShallowestPathOrder(paths: string[]) {
   padding: 12px;
 }
 
+.create-source-config-detail__tree-hint {
+  margin-bottom: 8px !important;
+}
+
 .create-source-config-detail__head {
   display: flex;
   align-items: center;
@@ -10777,6 +11346,11 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 .create-source-config-detail__head--compact {
   align-items: flex-start;
+}
+
+.create-source-config-detail__head--scope {
+  flex-direction: column;
+  gap: 4px;
 }
 
 .create-source-config-detail__head--browse {
@@ -10800,12 +11374,12 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .create-source-config-detail__selected {
-  max-height: 480px;
+  max-height: none;
   overflow: auto;
 }
 
 .create-source-config-detail__tree {
-  max-height: 480px;
+  max-height: none;
   overflow: hidden;
 }
 
@@ -13003,6 +13577,149 @@ function preserveShallowestPathOrder(paths: string[]) {
   color: rgb(100 116 139);
 }
 
+.create-dir-row__add-wrap {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.create-dir-row__button-action {
+  --create-dir-action-hover-border: color-mix(in srgb, var(--color-primary) 28%, var(--el-bg-color, #fff));
+  --create-dir-action-hover-background: color-mix(in srgb, var(--color-primary) 7%, var(--el-bg-color, #fff));
+  --create-dir-action-hover-shadow: 0 2px 5px rgba(15, 23, 42, 0.08);
+
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 30px;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--el-border-color, rgb(226 232 240));
+  border-radius: 6px;
+  background: var(--el-bg-color, #fff);
+  color: var(--el-text-color-secondary, rgb(100 116 139));
+  font: inherit;
+  cursor: pointer;
+  transition:
+    color 0.14s ease,
+    border-color 0.14s ease,
+    background-color 0.14s ease,
+    box-shadow 0.14s ease;
+}
+
+.create-dir-row__button-action:hover,
+.create-dir-row__button-action:focus-visible,
+.create-dir-row__button-action.is-loading,
+.create-dir-row__button-action.is-refreshing {
+  border-color: var(--create-dir-action-hover-border);
+  background: var(--create-dir-action-hover-background);
+  box-shadow: var(--create-dir-action-hover-shadow);
+  color: var(--color-primary);
+  outline: none;
+}
+
+.create-dir-row__button-action:disabled {
+  cursor: not-allowed;
+}
+
+.create-dir-row__button-action:disabled:not(.is-loading):not(.is-refreshing),
+.create-dir-row__button-action:disabled:not(.is-loading):not(.is-refreshing):hover {
+  border-color: var(--el-border-color, rgb(226 232 240));
+  background: var(--el-bg-color, #fff);
+  box-shadow: none;
+  color: var(--el-text-color-placeholder, rgb(148 163 184));
+}
+
+.create-dir-row__button-action.is-loading,
+.create-dir-row__button-action.is-refreshing {
+  cursor: wait;
+}
+
+.create-dir-row__button-action .is-spinning {
+  animation: hfl-dir-tree-refresh-spin 0.85s linear infinite;
+}
+
+.create-dir-row__add-trigger {
+  width: auto;
+  margin-left: 0;
+  padding-inline: 8px;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .create-dir-row--tree .create-dir-row__action-control {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.14s ease;
+  }
+
+  .create-dir-row--tree:hover .create-dir-row__action-control,
+  .create-dir-row--tree:focus-within .create-dir-row__action-control,
+  .create-dir-row--tree .create-dir-row__action-control.is-refreshing,
+  .create-dir-row--tree .create-dir-row__add-trigger.is-loading,
+  .create-dir-row--tree:has(.create-dir-row__add-trigger.is-loading) .create-dir-row__action-control {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.create-dir-row__icon-action {
+  width: 30px;
+  flex: 0 0 30px;
+  padding: 0;
+}
+
+.create-dir-row__refresh-action {
+  margin-left: 4px;
+}
+
+
+:global(.create-dir-add-menu) {
+  width: min(340px, calc(100vw - 24px));
+}
+
+:global(.create-dir-add-menu .el-dropdown-menu__item) {
+  height: auto;
+  min-height: 48px;
+  align-items: flex-start;
+  padding-block: 8px;
+  white-space: normal;
+}
+
+:global(.create-dir-add-menu__item) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+:global(.create-dir-add-menu__title) {
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+:global(.create-dir-add-menu__description) {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+:global(.create-dir-add-menu .el-dropdown-menu__item:not(.is-disabled):hover .create-dir-add-menu__title),
+:global(.create-dir-add-menu .el-dropdown-menu__item:not(.is-disabled):focus .create-dir-add-menu__title) {
+  color: #fff;
+}
+
+:global(.create-dir-add-menu .el-dropdown-menu__item:not(.is-disabled):hover .create-dir-add-menu__description),
+:global(.create-dir-add-menu .el-dropdown-menu__item:not(.is-disabled):focus .create-dir-add-menu__description) {
+  color: rgb(226 232 240);
+}
+
 .create-dir-row__body {
   display: flex;
   flex: 1 1 auto;
@@ -13026,6 +13743,15 @@ function preserveShallowestPathOrder(paths: string[]) {
   line-height: 14px;
   color: rgb(100 116 139);
   word-break: break-word;
+}
+
+.create-dir-row__pending-status {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--color-primary) 82%, var(--el-text-color-secondary, rgb(100 116 139)));
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 .create-dir-row__meta {
@@ -15027,6 +15753,36 @@ function preserveShallowestPathOrder(paths: string[]) {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.dp-wizard-pane--source-step {
+  flex: 1 1 auto;
+}
+
+.dp-wizard-pane--source-step .create-source-config-toolbar {
+  flex: 0 0 auto;
+}
+
+.dp-wizard-pane--source-step .create-source-config-table {
+  flex: 1 1 auto;
+  min-height: 280px;
+}
+
+.dp-wizard-pane--source-step .create-source-config-table :deep(.el-table__inner-wrapper) {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.dp-wizard-pane--source-step .create-source-config-table :deep(.el-table__header-wrapper),
+.dp-wizard-pane--source-step .create-source-config-table :deep(.el-table__fixed-header-wrapper) {
+  flex: 0 0 auto;
+}
+
+.dp-wizard-pane--source-step .create-source-config-table :deep(.el-table__body-wrapper) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .create-backup-fullscreen .create-backup-layout--steps {

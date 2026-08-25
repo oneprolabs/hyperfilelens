@@ -72,6 +72,8 @@ func SendInventory(
 			"repository_ownership_v1",
 			"backup_prepared_snapshot_v1",
 			"backup_operation_reconcile_v1",
+			"explorer_static_capture_v1",
+			"explorer_static_tree_capture_v2",
 			"snapshot_browse_v1",
 			"snapshot_artifact_upload_v1",
 			"snapshot_scope_resolve_v1",

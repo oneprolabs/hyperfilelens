@@ -1119,7 +1119,7 @@ func mustNASSpec(t *testing.T, raw map[string]any) *nassvc.Spec {
 }
 
 func TestManagedBackupSnapshotArgsAvoidUnsupportedProgressIntervalFlag(t *testing.T) {
-	args := managedBackupSnapshotArgs("/tmp/repo.config", "/tmp/source", "operation-123")
+	args := managedBackupSnapshotArgs("/tmp/repo.config", "/tmp/source", "operation-123", "")
 
 	if slices.Contains(args, "--progress-interval=3s") {
 		t.Fatalf("snapshot args must not include unsupported --progress-interval flag: %#v", args)
@@ -1138,6 +1138,76 @@ func TestManagedBackupSnapshotArgsAvoidUnsupportedProgressIntervalFlag(t *testin
 	}
 	if got := args[len(args)-3]; got != "/tmp/source" {
 		t.Fatalf("expected source path before tag and --json, got %q in %#v", got, args)
+	}
+}
+
+func TestManagedBackupSnapshotArgsOverrideFrozenDirectorySource(t *testing.T) {
+	args := managedBackupSnapshotArgs(
+		"/tmp/repo.config",
+		"/tmp/hfl-frozen-empty-123",
+		"operation-123",
+		"/data/original-empty",
+	)
+
+	if !slices.Contains(args, "--override-source=/data/original-empty") {
+		t.Fatalf("frozen directory args must preserve the original source: %#v", args)
+	}
+	if !slices.Contains(args, "/tmp/hfl-frozen-empty-123") {
+		t.Fatalf("frozen directory args must snapshot the empty staging directory: %#v", args)
+	}
+}
+
+func TestPreparedSnapshotFreezesCapturedDirectoryAsEmpty(t *testing.T) {
+	originalRunner := runManagedSnapshotCommand
+	t.Cleanup(func() {
+		runManagedSnapshotCommand = originalRunner
+	})
+
+	sourcePath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourcePath, "added-after-capture.txt"), []byte("later"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stagingPath := ""
+	runManagedSnapshotCommand = func(
+		_ context.Context,
+		_ string,
+		args []string,
+		_ map[string]string,
+		_ string,
+		_ process.OutputLineHandler,
+	) (process.Result, error) {
+		if !slices.Contains(args, "--override-source="+sourcePath) {
+			t.Fatalf("snapshot args do not preserve captured directory identity: %#v", args)
+		}
+		for _, arg := range args {
+			if strings.HasPrefix(arg, os.TempDir()+string(os.PathSeparator)+"hfl-frozen-empty-") {
+				stagingPath = arg
+				break
+			}
+		}
+		if stagingPath == "" {
+			t.Fatalf("snapshot args do not use an empty staging directory: %#v", args)
+		}
+		entries, err := os.ReadDir(stagingPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("frozen directory staging contains later entries: %#v", entries)
+		}
+		return process.Result{Stdout: `{"id":"snapshot-empty-directory"}`}, nil
+	}
+
+	status, result, message := runPreparedManagedSnapshot(
+		t.Context(), ReporterSink{}, "frozen-empty", "kopia", "/tmp/frozen.config",
+		nil, sourcePath, map[string]any{}, true,
+	)
+
+	if status != "success" || message != "" || result["kopia_snapshot_id"] != "snapshot-empty-directory" {
+		t.Fatalf("status=%q message=%q result=%#v", status, message, result)
+	}
+	if _, err := os.Stat(stagingPath); !os.IsNotExist(err) {
+		t.Fatalf("temporary frozen-directory staging was not removed: %v", err)
 	}
 }
 
@@ -1202,7 +1272,7 @@ func TestParseManagedSnapshotStorageStatsLinePreservesZeroAndRejectsIncompleteRo
 }
 
 func TestManagedBackupLegacySnapshotArgsRemoveStructuredProgress(t *testing.T) {
-	args := managedBackupLegacySnapshotArgs("/tmp/repo.config", "/tmp/source")
+	args := managedBackupLegacySnapshotArgs("/tmp/repo.config", "/tmp/source", "")
 	if slices.Contains(args, "--progress-format=hfl-json") {
 		t.Fatalf("legacy args must omit structured progress: %#v", args)
 	}

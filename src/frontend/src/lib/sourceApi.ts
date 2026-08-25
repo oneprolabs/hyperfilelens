@@ -225,6 +225,21 @@ export type BackupSourcePathInfo = BackupSourceDirectoryEntry & {
   task_id: string
 }
 
+export type BackupSourceFileCapture = {
+  capture_id: string
+  source_id: string
+  root_path: string
+  scope_mode: 'static_direct_files' | 'static_recursive_files'
+  captured_at: string
+  manifest_hash: string
+  entry_count: number
+  file_count: number
+  directory_count: number
+  entries: BackupSourceDirectoryEntry[]
+  files: BackupSourceDirectoryEntry[]
+  task_id: string
+}
+
 const base = '/api/v1/source/resources'
 const backupSelectableBase = '/api/v1/source/backup-selectable'
 
@@ -315,6 +330,23 @@ export async function listBackupSourceDirectories(params: {
   if (params.include_metadata !== undefined) qs.set('include_metadata', params.include_metadata ? 'true' : 'false')
   return unwrapApiPayload<BackupSourceDirectoryList>(
     await api<unknown>(`${backupSelectableBase}/directories/?${qs}`, { ...init, headers: orgHeaders() }),
+  )
+}
+
+export async function captureBackupSourceFiles(params: {
+  source_id: string
+  path: string
+  mode: 'direct' | 'recursive'
+  timeout?: number
+  max_files?: number
+}, init?: RequestInit) {
+  return unwrapApiPayload<BackupSourceFileCapture>(
+    await api<unknown>(`${backupSelectableBase}/file-capture/`, {
+      ...init,
+      method: 'POST',
+      body: JSON.stringify(params),
+      headers: orgHeaders(),
+    }),
   )
 }
 

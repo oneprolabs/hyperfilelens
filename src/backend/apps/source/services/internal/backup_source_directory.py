@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import ntpath
 import posixpath
+import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -15,6 +17,7 @@ from apps.monitor.services.internal.node_monitor import resource_type_for_role
 from apps.monitor.services.internal.resource_metrics import latest_resource_metric
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
+from apps.node.services.capabilities import node_supports_capability
 from apps.node.services.interface import run_agent_task_sync
 from apps.source.constants import ResourceType
 from apps.source.services.internal.nas_agent import nas_payload_for_resource
@@ -30,6 +33,8 @@ from apps.source.services.internal.selectable_ids import parse_selectable_id
 
 
 DEFAULT_DIRECTORY_LIMIT = 200
+STATIC_CAPTURE_CAPABILITY = "explorer_static_tree_capture_v2"
+STATIC_CAPTURE_MAX_FILES = 10000
 _MOUNT_CACHE_MAX_AGE = timedelta(seconds=120)
 
 logger = logging.getLogger(__name__)
@@ -45,6 +50,10 @@ class BackupSourceDirectoryError(ValueError):
 
 class BackupSourceDirectoryInvalid(BackupSourceDirectoryError):
     """The source selection or local source configuration is invalid."""
+
+
+class BackupSourceAgentUpgradeRequired(BackupSourceDirectoryInvalid):
+    """The Agent does not support immutable point-in-time file capture."""
 
 
 class BackupSourceDirectoryNotFound(LookupError):
@@ -725,6 +734,103 @@ def list_backup_source_directories(
         "has_more": response_has_more,
         "next_cursor": response_next_cursor,
         "entries": response_entries,
+    }
+
+
+def capture_backup_source_files(
+    *,
+    organization_id: int,
+    source_id: str,
+    path: str,
+    recursive: bool,
+    wait_timeout_seconds: int = 60,
+    max_files: int = STATIC_CAPTURE_MAX_FILES,
+) -> dict[str, Any]:
+    """Capture an immutable point-in-time list of regular file paths."""
+
+    if not str(path or "").strip():
+        raise BackupSourceDirectoryInvalid("path is required.")
+    target = _resolve_target(
+        organization_id=organization_id,
+        source_id=source_id,
+        path=path,
+    )
+    if not node_supports_capability(target.node, STATIC_CAPTURE_CAPABILITY):
+        raise BackupSourceAgentUpgradeRequired(
+            "The selected Agent must be upgraded before current files can be captured."
+        )
+    limit = max(1, min(int(max_files), STATIC_CAPTURE_MAX_FILES))
+    payload: dict[str, Any] = {
+        "path": target.path,
+        "mode": "recursive" if recursive else "direct",
+        "max_files": limit,
+    }
+    if target.nas_payload:
+        payload["nas"] = target.nas_payload
+    outcome = run_agent_task_sync(
+        organization_id=organization_id,
+        node_id=target.node.id,
+        kind="explorer.capture",
+        payload=payload,
+        correlation_type="source.file-capture",
+        correlation_id=source_id,
+        wait_timeout_seconds=wait_timeout_seconds,
+    )
+    if outcome.timed_out:
+        raise BackupSourceDirectoryTimeout("File capture timed out.")
+    if not outcome.ok:
+        error = str(getattr(outcome.task, "last_error", "") or "").strip()
+        if not error:
+            error = "File capture failed."
+        raise BackupSourceDirectoryError(
+            error,
+            agent_error_code=_agent_task_error_code(outcome),
+        )
+    result = outcome.result if isinstance(outcome.result, dict) else {}
+    entries = _normalize_entries(
+        target=target,
+        raw_entries=result.get("entries"),
+        include_files=True,
+    )
+    files = [entry for entry in entries if entry.get("path_type") == "file"]
+    explicit_directories = [
+        entry for entry in entries if entry.get("path_type") == "directory"
+    ]
+    file_count = int(result.get("file_count") or 0)
+    entry_count = int(result.get("entry_count") or 0)
+    directory_count = int(result.get("directory_count") or 0)
+    if (
+        len(files) != file_count
+        or len(entries) != entry_count
+        or directory_count < len(explicit_directories)
+    ):
+        raise BackupSourceDirectoryError("Agent returned an inconsistent tree capture.")
+    manifest_hash = hashlib.sha256(
+        "".join(
+            f"{entry['path_type']}\0{entry['path']}\n"
+            for entry in sorted(
+                entries, key=lambda item: (item["path"], item["path_type"])
+            )
+        ).encode()
+    ).hexdigest()
+    return {
+        "capture_id": str(uuid.uuid4()),
+        "source_id": source_id,
+        "source_kind": target.source_kind,
+        "source_ref_id": target.source_ref_id,
+        "node_id": target.node.id,
+        "root_path": target.user_path or target.path,
+        "scope_mode": "static_recursive_files" if recursive else "static_direct_files",
+        "captured_at": str(result.get("captured_at") or ""),
+        "manifest_hash": manifest_hash,
+        "entry_count": len(entries),
+        "file_count": len(files),
+        "directory_count": directory_count,
+        "entries": entries,
+        # Compatibility for clients deployed before frozen trees included
+        # explicit empty-directory entries.
+        "files": files,
+        "task_id": outcome.task_id,
     }
 
 

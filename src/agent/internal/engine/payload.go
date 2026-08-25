@@ -155,6 +155,8 @@ func NormalizeKind(kind string) string {
 	switch k {
 	case "explorer.list", "list.local", "list_local", "dir.list", "directory.list", "fs.ls":
 		return "browse"
+	case "explorer.capture", "directory.capture", "fs.capture":
+		return "capture"
 	case "backup.run", "snapshot.create", "kopia.snapshot":
 		return "backup"
 	case "backup.snapshot.create", "prepared.snapshot.create":

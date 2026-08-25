@@ -2936,6 +2936,48 @@ class ProtectionBackupConfigApiTests(TestCase):
         self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(BackupConfig.objects.filter(name="Parent child dirs").exists())
 
+    def test_create_nas_config_rejects_paths_that_duplicate_after_normalization(self):
+        proxy = self._proxy(name="nas-normalization-proxy")
+        source = self._nas_source(proxy=proxy, name="nas-normalization-source")
+        payload = self._nas_payload(
+            source=source,
+            repository=self.repository,
+            path=source.effective_mount_point() + "/data",
+        )
+        payload["directories"].append(
+            {"path": "/data", "path_type": "directory"}
+        )
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(BackupConfig.objects.filter(name=payload["name"]).exists())
+
+    def test_update_backup_config_rejects_parent_child_directories(self):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Update parent child dirs"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+
+        update = self.client.patch(
+            f"/api/v1/protection/backup-configs/{create.data['id']}/",
+            {"directories": [{"path": "/data"}, {"path": "/data/projects"}]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(update.status_code, status.HTTP_400_BAD_REQUEST)
+        config = BackupConfig.objects.get(id=create.data["id"])
+        self.assertEqual(list(config.directories.values_list("path", flat=True)), ["/data"])
+
     def test_create_backup_config_persists_real_policy_filter_target_and_recovery_plan(
         self,
     ):
