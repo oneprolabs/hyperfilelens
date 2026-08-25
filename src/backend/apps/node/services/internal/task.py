@@ -64,6 +64,7 @@ _ACK_DURABLE_TASKS = frozenset(
         ("storage.repository_health", "repo.status"),
     }
 )
+_LIFECYCLE_PRE_DISPATCH_KINDS = frozenset({"agent.upgrade", "agent.uninstall"})
 
 
 @dataclass(frozen=True)
@@ -388,6 +389,22 @@ def _task_within_route_grace(task: NodeTask) -> bool:
     return timezone.now() - task.created_at < grace
 
 
+def _is_pre_dispatch_lifecycle_task(task: NodeTask) -> bool:
+    """Return whether a lifecycle command is still safe to retry.
+
+    Before the command is sent, retrying after a short WebSocket flap cannot
+    duplicate an Agent operation.  Once delivery starts, detached upgrade and
+    uninstall commands must retain their existing fail-closed semantics.
+    """
+    return (
+        task.correlation_type == node_conf.LIFECYCLE_CORRELATION_TYPE
+        and task.kind in _LIFECYCLE_PRE_DISPATCH_KINDS
+        and task.dispatched_at is None
+        and task.accepted_at is None
+        and task.delivery_attempt_count == 0
+    )
+
+
 def _node_route_state(*, task: NodeTask) -> _RouteState:
     node = task.node
     if node.role not in (NodeRole.AGENT, NodeRole.PROXY):
@@ -396,6 +413,11 @@ def _node_route_state(*, task: NodeTask) -> _RouteState:
         return _RouteState.RECONNECTING
     if _node_ws_routable(node_id=node.id):
         return _RouteState.ONLINE
+    # A lifecycle command has not reached the Agent yet.  Keep it pending for
+    # the existing 30-second route grace even if the node status projection has
+    # already crossed from Online to Offline during a brief reconnect flap.
+    if _is_pre_dispatch_lifecycle_task(task) and _task_within_route_grace(task):
+        return _RouteState.RECONNECTING
     if (
         node.availability == Node.Availability.ONLINE
         and _last_seen_within_task_route_grace(node)
