@@ -1,7 +1,7 @@
 import type { RestoreRecord, RestoreRecordItem } from '../../../lib/restoreApi'
 import {
+  formatBytes,
   formatCount,
-  transferCapacityText,
   transferMetricParts,
   type TaskRuntimePayload,
   type TransferProgress,
@@ -89,20 +89,38 @@ export function restoreRecordRuntimeMetricParts(
   const status = String(taskStatus).trim().toLowerCase()
   const completed = ['success', 'succeeded', 'completed'].includes(status)
   if (completed) {
-    if (processed > 0) {
-      parts.push(total > 0
-        ? t('protection.backupsPage.flowRestoreRecordItemsProgress', {
-            done: formatCount(processed),
-            total: formatCount(total),
-          })
-        : t('protection.backupsPage.flowRestoreRecordItemsProcessed', {
-            n: formatCount(processed),
-          }))
+    const restoredFiles = positiveCount(transfer.restored_file_count)
+    const restoredDirectories = positiveCount(transfer.restored_directory_count)
+    const restoredSymlinks = positiveCount(transfer.restored_symlink_count)
+    const hasRestoredCounts = [
+      transfer.restored_file_count,
+      transfer.restored_directory_count,
+      transfer.restored_symlink_count,
+    ].some((value) => value != null && Number.isFinite(Number(value)))
+    if (hasRestoredCounts) {
+      parts.push(t('protection.backupsPage.flowRestoreRecordRestoredObjects', {
+        files: formatCount(restoredFiles),
+        directories: formatCount(restoredDirectories),
+        symlinks: formatCount(restoredSymlinks),
+      }))
     }
-    const processedBytes = Number(transfer.processed_bytes ?? transfer.bytes_done ?? 0)
+    if (processed > 0) {
+      if (!hasRestoredCounts) {
+        parts.push(total > 0
+          ? t('protection.backupsPage.flowRestoreRecordItemsProgress', {
+              done: formatCount(processed),
+              total: formatCount(total),
+            })
+          : t('protection.backupsPage.flowRestoreRecordItemsProcessed', {
+              n: formatCount(processed),
+            }))
+      }
+    }
+    const processedBytes = Number(transfer.bytes_done ?? transfer.processed_bytes ?? 0)
     if (Number.isFinite(processedBytes) && processedBytes > 0) {
-      const capacity = transferCapacityText(t, transfer as TransferProgress)
-      if (capacity) parts.push(capacity)
+      parts.push(t('protection.backupsPage.flowRestoreRecordRestoredCapacity', {
+        size: formatBytes(processedBytes),
+      }))
     }
     return parts
   }

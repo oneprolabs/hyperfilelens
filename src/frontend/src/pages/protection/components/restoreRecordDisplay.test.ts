@@ -89,6 +89,8 @@ describe('restore record display', () => {
   it('formats available restore counts, capacity, speed, and ETA', () => {
     const t = (key: string, args?: Record<string, unknown>) => {
       if (key.endsWith('flowRestoreRecordItemsProgress')) return `${args?.done} / ${args?.total} items processed`
+      if (key.endsWith('flowRestoreRecordRestoredObjects')) return `Restored: ${args?.files} files, ${args?.directories} directories, ${args?.symlinks} symbolic links`
+      if (key.endsWith('flowRestoreRecordRestoredCapacity')) return `Restore capacity: ${args?.size}`
       if (key.endsWith('bytesCapacity')) return `${args?.done} / ${args?.total}`
       if (key.endsWith('etaSeconds')) return `${args?.n}s remaining`
       return key
@@ -107,8 +109,8 @@ describe('restore record display', () => {
       },
     })).toEqual([
       '4 / 10 items processed',
-      '2.00 MB / 8.00 MB',
-      '500 KB/s',
+      '1.91 MB / 7.63 MB',
+      '488 KB/s',
       '12s remaining',
     ])
   })
@@ -136,6 +138,8 @@ describe('restore record display', () => {
   it('keeps valid final metrics for a successful restore', () => {
     const t = (key: string, args?: Record<string, unknown>) => {
       if (key.endsWith('flowRestoreRecordItemsProgress')) return `${args?.done} / ${args?.total} items processed`
+      if (key.endsWith('flowRestoreRecordRestoredObjects')) return `Restored: ${args?.files} files, ${args?.directories} directories, ${args?.symlinks} symbolic links`
+      if (key.endsWith('flowRestoreRecordRestoredCapacity')) return `Restore capacity: ${args?.size}`
       if (key.endsWith('bytesCapacity')) return `${args?.done} / ${args?.total}`
       return key
     }
@@ -143,15 +147,45 @@ describe('restore record display', () => {
     expect(restoreRecordRuntimeMetricParts(t, {
       transfer_progress: {
         phase: 'done',
-        processed_count: 263,
-        total_count: 263,
+        restored_file_count: 240,
+        restored_directory_count: 22,
+        restored_symlink_count: 1,
         bytes_done: 649_000_000,
         bytes_total: 649_000_000,
         bytes_total_known: true,
       },
     }, 'success')).toEqual([
-      '263 / 263 items processed',
-      '649 MB / 649 MB',
+      'Restored: 240 files, 22 directories, 1 symbolic links',
+      'Restore capacity: 619 MB',
     ])
+  })
+
+  it('shows processed items while a restore is running', () => {
+    const t = (key: string, args?: Record<string, unknown>) => {
+      if (key.endsWith('flowRestoreRecordItemsProgress')) return `${args?.done} / ${args?.total} items processed`
+      return key
+    }
+    expect(restoreRecordRuntimeMetricParts(t, {
+      transfer_progress: {
+        phase: 'transferring',
+        processed_count: 12884,
+        total_count: 12898,
+      },
+    }, 'running')).toEqual(['12,884 / 12,898 items processed'])
+  })
+
+  it('shows explicit zero terminal object counts', () => {
+    const t = (key: string, args?: Record<string, unknown>) => {
+      if (key.endsWith('flowRestoreRecordRestoredObjects')) return `Restored: ${args?.files} files, ${args?.directories} directories, ${args?.symlinks} symbolic links`
+      return key
+    }
+    expect(restoreRecordRuntimeMetricParts(t, {
+      transfer_progress: {
+        phase: 'done',
+        restored_file_count: 0,
+        restored_directory_count: 0,
+        restored_symlink_count: 0,
+      },
+    }, 'success')).toEqual(['Restored: 0 files, 0 directories, 0 symbolic links'])
   })
 })

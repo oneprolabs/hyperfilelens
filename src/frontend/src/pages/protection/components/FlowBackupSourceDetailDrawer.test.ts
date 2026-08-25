@@ -106,6 +106,27 @@ describe('FlowBackupSourceDetailDrawer target validation refresh', () => {
 })
 
 describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
+  it('adds snapshot filters and refresh without an advanced-filter entry', () => {
+    const snapshotTab = sourceBetween(
+      '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',
+      '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',
+    )
+    const loader = sourceBetween(
+      'async function loadSnapshotsForSource()',
+      'async function downloadSelectedBrowserPaths()',
+    )
+
+    expect(snapshotTab).toContain('v-model="snapshotFilterId"')
+    expect(snapshotTab).toContain('v-model="snapshotFilterStatus"')
+    expect(snapshotTab).toContain('v-model="snapshotFilterTimeMode"')
+    expect(snapshotTab).toContain('@click="loadSnapshotsForSource"')
+    expect(snapshotTab).not.toContain('advancedFilter')
+    expect(loader).toContain('snapshot_uid: appliedSnapshotFilterId.value || undefined')
+    expect(loader).toContain('status: snapshotFilterStatus.value || undefined')
+    expect(loader).toContain('started_from: startedRange.from')
+    expect(loader).toContain('started_to: startedRange.to')
+  })
+
   it('blocks snapshot restore actions while the source backup is active', () => {
     const restoreGuard = sourceBetween(
       'function canRestoreSnapshot(row: BackupSourceSnapshot)',
@@ -209,6 +230,50 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(drawer).toContain('.snapshot-directory-expand-panel { position: sticky; left: 35px;')
     expect(drawer).toContain('width: calc(100cqw - 49px);')
     expect(drawer).toContain('.snapshot-directory-table { width: 100%; min-width: 0; }')
+  })
+
+  it('keeps expanded restore details pinned to the drawer viewport', () => {
+    expect(drawer).toContain('class="hfl-list-table restore-task-drawer-table restore-records-table"')
+    expect(drawer).toContain('.restore-records-table { container-type: inline-size; }')
+    expect(drawer).toContain('.restore-record-expand-panel { position: sticky; left: 35px;')
+    expect(drawer).toContain('width: calc(100cqw - 49px);')
+    expect(drawer).toContain('max-width: calc(100cqw - 49px); overflow-x: hidden; margin-left: 35px;')
+  })
+
+  it('adds a single restore record search field and ordered status filters without advanced filtering', () => {
+    const restoreTab = sourceBetween(
+      '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',
+      '<el-tab-pane :label="t(\'protection.backupDetail.tabTasks\')" name="tasks">',
+    )
+    const loader = sourceBetween(
+      'async function loadRestoreRecordsForSource',
+      'function stopRestoreRecordPolling()',
+    )
+
+    expect(restoreTab).toContain('v-model="restoreRecordFilterQuery"')
+    expect(restoreTab).toContain('v-model="restoreRecordSearchField"')
+    expect(restoreTab).not.toContain('v-model="restoreRecordSearchField" multiple')
+    expect(restoreTab).toContain('@change="handleRestoreRecordSearchFieldChange"')
+    expect(restoreTab).toContain('v-model="restoreRecordFilterStatus"')
+    expect(restoreTab).toContain('v-model="restoreRecordFilterSourceMode"')
+    expect(restoreTab).toContain('v-model="restoreRecordFilterTimeMode"')
+    expect(restoreTab).toContain('@click="loadRestoreRecordsForSource()"')
+    expect(restoreTab).not.toContain('advancedFilter')
+    expect(loader).toContain('search_fields: restoreRecordSearchField.value')
+    expect(loader).toContain('status: restoreRecordFilterStatus.value || undefined')
+    expect(loader).toContain('source_mode: restoreRecordFilterSourceMode.value || undefined')
+    expect(loader).toContain('created_from: createdRange.from')
+    expect(loader).toContain('created_to: createdRange.to')
+    expect(drawer).toContain("const restoreRecordSearchField = ref<RestoreRecordSearchField>('restore_uid')")
+    expect(drawer).toContain("const RESTORE_RECORD_STATUS_OPTIONS = ['success', 'running', 'failed', 'cancelled', 'pending', 'timeout']")
+    expect(restoreTab).toContain('v-for="option in restoreRecordStatusOptions"')
+    expect(restoreTab).not.toContain('v-for="option in taskStatusOptions"')
+    expect(en.ops.task.status.success).toBe('Succeeded')
+    expect(en.ops.task.status.running).toBe('Running')
+    expect(en.ops.task.status.failed).toBe('Failed')
+    expect(en.ops.task.status.cancelled).toBe('Cancelled')
+    expect(en.ops.task.status.pending).toBe('Queued')
+    expect(en.ops.task.status.timeout).toBe('Timed out')
   })
 
   it('preserves loaded snapshot details when the active tab refreshes its list', () => {

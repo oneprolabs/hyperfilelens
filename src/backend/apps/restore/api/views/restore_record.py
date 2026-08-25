@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils.dateparse import parse_datetime
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
@@ -30,6 +31,32 @@ from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
 from apps.source.services.internal.nas_share_path import share_root_label
 from apps.task.models import Task
+
+
+RESTORE_RECORD_SEARCH_FIELDS = {"restore_uid", "snapshot_uid", "task_uuid"}
+
+
+def _datetime_query_param(value: str | None, field_name: str):
+    if not value:
+        return None
+    parsed = parse_datetime(value)
+    if parsed is None:
+        raise ValidationError({field_name: "Must be a valid ISO 8601 datetime."})
+    return parsed
+
+
+def _restore_record_search_fields(value: str | None) -> list[str]:
+    fields = [
+        item.strip() for item in str(value or "restore_uid").split(",") if item.strip()
+    ]
+    invalid = sorted(set(fields) - RESTORE_RECORD_SEARCH_FIELDS)
+    if invalid:
+        raise ValidationError(
+            {"search_fields": f"Unsupported search fields: {', '.join(invalid)}."}
+        )
+    if not fields:
+        raise ValidationError({"search_fields": "Select at least one search field."})
+    return fields
 
 
 def _validation_error(exc: DjangoValidationError) -> ValidationError:
@@ -67,12 +94,26 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         org = require_org(self.request)
         params = self.request.query_params
         source_ref_id = params.get("source_ref_id")
+        task_status = params.get("status") or None
+        if task_status and task_status not in Task.Status.values:
+            raise ValidationError({"status": "Unsupported task status."})
+        source_mode = params.get("source_mode") or None
+        if source_mode and source_mode not in RestoreRecord.SourceMode.values:
+            raise ValidationError({"source_mode": "Unsupported restore configuration."})
         return filter_restore_records(
             restore_records_queryset(organization_id=org.id),
+            organization_id=org.id,
             source_type=params.get("source_type") or None,
             source_ref_id=int(source_ref_id) if source_ref_id else None,
             task_uuid=params.get("task_uuid") or None,
             search=params.get("search") or None,
+            search_fields=_restore_record_search_fields(params.get("search_fields")),
+            status=task_status,
+            source_mode=source_mode,
+            created_from=_datetime_query_param(
+                params.get("created_from"), "created_from"
+            ),
+            created_to=_datetime_query_param(params.get("created_to"), "created_to"),
         )
 
     def get_object(self):
@@ -187,7 +228,11 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
                 result_payload = task.result_payload if isinstance(task.result_payload, dict) else {}
                 transfer = result_payload.get("transfer_progress")
                 if isinstance(transfer, dict):
-                    payload["transfer_progress"] = transfer
+                    derived = payload.get("transfer_progress")
+                    payload["transfer_progress"] = {
+                        **transfer,
+                        **(derived if isinstance(derived, dict) else {}),
+                    }
         progress = float(task.progress or 0) if task is not None else 0.0
         return Response({
             "progress": progress,

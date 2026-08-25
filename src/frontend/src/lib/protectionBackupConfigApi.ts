@@ -229,6 +229,7 @@ export type SnapshotDownloadTaskResult = {
 export type BackupSourceSnapshotListParams = {
   page?: number
   page_size?: number
+  snapshot_uid?: string
   search?: string
   source_type?: string
   source_ref_id?: number
@@ -236,6 +237,8 @@ export type BackupSourceSnapshotListParams = {
   repository_id?: number
   status?: string
   exclude_status?: string
+  started_from?: string
+  started_to?: string
   ordering?: string
   include_directory_snapshots?: number
 }

@@ -113,7 +113,7 @@ import {
 } from '../../../lib/kopiaProgress'
 import type { TaskEventRow, TaskResourceRow, TaskRow } from '../../../lib/taskApi'
 import { getTask, listTaskEvents, listTasks } from '../../../lib/taskApi'
-import type { RestoreEndpointType, RestoreRecord, RestoreRecordItem } from '../../../lib/restoreApi'
+import type { RestoreEndpointType, RestoreRecord, RestoreRecordItem, RestoreRecordSearchField } from '../../../lib/restoreApi'
 import { listRestoreRecords, fetchRestoreRecordRuntime } from '../../../lib/restoreApi'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../../lib/taskBackupSourceResource'
@@ -308,6 +308,16 @@ const sourceTaskRows = ref<TaskRow[]>([])
 const sourceTasksLoading = ref(false)
 const sourceTasksError = ref('')
 const sourceTasksTotal = ref(0)
+const snapshotFilterId = ref('')
+const snapshotFilterStatus = ref('')
+const snapshotFilterTimeMode = ref<'all' | '24h' | '7d' | '30d' | 'range'>('all')
+const snapshotFilterDateRange = ref<[Date, Date] | null>(null)
+const restoreRecordFilterQuery = ref('')
+const restoreRecordSearchField = ref<RestoreRecordSearchField>('restore_uid')
+const restoreRecordFilterStatus = ref('')
+const restoreRecordFilterSourceMode = ref<'' | 'plan' | 'manual'>('')
+const restoreRecordFilterTimeMode = ref<'all' | '24h' | '7d' | '30d' | 'range'>('all')
+const restoreRecordFilterDateRange = ref<[Date, Date] | null>(null)
 const taskFilterId = ref('')
 const taskFilterSearchField = ref<'name' | 'uuid'>('name')
 const taskFilterType = ref('')
@@ -319,6 +329,19 @@ const lastSourceTaskQuickTimeMode = ref<'all' | '24h' | '7d' | '30d'>('all')
 const taskAdvancedFilterDraft = reactive({
   dateRange: null as [Date, Date] | null,
 })
+const {
+  appliedSearch: appliedSnapshotFilterId,
+  clearSearch: clearSnapshotSearch,
+  resetSearch: resetSnapshotSearch,
+  runSearchNow: runSnapshotSearchNow,
+} = useListSearch(snapshotFilterId, () => reloadSnapshotsFromFirstPage())
+const {
+  appliedSearch: appliedRestoreRecordFilterQuery,
+  clearSearch: clearRestoreRecordSearch,
+  handleSearchFieldChange: handleRestoreRecordSearchFieldChange,
+  resetSearch: resetRestoreRecordSearch,
+  runSearchNow: runRestoreRecordSearchNow,
+} = useListSearch(restoreRecordFilterQuery, () => reloadRestoreRecordsFromFirstPage())
 const {
   appliedSearch: appliedTaskFilterId,
   clearSearch: clearSourceTaskSearch,
@@ -352,6 +375,8 @@ const resourceDetails = reactive<Record<string, ResourceDetailRow[]>>({})
 const resourceErrors = reactive<Record<string, string>>({})
 
 const DEFAULT_TASK_STATUS_OPTIONS = ['pending', 'waiting', 'running', 'success', 'failed', 'cancelled', 'timeout']
+const RESTORE_RECORD_STATUS_OPTIONS = ['success', 'running', 'failed', 'cancelled', 'pending', 'timeout']
+const SNAPSHOT_STATUS_OPTIONS = ['creating', 'available', 'partial', 'failed', 'deleting', 'delete_failed', 'deleted']
 const DEFAULT_TASK_TYPE_OPTIONS = ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'backup_config_reset', 'backup_config_provision']
 const sourceId = computed(() => props.source?.id ?? '')
 const aggregate = computed(() => (sourceId.value ? aggregateForSource(sourceId.value) : null))
@@ -536,6 +561,12 @@ const displayedRestoreRecords = computed(() => {
   if (!target || restoreRecords.value.some((record) => record.id === target.id)) return restoreRecords.value
   return [target, ...restoreRecords.value]
 })
+const hasRestoreRecordFilters = computed(() => Boolean(
+  appliedRestoreRecordFilterQuery.value.trim()
+  || restoreRecordFilterStatus.value
+  || restoreRecordFilterSourceMode.value
+  || restoreRecordFilterTimeMode.value !== 'all',
+))
 const hasActiveRestoreRecords = computed(() => displayedRestoreRecords.value.some((record) => {
   const status = String(record.task_summary?.status || '').toLowerCase()
   return status === 'pending' || status === 'running'
@@ -551,6 +582,23 @@ watch(
 const taskSearchFieldOptions = computed(() => [
   { value: 'name' as const, label: t('ops.task.searchName') },
   { value: 'uuid' as const, label: t('ops.task.searchUuid') },
+])
+const snapshotStatusOptions = computed(() => SNAPSHOT_STATUS_OPTIONS.map((value) => ({
+  value,
+  label: snapshotStatusLabel(value),
+})))
+const restoreRecordSearchFieldOptions = computed(() => [
+  { value: 'restore_uid' as const, label: t('protection.backupsPage.flowRestoreSearchRecordId') },
+  { value: 'snapshot_uid' as const, label: t('protection.backupsPage.flowRestoreSearchSnapshotId') },
+  { value: 'task_uuid' as const, label: t('protection.backupsPage.flowRestoreSearchTaskId') },
+])
+const restoreRecordStatusOptions = computed(() => RESTORE_RECORD_STATUS_OPTIONS.map((value) => ({
+  value,
+  label: taskStatusLabel(value),
+})))
+const restoreRecordSourceModeOptions = computed(() => [
+  { value: 'plan' as const, label: t('protection.backupsPage.flowRestoreRecordModePlan') },
+  { value: 'manual' as const, label: t('protection.backupsPage.flowRestoreRecordModeManual') },
 ])
 const taskTypeOptions = computed(() => {
   const values = Array.from(new Set([
@@ -573,6 +621,7 @@ const sourceTaskTimeModeOptions = computed(() => [
   { value: '30d' as const, label: t('ops.task.time30d') },
   { value: 'range' as const, label: t('ops.task.timeRange') },
 ])
+const detailTimeModeOptions = sourceTaskTimeModeOptions
 const sourceTaskDateRangeShortcuts = computed(() => [
   {
     text: t('ops.task.time24h'),
@@ -1649,6 +1698,29 @@ function isoDateParam(date?: Date | null) {
   return date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : undefined
 }
 
+type DetailTimeMode = 'all' | '24h' | '7d' | '30d' | 'range'
+
+function detailTimeRangeParams(mode: DetailTimeMode, range: [Date, Date] | null) {
+  const now = new Date()
+  if (mode === '24h') return { from: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(), to: undefined }
+  if (mode === '7d') return { from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(), to: undefined }
+  if (mode === '30d') return { from: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString(), to: undefined }
+  if (mode === 'range' && range) {
+    const end = new Date(range[1])
+    end.setMilliseconds(999)
+    return { from: isoDateParam(range[0]), to: isoDateParam(end) }
+  }
+  return { from: undefined, to: undefined }
+}
+
+function onSnapshotTimeModeChange(value: DetailTimeMode) {
+  if (value !== 'range') snapshotFilterDateRange.value = null
+}
+
+function onRestoreRecordTimeModeChange(value: DetailTimeMode) {
+  if (value !== 'range') restoreRecordFilterDateRange.value = null
+}
+
 function sourceTaskCreatedRangeParams() {
   const now = new Date()
   if (taskFilterTimeMode.value === '24h') return { created_after: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(), created_before: undefined }
@@ -2183,12 +2255,17 @@ async function loadSnapshotsForSource() {
   const signal = requests.nextSignal('flow-source-snapshots')
   sourceSnapshotsLoading.value = true
   try {
+    const startedRange = detailTimeRangeParams(snapshotFilterTimeMode.value, snapshotFilterDateRange.value)
     const result = await listBackupSourceSnapshots({
       page: snapshotPagination.page,
       page_size: snapshotPagination.pageSize,
+      snapshot_uid: appliedSnapshotFilterId.value || undefined,
       source_type: endpoint.sourceType,
       source_ref_id: endpoint.sourceRefId,
-      exclude_status: HIDDEN_SOURCE_SNAPSHOT_STATUSES.join(','),
+      status: snapshotFilterStatus.value || undefined,
+      exclude_status: snapshotFilterStatus.value ? undefined : HIDDEN_SOURCE_SNAPSHOT_STATUSES.join(','),
+      started_from: startedRange.from,
+      started_to: startedRange.to,
       ordering: '-created_at',
     }, { signal })
     sourceSnapshotRows.value = result.results.filter(isVisibleSourceSnapshot)
@@ -2284,14 +2361,23 @@ async function loadRestoreRecordsForSource(options: { silent?: boolean } = {}) {
   if (silent) restoreRecordsSilentRefreshing.value = true
   else restoreRecordsLoading.value = true
   try {
+    const createdRange = detailTimeRangeParams(restoreRecordFilterTimeMode.value, restoreRecordFilterDateRange.value)
     const result = await listRestoreRecords({
       page: restoreRecordPagination.page,
       page_size: restoreRecordPagination.pageSize,
       source_type: endpoint.sourceType,
       source_ref_id: endpoint.sourceRefId,
+      search: appliedRestoreRecordFilterQuery.value || undefined,
+      search_fields: restoreRecordSearchField.value,
+      status: restoreRecordFilterStatus.value || undefined,
+      source_mode: restoreRecordFilterSourceMode.value || undefined,
+      created_from: createdRange.from,
+      created_to: createdRange.to,
     }, { signal })
     restoreRecords.value = result.results
-    const target = await resolveTargetedRestoreRecord(result.results, endpoint, signal)
+    let target: RestoreRecord | null = null
+    if (hasRestoreRecordFilters.value) targetedRestoreRecord.value = null
+    else target = await resolveTargetedRestoreRecord(result.results, endpoint, signal)
     const currentRecordIds = new Set(displayedRestoreRecords.value.map((record) => record.id))
     if (expandedRestoreRecordRowKeys.value.some((id) => !currentRecordIds.has(id))) {
       resetExpandedRestoreItems()
@@ -2509,12 +2595,49 @@ watch(
 )
 
 /* Pagination and filter changes are explicit refreshes within the active tab. */
+function reloadSnapshotsFromFirstPage() {
+  if (!props.modelValue || activeTab.value !== 'snapshots') return
+  if (snapshotPagination.page !== 1) {
+    snapshotPagination.page = 1
+    return
+  }
+  void loadSnapshotsForSource()
+}
+
+function reloadRestoreRecordsFromFirstPage() {
+  if (!props.modelValue || activeTab.value !== 'restoreRecords') return
+  if (restoreRecordPagination.page !== 1) {
+    restoreRecordPagination.page = 1
+    return
+  }
+  void loadRestoreRecordsForSource()
+}
+
 watch(
   () => [restoreRecordPagination.page, restoreRecordPagination.pageSize] as const,
   () => {
     resetExpandedRestoreItems()
     if (props.modelValue && activeTab.value === 'restoreRecords') void loadRestoreRecordsForSource()
   },
+)
+
+watch(
+  () => [
+    snapshotFilterStatus.value,
+    snapshotFilterTimeMode.value,
+    snapshotFilterDateRange.value,
+  ] as const,
+  runSnapshotSearchNow,
+)
+
+watch(
+  () => [
+    restoreRecordFilterStatus.value,
+    restoreRecordFilterSourceMode.value,
+    restoreRecordFilterTimeMode.value,
+    restoreRecordFilterDateRange.value,
+  ] as const,
+  runRestoreRecordSearchNow,
 )
 
 /*
@@ -2569,8 +2692,18 @@ watch(sourceId, () => {
   snapshotPagination.count = 0
   sourceSnapshotRows.value = []
   sourceSnapshotsError.value = ''
+  resetSnapshotSearch()
+  snapshotFilterStatus.value = ''
+  snapshotFilterTimeMode.value = 'all'
+  snapshotFilterDateRange.value = null
   restoreRecords.value = []
   restoreRecordsError.value = ''
+  resetRestoreRecordSearch()
+  restoreRecordSearchField.value = 'restore_uid'
+  restoreRecordFilterStatus.value = ''
+  restoreRecordFilterSourceMode.value = ''
+  restoreRecordFilterTimeMode.value = 'all'
+  restoreRecordFilterDateRange.value = null
   targetedRestoreRecord.value = null
   appliedRestoreRecordTargetId.value = null
   restoreRecordRuntimeById.value = new Map()
@@ -2639,11 +2772,21 @@ function onClosed() {
   expandedSnapshotRowKeys.value = []
   sourceSnapshotRows.value = []
   sourceSnapshotsError.value = ''
+  resetSnapshotSearch()
+  snapshotFilterStatus.value = ''
+  snapshotFilterTimeMode.value = 'all'
+  snapshotFilterDateRange.value = null
   snapshotPagination.page = 1
   snapshotPagination.pageSize = DETAIL_PAGE_SIZE
   snapshotPagination.count = 0
   restoreRecords.value = []
   restoreRecordsError.value = ''
+  resetRestoreRecordSearch()
+  restoreRecordSearchField.value = 'restore_uid'
+  restoreRecordFilterStatus.value = ''
+  restoreRecordFilterSourceMode.value = ''
+  restoreRecordFilterTimeMode.value = 'all'
+  restoreRecordFilterDateRange.value = null
   targetedRestoreRecord.value = null
   appliedRestoreRecordTargetId.value = null
   restoreRecordRuntimeById.value = new Map()
@@ -3309,6 +3452,76 @@ function onClosed() {
           :label="t('protection.backupsPage.flowSourceDetailTabSnapshots')"
           name="snapshots"
         >
+          <div class="hfl-list-toolbar dp-source-task-toolbar dp-source-record-toolbar">
+            <ElInput
+              v-model="snapshotFilterId"
+              clearable
+              class="hfl-list-search dp-source-task-toolbar__search"
+              :placeholder="t('protection.backupsPage.flowSnapshotSearchPlaceholder')"
+              @clear="clearSnapshotSearch"
+            >
+              <template #prefix>
+                <Search
+                  :size="16"
+                  class="text-slate-400"
+                />
+              </template>
+            </ElInput>
+            <ElSelect
+              v-model="snapshotFilterStatus"
+              clearable
+              :placeholder="t('ops.task.filterStatus')"
+              style="width: 130px"
+              popper-class="dp-source-task-select-popper"
+            >
+              <ElOption
+                v-for="option in snapshotStatusOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </ElSelect>
+            <ElSelect
+              v-model="snapshotFilterTimeMode"
+              :placeholder="t('protection.backupsPage.flowSnapshotStartTime')"
+              style="width: 150px"
+              popper-class="dp-source-task-select-popper"
+              @change="onSnapshotTimeModeChange"
+            >
+              <ElOption
+                v-for="option in detailTimeModeOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </ElSelect>
+            <ElDatePicker
+              v-if="snapshotFilterTimeMode === 'range'"
+              v-model="snapshotFilterDateRange"
+              type="datetimerange"
+              format="YYYY-MM-DD HH:mm:ss"
+              :default-time="[new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)]"
+              :shortcuts="sourceTaskDateRangeShortcuts"
+              :start-placeholder="t('ops.task.startTime')"
+              :end-placeholder="t('ops.task.endTime')"
+              popper-class="dp-source-task-select-popper"
+              class="dp-source-record-toolbar__range"
+            />
+            <div class="hfl-list-toolbar__right">
+              <ElButton
+                class="hfl-refresh-button"
+                :title="t('ops.task.btnRefresh')"
+                :aria-label="t('ops.task.btnRefresh')"
+                :disabled="sourceSnapshotsLoading"
+                @click="loadSnapshotsForSource"
+              >
+                <RefreshCw
+                  :size="16"
+                  :class="{ 'is-spinning': sourceSnapshotsLoading }"
+                />
+              </ElButton>
+            </div>
+          </div>
           <el-alert
             v-if="sourceSnapshotsError"
             :title="sourceSnapshotsError"
@@ -3995,6 +4208,105 @@ function onClosed() {
           :label="t('protection.backupsPage.flowSourceDetailTabRestoreRecords')"
           name="restoreRecords"
         >
+          <div class="hfl-list-toolbar dp-source-task-toolbar dp-source-record-toolbar">
+            <ElInput
+              v-model="restoreRecordFilterQuery"
+              clearable
+              class="hfl-list-search dp-source-record-toolbar__restore-search"
+              :placeholder="t('protection.backupsPage.flowRestoreSearchPlaceholder')"
+              @clear="clearRestoreRecordSearch"
+            >
+              <template #prepend>
+                <ElSelect
+                  v-model="restoreRecordSearchField"
+                  style="width: 120px"
+                  popper-class="dp-source-task-select-popper"
+                  @change="handleRestoreRecordSearchFieldChange"
+                >
+                  <ElOption
+                    v-for="option in restoreRecordSearchFieldOptions"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </ElSelect>
+              </template>
+              <template #prefix>
+                <Search
+                  :size="16"
+                  class="text-slate-400"
+                />
+              </template>
+            </ElInput>
+            <ElSelect
+              v-model="restoreRecordFilterStatus"
+              clearable
+              :placeholder="t('ops.task.filterStatus')"
+              style="width: 130px"
+              popper-class="dp-source-task-select-popper"
+            >
+              <ElOption
+                v-for="option in restoreRecordStatusOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </ElSelect>
+            <ElSelect
+              v-model="restoreRecordFilterSourceMode"
+              clearable
+              :placeholder="t('protection.backupsPage.flowRestoreConfiguration')"
+              style="width: 150px"
+              popper-class="dp-source-task-select-popper"
+            >
+              <ElOption
+                v-for="option in restoreRecordSourceModeOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </ElSelect>
+            <ElSelect
+              v-model="restoreRecordFilterTimeMode"
+              :placeholder="t('protection.backupsPage.flowRestoreCreatedTime')"
+              style="width: 150px"
+              popper-class="dp-source-task-select-popper"
+              @change="onRestoreRecordTimeModeChange"
+            >
+              <ElOption
+                v-for="option in detailTimeModeOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </ElSelect>
+            <ElDatePicker
+              v-if="restoreRecordFilterTimeMode === 'range'"
+              v-model="restoreRecordFilterDateRange"
+              type="datetimerange"
+              format="YYYY-MM-DD HH:mm:ss"
+              :default-time="[new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)]"
+              :shortcuts="sourceTaskDateRangeShortcuts"
+              :start-placeholder="t('ops.task.startTime')"
+              :end-placeholder="t('ops.task.endTime')"
+              popper-class="dp-source-task-select-popper"
+              class="dp-source-record-toolbar__range"
+            />
+            <div class="hfl-list-toolbar__right">
+              <ElButton
+                class="hfl-refresh-button"
+                :title="t('ops.task.btnRefresh')"
+                :aria-label="t('ops.task.btnRefresh')"
+                :disabled="restoreRecordsLoading"
+                @click="loadRestoreRecordsForSource()"
+              >
+                <RefreshCw
+                  :size="16"
+                  :class="{ 'is-spinning': restoreRecordsLoading }"
+                />
+              </ElButton>
+            </div>
+          </div>
           <el-alert
             v-if="restoreRecordsError"
             :title="t('protection.backupsPage.flowSourceDetailRestoreRecordsLoadFailed', { msg: restoreRecordsError })"
@@ -4015,7 +4327,7 @@ function onClosed() {
             :expand-row-keys="expandedRestoreRecordRowKeys"
             :header-cell-style="TABLE_HEADER_STYLE"
             stripe
-            class="hfl-list-table restore-task-drawer-table"
+            class="hfl-list-table restore-task-drawer-table restore-records-table"
             @expand-change="onRestoreRecordExpandChange"
           >
             <el-table-column
@@ -4363,7 +4675,7 @@ function onClosed() {
             </el-table-column>
             <el-table-column
               :label="t('protection.backupDetail.colSnapId')"
-              width="210"
+              width="168"
             >
               <template #default="{ row }">
                 <span
@@ -6151,9 +6463,22 @@ function onClosed() {
   font-weight: 700;
 }
 
+.restore-records-table {
+  container-type: inline-size;
+}
+
 .restore-record-expand-panel {
+  position: sticky;
+  left: 35px;
+  box-sizing: border-box;
+  width: calc(100cqw - 49px);
+  min-width: 0;
+  max-width: calc(100cqw - 49px);
+  overflow-x: hidden;
+  margin-left: 35px;
   padding: 12px 16px 14px;
   background: rgb(248 250 252);
+  contain: inline-size;
 }
 
 .restore-record-time-summary {
@@ -6329,6 +6654,15 @@ function onClosed() {
 }
 
 @media (max-width: 760px) {
+  .restore-record-expand-panel {
+    left: 21px;
+    width: calc(100cqw - 27px);
+    max-width: calc(100cqw - 27px);
+    margin-left: 21px;
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
   .restore-record-time-summary {
     grid-template-columns: minmax(0, 1fr);
     gap: 9px;
@@ -6530,8 +6864,18 @@ function onClosed() {
   max-width: 100%;
 }
 
+.dp-source-record-toolbar__restore-search {
+  width: 390px;
+}
+
+.dp-source-record-toolbar__range {
+  width: 360px;
+}
+
 @media (max-width: 760px) {
-  .dp-source-task-toolbar__search {
+  .dp-source-task-toolbar__search,
+  .dp-source-record-toolbar__restore-search,
+  .dp-source-record-toolbar__range {
     width: 100%;
   }
 }

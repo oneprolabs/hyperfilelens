@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from common.observability.celery_context import logged_celery_task
 
+from apps.node.models import Node
 from apps.storage.repositories.models import (
     Repository,
     RepositoryExecutionTarget,
@@ -84,6 +85,41 @@ def _repository_health_startup_dispatch_lock() -> str:
     return "storage:repository-health:startup-dispatch"
 
 
+def _project_bound_node_unavailability(repository: Repository) -> bool:
+    """Mark a bound repository offline when its execution node is not online."""
+    if (
+        repository.bind_node_type != Repository.BindNodeType.PROXY
+        or not repository.bind_node_id
+    ):
+        return False
+    node_availability = Node.objects.filter(
+        pk=repository.bind_node_id,
+        organization_id=repository.organization_id,
+        is_deleted=False,
+    ).values_list("availability", flat=True).first()
+    if node_availability != Node.Availability.OFFLINE:
+        return False
+    if repository.health == Repository.Health.OFFLINE:
+        return True
+    current_scope = Repository.objects.filter(
+        pk=repository.id,
+        status=Repository.Status.CREATED,
+        bind_node_type=Repository.BindNodeType.PROXY,
+        bind_node_id=repository.bind_node_id,
+        updated_at=repository.updated_at,
+    )
+    projected = bool(
+        current_scope.update(
+            health=Repository.Health.OFFLINE,
+            health_failures=0,
+        )
+    )
+    if projected:
+        repository.health = Repository.Health.OFFLINE
+        repository.health_failures = 0
+    return projected
+
+
 @worker_ready.connect
 def enqueue_startup_repository_health_checks(sender=None, **_kwargs) -> None:
     """Schedule one health sweep when a Celery worker becomes ready."""
@@ -127,7 +163,12 @@ def reconcile_storage_repositories(
             async_agent_probes=True,
         )
     return {
-        "repositories_scanned": result.get("repositories_synced", 0),
+        "repositories_scanned": result.get(
+            "repositories_attempted", result.get("repositories_synced", 0)
+        ),
+        "repositories_synced": result.get("repositories_synced", 0),
+        "repositories_failed": result.get("repositories_failed", 0),
+        "failed_repository_ids": result.get("failed_repository_ids", []),
         "snapshots_upserted": result.get("snapshots_upserted", 0),
         "snapshots_marked_deleted": 0,
         "observations_dispatched": result.get("observations_dispatched", 0),
@@ -198,6 +239,13 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                 "repository_id": repository_id,
                 "status": "skipped",
                 "eligible": False,
+            }
+        if _project_bound_node_unavailability(repository):
+            return {
+                "repository_id": repository_id,
+                "status": Repository.Health.OFFLINE,
+                "probe_status": "bound_node_offline",
+                "health_failures": repository.health_failures,
             }
         try:
             node_tasks = dispatch_automatic_repository_observation(

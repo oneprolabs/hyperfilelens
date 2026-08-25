@@ -46,6 +46,15 @@ def _truthy_query_param(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _datetime_query_param(value: str | None, field_name: str):
+    if not value:
+        return None
+    parsed = parse_datetime(value)
+    if parsed is None:
+        raise ValidationError({field_name: "Must be a valid ISO 8601 datetime."})
+    return parsed
+
+
 def _snapshot_context(
     *,
     organization_id: int,
@@ -114,17 +123,29 @@ class BackupSourceSnapshotViewSet(
         org = require_org(self.request)
         params = self.request.query_params
         requested_statuses = _csv_query_param(params.get("status"))
+        invalid_statuses = sorted(set(requested_statuses) - set(BackupSourceSnapshot.Status.values))
+        if invalid_statuses:
+            raise ValidationError({"status": f"Unsupported snapshot statuses: {', '.join(invalid_statuses)}."})
         requested_status = requested_statuses[0] if len(requested_statuses) == 1 else None
         source_ref_id = _int_query_param(params.get("source_ref_id"), "source_ref_id")
         backup_config_id = _int_query_param(params.get("backup_config_id"), "backup_config_id")
         repository_id = _int_query_param(params.get("repository_id"), "repository_id")
         created_from = parse_datetime(params.get("created_from", "")) if params.get("created_from") else None
         created_to = parse_datetime(params.get("created_to", "")) if params.get("created_to") else None
+        started_from = _datetime_query_param(params.get("started_from"), "started_from")
+        started_to = _datetime_query_param(params.get("started_to"), "started_to")
         exclude_statuses = _csv_query_param(params.get("exclude_status"))
         return filter_backup_source_snapshots(
             backup_source_snapshots_queryset(
                 organization_id=org.id,
-                include_deleted=BackupSourceSnapshot.Status.DELETED in requested_statuses,
+                include_deleted=bool(
+                    set(requested_statuses)
+                    & {
+                        BackupSourceSnapshot.Status.DELETING,
+                        BackupSourceSnapshot.Status.DELETE_FAILED,
+                        BackupSourceSnapshot.Status.DELETED,
+                    }
+                ),
             ),
             organization_id=org.id,
             source_type=params.get("source_type") or None,
@@ -136,6 +157,9 @@ class BackupSourceSnapshotViewSet(
             exclude_statuses=exclude_statuses,
             created_from=created_from,
             created_to=created_to,
+            started_from=started_from,
+            started_to=started_to,
+            snapshot_uid=params.get("snapshot_uid") or None,
             search=params.get("search") or None,
             ordering=params.get("ordering") or None,
         )

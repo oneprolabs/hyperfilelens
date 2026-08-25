@@ -146,9 +146,9 @@ describe('TaskProgressCell', () => {
       hash_speed_bps: 393_000_000,
       eta_seconds: null,
     })
-    const expectedTitle = 'Backing up\nScanning: 393 MB/s'
+    const expectedTitle = 'Backing up\nScanning: 375 MB/s'
 
-    expect(wrapper.get('.task-progress-cell__metric-line').text()).toBe('Scanning: 393 MB/s')
+    expect(wrapper.get('.task-progress-cell__metric-line').text()).toBe('Scanning: 375 MB/s')
     expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe(expectedTitle)
     expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe(expectedTitle)
   })
@@ -157,7 +157,7 @@ describe('TaskProgressCell', () => {
     const wrapper = mountCell(59.1)
     const line = wrapper.get('.task-progress-cell__metric-line')
 
-    expect(line.text()).toBe('Processed: 900 MB / 322 GB · Upload: 5.74 MB/s · 15 min left')
+    expect(line.text()).toBe('Processed: 858 MB / 300 GB · Upload: 5.47 MB/s · 15 min left')
     expect(line.element.children).toHaveLength(0)
 
     const source = readFileSync(resolve(process.cwd(), 'src/pages/protection/components/TaskProgressCell.vue'), 'utf8')
@@ -169,8 +169,8 @@ describe('TaskProgressCell', () => {
 
     expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe([
       'Backing up',
-      'Processed: 900 MB / 322 GB',
-      'Upload: 5.74 MB/s',
+      'Processed: 858 MB / 300 GB',
+      'Upload: 5.47 MB/s',
       '15 min left',
     ].join('\n'))
   })

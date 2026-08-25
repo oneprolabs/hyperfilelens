@@ -170,6 +170,30 @@ class AgentNodeOnlineStatusTests(TestCase):
             countdown=2,
         )
 
+    def test_offline_transition_marks_bound_repository_offline(self):
+        self.node.availability = Node.Availability.ONLINE
+        self.node.save(update_fields=["availability", "updated_at"])
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="online-bound-repository",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            health_failures=1,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=self.node.id,
+        )
+
+        changed = record_node_availability(
+            node_id=self.node.id,
+            availability=Node.Availability.OFFLINE,
+        )
+
+        self.assertTrue(changed)
+        repository.refresh_from_db()
+        self.assertEqual(repository.health, Repository.Health.OFFLINE)
+        self.assertEqual(repository.health_failures, 0)
+
     def test_ws_connect_updates_connection_ip_without_overwriting_host_ip(self):
         self.node.ip_address = "10.20.1.15"
         self.node.save(update_fields=["ip_address", "updated_at"])
@@ -378,6 +402,32 @@ class AgentNodeOnlineStatusTests(TestCase):
         self.node.refresh_from_db()
         self.assertEqual(self.node.availability, Node.Availability.OFFLINE)
         self.assertEqual(summary["nodes_marked_offline"], 1)
+
+    def test_reconcile_marks_bound_repository_offline_with_stale_proxy(self):
+        self.node.role = NodeRole.PROXY
+        self.node.save(update_fields=["role", "updated_at"])
+        self._mark_ws_alive()
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+        self.redis.delete(redis_store.agent_loc_key(self.node.id))
+        stale_at = timezone.now() - timezone.timedelta(
+            seconds=node_conf.AGENT_LOC_TTL_SECONDS + 5,
+        )
+        Node.objects.filter(pk=self.node.id).update(last_seen_at=stale_at)
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="proxy-filesystem-repository",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=self.node.id,
+        )
+
+        summary = reconcile_stale_online_nodes(limit=10)
+
+        repository.refresh_from_db()
+        self.assertEqual(summary["nodes_marked_offline"], 1)
+        self.assertEqual(repository.health, Repository.Health.OFFLINE)
 
     def test_reconcile_skips_recent_last_seen(self):
         self._mark_ws_alive()

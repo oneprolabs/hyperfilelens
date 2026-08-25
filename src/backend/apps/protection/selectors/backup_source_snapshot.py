@@ -56,6 +56,9 @@ def filter_backup_source_snapshots(
     exclude_statuses: Iterable[str] | None = None,
     created_from=None,
     created_to=None,
+    started_from=None,
+    started_to=None,
+    snapshot_uid: str | None = None,
     search: str | None = None,
     ordering: str | None = None,
 ) -> QuerySet[BackupSourceSnapshot]:
@@ -79,6 +82,13 @@ def filter_backup_source_snapshots(
         queryset = queryset.filter(created_at__gte=created_from)
     if created_to is not None:
         queryset = queryset.filter(created_at__lte=created_to)
+    if started_from is not None:
+        queryset = queryset.filter(started_at__gte=started_from)
+    if started_to is not None:
+        queryset = queryset.filter(started_at__lte=started_to)
+    snapshot_uid_query = str(snapshot_uid or "").strip()
+    if snapshot_uid_query:
+        queryset = queryset.filter(snapshot_uid__icontains=snapshot_uid_query)
 
     return _apply_search(
         queryset=queryset,

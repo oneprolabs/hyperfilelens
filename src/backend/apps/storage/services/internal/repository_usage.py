@@ -1060,6 +1060,56 @@ def _repository_usage_queryset(
     ]
 
 
+def _sync_repository_usage_candidates(
+    repositories,
+    *,
+    recorded_at=None,
+    async_agent_probes: bool = False,
+) -> dict[str, Any]:
+    attempted = 0
+    synced = 0
+    snapshots_upserted = 0
+    observations_dispatched = 0
+    failed_repository_ids: list[int] = []
+    for repository in repositories:
+        attempted += 1
+        try:
+            if async_agent_probes and repository.repo_type in {
+                Repository.Type.NAS,
+                Repository.Type.PROXY_FS,
+            }:
+                from apps.storage.services.internal.repository_health import (
+                    dispatch_automatic_repository_observation,
+                )
+
+                node_tasks = dispatch_automatic_repository_observation(
+                    repository=repository,
+                    include_usage=True,
+                )
+                observations_dispatched += len(node_tasks or [])
+            else:
+                sync_repository_usage(repository, recorded_at=recorded_at)
+                snapshots_upserted += 1
+        except Exception:
+            failed_repository_ids.append(repository.id)
+            logger.exception(
+                "repository usage sync failed; continuing batch repository_id=%s "
+                "repository_type=%s",
+                repository.id,
+                repository.repo_type,
+            )
+            continue
+        synced += 1
+    return {
+        "repositories_attempted": attempted,
+        "repositories_synced": synced,
+        "repositories_failed": len(failed_repository_ids),
+        "failed_repository_ids": failed_repository_ids,
+        "snapshots_upserted": snapshots_upserted,
+        "observations_dispatched": observations_dispatched,
+    }
+
+
 def sync_organization_repositories(
     *,
     organization_id: int,
@@ -1089,38 +1139,20 @@ def sync_organization_repositories(
         force=force,
         stale_after_seconds=stale_after_seconds,
     )
-    synced = 0
-    snapshots_upserted = 0
-    observations_dispatched = 0
-    for repository in qs:
-        if async_agent_probes and repository.repo_type in {
-            Repository.Type.NAS,
-            Repository.Type.PROXY_FS,
-        }:
-            from apps.storage.services.internal.repository_health import (
-                dispatch_automatic_repository_observation,
-            )
-
-            node_tasks = dispatch_automatic_repository_observation(
-                repository=repository,
-                include_usage=True,
-            )
-            observations_dispatched += len(node_tasks or [])
-        else:
-            sync_repository_usage(repository, recorded_at=recorded_at)
-            snapshots_upserted += 1
-        synced += 1
-    logger.info(
-        "repository usage sync org finished org_id=%s repositories_synced=%s",
-        organization_id,
-        synced,
+    result = _sync_repository_usage_candidates(
+        qs,
+        recorded_at=recorded_at,
+        async_agent_probes=async_agent_probes,
     )
-    return {
-        "organization_id": organization_id,
-        "repositories_synced": synced,
-        "snapshots_upserted": snapshots_upserted,
-        "observations_dispatched": observations_dispatched,
-    }
+    logger.info(
+        "repository usage sync org finished org_id=%s repositories_attempted=%s "
+        "repositories_synced=%s repositories_failed=%s",
+        organization_id,
+        result["repositories_attempted"],
+        result["repositories_synced"],
+        result["repositories_failed"],
+    )
+    return {"organization_id": organization_id, **result}
 
 
 def sync_all_repositories(
@@ -1145,33 +1177,19 @@ def sync_all_repositories(
         force=force,
         stale_after_seconds=stale_after_seconds,
     )
-    synced = 0
-    snapshots_upserted = 0
-    observations_dispatched = 0
-    for repository in qs:
-        if async_agent_probes and repository.repo_type in {
-            Repository.Type.NAS,
-            Repository.Type.PROXY_FS,
-        }:
-            from apps.storage.services.internal.repository_health import (
-                dispatch_automatic_repository_observation,
-            )
-
-            node_tasks = dispatch_automatic_repository_observation(
-                repository=repository,
-                include_usage=True,
-            )
-            observations_dispatched += len(node_tasks or [])
-        else:
-            sync_repository_usage(repository, recorded_at=recorded_at)
-            snapshots_upserted += 1
-        synced += 1
-    logger.info("repository usage sync all finished repositories_synced=%s", synced)
-    return {
-        "repositories_synced": synced,
-        "snapshots_upserted": snapshots_upserted,
-        "observations_dispatched": observations_dispatched,
-    }
+    result = _sync_repository_usage_candidates(
+        qs,
+        recorded_at=recorded_at,
+        async_agent_probes=async_agent_probes,
+    )
+    logger.info(
+        "repository usage sync all finished repositories_attempted=%s "
+        "repositories_synced=%s repositories_failed=%s",
+        result["repositories_attempted"],
+        result["repositories_synced"],
+        result["repositories_failed"],
+    )
+    return result
 
 
 def _usage_refresh_lock_key(

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from django.db.models import QuerySet
+from collections.abc import Iterable
 
+from django.db.models import Q, QuerySet
+
+from apps.protection.models import BackupSourceSnapshot
 from apps.restore.models import RestorePlan, RestoreRecord
+from apps.task.models import Task
 
 
 def restore_plans_queryset(*, organization_id: int) -> QuerySet[RestorePlan]:
@@ -46,10 +50,16 @@ def restore_records_queryset(*, organization_id: int) -> QuerySet[RestoreRecord]
 def filter_restore_records(
     queryset: QuerySet[RestoreRecord],
     *,
+    organization_id: int,
     source_type: str | None = None,
     source_ref_id: int | None = None,
     task_uuid: str | None = None,
     search: str | None = None,
+    search_fields: Iterable[str] | None = None,
+    status: str | None = None,
+    source_mode: str | None = None,
+    created_from=None,
+    created_to=None,
 ) -> QuerySet[RestoreRecord]:
     if source_type:
         queryset = queryset.filter(source_type=source_type)
@@ -57,9 +67,37 @@ def filter_restore_records(
         queryset = queryset.filter(source_ref_id=source_ref_id)
     if task_uuid:
         queryset = queryset.filter(task_uuid=task_uuid)
+    if status:
+        task_uuids = Task.objects.filter(
+            organization_id=organization_id,
+            status=status,
+        ).values("task_uuid")
+        queryset = queryset.filter(task_uuid__in=task_uuids)
+    if source_mode:
+        queryset = queryset.filter(source_mode=source_mode)
+    if created_from is not None:
+        queryset = queryset.filter(created_at__gte=created_from)
+    if created_to is not None:
+        queryset = queryset.filter(created_at__lte=created_to)
     query = (search or "").strip()
     if query:
-        queryset = queryset.filter(restore_uid__icontains=query)
+        fields = set(search_fields or ["restore_uid"])
+        predicate = Q()
+        if "restore_uid" in fields:
+            predicate |= Q(restore_uid__icontains=query)
+        if "snapshot_uid" in fields:
+            snapshot_ids = BackupSourceSnapshot.objects.filter(
+                organization_id=organization_id,
+                snapshot_uid__icontains=query,
+            ).values("id")
+            predicate |= Q(source_snapshot_id__in=snapshot_ids)
+        if "task_uuid" in fields:
+            matching_tasks = Task.objects.filter(
+                organization_id=organization_id,
+                task_uuid__icontains=query,
+            ).values("task_uuid")
+            predicate |= Q(task_uuid__in=matching_tasks)
+        queryset = queryset.filter(predicate)
     return queryset
 
 
