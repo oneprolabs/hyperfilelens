@@ -76,6 +76,7 @@ func SendInventory(
 			"snapshot_artifact_upload_v1",
 			"snapshot_scope_resolve_v1",
 			"insight_safe_restore_v1",
+			"nas_mount_lifecycle_v1",
 			"network_inventory_v1",
 			"repository_server_port_range_v1",
 			"detached_uninstall_v2",

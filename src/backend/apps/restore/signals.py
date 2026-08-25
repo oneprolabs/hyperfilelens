@@ -405,7 +405,9 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
         return
     normalize_restore_task_type(record=record, task=product_task)
     from apps.restore.services.interface import stop_restore_repository_servers
+    from apps.restore.services.direct_nas_mounts import release_for_record
 
+    release_for_record(record=record)
     stop_restore_repository_servers(task=product_task)
     failed = [
         status for status in statuses if status != RestoreRecordItem.Status.SUCCESS

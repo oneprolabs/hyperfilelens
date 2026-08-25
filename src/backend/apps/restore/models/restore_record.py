@@ -160,3 +160,99 @@ class RestoreRecordItem(models.Model):
 
     def __str__(self) -> str:
         return f"{self.restore_record_id}:{self.source_snapshot_directory_id}"
+
+
+class DirectNASMount(models.Model):
+    """Control-plane aggregate for one Agent-local NAS mount identity."""
+
+    execution_organization_id = models.BigIntegerField(db_index=True)
+    requesting_organization_id = models.BigIntegerField(db_index=True)
+    repository_id = models.BigIntegerField(db_index=True)
+    reader_node_id = models.BigIntegerField(db_index=True)
+    mount_point = models.CharField(max_length=1000)
+    mount_key = models.CharField(max_length=64)
+    cleanup_node_task_id = models.UUIDField(blank=True, null=True, db_index=True)
+    cleanup_after = models.DateTimeField(blank=True, null=True, db_index=True)
+    last_error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "restore_direct_nas_mount"
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "execution_organization_id",
+                    "repository_id",
+                    "reader_node_id",
+                    "mount_key",
+                ],
+                name="uniq_restore_direct_nas_mount",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["reader_node_id", "repository_id"],
+                name="rst_nas_mount_node_repo_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.reader_node_id}:{self.repository_id}:{self.mount_point}"
+
+
+class DirectNASMountLease(models.Model):
+    """One Chat restore's use of a directly mounted NAS repository."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        RELEASED = "released", "Released"
+        CLEANUP_PENDING = "cleanup_pending", "Cleanup pending"
+
+    organization_id = models.BigIntegerField(db_index=True)
+    restore_record = models.ForeignKey(
+        RestoreRecord,
+        on_delete=models.CASCADE,
+        related_name="direct_nas_mount_leases",
+    )
+    mount = models.ForeignKey(
+        DirectNASMount,
+        on_delete=models.CASCADE,
+        related_name="leases",
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_index=True,
+    )
+    cleanup_node_task_id = models.UUIDField(blank=True, null=True, db_index=True)
+    released_at = models.DateTimeField(blank=True, null=True)
+    last_error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "restore_direct_nas_mount_lease"
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "restore_record",
+                    "mount",
+                ],
+                name="uniq_restore_direct_nas_lease",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["mount", "status"],
+                name="rst_nas_lease_mount_status_idx",
+            ),
+            models.Index(
+                fields=["restore_record", "status"],
+                name="rst_nas_lease_rec_status_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.mount_id}:{self.restore_record_id}:{self.status}"
