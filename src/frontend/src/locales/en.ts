@@ -102,6 +102,7 @@ export const en = {
       agentTimeout: 'Agent timed out. Confirm the node is online and try again.',
       agentUnreachable: 'Agent is unreachable. Confirm the node is online.',
       agentPathPermissionDenied: 'The Agent does not have permission to access this path. Choose a readable path or use Host files · continuous when broader host access is required.',
+      agentPathProtected: 'This directory is managed by the HyperFileLens Agent and cannot be selected as a backup source.',
       agentExplorerListFailed: 'Failed to browse directory. Confirm the node is online and try again.',
       agentPathValidateFailed: 'Path validation failed. Check the path and try again.',
       agentNasMountFailed: 'NAS mount operation failed. Check connection settings.',

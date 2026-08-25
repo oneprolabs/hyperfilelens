@@ -198,6 +198,9 @@ export type BackupSourceDirectoryEntry = {
   path_type?: 'directory' | 'file' | 'unknown'
   size?: number
   mod_time?: string
+  selectable?: boolean
+  protected?: boolean
+  protection_reason?: string
 }
 
 export type BackupSourceDirectoryList = {

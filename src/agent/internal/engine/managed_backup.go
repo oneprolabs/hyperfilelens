@@ -1254,6 +1254,10 @@ func (e *Engine) runManagedBackup(
 	if p.Path == "" {
 		return "failed", nil, "source_path is required"
 	}
+	boundary, boundaryErr := e.backupPathBoundary(p)
+	if boundaryErr != nil {
+		return "failed", agentPathBoundaryErrorResult(boundaryErr), boundaryErr.Error()
+	}
 	policySpec, policyParseErr := parseManagedBackupPolicy(p.Extra)
 	if policyParseErr != nil {
 		return "failed", map[string]any{
@@ -1276,7 +1280,7 @@ func (e *Engine) runManagedBackup(
 		result["error_code"] = "BACKUP_OPERATION_ID_INVALID"
 		return "failed", result, operationErr.Error()
 	}
-	return runPreparedManagedBackup(ctx, rep, taskID, bin, configFile, env, p.Path, policySpec, result)
+	return runPreparedManagedBackup(ctx, rep, taskID, bin, configFile, env, p.Path, policySpec, result, boundary.patterns())
 }
 
 func (e *Engine) runManagedPolicyApply(
@@ -1287,6 +1291,10 @@ func (e *Engine) runManagedPolicyApply(
 ) (string, map[string]any, string) {
 	if p.Path == "" {
 		return "failed", nil, "source_path is required"
+	}
+	boundary, boundaryErr := e.backupPathBoundary(p)
+	if boundaryErr != nil {
+		return "failed", agentPathBoundaryErrorResult(boundaryErr), boundaryErr.Error()
 	}
 	policySpec, err := parseManagedBackupPolicy(p.Extra)
 	if err != nil {
@@ -1313,7 +1321,7 @@ func (e *Engine) runManagedPolicyApply(
 		return "failed", result, lockErr.Error()
 	}
 	defer releasePathLock()
-	policyResult, policyErr := applyManagedBackupPolicy(ctx, bin, configFile, env, p.Path, policySpec)
+	policyResult, policyErr := applyManagedBackupPolicy(ctx, bin, configFile, env, p.Path, policySpec, boundary.patterns())
 	for key, value := range policyResult {
 		result[key] = value
 	}
@@ -1380,6 +1388,10 @@ func (e *Engine) runManagedPreparedSnapshot(
 	if p.Path == "" {
 		return "failed", nil, "source_path is required"
 	}
+	boundary, boundaryErr := e.backupPathBoundary(p)
+	if boundaryErr != nil {
+		return "failed", agentPathBoundaryErrorResult(boundaryErr), boundaryErr.Error()
+	}
 	if err := e.ensureNASMounted(ctx, p); err != nil {
 		return "failed", nil, err.Error()
 	}
@@ -1411,6 +1423,20 @@ func (e *Engine) runManagedPreparedSnapshot(
 		return "failed", result, lockErr.Error()
 	}
 	defer releasePathLock()
+	verifyResult, verifyErr := verifyManagedBackupProtection(
+		ctx,
+		bin,
+		configFile,
+		env,
+		p.Path,
+		boundary.patterns(),
+	)
+	for key, value := range verifyResult {
+		result[key] = value
+	}
+	if verifyErr != nil {
+		return "failed", result, verifyErr.Error()
+	}
 	status, snapshotResult, errMsg := runPreparedManagedSnapshot(
 		ctx, rep, taskID, bin, configFile, env, p.Path, result,
 	)
@@ -1429,6 +1455,7 @@ func runPreparedManagedBackup(
 	sourcePath string,
 	policySpec managedBackupPolicySpec,
 	result map[string]any,
+	protectedPatterns ...[]string,
 ) (string, map[string]any, string) {
 	releasePathLock, lockErr := managedBackupPathLocks.acquire(ctx, configFile, sourcePath)
 	if lockErr != nil {
@@ -1436,7 +1463,7 @@ func runPreparedManagedBackup(
 	}
 	defer releasePathLock()
 
-	policyResult, policyErr := applyManagedBackupPolicy(ctx, bin, configFile, env, sourcePath, policySpec)
+	policyResult, policyErr := applyManagedBackupPolicy(ctx, bin, configFile, env, sourcePath, policySpec, protectedPatterns...)
 	for key, value := range policyResult {
 		result[key] = value
 	}

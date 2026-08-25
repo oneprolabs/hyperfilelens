@@ -112,6 +112,21 @@ _DELIVERY_DIAGNOSTIC_MESSAGES = {
     ),
 }
 
+_BACKUP_PROTECTION_ERROR_MESSAGES = {
+    "AGENT_PATH_FORBIDDEN": (
+        "The selected source is managed by the HyperFileLens Agent and cannot "
+        "be backed up directly. Select its parent or another source path."
+    ),
+    "BACKUP_PROTECTION_POLICY_MISSING": (
+        "The required Agent path exclusion is missing from the active backup "
+        "policy. Retry after upgrading or repairing the Agent."
+    ),
+    "BACKUP_PROTECTION_POLICY_VERIFY_FAILED": (
+        "The Agent could not verify its protected-path exclusion. Check "
+        "repository availability and retry."
+    ),
+}
+
 
 def _bt():
     from apps.protection.services import backup_task as backup_task_module
@@ -160,6 +175,10 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
         return "KOPIA_SIGNAL_KILLED", last_error or "Kopia process was killed."
     if node_task.status == NodeTask.Status.FAILED:
         structured_error = str(result.get("error_code") or "")
+        if structured_error in _BACKUP_PROTECTION_ERROR_MESSAGES:
+            return structured_error, _BACKUP_PROTECTION_ERROR_MESSAGES[
+                structured_error
+            ]
         if structured_error == "KOPIA_SNAPSHOT_RECONCILE_FAILED":
             return (
                 "KOPIA_SNAPSHOT_RECONCILE_FAILED",
@@ -638,7 +657,13 @@ def _mark_policy_prepare_failed(
 ) -> None:
     error_code, error_message = _node_task_error_code(node_task)
     if (
-        error_code != "POLICY_APPLY_FAILED"
+        error_code
+        not in {
+            "AGENT_PATH_FORBIDDEN",
+            "POLICY_APPLY_FAILED",
+            "BACKUP_PROTECTION_POLICY_MISSING",
+            "BACKUP_PROTECTION_POLICY_VERIFY_FAILED",
+        }
         and error_code not in _DELIVERY_DIAGNOSTIC_MESSAGES
     ):
         error_code = "POLICY_APPLY_FAILED"
