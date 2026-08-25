@@ -189,12 +189,19 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         return queryset.order_by("name", "id")
 
     def _build_enrichments(self, nodes) -> dict[int, dict]:
+        from apps.node.services.internal.agent_upgrade import node_agent_release_status
+
         enrichments: dict[int, dict] = {}
+        release_targets: dict[tuple[str, str, str, str], str] = {}
         for node in nodes:
             enrichments[node.id] = enrich_node_row(
                 org=self.org,
                 node=node,
                 user=self.request.user,
+            )
+            enrichments[node.id]["agent_release"] = node_agent_release_status(
+                node,
+                target_cache=release_targets,
             )
         repository_counts = count_proxy_repository_bindings(
             organization_id=self.org.id,

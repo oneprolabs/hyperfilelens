@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowUpCircle, Plus, RefreshCw, Pencil, ChevronDown, Trash2, TriangleAlert, Search, Wrench } from 'lucide-vue-next'
+import { ArrowUpCircle, Plus, RefreshCw, Pencil, ChevronDown, Trash2, Search, Wrench } from 'lucide-vue-next'
 import { ElCheckbox, ElMessage, type ElTable } from 'element-plus'
 import NodeLifecycleStatusCell from '../../components/node-lifecycle/NodeLifecycleStatusCell.vue'
 import NodeVersionCell from '../../components/node-lifecycle/NodeVersionCell.vue'
@@ -25,7 +25,7 @@ import { apiErrorMessage } from '../../lib/api'
 import { afterOverlayDismiss } from '../../lib/uiDefer'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import { listNodesPaged, listAllNodes, updateNode, fetchLatestAgentVersion, getNodeBindings, previewNodeOperationsBatch, type NodeBindings } from '../../lib/nodeApi'
-import { canRemoteAgentUpgrade, needsAgentUpgrade } from '../../lib/agentVersion'
+import { canRemoteAgentUpgrade } from '../../lib/agentVersion'
 import { backupSourceLifecycleDisplay } from '../../lib/backupSourceLifecycleDisplay'
 import {
   formatNodeBytes,
@@ -98,8 +98,6 @@ function availabilityTagType(value?: ApiNode['availability']): 'success' | 'dang
 const protectionMenus = useProtectionSideNav()
 
 const nodeMenus = computed(() => protectionMenus.value)
-
-const latestVersion = computed(() => latestAgentVersion.value)
 
 async function loadLatestAgentVersion(signal?: AbortSignal) {
   if (!usesRealNodeList.value) {
@@ -310,15 +308,8 @@ function roleTagType(role: NodeRole | string): 'primary' | 'success' | 'warning'
 }
 
 function canUpgrade(row: ApiNode): boolean {
-  return canRemoteAgentUpgrade(row.version, latestAgentVersion.value)
-}
-
-function needsUpgrade(row: ApiNode): boolean {
-  return needsAgentUpgrade(row.version, latestAgentVersion.value)
-}
-
-function upgradeTargetVersion(row: ApiNode) {
-  return needsUpgrade(row) ? latestVersion.value ?? '—' : '—'
+  return row.agent_release?.upgrade_version_allowed
+    ?? canRemoteAgentUpgrade(row.version, latestAgentVersion.value)
 }
 
 function statusTagType(status: NodeStatus): 'success' | 'info' | 'danger' {
@@ -917,6 +908,8 @@ async function submitRename() {
                   <NodeVersionCell
                     :node="row"
                     :version-label="row.version || '—'"
+                    :target-version="row.agent_release?.target_version"
+                    :update-available="row.agent_release?.update_available"
                     :resolve-version-display="lifecycleOps.resolveVersionDisplay"
                   />
                 </template>
@@ -993,31 +986,14 @@ async function submitRename() {
                     v-if="usesRealNodeList"
                     :node="row"
                     :version-label="row.version || '—'"
+                    :target-version="row.agent_release?.target_version"
+                    :update-available="row.agent_release?.update_available"
                     :resolve-version-display="lifecycleOps.resolveVersionDisplay"
                   />
-                  <div
+                  <span
                     v-else
-                    class="nodes-version-cell"
-                    :class="{ 'nodes-version-cell--stacked': needsUpgrade(row) && latestVersion }"
-                  >
-                    <span
-                      class="nodes-version-cell__value"
-                      :class="{ 'hfl-empty-mark': !row.version }"
-                    >{{ row.version || '—' }}</span>
-                    <ElTooltip
-                      v-if="needsUpgrade(row) && latestVersion"
-                      :content="t('nodesPage.latestVersionTip', { version: upgradeTargetVersion(row) })"
-                      placement="top"
-                    >
-                      <span class="nodes-version-cell__hint">
-                        <TriangleAlert
-                          :size="14"
-                          stroke-width="2.1"
-                        />
-                        <span>{{ t('nodesPage.versionUpgradeAvailable') }}</span>
-                      </span>
-                    </ElTooltip>
-                  </div>
+                    :class="{ 'hfl-empty-mark': !row.version }"
+                  >{{ row.version || '—' }}</span>
                 </template>
               </el-table-column>
             </template>

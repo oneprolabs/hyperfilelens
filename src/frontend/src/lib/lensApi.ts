@@ -272,6 +272,7 @@ export type LensGatewayInsight = {
   sl_last_heartbeat_at?: string | null
   sl_registered_at?: string | null
   sl_tasks?: { name: string; title: string }[]
+  agent_release?: import('../types/node').AgentReleaseStatus | null
 }
 
 export type SlLensnodeTask = {
