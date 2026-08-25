@@ -1,9 +1,9 @@
 ---
-title: Data Gateway
+title: 部署 Private Data Gateway
 description: 部署用于 HyperFileLens 智能洞察的 Data Gateway。
 ---
 
-# Data Gateway
+# 部署 Private Data Gateway
 
 Data Gateway 连接 HyperFileLens 备份仓库与 AI 引擎，用于准备用户在 Copilot 会话中明确选择的数据。它不直接读取生产主机目录。
 
@@ -33,4 +33,3 @@ Community 环境是否提供可用公共 Data Gateway，取决于实际部署配
 7. 创建测试 Copilot 会话，验证网关能浏览所选快照目录并完成数据准备。
 
 Data Gateway 的工作区应使用产品管理的专用路径。卸载和清理时只操作界面与安装程序声明的产品目录，不要手工使用宽泛的递归删除命令。
-

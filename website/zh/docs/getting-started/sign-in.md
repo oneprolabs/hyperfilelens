@@ -1,9 +1,9 @@
 ---
-title: 登录与初始设置
+title: 登录控制台
 description: 登录 HyperFileLens 控制台并完成首次使用前的必要检查。
 ---
 
-# 登录与初始设置
+# 登录控制台
 
 官方 SaaS 用户使用注册账户登录；Community 用户使用安装程序输出的控制台地址和初始账户登录。
 
@@ -12,7 +12,7 @@ description: 登录 HyperFileLens 控制台并完成首次使用前的必要检�
 1. 打开官方 SaaS 或安装程序提供的控制台地址。
 2. 输入账户信息并登录。
 3. Community 首次登录后立即修改初始密码。
-4. 核对当前组织、时区和系统时间是否正确。
+4. 核对当前组织、时区和系统时间。
 5. 确认<span class="hfl-path">数据保护</span>页面可以正常打开。
 
 ## 开始前检查
@@ -22,4 +22,3 @@ description: 登录 HyperFileLens 控制台并完成首次使用前的必要检�
 - 已明确备份源和目标存储之间的数据访问路径。
 
 下一步：[添加备份源](/zh/docs/getting-started/add-source)。
-

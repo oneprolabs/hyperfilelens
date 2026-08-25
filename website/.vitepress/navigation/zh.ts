@@ -4,95 +4,95 @@ const quickStart: DefaultTheme.SidebarItem[] = [
   {
     text: '快速开始',
     items: [
-      { text: '概览', link: '/zh/docs/' },
+      { text: '选择使用方式', link: '/zh/docs/' },
       { text: '使用官方 SaaS', link: '/zh/docs/getting-started/saas' },
       { text: '安装 Community', link: '/zh/docs/getting-started/install' },
-      { text: '登录与初始设置', link: '/zh/docs/getting-started/sign-in' },
+      { text: '登录控制台', link: '/zh/docs/getting-started/sign-in' },
+    ],
+  },
+  {
+    text: '首次使用',
+    items: [
       { text: '添加备份源', link: '/zh/docs/getting-started/add-source' },
-      { text: '配置目标存储', link: '/zh/docs/getting-started/add-target' },
-      { text: '创建首次备份', link: '/zh/docs/getting-started/first-backup' },
-      { text: '验证备份结果', link: '/zh/docs/getting-started/verify-backup' },
+      { text: '配置备份源', link: '/zh/docs/getting-started/configure-source' },
+      { text: '添加目标存储', link: '/zh/docs/getting-started/add-target' },
+      { text: '创建并运行首次备份', link: '/zh/docs/getting-started/first-backup' },
+      { text: '检查任务与快照', link: '/zh/docs/getting-started/verify-backup' },
       { text: '恢复测试文件', link: '/zh/docs/getting-started/first-restore' },
+      { text: '创建洞察会话', link: '/zh/docs/getting-started/first-insight' },
     ],
   },
 ]
 
-const protection: DefaultTheme.SidebarItem[] = [
+const product: DefaultTheme.SidebarItem[] = [
+  {
+    text: '产品使用',
+    items: [
+      { text: '业务流程', link: '/zh/docs/product/' },
+    ],
+  },
   {
     text: '备份与恢复',
     items: [
-      { text: '概览', link: '/zh/docs/backup-restore/' },
-    ],
-  },
-  {
-    text: '备份源与目标',
-    items: [
+      { text: '使用流程', link: '/zh/docs/backup-restore/' },
       { text: '管理备份源', link: '/zh/docs/backup-restore/sources' },
       { text: '管理目标存储', link: '/zh/docs/backup-restore/targets' },
-    ],
-  },
-  {
-    text: '备份配置',
-    items: [
       { text: '创建并运行备份', link: '/zh/docs/backup-restore/create-backup' },
-      { text: '策略、保留与恢复计划', link: '/zh/docs/backup-restore/policies' },
-    ],
-  },
-  {
-    text: '任务与恢复',
-    items: [
-      { text: '查看任务与验证快照', link: '/zh/docs/backup-restore/snapshots' },
+      { text: '策略与保留', link: '/zh/docs/backup-restore/policies' },
+      { text: '查看任务与快照', link: '/zh/docs/backup-restore/snapshots' },
       { text: '恢复文件和目录', link: '/zh/docs/backup-restore/restore' },
     ],
   },
-]
-
-const insights: DefaultTheme.SidebarItem[] = [
   {
     text: '智能洞察',
     items: [
-      { text: '概览', link: '/zh/docs/insights/' },
-      { text: '准备快照与模型', link: '/zh/docs/insights/prepare' },
-      { text: '创建 Copilot 会话', link: '/zh/docs/insights/copilot' },
-      { text: '连接 Private Data Gateway', link: '/zh/docs/insights/data-gateway' },
+      { text: '使用流程', link: '/zh/docs/insights/' },
+      { text: '准备快照', link: '/zh/docs/insights/prepare' },
+      { text: '创建洞察会话', link: '/zh/docs/insights/copilot' },
+      { text: '配置 AI 模型', link: '/zh/docs/insights/models' },
+      { text: '使用 Private Data Gateway', link: '/zh/docs/insights/data-gateway' },
       { text: '查看 AI 使用量', link: '/zh/docs/insights/usage' },
-      { text: '会话与数据边界', link: '/zh/docs/insights/privacy' },
+      { text: '会话与数据范围', link: '/zh/docs/insights/privacy' },
     ],
   },
 ]
 
 const operations: DefaultTheme.SidebarItem[] = [
   {
-    text: '基础部署',
+    text: '部署运维',
     items: [
-      { text: '概览', link: '/zh/docs/deployment/' },
+      { text: '部署方式', link: '/zh/docs/deployment/' },
+    ],
+  },
+  {
+    text: 'Community 部署',
+    items: [
       { text: '系统要求', link: '/zh/docs/deployment/requirements' },
-      { text: '部署后检查', link: '/zh/docs/deployment/post-install' },
-      { text: '网络与端口要求', link: '/zh/docs/deployment/network' },
+      { text: '网络与端口', link: '/zh/docs/deployment/network' },
+      { text: '安装后检查', link: '/zh/docs/deployment/post-install' },
     ],
   },
   {
     text: '组件部署',
     items: [
-      { text: 'Agent 与 Proxy', link: '/zh/docs/deployment/nodes' },
-      { text: 'Private Data Gateway', link: '/zh/docs/deployment/data-gateway' },
+      { text: '部署 Agent 与 Proxy', link: '/zh/docs/deployment/nodes' },
+      { text: '部署 Private Data Gateway', link: '/zh/docs/deployment/data-gateway' },
     ],
   },
   {
-    text: '系统维护',
+    text: '运行维护',
     items: [
-      { text: '升级、备份与回退', link: '/zh/docs/deployment/lifecycle' },
-    ],
-  },
-  {
-    text: '日常运维',
-    items: [
+      { text: '升级与回退', link: '/zh/docs/deployment/lifecycle' },
       { text: '任务、告警与日志', link: '/zh/docs/deployment/operations' },
     ],
   },
 ]
 
-const reference: DefaultTheme.SidebarItem[] = [
+const help: DefaultTheme.SidebarItem[] = [
+  {
+    text: '帮助中心',
+    items: [],
+  },
   {
     text: '产品参考',
     items: [
@@ -102,12 +102,12 @@ const reference: DefaultTheme.SidebarItem[] = [
     ],
   },
   {
-    text: '常见问题与排障',
+    text: '问题排查',
     items: [
-      { text: '总览', link: '/zh/docs/troubleshooting/' },
+      { text: '排查方法', link: '/zh/docs/troubleshooting/' },
       { text: '安装与节点', link: '/zh/docs/troubleshooting/installation-nodes' },
       { text: '备份、存储与恢复', link: '/zh/docs/troubleshooting/protection' },
-      { text: 'Data Gateway 与 Copilot', link: '/zh/docs/troubleshooting/insights' },
+      { text: '智能洞察与 Data Gateway', link: '/zh/docs/troubleshooting/insights' },
       { text: '账户与登录', link: '/zh/docs/troubleshooting/account-sign-in' },
     ],
   },
@@ -124,21 +124,26 @@ export const zhThemeConfig: DefaultTheme.Config = {
       link: '/zh/docs/',
       activeMatch: '^/zh/docs/(?:$|getting-started/)',
     },
-    { text: '备份与恢复', link: '/zh/docs/backup-restore/' },
-    { text: '智能洞察', link: '/zh/docs/insights/' },
-    { text: '部署与运维', link: '/zh/docs/deployment/' },
     {
-      text: '参考与排障',
-      link: '/zh/docs/reference/',
-      activeMatch: '^/zh/docs/(reference|troubleshooting)/',
+      text: '产品使用',
+      link: '/zh/docs/product/',
+      activeMatch: '^/zh/docs/(product|backup-restore|insights)/',
+    },
+    { text: '部署运维', link: '/zh/docs/deployment/' },
+    {
+      text: '帮助中心',
+      link: '/zh/docs/help/',
+      activeMatch: '^/zh/docs/(help|reference|troubleshooting)/',
     },
   ],
   sidebar: {
-    '/zh/docs/backup-restore/': protection,
-    '/zh/docs/insights/': insights,
+    '/zh/docs/product/': product,
+    '/zh/docs/backup-restore/': product,
+    '/zh/docs/insights/': product,
     '/zh/docs/deployment/': operations,
-    '/zh/docs/reference/': reference,
-    '/zh/docs/troubleshooting/': reference,
+    '/zh/docs/help/': help,
+    '/zh/docs/reference/': help,
+    '/zh/docs/troubleshooting/': help,
     '/zh/docs/getting-started/': quickStart,
     '/zh/docs/': quickStart,
   },

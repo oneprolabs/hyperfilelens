@@ -1,9 +1,9 @@
 ---
-title: Agent 与 Proxy
+title: 部署 Agent 与 Proxy
 description: 使用产品部署向导安装、注册和检查 Agent 与 Proxy 节点。
 ---
 
-# Agent 与 Proxy
+# 部署 Agent 与 Proxy
 
 Agent 用于保护所在主机的文件，Proxy 用于连接 NAS、提供本地磁盘仓库或承担共享存储访问。两者都通过控制台生成的一次性部署流程注册。
 
@@ -38,5 +38,4 @@ Proxy 主机名或管理地址并不一定能被所有源端访问。跨网络�
 - Proxy 可以挂载目标 NAS，或访问配置的本地磁盘目录。
 - 服务重启后节点能够自动重新连接。
 
-注册失败或节点离线时，进入[安装与节点排障](/zh/docs/troubleshooting/installation-nodes)。
-
+注册失败或节点离线时，进入[安装与节点](/zh/docs/troubleshooting/installation-nodes)。

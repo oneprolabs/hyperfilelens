@@ -1,9 +1,9 @@
 ---
-title: 升级、备份与回退
-description: 使用 Release 安装程序管理 HyperFileLens 的运行状态、受管备份和升级。
+title: 升级与回退
+description: 使用 Release 安装程序管理 HyperFileLens 的升级、受管备份和回退。
 ---
 
-# 升级、备份与回退
+# 升级与回退
 
 控制平面的安装、备份和升级应通过 `/opt/hyperfilelens/install.sh` 管理。不要直接替换运行目录中的 Compose 文件或镜像标签。
 
@@ -52,4 +52,3 @@ sudo /opt/hyperfilelens/install.sh upgrade \
 2. 运行 `status` 确认当前活动版本和容器状态。
 3. 不要删除 `/opt/hyperfilelens/backup` 或 `.env`。
 4. 根据该 Release 的说明恢复，必要时在 GitHub Issue 中提供脱敏日志和错误编号。
-

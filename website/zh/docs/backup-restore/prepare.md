@@ -1,6 +1,7 @@
 ---
 title: 准备备份源和目标存储
 description: 为主机或 NAS 数据选择可访问、可验证的 HyperFileLens 目标仓库。
+search: false
 ---
 
 # 准备备份源和目标存储
@@ -52,4 +53,3 @@ NAS 可以绑定 Proxy，由 Proxy 挂载并向备份源提供仓库访问。未
 - 源端到对象存储或 Repository Server 的网络路径可达。
 - 主机时间准确，证书链可信。
 - 容量和保留周期能覆盖预期数据增长。
-

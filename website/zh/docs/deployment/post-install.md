@@ -15,7 +15,7 @@ description: 检查 HyperFileLens Community 服务、控制台和基础配置。
 sudo /opt/hyperfilelens/install.sh status
 ```
 
-确认安装程序报告的核心服务正常，并记录当前版本。服务异常时不要反复重新安装，应先保留错误信息并进入[安装与节点排障](/zh/docs/troubleshooting/installation-nodes)。
+确认安装程序报告的核心服务正常，并记录当前版本。服务异常时不要反复重新安装，应先保留错误信息并进入[安装与节点](/zh/docs/troubleshooting/installation-nodes)。
 
 ## 检查控制台
 
@@ -34,4 +34,3 @@ sudo /opt/hyperfilelens/install.sh lang-pack list
 ```
 
 安装后刷新浏览器并选择简体中文。语言包必须与当前产品版本兼容。
-

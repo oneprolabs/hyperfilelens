@@ -505,11 +505,40 @@ body .VPLocalSearchBox .search-keyboard-shortcuts kbd {
   background: var(--vp-c-bg-alt) !important;
 }
 
-.VPSidebarItem.level-0 > .item > .text {
+.VPSidebarItem.level-0 > .item .text {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   color: var(--vp-c-text-1);
   font-size: 13px;
   font-weight: 750;
   letter-spacing: .01em;
+}
+
+.VPSidebarItem.level-0 > .item .text .hfl-sidebar-icon {
+  width: 15px;
+  height: 15px;
+  display: inline-flex;
+  flex: 0 0 15px;
+  color: var(--vp-c-text-2);
+}
+
+.VPSidebarItem.level-0 > .item .text .hfl-sidebar-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.VPSidebarItem.level-0.has-active > .item .text .hfl-sidebar-icon {
+  color: var(--vp-c-brand-1);
+}
+
+.VPSidebarItem.level-0.hfl-sidebar-current > .item .text .hfl-sidebar-icon {
+  color: var(--vp-c-brand-1);
 }
 
 .VPSidebarItem.level-1 .text {

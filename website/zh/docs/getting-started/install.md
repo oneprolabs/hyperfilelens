@@ -35,7 +35,7 @@ curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/v0.2.8/deploy/online/i
 sudo /opt/hyperfilelens/install.sh status
 ```
 
-确认服务正常后，在浏览器打开安装程序输出的控制台地址，继续[登录与初始设置](/zh/docs/getting-started/sign-in)。
+确认服务正常后，在浏览器打开安装程序输出的控制台地址，继续[登录控制台](/zh/docs/getting-started/sign-in)。
 
 ::: warning 保护敏感信息
 不要在截图、聊天或公开 Issue 中提供初始密码、`.env`、访问令牌、客户地址或完整安装日志。排障时只提供版本、错误编号和已经脱敏的必要日志片段。

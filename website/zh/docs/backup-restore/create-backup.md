@@ -39,5 +39,4 @@ description: 使用备份向导选择目录、目标存储、策略并执行备�
 
 核对摘要并保存配置。目标验证通过后，在“开始备份”阶段选择源端并执行“立即备份”。
 
-运行期间不要重启 Agent、卸载 NAS 或修改目标凭据。任务结束后继续[查看任务与验证快照](/zh/docs/backup-restore/snapshots)。
-
+运行期间不要重启 Agent、卸载 NAS 或修改目标凭据。任务结束后继续[查看任务与快照](/zh/docs/backup-restore/snapshots)。

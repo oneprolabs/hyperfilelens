@@ -1,11 +1,11 @@
 ---
 title: 快速开始
-description: 使用官方 SaaS 或安装 HyperFileLens Community，完成首次备份、验证和恢复。
+description: 使用官方 SaaS 或安装 HyperFileLens Community，完成首次备份、恢复和智能洞察。
 ---
 
 # 快速开始
 
-<p class="hfl-doc-lead">选择官方 SaaS 或 Community，然后用一小组测试文件完成备份、验证和恢复。走完这条流程，才表示第一条数据保护链路真正可用。</p>
+<p class="hfl-doc-lead">选择官方 SaaS 或 Community，以 Windows 主机和对象存储为例，依次完成备份、恢复和智能洞察。</p>
 
 <div class="hfl-doc-grid">
   <a class="hfl-doc-card" href="/zh/docs/getting-started/saas">
@@ -20,27 +20,42 @@ description: 使用官方 SaaS 或安装 HyperFileLens Community，完成首次�
   </a>
 </div>
 
-## 完成一次核心业务流程
+## 本次示例
 
-两种方式只在进入产品前不同。登录控制台后，按照同一条主线操作：
+准备一台 Windows 测试主机，并创建一个内容和大小都容易确认的目录，例如：
 
-1. [登录并完成初始设置](/zh/docs/getting-started/sign-in)。
-2. [添加一个备份源](/zh/docs/getting-started/add-source)。
-3. [配置一处目标存储](/zh/docs/getting-started/add-target)。
-4. [创建并运行首次备份](/zh/docs/getting-started/first-backup)。
-5. [检查任务和备份快照](/zh/docs/getting-started/verify-backup)。
-6. [恢复一个测试文件](/zh/docs/getting-started/first-restore)。
+```text
+C:\HFL-Quickstart\
+├─ project-summary.txt
+├─ device-inventory.csv
+└─ incident-report.pdf
+```
 
-首次操作请使用内容和大小都容易确认的测试目录，不要直接选择整个系统盘或大规模生产目录。
+同时准备一个专用于本次测试的对象存储桶或对象前缀。不要使用包含其他业务数据的现有目录，也不要直接选择整个系统盘或大规模生产目录。
+
+Windows 和对象存储只是本章采用的示例。其他源端与目标存储类型可在[备份与恢复](/zh/docs/backup-restore/)中查询。
+
+## 完成首次使用
+
+官方 SaaS 和 Community 只在进入产品前不同。登录控制台后，按照同一条流程操作：
+
+1. [登录控制台](/zh/docs/getting-started/sign-in)。
+2. [添加备份源](/zh/docs/getting-started/add-source)，将 Windows 主机接入控制台。
+3. [配置备份源](/zh/docs/getting-started/configure-source)，选择需要保护的测试目录。
+4. [添加目标存储](/zh/docs/getting-started/add-target)，在向导中创建并选择对象存储。
+5. [创建并运行首次备份](/zh/docs/getting-started/first-backup)。
+6. [检查任务与快照](/zh/docs/getting-started/verify-backup)，确认预期文件已经进入快照。
+7. [恢复测试文件](/zh/docs/getting-started/first-restore)，验证备份数据确实可用。
+8. [创建洞察会话](/zh/docs/getting-started/first-insight)，基于同一快照分析测试文件。
 
 ## 完成标准
 
 同时满足下面的结果，才表示首次使用完成：
 
-- 备份源在线并且能够浏览测试目录。
-- 目标存储验证通过。
-- 备份任务完成并生成可浏览的快照。
-- 能够把快照中的测试文件恢复到独立目录，并确认内容正确。
+- Windows 备份源在线，并且能够浏览测试目录。
+- 对象存储连接验证通过。
+- 备份任务成功，并生成包含预期文件的可浏览快照。
+- 测试文件已恢复到独立目录，文件内容与备份前一致。
+- 已基于同一快照创建洞察会话，并获得可以回到原文件核对的回答。
 
-完成后，可按需查阅[备份与恢复](/zh/docs/backup-restore/)、[智能洞察](/zh/docs/insights/)和[部署与运维](/zh/docs/deployment/)。
-
+完成后，可按需查阅[产品使用](/zh/docs/product/)、[部署运维](/zh/docs/deployment/)和[帮助中心](/zh/docs/help/)。
