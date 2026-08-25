@@ -8,6 +8,7 @@ from apps.node.services.internal.agent_release import (
     UPGRADEABLE_AGENT_ROLES,
     agent_version_compare,
     is_agent_artifact_id,
+    latest_compatible_agent_version,
     parse_semver,
     resolve_agent_version,
 )
@@ -44,6 +45,50 @@ def node_platform_arch(node: Node) -> tuple[str, str]:
 def node_os_version(node: Node) -> str:
     inv = _merged_inventory(node)
     return str(inv.get("os_version") or "").strip()
+
+
+def node_agent_release_status(
+    node: Node,
+    *,
+    target_cache: dict[tuple[str, str, str, str], str] | None = None,
+) -> dict[str, str | bool | None]:
+    """Return read-only compatible release state for console presentation."""
+    platform, arch = node_platform_arch(node)
+    os_version = node_os_version(node)
+    cache_key = (platform, arch, str(node.role), os_version)
+    if target_cache is not None and cache_key in target_cache:
+        target = target_cache[cache_key]
+    else:
+        target = latest_compatible_agent_version(
+            platform,
+            arch,
+            node.role,
+            os_version,
+        )
+        if target_cache is not None:
+            target_cache[cache_key] = target
+
+    current = str(node.version or "").strip()
+    if not current:
+        current = str(_merged_inventory(node).get("agent_version") or "").strip()
+    upgrade_version_allowed = bool(target) and not (
+        parse_semver(current)
+        and parse_semver(target)
+        and agent_version_compare(current, target) > 0
+    )
+    update_available = bool(
+        current
+        and target
+        and is_agent_artifact_id(current)
+        and is_agent_artifact_id(target)
+        and agent_version_compare(current, target) < 0
+    )
+    return {
+        "current_version": current or None,
+        "target_version": target or None,
+        "update_available": update_available,
+        "upgrade_version_allowed": upgrade_version_allowed,
+    }
 
 
 def validate_agent_upgrade(*, node: Node) -> str:

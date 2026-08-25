@@ -60,6 +60,14 @@ export type ApiNode = {
   lifecycle?: NodeLifecycleInfo | null
   workload?: NodeWorkloadInfo | null
   associated_repository_count?: number
+  agent_release?: AgentReleaseStatus | null
+}
+
+export type AgentReleaseStatus = {
+  current_version: string | null
+  target_version: string | null
+  update_available: boolean
+  upgrade_version_allowed: boolean
 }
 
 export type ApiNodeToken = {

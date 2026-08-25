@@ -8,6 +8,7 @@ from typing import Any
 from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
 from apps.lens_bridge.services import gateway_readiness, provisioning, sl_client
 from apps.node.api.serializers.node import NodeSerializer
+from apps.node.services.internal.agent_upgrade import node_agent_release_status
 from apps.node.services.internal.node_lifecycle import enrich_node_row
 
 _SYSTEM_LENSNODE_NAMES = {"local-dev-lensnode"}
@@ -52,15 +53,21 @@ def _serialize_row(
     sl_node: dict[str, Any],
     link: LensGatewayLink | None,
     user=None,
+    release_targets: dict[tuple[str, str, str, str], str] | None = None,
 ) -> dict[str, Any]:
     sl_uuid = str(sl_node["uuid"])
     sl_status = _sl_status(sl_node.get("status"))
     if link is not None:
         provisioning.apply_gateway_lensnode_snapshot(link, sl_node)
         node = link.gateway
+        enrichment = enrich_node_row(org=node.organization, node=node, user=user)
+        enrichment["agent_release"] = node_agent_release_status(
+            node,
+            target_cache=release_targets,
+        )
         node_payload = NodeSerializer(
             node,
-            context={"enrichments": {node.id: enrich_node_row(org=node.organization, node=node, user=user)}},
+            context={"enrichments": {node.id: enrichment}},
         ).data
         knowledge_source_count = LensKnowledgeSource.objects.filter(gateway=node).count()
         origin = link.origin
@@ -91,6 +98,7 @@ def _serialize_row(
             "deleted_at": None,
             "lifecycle": None,
             "workload": None,
+            "agent_release": None,
         }
         knowledge_source_count = 0
         origin = _origin_for_unlinked(sl_node)
@@ -137,8 +145,15 @@ def _serialize_row(
 def list_admin_gateway_insight_rows(*, user=None) -> list[dict[str, Any]]:
     """All SL-admin LensNodes with optional HFL ownership metadata."""
     links = _link_index()
+    release_targets: dict[tuple[str, str, str, str], str] = {}
     return [
-        _serialize_row(position=index, sl_node=sl_node, link=links.get(str(sl_node["uuid"])), user=user)
+        _serialize_row(
+            position=index,
+            sl_node=sl_node,
+            link=links.get(str(sl_node["uuid"])),
+            user=user,
+            release_targets=release_targets,
+        )
         for index, sl_node in enumerate(_lensnode_rows())
     ]
 
@@ -148,8 +163,15 @@ def list_user_gateway_insight_rows(*, user) -> list[dict[str, Any]]:
     links = _link_index(owner_user=user)
     if not links:
         return []
+    release_targets: dict[tuple[str, str, str, str], str] = {}
     return [
-        _serialize_row(position=index, sl_node=sl_node, link=links.get(str(sl_node["uuid"])), user=user)
+        _serialize_row(
+            position=index,
+            sl_node=sl_node,
+            link=links.get(str(sl_node["uuid"])),
+            user=user,
+            release_targets=release_targets,
+        )
         for index, sl_node in enumerate(_lensnode_rows())
         if str(sl_node["uuid"]) in links
     ]

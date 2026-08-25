@@ -1,15 +1,27 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { TriangleAlert } from 'lucide-vue-next'
+import { ElTooltip } from 'element-plus'
 import type { ApiNode } from '../../types/node'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   node: ApiNode
   versionLabel: string
+  targetVersion?: string | null
+  updateAvailable?: boolean
+  showUpdateHint?: boolean
   resolveVersionDisplay?: (
     node: ApiNode,
     versionLabel: string,
   ) => { upgrading: boolean; versionLabel: string; targetVersion: string }
-}>()
+}>(), {
+  targetVersion: null,
+  showUpdateHint: true,
+  resolveVersionDisplay: undefined,
+})
+
+const { t } = useI18n()
 
 const display = computed(() => {
   if (props.resolveVersionDisplay) {
@@ -25,6 +37,17 @@ const display = computed(() => {
     targetVersion: lc?.target_version || '',
   }
 })
+
+const showsUpdate = computed(() =>
+  props.showUpdateHint !== false
+  && !display.value.upgrading
+  && props.updateAvailable === true
+  && Boolean(props.targetVersion),
+)
+
+const updateLabel = computed(() => t('nodesPage.latestVersionTip', {
+  version: props.targetVersion || '—',
+}))
 </script>
 
 <template>
@@ -41,6 +64,24 @@ const display = computed(() => {
       v-else
       class="node-version-cell__value"
     >{{ display.versionLabel }}</span>
+    <ElTooltip
+      v-if="showsUpdate"
+      :content="updateLabel"
+      placement="top"
+    >
+      <span
+        class="node-version-cell__hint hfl-table-no-tooltip"
+        tabindex="0"
+        :aria-label="updateLabel"
+      >
+        <TriangleAlert
+          :size="14"
+          stroke-width="2.1"
+          aria-hidden="true"
+        />
+        <span>{{ t('nodesPage.versionUpgradeAvailable') }}</span>
+      </span>
+    </ElTooltip>
   </div>
 </template>
 
@@ -64,6 +105,24 @@ const display = computed(() => {
 
 .node-version-cell__arrow {
   display: none;
+}
+
+.node-version-cell__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  color: var(--el-color-warning-dark-2);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: default;
+}
+
+.node-version-cell__hint > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .node-version-cell--upgrading {

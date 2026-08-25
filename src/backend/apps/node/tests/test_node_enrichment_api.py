@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -50,6 +52,40 @@ class NodeEnrichmentReadOnlyTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         mock_advance.assert_not_called()
+
+    def test_list_nodes_reports_compatible_agent_release(self):
+        self.node.role = NodeRole.PROXY
+        self.node.version = "1.0.0"
+        self.node.metadata = {
+            "inventory": {
+                "os": "linux",
+                "arch": "amd64",
+                "os_version": "22.04",
+            }
+        }
+        self.node.save(update_fields=["role", "version", "metadata"])
+
+        with TemporaryDirectory() as media_root:
+            release_dir = Path(media_root) / "agent-releases" / "1.1.0"
+            release_dir.mkdir(parents=True)
+            (
+                release_dir
+                / "hfl-agent-1.1.0-linux-amd64-ubuntu2204.tar.gz"
+            ).write_bytes(b"x")
+            with self.settings(MEDIA_ROOT=media_root):
+                client = APIClient()
+                client.force_authenticate(user=self.user)
+                response = client.get(
+                    "/api/v1/node/nodes/",
+                    HTTP_X_ORG_KEY=self.org.key,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        release = response.data[0]["agent_release"]
+        self.assertEqual(release["current_version"], "1.0.0")
+        self.assertEqual(release["target_version"], "1.1.0")
+        self.assertTrue(release["update_available"])
+        self.assertTrue(release["upgrade_version_allowed"])
 
 
 class NodeLifecycleWatchApiTests(TestCase):

@@ -209,7 +209,8 @@ const batchUpgradeDisabled = computed(() => {
 
 function canUpgrade(row: ApiNode) {
   if ((row as InsightGatewayRow).managed_by_hfl === false) return false
-  return canRemoteAgentUpgrade(row.version, latestAgentVersion.value)
+  return row.agent_release?.upgrade_version_allowed
+    ?? canRemoteAgentUpgrade(row.version, latestAgentVersion.value)
 }
 
 function platformLabel(row: ApiNode) {
@@ -987,6 +988,9 @@ onUnmounted(() => {
               <NodeVersionCell
                 :node="row"
                 :version-label="row.version || '—'"
+                :target-version="row.agent_release?.target_version"
+                :update-available="row.agent_release?.update_available"
+                :show-update-hint="row.managed_by_hfl !== false"
                 :resolve-version-display="lifecycleOps.resolveVersionDisplay"
               />
             </template>

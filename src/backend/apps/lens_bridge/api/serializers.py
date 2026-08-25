@@ -467,6 +467,7 @@ class LensGatewayInsightSerializer(serializers.Serializer):
     owner_username = serializers.CharField(required=False, allow_blank=True)
     owner_organization_id = serializers.IntegerField(required=False, allow_null=True)
     is_platform_default = serializers.BooleanField(required=False)
+    agent_release = serializers.DictField(required=False, allow_null=True)
 
 
 class LensGatewayEnableAiSerializer(serializers.Serializer):

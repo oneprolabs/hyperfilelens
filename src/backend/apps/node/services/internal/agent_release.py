@@ -243,14 +243,16 @@ def latest_published_agent_version() -> str:
     return preferred or "0.0.0"
 
 
-def resolve_agent_version(
+def latest_compatible_agent_version(
     platform: str,
     arch: str,
     role: str | None = None,
     os_version: str | None = None,
 ) -> str:
-    """Pick newest release dir that contains a dist archive for platform/arch."""
+    """Newest published release that contains this node's exact bundle."""
     root = agent_releases_root()
+    if not root.is_dir():
+        return ""
     preferred = os.getenv("AGENT_VERSION", "").strip()
     if preferred and version_has_dist(
         root,
@@ -276,9 +278,22 @@ def resolve_agent_version(
             os_version=os_version,
         )
     ]
-    if not candidates:
-        return preferred or latest_published_agent_version()
-    if preferred and preferred in candidates:
-        return preferred
     candidates.sort(key=agent_release_sort_key, reverse=True)
-    return candidates[0]
+    return candidates[0] if candidates else ""
+
+
+def resolve_agent_version(
+    platform: str,
+    arch: str,
+    role: str | None = None,
+    os_version: str | None = None,
+) -> str:
+    """Pick newest release dir that contains a dist archive for platform/arch."""
+    preferred = os.getenv("AGENT_VERSION", "").strip()
+    compatible = latest_compatible_agent_version(
+        platform,
+        arch,
+        role,
+        os_version,
+    )
+    return compatible or preferred or latest_published_agent_version()

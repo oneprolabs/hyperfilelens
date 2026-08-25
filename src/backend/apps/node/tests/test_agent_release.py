@@ -12,6 +12,7 @@ from apps.node.services.internal.agent_release import (
     agent_release_commit,
     agent_version_compare,
     is_main_build,
+    latest_compatible_agent_version,
     latest_published_agent_version,
     resolve_agent_version,
     semver_compare,
@@ -72,6 +73,32 @@ def test_resolve_agent_version_uses_matching_ubuntu_bundle(
     version_dir.mkdir()
     (version_dir / f"hfl-agent-1.0.0-linux-amd64-{suffix}.tar.gz").write_bytes(b"x")
     assert resolve_agent_version("linux", "amd64", "proxy", os_version) == "1.0.0"
+
+
+def test_latest_compatible_agent_version_ignores_newer_incompatible_bundle(
+    releases_root,
+):
+    older = releases_root / "1.0.0"
+    older.mkdir()
+    (older / "hfl-agent-1.0.0-linux-amd64-ubuntu2204.tar.gz").write_bytes(b"x")
+    newer = releases_root / "1.1.0"
+    newer.mkdir()
+    (newer / "hfl-agent-1.1.0-windows-amd64.zip").write_bytes(b"x")
+
+    assert (
+        latest_compatible_agent_version("linux", "amd64", "proxy", "22.04")
+        == "1.0.0"
+    )
+
+
+def test_latest_compatible_agent_version_is_empty_without_exact_bundle(
+    releases_root,
+):
+    version_dir = releases_root / "1.1.0"
+    version_dir.mkdir()
+    (version_dir / "hfl-agent-1.1.0-linux-amd64-ubuntu2404.tar.gz").write_bytes(b"x")
+
+    assert latest_compatible_agent_version("linux", "arm64", "proxy", "24.04") == ""
 
 
 def test_semver_compare_orders_versions():
