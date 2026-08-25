@@ -21,6 +21,7 @@ import {
   defaultPackagePath,
   installPathsSummary,
   isLinuxOnlyRole,
+  maintenanceExecutionKind,
   roleDeployNotes,
   roleSupportedOnOs,
   type NodeLifecycleTab,
@@ -223,6 +224,28 @@ const paths = computed(() => installPathsSummary(
   effectiveInstallationMode.value,
 ))
 
+const maintenanceModeLabel = computed(() => {
+  const keys: Record<NodeInstallationMode, string> = {
+    system: 'nodeLifecycle.installationModeSystem',
+    user: 'nodeLifecycle.installationModeUser',
+    user_continuous: 'nodeLifecycle.installationModeUserContinuous',
+    account: 'nodeLifecycle.installationModeAccount',
+  }
+  return t(keys[effectiveInstallationMode.value])
+})
+
+const maintenanceOsLabel = computed(() => (
+  osPickerOptions.value.find((option) => option.value === props.os)?.label ?? props.os
+))
+
+const maintenanceExecution = computed(() => {
+  const kind = maintenanceExecutionKind(props.os, effectiveInstallationMode.value)
+  return {
+    title: t(`nodeLifecycle.execution.${kind}.title`),
+    description: t(`nodeLifecycle.execution.${kind}.description`),
+  }
+})
+
 const displayCommand = computed(() => {
   switch (activeTab.value) {
     case 'upgrade':
@@ -284,6 +307,7 @@ const installFlowRegisterText = computed(() => {
 })
 
 const consoleBarTitle = computed(() => {
+  if (props.maintenanceOnly) return maintenanceExecution.value.title
   if (props.installOnly) {
     if (props.os === 'windows') return t('nodeLifecycle.consolePowerShell')
     if (props.os === 'macos') return t('nodeLifecycle.consoleZsh')
@@ -986,51 +1010,86 @@ defineExpose({ clearInstallCommand })
           </template>
 
           <template v-else>
-            <div class="node-lifecycle-wizard__tabs">
-              <button
-                v-for="tab in visibleTabs"
-                :key="tab"
-                type="button"
-                class="node-lifecycle-wizard__tab"
-                :class="{ 'node-lifecycle-wizard__tab--active': activeTab === tab }"
-                @click="activeTab = tab"
-              >
-                {{ t(`nodeLifecycle.tab.${tab}`) }}
-              </button>
-            </div>
-
             <div class="agent-install-wizard__body-grid">
               <div class="agent-install-wizard__platform">
-                <AgentPlatformBrandIcon
-                  :os="os"
-                  class="agent-install-wizard__platform-icon"
-                />
-                <p class="agent-install-wizard__platform-name">
-                  {{ roleLabel }}
-                </p>
-                <div
+                <div class="agent-install-wizard__section-title">
+                  <span class="fullscreen-form-section__indicator" />
+                  <h3>{{ t('nodeLifecycle.installedAgentTitle') }}</h3>
+                </div>
+                <div class="agent-install-wizard__platform-summary">
+                  <span class="agent-install-wizard__platform-icon-wrap">
+                    <AgentPlatformBrandIcon
+                      :os="os"
+                      class="agent-install-wizard__platform-icon"
+                    />
+                  </span>
+                  <span class="agent-install-wizard__platform-copy">
+                    <span class="agent-install-wizard__platform-eyebrow">
+                      {{ maintenanceOsLabel }} · {{ roleLabel }}
+                    </span>
+                    <strong class="agent-install-wizard__platform-name">
+                      {{ maintenanceModeLabel }}
+                    </strong>
+                  </span>
+                </div>
+
+                <div class="agent-install-wizard__execution">
+                  <span class="agent-install-wizard__execution-label">
+                    {{ t('nodeLifecycle.executionLabel') }}
+                  </span>
+                  <strong>{{ maintenanceExecution.title }}</strong>
+                  <span>{{ maintenanceExecution.description }}</span>
+                </div>
+
+                <dl
                   v-if="activeTab !== 'install'"
                   class="agent-install-wizard__platform-hints"
                 >
-                  <p class="agent-install-wizard__platform-hint-line">
-                    <span>{{ t('nodeLifecycle.installPathLabel') }}</span>
-                    <strong>{{ paths.installDir }}</strong>
-                  </p>
-                  <p class="agent-install-wizard__platform-hint-line">
-                    <span>{{ t('nodeLifecycle.dataPathLabel') }}</span>
-                    <strong>{{ paths.dataDir }}</strong>
-                  </p>
-                  <p class="agent-install-wizard__platform-hint-line">
-                    <span>{{ t('nodeLifecycle.serviceNameLabel') }}</span>
-                    <strong>{{ paths.service }}</strong>
-                  </p>
-                </div>
+                  <div class="agent-install-wizard__platform-hint-line">
+                    <dt>{{ t('nodeLifecycle.installPathLabel') }}</dt>
+                    <dd>{{ paths.installDir }}</dd>
+                  </div>
+                  <div class="agent-install-wizard__platform-hint-line">
+                    <dt>{{ t('nodeLifecycle.dataPathLabel') }}</dt>
+                    <dd>{{ paths.dataDir }}</dd>
+                  </div>
+                  <div class="agent-install-wizard__platform-hint-line">
+                    <dt>{{ t('nodeLifecycle.serviceNameLabel') }}</dt>
+                    <dd>{{ paths.service }}</dd>
+                  </div>
+                </dl>
               </div>
 
               <div class="agent-install-wizard__command-col">
-                <p class="fullscreen-form-field__hint agent-install-wizard__command-lead">
-                  {{ tabHint }}
-                </p>
+                <div class="agent-install-wizard__command-head">
+                  <div>
+                    <div class="agent-install-wizard__section-title">
+                      <span class="fullscreen-form-section__indicator" />
+                      <h3>{{ t('nodeLifecycle.maintenanceCommands') }}</h3>
+                    </div>
+                    <p class="fullscreen-form-field__hint agent-install-wizard__command-lead">
+                      {{ tabHint }}
+                    </p>
+                  </div>
+                  <div
+                    class="node-lifecycle-wizard__tabs"
+                    role="tablist"
+                    :aria-label="t('nodeLifecycle.maintenanceCommands')"
+                  >
+                    <button
+                      v-for="tab in visibleTabs"
+                      :key="tab"
+                      type="button"
+                      class="node-lifecycle-wizard__tab"
+                      :class="{ 'node-lifecycle-wizard__tab--active': activeTab === tab }"
+                      role="tab"
+                      :aria-selected="activeTab === tab"
+                      @click="activeTab = tab"
+                    >
+                      {{ t(`nodeLifecycle.tab.${tab}`) }}
+                    </button>
+                  </div>
+                </div>
 
                 <ElAlert
                   v-if="activeTab === 'upgrade' && upgradeError"
@@ -1055,6 +1114,7 @@ defineExpose({ clearInstallCommand })
                   <ElRadioGroup
                     v-model="serviceAction"
                     size="small"
+                    :aria-label="t('nodeLifecycle.maintenanceCommands')"
                   >
                     <ElRadio value="status">
                       {{ t('nodeLifecycle.serviceStatus') }}
@@ -1136,7 +1196,7 @@ defineExpose({ clearInstallCommand })
 
                 <div
                   v-if="localCommandWarning"
-                  class="add-s3-warning agent-install-wizard__warn"
+                  class="add-s3-warning agent-install-wizard__warn agent-install-wizard__warn--warning"
                   role="note"
                 >
                   <TriangleAlert
@@ -1201,27 +1261,44 @@ defineExpose({ clearInstallCommand })
 
 <style scoped>
 .node-lifecycle-wizard__tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 16px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background: var(--el-fill-color-blank);
 }
 
 .node-lifecycle-wizard__tab {
-  border: 1px solid rgb(226 232 240);
-  background: rgb(248 250 252);
-  color: rgb(51 65 85);
-  border-radius: 999px;
-  padding: 6px 14px;
-  font-size: 13px;
+  min-width: 78px;
+  min-height: 34px;
+  padding: 0 13px;
+  border: 0;
+  color: var(--color-text-secondary);
+  background: transparent;
+  font-size: 12px;
   cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.node-lifecycle-wizard__tab + .node-lifecycle-wizard__tab {
+  border-left: 1px solid var(--el-border-color-lighter);
 }
 
 .node-lifecycle-wizard__tab--active {
-  background: var(--color-info-light);
-  border-color: var(--color-info-border);
-  color: var(--color-info);
+  color: #fff;
+  background: var(--color-primary);
   font-weight: 600;
+}
+
+.node-lifecycle-wizard__tab:hover:not(.node-lifecycle-wizard__tab--active) {
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.node-lifecycle-wizard__tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -3px;
 }
 
 .node-lifecycle-wizard__options {
@@ -1237,76 +1314,202 @@ defineExpose({ clearInstallCommand })
 }
 
 .agent-install-wizard--maintenance .fullscreen-form-section {
-  padding: 18px 20px 20px;
+  padding: 0;
+}
+
+.agent-install-wizard--maintenance > .fullscreen-form-step-stack > .fullscreen-form-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .agent-install-wizard--maintenance .agent-install-wizard__body-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
   min-width: 0;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform,
+.agent-install-wizard--maintenance .agent-install-wizard__command-col {
+  min-width: 0;
+  padding: 18px 20px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 10px;
+  background: var(--el-fill-color-blank);
+  box-shadow: 0 5px 14px rgb(15 23 42 / 4%);
 }
 
 .agent-install-wizard--maintenance .agent-install-wizard__platform {
   display: grid;
-  grid-template-columns: 44px auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__section-title {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: flex-start;
+  gap: 8px;
   min-width: 0;
-  padding: 12px 14px;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 10px;
-  background: rgb(248 250 252);
 }
 
-.agent-install-wizard--maintenance .agent-install-wizard__platform-icon {
-  display: block;
-  width: 40px;
-  height: 40px;
-  filter: drop-shadow(0 2px 4px rgb(15 23 42 / 8%));
-}
-
-.agent-install-wizard--maintenance .agent-install-wizard__platform-name {
+.agent-install-wizard--maintenance .agent-install-wizard__section-title h3 {
   margin: 0;
-  color: rgb(30 41 59);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.4;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 18px;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-summary {
+  display: flex;
+  grid-column: 1;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__execution {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+  grid-column: 2;
+  padding-left: 20px;
+  border-left: 1px solid var(--el-border-color-lighter);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__execution-label {
+  padding: 0;
+  color: var(--color-text-secondary);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__execution strong {
+  color: var(--color-text-primary);
+  font-size: 15px;
 }
 
 .agent-install-wizard--maintenance .agent-install-wizard__platform-hints {
   display: grid;
+  grid-column: 1 / -1;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px 12px;
+  gap: 0;
   min-width: 0;
+  margin: 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 
 .agent-install-wizard--maintenance .agent-install-wizard__platform-hint-line {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: grid;
+  gap: 4px;
   min-width: 0;
   margin: 0;
-  color: rgb(148 163 184);
+  padding: 0 14px;
+  color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
-.agent-install-wizard--maintenance .agent-install-wizard__platform-hint-line strong {
-  color: rgb(71 85 105);
-  font-weight: 500;
+.agent-install-wizard--maintenance .agent-install-wizard__platform-hint-line:first-child {
+  padding-left: 0;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-hint-line + .agent-install-wizard__platform-hint-line {
+  border-left: 1px solid var(--el-border-color-light);
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-hint-line dt,
+.agent-install-wizard--maintenance .agent-install-wizard__platform-hint-line dd {
+  margin: 0;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-hint-line dd {
+  color: var(--color-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
 }
 
 .agent-install-wizard--maintenance .agent-install-wizard__command-col {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__command-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-icon-wrap {
+  display: grid;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 11px;
+  background: rgb(248 250 252);
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-icon {
+  display: block;
+  width: 32px;
+  height: 32px;
+  filter: drop-shadow(0 2px 4px rgb(15 23 42 / 8%));
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   min-width: 0;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-eyebrow {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.agent-install-wizard--maintenance .agent-install-wizard__platform-name {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .agent-install-wizard--maintenance .agent-install-wizard__command-lead {
   margin: 0;
+}
+
+.agent-install-wizard--maintenance .node-lifecycle-wizard__options {
+  margin: -2px 0 0;
+}
+
+.agent-install-wizard--maintenance .node-lifecycle-wizard__options :deep(.el-radio-group) {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.agent-install-wizard--maintenance .node-lifecycle-wizard__options :deep(.el-radio) {
+  margin-right: 0;
 }
 
 .agent-install-wizard--maintenance .agent-install-wizard__console.source-script-shell {
@@ -1374,11 +1577,11 @@ defineExpose({ clearInstallCommand })
   align-items: flex-start;
   gap: 10px;
   margin: 0;
-  padding: 11px 12px;
-  border: 1px solid rgb(253 230 138);
-  border-radius: 8px;
-  background: rgb(255 251 235);
-  color: rgb(146 64 14);
+  padding: 3px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
 }
 
 .agent-install-wizard--maintenance .agent-install-wizard__warn > svg {
@@ -1405,19 +1608,57 @@ defineExpose({ clearInstallCommand })
   font-weight: 600;
 }
 
+.agent-install-wizard--maintenance .agent-install-wizard__warn--warning {
+  color: #b54708;
+}
+
 @container (max-width: 680px) {
-  .agent-install-wizard--maintenance .agent-install-wizard__platform {
-    grid-template-columns: 40px minmax(0, 1fr);
+  .agent-install-wizard--maintenance .agent-install-wizard__platform-hints {
+    grid-template-columns: 1fr;
+    gap: 10px;
   }
 
-  .agent-install-wizard--maintenance .agent-install-wizard__platform-hints {
-    grid-column: 1 / -1;
-    grid-template-columns: 1fr;
+  .agent-install-wizard--maintenance .agent-install-wizard__platform-hint-line {
+    padding: 0;
+  }
+
+  .agent-install-wizard--maintenance .agent-install-wizard__platform-hint-line + .agent-install-wizard__platform-hint-line {
+    padding-top: 10px;
+    border-top: 1px solid rgb(241 245 249);
+    border-left: 0;
   }
 
   .agent-install-wizard--maintenance .agent-install-wizard__console-foot {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .agent-install-wizard--maintenance .agent-install-wizard__platform-summary {
+    grid-column: 1;
+  }
+
+  .agent-install-wizard--maintenance .agent-install-wizard__execution {
+    grid-column: 1;
+    padding: 14px 0 0;
+    border-top: 1px solid var(--el-border-color-lighter);
+    border-left: 0;
+  }
+
+  .agent-install-wizard--maintenance .agent-install-wizard__platform {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-install-wizard--maintenance .agent-install-wizard__command-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agent-install-wizard--maintenance .node-lifecycle-wizard__tabs {
+    display: flex;
+  }
+
+  .agent-install-wizard--maintenance .node-lifecycle-wizard__tab {
+    flex: 1;
   }
 }
 </style>

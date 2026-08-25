@@ -47,38 +47,38 @@ async function copyCommand(command: string) {
 
 <template>
   <div class="node-maintenance-panel">
-    <ElAlert
+    <div
       v-if="offline"
-      type="warning"
-      :closable="false"
-      show-icon
       class="node-maintenance-panel__offline"
+      role="status"
     >
-      <template #title>
-        {{ t('nodeLifecycle.offlineMaintenanceTitle') }}
-      </template>
-      <div class="node-maintenance-panel__offline-body">
+      <div class="node-maintenance-panel__offline-copy">
+        <span
+          class="node-maintenance-panel__offline-dot"
+          aria-hidden="true"
+        />
+        <strong>{{ t('nodeLifecycle.offlineMaintenanceTitle') }}</strong>
         <span>
           {{ node.last_seen_at
             ? t('nodeLifecycle.lastHeartbeatAt', { time: formatNodeDate(node.last_seen_at) })
             : t('nodeLifecycle.lastHeartbeatUnknown') }}
         </span>
-        <ElButton
-          link
-          type="primary"
-          :loading="refreshing"
-          :aria-label="t('nodeLifecycle.refreshNodeStatus')"
-          @click="emit('refresh')"
-        >
-          <RefreshCw
-            v-if="!refreshing"
-            :size="14"
-            aria-hidden="true"
-          />
-          {{ t('nodeLifecycle.refreshNodeStatus') }}
-        </ElButton>
       </div>
-    </ElAlert>
+      <ElButton
+        link
+        type="primary"
+        :loading="refreshing"
+        :aria-label="t('nodeLifecycle.refreshNodeStatus')"
+        @click="emit('refresh')"
+      >
+        <RefreshCw
+          v-if="!refreshing"
+          :size="14"
+          aria-hidden="true"
+        />
+        {{ t('nodeLifecycle.refreshNodeStatus') }}
+      </ElButton>
+    </div>
 
     <NodeLifecycleWizard
       maintenance-only
@@ -103,21 +103,51 @@ async function copyCommand(command: string) {
 }
 
 .node-maintenance-panel__offline {
-  align-items: flex-start;
-}
-
-.node-maintenance-panel__offline-body {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   width: 100%;
+  padding: 2px 2px 10px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.node-maintenance-panel__offline-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+}
+
+.node-maintenance-panel__offline-copy strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.node-maintenance-panel__offline-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #f79009;
+}
+
+.node-maintenance-panel__offline .el-button {
+  gap: 5px;
+  flex: 0 0 auto;
 }
 
 @media (max-width: 640px) {
-  .node-maintenance-panel__offline-body {
+  .node-maintenance-panel__offline {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .node-maintenance-panel__offline-copy {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 }
 </style>

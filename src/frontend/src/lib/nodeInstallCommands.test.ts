@@ -6,6 +6,7 @@ import {
   buildLocalUpgradeCommand,
   defaultPackagePath,
   installPathsSummary,
+  maintenanceExecutionKind,
 } from './nodeInstallCommands'
 
 describe('node upgrade download TLS policy', () => {
@@ -52,6 +53,19 @@ describe('node upgrade download TLS policy', () => {
 })
 
 describe('manual node maintenance commands', () => {
+  it.each([
+    ['windows', 'system', 'windows-administrator'],
+    ['windows', 'account', 'windows-administrator'],
+    ['windows', 'user', 'windows-user'],
+    ['linux', 'system', 'unix-administrator'],
+    ['linux', 'account', 'unix-administrator'],
+    ['linux', 'user_continuous', 'unix-user'],
+    ['macos', 'system', 'unix-administrator'],
+    ['macos', 'user', 'unix-user'],
+  ] as const)('explains the required identity for %s %s maintenance', (os, mode, kind) => {
+    expect(maintenanceExecutionKind(os, mode)).toBe(kind)
+  })
+
   it('shows unified machine Agent Roots for system installs', () => {
     expect(installPathsSummary('windows')).toMatchObject({
       installDir: 'C:\\ProgramData\\HyperFileLens\\Agent\\bin',
@@ -220,5 +234,22 @@ describe('manual node maintenance commands', () => {
     expect(commands.every((command) => command.includes('$env:ProgramData\\HyperFileLens\\Agent\\bin\\install.cmd'))).toBe(true)
     expect(commands.join('\n')).not.toContain('Start-Service')
     expect(commands.join('\n')).not.toContain('Restart-Service')
+  })
+
+  it('uses the system installer for every Windows service action', () => {
+    const commands = [
+      buildLocalServiceCommand('windows', 'status', 'agent', 'system'),
+      buildLocalServiceCommand('windows', 'start', 'agent', 'system'),
+      buildLocalServiceCommand('windows', 'stop', 'agent', 'system'),
+      buildLocalServiceCommand('windows', 'restart', 'agent', 'system'),
+    ]
+
+    expect(commands).toEqual([
+      '& "$env:ProgramData\\HyperFileLens\\Agent\\bin\\install.cmd" status',
+      '& "$env:ProgramData\\HyperFileLens\\Agent\\bin\\install.cmd" start',
+      '& "$env:ProgramData\\HyperFileLens\\Agent\\bin\\install.cmd" stop',
+      '& "$env:ProgramData\\HyperFileLens\\Agent\\bin\\install.cmd" restart',
+    ])
+    expect(commands.join('\n')).not.toMatch(/(?:Start|Stop|Restart)-Service/)
   })
 })
