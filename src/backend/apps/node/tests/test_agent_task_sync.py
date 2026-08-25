@@ -472,6 +472,119 @@ class AgentTaskDeliveryAndLeaseTests(TestCase):
         mock_clear_agent_location.assert_called_once_with(agent_id=self.node.id)
         mock_push_task_stream.assert_called_once()
 
+    @patch("apps.node.services.internal.task._schedule_agent_task_redelivery")
+    @patch("apps.node.services.internal.task.redis_store.get_agent_location")
+    @patch("apps.node.services.internal.task.redis_store.get_redis")
+    def test_lifecycle_delivery_waits_through_short_offline_flap(
+        self,
+        mock_get_redis,
+        mock_get_agent_location,
+        mock_schedule_redelivery,
+    ):
+        class RedisClient:
+            def exists(self, key):
+                return False
+
+            def set(self, *args, **kwargs):
+                return True
+
+        NodeTask.objects.filter(pk=self.task.pk).update(
+            kind="agent.upgrade",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            status=NodeTask.Status.PENDING,
+        )
+        self.node.availability = Node.Availability.OFFLINE
+        self.node.save(update_fields=["availability"])
+        self.task.refresh_from_db()
+        mock_get_agent_location.return_value = "stale-ws"
+        mock_get_redis.return_value = RedisClient()
+
+        task = deliver_agent_task(task=self.task)
+
+        self.assertEqual(task.status, NodeTask.Status.PENDING)
+        self.assertEqual(task.last_error, "agent websocket is reconnecting")
+        mock_schedule_redelivery.assert_called_once_with(task=task)
+
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch("apps.node.services.internal.task.redis_store.clear_agent_location")
+    @patch("apps.node.services.internal.task.redis_store.get_agent_location")
+    @patch("apps.node.services.internal.task.redis_store.get_redis")
+    def test_lifecycle_delivery_fails_after_pre_dispatch_route_grace(
+        self,
+        mock_get_redis,
+        mock_get_agent_location,
+        mock_clear_agent_location,
+        mock_push_task_stream,
+    ):
+        class RedisClient:
+            def exists(self, key):
+                return False
+
+            def set(self, *args, **kwargs):
+                return True
+
+        NodeTask.objects.filter(pk=self.task.pk).update(
+            kind="agent.upgrade",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            status=NodeTask.Status.PENDING,
+            created_at=timezone.now()
+            - timezone.timedelta(
+                seconds=node_conf.TASK_ROUTE_RECONNECT_GRACE_SECONDS + 1
+            ),
+        )
+        self.node.availability = Node.Availability.OFFLINE
+        self.node.save(update_fields=["availability"])
+        self.task.refresh_from_db()
+        mock_get_agent_location.return_value = "stale-ws"
+        mock_get_redis.return_value = RedisClient()
+
+        task = deliver_agent_task(task=self.task)
+
+        self.assertEqual(task.status, NodeTask.Status.FAILED)
+        self.assertEqual(task.last_error, "agent websocket is not routable")
+        mock_clear_agent_location.assert_called_once_with(agent_id=self.node.id)
+        mock_push_task_stream.assert_called_once()
+
+    @patch("apps.node.services.internal.task._schedule_agent_task_redelivery")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch("apps.node.services.internal.task.redis_store.clear_agent_location")
+    @patch("apps.node.services.internal.task.redis_store.get_agent_location")
+    @patch("apps.node.services.internal.task.redis_store.get_redis")
+    def test_lifecycle_delivery_never_retries_after_command_was_sent(
+        self,
+        mock_get_redis,
+        mock_get_agent_location,
+        mock_clear_agent_location,
+        mock_push_task_stream,
+        mock_schedule_redelivery,
+    ):
+        class RedisClient:
+            def exists(self, key):
+                return False
+
+            def set(self, *args, **kwargs):
+                return True
+
+        NodeTask.objects.filter(pk=self.task.pk).update(
+            kind="agent.upgrade",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            status=NodeTask.Status.PENDING,
+            dispatched_at=timezone.now(),
+            delivery_attempt_count=1,
+        )
+        self.node.availability = Node.Availability.OFFLINE
+        self.node.save(update_fields=["availability"])
+        self.task.refresh_from_db()
+        mock_get_agent_location.return_value = "stale-ws"
+        mock_get_redis.return_value = RedisClient()
+
+        task = deliver_agent_task(task=self.task)
+
+        self.assertEqual(task.status, NodeTask.Status.FAILED)
+        mock_clear_agent_location.assert_called_once_with(agent_id=self.node.id)
+        mock_push_task_stream.assert_called_once()
+        mock_schedule_redelivery.assert_not_called()
+
     @patch("apps.node.services.internal.task._send_task_command")
     @patch("apps.node.services.internal.task.redis_store.get_agent_location")
     @patch("apps.node.services.internal.task.redis_store.get_redis")
