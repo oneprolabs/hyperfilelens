@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 
 from django.test import SimpleTestCase
 from django.utils import timezone
@@ -10,11 +11,43 @@ from apps.protection.services.progress.step3_progress import (
     compute_step3_eta_seconds,
     enrich_step3_backup_transfer,
     enrich_step3_restore_transfer,
+    restore_terminal_counts,
     should_latch_kopia_switch,
 )
 
 
 class Step3ProgressTests(SimpleTestCase):
+    def test_restore_terminal_counts_sum_all_restore_results(self):
+        record = SimpleNamespace(
+            items=SimpleNamespace(
+                all=lambda: [
+                    SimpleNamespace(result_payload={"restore_results": [
+                        {"result": {"stderr_tail": "Restored 12 files, 3 directories and 1 symbolic links (2 MB)."}},
+                    ]}),
+                    SimpleNamespace(result_payload={"restore_results": [
+                        {"result": {"stderr": "Restored 8 files, 2 directories and 0 symbolic links (1 MB)."}},
+                    ]}),
+                ]
+            )
+        )
+
+        self.assertEqual(
+            restore_terminal_counts(record),
+            {"files": 20, "directories": 5, "symlinks": 1},
+        )
+
+    def test_completed_restore_uses_exact_snapshot_bytes(self):
+        transfer = enrich_step3_restore_transfer(
+            transfer={"phase": "done", "bytes_done": 716_400_740},
+            previous={"bytes_done": 716_400_740},
+            aggregate={"bytes_done": 716_400_740},
+            bytes_total=716_337_511,
+        )
+
+        self.assertEqual(transfer["bytes_done"], 716_337_511)
+        self.assertEqual(transfer["processed_bytes"], 716_337_511)
+        self.assertEqual(transfer["bytes_total"], 716_337_511)
+
     def test_display_percent_only_increases(self):
         first = compute_step3_display_percent(bytes_done=100, effective_total=1000, previous_display=None)
         second = compute_step3_display_percent(bytes_done=50, effective_total=1000, previous_display=first)

@@ -21,7 +21,7 @@ describe('transferCapacityText', () => {
       bytes_total: 2_000_000_000,
       bytes_total_known: true,
       bytes_total_reference: true,
-    })).toBe('Transferred: 5.00 MB / source data: 2.00 GB')
+    })).toBe('Transferred: 4.77 MB / source data: 1.86 GB')
   })
 
   it('labels a Kopia estimate as incremental transfer volume', () => {
@@ -30,7 +30,7 @@ describe('transferCapacityText', () => {
       bytes_total: 12_500_000,
       bytes_total_known: true,
       estimated_bytes: 12_500_000,
-    })).toBe('Incremental transfer: 5.00 MB / est. 12.5 MB')
+    })).toBe('Incremental transfer: 4.77 MB / est. 11.9 MB')
   })
 
   it('uses logical processed bytes for schema v2 capacity', () => {
@@ -42,7 +42,7 @@ describe('transferCapacityText', () => {
       bytes_total: 4_130_621_356,
       bytes_total_known: true,
       estimated_bytes: 4_130_621_356,
-    })).toBe('Processed: 3.48 GB / 4.13 GB')
+    })).toBe('Processed: 3.24 GB / 3.85 GB')
   })
 
   it('shows processed bytes without inventing a total', () => {
@@ -53,7 +53,7 @@ describe('transferCapacityText', () => {
       bytes_total: null,
       bytes_total_known: false,
       uploaded_bytes: 192,
-    })).toBe('Processed: 3.16 GB')
+    })).toBe('Processed: 2.94 GB')
   })
 })
 
@@ -63,7 +63,7 @@ describe('transferSpeedParts', () => {
       phase: 'transferring',
       speed_bps: 393_000_000,
       hash_speed_bps: 393_000_000,
-    })).toEqual(['Scanning: 393 MB/s'])
+    })).toEqual(['Scanning: 375 MB/s'])
   })
 
   it('does not display an unclassified legacy speed', () => {
@@ -77,7 +77,7 @@ describe('transferSpeedParts', () => {
     expect(transferSpeedParts(t, {
       phase: 'transferring',
       speed_bps: 500_000,
-    }, { allowUnclassifiedSpeed: true })).toEqual(['500 KB/s'])
+    }, { allowUnclassifiedSpeed: true })).toEqual(['488 KB/s'])
   })
 
   it('labels physical upload speed and preserves a fresh zero sample', () => {

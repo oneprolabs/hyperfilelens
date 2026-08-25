@@ -105,6 +105,65 @@ def _agent_routable(*, agent_id: int) -> bool:
     return bool(client.exists(redis_store.ws_alive_key(ws_instance)))
 
 
+def _project_bound_repository_availability(
+    *,
+    node_id: int,
+    availability: str,
+    transitioned: bool,
+) -> None:
+    """Project confirmed node transitions to repositories bound to that node."""
+    if not transitioned:
+        return
+
+    try:
+        from apps.storage.repositories.models import Repository
+
+        repositories = Repository.objects.filter(
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=node_id,
+            status=Repository.Status.CREATED,
+        )
+        if availability == Node.Availability.OFFLINE:
+            repositories.exclude(health=Repository.Health.OFFLINE).update(
+                health=Repository.Health.OFFLINE,
+                health_failures=0,
+            )
+            return
+
+        repository_ids = list(
+            repositories.filter(
+                health__in=[
+                    Repository.Health.OFFLINE,
+                    Repository.Health.UNVERIFIED,
+                ],
+            ).values_list("id", flat=True)
+        )
+
+        def _probe_bound_repositories() -> None:
+            try:
+                from apps.storage.tasks import check_storage_repository_health
+
+                for repository_id in repository_ids:
+                    check_storage_repository_health.apply_async(
+                        kwargs={"repository_id": repository_id}, countdown=2
+                    )
+            except Exception:
+                logger.warning(
+                    "bound repository health recovery dispatch failed node_id=%s",
+                    node_id,
+                    exc_info=True,
+                )
+
+        transaction.on_commit(_probe_bound_repositories)
+    except Exception:
+        logger.warning(
+            "bound repository availability projection failed node_id=%s availability=%s",
+            node_id,
+            availability,
+            exc_info=True,
+        )
+
+
 def record_node_availability(
     *,
     node_id: int,
@@ -144,6 +203,11 @@ def record_node_availability(
                 "updated_at",
             ]
         )
+        _project_bound_repository_availability(
+            node_id=node.id,
+            availability=node.availability,
+            transitioned=transitioned,
+        )
 
         def _project() -> None:
             try:
@@ -163,32 +227,6 @@ def record_node_availability(
                 )
 
         transaction.on_commit(_project)
-        if transitioned and availability == Node.Availability.ONLINE:
-
-            def _probe_bound_repositories() -> None:
-                try:
-                    from apps.storage.repositories.models import Repository
-                    from apps.storage.tasks import check_storage_repository_health
-
-                    repository_ids = list(
-                        Repository.objects.filter(
-                            bind_node_id=node.id,
-                            health__in=[Repository.Health.OFFLINE, Repository.Health.UNVERIFIED],
-                            status=Repository.Status.CREATED,
-                        ).values_list("id", flat=True)
-                    )
-                    for repository_id in repository_ids:
-                        check_storage_repository_health.apply_async(
-                            kwargs={"repository_id": repository_id}, countdown=2
-                        )
-                except Exception:
-                    logger.warning(
-                        "bound repository health recovery dispatch failed node_id=%s",
-                        node.id,
-                        exc_info=True,
-                    )
-
-            transaction.on_commit(_probe_bound_repositories)
         return True
 
 
@@ -305,6 +343,11 @@ def reconcile_stale_online_nodes(*, limit: int = 200) -> dict[str, int]:
             node.availability = Node.Availability.OFFLINE
             node.availability_updated_at = timezone.now()
             node.save(update_fields=["availability", "availability_updated_at", "updated_at"])
+            _project_bound_repository_availability(
+                node_id=node.id,
+                availability=node.availability,
+                transitioned=True,
+            )
             nodes_marked_offline += 1
             try:
                 from apps.source.services.internal.agent_host_sync import sync_agent_source_host

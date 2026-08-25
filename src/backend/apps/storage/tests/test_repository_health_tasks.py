@@ -13,6 +13,7 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
+from apps.node.models.base import NodeRole
 from apps.protection.models import BackupConfig
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
@@ -233,6 +234,40 @@ class RepositoryHealthTaskTests(TestCase):
 
         self.assertTrue(result["locked"])
         cache_delete.assert_not_called()
+
+    @mock.patch("apps.storage.tasks.dispatch_automatic_repository_observation")
+    @mock.patch("apps.storage.tasks.cache.delete")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=True)
+    def test_bound_offline_node_marks_repository_offline_without_probe(
+        self,
+        _cache_add,
+        _cache_delete,
+        dispatch_observation,
+    ):
+        proxy = Node.objects.create(
+            organization=self.organization,
+            name="offline-proxy",
+            role=NodeRole.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+        repository = self._repository(
+            "local",
+            Repository.Type.PROXY_FS,
+            health=Repository.Health.ONLINE,
+            health_failures=1,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+
+        result = check_storage_repository_health.run(repository_id=repository.id)
+
+        repository.refresh_from_db()
+        self.assertEqual(result["status"], Repository.Health.OFFLINE)
+        self.assertEqual(result["probe_status"], "bound_node_offline")
+        self.assertEqual(repository.health, Repository.Health.OFFLINE)
+        self.assertEqual(repository.health_failures, 0)
+        dispatch_observation.assert_not_called()
 
     @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
     @mock.patch("apps.storage.tasks.cache.delete")

@@ -14,6 +14,7 @@ from apps.protection.services.progress.step3_progress import (
     enrich_step3_restore_transfer,
     restore_file_count_seed,
     restore_snapshot_bytes_total,
+    restore_terminal_counts,
 )
 from apps.restore.models import RestoreRecord, RestoreRecordItem
 from apps.task.models import Task
@@ -79,6 +80,13 @@ def build_restore_kopia_progress(*, record: RestoreRecord, task: Task | None = N
         bytes_total=restore_snapshot_bytes_total(record),
         file_count_seed=restore_file_count_seed(record),
     )
+    terminal_counts = restore_terminal_counts(record)
+    if transfer.get("phase") in {"done", "success", "completed"} and terminal_counts is not None:
+        transfer.update(
+            restored_file_count=terminal_counts["files"],
+            restored_directory_count=terminal_counts["directories"],
+            restored_symlink_count=terminal_counts["symlinks"],
+        )
     enriched["transfer_progress"] = transfer
     return enriched
 

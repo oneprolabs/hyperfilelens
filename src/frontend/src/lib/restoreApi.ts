@@ -6,6 +6,7 @@ import { asList, asPagination, unwrapApiPayload } from './parse'
 export type RestoreEndpointType = 'agent' | 'nas'
 export type RestoreConflictMode = 'skip' | 'overwrite'
 export type RestoreScope = 'snapshot' | 'paths'
+export type RestoreRecordSearchField = 'restore_uid' | 'snapshot_uid' | 'task_uuid'
 
 export type PagedResult<T> = {
   count: number
@@ -296,6 +297,11 @@ export async function listRestoreRecords(params?: {
   source_ref_id?: number
   task_uuid?: string
   search?: string
+  search_fields?: string
+  status?: string
+  source_mode?: 'plan' | 'manual'
+  created_from?: string
+  created_to?: string
 }, init?: RequestInit) {
   const qs = query(params as Record<string, string | number | boolean | undefined>)
   const path = qs ? `${restoreRecordBase}/?${qs}` : `${restoreRecordBase}/`

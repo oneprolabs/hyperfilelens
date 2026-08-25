@@ -59,6 +59,9 @@ export type TransferProgress = {
   estimated_bytes?: number
   processed_count?: number
   total_count?: number
+  restored_file_count?: number
+  restored_directory_count?: number
+  restored_symlink_count?: number
   path_index?: number | null
   path_total?: number | null
   du_total?: number
@@ -144,8 +147,8 @@ export function formatBytes(value: number | null | undefined): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
   let unit = 0
   let scaled = bytes
-  while (scaled >= 1000 && unit < BYTE_UNITS.length - 1) {
-    scaled /= 1000
+  while (scaled >= 1024 && unit < BYTE_UNITS.length - 1) {
+    scaled /= 1024
     unit += 1
   }
   const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2

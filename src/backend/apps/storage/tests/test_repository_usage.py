@@ -1,6 +1,7 @@
 from datetime import timedelta
 from unittest import mock
 
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
@@ -80,7 +81,9 @@ class RepositoryUsageTests(TestCase):
 
         result = sync_all_repositories(limit=1, force=True)
 
+        self.assertEqual(result["repositories_attempted"], 1)
         self.assertEqual(result["repositories_synced"], 1)
+        self.assertEqual(result["repositories_failed"], 0)
         sync_usage.assert_called_once()
         self.assertEqual(sync_usage.call_args.args[0].id, older.id)
         self.assertNotEqual(sync_usage.call_args.args[0].id, newer.id)
@@ -125,6 +128,59 @@ class RepositoryUsageTests(TestCase):
             include_usage=True,
         )
         synchronous_probe.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_health."
+        "dispatch_automatic_repository_observation"
+    )
+    @mock.patch("apps.storage.services.internal.repository_usage.sync_repository_usage")
+    def test_scheduled_usage_continues_after_one_repository_fails(
+        self,
+        sync_usage,
+        dispatch_observation,
+    ):
+        org = Organization.objects.create(
+            key="scheduled-usage-isolation-org",
+            name="Scheduled Usage Isolation Org",
+        )
+        failed_repository = Repository.objects.create(
+            organization_id=org.id,
+            name="offline-proxy-repository",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=42,
+            last_checked_at=timezone.now() - timedelta(hours=1),
+        )
+        healthy_repository = Repository.objects.create(
+            organization_id=org.id,
+            name="healthy-s3-repository",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            last_checked_at=timezone.now() - timedelta(minutes=30),
+        )
+        dispatch_observation.side_effect = ValidationError("bound proxy is offline")
+
+        result = sync_all_repositories(
+            force=True,
+            async_agent_probes=True,
+        )
+
+        self.assertEqual(result["repositories_attempted"], 2)
+        self.assertEqual(result["repositories_synced"], 1)
+        self.assertEqual(result["repositories_failed"], 1)
+        self.assertEqual(
+            result["failed_repository_ids"],
+            [failed_repository.id],
+        )
+        dispatch_observation.assert_called_once_with(
+            repository=failed_repository,
+            include_usage=True,
+        )
+        sync_usage.assert_called_once_with(
+            healthy_repository,
+            recorded_at=None,
+        )
 
     def test_parse_kopia_content_stats_json(self):
         payload = '{"totalSize": 2048, "totalFileCount": 3}'

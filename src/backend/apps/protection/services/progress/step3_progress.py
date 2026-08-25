@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -11,6 +12,10 @@ from django.utils import timezone
 from apps.protection.models import BackupConfig, BackupConfigDirectory, BackupSourceSnapshot
 
 logger = logging.getLogger(__name__)
+
+_RESTORE_RESULT_COUNTS = re.compile(
+    r"(?i)^Restored\s+(\d+)\s+files?,\s+(\d+)\s+director(?:y|ies)\s+and\s+(\d+)\s+symbolic\s+links?"
+)
 
 _STABILITY_TIERS: tuple[tuple[int, int, int], ...] = (
     (500 * 1024 * 1024, 45, 6),
@@ -493,6 +498,35 @@ def restore_file_count_seed(record) -> int:
     return sum(max(0, int(directory.file_count or 0)) for directory in directories)
 
 
+def restore_terminal_counts(record) -> dict[str, int] | None:
+    """Return final file/dir/symlink counts reported by every restore lane."""
+    totals = {"files": 0, "directories": 0, "symlinks": 0}
+    found = False
+    for item in record.items.all():
+        payload = item.result_payload if isinstance(item.result_payload, dict) else {}
+        for entry in payload.get("restore_results") or []:
+            result = entry.get("result") if isinstance(entry, dict) else None
+            if not isinstance(result, dict):
+                continue
+            output = result.get("stderr_tail") or result.get("stderr") or ""
+            if not isinstance(output, str):
+                continue
+            match = next(
+                (
+                    parsed
+                    for line in reversed(output.splitlines())
+                    if (parsed := _RESTORE_RESULT_COUNTS.match(line.strip()))
+                ),
+                None,
+            )
+            if match:
+                found = True
+                totals["files"] += int(match.group(1))
+                totals["directories"] += int(match.group(2))
+                totals["symlinks"] += int(match.group(3))
+    return totals if found else None
+
+
 def enrich_step3_restore_transfer(
     *,
     transfer: dict[str, Any],
@@ -536,6 +570,11 @@ def enrich_step3_restore_transfer(
         merged["bytes_total_known"] = True
         merged["bytes_total_reference"] = False
         merged["bytes_total_estimated"] = False
+
+    if str(merged.get("phase") or "").lower() in {"done", "success", "completed"} and effective_total > 0:
+        merged["bytes_done"] = effective_total
+        merged["processed_bytes"] = effective_total
+        bytes_done = effective_total
 
     prev_display = _float(prev.get("step3_display_percent"))
     if prev_display is None:
