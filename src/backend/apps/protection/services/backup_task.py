@@ -1337,14 +1337,34 @@ def extract_kopia_failure_message(
         text = str(result.get(key) or "").strip()
         if text:
             chunks.append(text)
-    for nested_key in (
+
+    nested_keys = [
+        "policy_reset",
+        "policy_apply",
         "snapshot_create",
         "repository_create",
         "repository_connect",
         "repository_status",
-    ):
+    ]
+    policy_phase = str(result.get("policy_phase") or "").strip().lower()
+    phase_key = f"policy_{policy_phase}"
+    if phase_key in nested_keys:
+        nested_keys.remove(phase_key)
+        nested_keys.insert(0, phase_key)
+
+    for nested_key in nested_keys:
         nested = result.get(nested_key)
         if not isinstance(nested, dict):
+            continue
+        try:
+            exit_code = int(nested.get("exit_code", 0))
+        except (TypeError, ValueError):
+            exit_code = 0
+        if (
+            nested_key == "repository_status"
+            and "exit_code" in nested
+            and exit_code == 0
+        ):
             continue
         for key in ("stderr", "stderr_tail", "stdout", "stdout_tail"):
             text = str(nested.get(key) or "").strip()
@@ -1368,6 +1388,7 @@ def extract_kopia_failure_message(
             or "failed to open repository" in lower
             or "error connecting to repository" in lower
             or lower.startswith("error:")
+            or "quota exceeded" in lower
             or "unable to get policy tree" in lower
             or "policy not found" in lower
             or "unable to open" in lower
@@ -1416,6 +1437,11 @@ def public_repository_failure_message(message: str) -> str:
     """Return an actionable repository error without backend implementation details."""
     text = re.sub(r"https?://\S+", "", str(message or "")).strip()
     lower = text.lower()
+    if "quota exceeded" in lower:
+        return (
+            "Backup repository quota exceeded. Free storage or increase the "
+            "repository quota before retrying."
+        )
     if "not initialized" in lower:
         return "Backup repository is not initialized. Initialize or repair the repository before retrying."
     if "repository is not connected" in lower or "not connected" in lower:

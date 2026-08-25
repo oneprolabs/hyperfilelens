@@ -406,6 +406,42 @@ class KopiaProgressDisplayTests(SimpleTestCase):
 
 
 class KopiaFailureMessageTests(SimpleTestCase):
+    def test_extract_kopia_failure_message_prefers_failed_policy_over_status(self):
+        from apps.protection.services.backup_task import (
+            extract_kopia_failure_message,
+            public_repository_failure_message,
+        )
+
+        result = {
+            "error_code": "POLICY_APPLY_FAILED",
+            "policy_phase": "reset",
+            "policy_reset": {
+                "stderr_tail": (
+                    "Setting policy for root@jlb35:/opt/hyperfilelens-agent\n"
+                    "unable to write diagnostics blob despite 10 retries: "
+                    "Bucket quota exceeded\n"
+                    "error flushing writer: unable to write session marker"
+                ),
+                "exit_code": 1,
+            },
+            "repository_status": {
+                "stdout_tail": "Epoch range-compaction every: 7 epochs",
+                "exit_code": 0,
+            },
+        }
+
+        message = extract_kopia_failure_message(
+            result, last_error="reset backup policy: exit 1: exit status 1"
+        )
+
+        self.assertIn("Bucket quota exceeded", message)
+        self.assertNotIn("Epoch range-compaction", message)
+        self.assertEqual(
+            public_repository_failure_message(message),
+            "Backup repository quota exceeded. Free storage or increase the "
+            "repository quota before retrying.",
+        )
+
     def test_extract_kopia_failure_message_prefers_fatal_errors(self):
         from apps.protection.services.backup_task import extract_kopia_failure_message
 
