@@ -4063,12 +4063,13 @@
     "localInstallCommandTitle": "本地控制台地址",
     "localInstallCommandWarning": "该命令只能在控制台主机上运行。在远程安装之前，通过目标主机可访问的地址打开HyperFileLens。",
     "localUpgradeCommandWarning": "配置的包URL使用本地地址。在运行此命令之前，将 HyperFileLens public URL 设置为目标主机可访问的地址。",
-    "consoleBash": "重击",
-    "consoleShell": "重击",
-    "consolePowerShell": "电源外壳",
-    "consoleZsh": "兹什",
+    "consoleBash": "Bash 命令行",
+    "consoleShell": "Shell 命令行",
+    "consolePowerShell": "PowerShell 命令行",
+    "consoleZsh": "Zsh 命令行",
     "maintenance": "维护",
     "maintenanceCommands": "维护命令",
+    "installedAgentTitle": "已安装的 Agent",
     "offlineMaintenanceTitle": "该节点已离线。在节点主机上运行命令。",
     "lastHeartbeatAt": "最后一次心跳：{time}",
     "lastHeartbeatUnknown": "没有收到心跳。",
@@ -4076,6 +4077,25 @@
     "installPathLabel": "安装路径",
     "dataPathLabel": "数据路径",
     "serviceNameLabel": "服务",
+    "executionLabel": "执行身份",
+    "execution": {
+      "windows-administrator": {
+        "title": "管理员 PowerShell",
+        "description": "右键选择“以管理员身份运行”打开 PowerShell，然后粘贴命令。"
+      },
+      "windows-user": {
+        "title": "安装 Agent 的用户 PowerShell",
+        "description": "登录安装 Agent 时使用的同一用户并运行命令，请勿使用管理员 PowerShell。"
+      },
+      "unix-administrator": {
+        "title": "具有管理员权限的终端",
+        "description": "使用 sudo 运行命令，或在 root shell 中执行。"
+      },
+      "unix-user": {
+        "title": "安装 Agent 的用户终端",
+        "description": "登录安装 Agent 时使用的同一用户并运行命令，请勿使用 sudo。"
+      }
+    },
     "purgeAll": "同时删除本地配置和数据",
     "upgradeCommandUnavailable": "无法生成升级命令。刷新并重试。",
     "gatewayTabHint": {

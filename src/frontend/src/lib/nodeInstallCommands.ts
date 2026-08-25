@@ -11,6 +11,11 @@ const WIN_INSTALL_CMD = '& "$env:ProgramData\\HyperFileLens\\Agent\\bin\\install
 const WIN_USER_INSTALL_CMD = '& "$env:LOCALAPPDATA\\HyperFileLens\\Agent\\bin\\install.cmd"'
 
 export type NodeLifecycleTab = 'install' | 'upgrade' | 'uninstall' | 'service'
+export type MaintenanceExecutionKind =
+  | 'windows-administrator'
+  | 'windows-user'
+  | 'unix-administrator'
+  | 'unix-user'
 
 function curlDownloadOptions(tlsVerify: boolean): string {
   return tlsVerify ? "--proto '=https' --tlsv1.2 -fL" : '-k -fL'
@@ -26,6 +31,24 @@ export function isLinuxOnlyRole(role: NodeRole): boolean {
 export function roleSupportedOnOs(role: NodeRole, os: EnrollmentOs): boolean {
   if (isLinuxOnlyRole(role)) return os === 'linux'
   return true
+}
+
+/**
+ * Manual lifecycle commands must run with the identity that owns the installed
+ * Agent. Machine-wide and specified-user installations are administrator-owned;
+ * current-user installations are owned by the same non-elevated user that
+ * installed them. This is intentionally derived from the persisted concrete
+ * mode rather than inferred again from the console operator.
+ */
+export function maintenanceExecutionKind(
+  os: EnrollmentOs,
+  installationMode: NodeInstallationMode,
+): MaintenanceExecutionKind {
+  const userOwned = installationMode === 'user' || installationMode === 'user_continuous'
+  if (os === 'windows') {
+    return userOwned ? 'windows-user' : 'windows-administrator'
+  }
+  return userOwned ? 'unix-user' : 'unix-administrator'
 }
 
 export function linuxInstallScriptPath() {
@@ -140,17 +163,8 @@ export function buildLocalServiceCommand(
     return `${agent}\n${sidecar} up -d`
   }
   if (os === 'windows') {
-    if (installationMode === 'user') {
-      return `${WIN_USER_INSTALL_CMD} ${action}`
-    }
-    if (installationMode === 'account') {
-      // Specified-user continuous mode uses Task Scheduler, not SCM.
-      return `${WIN_INSTALL_CMD} ${action}`
-    }
-    if (action === 'status') return `${WIN_INSTALL_CMD} status`
-    if (action === 'start') return 'Start-Service HyperFileLensAgent'
-    if (action === 'stop') return 'Stop-Service HyperFileLensAgent -Force'
-    return 'Restart-Service HyperFileLensAgent'
+    const installCommand = installationMode === 'user' ? WIN_USER_INSTALL_CMD : WIN_INSTALL_CMD
+    return `${installCommand} ${action}`
   }
   const installScript = installScriptPath(os, installationMode)
   return `${installationMode === 'user' || installationMode === 'user_continuous' ? '' : 'sudo '}${installScript} ${action}`

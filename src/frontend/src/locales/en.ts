@@ -1899,6 +1899,7 @@ export const en = {
     manualCommands: 'Manual lifecycle commands',
     maintenance: 'Maintenance',
     maintenanceCommands: 'Maintenance Commands',
+    installedAgentTitle: 'Installed Agent',
     offlineMaintenanceTitle: 'This node is offline. Run the command on the node host.',
     lastHeartbeatAt: 'Last heartbeat: {time}',
     lastHeartbeatUnknown: 'No heartbeat has been received.',
@@ -1906,6 +1907,25 @@ export const en = {
     installPathLabel: 'Install path',
     dataPathLabel: 'Data path',
     serviceNameLabel: 'Service',
+    executionLabel: 'Run as',
+    execution: {
+      'windows-administrator': {
+        title: 'Administrator PowerShell',
+        description: 'Open PowerShell with Run as administrator, then paste the command.',
+      },
+      'windows-user': {
+        title: 'PowerShell as the installed user',
+        description: 'Sign in as the same user that installed the Agent. Do not use Run as administrator.',
+      },
+      'unix-administrator': {
+        title: 'Terminal with administrator access',
+        description: 'Run the command with sudo, or from a root shell.',
+      },
+      'unix-user': {
+        title: 'Terminal as the installed user',
+        description: 'Sign in as the same user that installed the Agent. Do not use sudo.',
+      },
+    },
     purgeAll: 'Also remove local configuration and data',
     serviceStatus: 'Status',
     serviceStart: 'Start',
