@@ -62,24 +62,36 @@ class BackupTaskWatchdogTests(SimpleTestCase):
     def test_automatic_probe_uses_remote_probe_watchdog(self):
         started_at = timezone.now()
 
-        for correlation_type in (
-            "source.connection_probe",
-            "storage.repository_health",
-        ):
-            with self.subTest(correlation_type=correlation_type):
-                deadline = _initial_watchdog_deadline(
-                    correlation_type=correlation_type,
-                    kind="repo.status",
-                    from_time=started_at,
-                )
+        deadline = _initial_watchdog_deadline(
+            correlation_type="storage.repository_health",
+            kind="repo.status",
+            from_time=started_at,
+        )
 
-                self.assertEqual(
-                    deadline,
-                    started_at
-                    + timezone.timedelta(
-                        seconds=node_conf.AUTOMATIC_PROBE_WATCHDOG_SECONDS
-                    ),
-                )
+        self.assertEqual(
+            deadline,
+            started_at
+            + timezone.timedelta(
+                seconds=node_conf.AUTOMATIC_PROBE_WATCHDOG_SECONDS
+            ),
+        )
+
+    def test_source_nas_probe_uses_bounded_execution_watchdog(self):
+        started_at = timezone.now()
+
+        deadline = _initial_watchdog_deadline(
+            correlation_type="source.connection_probe",
+            kind="nas.test",
+            from_time=started_at,
+        )
+
+        self.assertEqual(
+            deadline,
+            started_at
+            + timezone.timedelta(
+                seconds=node_conf.SOURCE_NAS_PROBE_EXECUTION_TIMEOUT_SECONDS
+            ),
+        )
 
     def test_snapshot_delete_uses_long_remote_watchdog(self):
         started_at = timezone.now()

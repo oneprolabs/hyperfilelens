@@ -209,6 +209,9 @@ def connection_test_result_from_agent_outcome(
         "mount_point": result.get("mount_point") or payload.get("mount_point"),
         "space_info": space,
     }
+    for key in ("cleanup_status", "mount_status"):
+        if key in result:
+            details[key] = result[key]
     logger.info(
         "source connection test ok node_id=%s resource_id=%s mount_point=%s",
         node.id,
@@ -248,10 +251,16 @@ def apply_connection_test_result(resource: SourceResource, result: dict) -> None
     if "object_count" in details:
         resource.file_count = int(details.get("object_count") or 0)
     if result.get("success") and resource.requires_mount:
-        mount_point = resource.effective_mount_point()
-        resource.mount_status = MountStatus.MOUNTED
-        resource.mount_point = mount_point
-        resource.mount_error = ""
+        details = result.get("details") or {}
+        if details.get("mount_status") == "unmounted":
+            resource.mount_status = MountStatus.UNMOUNTED
+            resource.mount_point = ""
+            resource.mount_error = ""
+        else:
+            mount_point = resource.effective_mount_point()
+            resource.mount_status = MountStatus.MOUNTED
+            resource.mount_point = mount_point
+            resource.mount_error = ""
     apply_result_availability(resource=resource, result=result)
     resource.save()
     if resource.resource_type == ResourceType.NAS:
@@ -468,10 +477,11 @@ def best_effort_unmount_on_proxy(
     node_id: int,
     force: bool = False,
     wait: bool = True,
+    payload_override: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     """Compensate a stale NAS mount on the selected proxy."""
 
-    if not resource.requires_mount:
+    if not resource.requires_mount and not payload_override:
         return {"success": True, "skipped": True}
     node = Node.objects.filter(
         id=node_id,
@@ -481,7 +491,11 @@ def best_effort_unmount_on_proxy(
     if node is None:
         return {"success": False, "message": "Proxy node not found."}
 
-    payload = build_nas_agent_payload(resource=resource)
+    payload = (
+        dict(payload_override)
+        if isinstance(payload_override, dict)
+        else build_nas_agent_payload(resource=resource)
+    )
     if force and _source_removal_fenced(resource.id):
         force = _source_removal_force_requested(resource)
     if force:

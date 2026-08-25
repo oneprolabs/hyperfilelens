@@ -30,6 +30,7 @@ from apps.source.services.internal.connection import (
     run_connection_test,
     unmount_resource as _unmount_resource,
 )
+from apps.source.services.internal.nas_agent import build_nas_agent_payload
 from apps.source.services.internal.availability import public_connection_result
 from apps.source.services.internal.bound_node_rules import validate_bound_node_role
 from apps.source.services.internal.nas_path_normalize import normalize_resource_config
@@ -60,8 +61,23 @@ def _node_agent_data_dir(node: Node) -> str | None:
 def _cancel_active_connection_probe(resource: SourceResource) -> None:
     if resource.connection_test_status not in ConnectionTestStatus.ACTIVE:
         return
+    from apps.source.tasks.connection_probe import (
+        cancel_active_source_connection_probe_tasks,
+    )
+
+    cancel_active_source_connection_probe_tasks(
+        resource_ids=[resource.id],
+        reason="Source configuration changed during the automatic NAS connection probe",
+    )
     resource.connection_test_status = ConnectionTestStatus.IDLE
     resource.connection_probe_token = None
+    # The automatic probe temporarily projects ``probing`` while it owns the
+    # resource.  Once that probe is invalidated by an edit or proxy change,
+    # leave the resource selectable and let the next availability reconciliation
+    # schedule a fresh observation instead of leaving it stuck in ``probing``.
+    if resource.status == ResourceStatus.PROBING:
+        resource.status = ResourceStatus.ACTIVE
+        resource.status_message = ""
 
 
 def _purge_soft_deleted_name_collision(*, organization_id: int, name: str) -> None:
@@ -367,28 +383,54 @@ def delete_source_resource(*, resource: SourceResource, user, force: bool = Fals
 
 def test_resource_connection(*, resource: SourceResource) -> dict:
     probe_token = uuid4()
-    claimed = (
-        SourceResource.all_objects.filter(pk=resource.id, is_deleted=False)
-        .exclude(status__in=ResourceStatus.REMOVAL_FENCED)
-        .update(
-            connection_test_status=ConnectionTestStatus.RUNNING,
-            connection_probe_token=probe_token,
-            updated_at=timezone.now(),
+    with transaction.atomic():
+        current = (
+            SourceResource.all_objects.select_for_update()
+            .filter(pk=resource.id, is_deleted=False)
+            .first()
         )
-    )
-    if not claimed:
-        return {
-            "success": False,
-            "message": "Connection testing is unavailable while this source is being removed.",
-        }
+        if current is None or current.status in ResourceStatus.REMOVAL_FENCED:
+            return {
+                "success": False,
+                "message": "Connection testing is unavailable while this source is being removed.",
+            }
+        if current.connection_test_status in ConnectionTestStatus.ACTIVE:
+            return {
+                "success": False,
+                "message": "A connection test is already running for this source.",
+            }
+        current.connection_test_status = ConnectionTestStatus.RUNNING
+        current.connection_probe_token = probe_token
+        current.save(
+            update_fields=[
+                "connection_test_status",
+                "connection_probe_token",
+                "updated_at",
+            ]
+        )
+        resource = current
     if resource.resource_type == ResourceType.NAS:
         sync_pipeline_projection(
             organization_id=resource.organization_id,
             source_kind=SelectableSourceKind.NAS,
             ref_id=resource.id,
         )
+    validation_mount_point = agent_paths.source_validation_mount_point(
+        str(probe_token),
+        int(resource.bound_node_id or 0),
+        data_dir=resource.agent_data_dir(),
+    )
+    validation_payload = None
     try:
-        result = run_connection_test(resource=resource)
+        validation_payload = build_nas_agent_payload(
+            resource=resource,
+            mount_point=validation_mount_point,
+        )
+        result = run_connection_test(
+            resource=resource,
+            mount_point_override=validation_mount_point,
+            cleanup_after_test=True,
+        )
     except Exception:
         logger.exception(
             "manual source connection test failed resource_id=%s",
@@ -407,12 +449,19 @@ def test_resource_connection(*, resource: SourceResource) -> dict:
         if skip_reason in {
             "source_deleted",
             "source_removing",
+            "source_changed",
+            "proxy_binding_changed",
+            "mount_not_required",
         }:
-            best_effort_unmount_on_proxy(
-                resource=resource,
-                node_id=int(resource.bound_node_id or 0),
-                force=True,
-            )
+            if validation_payload is not None:
+                # The payload is the immutable configuration used by the
+                # probe, so a concurrent source edit cannot redirect cleanup.
+                best_effort_unmount_on_proxy(
+                    resource=resource,
+                    node_id=int(resource.bound_node_id or 0),
+                    force=True,
+                    payload_override=validation_payload,
+                )
         return {**public_connection_result(result), "stale": True}
     return public_connection_result(result)
 
@@ -470,6 +519,8 @@ def bind_node(*, resource: SourceResource, node_id: int) -> dict:
             "bound_node",
             "connection_test_status",
             "connection_probe_token",
+            "status",
+            "status_message",
             "updated_at",
         ]
     )
@@ -511,6 +562,8 @@ def unbind_node(*, resource: SourceResource) -> dict:
             "mount_error",
             "connection_test_status",
             "connection_probe_token",
+            "status",
+            "status_message",
             "updated_at",
         ]
     )

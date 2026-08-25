@@ -888,6 +888,7 @@ def _nas_remote_operation_blockers(*, ctx: SourceDeleteContext) -> list[DeleteRe
         return []
     active_probe = resource.connection_test_status in ConnectionTestStatus.ACTIVE
     active_node_tasks: list[NodeTask] = []
+    active_automatic_probes = False
     if resource.bound_node_id:
         active_node_tasks = list(
             NodeTask.objects.filter(
@@ -902,7 +903,16 @@ def _nas_remote_operation_blockers(*, ctx: SourceDeleteContext) -> list[DeleteRe
                 status__in={NodeTask.Status.PENDING, NodeTask.Status.RUNNING},
             ).order_by("created_at", "id")
         )
-    if not active_probe and not active_node_tasks:
+        active_automatic_probes = NodeTask.objects.filter(
+            organization_id=resource.organization_id,
+            node_id=resource.bound_node_id,
+            correlation_type="source.connection_probe",
+            correlation_id=str(resource.id),
+            kind="nas.test",
+            status__in={NodeTask.Status.PENDING, NodeTask.Status.RUNNING},
+        ).exists()
+    unknown_active_probe = active_probe and not active_automatic_probes
+    if not unknown_active_probe and not active_node_tasks:
         return []
     active_node_task = active_node_tasks[0] if active_node_tasks else None
     return [
@@ -1365,6 +1375,14 @@ def _set_source_nas_removal_status(
         connection_test_status=ConnectionTestStatus.IDLE,
         connection_probe_token=None,
         updated_at=timezone.now(),
+    )
+    from apps.source.tasks.connection_probe import (
+        cancel_active_source_connection_probe_tasks,
+    )
+
+    cancel_active_source_connection_probe_tasks(
+        resource_ids=resource_ids,
+        reason="Source deregistration canceled the automatic NAS connection probe",
     )
 
 

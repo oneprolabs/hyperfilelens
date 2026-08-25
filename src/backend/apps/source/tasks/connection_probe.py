@@ -12,6 +12,8 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.node.models import Node, NodeTask
+from apps.node import agent_paths
+from apps.node.services.interface import cancel_agent_task
 from apps.node.services.interface import AgentTaskSyncResult
 from apps.source.constants import (
     Availability,
@@ -37,6 +39,58 @@ SOURCE_REMOTE_IO_QUEUE = "source.remote-io"
 SOURCE_CONNECTION_PROBE_CORRELATION_TYPE = "source.connection_probe"
 _PROBE_MAX_RETRIES = 2
 _PROBE_STALE_SECONDS = source_conf.AVAILABILITY_VALIDITY_SECONDS
+_ACTIVE_NODE_TASK_STATUSES = (NodeTask.Status.PENDING, NodeTask.Status.RUNNING)
+
+
+def _active_source_probe_tasks(*, resource_id: int):
+    return NodeTask.objects.filter(
+        correlation_type=SOURCE_CONNECTION_PROBE_CORRELATION_TYPE,
+        correlation_id=str(resource_id),
+        kind="nas.test",
+        status__in=_ACTIVE_NODE_TASK_STATUSES,
+    )
+
+
+def _cancel_probe_tasks_after_commit(
+    *, task_ids: list, reason: str
+) -> None:
+    if not task_ids:
+        return
+
+    def cancel_tasks() -> None:
+        for task_id in task_ids:
+            try:
+                cancel_agent_task(task_id=task_id, reason=reason)
+            except Exception:
+                # The source revision/fence is already committed.  A transient
+                # Redis or Agent delivery failure must not turn that committed
+                # product operation into an API 500; the bounded watchdog and
+                # stale-probe reconciler remain durable cleanup fallbacks.
+                logger.exception(
+                    "automatic NAS probe cancellation failed node_task_id=%s",
+                    task_id,
+                )
+
+    transaction.on_commit(cancel_tasks)
+
+
+def cancel_active_source_connection_probe_tasks(
+    *, resource_ids: list[int], reason: str
+) -> int:
+    """Cancel automatic probes after the caller's resource fence commits."""
+    normalized_ids = sorted({int(resource_id) for resource_id in resource_ids})
+    if not normalized_ids:
+        return 0
+    task_ids = list(
+        NodeTask.objects.filter(
+            correlation_type=SOURCE_CONNECTION_PROBE_CORRELATION_TYPE,
+            correlation_id__in=[str(resource_id) for resource_id in normalized_ids],
+            kind="nas.test",
+            status__in=_ACTIVE_NODE_TASK_STATUSES,
+        ).values_list("id", flat=True)
+    )
+    _cancel_probe_tasks_after_commit(task_ids=task_ids, reason=reason)
+    return len(task_ids)
 
 
 def _probe_target(
@@ -109,6 +163,12 @@ def run_source_resource_capacity_probe(
         return {"status": "skipped", "reason": skip_reason or "source_changed"}
 
     payload = build_nas_agent_payload(resource=resource)
+    payload["mount_point"] = agent_paths.source_validation_mount_point(
+        str(probe_token),
+        node.id,
+        data_dir=resource.agent_data_dir(),
+    )
+    payload["cleanup_after_test"] = True
     try:
         handle = dispatch_nas_agent_task_async(
             node=node,
@@ -191,13 +251,30 @@ def project_source_connection_probe(*, node_task: NodeTask) -> bool:
     )
     if resource is not None:
         return True
-    if skip_reason in {"source_deleted", "source_removing"}:
-        best_effort_unmount_on_proxy(
-            resource=probe_resource,
-            node_id=expected_node_id,
-            force=True,
-            wait=False,
-        )
+    if skip_reason in {
+        "source_deleted",
+        "source_removing",
+        "source_changed",
+        "proxy_binding_changed",
+        "mount_not_required",
+    }:
+        cleanup_payload = None
+        mount_point = str(payload.get("mount_point") or "")
+        normalized_mount_point = mount_point.replace("\\", "/")
+        if (
+            bool(payload.get("cleanup_after_test"))
+            and "/mounts/validations/" in normalized_mount_point
+        ):
+            cleanup_payload = payload
+        cleanup_kwargs = {
+            "resource": probe_resource,
+            "node_id": expected_node_id,
+            "force": True,
+            "wait": False,
+        }
+        if cleanup_payload is not None:
+            cleanup_kwargs["payload_override"] = cleanup_payload
+        best_effort_unmount_on_proxy(**cleanup_kwargs)
     return False
 
 
@@ -341,6 +418,8 @@ def _queue_availability_probe(
             resource.bound_node is None
             or resource.bound_node.availability != Node.Availability.ONLINE
         ):
+            return False
+        if _active_source_probe_tasks(resource_id=resource.id).exists():
             return False
         refresh_cutoff = timezone.now() - timedelta(
             seconds=max(1, source_conf.AVAILABILITY_VALIDITY_SECONDS // 2)
@@ -524,21 +603,54 @@ def reconcile_stale_source_connection_probes(*, limit: int = 100) -> dict[str, i
     if not stale_ids:
         return {"stale": 0, "failed": 0}
     message = "Automatic connection test timed out. Retry Test Connection."
-    failed = SourceResource.all_objects.filter(
-        id__in=stale_ids,
-        is_deleted=False,
-        connection_test_status__in=ConnectionTestStatus.ACTIVE,
-        updated_at__lt=cutoff,
-    ).update(
-        connection_test_status=ConnectionTestStatus.FAILED,
-        connection_probe_token=None,
-        status=ResourceStatus.ERROR,
-        status_message=message,
-        connection_test_result=message,
-        updated_at=timezone.now(),
-    )
+    failed = 0
+    canceled = 0
+    for resource_id in stale_ids:
+        with transaction.atomic():
+            resource = (
+                SourceResource.all_objects.select_for_update()
+                .filter(
+                    id=resource_id,
+                    is_deleted=False,
+                    connection_test_status__in=ConnectionTestStatus.ACTIVE,
+                    updated_at__lt=cutoff,
+                )
+                .first()
+            )
+            if resource is None:
+                continue
+            task_ids = list(
+                _active_source_probe_tasks(resource_id=resource.id).values_list(
+                    "id", flat=True
+                )
+            )
+            resource.connection_test_status = ConnectionTestStatus.FAILED
+            resource.connection_probe_token = None
+            resource.status = ResourceStatus.ERROR
+            resource.status_message = message
+            resource.connection_test_result = message
+            resource.save(
+                update_fields=[
+                    "connection_test_status",
+                    "connection_probe_token",
+                    "status",
+                    "status_message",
+                    "connection_test_result",
+                    "updated_at",
+                ]
+            )
+            _cancel_probe_tasks_after_commit(
+                task_ids=task_ids,
+                reason="Automatic NAS connection probe expired",
+            )
+            failed += 1
+            canceled += len(task_ids)
     if failed:
-        logger.warning("reconciled stale source capacity probes count=%s", failed)
+        logger.warning(
+            "reconciled stale source capacity probes count=%s cancel_requested=%s",
+            failed,
+            canceled,
+        )
     return {"stale": len(stale_ids), "failed": int(failed)}
 
 
@@ -554,6 +666,7 @@ def reconcile_stale_source_connection_probes_task(*, limit: int = 100) -> dict[s
 
 __all__ = [
     "SOURCE_CONNECTION_PROBE_CORRELATION_TYPE",
+    "cancel_active_source_connection_probe_tasks",
     "probe_source_resource_capacity",
     "queue_source_resource_capacity_probe",
     "queue_source_availability_probes_for_proxy",
