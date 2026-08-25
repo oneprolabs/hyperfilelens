@@ -23,7 +23,7 @@ from apps.node.api.views.enrollment_helpers import (
     resolve_bootstrap_enrollment_token,
     token_usable_for_bootstrap,
 )
-from apps.node.models import Node
+from apps.node.models import Node, NodeToken
 from common.deploy.site import enrollment_tls_verify, tenant_public_url
 
 
@@ -137,8 +137,28 @@ def _parse_enrollment_query(
             )
         return Response({"error": "invalid enrollment token"}, status=401)
 
+    platform_by_script_type = {
+        "linux": NodeToken.TargetPlatform.LINUX,
+        "sh": NodeToken.TargetPlatform.LINUX,
+        "darwin": NodeToken.TargetPlatform.MACOS,
+        "macos": NodeToken.TargetPlatform.MACOS,
+        "windows": NodeToken.TargetPlatform.WINDOWS,
+        "windows_ps1": NodeToken.TargetPlatform.WINDOWS,
+        "ps1": NodeToken.TargetPlatform.WINDOWS,
+    }
+    requested_platform = platform_by_script_type.get(script_type)
+    if (
+        token_row.installation_mode_policy == NodeToken.InstallationModePolicy.AUTO
+        and requested_platform != token_row.target_platform
+    ):
+        return _bootstrap_error_response(
+            script_type,
+            "This enrollment link was issued for a different operating system",
+        )
+
     if (
         token_row.installation_mode == Node.InstallationMode.USER_CONTINUOUS
+        and token_row.installation_mode_policy == NodeToken.InstallationModePolicy.FIXED
         and script_type not in ("linux", "sh")
     ):
         return _bootstrap_error_response(
@@ -146,7 +166,12 @@ def _parse_enrollment_query(
             "Linux user-continuous protection requires the Linux installer",
         )
 
-    return org_key, role, token, api_base, token_row.installation_mode
+    installation_mode = (
+        "auto"
+        if token_row.installation_mode_policy == NodeToken.InstallationModePolicy.AUTO
+        else token_row.installation_mode
+    )
+    return org_key, role, token, api_base, installation_mode
 
 
 def _template_values(

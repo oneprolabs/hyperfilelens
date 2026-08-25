@@ -9,6 +9,7 @@ import {
   getGatewayNode,
   fetchNodeMaintenanceRelease,
   issueGatewayEnrollmentInstall,
+  issueEnrollmentInstall,
   issuePlatformGatewayEnrollmentInstall,
   previewNodeOperationsBatch,
   revokePlatformGatewayEnrollment,
@@ -262,12 +263,56 @@ describe('Data Gateway enrollment', () => {
 
     expect(command).toMatch(/^cd \/ && curl --proto '=https' --tlsv1\.2 --fail --silent --show-error --location '/)
     expect(command).toContain('/api/v1/node/enrollment/bootstrap?')
-    expect(command).toContain('| sudo bash -s')
+    expect(command).toContain('| bash -s')
+    expect(command).not.toContain('| sudo bash -s')
     expect(command).not.toContain('--progress-bar')
     expect(command).not.toContain('installer.tar.gz')
     expect(command).not.toContain('mktemp')
     expect(command).not.toContain('WARNING:')
     expect(command.split('\n')).toHaveLength(1)
+  })
+
+  it('keeps infrastructure enrollment elevated when no mode is provided', () => {
+    const command = buildEnrollmentInstallCommand({
+      org: 'tenant-a',
+      role: 'gateway',
+      token: 'token-a',
+      apiBase: 'https://console.example.com',
+      os: 'linux',
+      tlsVerify: true,
+    })
+
+    expect(command).toContain('| sudo bash -s')
+  })
+
+  it('issues a platform-bound automatic token for a new Source Agent', async () => {
+    vi.mocked(api).mockResolvedValue({
+      id: 19,
+      token: 'agent-token',
+      role: 'agent',
+      installation_mode: 'system',
+      installation_mode_policy: 'auto',
+      target_platform: 'linux',
+      is_active: true,
+      status: 'active',
+      tls_verify: true,
+    })
+
+    const result = await issueEnrollmentInstall({ role: 'agent', os: 'linux' })
+
+    expect(vi.mocked(api)).toHaveBeenCalledWith(
+      '/api/v1/node/node-tokens/',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          role: 'agent',
+          installation_mode_policy: 'auto',
+          target_platform: 'linux',
+        }),
+      }),
+    )
+    expect(result.command).toContain('| bash -s')
+    expect(result.command).not.toContain('| sudo bash -s')
   })
 
   it('does not elevate a user-level Linux installation command', () => {

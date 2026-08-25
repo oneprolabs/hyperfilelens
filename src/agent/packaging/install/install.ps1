@@ -90,9 +90,13 @@ $LifecycleRoot = Join-Path $AgentRoot "lifecycle"
 $BackupRoot = Join-Path $AgentRoot "backup"
 $InstalledVersionFile = Join-Path $AgentRoot "INSTALLED_VERSION"
 $ManifestFile = Join-Path $AgentRoot "MANIFEST.json"
-$TaskName = "HyperFileLensAgent"
 $LifecycleLabel = if ($InstallationMode -eq "user") { "current-user task" } elseif ($InstallationMode -eq "account") { "specified-user task" } else { "Windows service" }
 $CurrentWindowsIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$CurrentWindowsSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+# User installations have independent roots and must also have independent
+# scheduler identities. The machine-slot account task keeps its compatibility
+# name because account and system installations are mutually exclusive.
+$TaskName = if ($InstallationMode -eq "user") { "HyperFileLensAgent.User.$CurrentWindowsSid" } else { "HyperFileLensAgent" }
 $script:LegacyMigrationRoot = ""
 $script:LegacyServiceWasRunning = $false
 if ([string]::IsNullOrWhiteSpace($RunAsUser) -and $env:HFL_RUN_AS_USER) {
@@ -1119,14 +1123,33 @@ function Stop-HflAgentProcesses {
   foreach ($name in @("hfl-agent", "hfl-agent-user-launcher", "kopia")) {
     $deadline = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline) {
-      $procs = @(Get-Process -Name $name -ErrorAction SilentlyContinue)
+      $procs = @(Get-Process -Name $name -ErrorAction SilentlyContinue | Where-Object {
+        try {
+          $path = $_.Path
+          -not [string]::IsNullOrWhiteSpace($path) -and
+            [System.IO.Path]::GetFullPath($path).StartsWith(
+              [System.IO.Path]::GetFullPath($AgentRoot).TrimEnd('\') + '\',
+              [System.StringComparison]::OrdinalIgnoreCase
+            )
+        }
+        catch { $false }
+      })
       if ($procs.Count -eq 0) { break }
       foreach ($proc in $procs) {
         Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
       }
       Start-Sleep -Milliseconds 500
     }
-    if (Get-Process -Name $name -ErrorAction SilentlyContinue) {
+    $remaining = @(Get-Process -Name $name -ErrorAction SilentlyContinue | Where-Object {
+      try {
+        $_.Path -and [System.IO.Path]::GetFullPath($_.Path).StartsWith(
+          [System.IO.Path]::GetFullPath($AgentRoot).TrimEnd('\') + '\',
+          [System.StringComparison]::OrdinalIgnoreCase
+        )
+      }
+      catch { $false }
+    })
+    if ($remaining.Count -gt 0) {
       Write-HflWarn "process $name still running after stop attempts ($Reason)"
     }
     else {
@@ -1137,9 +1160,17 @@ function Stop-HflAgentProcesses {
 
 function Stop-AgentForUpgrade {
   Stop-HflService
-  $proc = Get-Process -Name "hfl-agent" -ErrorAction SilentlyContinue
-  if ($null -ne $proc) {
-    Stop-Process -Name "hfl-agent" -Force -ErrorAction SilentlyContinue
+  $procs = @(Get-Process -Name "hfl-agent" -ErrorAction SilentlyContinue | Where-Object {
+    try {
+      $_.Path -and [System.IO.Path]::GetFullPath($_.Path).StartsWith(
+        [System.IO.Path]::GetFullPath($AgentRoot).TrimEnd('\') + '\',
+        [System.StringComparison]::OrdinalIgnoreCase
+      )
+    }
+    catch { $false }
+  })
+  if ($procs.Count -gt 0) {
+    $procs | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
     Write-HflOk "stopped hfl-agent process (pre-upgrade)"
   }

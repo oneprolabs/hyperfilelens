@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/user"
 	"strconv"
 	"strings"
 	"time"
@@ -139,19 +140,26 @@ func httpRegisterNode(
 		inventory["mac_address"] = mac
 		inventory["primary_mac_address"] = mac
 	}
+	metadata := map[string]any{
+		"hostname":      hostname,
+		"inventory":     inventory,
+		"install":       "hfl-enroll",
+		"agent_version": agentVersion,
+		"platform":      platform.OSFamily,
+		"arch":          platform.Arch,
+	}
+	if currentUser, userErr := user.Current(); userErr == nil {
+		metadata["runtime_principal"] = map[string]string{
+			"id":   strings.TrimSpace(currentUser.Uid),
+			"name": strings.TrimSpace(currentUser.Username),
+		}
+	}
 	body := map[string]any{
-		"name":    hostname,
-		"role":    string(cfg.Role),
-		"version": agentVersion,
-		"os_name": platform.Description(),
-		"metadata": map[string]any{
-			"hostname":      hostname,
-			"inventory":     inventory,
-			"install":       "hfl-enroll",
-			"agent_version": agentVersion,
-			"platform":      platform.OSFamily,
-			"arch":          platform.Arch,
-		},
+		"name":     hostname,
+		"role":     string(cfg.Role),
+		"version":  agentVersion,
+		"os_name":  platform.Description(),
+		"metadata": metadata,
 	}
 	machineFingerprint, err := identity.MachineFingerprint(ctx)
 	if err != nil {

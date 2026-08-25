@@ -68,6 +68,8 @@ export type ApiNodeToken = {
   token: string
   role: NodeRole
   installation_mode: NodeInstallationMode
+  installation_mode_policy?: 'fixed' | 'auto'
+  target_platform?: 'linux' | 'windows' | 'macos' | ''
   note?: string
   is_active: boolean
   created_at?: string
@@ -80,6 +82,8 @@ export type ApiNodeToken = {
 export type CreateNodeTokenBody = {
   role: NodeRole
   installation_mode?: NodeInstallationMode
+  installation_mode_policy?: 'fixed' | 'auto'
+  target_platform?: 'linux' | 'windows' | 'macos'
   note?: string
   expires_at?: string | null
   is_active?: boolean

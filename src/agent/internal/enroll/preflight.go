@@ -30,15 +30,14 @@ type EnvironmentReport struct {
 // RunEnvironmentChecks validates the host and prints user-facing results.
 func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, error) {
 	failures := &preflightFailures{}
-	// Existing-install and cross-mode conflicts are deliberately determined
-	// only from local installation markers. Do not make the control plane or a
-	// host fingerprint an installation-admission authority.
+	// Existing-install decisions are deliberately determined only from the
+	// selected installation slot. Machine and per-user slots may coexist; the
+	// control plane and host fingerprint are not installation-admission authorities.
 	report := &EnvironmentReport{
 		Platform: platformDescription(),
 		ArchOK:   supportedRuntimeArch(),
 		Existing: DetectInstallState(),
 	}
-	conflictingInstallPath := ConflictingInstallPath()
 
 	if err := privilegeConstraint(cfg.InstallationMode); err != nil {
 		report.PrivilegesOK = false
@@ -99,14 +98,6 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 			failures.add("Administrator privileges are required", "re-run with sudo or as Administrator", 1)
 		}
 	}
-	if conflictingInstallPath != "" {
-		failures.add(
-			"A different Agent installation mode already exists",
-			conflictingInstallPath+"; uninstall it before changing installation mode",
-			1,
-		)
-	}
-
 	if report.ArchOK {
 		logOKDetail("CPU architecture is supported", runtime.GOARCH)
 	} else {

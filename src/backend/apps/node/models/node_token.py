@@ -18,6 +18,15 @@ class NodeToken(OrganizationScopedModel):
         LEGACY = "legacy", "Legacy"
         CURRENT = "current", "Current"
 
+    class InstallationModePolicy(models.TextChoices):
+        FIXED = "fixed", "Fixed"
+        AUTO = "auto", "Automatic"
+
+    class TargetPlatform(models.TextChoices):
+        LINUX = "linux", "Linux"
+        WINDOWS = "windows", "Windows"
+        MACOS = "macos", "macOS"
+
     organization = models.ForeignKey(
         "iam.Organization",
         on_delete=models.CASCADE,
@@ -31,6 +40,23 @@ class NodeToken(OrganizationScopedModel):
         default=NodeInstallationMode.SYSTEM,
         db_index=True,
         help_text="Installation and runtime mode authorized by this token.",
+    )
+    installation_mode_policy = models.CharField(
+        max_length=16,
+        choices=InstallationModePolicy.choices,
+        default=InstallationModePolicy.FIXED,
+        db_index=True,
+        help_text=(
+            "Fixed authorizes installation_mode. Automatic authorizes the "
+            "platform-specific mode selected from the install process identity."
+        ),
+    )
+    target_platform = models.CharField(
+        max_length=16,
+        choices=TargetPlatform.choices,
+        blank=True,
+        default="",
+        help_text="Operating system bound to an automatic source-Agent token.",
     )
     note = models.CharField(max_length=200, blank=True, default="")
     is_active = models.BooleanField(default=True, db_index=True)
@@ -67,6 +93,20 @@ class NodeToken(OrganizationScopedModel):
                     | models.Q(role=NodeRole.AGENT)
                 ),
                 name="node_token_user_mode_agent_only",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        installation_mode_policy="fixed",
+                        target_platform="",
+                    )
+                    | models.Q(
+                        installation_mode_policy="auto",
+                        role=NodeRole.AGENT,
+                        target_platform__in=("linux", "windows", "macos"),
+                    )
+                ),
+                name="node_token_auto_mode_platform",
             ),
         ]
 

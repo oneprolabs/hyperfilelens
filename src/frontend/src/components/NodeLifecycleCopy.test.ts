@@ -11,7 +11,6 @@ describe('Node lifecycle copy', () => {
     const locale = source('src/locales/en.ts')
 
     expect(locale).toContain("installCommandStep: 'Run the Install Command'")
-    expect(locale).toContain("installationModeStep: 'Select Protection Mode'")
     expect(locale).toContain("installationModeSystem: 'Host files · continuous'")
     expect(locale).toContain("installationModeUser: 'Current user files'")
     expect(locale).toContain("installationModeUserContinuous: 'User files · continuous'")
@@ -20,27 +19,28 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain('installationModeUserPermission:')
     expect(locale).toContain('installationModeUserContinuousPermission:')
     expect(wizardSource()).toContain("const isNewAgentInstallation = computed(() => props.role === 'agent' && props.nodeId == null)")
-    expect(wizardSource()).toContain("props.role === 'agent' && props.nodeId == null\n    ? defaultInstallationModeForOs(props.os)")
-    expect(wizardSource()).toContain("if (option.value === 'account') return false")
-    expect(wizardSource()).toContain("return option.value === 'user_continuous' || option.value === 'system'")
-    expect(wizardSource()).toContain("return option.value === 'user' || option.value === 'system'")
+    expect(wizardSource()).toContain("? 'nodeLifecycle.installLeadAutomaticMacos'")
+    expect(wizardSource()).toContain(": 'nodeLifecycle.installLeadAutomatic'")
+    expect(wizardSource()).toContain("...(isNewAgentInstallation.value\n              ? {}")
     expect(wizardSource()).toContain("os === 'linux' ? 'user_continuous' : 'user'")
-    expect(wizardSource()).toContain('const defaultMode = defaultInstallationModeForOs(props.os)')
-    expect(wizardSource()).toContain('selectedInstallationMode.value = defaultMode')
-    expect(locale).toContain("installationModeRecommended: 'Recommended'")
+    expect(wizardSource()).not.toContain('selectedInstallationMode')
+    expect(wizardSource()).not.toContain('installationModeOptions')
+    expect(locale).toContain('never changes mode silently')
+    expect(locale).toContain('grant HyperFileLens Agent Full Disk Access')
     expect(locale).toContain("generateInstallCommand: 'Generate install command'")
     expect(locale).toContain('Copy the command and run it in a shell on the target host')
     expect(locale).toContain("installFlowDownload: 'Downloads the small installer and checks the target host'")
     expect(locale).toContain("installFlowInstall: 'Downloads the required components and installs the Agent'")
   })
 
-  it('presents operating system, protection mode, and command as separate install steps', () => {
+  it('presents operating system and command without a protection-mode picker', () => {
     const wizard = source('src/components/NodeLifecycleWizard.vue')
     const locale = source('src/locales/en.ts')
 
     expect(wizard).toMatch(
-      /fullscreen-form-card[\s\S]*?nodeLifecycle\.osStep[\s\S]*?<\/div>\s*\n\s*<div[\s\S]*?fullscreen-form-card[\s\S]*?nodeLifecycle\.installationModeStep[\s\S]*?<\/div>\s*\n\s*<div class="fullscreen-form-card">[\s\S]*?nodeLifecycle\.installCommandStep/,
+      /fullscreen-form-card[\s\S]*?nodeLifecycle\.osStep[\s\S]*?<\/div>\s*\n\s*<div class="fullscreen-form-card">[\s\S]*?nodeLifecycle\.installCommandStep/,
     )
+    expect(wizard).not.toContain("t('nodeLifecycle.installationModeStep')")
     expect(locale).toContain('Continuous, including after sign-out and restart')
     expect(locale).toContain('While this user is signed in')
     expect(locale).toContain('Selected files and folders on this host')
@@ -80,6 +80,15 @@ describe('Node lifecycle copy', () => {
     expect(wizard).toContain('fetchNodeMaintenanceRelease')
     expect(wizard).not.toContain('createNodeToken({ role: props.role')
     expect(wizard).not.toContain('installError.value')
+  })
+
+  it('refreshes maintenance commands when the persisted installation mode changes', () => {
+    const wizard = wizardSource()
+
+    expect(wizard).toMatch(
+      /props\.gatewayScope,\s*props\.installationMode,\s*\] as const/,
+    )
+    expect(wizard).toContain('refreshAll()')
   })
 
   it('shows expiry without host quotas or replacement-command controls', () => {

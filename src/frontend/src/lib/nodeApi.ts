@@ -448,7 +448,9 @@ function buildWindowsEnrollmentInstallCommand(url: string, tlsVerify: boolean): 
 }
 
 /**
- * POSIX one-liner: curl the rendered bootstrap stub into sudo bash.
+ * POSIX one-liner: curl the rendered bootstrap stub into bash. Automatic
+ * Source Agent enrollment keeps the caller's identity; fixed infrastructure
+ * enrollments still select sudo bash below.
  * The bootstrap script downloads one slim enroll helper and runs install.
  *
  * Moving to / avoids getcwd noise when the caller is sitting in a deleted install dir.
@@ -457,12 +459,18 @@ function buildWindowsEnrollmentInstallCommand(url: string, tlsVerify: boolean): 
 function buildPosixEnrollmentInstallCommand(
   url: string,
   tlsVerify: boolean,
-  installationMode: NodeInstallationMode,
+  installationMode?: NodeInstallationMode,
 ): string {
   const tlsOptions = tlsVerify
     ? "--proto '=https' --tlsv1.2"
     : '-k'
-  const shell = installationMode === 'user' || installationMode === 'user_continuous' ? 'bash -s' : 'sudo bash -s'
+  // An omitted mode is an automatic source-Agent enrollment. Run in the
+  // caller's actual identity so the host can select a mode without silently
+  // elevating or downgrading it. Fixed infrastructure enrollments remain
+  // explicitly system-scoped.
+  const shell = !installationMode || installationMode === 'user' || installationMode === 'user_continuous'
+    ? 'bash -s'
+    : 'sudo bash -s'
   return `cd / && curl ${tlsOptions} --fail --silent --show-error --location '${url}' | ${shell}`
 }
 
@@ -481,10 +489,16 @@ export function buildEnrollmentInstallCommand(params: {
   if (params.os === 'windows') {
     return buildWindowsEnrollmentInstallCommand(url, tlsVerify)
   }
+  // Only a new Source Agent enrollment may infer its mode from the caller.
+  // Preserve the historical elevated default for every infrastructure role
+  // and for any future caller that omits a fixed mode.
+  const installationMode = params.role === 'agent'
+    ? params.installationMode
+    : params.installationMode ?? 'system'
   return buildPosixEnrollmentInstallCommand(
     url,
     tlsVerify,
-    params.installationMode ?? 'system',
+    installationMode,
   )
 }
 
@@ -609,10 +623,17 @@ export async function issueEnrollmentInstall(params: {
   if (!org) {
     throw new Error('Missing organization key')
   }
-  const installationMode = params.installationMode ?? 'system'
+  const automaticMode = params.role === 'agent' && params.installationMode == null
   const row = await createNodeToken({
     role: params.role,
-    installation_mode: installationMode,
+    ...(automaticMode
+      ? {
+          installation_mode_policy: 'auto' as const,
+          target_platform: params.os,
+        }
+      : {
+          installation_mode: params.installationMode ?? 'system',
+        }),
     note: params.note,
   })
   const command = buildEnrollmentInstallCommand({
@@ -620,7 +641,7 @@ export async function issueEnrollmentInstall(params: {
     role: params.role,
     token: row.token,
     os: params.os,
-    installationMode,
+    installationMode: automaticMode ? undefined : params.installationMode ?? 'system',
     tlsVerify: row.tls_verify,
   })
   return {

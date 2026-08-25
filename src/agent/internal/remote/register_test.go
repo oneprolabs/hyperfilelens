@@ -77,6 +77,10 @@ func TestHTTPRegisterNodeIncludesPlatformInventory(t *testing.T) {
 	if !ok {
 		t.Fatalf("metadata=%T", payload["metadata"])
 	}
+	principal, ok := metadata["runtime_principal"].(map[string]any)
+	if !ok || principal["id"] == "" || principal["name"] == "" {
+		t.Errorf("runtime_principal=%v", metadata["runtime_principal"])
+	}
 	inventory, ok := metadata["inventory"].(map[string]any)
 	if !ok {
 		t.Fatalf("inventory=%T", metadata["inventory"])

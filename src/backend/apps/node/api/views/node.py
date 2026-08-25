@@ -40,7 +40,9 @@ from apps.node.services.internal.node_lifecycle import (
 )
 from apps.node.services.internal.node_naming import (
     is_auto_assigned_node_name,
+    is_automatic_user_node_name,
     resolve_registration_node_name,
+    runtime_principal_name,
     uniquify_node_name,
 )
 from apps.node.services.internal.network_inventory import split_network_from_metadata
@@ -64,6 +66,70 @@ from apps.node.services.internal.enrollment_auth import (
 from apps.source.services.internal.agent_host_sync import sync_agent_source_host
 
 logger = logging.getLogger(__name__)
+
+
+def _reported_platform(payload: dict) -> str:
+    """Return the bounded platform family reported by the enrollment client."""
+
+    def normalize(value: object) -> str:
+        platform = str(value or "").strip().lower()
+        if platform == "darwin":
+            return NodeToken.TargetPlatform.MACOS
+        if platform in NodeToken.TargetPlatform.values:
+            return platform
+        return ""
+
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        platform = normalize(metadata.get("platform"))
+        if platform:
+            return platform
+        inventory = metadata.get("inventory")
+        if isinstance(inventory, dict):
+            platform = normalize(inventory.get("os_family"))
+            if platform:
+                return platform
+    os_name = str(payload.get("os_name") or "").strip().lower()
+    if "windows" in os_name:
+        return NodeToken.TargetPlatform.WINDOWS
+    if "darwin" in os_name or "macos" in os_name or "mac os" in os_name:
+        return NodeToken.TargetPlatform.MACOS
+    if "linux" in os_name:
+        return NodeToken.TargetPlatform.LINUX
+    return ""
+
+
+def _token_authorizes_installation_mode(
+    token: NodeToken,
+    mode: str,
+    *,
+    reported_platform: str = "",
+) -> bool:
+    """Validate the final local mode without treating ``auto`` as a Node mode."""
+    if token.installation_mode_policy == NodeToken.InstallationModePolicy.FIXED:
+        return mode == token.installation_mode
+    if token.installation_mode_policy != NodeToken.InstallationModePolicy.AUTO:
+        return False
+    if reported_platform != token.target_platform:
+        return False
+    allowed_by_platform = {
+        NodeToken.TargetPlatform.LINUX: {
+            Node.InstallationMode.USER_CONTINUOUS,
+            Node.InstallationMode.SYSTEM,
+        },
+        NodeToken.TargetPlatform.WINDOWS: {
+            Node.InstallationMode.USER,
+            Node.InstallationMode.SYSTEM,
+        },
+        NodeToken.TargetPlatform.MACOS: {
+            Node.InstallationMode.USER,
+            Node.InstallationMode.SYSTEM,
+        },
+    }
+    return token.role == Node.Role.AGENT and mode in allowed_by_platform.get(
+        token.target_platform,
+        set(),
+    )
 
 
 def health(_request):
@@ -433,7 +499,13 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
             token_row = authorization.token
-            if payload["installation_mode"] != token_row.installation_mode:
+            resolved_installation_mode = payload["installation_mode"]
+            reported_platform = _reported_platform(payload)
+            if not _token_authorizes_installation_mode(
+                token_row,
+                resolved_installation_mode,
+                reported_platform=reported_platform,
+            ):
                 return Response(
                     {"error": "installation mode does not match enrollment token"},
                     status=status.HTTP_409_CONFLICT,
@@ -450,6 +522,15 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     session=session,
                 )
                 token_row = locked_token
+                if not _token_authorizes_installation_mode(
+                    token_row,
+                    resolved_installation_mode,
+                    reported_platform=reported_platform,
+                ):
+                    return Response(
+                        {"error": "installation mode authorization changed"},
+                        status=status.HTTP_409_CONFLICT,
+                    )
                 if session is not None:
                     locked_session = (
                         NodeInstallationSession.objects.select_for_update().get(
@@ -499,7 +580,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     )
                 if (
                     node is not None
-                    and node.installation_mode != token_row.installation_mode
+                    and node.installation_mode != resolved_installation_mode
                 ):
                     return Response(
                         {"error": "installation mode is fixed during enrollment"},
@@ -523,7 +604,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                                     ),
                                 ),
                                 role=payload["role"],
-                                installation_mode=token_row.installation_mode,
+                                installation_mode=resolved_installation_mode,
                                 version=payload.get("version", ""),
                                 os_name=payload.get("os_name", ""),
                                 availability_updated_at=observed_at,
@@ -552,7 +633,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                         )
                         if node is None:
                             raise
-                        if node.installation_mode != token_row.installation_mode:
+                        if node.installation_mode != resolved_installation_mode:
                             return Response(
                                 {
                                     "error": (
@@ -643,7 +724,35 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 if not identity_in_use:
                     node.installation_id = installation_id
             node.last_seen_at = observed_at
-            if is_auto_assigned_node_name(node.name):
+            if node.installation_mode in (
+                Node.InstallationMode.USER,
+                Node.InstallationMode.USER_CONTINUOUS,
+            ):
+                # User-scoped instances are identified by the runtime
+                # principal. Do not let the ordinary hostname in a heartbeat
+                # erase the account suffix after reconnecting, but preserve a
+                # display name that a console user explicitly assigned.
+                principal = runtime_principal_name(metadata_payload)
+                if principal and (
+                    is_automatic_user_node_name(
+                        name=node.name,
+                        metadata=node.metadata,
+                        node_id=node.id,
+                    )
+                    or is_automatic_user_node_name(
+                        name=node.name,
+                        metadata=metadata_payload,
+                        node_id=node.id,
+                    )
+                ):
+                    next_name = uniquify_node_name(
+                        organization_id=org.id,
+                        name=resolve_registration_node_name(payload=payload),
+                        exclude_node_id=node.id,
+                    )
+                    if next_name != node.name:
+                        node.name = next_name
+            elif is_auto_assigned_node_name(node.name):
                 next_name = resolve_registration_node_name(
                     payload=payload,
                     fallback=node.name,

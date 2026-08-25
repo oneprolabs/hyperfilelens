@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -110,41 +109,6 @@ func installedEnvPath() string {
 	return canonical
 }
 
-// ConflictingInstallPath returns the other lifecycle mode installed for the
-// current host account. System installers also inspect the invoking sudo user.
-func ConflictingInstallPath() string {
-	var candidate string
-	if vfs.UserInstallation() {
-		candidate = vfs.SystemInstallDir()
-		if !installMarkersPresent(candidate) {
-			candidate = vfs.LegacySystemInstallDir()
-		}
-	} else {
-		home := ""
-		if sudoUser := strings.TrimSpace(os.Getenv("SUDO_USER")); sudoUser != "" {
-			if account, err := user.Lookup(sudoUser); err == nil {
-				home = account.HomeDir
-			}
-		}
-		if home == "" {
-			home, _ = os.UserHomeDir()
-		}
-		if home != "" {
-			candidate = vfs.UserInstallDirForHome(home)
-			if !installMarkersPresent(candidate) {
-				candidate = vfs.LegacyUserInstallDirForHome(home)
-			}
-		}
-	}
-	if candidate == "" {
-		return ""
-	}
-	if installMarkersPresent(candidate) {
-		return candidate
-	}
-	return ""
-}
-
 func installMarkersPresent(installDir string) bool {
 	paths := []string{}
 	for _, name := range []string{
@@ -232,7 +196,7 @@ func serviceState(ctx context.Context) string {
 				"powershell.exe",
 				"-NoProfile",
 				"-Command",
-				"$task = Get-ScheduledTask -TaskName HyperFileLensAgent -ErrorAction SilentlyContinue; if ($null -eq $task) { exit 1 }; $task.State.ToString()",
+				"$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $name = \"HyperFileLensAgent.User.$sid\"; $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue; if ($null -eq $task) { exit 1 }; $task.State.ToString()",
 			).CombinedOutput()
 			if err != nil {
 				return "not installed"

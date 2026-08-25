@@ -228,9 +228,12 @@ func TestWriteWindowsUserUninstallScriptUsesCurrentUserLifecycle(t *testing.T) {
 	for _, want := range []string{
 		`$userInstall = $true`,
 		`$env:HFL_INSTALLATION_MODE = if ($userInstall) { 'user' } else { 'system' }`,
-		`Stop-ScheduledTask -TaskName HyperFileLensAgent`,
-		`Get-ScheduledTask -TaskName HyperFileLensAgent`,
-		`Unregister-ScheduledTask -TaskName HyperFileLensAgent`,
+		`$runtimeTaskName = if ($userInstall) { "HyperFileLensAgent.User.$currentSid" }`,
+		`Stop-ScheduledTask -TaskName $runtimeTaskName`,
+		`$agentRoot = $install`,
+		`@('hfl-agent', 'hfl-agent-user-launcher', 'kopia')`,
+		`Get-ScheduledTask -TaskName $runtimeTaskName`,
+		`Unregister-ScheduledTask -TaskName $runtimeTaskName`,
 		`Join-Path $env:LOCALAPPDATA 'HyperFileLens\Agent'`,
 		`return $full.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)`,
 	} {
@@ -261,8 +264,10 @@ func TestWriteWindowsUserUpgradeScriptStopsScheduledTask(t *testing.T) {
 	text := string(body)
 	for _, expected := range []string{
 		"$userInstall = $true",
-		"Stop-ScheduledTask -TaskName HyperFileLensAgent",
-		"$scheduledTaskName = 'HyperFileLensAgent.DetachedRunner'",
+		"$runtimeTaskName = if ($userInstall) { \"HyperFileLensAgent.User.$currentSid\" }",
+		"Stop-ScheduledTask -TaskName $runtimeTaskName",
+		"$agentRoot = Split-Path -Parent $install",
+		"$scheduledTaskName = if ($userInstall) { \"$runtimeTaskName.DetachedRunner\" }",
 		"Unregister-ScheduledTask -TaskName $scheduledTaskName",
 	} {
 		if !strings.Contains(text, expected) {

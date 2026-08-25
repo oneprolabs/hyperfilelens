@@ -23,6 +23,8 @@ class NodeTokenSerializer(serializers.ModelSerializer):
             "token",
             "role",
             "installation_mode",
+            "installation_mode_policy",
+            "target_platform",
             "note",
             "is_active",
             "created_at",
@@ -41,6 +43,8 @@ class NodeTokenSerializer(serializers.ModelSerializer):
             "token",
             "role",
             "installation_mode",
+            "installation_mode_policy",
+            "target_platform",
             "created_at",
             "updated_at",
             "expires_at",
@@ -78,6 +82,8 @@ class NodeTokenCreateSerializer(serializers.ModelSerializer):
             "org",
             "role",
             "installation_mode",
+            "installation_mode_policy",
+            "target_platform",
             "note",
             "expires_at",
             "is_active",
@@ -102,11 +108,53 @@ class NodeTokenCreateSerializer(serializers.ModelSerializer):
             "installation_mode",
             NodeInstallationMode.SYSTEM,
         )
-        if installation_mode in (
-            NodeInstallationMode.USER,
-            NodeInstallationMode.USER_CONTINUOUS,
-            NodeInstallationMode.ACCOUNT,
-        ) and role != Node.Role.AGENT:
+        policy = attrs.get(
+            "installation_mode_policy",
+            NodeToken.InstallationModePolicy.FIXED,
+        )
+        target_platform = attrs.get("target_platform", "")
+        if policy == NodeToken.InstallationModePolicy.AUTO:
+            if role != Node.Role.AGENT:
+                raise serializers.ValidationError(
+                    {
+                        "installation_mode_policy": (
+                            "Automatic installation mode is only available for Source Agent."
+                        )
+                    }
+                )
+            if target_platform not in NodeToken.TargetPlatform.values:
+                raise serializers.ValidationError(
+                    {
+                        "target_platform": (
+                            "A supported target platform is required for automatic installation mode."
+                        )
+                    }
+                )
+            if "installation_mode" in attrs:
+                raise serializers.ValidationError(
+                    {
+                        "installation_mode": (
+                            "Do not provide a fixed installation mode with automatic selection."
+                        )
+                    }
+                )
+        elif target_platform:
+            raise serializers.ValidationError(
+                {
+                    "target_platform": (
+                        "Target platform is only valid with automatic installation mode."
+                    )
+                }
+            )
+        if (
+            installation_mode
+            in (
+                NodeInstallationMode.USER,
+                NodeInstallationMode.USER_CONTINUOUS,
+                NodeInstallationMode.ACCOUNT,
+            )
+            and role != Node.Role.AGENT
+        ):
             raise serializers.ValidationError(
                 {
                     "installation_mode": (

@@ -1386,6 +1386,56 @@ class SourceResourceApiTests(TestCase):
         self.assertIsNotNone(resource)
         self.assertEqual(resource.config["platform"], "macos")
 
+    def test_sync_user_agents_keep_principal_in_source_host_name(self):
+        resources = []
+        for index, principal in enumerate(("backup-a", "backup-b"), start=1):
+            agent = Node.objects.create(
+                organization=self.org,
+                name=f"host-a · {principal}",
+                role=Node.Role.AGENT,
+                installation_mode=Node.InstallationMode.USER_CONTINUOUS,
+                status=Node.Status.ACTIVE,
+                availability=Node.Availability.ONLINE,
+                installation_id=f"hfli-user-{index}",
+                metadata={
+                    "hostname": "host-a",
+                    "runtime_principal": {"id": str(1000 + index), "name": principal},
+                },
+            )
+            resources.append(sync_agent_source_host(node=agent))
+
+        self.assertEqual(
+            [resource.name for resource in resources],
+            ["host-a · backup-a", "host-a · backup-b"],
+        )
+        self.assertEqual(
+            [resource.config["hostname"] for resource in resources],
+            ["host-a", "host-a"],
+        )
+
+    def test_sync_user_agent_upgrades_plain_legacy_source_name(self):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="host-a · backup-user",
+            role=Node.Role.AGENT,
+            installation_mode=Node.InstallationMode.USER,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            installation_id="hfli-user-legacy-name",
+            metadata={"hostname": "host-a"},
+        )
+        resource = SourceResource.objects.create(
+            organization=self.org,
+            name="host-a",
+            resource_type="local",
+            bound_node=agent,
+        )
+
+        sync_agent_source_host(node=agent)
+
+        resource.refresh_from_db()
+        self.assertEqual(resource.name, "host-a · backup-user")
+
     def test_sync_agent_source_host_clears_legacy_capacity_while_inventory_pending(
         self,
     ):

@@ -477,7 +477,7 @@ func printAgentLifecycleCommands(info SummaryInfo) {
 	if runtime.GOOS == "windows" {
 		command := windowsPowerShellCommand(filepath.Join(info.InstallPath, installerScriptName()))
 		if vfs.UserInstallation() {
-			printSummaryValue("Task status", "schtasks.exe /Query /TN HyperFileLensAgent /FO LIST")
+			printSummaryValue("Task status", `powershell -NoProfile -Command "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Get-ScheduledTask -TaskName ('HyperFileLensAgent.User.'+$sid)"`)
 		} else {
 			printSummaryValue("Service status", "sc.exe query HyperFileLensAgent")
 		}

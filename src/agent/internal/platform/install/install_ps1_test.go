@@ -104,6 +104,48 @@ func TestInstallPs1UsesFullWindowsIdentityForCurrentUserTask(t *testing.T) {
 	}
 }
 
+func TestWindowsUserLifecycleIsScopedToTheCurrentInstallation(t *testing.T) {
+	installScript := readPackagingInstallScript(t)
+	for _, want := range []string{
+		`$CurrentWindowsSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value`,
+		`"HyperFileLensAgent.User.$CurrentWindowsSid"`,
+		`[System.IO.Path]::GetFullPath($AgentRoot)`,
+	} {
+		if !strings.Contains(installScript, want) {
+			t.Fatalf("install.ps1 missing instance isolation contract %q", want)
+		}
+	}
+	for _, name := range []string{
+		"detached_run_windows.go",
+		"local_upgrade_windows.go",
+		"local_uninstall_windows.go",
+	} {
+		source := readInstallPackageSource(t, name)
+		if !strings.Contains(source, "HyperFileLensAgent.User.$currentSid") {
+			t.Fatalf("%s does not use a SID-scoped lifecycle task", name)
+		}
+		if strings.Contains(source, "Stop-Process -Name") {
+			t.Fatalf("%s contains a machine-global process-name stop", name)
+		}
+	}
+	if strings.Contains(installScript, "Stop-Process -Name") {
+		t.Fatal("install.ps1 contains a machine-global process-name stop")
+	}
+}
+
+func readInstallPackageSource(t *testing.T, name string) string {
+	t.Helper()
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test source path")
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func TestInstallPs1SupportsSpecifiedUserContinuousTask(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	for _, want := range []string{

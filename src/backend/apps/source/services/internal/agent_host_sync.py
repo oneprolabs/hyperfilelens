@@ -33,12 +33,24 @@ def _latest_agent_version() -> str:
 
 
 def _agent_platform(node: Node, inv: dict[str, Any]) -> str:
-    raw = str(inv.get("os") or inv.get("platform") or node.os_name or "").strip().lower()
+    raw = (
+        str(inv.get("os") or inv.get("platform") or node.os_name or "").strip().lower()
+    )
     if "darwin" in raw or "mac" in raw:
         return "macos"
     if "windows" in raw or raw in {"win32", "win64"} or raw.startswith("win "):
         return "windows"
     return "linux"
+
+
+def _agent_display_name(node: Node, hostname: str) -> str:
+    """Keep per-user Agent instances distinguishable on the source-host UI."""
+    if node.installation_mode in (
+        Node.InstallationMode.USER,
+        Node.InstallationMode.USER_CONTINUOUS,
+    ):
+        return str(node.name or "").strip() or hostname
+    return hostname or str(node.name or "").strip()
 
 
 def sync_agent_source_host(*, node: Node) -> SourceResource | None:
@@ -84,8 +96,9 @@ def sync_agent_source_host(*, node: Node) -> SourceResource | None:
         resource_type=ResourceType.LOCAL,
     )
     resource = qs.first()
+    display_name = _agent_display_name(node, hostname)
     if resource is None:
-        name = hostname or node.name or f"agent-{node.id}"
+        name = display_name or f"agent-{node.id}"
         if (
             SourceResource.objects.filter(
                 organization_id=node.organization_id,
@@ -132,10 +145,18 @@ def sync_agent_source_host(*, node: Node) -> SourceResource | None:
         "free_size",
         "updated_at",
     ]
-    desired_name = hostname or node.name
+    desired_name = display_name
     if desired_name and (
         is_auto_assigned_node_name(resource.name)
         or resource.name == f"agent-{node.id}"
+        or (
+            node.installation_mode
+            in (
+                Node.InstallationMode.USER,
+                Node.InstallationMode.USER_CONTINUOUS,
+            )
+            and resource.name == hostname
+        )
     ):
         next_name = desired_name
         if (
