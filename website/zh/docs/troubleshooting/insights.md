@@ -1,9 +1,9 @@
 ---
-title: Data Gateway 与 Copilot 排障
-description: 排查 HyperFileLens Insights 数据准备、网关和 Copilot 会话问题。
+title: 智能洞察与 Data Gateway
+description: 排查 HyperFileLens 智能洞察、数据准备和 Data Gateway 问题。
 ---
 
-# Data Gateway 与 Copilot 排障
+# 智能洞察与 Data Gateway
 
 ## 无法创建会话
 
@@ -43,4 +43,3 @@ description: 排查 HyperFileLens Insights 数据准备、网关和 Copilot 会�
 ## 数据边界疑问
 
 确认当前使用公共还是私有 Data Gateway，以及模型是自托管还是外部 API。需要判断数据是否离开私有网络时，必须结合网关部署位置、模型提供商和组织网络配置，不能只根据页面中的“私有网关”名称推断完整数据路径。
-

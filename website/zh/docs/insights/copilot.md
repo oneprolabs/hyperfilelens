@@ -1,9 +1,9 @@
 ---
-title: 创建和使用 Copilot 会话
-description: 选择备份源、快照、数据范围和网关，创建 HyperFileLens Copilot 会话。
+title: 创建洞察会话
+description: 选择备份源、快照、数据范围和网关，创建 HyperFileLens 洞察会话。
 ---
 
-# 创建和使用 Copilot 会话
+# 创建洞察会话
 
 打开<span class="hfl-path">洞察 → AI Copilot</span>并选择“新建对话”。
 
@@ -37,4 +37,3 @@ description: 选择备份源、快照、数据范围和网关，创建 HyperFile
 - 回答似乎来自旧内容时，核对会话绑定的快照时间。
 
 AI Copilot 适合辅助理解和定位，不应成为未经复核的生产变更、法律或财务决策依据。
-

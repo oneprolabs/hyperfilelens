@@ -1,9 +1,9 @@
 ---
-title: 常见问题与故障排查
+title: 问题排查
 description: 按失败阶段定位 HyperFileLens 安装、节点、备份、恢复和智能洞察问题。
 ---
 
-# 常见问题与故障排查
+# 问题排查
 
 先定位失败发生在哪一段链路，再修改配置。一次同时修改网络、凭据、路径和策略，会让问题更难复现。
 
@@ -46,4 +46,3 @@ description: 按失败阶段定位 HyperFileLens 安装、节点、备份、恢�
 可公开提供：版本、操作系统、错误编号、失败阶段和已脱敏日志。不要提供密码、访问令牌、对象存储密钥、完整 `.env`、客户文件名或可访问的私有地址。
 
 确认问题可复现后，可前往 [GitHub Issues](https://github.com/oneprolabs/hyperfilelens/issues) 搜索已有记录或提交新问题。
-

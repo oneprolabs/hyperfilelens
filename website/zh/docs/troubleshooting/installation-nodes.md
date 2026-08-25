@@ -1,9 +1,9 @@
 ---
-title: 安装与节点排障
+title: 安装与节点
 description: 排查控制平面安装、Agent、Proxy 和 Data Gateway 注册或离线问题。
 ---
 
-# 安装与节点排障
+# 安装与节点
 
 ## 控制平面安装被拒绝
 
@@ -42,4 +42,3 @@ description: 排查控制平面安装、Agent、Proxy 和 Data Gateway 注册或
 - 已有 Docker 处于不完整或不兼容状态时，安装程序会停止。
 - 检查 AI 引擎镜像或离线介质是否与当前控制平面版本一致。
 - 检查网关工作区磁盘空间和到控制平面的网络。
-

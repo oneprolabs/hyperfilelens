@@ -1,9 +1,9 @@
 ---
-title: 连接 Private Data Gateway
+title: 使用 Private Data Gateway
 description: 选择并使用能够访问备份仓库的 Private Data Gateway。
 ---
 
-# 连接 Private Data Gateway
+# 使用 Private Data Gateway
 
 当备份仓库位于私有网络，或者不能由平台提供的网关访问时，可以使用部署在可控网络中的 Private Data Gateway。
 
@@ -19,4 +19,3 @@ description: 选择并使用能够访问备份仓库的 Private Data Gateway。
 创建 AI Copilot 会话时，选择手动指定 Data Gateway，然后从当前可用列表中选择 Private Data Gateway。提交前再次核对快照、文件范围和网关。
 
 需要新部署网关时，请查看[Private Data Gateway 部署](/zh/docs/deployment/data-gateway)。
-

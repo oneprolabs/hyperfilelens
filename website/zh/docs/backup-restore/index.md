@@ -12,9 +12,9 @@ HyperFileLens 的数据保护流程从备份源开始，经由备份配置把数
 1. [管理备份源](/zh/docs/backup-restore/sources)，确认主机或 NAS 数据可以读取。
 2. [管理目标存储](/zh/docs/backup-restore/targets)，确认仓库位置可写。
 3. [创建并运行备份](/zh/docs/backup-restore/create-backup)。
-4. [查看任务与验证快照](/zh/docs/backup-restore/snapshots)。
+4. [查看任务与快照](/zh/docs/backup-restore/snapshots)。
 5. [恢复文件和目录](/zh/docs/backup-restore/restore)。
-6. 根据业务要求设置[策略、保留与恢复计划](/zh/docs/backup-restore/policies)。
+6. 根据业务要求设置[策略与保留](/zh/docs/backup-restore/policies)，并按需配置恢复计划。
 
 ## 三个关键判断
 
@@ -23,4 +23,3 @@ HyperFileLens 的数据保护流程从备份源开始，经由备份配置把数
 - **快照可恢复**：任务完成，快照包含预期目录，并通过实际恢复验证。
 
 部分成功不代表全部数据已经受到保护。必须查看失败目录、跳过项和实际数据量，再判断快照是否满足恢复要求。
-

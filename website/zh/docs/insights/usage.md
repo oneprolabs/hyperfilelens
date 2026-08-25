@@ -17,5 +17,4 @@ AI 使用量页面用于了解当前可用额度和已经产生的模型使用�
 
 Community 使用内置社区额度；官方 SaaS 以页面实际显示的可用额度为准。额度用于限制智能洞察使用，不影响已有备份和恢复流程。
 
-如果额度显示异常，先刷新页面并确认当前组织和账户，再联系平台管理员或查看[Data Gateway 与 Copilot 排障](/zh/docs/troubleshooting/insights)。
-
+如果额度显示异常，先刷新页面并确认当前组织和账户，再联系平台管理员或查看[智能洞察与 Data Gateway](/zh/docs/troubleshooting/insights)。
