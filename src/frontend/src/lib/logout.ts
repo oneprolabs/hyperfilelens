@@ -39,11 +39,6 @@ export async function performLogout(router: Router): Promise<void> {
   } catch (e) {
     logger.warn('logout.ts', 41, 'API call failed, proceeding anyway', e)
   }
-  try {
-    localStorage.clear()
-  } catch {
-    /* ignore */
-  }
   // Clear in-memory auth state before navigation
   clearAuth()
   try {

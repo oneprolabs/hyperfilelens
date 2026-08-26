@@ -30,9 +30,7 @@ export function useLocaleSwitch() {
     })),
   )
 
-  function selectLocale(code: string) {
-    if (!canSwitchLocale.value || !getAvailableLocaleCodes().includes(code)) return false
-    if (String(locale.value) === code) return false
+  function applySelectedLocale(code: string) {
     const selected = applyLocale(code)
     const user = currentUser.value
     if (!user) return true
@@ -40,6 +38,10 @@ export function useLocaleSwitch() {
       ? DEFAULT_LOCALE
       : installedLangPacks.value.find((pack) => pack.frontend_code === selected)?.backend_code
     if (!profileLanguage) return true
+    if (user.language === profileLanguage) {
+      setAuthenticatedLocalePreference(profileLanguage)
+      return true
+    }
     currentUser.value = { ...user, language: profileLanguage }
     setAuthenticatedLocalePreference(profileLanguage)
     localePreferenceWriteQueue = localePreferenceWriteQueue.catch(() => undefined).then(async () => {
@@ -63,11 +65,23 @@ export function useLocaleSwitch() {
     return true
   }
 
+  function selectLocale(code: string) {
+    if (!canSwitchLocale.value || !getAvailableLocaleCodes().includes(code)) return false
+    if (String(locale.value) === code) return false
+    return applySelectedLocale(code)
+  }
+
+  function syncAuthenticatedLocale(code: string) {
+    if (!canSwitchLocale.value || !getAvailableLocaleCodes().includes(code)) return false
+    return applySelectedLocale(code)
+  }
+
   return {
     canSwitchLocale,
     currentLocaleLabel,
     localeOptions,
     selectLocale,
+    syncAuthenticatedLocale,
     locale,
   }
 }

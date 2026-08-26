@@ -161,4 +161,79 @@ describe('useLocaleSwitch', () => {
     expect(JSON.parse(mocks.api.mock.calls[0]?.[1].body).language).toBe('pt')
     wrapper.unmount()
   })
+
+  it('syncs an explicit pre-login selection even when the active locale already matches', async () => {
+    registerLocale('zh-hans', { nav: { overview: 'Translated overview' } }, ['zh', 'zh-cn'])
+    installedLangPacks.value = [{
+      id: 'zh-hans',
+      display_name: 'Simplified Chinese',
+      frontend_code: 'zh-hans',
+      backend_code: 'zh-hans',
+      aliases: ['zh', 'zh-cn'],
+      version: '0.2.0',
+    }]
+    selectLocale('zh-hans')
+    currentUser.value = {
+      id: 11,
+      email: 'pre-login-locale@example.com',
+      username: 'pre-login-locale',
+      language: 'en',
+    }
+    mocks.api.mockResolvedValue(undefined)
+
+    let localeSwitch: ReturnType<typeof useLocaleSwitch> | undefined
+    const wrapper = mount(defineComponent({
+      setup() {
+        localeSwitch = useLocaleSwitch()
+        return () => h('div')
+      },
+    }), { global: { plugins: [i18n] } })
+
+    expect(localeSwitch?.syncAuthenticatedLocale('zh-hans')).toBe(true)
+
+    await vi.waitFor(() => expect(mocks.api).toHaveBeenCalledTimes(1))
+    expect(i18n.global.locale.value).toBe('zh-hans')
+    expect(currentUser.value?.language).toBe('zh-hans')
+    expect(JSON.parse(mocks.api.mock.calls[0]?.[1].body).language).toBe('zh-hans')
+    wrapper.unmount()
+  })
+
+  it('keeps the explicit locale active when saving the profile preference fails', async () => {
+    registerLocale('zh-hans', { nav: { overview: 'Translated overview' } }, ['zh', 'zh-cn'])
+    installedLangPacks.value = [{
+      id: 'zh-hans',
+      display_name: 'Simplified Chinese',
+      frontend_code: 'zh-hans',
+      backend_code: 'zh-hans',
+      aliases: ['zh', 'zh-cn'],
+      version: '0.2.0',
+    }]
+    currentUser.value = {
+      id: 12,
+      email: 'locale-save-failure@example.com',
+      username: 'locale-save-failure',
+      language: 'en',
+    }
+    const saveError = new Error('save failed')
+    mocks.api.mockRejectedValue(saveError)
+
+    let localeSwitch: ReturnType<typeof useLocaleSwitch> | undefined
+    const wrapper = mount(defineComponent({
+      setup() {
+        localeSwitch = useLocaleSwitch()
+        return () => h('div')
+      },
+    }), { global: { plugins: [i18n] } })
+
+    expect(localeSwitch?.syncAuthenticatedLocale('zh-hans')).toBe(true)
+
+    await vi.waitFor(() => expect(mocks.notifyError).toHaveBeenCalledTimes(1))
+    expect(i18n.global.locale.value).toBe('zh-hans')
+    expect(currentUser.value?.language).toBe('zh-hans')
+    expect(mocks.notifyError).toHaveBeenCalledWith(expect.objectContaining({
+      error: saveError,
+      dedupeKey: 'language-preference-save-failed',
+    }))
+    wrapper.unmount()
+  })
 })
