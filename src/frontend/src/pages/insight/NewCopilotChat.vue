@@ -786,9 +786,6 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     <h2 class="fullscreen-form-section__title">
                       <span class="fullscreen-form-section__indicator" />{{ t('insight.copilot.analysisTypeLabel') }}
                     </h2>
-                    <p class="fullscreen-form-section__hint">
-                      {{ t('insight.copilot.analysisTypeHint') }}
-                    </p>
                   </div>
                 </div>
                 <fieldset class="new-chat-analysis-options">

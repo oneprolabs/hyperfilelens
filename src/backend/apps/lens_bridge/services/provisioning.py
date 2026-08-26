@@ -49,7 +49,7 @@ def normalize_analysis_type(value: str | None) -> str:
 
     normalized = str(value or "knowledge_qa").strip().lower()
     if normalized not in ANALYSIS_TYPE_TASKS:
-        raise ValidationError({"analysis_type": "Select a supported analysis approach."})
+        raise ValidationError({"analysis_type": "Select a supported analysis type."})
     return normalized
 
 
@@ -104,7 +104,7 @@ def validate_analysis_type_for_gateway(
     if not has_gateway_task_snapshot(link) and normalized == "knowledge_qa":
         return normalized
     raise ValidationError(
-        {"analysis_type": "The selected Data Gateway does not support this analysis approach."}
+        {"analysis_type": "The selected Data Gateway does not support this analysis type."}
     )
 
 
@@ -484,7 +484,7 @@ def pick_lensnode_task(
     *,
     analysis_type: str | None = None,
 ) -> str:
-    """Resolve the requested HFL analysis approach to a SourceLens task."""
+    """Resolve the requested HFL analysis type to a SourceLens task."""
 
     requested_type = normalize_analysis_type(analysis_type)
     data = sl_client.request_json("GET", f"/api/lens/admin/lensnodes/{lensnode_uuid}/")
@@ -500,7 +500,7 @@ def pick_lensnode_task(
         if name == selected_task:
             return name
     raise ValidationError(
-        {"analysis_type": "The selected Data Gateway does not support this analysis approach."}
+        {"analysis_type": "The selected Data Gateway does not support this analysis type."}
     )
 
 
