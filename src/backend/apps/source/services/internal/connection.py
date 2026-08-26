@@ -270,14 +270,6 @@ def apply_connection_test_result(resource: SourceResource, result: dict) -> None
             resource.mount_error = ""
     apply_result_availability(resource=resource, result=result)
     resource.save()
-    if resource.resource_type == ResourceType.NAS:
-        from apps.source.services.internal.source_pipeline import sync_pipeline_projection
-
-        sync_pipeline_projection(
-            organization_id=resource.organization_id,
-            source_kind="nas",
-            ref_id=resource.id,
-        )
 
 
 def apply_connection_test_result_if_current(
@@ -310,7 +302,32 @@ def apply_connection_test_result_if_current(
         if str(resource.connection_probe_token or "") != str(probe_token or ""):
             return None, "source_changed"
         apply_connection_test_result(resource, result)
+        if resource.resource_type == ResourceType.NAS:
+            # The source row is locked in this transaction. Queue the pipeline
+            # projection only after commit so it can acquire locks in the
+            # canonical Node -> Source order without retaining this Source lock.
+            organization_id = int(resource.organization_id)
+            resource_id = int(resource.id)
+            transaction.on_commit(
+                lambda organization_id=organization_id, resource_id=resource_id: (
+                    _queue_source_pipeline_projection(
+                        organization_id=organization_id,
+                        resource_id=resource_id,
+                    )
+                )
+            )
         return resource, ""
+
+
+def _queue_source_pipeline_projection(*, organization_id: int, resource_id: int) -> None:
+    """Queue a committed NAS projection without affecting the source result."""
+    from apps.source.tasks.pipeline import queue_source_pipeline_projection
+
+    queue_source_pipeline_projection(
+        organization_id=organization_id,
+        source_kind="nas",
+        ref_id=resource_id,
+    )
 
 
 def _source_removal_fenced(resource_id: int) -> bool:

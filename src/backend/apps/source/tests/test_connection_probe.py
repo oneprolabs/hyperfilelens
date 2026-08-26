@@ -132,6 +132,24 @@ class SourceConnectionProbeTests(TestCase):
         self.assertEqual(self.resource.availability, "online")
         self.assertIsNotNone(self.resource.availability_updated_at)
 
+    @mock.patch("apps.source.tasks.pipeline.queue_source_pipeline_projection")
+    def test_probe_result_queues_pipeline_projection_after_source_commit(
+        self, queue_projection
+    ):
+        node_task = self._probe_node_task()
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.result = {"space_info": {"total_bytes": 1000}}
+        node_task.save(update_fields=["status", "result", "updated_at"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            self.assertTrue(project_source_connection_probe(node_task=node_task))
+
+        queue_projection.assert_called_once_with(
+            organization_id=self.org.id,
+            source_kind="nas",
+            ref_id=self.resource.id,
+        )
+
     @mock.patch(
         "apps.source.tasks.connection_probe.dispatch_nas_agent_task_async",
         side_effect=RuntimeError("broker unavailable"),

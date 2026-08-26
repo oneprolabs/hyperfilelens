@@ -38,7 +38,6 @@ from apps.source.services.internal.validators import validate_resource_payload
 from apps.source.services.internal.source_pipeline import (
     delete_pipeline_entry,
     ensure_pipeline_entry,
-    sync_pipeline_projection,
 )
 from apps.source.services.internal.source_credentials import (
     merge_source_credentials,
@@ -48,6 +47,23 @@ from apps.source.services.internal.source_credentials import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _queue_nas_pipeline_projection_after_commit(
+    *, organization_id: int, resource_id: int
+) -> None:
+    """Queue a NAS read-model refresh after the source transaction commits."""
+    from apps.source.tasks.pipeline import queue_source_pipeline_projection
+
+    transaction.on_commit(
+        lambda organization_id=int(organization_id), resource_id=int(resource_id): (
+            queue_source_pipeline_projection(
+                organization_id=organization_id,
+                source_kind=SelectableSourceKind.NAS,
+                ref_id=resource_id,
+            )
+        )
+    )
 
 
 def _node_agent_data_dir(node: Node) -> str | None:
@@ -325,10 +341,9 @@ def update_source_resource(
     )
     resource.save()
     if resource.resource_type == ResourceType.NAS:
-        sync_pipeline_projection(
+        _queue_nas_pipeline_projection_after_commit(
             organization_id=resource.organization_id,
-            source_kind=SelectableSourceKind.NAS,
-            ref_id=resource.id,
+            resource_id=resource.id,
         )
     if bound_node_changed and resource.resource_type in ResourceType.REQUIRES_MOUNT and resource.bound_node:
         _queue_remount_after_proxy_binding(
@@ -410,10 +425,9 @@ def test_resource_connection(*, resource: SourceResource) -> dict:
         )
         resource = current
     if resource.resource_type == ResourceType.NAS:
-        sync_pipeline_projection(
+        _queue_nas_pipeline_projection_after_commit(
             organization_id=resource.organization_id,
-            source_kind=SelectableSourceKind.NAS,
-            ref_id=resource.id,
+            resource_id=resource.id,
         )
     validation_mount_point = agent_paths.source_validation_mount_point(
         str(probe_token),
@@ -525,10 +539,9 @@ def bind_node(*, resource: SourceResource, node_id: int) -> dict:
         ]
     )
     if resource.resource_type == ResourceType.NAS:
-        sync_pipeline_projection(
+        _queue_nas_pipeline_projection_after_commit(
             organization_id=resource.organization_id,
-            source_kind=SelectableSourceKind.NAS,
-            ref_id=resource.id,
+            resource_id=resource.id,
         )
     if resource.resource_type in ResourceType.REQUIRES_MOUNT:
         _queue_remount_after_proxy_binding(

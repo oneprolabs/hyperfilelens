@@ -1,7 +1,9 @@
 from io import StringIO
+from unittest import mock
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import OperationalError
 from django.test import TestCase
 
 from apps.iam.models import Organization
@@ -15,6 +17,7 @@ from apps.source.services.internal.source_pipeline import (
     ensure_pipeline_entry,
     reconcile_pipeline_projections,
     revert_backup_flow_sources,
+    sync_pipeline_projection_with_retry,
 )
 from apps.task.models import Task, TaskResource
 from apps.task.services.interface import complete_task, create_task, start_task
@@ -34,6 +37,27 @@ class SourcePipelineProjectionTests(TestCase):
             connection_ip_address="198.51.100.10",
             metadata={"inventory": {"hostname": "agent-reported"}},
         )
+
+    @mock.patch("apps.source.services.internal.source_pipeline.time.sleep")
+    @mock.patch("apps.source.services.internal.source_pipeline.sync_pipeline_projection")
+    def test_projection_retries_transient_database_deadlock(
+        self, sync_projection, sleep
+    ):
+        expected = object()
+        sync_projection.side_effect = [
+            OperationalError("deadlock detected"),
+            expected,
+        ]
+
+        result = sync_pipeline_projection_with_retry(
+            organization_id=self.org.id,
+            source_kind=SelectableSourceKind.AGENT,
+            ref_id=self.agent.id,
+        )
+
+        self.assertIs(result, expected)
+        self.assertEqual(sync_projection.call_count, 2)
+        sleep.assert_called_once_with(0.05)
 
     def test_agent_projection_uses_hostname_and_connection_ip_fallback(self):
         entry = ensure_pipeline_entry(
