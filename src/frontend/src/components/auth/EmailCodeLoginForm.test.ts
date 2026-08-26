@@ -126,6 +126,13 @@ describe('EmailCodeLoginForm', () => {
     await codeInput.setValue('123456')
 
     await wrapper.get('button.submit-btn').trigger('click')
+    await vi.waitFor(() => {
+      expect(mocks.verify).toHaveBeenCalledWith(
+        'person@example.com',
+        '123456',
+        expect.any(AbortSignal),
+      )
+    })
     await flushPromises()
 
     expect(wrapper.emitted('verification-unknown')).toEqual([[networkError]])
