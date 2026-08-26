@@ -196,14 +196,29 @@ describe('Login Turnstile lifecycle', () => {
     expect(storeSessionNotice('TOKEN_REUSED')).toBe(true)
 
     const firstMount = await mountLogin(1440)
-    expect(firstMount.get('.session-alert').text()).toContain(
+    const securityNotice = firstMount.get('.session-alert')
+    expect(securityNotice.text()).toContain(
       'Unusual sign-in activity. Sign in again.',
     )
+    expect(securityNotice.classes()).toContain('session-alert--warning')
+    expect(firstMount.getComponent({ name: 'ElAlert' }).props('type')).toBe('warning')
     firstMount.unmount()
 
     const replayMount = await mountLogin(1440)
     expect(replayMount.find('.session-alert').exists()).toBe(false)
     replayMount.unmount()
+  })
+
+  it('uses the brand information tone for routine session expiry', async () => {
+    expect(storeSessionNotice('TOKEN_EXPIRED')).toBe(true)
+
+    const wrapper = await mountLogin(1440)
+    const expiryNotice = wrapper.get('.session-alert')
+
+    expect(expiryNotice.text()).toContain('Sign-in expired. Sign in again.')
+    expect(expiryNotice.classes()).toContain('session-alert--info')
+    expect(wrapper.getComponent({ name: 'ElAlert' }).props('type')).toBe('info')
+    wrapper.unmount()
   })
 
   it('keeps the password tab selected when Turnstile is blocked', async () => {
