@@ -1366,6 +1366,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                 gateway_link_id=body.validated_data.get("gateway_link_id"),
                 idempotency_key=body.validated_data["idempotency_key"],
                 title=body.validated_data.get("title"),
+                analysis_type=body.validated_data.get("analysis_type"),
                 analysis_mode=body.validated_data.get("analysis_mode"),
                 agent_model_ref=body.validated_data.get("agent_model_ref"),
             )

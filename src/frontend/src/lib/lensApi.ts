@@ -92,6 +92,7 @@ export type LensCopilotReadiness = {
   default_multimodal_model_ref: string | null
 }
 
+export type LensAnalysisType = 'knowledge_qa' | 'code_analysis'
 export type LensAnalysisMode = 'fast' | 'standard' | 'deep'
 
 export type LensCopilotUsageSummary = {
@@ -315,6 +316,7 @@ export type LensSessionLink = {
   selected_task?: string | null
   agent_model_ref: string | null
   multimodal_model_ref?: string | null
+  analysis_type?: LensAnalysisType | null
   analysis_mode?: LensAnalysisMode
   backup_config_id: number | null
   backup_source_name: string | null
@@ -1015,6 +1017,7 @@ export type CreateCopilotSessionPayload = {
   }>
   gateway_mode: 'auto' | 'manual'
   gateway_link_id?: number | null
+  analysis_type?: LensAnalysisType
   analysis_mode?: LensAnalysisMode
   agent_model_ref?: string | null
 }
@@ -1648,6 +1651,7 @@ export type LensCopilotGatewayOption = {
   online: boolean
   hfl_usable: boolean
   copilot_eligible: boolean
+  analysis_types?: LensAnalysisType[]
 }
 
 function tenantLensUrl(relative: string): string {

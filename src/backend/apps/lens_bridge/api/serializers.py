@@ -522,6 +522,7 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             "selected_task",
             "agent_model_ref",
             "multimodal_model_ref",
+            "analysis_type",
             "analysis_mode",
             "backup_config_id",
             "backup_source_name",
@@ -716,6 +717,10 @@ class LensSessionCreateSerializer(serializers.Serializer):
         default=LensSessionLink.GatewaySelectionMode.AUTO,
     )
     gateway_link_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    analysis_type = serializers.ChoiceField(
+        choices=LensSessionLink.AnalysisType.values,
+        required=False,
+    )
     analysis_mode = serializers.ChoiceField(
         choices=LensSessionLink.AnalysisMode.values,
         required=False,
@@ -887,3 +892,7 @@ class LensCopilotGatewayOptionSerializer(serializers.Serializer):
     online = serializers.BooleanField()
     hfl_usable = serializers.BooleanField()
     copilot_eligible = serializers.BooleanField()
+    analysis_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=LensSessionLink.AnalysisType.values),
+        required=False,
+    )

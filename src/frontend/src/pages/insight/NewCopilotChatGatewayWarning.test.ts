@@ -76,6 +76,7 @@ const publicGateway: LensCopilotGatewayOption = {
   online: true,
   hfl_usable: true,
   copilot_eligible: true,
+  analysis_types: ['knowledge_qa', 'code_analysis'],
 }
 
 const privateGateway: LensCopilotGatewayOption = {
@@ -88,6 +89,7 @@ const privateGateway: LensCopilotGatewayOption = {
   online: true,
   hfl_usable: true,
   copilot_eligible: true,
+  analysis_types: ['knowledge_qa', 'code_analysis'],
 }
 
 type FormScenario = {
@@ -291,7 +293,9 @@ describe('New Chat Public Data Gateway warning', () => {
     expect(wrapper.text()).toContain(zhHans.insight.copilot.detailsDataSource)
     expect(wrapper.text()).toContain(zhHans.insight.copilot.bindingBackupSource)
     expect(wrapper.text()).toContain(zhHans.insight.copilot.detailsFilesFolders)
-    expect(wrapper.text()).toContain(zhHans.insight.copilot.advancedOptions)
+    expect(wrapper.text()).toContain(zhHans.insight.copilot.analysisTypeLabel)
+    expect(wrapper.text()).toContain(zhHans.insight.copilot.analysisTypeKnowledgeQa)
+    expect(wrapper.text()).toContain(zhHans.insight.copilot.analysisTypeCodeAnalysis)
     expect(wrapper.text()).toContain(zhHans.insight.copilot.dataPrivacy)
     expect(wrapper.text()).toContain(zhHans.insight.copilot.pathCountOne.replace('{count}', '1'))
     expect(wrapper.text()).toContain('public-dg-01')
@@ -381,6 +385,22 @@ describe('New Chat Public Data Gateway warning', () => {
     expect(wrapper.text()).toContain('1 path')
     expect(wrapper.text()).not.toContain('1 paths')
     expect(startChatButton(wrapper).attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('shows both supported analysis approaches and submits the selected one', async () => {
+    mocks.createCopilotSession.mockResolvedValue({ id: 91 })
+    const wrapper = await mountNewChat({ gatewayResponse: [publicGateway] })
+
+    const codeOption = wrapper.get('input[value="code_analysis"]')
+    expect(codeOption.attributes('disabled')).toBeUndefined()
+    await codeOption.setValue(true)
+    await startChatButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(mocks.createCopilotSession).toHaveBeenCalledWith(
+      expect.objectContaining({ analysis_type: 'code_analysis' }),
+    )
     wrapper.unmount()
   })
 

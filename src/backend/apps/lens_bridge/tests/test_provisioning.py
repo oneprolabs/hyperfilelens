@@ -1,3 +1,4 @@
+import uuid
 from unittest.mock import MagicMock, call, patch
 
 from django.test import SimpleTestCase
@@ -345,6 +346,97 @@ class EnsureKsWorkspaceTests(SimpleTestCase):
 
 
 class CreateAssistantModelBindingTests(SimpleTestCase):
+    def test_analysis_types_are_derived_from_sourcelens_tasks(self):
+        from apps.lens_bridge.services import provisioning
+
+        self.assertEqual(
+            provisioning.analysis_types_for_tasks(
+                [
+                    {"name": "knowledge_qa", "title": "Knowledge Q&A"},
+                    {"task": "code_analysis", "title": "Code Analysis"},
+                    {"name": "general_chat", "title": "General Chat"},
+                ]
+            ),
+            ["knowledge_qa", "code_analysis"],
+        )
+
+    def test_gateway_capabilities_reject_an_unavailable_analysis_type(self):
+        from apps.lens_bridge.services import provisioning
+
+        gateway_link = MagicMock(
+            config_json={
+                "sl_lensnode_snapshot": {
+                    "sl_tasks": [
+                        {"name": "knowledge_qa", "title": "Knowledge Q&A"}
+                    ]
+                }
+            },
+            sl_lensnode_uuid=uuid.uuid4(),
+        )
+
+        with self.assertRaises(ValidationError) as raised:
+            provisioning.validate_analysis_type_for_gateway(
+                gateway_link,
+                "code_analysis",
+            )
+
+        self.assertIn("analysis_type", raised.exception.detail)
+
+    def test_legacy_gateway_without_tasks_keeps_knowledge_qa_default(self):
+        from apps.lens_bridge.services import provisioning
+
+        gateway_link = MagicMock(
+            config_json={},
+            sl_lensnode_uuid=uuid.uuid4(),
+        )
+
+        self.assertEqual(
+            provisioning.validate_analysis_type_for_gateway(gateway_link, None),
+            "knowledge_qa",
+        )
+        self.assertEqual(
+            provisioning.analysis_types_for_gateway(gateway_link),
+            ["knowledge_qa"],
+        )
+
+    def test_gateway_with_only_general_chat_does_not_use_legacy_fallback(self):
+        from apps.lens_bridge.services import provisioning
+
+        gateway_link = MagicMock(
+            config_json={
+                "sl_lensnode_snapshot": {
+                    "sl_tasks": [
+                        {"name": "general_chat", "title": "General Chat"}
+                    ]
+                }
+            },
+            sl_lensnode_uuid=uuid.uuid4(),
+        )
+
+        with self.assertRaises(ValidationError):
+            provisioning.validate_analysis_type_for_gateway(
+                gateway_link,
+                "knowledge_qa",
+            )
+
+    @patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
+    def test_requested_analysis_type_is_resolved_instead_of_first_task(self, request_json):
+        from apps.lens_bridge.services import provisioning
+
+        request_json.return_value = {
+            "tasks": [
+                {"name": "knowledge_qa", "title": "Knowledge Q&A"},
+                {"name": "code_analysis", "title": "Code Analysis"},
+            ]
+        }
+
+        self.assertEqual(
+            provisioning.pick_lensnode_task(
+                uuid.uuid4(), analysis_type="code_analysis"
+            ),
+            "code_analysis",
+        )
+
     @patch(
         "apps.lens_bridge.services.provisioning."
         "default_multimodal_model_ref_for_org"
