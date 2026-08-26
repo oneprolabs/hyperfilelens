@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from django.db import transaction
+import logging
+import time
+
+from django.db import OperationalError, transaction
 from django.utils import timezone
 
 from apps.node.models import Node
@@ -13,6 +16,60 @@ from apps.source.services.internal.selectable_ids import parse_selectable_id
 from apps.source.services.internal.source_pipeline_projection import (
     build_source_projection,
 )
+
+logger = logging.getLogger(__name__)
+
+
+_PROJECTION_RETRYABLE_PG_CODES = {"40P01", "40001"}
+_PROJECTION_MAX_RETRIES = 3
+
+
+def _is_retryable_projection_error(error: BaseException) -> bool:
+    """Return whether PostgreSQL rejected a projection for a transient reason."""
+    current: BaseException | None = error
+    while current is not None:
+        if (
+            getattr(current, "pgcode", None) in _PROJECTION_RETRYABLE_PG_CODES
+            or getattr(current, "sqlstate", None) in _PROJECTION_RETRYABLE_PG_CODES
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    message = str(error).lower()
+    return "deadlock detected" in message or "could not serialize" in message
+
+
+def sync_pipeline_projection_with_retry(
+    *,
+    organization_id: int,
+    source_kind: str,
+    ref_id: int,
+    minimum_step: int = PipelineStep.SOURCE_POOL,
+    max_retries: int = _PROJECTION_MAX_RETRIES,
+) -> SourceBackupPipelineEntry | None:
+    """Run an idempotent projection with bounded retry for transient DB conflicts."""
+    attempts = max(1, int(max_retries))
+    for attempt in range(attempts):
+        try:
+            return sync_pipeline_projection(
+                organization_id=organization_id,
+                source_kind=source_kind,
+                ref_id=ref_id,
+                minimum_step=minimum_step,
+            )
+        except OperationalError as exc:
+            if not _is_retryable_projection_error(exc) or attempt + 1 >= attempts:
+                raise
+            logger.warning(
+                "retrying source pipeline projection after transient database conflict "
+                "organization_id=%s source_kind=%s ref_id=%s attempt=%s",
+                organization_id,
+                source_kind,
+                ref_id,
+                attempt + 1,
+                exc_info=True,
+            )
+            time.sleep(0.05 * (attempt + 1))
+    return None
 
 
 def _selectable_key(source_kind: str, ref_id: int) -> str:
@@ -354,7 +411,7 @@ def reconcile_pipeline_projections(*, limit: int = 200) -> dict[str, int]:
             .values_list("organization_id", "id")[:remaining]
         )
     repaired = sum(
-        sync_pipeline_projection(
+        sync_pipeline_projection_with_retry(
             organization_id=organization_id,
             source_kind=source_kind,
             ref_id=ref_id,

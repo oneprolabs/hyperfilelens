@@ -13,7 +13,11 @@ from .source_unregister import (
     reconcile_stuck_source_unregister_tasks_task,
     reevaluate_source_unregister_task_task,
 )
-from .pipeline import reconcile_source_pipeline_task
+from .pipeline import (
+    queue_source_pipeline_projection,
+    reconcile_source_pipeline_task,
+    sync_source_pipeline_projection_task,
+)
 
 __all__ = [
     "execute_source_unregister_task",
@@ -24,6 +28,8 @@ __all__ = [
     "reconcile_stale_source_connection_probes_task",
     "reconcile_source_availability_task",
     "reconcile_source_pipeline_task",
+    "sync_source_pipeline_projection_task",
+    "queue_source_pipeline_projection",
     "reconcile_stuck_source_unregister_tasks_task",
     "reevaluate_source_unregister_task_task",
 ]
