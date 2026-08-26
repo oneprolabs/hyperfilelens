@@ -87,8 +87,8 @@ def process_uplink_payload(self, *, payload: str) -> dict[str, str]:
     parsed = payload_to_parsed(data)
     if parsed is None:
         return {"status": "ignored", "reason": "unparseable"}
-    node_id, message = parsed
-    handle_uplink(node_id=node_id, message=message)
+    node_id, message, session_id = parsed
+    handle_uplink(node_id=node_id, message=message, session_id=session_id)
     return {"status": "ok", "node_id": str(node_id), "msg_type": str(message.msg_type)}
 
 

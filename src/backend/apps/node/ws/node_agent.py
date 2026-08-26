@@ -33,7 +33,11 @@ from apps.node.ws.uplink import (
     project_identical_task_result_recovery,
     trigger_task_result_followup,
 )
-from apps.node.ws.uplink_queue import enqueue_uplink, touch_heartbeat_fast
+from apps.node.ws.uplink_queue import (
+    enqueue_uplink,
+    touch_agent_session_fast,
+    touch_heartbeat_fast,
+)
 from apps.node.ws.wire import (
     TASK_RESULT_ACK_SUBPROTOCOL,
     WireType,
@@ -200,25 +204,59 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
             )
 
         if message.msg_type == WireType.HEARTBEAT:
-            await database_sync_to_async(touch_heartbeat_fast)(
+            route_current = await database_sync_to_async(touch_heartbeat_fast)(
                 node_id=self.node_id,
                 session_id=self.session_id,
             )
+            if route_current is False:
+                logger.debug(
+                    "stale Agent heartbeat ignored node_id=%s session=%s",
+                    self.node_id,
+                    self.session_id,
+                )
+                return
             await self.send(text_data=dumps_wire(heartbeat_ack_wire()))
             await database_sync_to_async(apply_heartbeat_inventory_snapshot)(
                 node_id=self.node_id,
                 inventory=message.heartbeat_payload,
+                session_id=self.session_id,
             )
-            await database_sync_to_async(enqueue_uplink)(
-                node_id=self.node_id, message=message
-            )
+            try:
+                await database_sync_to_async(enqueue_uplink)(
+                    node_id=self.node_id,
+                    message=message,
+                    session_id=self.session_id,
+                )
+            except Exception:
+                # The hot path already ACKed the heartbeat and persisted
+                # liveness. Redis stream ingestion is a deferred projection;
+                # a transient broker failure must not tear down this healthy
+                # WebSocket or turn the Agent offline.
+                logger.warning(
+                    "Agent heartbeat follow-up enqueue failed node_id=%s session=%s",
+                    self.node_id,
+                    self.session_id,
+                    exc_info=True,
+                )
             return
 
         # Task frames drive watchdog + lifecycle; must persist synchronously.
+        session_id = getattr(self, "session_id", "")
+        if session_id:
+            # A live socket can outlast the Redis route lease (for example
+            # while heartbeats are delayed). Recreate/renew only this
+            # authenticated session before applying the task frame. A route
+            # owned by a newer socket remains stale and is rejected again by
+            # handle_uplink's authoritative ownership check.
+            await database_sync_to_async(touch_agent_session_fast)(
+                node_id=self.node_id,
+                session_id=session_id,
+            )
         try:
             handled = await database_sync_to_async(handle_uplink)(
                 node_id=self.node_id,
                 message=message,
+                session_id=session_id or None,
             )
         except Exception:
             AGENT_UPLINK_REJECTED.labels(reason="persistence_failed").inc()
@@ -258,6 +296,8 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
                 )
         task = handled.node_task
         if task is None:
+            return
+        if bool(getattr(task, "_late_result_ignored", False)):
             return
         if bool(getattr(task, "_result_retransmission_unchanged", False)):
             try:

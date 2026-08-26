@@ -411,7 +411,13 @@ def _node_ws_routable(*, node_id: int) -> bool:
     client = redis_store.get_redis()
     if client is None:
         return True
-    return bool(client.exists(redis_store.ws_alive_key(ws_instance)))
+    try:
+        return bool(client.exists(redis_store.ws_alive_key(ws_instance)))
+    except redis.RedisError as exc:
+        logger.warning(
+            "failed to read Agent WebSocket lease node_id=%s: %s", node_id, exc
+        )
+        return False
 
 
 def _last_seen_within_task_route_grace(node: Node) -> bool:
@@ -444,6 +450,35 @@ def _is_pre_dispatch_lifecycle_task(task: NodeTask) -> bool:
         and task.accepted_at is None
         and task.delivery_attempt_count == 0
     )
+
+
+def _capture_upgrade_session_baseline(*, task: NodeTask) -> None:
+    """Persist the route session immediately before dispatching an upgrade."""
+    if (
+        task.correlation_type != node_conf.LIFECYCLE_CORRELATION_TYPE
+        or task.kind != "agent.upgrade"
+    ):
+        return
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    session_id = redis_store.get_agent_session(agent_id=task.node_id)
+    if not session_id:
+        # Keep a baseline captured at task creation when Redis is temporarily
+        # unavailable at dispatch time; verification will fail closed if it
+        # cannot establish a trustworthy session transition.
+        return
+    if str(payload.get("pre_upgrade_session_id") or "").strip() == session_id:
+        return
+    updated = NodeTask.objects.filter(
+        pk=task.pk,
+        status=NodeTask.Status.PENDING,
+        accepted_at__isnull=True,
+        dispatched_at__isnull=True,
+    ).update(
+        payload={**payload, "pre_upgrade_session_id": session_id},
+        updated_at=timezone.now(),
+    )
+    if updated:
+        task.payload = {**payload, "pre_upgrade_session_id": session_id}
 
 
 def _node_route_state(*, task: NodeTask) -> _RouteState:
@@ -788,6 +823,22 @@ def deliver_agent_task(
         if route_state == _RouteState.OFFLINE:
             redis_store.clear_agent_location(agent_id=task.node_id)
             raise RuntimeError("agent websocket is not routable")
+        _capture_upgrade_session_baseline(task=task)
+        if (
+            delivery_payload is None
+            and task.correlation_type == node_conf.LIFECYCLE_CORRELATION_TYPE
+            and task.kind == "agent.upgrade"
+            and isinstance(task.payload, dict)
+            and "pre_upgrade_session_id" in task.payload
+        ):
+            # A legacy/plain lifecycle payload may not have a delivery
+            # envelope. The baseline is durable control-plane evidence, never
+            # an Agent command argument; strip it before downlink delivery.
+            delivery_payload = {
+                key: value
+                for key, value in task.payload.items()
+                if key != "pre_upgrade_session_id"
+            }
         logger.info("agent task dispatching %s", ctx)
         dispatched_at = timezone.now()
         if uses_ack:
@@ -1275,6 +1326,52 @@ def complete_task(
     incoming_result = dict(result or {})
     incoming_terminal_status = _incoming_terminal_status(incoming)
     if (
+        _is_lifecycle_correlated_task(task)
+        and task.status == NodeTask.Status.SUCCESS
+        and incoming_terminal_status == NodeTask.Status.SUCCESS
+        and isinstance(task.result, dict)
+        and task.result.get("lifecycle_terminal_sealed")
+    ):
+        # A coordinator-completed lifecycle task is immutable. Late duplicate
+        # success frames are ACKed by the caller without a second stream event.
+        task._result_retransmission_unchanged = True
+        return task
+    if (
+        _is_lifecycle_correlated_task(task)
+        and task.status in {NodeTask.Status.FAILED, NodeTask.Status.TIMEOUT}
+        and incoming_terminal_status == NodeTask.Status.FAILED
+        and isinstance(task.result, dict)
+        and task.result.get("lifecycle_terminal_sealed")
+    ):
+        # Once a lifecycle failure is durably sealed, repeated host failure
+        # frames must not refresh timestamps, duplicate stream events, or
+        # overwrite the classified failure evidence.
+        task._result_retransmission_unchanged = True
+        return task
+    if (
+        _is_lifecycle_correlated_task(task)
+        and task.kind in {"agent.upgrade", "agent.uninstall"}
+        and task.status in {NodeTask.Status.FAILED, NodeTask.Status.TIMEOUT}
+        and incoming_terminal_status == NodeTask.Status.SUCCESS
+        and _task_has_detached_marker(task)
+    ):
+        # A detached lifecycle task is sealed once the coordinator records a
+        # terminal failure. ACK a late Agent result, but retain it only as
+        # diagnostics; never resurrect the audited failure.
+        merged = dict(task.result or {})
+        merged["late_result"] = {
+            "received_at": timezone.now().isoformat(),
+            "status": incoming,
+            "result": incoming_result,
+        }
+        task.result = merged
+        task.save(update_fields=["result", "updated_at"])
+        # The frame is retained for diagnostics and ACKed, but it must not
+        # trigger ordinary task-result follow-up for a lifecycle operation
+        # that has already been durably failed by the coordinator.
+        task._late_result_ignored = True
+        return task
+    if (
         incoming_terminal_status is not None
         and task.status == incoming_terminal_status
         and dict(task.result or {}) == incoming_result
@@ -1362,6 +1459,13 @@ def complete_task(
         task.result = result
     else:
         task.result = _without_delivery_runtime_state(task.result)
+    if (
+        _is_lifecycle_correlated_task(task)
+        and task.kind in {"agent.upgrade", "agent.uninstall"}
+    ):
+        lifecycle_result = dict(task.result or {})
+        lifecycle_result["lifecycle_terminal_sealed"] = True
+        task.result = lifecycle_result
     task.save(
         update_fields=["status", "accepted_at", "result", "last_error", "updated_at"]
     )
@@ -1589,6 +1693,12 @@ def sweep_watchdog_timeouts(
         qs = NodeTask.objects.filter(
             status__in=_ACTIVE_STATUSES,
             watchdog_deadline_at__lt=now,
+        ).exclude(
+            Q(correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE)
+            & (
+                Q(result__mode="local_detached")
+                | Q(result__last_progress__mode="local_detached")
+            )
         )
     ids = list(
         qs.order_by("watchdog_deadline_at", "pk").values_list("pk", flat=True)[
@@ -1612,6 +1722,11 @@ def sweep_watchdog_timeouts(
                 .first()
             )
             if task is None:
+                continue
+            if _task_has_detached_marker(task):
+                # Detached upgrade/uninstall has an independent durable
+                # lifecycle deadline and coordinator. The generic execution
+                # watchdog must not race it and publish a misleading timeout.
                 continue
             # ACK-capable commands have a separate delivery/acceptance
             # watchdog. The reconciliation sweep owns its bounded deadline

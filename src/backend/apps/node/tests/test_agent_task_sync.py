@@ -653,6 +653,49 @@ class AgentTaskDeliveryAndLeaseTests(TestCase):
         self.assertNotIn("plain-secret", str(self.task.payload))
 
     @patch("apps.node.services.internal.task._send_task_command")
+    @patch("apps.node.services.internal.task.redis_store.get_agent_session")
+    @patch("apps.node.services.internal.task.redis_store.get_agent_location")
+    @patch("apps.node.services.internal.task.redis_store.get_redis")
+    def test_plain_upgrade_payload_does_not_leak_session_baseline(
+        self,
+        mock_get_redis,
+        mock_get_agent_location,
+        mock_get_agent_session,
+        mock_send_task_command,
+    ):
+        class RedisClient:
+            def exists(self, key):
+                return key != redis_store.ws_recovery_hold_key()
+
+            def set(self, *_args, **_kwargs):
+                return True
+
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.PENDING,
+            payload={"target_version": "1.2.0"},
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+        )
+        mock_get_agent_location.return_value = "live-ws"
+        mock_get_agent_session.return_value = "session-live"
+        mock_get_redis.return_value = RedisClient()
+
+        def capture(*, task):
+            self.assertNotIn("pre_upgrade_session_id", task.payload)
+
+        mock_send_task_command.side_effect = capture
+
+        delivered = deliver_agent_task(task=task)
+
+        self.assertEqual(delivered.status, NodeTask.Status.RUNNING)
+        task.refresh_from_db()
+        self.assertEqual(task.payload["pre_upgrade_session_id"], "session-live")
+
+    @patch("apps.node.services.internal.task._send_task_command")
     def test_redeliver_terminal_task_is_noop(self, mock_send_task_command):
         self.task.status = NodeTask.Status.SUCCESS
         self.task.save(update_fields=["status"])

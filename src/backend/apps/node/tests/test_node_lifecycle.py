@@ -14,14 +14,18 @@ from apps.node.exceptions import NodeLifecycleError
 from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.node_lifecycle import (
+    _target_commit_from_task,
+    _target_version_from_task,
     _version_matches_target,
     advance_node_lifecycle,
     compute_node_lifecycle,
     preview_batch_operations,
     queue_detached_remove_verification,
+    record_upgrade_session_observation,
     start_node_remove,
     start_node_upgrade,
 )
+from apps.node.services.internal.task import _capture_upgrade_session_baseline
 from apps.node.services.internal.task import (
     _RouteState,
     complete_task,
@@ -583,7 +587,7 @@ class NodeLifecycleTests(TestCase):
             correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
             correlation_id=f"upgrade:{self.node.id}",
         )
-        with patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=True):
+        with patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True):
             lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
         self.assertIsNone(lifecycle)
 
@@ -638,7 +642,7 @@ class NodeLifecycleTests(TestCase):
             )
         )
 
-    @patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=False)
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_same_version_running_task_not_finalized_on_enrich(self, _session):
         task = NodeTask.objects.create(
             organization=self.org,
@@ -657,8 +661,9 @@ class NodeLifecycleTests(TestCase):
         lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
         self.assertEqual(lifecycle["state"], "restarting")
 
-    @patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=True)
-    def test_same_version_detached_finalizes_after_reconnect(self, _session):
+    @patch("apps.node.services.internal.node_lifecycle._current_agent_session", return_value="new")
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
+    def test_same_version_detached_finalizes_after_reconnect(self, _routable, _session):
         stable_seconds = int(node_conf.UPGRADE_STABLE_SECONDS)
         verify_started = timezone.now() - timezone.timedelta(seconds=stable_seconds + 1)
         task = NodeTask.objects.create(
@@ -670,6 +675,10 @@ class NodeLifecycleTests(TestCase):
             result={
                 "target_version": "1.0.0",
                 "mode": "local_detached",
+                "host_upgrade_status": "success",
+                "detached_session_id": "old",
+                "reconnect_session_id": "new",
+                "inventory_session_id": "new",
                 "detached_at": timezone.now().isoformat(),
                 "disconnect_observed_at": timezone.now().isoformat(),
                 "verify_started_at": verify_started.isoformat(),
@@ -682,7 +691,7 @@ class NodeLifecycleTests(TestCase):
         task.refresh_from_db()
         self.assertEqual(task.status, NodeTask.Status.SUCCESS)
 
-    @patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=True)
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
     def test_same_version_does_not_verify_before_disconnect(self, _session):
         task = NodeTask.objects.create(
             organization=self.org,
@@ -710,8 +719,9 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(task.status, NodeTask.Status.RUNNING)
         self.assertNotIn("verify_started_at", task.result or {})
 
-    @patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=True)
-    def test_upgrade_verify_waits_for_stable_window(self, _session):
+    @patch("apps.node.services.internal.node_lifecycle._current_agent_session", return_value="new")
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
+    def test_upgrade_verify_waits_for_stable_window(self, _routable, _session):
         task = NodeTask.objects.create(
             organization=self.org,
             node=self.node,
@@ -721,6 +731,10 @@ class NodeLifecycleTests(TestCase):
             result={
                 "target_version": "1.0.0",
                 "mode": "local_detached",
+                "host_upgrade_status": "success",
+                "detached_session_id": "old",
+                "reconnect_session_id": "new",
+                "inventory_session_id": "new",
                 "detached_at": timezone.now().isoformat(),
                 "disconnect_observed_at": timezone.now().isoformat(),
                 "verify_started_at": timezone.now().isoformat(),
@@ -735,8 +749,9 @@ class NodeLifecycleTests(TestCase):
         lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
         self.assertEqual(lifecycle["state"], "verifying")
 
-    @patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=True)
-    def test_upgrade_verify_starts_clock_on_first_stable_reconnect(self, _session):
+    @patch("apps.node.services.internal.node_lifecycle._current_agent_session", return_value="new")
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
+    def test_upgrade_verify_starts_clock_on_first_stable_reconnect(self, _routable, _session):
         task = NodeTask.objects.create(
             organization=self.org,
             node=self.node,
@@ -746,6 +761,10 @@ class NodeLifecycleTests(TestCase):
             result={
                 "target_version": "1.0.0",
                 "mode": "local_detached",
+                "host_upgrade_status": "success",
+                "detached_session_id": "old",
+                "reconnect_session_id": "new",
+                "inventory_session_id": "new",
                 "detached_at": timezone.now().isoformat(),
                 "disconnect_observed_at": timezone.now().isoformat(),
             },
@@ -760,7 +779,7 @@ class NodeLifecycleTests(TestCase):
         lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
         self.assertEqual(lifecycle["state"], "verifying")
 
-    @patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=False)
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_upgrade_verify_clears_clock_when_ws_drops(self, _session):
         task = NodeTask.objects.create(
             organization=self.org,
@@ -784,6 +803,109 @@ class NodeLifecycleTests(TestCase):
         self.assertNotIn("verify_started_at", task.result or {})
         lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
         self.assertEqual(lifecycle["state"], "restarting")
+
+    def test_upgrade_session_observation_uses_dispatch_baseline(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"pre_upgrade_session_id": "old"},
+            result={"mode": "local_detached"},
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        record_upgrade_session_observation(
+            node_id=self.node.id,
+            session_id="new",
+        )
+        task.refresh_from_db()
+        self.assertEqual(task.result["detached_session_id"], "old")
+        self.assertEqual(task.result["reconnect_session_id"], "new")
+
+        task.result["verify_started_at"] = timezone.now().isoformat()
+        task.save(update_fields=["result"])
+        record_upgrade_session_observation(
+            node_id=self.node.id,
+            session_id="new",
+            inventory=True,
+        )
+        task.refresh_from_db()
+        self.assertEqual(task.result["inventory_session_id"], "new")
+        self.assertNotIn("verify_started_at", task.result)
+
+    def test_upgrade_session_observation_does_not_mutate_terminal_task(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.FAILED,
+            payload={"pre_upgrade_session_id": "old"},
+            result={
+                "mode": "local_detached",
+                "failure_code": "AGENT_RECONNECT_TIMEOUT",
+                "lifecycle_terminal_sealed": True,
+            },
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        changed = record_upgrade_session_observation(
+            node_id=self.node.id,
+            session_id="new",
+            inventory=True,
+        )
+
+        task.refresh_from_db()
+        self.assertFalse(changed)
+        self.assertNotIn("reconnect_session_id", task.result or {})
+        self.assertNotIn("inventory_session_id", task.result or {})
+
+    @patch(
+        "apps.node.services.internal.task.redis_store.get_agent_session",
+        return_value="new",
+    )
+    def test_upgrade_dispatch_refreshes_stale_baseline(self, _session):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.PENDING,
+            payload={"pre_upgrade_session_id": "old"},
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        _capture_upgrade_session_baseline(task=task)
+
+        task.refresh_from_db()
+        self.assertEqual(task.payload["pre_upgrade_session_id"], "new")
+
+    def test_upgrade_target_identity_comes_from_persisted_payload(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={
+                "target_version": "1.2.0",
+                "target_commit": "a" * 40,
+            },
+            result={
+                "target_version": "9.9.9",
+                "target_commit": "b" * 40,
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        self.assertEqual(_target_version_from_task(task), "1.2.0")
+        self.assertEqual(_target_commit_from_task(task), "a" * 40)
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_remove_does_not_finalize_from_ws_disconnect_alone(self, _routable):

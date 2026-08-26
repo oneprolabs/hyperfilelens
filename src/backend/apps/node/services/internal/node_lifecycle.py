@@ -33,7 +33,8 @@ from apps.node.services.internal.agent_upgrade import (
     node_platform_arch,
     validate_agent_upgrade,
 )
-from apps.node.services.internal.node_registry import agent_session_registered, agent_ws_routable
+from apps.node.services.internal import redis_store
+from apps.node.services.internal.node_registry import agent_ws_routable
 from apps.node.services.internal.node_workload import (
     assert_node_available_for_lifecycle,
     assert_node_available_for_removal,
@@ -104,21 +105,23 @@ def _task_progress_phase(task: NodeTask) -> str | None:
 
 
 def _target_version_from_task(task: NodeTask) -> str:
-    result = task.result if isinstance(task.result, dict) else {}
-    target = str(result.get("target_version") or "").strip()
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    target = str(payload.get("target_version") or "").strip()
     if target:
         return target
-    payload = task.payload if isinstance(task.payload, dict) else {}
-    return str(payload.get("target_version") or "").strip()
+    # Older lifecycle rows may not have retained the original payload. Keep
+    # result as a compatibility fallback, never as the preferred authority.
+    result = task.result if isinstance(task.result, dict) else {}
+    return str(result.get("target_version") or "").strip()
 
 
 def _target_commit_from_task(task: NodeTask) -> str:
-    result = task.result if isinstance(task.result, dict) else {}
-    target = str(result.get("target_commit") or "").strip().lower()
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    target = str(payload.get("target_commit") or "").strip().lower()
     if target:
         return target
-    payload = task.payload if isinstance(task.payload, dict) else {}
-    return str(payload.get("target_commit") or "").strip().lower()
+    result = task.result if isinstance(task.result, dict) else {}
+    return str(result.get("target_commit") or "").strip().lower()
 
 
 def _node_installed_version(node: Node) -> str:
@@ -222,6 +225,93 @@ def _version_matches_target(
         return False
     expected_commit = str(target_commit or "").strip().lower()
     return not expected_commit or _node_installed_commit(node) == expected_commit
+
+
+def _strict_build_matches_target(
+    *,
+    node: Node,
+    target_version: str,
+    target_commit: str = "",
+) -> bool:
+    """Require the exact build requested by this lifecycle operation.
+
+    ``_version_matches_target`` intentionally retains its historical
+    compatibility semantics for callers that only need an upgrade ordering
+    check. Detached lifecycle verification is stricter: a newer build is not
+    proof that this particular upgrade completed.
+    """
+    current = _node_installed_version(node)
+    if not target_version or not current or current != target_version:
+        return False
+    expected_commit = str(target_commit or "").strip().lower()
+    return not expected_commit or _node_installed_commit(node) == expected_commit
+
+
+def _current_agent_session(*, node_id: int) -> str | None:
+    return redis_store.get_agent_session(agent_id=node_id)
+
+
+@transaction.atomic
+def record_upgrade_session_observation(
+    *,
+    node_id: int,
+    session_id: str,
+    inventory: bool = False,
+) -> bool:
+    """Persist post-detach session evidence without changing task status.
+
+    The task row is the durable serialization boundary. Redis route state is
+    read separately by verification and is never treated as durable evidence
+    on its own.
+    """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return False
+    node = Node.objects.filter(pk=node_id, is_deleted=False).first()
+    if node is None:
+        return False
+    candidate = _running_lifecycle_task(
+        org=node.organization,
+        node=node,
+        kind=LIFECYCLE_KIND_UPGRADE,
+    )
+    if candidate is None:
+        return False
+    task = NodeTask.objects.select_for_update().get(pk=candidate.pk)
+    if task.status not in _ACTIVE_TASK_STATUSES or not _is_detached_lifecycle_task(task):
+        return False
+    result = dict(task.result or {})
+    detached_session = str(result.get("detached_session_id") or "").strip()
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    pre_upgrade_session = str(payload.get("pre_upgrade_session_id") or "").strip()
+    now = timezone.now().isoformat()
+    changed = False
+    if not detached_session:
+        # The session that was connected when the command was dispatched is
+        # the only reliable baseline. Do not infer it from the first event
+        # observed after the Agent has already detached: that event may be the
+        # upgraded session when the old socket's final frame was lost.
+        if not pre_upgrade_session:
+            return False
+        result["detached_session_id"] = pre_upgrade_session
+        result["detached_session_observed_at"] = now
+        detached_session = pre_upgrade_session
+        changed = True
+    if detached_session != session_id:
+        if result.get("reconnect_session_id") != session_id:
+            result["reconnect_session_id"] = session_id
+            result["reconnect_observed_at"] = now
+            result.pop("verify_started_at", None)
+            changed = True
+        if inventory and result.get("inventory_session_id") != session_id:
+            result["inventory_session_id"] = session_id
+            result["inventory_observed_at"] = now
+            result.pop("verify_started_at", None)
+            changed = True
+    if changed:
+        task.result = result
+        task.save(update_fields=["result", "updated_at"])
+    return changed
 
 
 def _is_detached_lifecycle_task(task: NodeTask) -> bool:
@@ -385,17 +475,29 @@ def _clear_upgrade_verify_clock(*, node: Node, task: NodeTask) -> NodeTask:
 def _upgrade_verify_ready(*, node: Node, task: NodeTask) -> bool:
     if not _is_detached_lifecycle_task(task):
         return False
-    if not agent_session_registered(agent_id=node.id):
+    result = task.result if isinstance(task.result, dict) else {}
+    if str(result.get("host_upgrade_status") or "").strip().lower() != "success":
+        return False
+    current_session = _current_agent_session(node_id=node.id)
+    if not current_session or not agent_ws_routable(agent_id=node.id):
         return False
     if node.availability != Node.Availability.ONLINE:
         return False
-    result = task.result if isinstance(task.result, dict) else {}
-    if not result.get("disconnect_observed_at"):
+    detached_session = str(result.get("detached_session_id") or "").strip()
+    reconnect_session = str(result.get("reconnect_session_id") or "").strip()
+    inventory_session = str(result.get("inventory_session_id") or "").strip()
+    if not detached_session or not reconnect_session or not inventory_session:
+        return False
+    if (
+        current_session != reconnect_session
+        or reconnect_session == detached_session
+        or inventory_session != reconnect_session
+    ):
         return False
     target_version = _target_version_from_task(task)
     if not target_version:
         return False
-    return _version_matches_target(
+    return _strict_build_matches_target(
         node=node,
         target_version=target_version,
         target_commit=_target_commit_from_task(task),
@@ -429,12 +531,18 @@ def record_upgrade_disconnect(*, node_id: int) -> bool:
         return True
 
 
+@transaction.atomic
 def _advance_upgrade_verify(*, node: Node, task: NodeTask) -> bool:
     """
     Finalize detached upgrade only after WS + version stayed stable long enough.
 
     Returns True when the task was marked SUCCESS.
     """
+    locked_task = NodeTask.objects.select_for_update().filter(pk=task.pk).first()
+    if locked_task is None:
+        return False
+    task = locked_task
+    node.refresh_from_db()
     if task.kind != _LIFECYCLE_TASK_KINDS[LIFECYCLE_KIND_UPGRADE]:
         return False
     if task.status not in _ACTIVE_TASK_STATUSES:
@@ -500,7 +608,57 @@ def _finalize_upgrade_on_reconnect(*, node: Node, task: NodeTask) -> bool:
     return _advance_upgrade_verify(node=node, task=task)
 
 
+def _upgrade_timeout_failure(*, node: Node, task: NodeTask) -> tuple[str, str]:
+    """Classify a detached upgrade timeout from the final durable evidence."""
+    result = task.result if isinstance(task.result, dict) else {}
+    host_status = str(result.get("host_upgrade_status") or "").strip().lower()
+    if host_status == "failed":
+        return "HOST_UPGRADE_FAILED", str(
+            result.get("host_error") or "Agent failed to upgrade on the host."
+        )
+    if not result.get("reconnect_session_id"):
+        return "AGENT_RECONNECT_TIMEOUT", "Agent did not reconnect after the upgrade."
+    if not result.get("inventory_session_id"):
+        return (
+            "POST_UPGRADE_INVENTORY_TIMEOUT",
+            "Agent reconnected but did not report post-upgrade host information.",
+        )
+    detached_session = str(result.get("detached_session_id") or "").strip()
+    reconnect_session = str(result.get("reconnect_session_id") or "").strip()
+    inventory_session = str(result.get("inventory_session_id") or "").strip()
+    if not detached_session or reconnect_session == detached_session:
+        return (
+            "AGENT_CONNECTION_UNSTABLE",
+            "Agent did not establish a new connection after the upgrade.",
+        )
+    if inventory_session != reconnect_session:
+        return (
+            "POST_UPGRADE_INVENTORY_TIMEOUT",
+            "Agent reconnected, but host information belongs to an older session.",
+        )
+    current_session = _current_agent_session(node_id=node.id)
+    if not current_session or not agent_ws_routable(agent_id=node.id):
+        return "AGENT_NOT_ROUTABLE", "Agent is online in the console but cannot be reached."
+    if current_session != reconnect_session:
+        return "AGENT_CONNECTION_UNSTABLE", "Agent connection remained unstable during verification."
+    target_version = _target_version_from_task(task)
+    target_commit = _target_commit_from_task(task)
+    if not _strict_build_matches_target(
+        node=node,
+        target_version=target_version,
+        target_commit=target_commit,
+    ):
+        return "TARGET_BUILD_MISMATCH", "Agent version or build does not match the upgrade target."
+    return "UPGRADE_VERIFICATION_TIMEOUT", "Upgrade verification timed out."
+
+
+@transaction.atomic
 def _fail_stale_upgrade_task(*, node: Node, task: NodeTask) -> bool:
+    locked_task = NodeTask.objects.select_for_update().filter(pk=task.pk).first()
+    if locked_task is None:
+        return False
+    task = locked_task
+    node.refresh_from_db()
     if task.kind != _LIFECYCLE_TASK_KINDS[LIFECYCLE_KIND_UPGRADE]:
         return False
     if task.status not in _ACTIVE_TASK_STATUSES:
@@ -515,27 +673,28 @@ def _fail_stale_upgrade_task(*, node: Node, task: NodeTask) -> bool:
     ):
         return False
     target_version = _target_version_from_task(task)
-    if target_version and _version_matches_target(
-        node=node,
-        target_version=target_version,
-        target_commit=_target_commit_from_task(task),
-    ):
+    if target_version and _upgrade_verify_ready(node=node, task=task):
         if _advance_upgrade_verify(node=node, task=task):
             return True
-
     from apps.node.services.internal.task import complete_task
 
+    failure_code, failure_message = _upgrade_timeout_failure(node=node, task=task)
+    result = dict(task.result or {})
+    result["failure_code"] = failure_code
+    result["failed_at"] = timezone.now().isoformat()
     complete_task(
         task_id=task.id,
         node_id=node.id,
         status=NodeTask.Status.FAILED,
-        error="Upgrade timed out waiting for agent to reconnect.",
-        result=dict(task.result or {}),
+        error=failure_message,
+        result=result,
+        replace_result=True,
     )
     logger.warning(
-        "node lifecycle upgrade timed out node_id=%s task_id=%s",
+        "node lifecycle upgrade timed out node_id=%s task_id=%s code=%s",
         node.id,
         task.id,
+        failure_code,
     )
     write_audit_log(
         organization=node.organization,
@@ -546,13 +705,14 @@ def _fail_stale_upgrade_task(*, node: Node, task: NodeTask) -> bool:
         resource_id=str(node.id),
         resource_name=node.name,
         result=AuditResult.FAILURE,
-        error_message="Upgrade timed out waiting for agent to reconnect.",
+        error_message=failure_message,
         metadata={
             "kind": LIFECYCLE_KIND_UPGRADE,
             "role": node.role,
             "task_id": str(task.id),
             "target_version": target_version,
             "current_version": _node_installed_version(node),
+            "failure_code": failure_code,
         },
     )
     return True
@@ -597,7 +757,14 @@ def _build_upgrade_timeline(*, node: Node, task: NodeTask) -> list[dict[str, Any
         elif verify_started_at is not None:
             active_phase = "verifying"
         elif detached is not None:
-            active_phase = "restarting"
+            result = task.result if isinstance(task.result, dict) else {}
+            active_phase = (
+                "verification_pending"
+                if result.get("reconnect_session_id")
+                or result.get("inventory_session_id")
+                or result.get("host_upgrade_status") == "success"
+                else "restarting"
+            )
         elif task.dispatched_at is not None:
             active_phase = "upgrading"
         else:
@@ -623,7 +790,7 @@ def _build_upgrade_timeline(*, node: Node, task: NodeTask) -> list[dict[str, Any
                 if active_phase == "upgrading"
                 else (
                     "completed"
-                    if task.dispatched_at or active_phase in ("restarting", "verifying")
+                    if task.dispatched_at or active_phase in ("restarting", "verification_pending", "verifying")
                     or is_success
                     else "pending"
                 )
@@ -638,7 +805,26 @@ def _build_upgrade_timeline(*, node: Node, task: NodeTask) -> list[dict[str, Any
                 if active_phase == "restarting"
                 else (
                     "completed"
-                    if detached and (active_phase == "verifying" or is_success)
+                    if detached
+                    and (active_phase in ("verification_pending", "verifying") or is_success)
+                    else "pending"
+                )
+            ),
+        },
+        {
+            "phase": "verification_pending",
+            "label": "Verification pending",
+            "at": _ts(
+                result.get("reconnect_observed_at")
+                if isinstance(result, dict)
+                else None
+            ),
+            "status": (
+                "active"
+                if active_phase == "verification_pending"
+                else (
+                    "completed"
+                    if active_phase == "verifying" or is_success
                     else "pending"
                 )
             ),
@@ -691,6 +877,7 @@ def _upgrade_lifecycle_payload(
         "kind": LIFECYCLE_KIND_UPGRADE,
         "task_id": str(task.id),
         "target_version": target_version,
+        "target_commit": _target_commit_from_task(task) or None,
         "current_version": current_version,
         "started_at": task.created_at.isoformat() if task.created_at else None,
         "timeline": _build_upgrade_timeline(node=node, task=task),
@@ -699,10 +886,10 @@ def _upgrade_lifecycle_payload(
     if task.status in _ACTIVE_TASK_STATUSES:
         phase = _task_progress_phase(task) or "dispatching"
         if _is_detached_lifecycle_task(task):
-            if agent_session_registered(agent_id=node.id):
+            if agent_ws_routable(agent_id=node.id):
                 if _upgrade_verify_ready(node=node, task=task):
                     return {**base, "state": "verifying", "phase": "waiting_for_version"}
-                return {**base, "state": "upgrading", "phase": phase}
+                return {**base, "state": "verification_pending", "phase": "verification_pending"}
             return {
                 **base,
                 "state": "restarting",
@@ -715,11 +902,13 @@ def _upgrade_lifecycle_payload(
         }
 
     if task.status in {NodeTask.Status.FAILED, NodeTask.Status.TIMEOUT, NodeTask.Status.CANCELED}:
+        result = task.result if isinstance(task.result, dict) else {}
         return {
             **base,
             "state": "failed",
             "phase": "failed",
             "error": task.last_error or task.status,
+            "failure_code": result.get("failure_code") or None,
         }
 
     if task.status != NodeTask.Status.SUCCESS:
@@ -1015,14 +1204,52 @@ def start_node_upgrade(
         role=node.role,
         os_version=node_os_version(node),
     )
+    current_version = _node_installed_version(node)
+    current_commit = _node_installed_commit(node)
+    if (
+        target_commit
+        and current_version
+        and current_commit
+        and current_version == target_version
+        and current_commit == target_commit.lower()
+    ):
+        logger.info(
+            "node lifecycle upgrade skipped; requested build is already installed "
+            "node_id=%s version=%s commit=%s",
+            node.id,
+            target_version,
+            target_commit,
+        )
+        return {
+            "operation_id": None,
+            "task_id": None,
+            "node_id": node.id,
+            "kind": LIFECYCLE_KIND_UPGRADE,
+            "state": "completed",
+            "phase": "already_current",
+            "outcome": "no_op",
+            "target_version": target_version,
+            "target_commit": target_commit,
+            "current_version": current_version,
+        }
     payload = {"target_version": target_version}
     if target_commit:
         payload["target_commit"] = target_commit
+    # Keep the authenticated route that existed before the detached command
+    # in the durable task payload, but never send this internal session ID to
+    # the Agent. It must survive a lost final frame from the old WebSocket and
+    # must never be inferred from a later reconnect event.
+    persisted_payload = {
+        **payload,
+        "pre_upgrade_session_id": redis_store.get_agent_session(agent_id=node.id)
+        or "",
+    }
     handle = run_agent_task_async(
         org=org,
         node_id=node.id,
         kind="agent.upgrade",
         payload=payload,
+        persisted_payload=persisted_payload,
         correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
         correlation_id=_correlation_id(node_id=node.id, kind=LIFECYCLE_KIND_UPGRADE),
     )

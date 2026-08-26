@@ -49,25 +49,40 @@ def ensure_uplink_stream_group(client=None) -> None:
             raise
 
 
-def touch_heartbeat_fast(*, node_id: int, session_id: str) -> None:
-    """Hot path: refresh Redis routing only (no PostgreSQL)."""
-    redis_store.ensure_agent_location_on_heartbeat(
+def touch_agent_session_fast(*, node_id: int, session_id: str) -> bool | None:
+    """Refresh the authenticated WebSocket route without touching PostgreSQL.
+
+    Heartbeats are the usual caller, but task frames are also received on the
+    same live socket.  Refreshing the lease for every authenticated frame
+    prevents a route key that expired during a long heartbeat gap from making
+    an otherwise healthy task result look stale.
+    """
+    route_current = redis_store.ensure_agent_location_on_heartbeat(
         agent_id=node_id,
         session_id=session_id,
     )
     redis_store.touch_ws_instance_alive()
+    return route_current
+
+
+def touch_heartbeat_fast(*, node_id: int, session_id: str) -> bool | None:
+    """Backward-compatible heartbeat wrapper for the hot-path helper."""
+    return touch_agent_session_fast(node_id=node_id, session_id=session_id)
 
 
 def _serialize_uplink(
     *,
     node_id: int,
     message: ParsedUplink,
+    session_id: str | None = None,
     marker_token: str = "",
 ) -> dict[str, str]:
     payload: dict[str, Any] = {
         "node_id": node_id,
         "msg_type": str(message.msg_type),
     }
+    if session_id:
+        payload["session_id"] = str(session_id)
     if message.msg_type == WireType.HEARTBEAT:
         payload["heartbeat_payload"] = message.heartbeat_payload
     else:
@@ -81,13 +96,19 @@ def _serialize_uplink(
     return {"payload": json.dumps(payload, ensure_ascii=False)}
 
 
-def enqueue_uplink(*, node_id: int, message: ParsedUplink) -> None:
+def enqueue_uplink(
+    *, node_id: int, message: ParsedUplink, session_id: str | None = None
+) -> None:
     r = _redis()
     if r is None:
         from apps.node.tasks.uplink_ingest import process_uplink_payload
 
         process_uplink_payload.delay(
-            payload=_serialize_uplink(node_id=node_id, message=message)["payload"]
+            payload=_serialize_uplink(
+                node_id=node_id,
+                message=message,
+                session_id=session_id,
+            )["payload"]
         )
         return
     ensure_uplink_stream_group(r)
@@ -96,6 +117,7 @@ def enqueue_uplink(*, node_id: int, message: ParsedUplink) -> None:
         fields = _serialize_uplink(
             node_id=node_id,
             message=message,
+            session_id=session_id,
             marker_token=marker_token,
         )
         redis_store.enqueue_uplink_with_activity(
@@ -107,7 +129,10 @@ def enqueue_uplink(*, node_id: int, message: ParsedUplink) -> None:
             marker_token=marker_token,
         )
         return
-    r.xadd(NODE_UPLINK_STREAM, _serialize_uplink(node_id=node_id, message=message))
+    r.xadd(
+        NODE_UPLINK_STREAM,
+        _serialize_uplink(node_id=node_id, message=message, session_id=session_id),
+    )
 
 
 def _deserialize_payload(raw: str) -> dict[str, Any] | None:
@@ -118,7 +143,9 @@ def _deserialize_payload(raw: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def payload_to_parsed(data: dict[str, Any]) -> tuple[int, ParsedUplink] | None:
+def payload_to_parsed(
+    data: dict[str, Any],
+) -> tuple[int, ParsedUplink, str | None] | None:
     node_id_raw = data.get("node_id")
     if not isinstance(node_id_raw, int):
         try:
@@ -137,23 +164,31 @@ def payload_to_parsed(data: dict[str, Any]) -> tuple[int, ParsedUplink] | None:
     if msg_type == WireType.HEARTBEAT:
         hb = data.get("heartbeat_payload")
         heartbeat_payload = hb if isinstance(hb, dict) else None
-        return node_id, ParsedUplink(
-            msg_type=msg_type, heartbeat_payload=heartbeat_payload
+        return (
+            node_id,
+            ParsedUplink(msg_type=msg_type, heartbeat_payload=heartbeat_payload),
+            str(data.get("session_id") or "") or None,
         )
 
     task_id = data.get("task_id")
     if not task_id:
         return None
-    return node_id, ParsedUplink(
-        msg_type=msg_type,
-        task_id=str(task_id),
-        progress=data.get("progress")
-        if isinstance(data.get("progress"), dict)
-        else None,
-        is_alive=bool(data.get("is_alive")),
-        status=str(data.get("status") or "") or None,
-        result=data.get("result") if isinstance(data.get("result"), dict) else None,
-        error=str(data.get("error") or ""),
+    return (
+        node_id,
+        ParsedUplink(
+            msg_type=msg_type,
+            task_id=str(task_id),
+            progress=data.get("progress")
+            if isinstance(data.get("progress"), dict)
+            else None,
+            is_alive=bool(data.get("is_alive")),
+            status=str(data.get("status") or "") or None,
+            result=data.get("result")
+            if isinstance(data.get("result"), dict)
+            else None,
+            error=str(data.get("error") or ""),
+        ),
+        str(data.get("session_id") or "") or None,
     )
 
 
@@ -301,7 +336,7 @@ def replay_dead_letter_entry(r, *, entry_id: str, fields: dict[str, str]) -> str
     parsed = payload_to_parsed(data) if data is not None else None
     if parsed is None:
         raise ValueError("dead-letter payload is not a valid Agent uplink")
-    _node_id, message = parsed
+    _node_id, message, _session_id = parsed
     ensure_uplink_stream_group(r)
     if message.task_id:
         marker_token = uuid.uuid4().hex
@@ -434,10 +469,14 @@ def drain_uplink_stream(*, count: int | None = None) -> int:
         if parsed is None:
             _acknowledge_entry(r, entry_id=entry_id)
             continue
-        node_id, message = parsed
+        node_id, message, session_id = parsed
         marker_token = str(data.get("marker_token") or "")
         try:
-            handle_uplink(node_id=node_id, message=message)
+            handle_uplink(
+                node_id=node_id,
+                message=message,
+                session_id=session_id,
+            )
         except Exception as exc:
             quarantined, deliveries, age_seconds = _quarantine_failed_entry(
                 r,
