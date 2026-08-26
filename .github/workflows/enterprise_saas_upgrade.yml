@@ -168,6 +168,8 @@ jobs:
           ./tools/quality/check-release-contracts.sh
           ./tools/quality/test-saas-registry-delivery.sh
           ./tools/quality/test-online-community-install.sh
+          ./tools/quality/test-sourcelens-runtime-contract.sh
+          ./tools/sourcelens/update-runtime-contract.sh --check
 
   verify-public-images:
     name: Verify · Public Community images

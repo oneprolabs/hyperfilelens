@@ -111,6 +111,10 @@ jobs:
           python-version: "3.12"
       - name: Check English source boundary
         run: python3 tools/quality/check-english-source.py
+      - name: Check SourceLens runtime contract
+        run: |
+          ./tools/quality/test-sourcelens-runtime-contract.sh
+          ./tools/sourcelens/update-runtime-contract.sh --check
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22"

@@ -451,6 +451,8 @@ jobs:
           ./tools/quality/test-nginx-startup-readiness.sh
           ./tools/quality/test-sourcelens-runtime-sync.sh
           ./tools/quality/test-sourcelens-runtime-fingerprint.sh
+          ./tools/quality/test-sourcelens-runtime-contract.sh
+          ./tools/sourcelens/update-runtime-contract.sh --check
           ./tools/quality/test-redis-rdb-preflight.sh
           ./tools/quality/test-agent-release-retention.sh
           ./tools/quality/test-managed-image-retention.sh

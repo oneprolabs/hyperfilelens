@@ -139,7 +139,7 @@ grep -F 'npm config set fetch-retries 5' "${ROOT_REPO}/tools/sourcelens/common.s
 # record remains one complete line, with no truncation or repeated prefix.
 wrapped_terminal="${fixture}/wrapped-terminal.log"
 wrapped_session="${fixture}/wrapped-session.log"
-wrapped_message='[2026-08-23T02:43:53.000Z] [INFO] [sourcelens] SourceLens app images already built; compose build skipped; source_stamp=v3:0.47.6:3f16494b269c4fbe37a5acd4bdaca3962cdd8a0e:6e8dbf651a5a7ea7709fe7c6f810978b5aa051de441a1a1da4f44e81346dda47'
+wrapped_message='[2026-08-23T02:43:53.000Z] [INFO] [sourcelens] SourceLens app images already built; compose build skipped; source_stamp=v3:0.47.6:accb97757382391a05a566497b6e37dd6a2ea847:6e8dbf651a5a7ea7709fe7c6f810978b5aa051de441a1a1da4f44e81346dda47'
 HFL_LOG_TERMINAL_WRAP_COLUMNS=70 HFL_WRAPPED_MESSAGE="${wrapped_message}" \
 	bash -c '
 set -euo pipefail

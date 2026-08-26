@@ -19,6 +19,7 @@ SOURCELENS_DATA_DIR="${HFL_ROOT}/data/sourcelens"
 SOURCELENS_DEV_ENV_FILE="${SOURCELENS_DATA_DIR}/config/.env"
 SOURCELENS_BUILD_ENV_FILE="${HFL_ROOT}/tools/sourcelens/defaults.env"
 SOURCELENS_PATCH_ROOT="${HFL_ROOT}/tools/sourcelens/patches"
+SOURCELENS_RUNTIME_CONTRACT_FILE="${SOURCELENS_RUNTIME_CONTRACT_FILE:-${HFL_ROOT}/deploy/online/sourcelens/runtime.json}"
 SOURCELENS_COMPOSE_PROJECT="${SOURCELENS_COMPOSE_PROJECT:-hyperfilelens-sourcelens}"
 SOURCELENS_SHARED_NETWORK="hyperfilelens-bridge"
 
@@ -367,6 +368,56 @@ sourcelens_ensure_tls_certs() {
 	chmod 600 "${key}"
 }
 
+sourcelens_verify_runtime_contract() {
+	local source_dir=${1:-${SOURCELENS_SOURCE_CACHE}}
+	local contract_ref contract_version contract_commit actual_commit resolved_commit
+	[[ -f "${SOURCELENS_RUNTIME_CONTRACT_FILE}" ]] \
+		|| sourcelens_die "missing SourceLens runtime contract: ${SOURCELENS_RUNTIME_CONTRACT_FILE#${HFL_ROOT}/}"
+	IFS=$'\t' read -r contract_ref contract_version contract_commit < <(
+		python3 - "${SOURCELENS_RUNTIME_CONTRACT_FILE}" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    contract = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"invalid SourceLens runtime contract: {exc}") from exc
+
+git_ref = str(contract.get("git_ref") or "")
+version = str(contract.get("version") or "")
+git_commit = str(contract.get("git_commit") or "")
+if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", git_ref):
+    raise SystemExit("SourceLens runtime contract has an invalid git_ref")
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+    raise SystemExit("SourceLens runtime contract has an invalid version")
+if git_ref != f"v{version}":
+    raise SystemExit("SourceLens runtime contract git_ref and version differ")
+if not re.fullmatch(r"[0-9a-f]{40}", git_commit):
+    raise SystemExit("SourceLens runtime contract has an invalid git_commit")
+print(git_ref, version, git_commit, sep="\t")
+PY
+	) || sourcelens_die "SourceLens runtime contract validation failed"
+
+	if [[ "${SOURCELENS_GIT_REF}" != "${contract_ref}" ]]; then
+		sourcelens_log "SourceLens ref ${SOURCELENS_GIT_REF} is an explicit unlocked override; runtime contract is ${contract_ref}"
+		return 0
+	fi
+	[[ "${SOURCELENS_VERSION}" == "${contract_version}" ]] \
+		|| sourcelens_die "SourceLens resolved version does not match the runtime contract"
+	actual_commit="$(git -C "${source_dir}" rev-parse HEAD 2>/dev/null)" \
+		|| sourcelens_die "cannot resolve the checked-out SourceLens commit"
+	resolved_commit="$(git -C "${source_dir}" rev-parse "refs/tags/${contract_ref}^{commit}" 2>/dev/null)" \
+		|| sourcelens_die "cannot peel SourceLens ref ${contract_ref} to a commit"
+	[[ "${actual_commit}" == "${resolved_commit}" ]] \
+		|| sourcelens_die "checked-out SourceLens commit does not match ${contract_ref}"
+	[[ "${contract_commit}" == "${resolved_commit}" ]] \
+		|| sourcelens_die "SourceLens runtime contract git_commit must be the peeled commit for ${contract_ref}"
+	sourcelens_log "Verified SourceLens runtime contract (${contract_ref} @ ${contract_commit:0:12})"
+}
+
 sourcelens_sync_source() {
 	command -v git >/dev/null 2>&1 || sourcelens_die "git not found (required to fetch SourceLens)"
 	if sourcelens_git_needs_github_token && [[ -z "${GITHUB_TOKEN:-}" ]]; then
@@ -411,6 +462,7 @@ sourcelens_sync_source() {
 		else
 			sourcelens_git_output_command sourcelens_git checkout "${SOURCELENS_GIT_REF}"
 		fi
+		sourcelens_verify_runtime_contract "${SOURCELENS_SOURCE_CACHE}"
 		sourcelens_sync_submodules
 		sourcelens_git_output_command sourcelens_git submodule foreach --recursive \
 			'git reset --hard HEAD >/dev/null && git clean -fdx >/dev/null'
