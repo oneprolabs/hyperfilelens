@@ -81,7 +81,12 @@ def on_agent_connected(*, node_id: int, session_id: str, client_ip: str | None =
         updates["connection_ip_address"] = client_ip
     Node.objects.filter(pk=node_id).update(**updates)
     record_node_available(node_id=node_id, observed_at=observed_at)
-    _record_upgrade_session(node_id=node_id, session_id=session_id)
+    if route_recorded:
+        _record_upgrade_session(
+            node_id=node_id,
+            session_id=session_id,
+            redis_client=redis_client,
+        )
     try:
         sync_agent_source_host_by_id(node_id=node_id)
     except Exception:
@@ -167,12 +172,24 @@ def _schedule_lifecycle_advance(
 
 
 def _record_upgrade_session(
-    *, node_id: int, session_id: str, inventory: bool = False
+    *,
+    node_id: int,
+    session_id: str,
+    inventory: bool = False,
+    redis_client=None,
 ) -> None:
-    if redis_store.is_agent_session_current(
-        agent_id=node_id,
-        session_id=session_id,
-    ) is not True:
+    if redis_client is None:
+        ownership = redis_store.is_agent_session_current(
+            agent_id=node_id,
+            session_id=session_id,
+        )
+    else:
+        ownership = redis_store.is_agent_session_current(
+            agent_id=node_id,
+            session_id=session_id,
+            redis_client=redis_client,
+        )
+    if ownership is not True:
         logger.debug(
             "stale Agent lifecycle session observation ignored node_id=%s session=%s",
             node_id,

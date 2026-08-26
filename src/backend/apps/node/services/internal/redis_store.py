@@ -169,12 +169,17 @@ def ensure_agent_location_on_heartbeat(
     return None
 
 
-def is_agent_session_current(*, agent_id: int, session_id: str) -> bool | None:
+def is_agent_session_current(
+    *,
+    agent_id: int,
+    session_id: str,
+    redis_client: redis.Redis | None | _DefaultRedisClient = _DEFAULT_REDIS_CLIENT,
+) -> bool | None:
     """Return route ownership, or ``None`` when Redis cannot be checked."""
     session_id = str(session_id or "").strip()
     if not session_id:
         return False
-    r = get_redis()
+    r = _resolve_redis_client(redis_client)
     if r is None:
         return None
     try:
