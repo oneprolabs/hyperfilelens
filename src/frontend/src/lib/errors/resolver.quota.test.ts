@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { resolveErrorMessage, resolveErrorMessageI18n } from './resolver'
 
 const messages: Record<string, string> = {
+  'errors.codes.backupRepositoryQuotaExceeded':
+    'This repository reached its configured storage quota.',
   'errors.codes.subscriptionQuotaExceeded':
     'Organization quota is full. Contact your platform administrator to raise limits.',
   'errors.codes.subscriptionQuotaExceededMeter':
@@ -25,6 +27,30 @@ function t(key: string, params?: Record<string, unknown>) {
 }
 
 describe('subscription quota error messages', () => {
+  it('maps repository quota errors through the registry', () => {
+    const message = resolveErrorMessageI18n(
+      {
+        status: 403,
+        errorCode: 'BACKUP.REPOSITORY_QUOTA_EXCEEDED',
+        message: 'internal diagnostic',
+      },
+      t,
+    )
+
+    expect(message).toBe('This repository reached its configured storage quota.')
+    expect(message).not.toContain('internal diagnostic')
+  })
+
+  it('uses the repository quota English fallback without a translator', () => {
+    expect(
+      resolveErrorMessage({
+        status: 403,
+        errorCode: 'BACKUP.REPOSITORY_QUOTA_EXCEEDED',
+        message: 'blocked',
+      }),
+    ).toContain('configured Storage Quota')
+  })
+
   it('uses organization meter copy when scope is organization', () => {
     const message = resolveErrorMessageI18n(
       {

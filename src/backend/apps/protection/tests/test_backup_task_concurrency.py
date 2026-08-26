@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from django.db import close_old_connections, connection
 from django.test import TransactionTestCase
+from django.utils import timezone
 
 from apps.iam.models import Organization
 from apps.node.models import Node
@@ -133,6 +134,62 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
             ).count(),
             1,
         )
+
+    def test_simultaneous_starts_both_observe_full_repository_quota(self):
+        self.repository.config = {**self.repository.config, "quota_gb": 1}
+        self.repository.estimated_usage_bytes = 1024**3
+        self.repository.usage_probe_status = Repository.MetricProbeStatus.SUCCESS
+        self.repository.usage_last_success_at = timezone.now()
+        self.repository.save(
+            update_fields=[
+                "config",
+                "estimated_usage_bytes",
+                "usage_probe_status",
+                "usage_last_success_at",
+                "updated_at",
+            ]
+        )
+        barrier = threading.Barrier(2)
+        outcomes: queue.Queue[str] = queue.Queue()
+        errors: queue.Queue[BaseException] = queue.Queue()
+
+        def start(idempotency_key: str) -> None:
+            close_old_connections()
+            try:
+                barrier.wait(timeout=5)
+                start_backup_tasks(
+                    organization_id=self.org.id,
+                    source_ids=[f"agent:{self.agent.id}"],
+                    trigger_type="manual",
+                    idempotency_key=idempotency_key,
+                )
+            except AppError as exc:
+                outcomes.put(exc.code)
+            except BaseException as exc:  # pragma: no cover - surfaced below
+                errors.put(exc)
+            finally:
+                close_old_connections()
+
+        threads = [
+            threading.Thread(target=start, args=("quota-full-a",)),
+            threading.Thread(target=start, args=("quota-full-b",)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        if not errors.empty():
+            raise errors.get()
+        self.assertEqual(outcomes.qsize(), 2)
+        self.assertEqual(
+            [outcomes.get(), outcomes.get()],
+            [
+                "BACKUP.REPOSITORY_QUOTA_EXCEEDED",
+                "BACKUP.REPOSITORY_QUOTA_EXCEEDED",
+            ],
+        )
+        self.assertFalse(Task.objects.filter(task_type=Task.Type.BACKUP).exists())
 
     def test_backup_start_is_blocked_by_active_source_unregister(self):
         unregister_task = Task.objects.create(

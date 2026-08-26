@@ -49,7 +49,10 @@ from apps.storage.services.internal.repository_access import (
     explicit_repository_server_host,
     resolve_repository_reader,
 )
-from apps.storage.services.internal.repository_usage import enqueue_repository_usage_refresh
+from apps.storage.services.internal.repository_usage import (
+    assert_repository_quota_available,
+    enqueue_repository_usage_refresh,
+)
 from apps.task.models import Task, TaskEvent, TaskStep
 from apps.task.services.interface import append_task_step_event, complete_task, start_task
 from apps.task.signals import task_updated
@@ -2047,9 +2050,14 @@ def advance_backup(
             source_ref_id=source_snapshot.source_ref_id,
             repository_id=config.repository_id,
         )
+        repository = Repository.objects.select_for_update().get(
+            organization_id=organization_id,
+            id=repository.id,
+        )
+        assert_repository_quota_available(repository)
         runtime_policy = backup_runtime_policy_payload(source_snapshot.policy_snapshot)
     except Exception as exc:
-        error_code = "BACKUP_PRECHECK_FAILED"
+        error_code = getattr(exc, "code", "BACKUP_PRECHECK_FAILED")
         error_message = str(exc)
         mark_source_snapshot_failed(
             source_snapshot=source_snapshot,

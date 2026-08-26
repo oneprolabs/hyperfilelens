@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
+from common.errors import AppError
 from apps.iam.models import Organization
 from apps.node.models import Node
 from apps.node.agent_paths import repository_mount_point
@@ -22,6 +23,7 @@ from apps.storage.services.internal.repository_location import (
 from apps.storage.services.internal.repository_usage import (
     RepositoryUsageProbeResult,
     _parse_agent_repo_status_result,
+    assert_repository_quota_available,
     capacity_bytes_from_config,
     kopia_estimated_usage_from_packed,
     parse_kopia_content_stats,
@@ -55,6 +57,76 @@ class RepositoryUsageTests(TestCase):
         self.assertEqual(capacity_bytes_from_config({"quota_gb": 10}), 10 * 1024**3)
         self.assertEqual(capacity_bytes_from_config({"quota_gb": 0}), 0)
         self.assertEqual(capacity_bytes_from_config(None), 0)
+
+    def test_repository_quota_rejects_full_fresh_observation(self):
+        repository = Repository(
+            id=798,
+            config={"quota_gb": 1},
+            estimated_usage_bytes=1024**3,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
+        )
+
+        with self.assertRaisesMessage(
+            AppError,
+            "configured Storage Quota",
+        ) as context:
+            assert_repository_quota_available(repository)
+
+        self.assertEqual(context.exception.code, "BACKUP.REPOSITORY_QUOTA_EXCEEDED")
+
+    def test_repository_quota_fails_open_for_stale_observation(self):
+        repository = Repository(
+            config={"quota_gb": 1},
+            estimated_usage_bytes=2 * 1024**3,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now() - timedelta(minutes=16),
+        )
+
+        assert_repository_quota_available(repository)
+
+    def test_repository_quota_allows_unlimited_under_limit_and_unknown_usage(self):
+        now = timezone.now()
+        cases = (
+            {
+                "name": "unlimited",
+                "config": {"quota_gb": 0},
+                "used": 2 * 1024**3,
+                "status": Repository.MetricProbeStatus.SUCCESS,
+                "checked_at": now,
+            },
+            {
+                "name": "under limit",
+                "config": {"quota_gb": 2},
+                "used": 1024**3,
+                "status": Repository.MetricProbeStatus.SUCCESS,
+                "checked_at": now,
+            },
+            {
+                "name": "failed probe",
+                "config": {"quota_gb": 1},
+                "used": 2 * 1024**3,
+                "status": Repository.MetricProbeStatus.FAILED,
+                "checked_at": now,
+            },
+            {
+                "name": "missing successful observation",
+                "config": {"quota_gb": 1},
+                "used": 2 * 1024**3,
+                "status": Repository.MetricProbeStatus.SUCCESS,
+                "checked_at": None,
+            },
+        )
+
+        for case in cases:
+            with self.subTest(case["name"]):
+                repository = Repository(
+                    config=case["config"],
+                    estimated_usage_bytes=case["used"],
+                    usage_probe_status=case["status"],
+                    usage_last_success_at=case["checked_at"],
+                )
+                assert_repository_quota_available(repository, now=now)
 
     @mock.patch(
         "apps.storage.services.internal.repository_usage.sync_repository_usage"

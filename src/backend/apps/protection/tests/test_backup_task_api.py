@@ -41,6 +41,7 @@ from apps.protection.services.backup_task import (
     _repository_runtime_payload,
     reconcile_interrupted_backup_tasks,
     run_backup_task,
+    start_backup_tasks,
 )
 from apps.protection.services.progress.orchestrated_progress import (
     BACKUP_TRANSFER_END,
@@ -401,6 +402,115 @@ class ProtectionBackupTaskApiTests(TestCase):
             additional=0,
         )
 
+    @patch("apps.protection.services.backup_task._queue_backup_execution")
+    def test_start_backup_task_api_stops_new_write_when_repository_quota_is_full(
+        self,
+        queue_backup,
+    ):
+        self.repository.config = {**self.repository.config, "quota_gb": 1}
+        self.repository.estimated_usage_bytes = 1 * 1024**3
+        self.repository.usage_probe_status = Repository.MetricProbeStatus.SUCCESS
+        self.repository.usage_last_success_at = timezone.now()
+        self.repository.save(
+            update_fields=[
+                "config",
+                "estimated_usage_bytes",
+                "usage_probe_status",
+                "usage_last_success_at",
+                "updated_at",
+            ]
+        )
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.config["quota_gb"], 1)
+        self.assertEqual(self.repository.usage_probe_status, Repository.MetricProbeStatus.SUCCESS)
+        self.assertEqual(self.repository.estimated_usage_bytes, 1 * 1024**3)
+
+        response = self.client.post(
+            "/api/v1/protection/backup-tasks/",
+            {
+                "source_ids": [f"agent:{self.agent.id}"],
+                "trigger_type": "manual",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.data["data"]["error_code"],
+            "BACKUP.REPOSITORY_QUOTA_EXCEEDED",
+        )
+        self.assertIn("configured Storage Quota", response.data["data"]["title"])
+        queue_backup.assert_not_called()
+
+    @patch("apps.protection.services.backup_task._queue_backup_execution")
+    def test_scheduled_backup_records_repository_quota_rejection_without_task(
+        self,
+        queue_backup,
+    ):
+        self.repository.config = {**self.repository.config, "quota_gb": 1}
+        self.repository.estimated_usage_bytes = 2 * 1024**3
+        self.repository.usage_probe_status = Repository.MetricProbeStatus.SUCCESS
+        self.repository.usage_last_success_at = timezone.now()
+        self.repository.save(
+            update_fields=[
+                "config",
+                "estimated_usage_bytes",
+                "usage_probe_status",
+                "usage_last_success_at",
+                "updated_at",
+            ]
+        )
+
+        result = start_backup_tasks(
+            organization_id=self.org.id,
+            source_ids=[f"agent:{self.agent.id}"],
+            trigger_type=BackupSourceSnapshot.TriggerType.SCHEDULE,
+            idempotency_key="scheduled-repository-quota-full",
+        )
+
+        self.assertEqual(result["created_count"], 0)
+        self.assertEqual(result["skipped_count"], 1)
+        self.assertEqual(result["results"][0]["status"], "failed")
+        self.assertEqual(
+            result["results"][0]["error_code"],
+            "BACKUP.REPOSITORY_QUOTA_EXCEEDED",
+        )
+        self.assertIn("configured Storage Quota", result["results"][0]["message"])
+        self.assertFalse(Task.objects.filter(task_type=Task.Type.BACKUP).exists())
+        queue_backup.assert_not_called()
+
+    def test_backup_execution_rechecks_repository_quota_before_write(self):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="repository-quota-queued-recheck",
+        )
+        self.repository.config = {**self.repository.config, "quota_gb": 1}
+        self.repository.estimated_usage_bytes = 1 * 1024**3
+        self.repository.usage_probe_status = Repository.MetricProbeStatus.SUCCESS
+        self.repository.usage_last_success_at = timezone.now()
+        self.repository.save(
+            update_fields=[
+                "config",
+                "estimated_usage_bytes",
+                "usage_probe_status",
+                "usage_last_success_at",
+                "updated_at",
+            ]
+        )
+
+        result = run_backup_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=snapshot.id,
+        )
+
+        self.assertEqual(result["status"], Task.Status.FAILED)
+        task.refresh_from_db()
+        snapshot.refresh_from_db()
+        self.assertEqual(task.error_code, "BACKUP.REPOSITORY_QUOTA_EXCEEDED")
+        self.assertEqual(snapshot.error_code, "BACKUP.REPOSITORY_QUOTA_EXCEEDED")
+        self.assertIn("configured Storage Quota", snapshot.error_message)
+
     @patch("apps.protection.services.directory_size_estimate.run_agent_task_sync")
     @patch("apps.protection.services.backup_task._queue_backup_execution")
     @patch(
@@ -704,6 +814,19 @@ class ProtectionBackupTaskApiTests(TestCase):
                 format="json",
                 **self._headers(),
             )
+        self.repository.config = {**self.repository.config, "quota_gb": 1}
+        self.repository.estimated_usage_bytes = 1024**3
+        self.repository.usage_probe_status = Repository.MetricProbeStatus.SUCCESS
+        self.repository.usage_last_success_at = timezone.now()
+        self.repository.save(
+            update_fields=[
+                "config",
+                "estimated_usage_bytes",
+                "usage_probe_status",
+                "usage_last_success_at",
+                "updated_at",
+            ]
+        )
         with patch(
             "apps.subscription.services.interface.enforce_license_quota",
             side_effect=AppError(
@@ -2028,8 +2151,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(row.status, BackupSourceSnapshotDirectory.Status.FAILED)
         self.assertEqual(row.error_code, "POLICY_APPLY_FAILED")
         expected_message = (
-            "Backup repository quota exceeded. Free storage or increase the "
-            "repository quota before retrying."
+            "The underlying storage rejected the backup because its capacity "
+            "or provider-side quota was reached. Free space or increase the "
+            "quota on the NAS or object-storage platform, then retry."
         )
         self.assertEqual(row.error_message, expected_message)
         snapshot.refresh_from_db()

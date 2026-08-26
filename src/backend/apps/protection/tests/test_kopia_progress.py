@@ -438,9 +438,27 @@ class KopiaFailureMessageTests(SimpleTestCase):
         self.assertNotIn("Epoch range-compaction", message)
         self.assertEqual(
             public_repository_failure_message(message),
-            "Backup repository quota exceeded. Free storage or increase the "
-            "repository quota before retrying.",
+            "The underlying storage rejected the backup because its capacity "
+            "or provider-side quota was reached. Free space or increase the "
+            "quota on the NAS or object-storage platform, then retry.",
         )
+
+    def test_public_repository_failure_message_classifies_provider_capacity_markers(self):
+        from apps.protection.services.backup_task import (
+            extract_kopia_failure_message,
+            public_repository_failure_message,
+        )
+
+        for marker in ("ENOSPC", "no space left on device", "storage limit reached"):
+            with self.subTest(marker=marker):
+                extracted = extract_kopia_failure_message(
+                    {"stderr_tail": f"write failed: {marker}", "exit_code": 1},
+                    last_error="exit 1: exit status 1",
+                )
+                self.assertIn(marker, extracted)
+                public_message = public_repository_failure_message(extracted)
+                self.assertIn("underlying storage", public_message)
+                self.assertIn("NAS or object-storage platform", public_message)
 
     def test_extract_kopia_failure_message_prefers_fatal_errors(self):
         from apps.protection.services.backup_task import extract_kopia_failure_message

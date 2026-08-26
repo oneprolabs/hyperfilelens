@@ -91,6 +91,7 @@
   "errors.codes.smbCharsetUnavailable": "8793d9ad38cd43ed8f1293919f092eac4f987fb9ff1120016af238d323432f3c",
   "errors.codes.agentTaskFailed": "cc11ff8d4f894bd4e4f58cbdb609fcfcde18aa37b1f95521d60efb545fe48e0a",
   "errors.codes.backupQuotaExceeded": "554ed2cf3a2d763191d4cf65095ff4eb560768b6fef4ff55ff43745e0ef4a49f",
+  "errors.codes.backupRepositoryQuotaExceeded": "783b44f747aec0e3c5a6834c61cef110a3ff939b92178d2b9781e621a3b5ae59",
   "errors.codes.subscriptionQuotaExceeded": "9caa3d7e43c054ba8f2b103bc2fe4c91e26f0a0ee9ed8d8c1f9b74d7b219d78d",
   "errors.codes.subscriptionQuotaExceededMeter": "e4c55d6c762a416055c1751c91ccb47dfe36505a48c1f425538ea0a224f394a4",
   "errors.codes.subscriptionQuotaExceededInstance": "7f628c504ac2a9ad7f1cb0ba1d686c69e35e4002b86d0c092622c3739095fc0e",
