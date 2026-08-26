@@ -96,26 +96,34 @@ manually with `sudo ./install.sh backup`.
 ### Community online installation
 
 For a supported Ubuntu 20.04/22.04/24.04 amd64 host with Docker Engine and
-Compose V2 already installed, install a pinned Community release with one
-command. Global users should use GitHub and Docker Hub:
+Compose V2 already installed, install the latest Community tag
+with one command. The installer adds only its small host-tool prerequisites
+(Python, rsync, tar, OpenSSL, and CA certificates) through the Ubuntu package
+manager. Global users should use GitHub and Docker Hub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/vX.Y.Z/deploy/online/install.sh \
-  | sudo bash -s -- vX.Y.Z --region global --download-source github --yes
+curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh \
+  | sudo bash -s -- --mirror global
 ```
 
 Users in mainland China can use the public Gitee source and Alibaba Cloud
 image mirror:
 
 ```bash
-curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/vX.Y.Z/deploy/online/install.sh \
-  | sudo bash -s -- vX.Y.Z --region cn --download-source gitee --yes
+curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh \
+  | sudo bash -s -- --mirror cn
 ```
 
-With `--download-source auto`, the installer prefers Gitee in China and
-GitHub elsewhere, then falls back to the other public source. `--yes` enables
-non-interactive execution. The online installer is Community-only; Enterprise
-continues to use the existing Enterprise delivery workflow.
+The installer resolves the latest semantic version tag from the selected
+source and asks for confirmation before installation or upgrade. Use
+`--tag vX.Y.Z` to select a specific version and `--yes` only for
+non-interactive automation. The old positional tag, `--region`, and
+`--download-source` forms are not supported. The online installer is
+Community-only; Enterprise continues to use the existing Enterprise delivery
+workflow. Before changing an installation, it verifies that the selected tag's
+images, assets, and source revision are complete and consistent. If the latest
+or selected tag is unavailable, it prints up to ten recent available tags and
+the exact `--mirror ... --tag vX.Y.Z` form to use instead.
 
 ## Quick Start
 

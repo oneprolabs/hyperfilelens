@@ -34,14 +34,10 @@ const loginUrl = computed(() => `${appOrigin.value || '#'}${appOrigin.value ? '/
 const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
 const sourceLensUrl = 'https://github.com/HyperBDR/sourcelens'
 const communityInstallGuideUrl = 'https://github.com/oneprolabs/hyperfilelens#community-online-installation'
-const communityVersion = 'v0.2.8'
 const installCommand = [
   'curl -fsSL \\',
-  `  https://gitee.com/oneprolabs/hyperfilelens/raw/${communityVersion}/deploy/online/install.sh \\`,
-  `  | sudo bash -s -- ${communityVersion} \\`,
-  '      --region cn \\',
-  '      --download-source gitee \\',
-  '      --yes',
+  '  https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh \\',
+  '  | sudo bash -s -- --mirror global',
 ].join('\n')
 const copied = ref(false)
 let copyResetTimer: number | undefined
@@ -276,7 +272,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           <div class="open-source-copy">
             <p class="section-kicker dark-kicker">Community</p>
             <h2 id="open-source-title">Open source.<br />One-command install.</h2>
-            <p>Run the Community edition on an Ubuntu host with Docker in one command. The current public installer is hosted on Gitee.</p>
+            <p>Install the latest Community tag on an Ubuntu host with Docker. The installer verifies its images and assets before changing the host.</p>
             <div class="open-source-callout">
               <svg aria-hidden="true"><use href="#icon-check" /></svg>
               <p>Community is free and open source, with S3-compatible storage and an AI model or API key. Enterprise capabilities will be available in a later release.</p>
@@ -294,7 +290,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           <div class="terminal-card" aria-label="Community online installation command">
             <div class="terminal-bar">
               <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
-              <div class="terminal-title"><strong>Community</strong><span>{{ communityVersion }}</span></div>
+              <div class="terminal-title"><strong>Community</strong><span>Latest tag</span></div>
               <button
                 type="button"
                 class="copy-command"
@@ -307,7 +303,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             </div>
             <div class="terminal-body">
               <p class="terminal-context">Run on an Ubuntu host</p>
-              <pre><code><span class="terminal-comment"># Community online install · {{ communityVersion }}</span>
+              <pre><code><span class="terminal-comment"># Install the latest Community tag</span>
 <span class="terminal-prompt">$</span> {{ installCommand }}</code></pre>
             </div>
             <div class="terminal-summary">

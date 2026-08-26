@@ -33,14 +33,10 @@ const loginUrl = computed(() => `${appOrigin.value || '#'}${appOrigin.value ? '/
 
 const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
 const sourceLensUrl = 'https://github.com/HyperBDR/sourcelens'
-const communityVersion = 'v0.2.8'
 const installCommand = [
   'curl -fsSL \\',
-  `  https://gitee.com/oneprolabs/hyperfilelens/raw/${communityVersion}/deploy/online/install.sh \\`,
-  `  | sudo bash -s -- ${communityVersion} \\`,
-  '      --region cn \\',
-  '      --download-source gitee \\',
-  '      --yes',
+  '  https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh \\',
+  '  | sudo bash -s -- --mirror cn',
 ].join('\n')
 const copied = ref(false)
 let copyResetTimer: number | undefined
@@ -275,7 +271,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           <div class="open-source-copy">
             <p class="section-kicker dark-kicker">社区版</p>
             <h2 id="open-source-title">开源社区版 一条命令部署</h2>
-            <p>在安装了 Docker 的 Ubuntu 主机上一条命令运行 Community。当前提供稳定的 Gitee 在线安装入口。</p>
+            <p>在安装了 Docker 的 Ubuntu 主机上安装最新 Community Tag，安装程序会先校验镜像和资产，国内通过 Gitee 和阿里云镜像交付。</p>
             <div class="open-source-callout">
               <svg aria-hidden="true"><use href="#icon-check" /></svg>
               <p>社区版免费开源，自带 S3 兼容存储和 AI 模型或 API Key；企业版能力将在后续版本提供。</p>
@@ -293,7 +289,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           <div class="terminal-card" aria-label="Community 在线安装命令">
             <div class="terminal-bar">
               <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
-              <div class="terminal-title"><strong>Community</strong><span>{{ communityVersion }}</span></div>
+              <div class="terminal-title"><strong>Community</strong><span>最新 Tag</span></div>
               <button
                 type="button"
                 class="copy-command"
@@ -306,7 +302,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             </div>
             <div class="terminal-body">
               <p class="terminal-context">在 Ubuntu 主机上运行</p>
-              <pre><code><span class="terminal-comment"># 在线安装 Community · {{ communityVersion }}</span>
+              <pre><code><span class="terminal-comment"># 安装最新 Community Tag</span>
 <span class="terminal-prompt">$</span> {{ installCommand }}</code></pre>
             </div>
             <div class="terminal-summary">
