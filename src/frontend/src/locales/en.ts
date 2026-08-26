@@ -109,6 +109,8 @@ export const en = {
       smbCharsetUnavailable: 'SMB UTF-8 filename support is unavailable on the Proxy Host. Install the matching kernel extra-modules package, then remount the share.',
       agentTaskFailed: 'Agent task failed. Please try again.',
       backupQuotaExceeded: 'Backup quota exceeded. Upgrade your subscription and try again.',
+      backupRepositoryQuotaExceeded:
+        'This backup repository has reached its configured Storage Quota. Free repository space or increase Storage Quota before retrying.',
       subscriptionQuotaExceeded:
         'Organization quota is full. Contact your platform administrator to raise limits.',
       subscriptionQuotaExceededMeter:

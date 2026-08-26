@@ -24,6 +24,7 @@ from apps.storage.services.internal.kopia_cli import (
     connect_s3_repository,
     content_stats as kopia_content_stats,
 )
+from common.errors import AppError
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,11 @@ _GB = 1024**3
 _KOPIA_ESTIMATED_USAGE_FACTOR = 1.05
 _USAGE_REFRESH_DEDUP_TTL_SECONDS = 60
 _DEFAULT_STALE_AFTER_SECONDS = 900
+_REPOSITORY_QUOTA_ERROR_CODE = "BACKUP.REPOSITORY_QUOTA_EXCEEDED"
+_REPOSITORY_QUOTA_MESSAGE = (
+    "This backup repository has reached its configured Storage Quota. "
+    "Free repository space or increase Storage Quota before retrying."
+)
 _SIZE_RE = re.compile(
     r"(?P<key>total\s*packed|packed|total\s*size|total\s*bytes|size|used|total)\s*[:=]\s*(?P<num>[\d.,]+)\s*(?P<unit>[KMGT]?B)?",
     re.IGNORECASE,
@@ -118,6 +124,54 @@ def capacity_bytes_from_config(config: dict | None) -> int:
     if quota_gb <= 0:
         return 0
     return int(quota_gb * _GB)
+
+
+def assert_repository_quota_available(
+    repository: Repository,
+    *,
+    now=None,
+    stale_after_seconds: int | None = _DEFAULT_STALE_AFTER_SECONDS,
+) -> None:
+    """Reject new backup writes when a trusted repository observation is full.
+
+    Repository usage is collected asynchronously.  A missing, failed, or stale
+    observation therefore fails open so a transient metrics outage does not
+    block every backup; the next successful observation will restore admission
+    enforcement.  Callers that admit a write must lock the repository row in
+    their transaction before invoking this helper.
+    """
+    limit = capacity_bytes_from_config(repository.config)
+    if limit <= 0:
+        return None
+    if repository.usage_probe_status != Repository.MetricProbeStatus.SUCCESS:
+        return None
+    checked_at = repository.usage_last_success_at
+    if checked_at is None:
+        return None
+    current_time = now or timezone.now()
+    if stale_after_seconds is not None:
+        try:
+            stale_after = int(stale_after_seconds)
+        except (TypeError, ValueError):
+            stale_after = _DEFAULT_STALE_AFTER_SECONDS
+        if stale_after >= 0 and current_time - checked_at > timedelta(seconds=stale_after):
+            return None
+    used = max(0, int(repository.estimated_usage_bytes or 0))
+    if used < limit:
+        return None
+    raise AppError(
+        code=_REPOSITORY_QUOTA_ERROR_CODE,
+        status=403,
+        title=_REPOSITORY_QUOTA_MESSAGE,
+        diagnostic=_REPOSITORY_QUOTA_MESSAGE,
+        meta={
+            "quota_type": "repository.quota_gb",
+            "repository_id": repository.id,
+            "limit_bytes": limit,
+            "used_bytes": used,
+            "scope": "repository",
+        },
+    )
 
 
 def apply_capacity_from_config(repository: Repository) -> bool:

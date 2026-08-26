@@ -58,6 +58,9 @@ from apps.storage.services.internal.repository_workload import (
     RepositoryWorkload,
     lock_repositories_for_workload,
 )
+from apps.storage.services.internal.repository_usage import (
+    assert_repository_quota_available,
+)
 from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import (
     append_task_step_event,
@@ -77,6 +80,7 @@ _DEFAULT_DIRECTORY_WAIT_TIMEOUT_SECONDS = 3600
 _BACKUP_EXECUTION_LOCK_TTL_BUFFER_SECONDS = 600
 _BACKUP_EXECUTION_LOCK_VALUE = "running"
 _QUOTA_EXCEEDED_ERROR_CODE = "SUBSCRIPTION.QUOTA_EXCEEDED"
+_REPOSITORY_QUOTA_EXCEEDED_ERROR_CODE = "BACKUP.REPOSITORY_QUOTA_EXCEEDED"
 _TASK_TERMINAL_STATUSES = {
     Task.Status.SUCCESS,
     Task.Status.FAILED,
@@ -97,7 +101,27 @@ _DIRECTORY_TERMINAL_STATUSES = {
 
 
 def _is_global_backup_admission_error(exc: Exception) -> bool:
-    return isinstance(exc, AppError) and exc.code == _QUOTA_EXCEEDED_ERROR_CODE
+    return isinstance(exc, AppError) and exc.code in {
+        _QUOTA_EXCEEDED_ERROR_CODE,
+        _REPOSITORY_QUOTA_EXCEEDED_ERROR_CODE,
+    }
+
+
+def _should_raise_backup_admission_error(
+    exc: Exception,
+    *,
+    trigger_type: str,
+) -> bool:
+    if not _is_global_backup_admission_error(exc):
+        return False
+    if (
+        isinstance(exc, AppError)
+        and exc.code == _REPOSITORY_QUOTA_EXCEEDED_ERROR_CODE
+        and str(trigger_type).strip().lower()
+        == BackupSourceSnapshot.TriggerType.SCHEDULE
+    ):
+        return False
+    return True
 
 
 logger = logging.getLogger(__name__)
@@ -786,6 +810,11 @@ def start_backup_tasks(
                     # the write first and retain the quota lock until durable
                     # ownership facts commit.
                     with transaction.atomic():
+                        locked_repository = Repository.objects.select_for_update().get(
+                            organization_id=organization_id,
+                            id=repository.id,
+                        )
+                        assert_repository_quota_available(locked_repository)
                         enforce_license_quota(
                             organization,
                             "max_storage_gb",
@@ -802,7 +831,10 @@ def start_backup_tasks(
                 # backup because configured path contents can change without a
                 # config edit. Never block the Backup Now request on path.size.
             except (ValidationError, AppError) as exc:
-                if _is_global_backup_admission_error(exc):
+                if _should_raise_backup_admission_error(
+                    exc,
+                    trigger_type=trigger_type,
+                ):
                     raise
                 skipped_count += 1
                 results.append(
@@ -819,6 +851,12 @@ def start_backup_tasks(
                             if isinstance(exc, AppError)
                             and exc.code == "RESTORE.ALREADY_RUNNING"
                             else "failed"
+                        ),
+                        **(
+                            {"error_code": exc.code}
+                            if isinstance(exc, AppError)
+                            and exc.code == _REPOSITORY_QUOTA_EXCEEDED_ERROR_CODE
+                            else {}
                         ),
                         "message": (
                             _validation_message(exc)
@@ -900,6 +938,11 @@ def start_backup_tasks(
                                 "max_storage_gb",
                                 additional=0,
                             )
+                        locked_repository = Repository.objects.select_for_update().get(
+                            organization_id=organization_id,
+                            id=locked_config.repository_id,
+                        )
+                        assert_repository_quota_available(locked_repository)
                         lock_repositories_for_workload(
                             organization_id=organization_id,
                             repository_ids=[locked_config.repository_id],
@@ -1032,7 +1075,10 @@ def start_backup_tasks(
                         "message": "A backup task for this source and backup config is already running.",
                     }
             except (ValidationError, AppError) as exc:
-                if _is_global_backup_admission_error(exc):
+                if _should_raise_backup_admission_error(
+                    exc,
+                    trigger_type=trigger_type,
+                ):
                     raise
                 skipped_count += 1
                 results.append(
@@ -1049,6 +1095,12 @@ def start_backup_tasks(
                             if isinstance(exc, AppError)
                             and exc.code == "RESTORE.ALREADY_RUNNING"
                             else "failed"
+                        ),
+                        **(
+                            {"error_code": exc.code}
+                            if isinstance(exc, AppError)
+                            and exc.code == _REPOSITORY_QUOTA_EXCEEDED_ERROR_CODE
+                            else {}
                         ),
                         "message": (
                             _validation_message(exc)
@@ -1389,6 +1441,9 @@ def extract_kopia_failure_message(
             or "error connecting to repository" in lower
             or lower.startswith("error:")
             or "quota exceeded" in lower
+            or "enospc" in lower
+            or "no space left" in lower
+            or "storage limit reached" in lower
             or "unable to get policy tree" in lower
             or "policy not found" in lower
             or "unable to open" in lower
@@ -1437,10 +1492,19 @@ def public_repository_failure_message(message: str) -> str:
     """Return an actionable repository error without backend implementation details."""
     text = re.sub(r"https?://\S+", "", str(message or "")).strip()
     lower = text.lower()
-    if "quota exceeded" in lower:
+    if any(
+        marker in lower
+        for marker in (
+            "quota exceeded",
+            "enospc",
+            "no space left",
+            "storage limit reached",
+        )
+    ):
         return (
-            "Backup repository quota exceeded. Free storage or increase the "
-            "repository quota before retrying."
+            "The underlying storage rejected the backup because its capacity "
+            "or provider-side quota was reached. Free space or increase the "
+            "quota on the NAS or object-storage platform, then retry."
         )
     if "not initialized" in lower:
         return "Backup repository is not initialized. Initialize or repair the repository before retrying."

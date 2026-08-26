@@ -61,6 +61,7 @@
       "agentNasMountFailed": "NAS 挂载失败，请检查连接设置",
       "agentTaskFailed": "Agent 任务失败，请稍后重试",
       "backupQuotaExceeded": "备份配额已用尽，请升级订阅后重试",
+      "backupRepositoryQuotaExceeded": "该备份仓库已达到配置的存储配额。请释放仓库空间或提高存储配额后重试。",
       "backupAlreadyRunning": "该备份源的备份正在启动或运行。请先停止备份或等待其完成，再继续操作。",
       "restoreAlreadyRunning": "该备份源已有恢复任务正在运行",
       "storageRepositoryOperationNotCancellable": "只能取消控制器管理的 S3 维护任务。",
