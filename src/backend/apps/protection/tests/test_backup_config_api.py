@@ -181,7 +181,31 @@ class ProtectionBackupConfigApiTests(TestCase):
             result={"ok": True, "ownership_verified": True},
         )
 
-    def _run_latest_provision(self, *, config_name: str):
+    def _dispatch_pending_agent_task(self, **kwargs):
+        node = Node.objects.get(id=kwargs["node_id"])
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=node,
+            parent_task=kwargs.get("parent_task"),
+            kind=kwargs["kind"],
+            correlation_type=kwargs.get("correlation_type", ""),
+            correlation_id=kwargs.get("correlation_id", ""),
+            payload=kwargs.get("payload") or {},
+            status=NodeTask.Status.PENDING,
+            watchdog_deadline_at=timezone.now() + timedelta(minutes=5),
+        )
+        return SimpleNamespace(task=node_task, task_id=str(node_task.id))
+
+    def _run_latest_provision(
+        self,
+        *,
+        config_name: str,
+        node_status: str = NodeTask.Status.SUCCESS,
+        node_result: dict | None = None,
+        node_error: str = "",
+        async_dispatch=None,
+    ):
         from apps.protection.services.backup_config_provision import (
             run_backup_config_provision_task,
         )
@@ -189,6 +213,10 @@ class ProtectionBackupConfigApiTests(TestCase):
         config = BackupConfig.objects.get(name=config_name)
         task = Task.objects.get(task_uuid=config.provisioning_task_uuid)
         with (
+            mock.patch(
+                "apps.protection.services.backup_config.run_agent_task_async",
+                side_effect=async_dispatch or self._dispatch_pending_agent_task,
+            ),
             mock.patch(
                 "apps.protection.tasks.repository_policy.sync_backup_config_repository_policy_task.delay"
             ),
@@ -198,6 +226,21 @@ class ProtectionBackupConfigApiTests(TestCase):
             self.captureOnCommitCallbacks(execute=True),
         ):
             result = run_backup_config_provision_task(task_id=task.id)
+            node_task = (
+                NodeTask.objects.filter(parent_task=task, kind="repo.initialize")
+                .order_by("-created_at", "-id")
+                .first()
+            )
+            if node_task is not None and node_task.status == NodeTask.Status.PENDING:
+                node_task.status = node_status
+                if node_result is None and node_status == NodeTask.Status.SUCCESS:
+                    node_result = {"ownership_verified": True}
+                node_task.result = dict(node_result or {})
+                node_task.last_error = node_error
+                node_task.save(
+                    update_fields=["status", "result", "last_error", "updated_at"]
+                )
+                result = run_backup_config_provision_task(task_id=task.id)
         config.refresh_from_db()
         task.refresh_from_db()
         return config, task, result
@@ -228,6 +271,41 @@ class ProtectionBackupConfigApiTests(TestCase):
             config={"proxy_node_dir": "/repo"},
         )
         return self._mark_repository_owned(repository)
+
+    def test_waiting_projection_does_not_regress_terminal_provision(self):
+        from apps.protection.services.backup_config_provision import _mark_waiting
+
+        nas_repo = self._direct_nas_repository(name="terminal-provision-race-repo")
+        response = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(
+                name="Terminal provision race",
+            )
+            | {"repository_id": nas_repo.id},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        config = BackupConfig.objects.get(id=response.data["id"])
+        task = Task.objects.get(task_uuid=config.provisioning_task_uuid)
+        Task.objects.filter(id=task.id).update(status=Task.Status.SUCCESS)
+        BackupConfig.objects.filter(id=config.id).update(
+            status=BackupConfig.Status.ACTIVE
+        )
+
+        self.assertTrue(
+            _mark_waiting(
+                task=task,
+                config=config,
+                error_code="AGENT_TASK_PENDING",
+                message="late worker projection",
+            )
+        )
+
+        task.refresh_from_db()
+        config.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertEqual(config.status, BackupConfig.Status.ACTIVE)
 
     def _proxy_bound_nas_repository(
         self, *, proxy: Node | None = None, name: str = "proxy-nas-repo"
@@ -913,11 +991,13 @@ class ProtectionBackupConfigApiTests(TestCase):
             ).exists()
         )
         self._run_latest_provision(config_name="Direct NAS config")
-        run_agent_task_sync.assert_called_once()
-        call = run_agent_task_sync.call_args.kwargs
-        self.assertEqual(call["node_id"], self.agent.id)
-        self.assertEqual(call["kind"], "repo.initialize")
-        repository_payload = call["payload"]["repository"]
+        run_agent_task_sync.assert_not_called()
+        node_task = NodeTask.objects.get(
+            parent_task=provision_task,
+            kind="repo.initialize",
+        )
+        self.assertEqual(node_task.node_id, self.agent.id)
+        repository_payload = node_task.payload["repository"]
         self.assertEqual(repository_payload["type"], Repository.Type.NAS)
         self.assertEqual(
             repository_payload["subdir"], f"hp-repos/agent-{self.agent.id}"
@@ -945,16 +1025,11 @@ class ProtectionBackupConfigApiTests(TestCase):
             trigger="protection.backup_config.provision",
         )
 
-    @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
-    def test_direct_nas_activation_survives_followup_dispatch_failure(
-        self,
-        run_agent_task_sync,
-    ):
+    def test_direct_nas_activation_survives_followup_dispatch_failure(self):
         from apps.protection.services.backup_config_provision import (
             run_backup_config_provision_task,
         )
 
-        run_agent_task_sync.return_value = self._successful_agent_task()
         nas_repo = self._direct_nas_repository(name="followup-failure-direct-nas")
         payload = self._payload(name="Followup failure Direct NAS config")
         payload["repository_id"] = nas_repo.id
@@ -967,6 +1042,18 @@ class ProtectionBackupConfigApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
         config = BackupConfig.objects.get(id=response.data["id"])
         task = Task.objects.get(task_uuid=config.provisioning_task_uuid)
+
+        with mock.patch(
+            "apps.protection.services.backup_config.run_agent_task_async",
+            side_effect=self._dispatch_pending_agent_task,
+        ), self.captureOnCommitCallbacks(execute=True):
+            waiting = run_backup_config_provision_task(task_id=task.id)
+
+        self.assertEqual(waiting["status"], "waiting")
+        node_task = NodeTask.objects.get(parent_task=task, kind="repo.initialize")
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.result = {"ownership_verified": True}
+        node_task.save(update_fields=["status", "result", "updated_at"])
 
         with (
             mock.patch(
@@ -1057,9 +1144,54 @@ class ProtectionBackupConfigApiTests(TestCase):
             status=Task.Status.WAITING,
             started_at=stale_at,
         )
-        Task.objects.filter(id__in=[active_parent.id, dispatchable.id]).update(
-            updated_at=stale_at
+        late_success_parent = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+            display_name="Late Agent validation result",
+            trigger_type=Task.TriggerType.SYSTEM,
+            status=Task.Status.BLOCKED,
+            started_at=stale_at,
         )
+        late_failure_parent = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+            display_name="Late Agent validation failure",
+            trigger_type=Task.TriggerType.SYSTEM,
+            status=Task.Status.BLOCKED,
+            started_at=stale_at,
+        )
+        unresolved_parent = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP_CONFIG_PROVISION,
+            display_name="Unknown Agent validation result",
+            trigger_type=Task.TriggerType.SYSTEM,
+            status=Task.Status.BLOCKED,
+            started_at=stale_at,
+        )
+        Task.objects.filter(
+            id__in=[
+                active_parent.id,
+                dispatchable.id,
+                late_success_parent.id,
+                late_failure_parent.id,
+                unresolved_parent.id,
+            ]
+        ).update(updated_at=stale_at)
+        for parent, node_status in (
+            (late_success_parent, NodeTask.Status.SUCCESS),
+            (late_failure_parent, NodeTask.Status.FAILED),
+            (unresolved_parent, NodeTask.Status.TIMEOUT),
+        ):
+            NodeTask.objects.create(
+                organization=self.org,
+                requesting_organization_id=self.org.id,
+                node=self.agent,
+                parent_task=parent,
+                correlation_type="protection.backup_config",
+                kind="repo.initialize",
+                status=node_status,
+                watchdog_deadline_at=timezone.now(),
+            )
         NodeTask.objects.create(
             organization=self.org,
             requesting_organization_id=self.org.id,
@@ -1073,8 +1205,11 @@ class ProtectionBackupConfigApiTests(TestCase):
         result = reconcile_backup_config_provision_tasks(limit=10, stale_seconds=30)
 
         self.assertEqual(result["active_agent_tasks"], 1)
-        self.assertEqual(result["dispatch_attempted"], 1)
-        queue_task.assert_called_once_with(task_id=dispatchable.id)
+        self.assertEqual(result["dispatch_attempted"], 3)
+        self.assertEqual(
+            [call.kwargs["task_id"] for call in queue_task.call_args_list],
+            [dispatchable.id, late_success_parent.id, late_failure_parent.id],
+        )
 
     def test_upgrade_recovery_candidates_exclude_unupgraded_agents(self):
         from apps.protection.services.backup_config_provision import (
@@ -1226,7 +1361,7 @@ class ProtectionBackupConfigApiTests(TestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(config.status, BackupConfig.Status.ACTIVE)
         self.assertEqual(task.status, Task.Status.SUCCESS)
-        run_agent_task_sync.assert_called_once()
+        run_agent_task_sync.assert_not_called()
 
     @mock.patch(
         "apps.protection.services.backup_config._advance_pipeline",
@@ -1270,9 +1405,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             Repository.objects.filter(pk=nas_repo.id).update(
                 status=Repository.Status.REMOVING
             )
-            return self._successful_agent_task()
+            return self._dispatch_pending_agent_task(**_kwargs)
 
-        run_agent_task_sync.side_effect = complete_after_removal
         payload = self._payload(name="Removing Direct NAS config")
         payload["repository_id"] = nas_repo.id
 
@@ -1285,7 +1419,8 @@ class ProtectionBackupConfigApiTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         config, task, result = self._run_latest_provision(
-            config_name="Removing Direct NAS config"
+            config_name="Removing Direct NAS config",
+            async_dispatch=complete_after_removal,
         )
         self.assertEqual(result["status"], "failed")
         self.assertEqual(config.status, BackupConfig.Status.PROVISION_FAILED)
@@ -1392,11 +1527,13 @@ class ProtectionBackupConfigApiTests(TestCase):
 
         self.assertEqual(create.status_code, status.HTTP_202_ACCEPTED, create.content)
         self._run_latest_provision(config_name=create.data["name"])
-        call = run_agent_task_sync.call_args.kwargs
-        self.assertEqual(call["node_id"], proxy.id)
-        self.assertEqual(call["kind"], "repo.initialize")
+        run_agent_task_sync.assert_not_called()
+        task = Task.objects.get(
+            task_uuid=BackupConfig.objects.get(id=create.data["id"]).provisioning_task_uuid
+        )
+        node_task = NodeTask.objects.get(parent_task=task, kind="repo.initialize")
         self.assertEqual(
-            call["payload"]["repository"]["subdir"], f"hp-repos/agent-{proxy.id}"
+            node_task.payload["repository"]["subdir"], f"hp-repos/agent-{proxy.id}"
         )
         enqueue_usage.assert_called_once()
 
@@ -1426,8 +1563,8 @@ class ProtectionBackupConfigApiTests(TestCase):
         config = BackupConfig.objects.get(id=create.data["id"])
         task = Task.objects.get(task_uuid=config.provisioning_task_uuid)
 
-        def timeout_after_dispatch(**kwargs):
-            NodeTask.objects.create(
+        def dispatch_async(**kwargs):
+            node_task = NodeTask.objects.create(
                 organization=self.org,
                 requesting_organization_id=self.org.id,
                 node=proxy,
@@ -1439,10 +1576,13 @@ class ProtectionBackupConfigApiTests(TestCase):
                 watchdog_deadline_at=timezone.now() + timedelta(minutes=5),
                 payload=kwargs["payload"],
             )
-            raise TimeoutError("Controller wait expired")
+            return SimpleNamespace(task=node_task, task_id=str(node_task.id))
 
-        run_agent_task_sync.side_effect = timeout_after_dispatch
-        first = run_backup_config_provision_task(task_id=task.id)
+        with mock.patch(
+            "apps.protection.services.backup_config.run_agent_task_async",
+            side_effect=dispatch_async,
+        ):
+            first = run_backup_config_provision_task(task_id=task.id)
 
         task.refresh_from_db()
         config.refresh_from_db()
@@ -1453,7 +1593,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             repository=repository,
             owner_node_id=proxy.id,
         )
-        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.INITIALIZING)
+        run_agent_task_sync.assert_not_called()
 
         node_task = NodeTask.objects.get(parent_task=task)
         node_task.status = NodeTask.Status.SUCCESS
@@ -1524,7 +1665,10 @@ class ProtectionBackupConfigApiTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
         config, task, result = self._run_latest_provision(
-            config_name="Direct NAS conflict"
+            config_name="Direct NAS conflict",
+            node_status=NodeTask.Status.FAILED,
+            node_result={"error_code": REPOSITORY_ALREADY_EXISTS_CODE},
+            node_error="repository already exists",
         )
         self.assertEqual(result["status"], "failed")
         self.assertEqual(config.status, BackupConfig.Status.PROVISION_FAILED)
@@ -1534,10 +1678,7 @@ class ProtectionBackupConfigApiTests(TestCase):
         )
         claim = RepositoryLocationClaim.objects.get(repository=nas_repo)
         self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
-        self.assertEqual(
-            [call.kwargs["kind"] for call in run_agent_task_sync.call_args_list],
-            ["repo.initialize"],
-        )
+        run_agent_task_sync.assert_not_called()
 
     @mock.patch(
         "apps.storage.services.internal.repository_usage.enqueue_repository_usage_refresh"
@@ -1548,16 +1689,7 @@ class ProtectionBackupConfigApiTests(TestCase):
         run_agent_task_sync,
         _enqueue_usage,
     ):
-        run_agent_task_sync.side_effect = [
-            SimpleNamespace(
-                task=SimpleNamespace(
-                    status="failed",
-                    last_error="repository already exists",
-                ),
-                result={"error_code": REPOSITORY_ALREADY_EXISTS_CODE},
-            ),
-            self._successful_agent_task(),
-        ]
+        run_agent_task_sync.return_value = self._successful_agent_task()
         nas_repo = self._direct_nas_repository()
         repository_subdir = f"hp-repos/agent-{self.agent.id}"
         reserve_direct_nas_location(
@@ -1581,7 +1713,12 @@ class ProtectionBackupConfigApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
-        self._run_latest_provision(config_name="Direct NAS interrupted init")
+        self._run_latest_provision(
+            config_name="Direct NAS interrupted init",
+            node_status=NodeTask.Status.FAILED,
+            node_result={"error_code": REPOSITORY_ALREADY_EXISTS_CODE},
+            node_error="repository already exists",
+        )
         claim = RepositoryLocationClaim.objects.get(repository=nas_repo)
         self.assertEqual(claim.state, RepositoryLocationClaim.State.OWNED)
         self.assertTrue(
@@ -1592,7 +1729,7 @@ class ProtectionBackupConfigApiTests(TestCase):
         )
         self.assertEqual(
             [call.kwargs["kind"] for call in run_agent_task_sync.call_args_list],
-            ["repo.initialize", "repo.status"],
+            ["repo.status"],
         )
 
     @mock.patch(
@@ -1660,9 +1797,7 @@ class ProtectionBackupConfigApiTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
         self._run_latest_provision(config_name="Reused Direct NAS")
-        self.assertEqual(
-            run_agent_task_sync.call_args.kwargs["kind"], "repo.initialize"
-        )
+        run_agent_task_sync.assert_not_called()
         claim = RepositoryLocationClaim.objects.get(
             repository=nas_repo,
             owner_node_id=self.agent.id,

@@ -415,6 +415,19 @@ def trigger_task_result_followup(*, node_task_id) -> None:
     except Exception:
         logger.exception("repository result follow-up queue failed task_id=%s", task.id)
     try:
+        if task.correlation_type == "protection.backup_config":
+            from apps.protection.services.backup_config_provision import (
+                queue_backup_config_provision_task,
+            )
+
+            if task.parent_task_id:
+                queue_backup_config_provision_task(task_id=task.parent_task_id)
+    except Exception:
+        logger.exception(
+            "backup config provision result follow-up queue failed task_id=%s",
+            task.id,
+        )
+    try:
         from apps.protection.services.backup_orchestrator import queue_backup_result_projection
 
         if queue_backup_result_projection(node_task=task):

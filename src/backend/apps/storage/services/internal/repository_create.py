@@ -48,6 +48,11 @@ from apps.storage.services.internal.repository_errors import (
 from apps.storage.services.internal.repository_execution_lock import (
     repository_execution_lock,
 )
+from apps.storage.services.internal.repository_agent_operation import (
+    RepositoryCreateAgentTaskResult,
+    RepositoryAgentOperationStateUnknown,
+    repository_create_has_durable_agent_task,
+)
 from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
     check_s3_repository,
@@ -74,12 +79,23 @@ from apps.storage.services.internal.repository_usage import (
 from apps.storage.services.internal.s3_validation_errors import (
     classify_s3_validation_error,
 )
-from apps.task.models import Task, TaskResource, TaskStep
-from apps.task.services.interface import complete_task, create_task, start_task
+from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
+from apps.task.services.interface import (
+    append_task_event,
+    complete_task,
+    create_task,
+    resume_waiting_task,
+    start_task,
+)
 
 logger = logging.getLogger(__name__)
 
-ACTIVE_TASK_STATUSES = (Task.Status.PENDING, Task.Status.RUNNING)
+ACTIVE_TASK_STATUSES = (
+    Task.Status.PENDING,
+    Task.Status.WAITING,
+    Task.Status.BLOCKED,
+    Task.Status.RUNNING,
+)
 
 CREATE_STEPS = (
     "prepare_repository_create",
@@ -415,6 +431,12 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
     if started_now:
         start_task(task_uuid=task.task_uuid, organization_id=task.organization_id)
         task.refresh_from_db()
+    elif task.status in {Task.Status.WAITING, Task.Status.BLOCKED}:
+        resume_waiting_task(
+            task_uuid=task.task_uuid,
+            organization_id=task.organization_id,
+        )
+        task.refresh_from_db()
     elif task.status != Task.Status.RUNNING:
         return {"status": task.status, "idempotent": True}
 
@@ -478,7 +500,9 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
                 if repository.repo_type in {
                     Repository.Type.NAS,
                     Repository.Type.PROXY_FS,
-                }:
+                } and not repository_create_has_durable_agent_task(
+                    repository_task=repository_task
+                ):
                     preflight_bound_proxy(repository=repository)
             _set_create_step(
                 task, "verify_repository_owner", TaskStep.Status.SUCCESS, 35
@@ -513,7 +537,14 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
                             state=RepositoryLocationClaim.State.RESIDUAL
                         ).exists()
                     ),
+                    repository_task=repository_task,
                 )
+            if isinstance(initialization_outcome, RepositoryCreateAgentTaskResult):
+                if initialization_outcome.waiting or initialization_outcome.state_unknown:
+                    return _mark_create_waiting(
+                        repository_task,
+                        initialization_outcome,
+                    )
             physical_initialize_done = True
             if (
                 repository_task.operation_type
@@ -546,6 +577,16 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
             task, "finalize_repository_create", TaskStep.Status.RUNNING, 90
         )
         return _complete_create_success(repository_task)
+    except RepositoryAgentOperationStateUnknown as exc:
+        return _mark_create_waiting(
+            repository_task,
+            RepositoryCreateAgentTaskResult(
+                waiting=False,
+                state_unknown=True,
+                node_task_id=repository_task.remote_task_id,
+                result={"error_code": "REMOTE_RESULT_UNKNOWN", "detail": str(exc)},
+            ),
+        )
     except RepositoryAlreadyExistsError as exc:
         message = _safe_error_message(repository, str(exc))
         # Existing physical state may belong to an interrupted attempt or an
@@ -868,6 +909,75 @@ def _initialize_step_complete(task: Task) -> bool:
     return False
 
 
+@transaction.atomic
+def _mark_create_waiting(
+    repository_task: RepositoryTask,
+    result: RepositoryCreateAgentTaskResult,
+) -> dict[str, Any]:
+    """Park the product task without releasing its physical target lease."""
+
+    task = Task.objects.select_for_update().get(pk=repository_task.task_id)
+    # A terminal Agent callback can win the race with the worker that observed
+    # the pending/unknown result.  Never regress that authoritative terminal
+    # state back to WAITING or BLOCKED.
+    if task.status in {
+        Task.Status.SUCCESS,
+        Task.Status.FAILED,
+        Task.Status.CANCELLED,
+        Task.Status.TIMEOUT,
+    }:
+        return {
+            "status": task.status,
+            "repository_task_id": repository_task.id,
+            "remote_task_id": str(result.node_task_id or ""),
+            "idempotent": True,
+        }
+    state_unknown = bool(result.state_unknown)
+    status = Task.Status.BLOCKED if state_unknown else Task.Status.WAITING
+    error_code = "REMOTE_RESULT_UNKNOWN" if state_unknown else "AGENT_TASK_PENDING"
+    message = (
+        "Agent repository initialization exceeded its execution watchdog; the "
+        "remote state is unknown and duplicate initialization is blocked."
+        if state_unknown
+        else "Repository initialization is waiting for the Agent to return a result."
+    )
+    task.status = status
+    task.error_code = error_code
+    task.error_message = message
+    task.save(
+        update_fields=[
+            "status",
+            "error_code",
+            "error_message",
+            "updated_at",
+        ]
+    )
+    TaskStep.objects.filter(
+        task_id=task.id,
+        step_name="initialize_repository",
+        status=TaskStep.Status.RUNNING,
+    ).update(status=TaskStep.Status.WARNING)
+    append_task_event(
+        task=task,
+        level=TaskEvent.Level.WARN,
+        message=(
+            "Repository initialization is waiting for the Agent"
+            if not state_unknown
+            else "Repository initialization entered an unknown remote state"
+        ),
+        metadata={
+            "error_code": error_code,
+            "remote_task_id": str(result.node_task_id or ""),
+        },
+    )
+    return {
+        "status": status,
+        "repository_task_id": repository_task.id,
+        "remote_task_id": str(result.node_task_id or ""),
+        "error_code": error_code,
+    }
+
+
 def _complete_create_success(repository_task: RepositoryTask) -> dict[str, Any]:
     task = repository_task.task
     with transaction.atomic():
@@ -945,11 +1055,22 @@ def _resolve_create_owner(
     )
 
 
-def _run_initialize(repository: Repository, *, recovery: bool = False):
+def _run_initialize(
+    repository: Repository,
+    *,
+    recovery: bool = False,
+    repository_task: RepositoryTask | None = None,
+):
     if repository.repo_type == Repository.Type.NAS:
-        return initialize_proxy_nas_repository(repository)
+        return initialize_proxy_nas_repository(
+            repository,
+            repository_task=repository_task,
+        )
     if repository.repo_type == Repository.Type.PROXY_FS:
-        return initialize_proxy_fs_repository(repository)
+        return initialize_proxy_fs_repository(
+            repository,
+            repository_task=repository_task,
+        )
     if repository.repo_type == Repository.Type.S3:
         initialize_s3_repository(repository, recovery=recovery)
         return

@@ -78,6 +78,20 @@ func TestUnescapeProcMount(t *testing.T) {
 	}
 }
 
+func TestMountPointInProcMountsMatchesDecodedTarget(t *testing.T) {
+	raw := []byte("192.168.10.35:/data /var/lib/hyperfilelens-agent/mounts/custom/nfs-192.168.10.35-data nfs rw,relatime 0 0\n")
+	if !mountPointInProcMounts(raw, "/var/lib/hyperfilelens-agent/mounts/custom/nfs-192.168.10.35-data") {
+		t.Fatal("expected mountpoint to be found from /proc/mounts")
+	}
+}
+
+func TestMountPointInProcMountsDoesNotMatchPrefix(t *testing.T) {
+	raw := []byte("192.168.10.35:/data /var/lib/hyperfilelens-agent/mounts/custom/nfs-192.168.10.350-data nfs rw,relatime 0 0\n")
+	if mountPointInProcMounts(raw, "/var/lib/hyperfilelens-agent/mounts/custom/nfs-192.168.10.35-data") {
+		t.Fatal("did not expect a prefix-only mountpoint match")
+	}
+}
+
 func TestIsBusyMountErrorDetectsCIFSError16(t *testing.T) {
 	res := process.Result{Stderr: "mount error(16): Device or resource busy"}
 	if !isBusyMountError(res, fmt.Errorf("exit 32")) {

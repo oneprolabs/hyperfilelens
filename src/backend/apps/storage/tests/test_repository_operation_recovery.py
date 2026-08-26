@@ -15,13 +15,19 @@ from apps.storage.services.internal.repository_cleanup import (
     create_repository_cleanup_task,
     run_repository_cleanup_task,
 )
+from apps.storage.services.internal.repository_create import (
+    enqueue_repository_create_task,
+)
 from apps.storage.services.internal.repository_location import (
     mark_repository_location_owned,
     mark_repository_location_ownership_verified,
     reserve_repository_location,
 )
 from apps.storage.services.internal.repository_agent_operation import (
+    RepositoryAgentOperationError,
+    RepositoryAgentOperationStateUnknown,
     queue_repository_agent_result_followup,
+    resolve_or_dispatch_repository_create_agent_task,
 )
 from apps.storage.services.internal.repository_operations import (
     create_repository_operation_task,
@@ -102,6 +108,54 @@ class RepositoryOperationRecoveryTests(TestCase):
             status=TaskStep.Status.RUNNING,
             progress=25,
         )
+
+    def test_sealed_delivery_timeout_is_a_retryable_failure_not_unknown_state(self):
+        self.repository.status = Repository.Status.CREATE_FAILED
+        self.repository.save(update_fields=["status", "updated_at"])
+        repository_task = enqueue_repository_create_task(
+            repository=self.repository,
+            dispatch=False,
+        )
+        start_task(
+            task_uuid=repository_task.task.task_uuid,
+            organization_id=self.org.id,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.node,
+            parent_task=repository_task.task,
+            correlation_type="repository_create",
+            correlation_id=str(repository_task.task.task_uuid),
+            kind="repo.initialize",
+            payload={
+                "repository_id": self.repository.id,
+                "operation_type": repository_task.operation_type,
+            },
+            status=NodeTask.Status.TIMEOUT,
+            result={
+                "diagnostic_error_code": "AGENT_ACK_TIMEOUT",
+                "delivery_timeout_sealed": True,
+            },
+            last_error="AGENT_ACK_TIMEOUT: Agent did not accept task.command",
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        with self.assertRaises(RepositoryAgentOperationError) as context:
+            resolve_or_dispatch_repository_create_agent_task(
+                repository_task=repository_task,
+                node=self.node,
+                payload={"repository_id": self.repository.id},
+                persisted_payload={"repository_id": self.repository.id},
+            )
+
+        self.assertEqual(context.exception.result["error_code"], "AGENT_ACK_TIMEOUT")
+        self.assertNotIsInstance(
+            context.exception,
+            RepositoryAgentOperationStateUnknown,
+        )
+        self.assertEqual(repository_task.remote_task_id, node_task.id)
+        self.assertEqual(node_task.status, NodeTask.Status.TIMEOUT)
 
     def _controller_maintenance_task(self) -> RepositoryTask:
         repository = Repository.objects.create(
@@ -290,11 +344,43 @@ class RepositoryOperationRecoveryTests(TestCase):
     @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
     def test_reconciler_queues_only_active_agent_operations(self, apply_async):
         active = self._maintenance_task()
+        late_repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="late-create-result",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATING,
+            health=Repository.Health.OFFLINE,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=self.node.id,
+            config={"proxy_node_dir": "/data/late-create-result"},
+        )
+        late_create = enqueue_repository_create_task(
+            repository=late_repository,
+            dispatch=False,
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            parent_task=late_create.task,
+            correlation_type="repository_create",
+            correlation_id=str(late_create.task.task_uuid),
+            kind="repo.initialize",
+            status=NodeTask.Status.SUCCESS,
+            watchdog_deadline_at=timezone.now(),
+        )
+        # Simulate a control-plane interruption after the Agent task committed
+        # but before RepositoryTask.remote_task_id was persisted.
+        Task.objects.filter(id=late_create.task_id).update(status=Task.Status.BLOCKED)
 
         result = reconcile_repository_operations.run(limit=10)
 
-        self.assertEqual(result["repository_task_ids"], [active.id])
-        apply_async.assert_called_once_with(kwargs={"repository_task_id": active.id})
+        self.assertCountEqual(
+            result["repository_task_ids"],
+            [active.id, late_create.id],
+        )
+        self.assertEqual(apply_async.call_count, 2)
+        apply_async.assert_any_call(kwargs={"repository_task_id": active.id})
+        apply_async.assert_any_call(kwargs={"repository_task_id": late_create.id})
 
     def test_fresh_controller_heartbeat_keeps_parent_running(self):
         repository_task = self._controller_maintenance_task()

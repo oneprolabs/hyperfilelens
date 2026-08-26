@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"log/slog"
 
@@ -22,21 +23,29 @@ func isMounted(mountPoint string) bool {
 	if mountPoint == "" {
 		return false
 	}
-	res, err := process.Run(context.Background(), "mountpoint", []string{"-q", mountPoint}, nil, "")
-	if err == nil && res.ExitCode == 0 {
-		return true
-	}
-	data, readErr := os.ReadFile("/proc/mounts")
-	if readErr != nil {
-		return false
-	}
 	target := filepath.Clean(mountPoint)
+	// Reading /proc/mounts is a non-blocking metadata check for Linux mounts.
+	// Do it before invoking mountpoint(1): mountpoint itself can enter an
+	// uninterruptible kernel wait for a stale NFS mount. Repeating that check
+	// from health probes can otherwise leave one D-state child behind every
+	// probe interval and eventually starve the Agent task executor.
+	if data, err := os.ReadFile("/proc/mounts"); err == nil {
+		return mountPointInProcMounts(data, target)
+	}
+
+	// Keep a bounded fallback for Unix systems where /proc is unavailable.
+	// The timeout cannot interrupt a kernel D-state process, so callers must
+	// treat a failed fallback as an unknown mount state and avoid retry storms.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	res, err := process.Run(ctx, "mountpoint", []string{"-q", mountPoint}, nil, "")
+	return err == nil && res.ExitCode == 0
+}
+
+func mountPointInProcMounts(data []byte, target string) bool {
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		if filepath.Clean(fields[1]) == target {
+		if len(fields) >= 2 && filepath.Clean(unescapeProcMount(fields[1])) == target {
 			return true
 		}
 	}

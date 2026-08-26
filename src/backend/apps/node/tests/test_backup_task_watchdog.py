@@ -93,6 +93,23 @@ class BackupTaskWatchdogTests(SimpleTestCase):
             ),
         )
 
+    def test_repository_initialization_uses_dedicated_watchdog(self):
+        started_at = timezone.now()
+
+        deadline = _initial_watchdog_deadline(
+            correlation_type="repository_create",
+            kind="repo.initialize",
+            from_time=started_at,
+        )
+
+        self.assertEqual(
+            deadline,
+            started_at
+            + timezone.timedelta(
+                seconds=node_conf.REPOSITORY_INITIALIZE_WATCHDOG_SECONDS
+            ),
+        )
+
     def test_snapshot_delete_uses_long_remote_watchdog(self):
         started_at = timezone.now()
 

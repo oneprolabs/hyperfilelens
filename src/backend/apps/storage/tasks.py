@@ -8,11 +8,13 @@ from celery import shared_task
 from celery.signals import worker_ready
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
+from django.db.models import CharField, Exists, OuterRef, Q
+from django.db.models.functions import Cast
 from django.utils import timezone
 
 from common.observability.celery_context import logged_celery_task
 
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.storage.repositories.models import (
     Repository,
     RepositoryExecutionTarget,
@@ -382,9 +384,39 @@ def schedule_repository_maintenance():
 )
 def reconcile_repository_operations(*, limit: int = 100):
     """Requeue active repository operations for one idempotent advance."""
+    active_agent_task = NodeTask.objects.filter(
+        parent_task_id=OuterRef("task_id"),
+        status__in=[NodeTask.Status.PENDING, NodeTask.Status.RUNNING],
+    )
+    resolved_create_agent_task = NodeTask.objects.filter(
+        correlation_type="repository_create",
+        kind="repo.initialize",
+        status__in=[
+            NodeTask.Status.SUCCESS,
+            NodeTask.Status.FAILED,
+            NodeTask.Status.CANCELED,
+        ],
+    ).filter(
+        Q(pk=OuterRef("remote_task_id"))
+        | Q(
+            correlation_id=Cast(
+                OuterRef("task__task_uuid"),
+                output_field=CharField(),
+            )
+        )
+    )
     repository_task_ids = list(
-        RepositoryTask.objects.filter(
-            task__status__in=[Task.Status.PENDING, Task.Status.RUNNING],
+        RepositoryTask.objects.annotate(
+            has_active_agent=Exists(active_agent_task),
+            has_resolved_create_agent=Exists(resolved_create_agent_task),
+        )
+        .filter(
+            Q(task__status__in=[Task.Status.PENDING, Task.Status.RUNNING])
+            | Q(task__status=Task.Status.WAITING, has_active_agent=False)
+            | Q(
+                task__status=Task.Status.BLOCKED,
+                has_resolved_create_agent=True,
+            ),
         )
         .order_by("task__updated_at", "id")
         .values_list("id", flat=True)[: max(1, int(limit))]

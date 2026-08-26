@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import ntpath
 import posixpath
+from types import SimpleNamespace
 from typing import Any
 
 from django.core.exceptions import ValidationError
@@ -10,7 +11,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.capabilities import (
     REPOSITORY_OWNERSHIP_CAPABILITY,
@@ -18,7 +19,7 @@ from apps.node.services.capabilities import (
 )
 from apps.node.services.internal.node_registry import node_is_available_for_work
 from apps.node.services.internal.agent_log import log_agent_dispatch, log_agent_outcome
-from apps.node.services.interface import run_agent_task_sync
+from apps.node.services.interface import run_agent_task_async, run_agent_task_sync
 from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
@@ -819,11 +820,23 @@ def _initialize_direct_nas_repository(
                 node_id=node.id,
                 repository_subdir=repository_subdir,
             )
+            # A location that this attempt just reserved and marked
+            # INITIALIZING is not recoverable merely because a later worker
+            # observes it again.  Only a pre-existing authoritative/residual
+            # claim may enter the ownership-verification recovery path;
+            # otherwise an unrelated repository-exists result would trigger a
+            # second synchronous probe and could adopt unknown data.
+            claim_preceded_task = (
+                parent_task is None
+                or claim.created_at <= parent_task.created_at
+            )
             may_recover_existing_location = claim.state in {
-                RepositoryLocationClaim.State.INITIALIZING,
                 RepositoryLocationClaim.State.OWNED,
                 RepositoryLocationClaim.State.RESIDUAL,
-            }
+            } or (
+                claim.state == RepositoryLocationClaim.State.INITIALIZING
+                and claim_preceded_task
+            )
             # Legacy adoption is reserved for locations that were already
             # authoritative before the ownership-marker rollout. A newly
             # reserved/failed location must present this Repository's marker;
@@ -869,24 +882,127 @@ def _initialize_direct_nas_repository(
         repository_id=repository_id,
     )
     try:
-        outcome = run_agent_task_sync(
-            organization_id=organization_id,
-            node_id=node.id,
-            kind=task_kind,
-            payload={
-                "repository": payload,
-                "allow_ownership_adoption": allow_ownership_adoption,
-                # Repository initialization and explicit retry are write-intent
-                # paths. Revalidate a stale managed mount instead of silently
-                # reusing a read-only mount.
-                "repair_mount": True,
-            },
-            correlation_type="protection.backup_config",
-            correlation_id=correlation_id,
-            parent_task=parent_task,
-            wait_timeout_seconds=180,
-        )
-    except Exception:
+        delivery_payload = {
+            "repository": payload,
+            "allow_ownership_adoption": allow_ownership_adoption,
+            # Repository initialization and explicit retry are write-intent
+            # paths. Revalidate a stale managed mount instead of silently
+            # reusing a read-only mount.
+            "repair_mount": True,
+        }
+        if parent_task is not None and task_kind == "repo.initialize":
+            node_tasks = NodeTask.objects.filter(
+                parent_task=parent_task,
+                organization_id=organization_id,
+                node_id=node.id,
+                kind=task_kind,
+                correlation_type="protection.backup_config",
+                correlation_id=correlation_id,
+            )
+            # A retry starts a new product attempt. Never reuse a terminal
+            # child from the previous attempt as the current dispatch result.
+            if parent_task.started_at is not None:
+                node_tasks = node_tasks.filter(
+                    created_at__gte=parent_task.started_at
+                )
+            latest = node_tasks.order_by("-created_at", "-id").first()
+            if latest is None:
+                handle = run_agent_task_async(
+                    organization_id=organization_id,
+                    node_id=node.id,
+                    kind=task_kind,
+                    payload=delivery_payload,
+                    persisted_payload={
+                        "repository_id": repository_id,
+                        "source_type": source_type,
+                        "source_ref_id": source_ref_id,
+                        "backup_config_id": parent_task.request_payload.get(
+                            "backup_config_id"
+                        )
+                        if isinstance(parent_task.request_payload, dict)
+                        else None,
+                    },
+                    correlation_type="protection.backup_config",
+                    correlation_id=correlation_id,
+                    parent_task=parent_task,
+                )
+                raise AppError(
+                    code="AGENT_TASK_PENDING",
+                    status=202,
+                    retryable=True,
+                    title="Waiting for Agent",
+                    diagnostic=(
+                        "Repository validation was dispatched to the Agent and "
+                        "is waiting for a terminal result."
+                    ),
+                    meta={"node_task_id": str(handle.task.id)},
+                )
+            if latest.status in {
+                NodeTask.Status.PENDING,
+                NodeTask.Status.RUNNING,
+            }:
+                raise AppError(
+                    code="AGENT_TASK_PENDING",
+                    status=202,
+                    retryable=True,
+                    title="Waiting for Agent",
+                    diagnostic=(
+                        "Repository validation is still running on the Agent."
+                    ),
+                    meta={"node_task_id": str(latest.id)},
+                )
+            if latest.status == NodeTask.Status.TIMEOUT:
+                latest_result = dict(latest.result or {})
+                if latest_result.get("delivery_timeout_sealed"):
+                    error_code = str(
+                        latest_result.get("diagnostic_error_code")
+                        or "AGENT_ACK_TIMEOUT"
+                    )
+                    raise AppError(
+                        code=error_code,
+                        status=503,
+                        retryable=True,
+                        title="Agent did not accept the task",
+                        diagnostic=(
+                            latest.last_error
+                            or "The Agent did not accept repository validation."
+                        ),
+                        meta={"node_task_id": str(latest.id)},
+                    )
+                raise AppError(
+                    code="REMOTE_RESULT_UNKNOWN",
+                    status=409,
+                    retryable=True,
+                    title="Agent result is unknown",
+                    diagnostic=(
+                        "The Agent initialization watchdog expired before a terminal "
+                        "result was confirmed. The repository location is retained; "
+                        "wait for a late result or perform an explicit recovery before retrying."
+                    ),
+                    meta={"node_task_id": str(latest.id)},
+                )
+            outcome = SimpleNamespace(
+                task=latest,
+                result=dict(latest.result or {}),
+                timed_out=latest.status == NodeTask.Status.TIMEOUT,
+            )
+        else:
+            outcome = run_agent_task_sync(
+                organization_id=organization_id,
+                node_id=node.id,
+                kind=task_kind,
+                payload=delivery_payload,
+                correlation_type="protection.backup_config",
+                correlation_id=correlation_id,
+                parent_task=parent_task,
+                wait_timeout_seconds=180,
+            )
+    except Exception as exc:
+        if isinstance(exc, AppError) and exc.code in {
+            "AGENT_TASK_PENDING",
+            "REMOTE_RESULT_UNKNOWN",
+        }:
+            raise
         if not previously_initialized or location_requires_verification:
             mark_repository_location_initialization_failed(
                 repository,
