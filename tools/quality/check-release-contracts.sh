@@ -430,6 +430,14 @@ grep -F 'CODEGRAPH_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}' \
 
 grep -F '# SourceLens v0.47.6 requires no HFL functional patches.' \
 	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
+[[ -x "${ROOT}/tools/sourcelens/update-runtime-contract.sh" ]]
+[[ -x "${ROOT}/tools/quality/test-sourcelens-runtime-contract.sh" ]]
+grep -F 'sourcelens_verify_runtime_contract "${SOURCELENS_SOURCE_CACHE}"' \
+	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
+for workflow in pr_checks.yml release_pipeline.yml enterprise_saas_upgrade.yml; do
+	grep -F './tools/sourcelens/update-runtime-contract.sh --check' \
+		"${ROOT}/.github/workflows/${workflow}" >/dev/null
+done
 [[ -f "${ROOT}/tools/sourcelens/patches/retired/lensnode-tls-v0.4.0.patch" ]]
 if [[ -e "${ROOT}/deploy/installer/sourcelens/lensnode-tls.patch" \
 	|| -e "${ROOT}/tools/sourcelens/lensnode-patch.sh" ]]; then
