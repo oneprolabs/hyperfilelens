@@ -1,11 +1,11 @@
 ---
 title: 安装 Community
-description: 使用当前公开安装方式部署 HyperFileLens Community v0.2.8。
+description: 使用公开在线安装方式部署最新 HyperFileLens Community Tag。
 ---
 
 # 安装 Community
 
-如果希望在自己的环境中运行 HyperFileLens，请安装 Community。当前公开版本为 `v0.2.8`，使用下面的在线安装方式。
+如果希望在自己的环境中运行 HyperFileLens，请使用下面的在线安装方式部署最新 Community Tag。
 
 ## 安装前准备
 
@@ -14,6 +14,9 @@ description: 使用当前公开安装方式部署 HyperFileLens Community v0.2.8
 - 能够访问 Gitee、镜像仓库和产品运行所需的网络地址。
 - 具备 `sudo` 权限，并为 `/opt/hyperfilelens` 和容器数据预留足够空间。
 
+安装程序会通过 Ubuntu 软件源补齐 Python、rsync、tar、OpenSSL 和 CA
+证书等少量运行所需工具；Docker Engine 和 Compose V2 需要预先安装。
+
 详细要求请查看[系统要求](/zh/docs/deployment/requirements)。
 
 ## 执行安装
@@ -21,11 +24,23 @@ description: 使用当前公开安装方式部署 HyperFileLens Community v0.2.8
 在准备好的主机上运行：
 
 ```bash
-curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/v0.2.8/deploy/online/install.sh \
-  | sudo bash -s -- v0.2.8 --region cn --download-source gitee --yes
+curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh \
+  | sudo bash -s -- --mirror cn
 ```
 
-该命令从 Gitee 获取 `v0.2.8` 安装内容，并使用中国大陆镜像来源部署 Community。不要把版本替换为未发布分支或浮动标签。
+安装程序从 Gitee 读取最新的语义化版本 Tag，并使用阿里云公共镜像。执行安装或升级前，会显示实际版本、下载来源和镜像仓库并等待确认；正式修改产品安装前还会校验该版本的镜像、资产和代码提交是否完整一致。
+
+如需安装一个已经发布的固定版本，可显式指定：
+
+```bash
+curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh \
+  | sudo bash -s -- --mirror cn --tag vX.Y.Z
+```
+
+自动化场景可以额外传入 `--yes` 跳过确认；普通交互安装不建议使用。
+如果最新 Tag 不完整，或指定的 Tag 不存在、源码或镜像不可用，安装程序会列出最多
+10 个最近可用的 Tag，并提示正确的 `--mirror ... --tag vX.Y.Z` 用法。程序不会自动降级，
+由用户明确选择需要重试的版本。
 
 ## 确认安装结果
 

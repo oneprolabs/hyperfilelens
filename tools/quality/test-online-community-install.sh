@@ -12,14 +12,24 @@ bash -n "${online}/install.sh"
 PYTHONPYCACHEPREFIX="${tmp}/pycache" python3 -m py_compile "${online}/prepare.py"
 
 help_output="$("${online}/install.sh" --help)"
-grep -Fq -- '--download-source auto|github|gitee' <<<"${help_output}"
+grep -Fq -- '--mirror cn|global' <<<"${help_output}"
+grep -Fq -- '--tag vX.Y.Z' <<<"${help_output}"
 grep -Fq -- '--yes' <<<"${help_output}"
-grep -Fq 'https://codeload.github.com/oneprolabs/hyperfilelens/tar.gz/refs/tags/${TAG}' \
+if grep -Eq -- '--region|--download-source|install\.sh vX\.Y\.Z' <<<"${help_output}"; then
+	printf 'ERROR: online installer exposes a retired public argument\n' >&2
+	exit 1
+fi
+grep -Fq 'https://codeload.github.com/oneprolabs/hyperfilelens/tar.gz/${RELEASE_COMMIT}' \
 	"${online}/install.sh"
-grep -Fq 'https://gitee.com/oneprolabs/hyperfilelens/repository/archive/${TAG}.tar.gz' \
+grep -Fq 'https://gitee.com/oneprolabs/hyperfilelens/repository/archive/${RELEASE_COMMIT}.tar.gz' \
 	"${online}/install.sh"
-grep -Fq 'sources=(gitee github)' "${online}/install.sh"
-grep -Fq 'sources=(github gitee)' "${online}/install.sh"
+grep -Fq 'api.github.com/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1' \
+	"${online}/install.sh"
+grep -Fq 'gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1' \
+	"${online}/install.sh"
+grep -Fq 'recent fallback tags:' "${online}/install.sh"
+grep -Fq 'prepared Community image revision does not match the published release' \
+	"${online}/install.sh"
 grep -Fq -- '--yes                   Non-interactive compatibility flag' \
 	"${ROOT}/deploy/installer/install.sh"
 
@@ -31,6 +41,10 @@ grep -Fq 'tag_suffix: -ee' "${workflow}"
 grep -Fq 'hyperfilelens-agent-assets:${{ needs.prepare.outputs.version }}' "${workflow}"
 grep -Fq 'hyperfilelens-gateway-assets:${{ needs.prepare.outputs.version }}' "${workflow}"
 grep -Fq 'hyperfilelens-language-assets:${{ needs.prepare.outputs.version }}' "${workflow}"
+if grep -Eq 'publish-community-channel|community-channel|git push origin HEAD:main' "${workflow}"; then
+	printf 'ERROR: SaaS workflow must not manage a separate Community channel branch\n' >&2
+	exit 1
+fi
 grep -Fq 'SOURCELENS_DISTRIBUTION_TAG_OVERRIDE="${version}"' \
 	"${ROOT}/release/ci/assemble-saas-candidate.sh"
 grep -Fq 'SOURCELENS_DISTRIBUTION_TAG_OVERRIDE: ${{ needs.prepare.outputs.version }}' \
@@ -142,12 +156,82 @@ PY
 fake_bin="${tmp}/bin"
 candidate="${tmp}/hyperfilelens-1.2.3-online"
 mkdir -p "${fake_bin}"
+tag_fixture="${tmp}/tags.json"
+tag_page_one_fixture="${tmp}/tags-page-1.json"
+tag_page_two_fixture="${tmp}/tags-page-2.json"
+python3 - "${tag_fixture}" <<'PY'
+import json
+import pathlib
+import sys
+
+tags = [
+    {
+        "name": f"v1.2.{version}",
+        "commit": {"sha": f"{version:x}" * 40},
+    }
+    for version in range(1, 13)
+]
+pathlib.Path(sys.argv[1]).write_text(json.dumps(tags), encoding="utf-8")
+PY
+python3 - "${tag_page_one_fixture}" "${tag_page_two_fixture}" <<'PY'
+import json
+import pathlib
+import sys
+
+first = [
+    {"name": f"v1.0.{version}", "commit": {"sha": f"{version:040x}"}}
+    for version in range(1, 101)
+]
+second = [{"name": "v2.0.0", "commit": {"sha": "f" * 40}}]
+pathlib.Path(sys.argv[1]).write_text(json.dumps(first), encoding="utf-8")
+pathlib.Path(sys.argv[2]).write_text(json.dumps(second), encoding="utf-8")
+PY
+cat >"${fake_bin}/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+url=""
+[[ -z "${HFL_TEST_CURL_MARKER:-}" ]] || touch "${HFL_TEST_CURL_MARKER}"
+while (($#)); do
+	case "$1" in
+	-o)
+		output=${2:-}
+		shift 2
+		;;
+	http://* | https://*)
+		url=$1
+		shift
+		;;
+	*) shift ;;
+	esac
+done
+if [[ "${url}" == *'/tags?'* && -n "${output}" ]]; then
+	page=1
+	if [[ "${url}" =~ [\?\&]page=([0-9]+) ]]; then
+		page=${BASH_REMATCH[1]}
+	fi
+	page_fixture_name="HFL_TEST_TAG_FIXTURE_PAGE_${page}"
+	page_fixture=${!page_fixture_name:-}
+	if [[ -n "${page_fixture}" ]]; then
+		cp "${page_fixture}" "${output}"
+	elif ((page == 1)); then
+		cp "${HFL_TEST_TAG_FIXTURE}" "${output}"
+	else
+		printf '[]\n' >"${output}"
+	fi
+	exit 0
+fi
+exit 22
+SH
 cat >"${fake_bin}/docker" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 digest="sha256:$(printf 'b%.0s' {1..64})"
 revision="$(printf 'c%.0s' {1..40})"
 case "${1:-} ${2:-}" in
+"info " | "compose version")
+	exit 0
+	;;
 "pull --platform")
 	exit 0
 	;;
@@ -217,7 +301,87 @@ case "${1:-} ${2:-}" in
 	;;
 esac
 SH
-chmod 755 "${fake_bin}/docker"
+chmod 755 "${fake_bin}/curl" "${fake_bin}/docker"
+
+enterprise_root="${tmp}/enterprise-install"
+mkdir -p "${enterprise_root}"
+printf 'HFL_EDITION=enterprise\n' >"${enterprise_root}/.env"
+printf '{"edition":"enterprise"}\n' >"${enterprise_root}/MANIFEST.json"
+enterprise_installer="${tmp}/enterprise-rejection-install.sh"
+python3 - "${online}/install.sh" "${enterprise_installer}" "${enterprise_root}" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+source = source.replace(
+    'INSTALL_ROOT="/opt/hyperfilelens"',
+    f'INSTALL_ROOT="{sys.argv[3]}"',
+    1,
+)
+pathlib.Path(sys.argv[2]).write_text(source, encoding="utf-8")
+PY
+chmod 755 "${enterprise_installer}"
+enterprise_log="${tmp}/enterprise-rejection.log"
+curl_marker="${tmp}/enterprise-curl-called"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_CURL_MARKER="${curl_marker}" \
+	"${enterprise_installer}" --mirror global --yes >"${enterprise_log}" 2>&1; then
+	printf 'ERROR: Community installer accepted an Enterprise installation\n' >&2
+	exit 1
+fi
+grep -Fq 'this public installer upgrades Community only' "${enterprise_log}"
+[[ ! -e "${curl_marker}" ]] || {
+	printf 'ERROR: Community installer contacted the release source before rejecting Enterprise\n' >&2
+	exit 1
+}
+
+latest_log="${tmp}/latest-tag.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	"${online}/install.sh" --mirror global --yes >"${latest_log}" 2>&1; then
+	printf 'ERROR: fake online install unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'Selected tag: v1.2.12' "${latest_log}" || {
+	cat "${latest_log}" >&2
+	exit 1
+}
+grep -Fq 'recent fallback tags: v1.2.11, v1.2.10, v1.2.9, v1.2.8, v1.2.7, v1.2.6, v1.2.5, v1.2.4, v1.2.3, v1.2.2' \
+	"${latest_log}"
+grep -Fq 'recommended retry: --mirror global --tag v1.2.11' "${latest_log}"
+
+missing_log="${tmp}/missing-tag.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	"${online}/install.sh" --mirror global --tag v9.9.9 --yes \
+	>"${missing_log}" 2>&1; then
+	printf 'ERROR: missing online tag unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'Community tag v9.9.9 does not exist on GitHub' "${missing_log}"
+grep -Fq 'recent fallback tags: v1.2.12, v1.2.11, v1.2.10, v1.2.9, v1.2.8, v1.2.7, v1.2.6, v1.2.5, v1.2.4, v1.2.3' \
+	"${missing_log}"
+grep -Fq 'recommended retry: --mirror global --tag v1.2.12' "${missing_log}"
+
+pagination_log="${tmp}/pagination.log"
+if PATH="${fake_bin}:${PATH}" \
+	HFL_TEST_TAG_FIXTURE="${tag_page_one_fixture}" \
+	HFL_TEST_TAG_FIXTURE_PAGE_2="${tag_page_two_fixture}" \
+	"${online}/install.sh" --mirror global --yes >"${pagination_log}" 2>&1; then
+	printf 'ERROR: fake paginated online install unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'Selected tag: v2.0.0' "${pagination_log}" || {
+	cat "${pagination_log}" >&2
+	exit 1
+}
+
+repeated_page_log="${tmp}/repeated-page.log"
+if PATH="${fake_bin}:${PATH}" \
+	HFL_TEST_TAG_FIXTURE="${tag_page_one_fixture}" \
+	HFL_TEST_TAG_FIXTURE_PAGE_2="${tag_page_one_fixture}" \
+	"${online}/install.sh" --mirror global --yes >"${repeated_page_log}" 2>&1; then
+	printf 'ERROR: repeated tag page unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'repeated page 2' "${repeated_page_log}"
 
 PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 	python3 "${online}/prepare.py" \
