@@ -388,7 +388,7 @@ describe('New Chat Public Data Gateway warning', () => {
     wrapper.unmount()
   })
 
-  it('shows both supported analysis approaches and submits the selected one', async () => {
+  it('shows both supported analysis types and submits the selected one', async () => {
     mocks.createCopilotSession.mockResolvedValue({ id: 91 })
     const wrapper = await mountNewChat({ gatewayResponse: [publicGateway] })
 
