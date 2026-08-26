@@ -83,6 +83,8 @@ class TaskCommandAckTests(TestCase):
             ("protection.backup_config_reset", "snapshot.delete"),
             ("source.connection_probe", "nas.test"),
             ("storage.repository_health", "repo.status"),
+            ("repository_create", "repo.initialize"),
+            ("protection.backup_config", "repo.initialize"),
         ):
             with self.subTest(correlation_type=correlation_type, kind=kind):
                 task = deliver_agent_task(
@@ -97,7 +99,7 @@ class TaskCommandAckTests(TestCase):
                 self.assertIsNotNone(task.dispatched_at)
                 self.assertIsNone(task.accepted_at)
 
-        self.assertEqual(send_command.call_count, 4)
+        self.assertEqual(send_command.call_count, 6)
 
     @patch("apps.node.services.internal.task.redis_store.set_task_info")
     @patch("apps.node.services.internal.task._send_task_command")
@@ -254,6 +256,67 @@ class TaskCommandAckTests(TestCase):
             ),
         )
 
+    @patch("apps.node.services.internal.task.redis_store.set_task_info")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    def test_repository_initialize_alive_does_not_extend_absolute_deadline(
+        self, _push, _set_info
+    ):
+        accepted_at = timezone.now() - timezone.timedelta(seconds=10)
+        task = self.task(
+            kind="repo.initialize",
+            correlation_type="repository_create",
+            correlation_id="repository-task",
+            status=NodeTask.Status.RUNNING,
+            accepted_at=accepted_at,
+            watchdog_deadline_at=timezone.now() - timezone.timedelta(seconds=1),
+        )
+
+        renewed = record_task_progress(
+            task_id=task.id,
+            node_id=self.node.id,
+            progress={},
+            alive=True,
+        )
+
+        self.assertEqual(
+            renewed.watchdog_deadline_at,
+            accepted_at
+            + timezone.timedelta(
+                seconds=node_conf.REPOSITORY_INITIALIZE_WATCHDOG_SECONDS
+            ),
+        )
+
+    @patch("apps.node.services.internal.task.redis_store.set_task_info")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    def test_legacy_repository_initialize_uses_dispatch_start(
+        self, _push, _set_info
+    ):
+        dispatched_at = timezone.now() - timezone.timedelta(seconds=20)
+        task = self.task(
+            kind="repo.initialize",
+            correlation_type="repository_create",
+            correlation_id="legacy-repository-task",
+            status=NodeTask.Status.RUNNING,
+            dispatched_at=dispatched_at,
+            accepted_at=None,
+            last_progress_at=dispatched_at,
+            watchdog_deadline_at=timezone.now() - timezone.timedelta(seconds=1),
+        )
+
+        renewed = record_task_progress(
+            task_id=task.id,
+            node_id=self.node.id,
+            progress={"phase": "running"},
+        )
+
+        self.assertEqual(
+            renewed.watchdog_deadline_at,
+            dispatched_at
+            + timezone.timedelta(
+                seconds=node_conf.REPOSITORY_INITIALIZE_WATCHDOG_SECONDS
+            ),
+        )
+
     @patch("apps.node.services.internal.task._send_cancel_command")
     @patch(
         "apps.node.services.internal.task_offline_reconcile.sync_platform_tasks_for_node_task"
@@ -279,6 +342,47 @@ class TaskCommandAckTests(TestCase):
             str(task.id): {
                 "received_at": timezone.now().timestamp(),
                 "message_type": "task.progress",
+            }
+        }
+
+        with patch(
+            "apps.node.services.internal.task.redis_store.get_task_uplink_activities",
+            return_value=activity,
+        ):
+            marked = sweep_watchdog_timeouts(
+                queryset=NodeTask.objects.filter(pk=task.pk),
+            )
+
+        task.refresh_from_db()
+        self.assertEqual(marked, 1)
+        self.assertEqual(task.status, NodeTask.Status.TIMEOUT)
+        send_cancel.assert_called_once()
+
+    @patch("apps.node.services.internal.task._send_cancel_command")
+    @patch(
+        "apps.node.services.internal.task_offline_reconcile.sync_platform_tasks_for_node_task"
+    )
+    @patch("apps.node.services.internal.task._sync_task_info")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    def test_repository_initialize_alive_does_not_defer_timeout(
+        self,
+        _push,
+        _set_info,
+        _sync_platform_task,
+        send_cancel,
+    ):
+        task = self.task(
+            kind="repo.initialize",
+            correlation_type="protection.backup_config",
+            correlation_id="backup-config-task",
+            status=NodeTask.Status.RUNNING,
+            accepted_at=timezone.now() - timezone.timedelta(minutes=10),
+            watchdog_deadline_at=timezone.now() - timezone.timedelta(seconds=1),
+        )
+        activity = {
+            str(task.id): {
+                "received_at": timezone.now().timestamp(),
+                "message_type": "task.alive",
             }
         }
 

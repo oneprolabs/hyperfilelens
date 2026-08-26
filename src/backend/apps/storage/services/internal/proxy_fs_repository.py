@@ -29,7 +29,7 @@ from apps.node.services.internal.agent_log import (
     log_agent_outcome,
 )
 from apps.node.services.interface import run_agent_task_sync
-from apps.storage.repositories.models import Repository, RepositoryLocationClaim
+from apps.storage.repositories.models import Repository, RepositoryLocationClaim, RepositoryTask
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_MESSAGE,
     RepositoryAlreadyExistsError,
@@ -39,6 +39,12 @@ from apps.storage.services.internal.repository_errors import (
     agent_result_has_repository_conflict,
 )
 from apps.storage.services.internal.repository_secrets import resolve_repository_secrets
+from apps.storage.services.internal.repository_agent_operation import (
+    RepositoryAgentOperationError,
+    RepositoryAgentOperationStateUnknown,
+    repository_create_has_durable_agent_task,
+    resolve_or_dispatch_repository_create_agent_task,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +105,11 @@ def proxy_fs_uses_managed_subdir(repository: Repository) -> bool:
     )
 
 
-def validate_proxy_for_proxy_fs(repository: Repository) -> Node:
+def validate_proxy_for_proxy_fs(
+    repository: Repository,
+    *,
+    require_online: bool = True,
+) -> Node:
     """Resolve the bound Proxy node; raise if the binding is invalid/offline."""
     if repository.repo_type != Repository.Type.PROXY_FS:
         raise ValidationError("Repository is not a proxy_fs repository.")
@@ -118,7 +128,7 @@ def validate_proxy_for_proxy_fs(repository: Repository) -> Node:
     ).first()
     if node is None:
         raise ValidationError("Bound proxy node not found.")
-    if node.availability != Node.Availability.ONLINE:
+    if require_online and node.availability != Node.Availability.ONLINE:
         raise ValidationError(f'Bound proxy node "{node.name}" is not online.')
     return node
 
@@ -148,13 +158,18 @@ def proxy_fs_repository_payload(repository: Repository) -> dict[str, Any]:
     return payload
 
 
-def initialize_proxy_fs_repository(repository: Repository):
+def initialize_proxy_fs_repository(
+    repository: Repository,
+    *,
+    repository_task: RepositoryTask | None = None,
+):
     """Initialize a new proxy_fs repository on the bound Proxy node."""
 
     return _run_proxy_fs_repository_task(
         repository,
         kind="repo.initialize",
         log_scope="storage proxy_fs repo init",
+        repository_task=repository_task,
     )
 
 
@@ -180,11 +195,21 @@ def _run_proxy_fs_repository_task(
     log_scope: str,
     health_only: bool = False,
     adopt_legacy_ownership: bool = True,
+    repository_task: RepositoryTask | None = None,
 ):
     """Run a strict initialize or connect-only probe on the bound Proxy."""
 
+    async_create = kind == "repo.initialize" and repository_task is not None
+    can_resume_offline = bool(
+        async_create
+        and repository_task is not None
+        and repository_create_has_durable_agent_task(repository_task=repository_task)
+    )
     try:
-        node = validate_proxy_for_proxy_fs(repository)
+        node = validate_proxy_for_proxy_fs(
+            repository,
+            require_online=not can_resume_offline,
+        )
     except ValidationError as exc:
         if health_only:
             raise RepositoryHealthTransportUnconfirmed(str(exc)) from exc
@@ -223,15 +248,29 @@ def _run_proxy_fs_repository_task(
         org_id=repository.organization_id,
     )
     try:
-        outcome = run_agent_task_sync(
-            organization_id=repository.organization_id,
-            node_id=node.id,
-            kind=kind,
-            payload=payload,
-            correlation_type="storage_repository",
-            correlation_id=str(repository.id),
-            wait_timeout_seconds=180,
-        )
+        if async_create:
+            outcome = resolve_or_dispatch_repository_create_agent_task(
+                repository_task=repository_task,
+                node=node,
+                payload=payload,
+                persisted_payload={
+                    "repository_id": repository.id,
+                    "operation_type": repository_task.operation_type,
+                    "owner_node_id": node.id,
+                },
+            )
+            if outcome.waiting or outcome.state_unknown:
+                return outcome
+        else:
+            outcome = run_agent_task_sync(
+                organization_id=repository.organization_id,
+                node_id=node.id,
+                kind=kind,
+                payload=payload,
+                correlation_type="storage_repository",
+                correlation_id=str(repository.id),
+                wait_timeout_seconds=180,
+            )
     except Exception as exc:
         log_agent_exception(
             log_scope,
@@ -242,6 +281,21 @@ def _run_proxy_fs_repository_task(
             correlation_id=str(repository.id),
             repository_id=repository.id,
         )
+        if isinstance(exc, RepositoryAgentOperationStateUnknown):
+            raise
+        if isinstance(exc, RepositoryAgentOperationError):
+            if agent_result_has_repository_conflict(exc.result):
+                raise RepositoryAlreadyExistsError(
+                    REPOSITORY_ALREADY_EXISTS_MESSAGE
+                ) from exc
+            message = agent_repository_failure_message(
+                exc.result,
+                last_error=str(exc),
+            )
+            raise ProxyFSRepositoryError(
+                message or "Proxy filesystem repository initialization failed.",
+                error_code=str(exc.result.get("error_code") or "REPOSITORY_CREATE_FAILED"),
+            ) from exc
         if health_only:
             raise RepositoryHealthTransportUnconfirmed(str(exc)) from exc
         raise ProxyFSRepositoryError(str(exc)) from exc
@@ -254,26 +308,29 @@ def _run_proxy_fs_repository_task(
         correlation_id=str(repository.id),
         repository_id=repository.id,
     )
-    if agent_task_transport_unconfirmed(outcome):
+    if not async_create and agent_task_transport_unconfirmed(outcome):
         raise RepositoryHealthTransportUnconfirmed(
             "Agent repository probe did not return a terminal result."
         )
-    if outcome.task.status != "success":
-        if agent_result_has_repository_conflict(outcome.result):
+    outcome_result = outcome.result if isinstance(outcome.result, dict) else {}
+    outcome_status = (
+        "success"
+        if async_create
+        else str(getattr(getattr(outcome, "task", None), "status", ""))
+    )
+    if outcome_status != "success":
+        if agent_result_has_repository_conflict(outcome_result):
             raise RepositoryAlreadyExistsError(REPOSITORY_ALREADY_EXISTS_MESSAGE)
         message = agent_repository_failure_message(
-            outcome.result,
-            last_error=str(getattr(outcome.task, "last_error", "") or ""),
+            outcome_result,
+            last_error=str(getattr(getattr(outcome, "task", None), "last_error", "") or ""),
         )
-        result = outcome.result if isinstance(outcome.result, dict) else {}
+        result = outcome_result
         raise ProxyFSRepositoryError(
             message or "Proxy filesystem repository initialization failed.",
             error_code=str(result.get("error_code") or "REPOSITORY_CREATE_FAILED"),
         )
-    if not (
-        isinstance(outcome.result, dict)
-        and outcome.result.get("ownership_verified") is True
-    ):
+    if outcome_result.get("ownership_verified") is not True:
         from apps.storage.services.internal.repository_location import (
             repository_has_legacy_location,
         )

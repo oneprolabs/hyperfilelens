@@ -40,15 +40,50 @@ class RepositoryAgentOperationResult:
     result: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class RepositoryCreateAgentTaskResult:
+    """Durable result for a repository-initialization Agent task.
+
+    Repository creation is a product task in its own right.  The Controller
+    must persist the Agent task and return control to the queue instead of
+    synchronously waiting for a mount or Kopia command that may block in the
+    kernel.
+    """
+
+    waiting: bool
+    state_unknown: bool
+    node_task_id: UUID | None
+    result: dict[str, Any]
+
+    @property
+    def ok(self) -> bool:
+        """Whether the durable Agent task reached a terminal success state."""
+        return not self.waiting and not self.state_unknown
+
+
+def repository_create_has_durable_agent_task(
+    *, repository_task: RepositoryTask
+) -> bool:
+    """Return whether an initialization child exists for this product task."""
+    return NodeTask.objects.filter(
+        parent_task_id=repository_task.task_id,
+        organization_id=repository_task.repository.organization_id,
+        kind="repo.initialize",
+        correlation_type="repository_create",
+        correlation_id=str(repository_task.task.task_uuid),
+    ).exists()
+
+
 def queue_repository_agent_result_followup(*, node_task: NodeTask) -> bool:
     """Queue repository parents affected by one terminal Agent result."""
-    if node_task.kind != "repository.operation":
+    if node_task.kind not in {"repository.operation", "repo.initialize"}:
         return False
     if node_task.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}:
         return False
     if node_task.correlation_type not in {
         "repository_cleanup",
         "repository_operation",
+        "repository_create",
     }:
         return False
 
@@ -60,11 +95,22 @@ def queue_repository_agent_result_followup(*, node_task: NodeTask) -> bool:
     if correlation_uuid is not None:
         relation |= Q(task__task_uuid=correlation_uuid)
 
+    parent_statuses = {
+        Task.Status.PENDING,
+        Task.Status.WAITING,
+        Task.Status.RUNNING,
+    }
+    if node_task.correlation_type == "repository_create":
+        # A late initialization result may unblock a parent parked in BLOCKED
+        # with an unknown remote state. Other repository operations retain
+        # their existing fail-closed BLOCKED behavior.
+        parent_statuses.add(Task.Status.BLOCKED)
+
     repository_task_ids = list(
         RepositoryTask.objects.filter(
             relation,
             repository__organization_id=node_task.organization_id,
-            task__status__in={Task.Status.PENDING, Task.Status.RUNNING},
+            task__status__in=parent_statuses,
         )
         .order_by("id")
         .values_list("id", flat=True)
@@ -80,6 +126,155 @@ def queue_repository_agent_result_followup(*, node_task: NodeTask) -> bool:
             countdown=1,
         )
     return True
+
+
+def resolve_or_dispatch_repository_create_agent_task(
+    *,
+    repository_task: RepositoryTask,
+    node: Node,
+    payload: dict[str, Any],
+    persisted_payload: dict[str, Any],
+) -> RepositoryCreateAgentTaskResult:
+    """Resume or dispatch one idempotent repository initialization attempt.
+
+    The remote task is linked to the durable RepositoryTask before the caller
+    returns.  A running child is reported as ``waiting``; an execution timeout
+    is reported as ``state_unknown`` so callers never start a second
+    initialization against the same physical location without first
+    reconciling the original child. A sealed delivery timeout is returned as a
+    normal failure because the Agent never acknowledged receipt.
+    """
+
+    task = _related_repository_create_node_task(
+        repository_task=repository_task,
+        node=node,
+    )
+    if task is None:
+        handle = run_agent_task_async(
+            organization_id=repository_task.repository.organization_id,
+            node_id=node.id,
+            kind="repo.initialize",
+            payload=payload,
+            persisted_payload=persisted_payload,
+            correlation_type="repository_create",
+            correlation_id=str(repository_task.task.task_uuid),
+            parent_task=repository_task.task,
+        )
+        task = handle.task
+
+    if repository_task.remote_task_id != task.id:
+        RepositoryTask.objects.filter(pk=repository_task.id).update(
+            remote_task_id=task.id,
+        )
+        repository_task.remote_task_id = task.id
+
+    if task.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}:
+        return RepositoryCreateAgentTaskResult(
+            waiting=True,
+            state_unknown=False,
+            node_task_id=task.id,
+            result={},
+        )
+    if task.status == NodeTask.Status.SUCCESS:
+        return RepositoryCreateAgentTaskResult(
+            waiting=False,
+            state_unknown=False,
+            node_task_id=task.id,
+            result=dict(task.result or {}),
+        )
+    if task.status == NodeTask.Status.TIMEOUT:
+        timeout_result = dict(task.result or {})
+        if timeout_result.get("delivery_timeout_sealed"):
+            # An ACK timeout is sealed only while the task is still PENDING,
+            # so the Agent never confirmed receipt or execution.  This is a
+            # normal delivery failure and is safe to retry explicitly; it is
+            # not an unknown remote side effect.
+            raise RepositoryAgentOperationError(
+                task.last_error or "Agent did not accept repository initialization.",
+                result={
+                    **timeout_result,
+                    "error_code": str(
+                        timeout_result.get("diagnostic_error_code")
+                        or "AGENT_ACK_TIMEOUT"
+                    ),
+                },
+            )
+        return RepositoryCreateAgentTaskResult(
+            waiting=False,
+            state_unknown=True,
+            node_task_id=task.id,
+            result={
+                "error_code": "REMOTE_RESULT_UNKNOWN",
+                "detail": task.last_error or "Agent initialization timed out.",
+            },
+        )
+    raise RepositoryAgentOperationError(
+        task.last_error
+        or f"Agent repository initialization ended with status {task.status}.",
+        result=task.result,
+    )
+
+
+def _related_repository_create_node_task(
+    *,
+    repository_task: RepositoryTask,
+    node: Node,
+) -> NodeTask | None:
+    if repository_task.remote_task_id:
+        task = NodeTask.objects.filter(
+            pk=repository_task.remote_task_id,
+            organization_id=repository_task.repository.organization_id,
+            kind="repo.initialize",
+        ).first()
+        if task is not None:
+            _validate_repository_create_node_task(
+                task=task,
+                repository_task=repository_task,
+                node=node,
+            )
+            return task
+        raise RepositoryAgentOperationStateUnknown(
+            "The durable Agent task referenced by the repository initialization "
+            "could not be found."
+        )
+
+    task = (
+        NodeTask.objects.filter(
+            organization_id=repository_task.repository.organization_id,
+            kind="repo.initialize",
+            correlation_type="repository_create",
+            correlation_id=str(repository_task.task.task_uuid),
+        )
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    if task is not None:
+        _validate_repository_create_node_task(
+            task=task,
+            repository_task=repository_task,
+            node=node,
+        )
+    return task
+
+
+def _validate_repository_create_node_task(
+    *,
+    task: NodeTask,
+    repository_task: RepositoryTask,
+    node: Node,
+) -> None:
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    if (
+        task.node_id != node.id
+        or task.correlation_type != "repository_create"
+        or task.correlation_id != str(repository_task.task.task_uuid)
+        or str(payload.get("repository_id") or "")
+        != str(repository_task.repository_id)
+        or payload.get("operation_type") != repository_task.operation_type
+    ):
+        raise RepositoryAgentOperationStateUnknown(
+            "The durable Agent task does not match this repository initialization."
+        )
 
 
 def _related_node_task(

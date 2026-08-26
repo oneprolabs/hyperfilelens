@@ -86,6 +86,21 @@ def sync_platform_tasks_for_node_task(*, node_task: NodeTask) -> None:
 
         project_repository_health_from_agent_result(node_task=node_task)
         return
+    if node_task.correlation_type == "repository_create":
+        from apps.storage.services.internal.repository_agent_operation import (
+            queue_repository_agent_result_followup,
+        )
+
+        queue_repository_agent_result_followup(node_task=node_task)
+        return
+    if node_task.correlation_type == "protection.backup_config":
+        from apps.protection.services.backup_config_provision import (
+            queue_backup_config_provision_task,
+        )
+
+        if node_task.parent_task_id:
+            queue_backup_config_provision_task(task_id=node_task.parent_task_id)
+        return
     if node_task.correlation_type in {
         "protection.snapshot_delete",
         "protection.backup_config_reset",

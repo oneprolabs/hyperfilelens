@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 _ACTIVE_NODE_TASK_STATUSES = {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}
 _TRANSIENT_CODES = {
+    "AGENT_TASK_PENDING",
     "AGENT_OFFLINE",
     "AGENT_RECONNECTING",
     "NODE_TASK_TIMEOUT",
@@ -52,6 +53,7 @@ _TRANSIENT_CODES = {
 _MAX_TRANSIENT_RETRIES = 8
 _DISPATCH_LEASE_SECONDS = 90
 _WAITING_EVENT_MESSAGE = "Storage validation is waiting for the Agent to reconnect"
+_EXPLICIT_RETRY_EVENT_MESSAGE = "Task queued for retry"
 
 
 def queue_backup_config_provision_task(*, task_id: int) -> bool:
@@ -132,13 +134,51 @@ def run_backup_config_provision_task(*, task_id: int) -> dict[str, object]:
         _activate_config(task=task, config=config)
     except Exception as exc:
         code, message = _error_details(exc, task=task)
+        if code == "REMOTE_RESULT_UNKNOWN":
+            blocked = _mark_waiting(
+                task=task,
+                config=config,
+                error_code=code,
+                message=message,
+                state_unknown=True,
+            )
+            if not blocked:
+                return {
+                    "status": "failed",
+                    "error_code": "BACKUP_CONFIG_NOT_AVAILABLE",
+                }
+            task.refresh_from_db()
+            if task.status == Task.Status.SUCCESS:
+                return {"status": "success", "task_uuid": str(task.task_uuid)}
+            if task.status in {
+                Task.Status.FAILED,
+                Task.Status.CANCELLED,
+                Task.Status.TIMEOUT,
+            }:
+                return {"status": task.status, "task_uuid": str(task.task_uuid)}
+            return {"status": "blocked", "error_code": code}
         if code in _TRANSIENT_CODES and _transient_retry_count(task) < _MAX_TRANSIENT_RETRIES:
+            latest = _latest_node_task_for_attempt(task)
             if _mark_waiting(
                 task=task,
                 config=config,
                 error_code=code,
                 message=message,
+                reset_attempt=(
+                    latest is not None
+                    and latest.status
+                    in {NodeTask.Status.FAILED, NodeTask.Status.CANCELED}
+                ),
             ):
+                task.refresh_from_db()
+                if task.status == Task.Status.SUCCESS:
+                    return {"status": "success", "task_uuid": str(task.task_uuid)}
+                if task.status in {
+                    Task.Status.FAILED,
+                    Task.Status.CANCELLED,
+                    Task.Status.TIMEOUT,
+                }:
+                    return {"status": task.status, "task_uuid": str(task.task_uuid)}
                 return {"status": "waiting", "error_code": code}
             return {"status": "failed", "error_code": "BACKUP_CONFIG_NOT_AVAILABLE"}
         _finish_failure(task=task, config=config, error_code=code, message=message)
@@ -223,10 +263,15 @@ def _claim_task_execution(*, task_id: int) -> tuple[Task, str, NodeTask | None]:
 
 
 def _transient_retry_count(task: Task) -> int:
-    """Count reconnect waits in this attempt, not across explicit user retries."""
+    """Count automatic waits since the most recent explicit user retry."""
     events = task.events.filter(message=_WAITING_EVENT_MESSAGE)
-    if task.started_at is not None:
-        events = events.filter(created_at__gte=task.started_at)
+    explicit_retry = (
+        task.events.filter(message=_EXPLICIT_RETRY_EVENT_MESSAGE)
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    if explicit_retry is not None:
+        events = events.filter(created_at__gte=explicit_retry.created_at)
     return int(events.count())
 
 
@@ -270,13 +315,39 @@ def reconcile_backup_config_provision_tasks(
         status__in=_ACTIVE_NODE_TASK_STATUSES,
         created_at__gte=OuterRef("started_at"),
     )
+    resolved_node_tasks = NodeTask.objects.filter(
+        parent_task_id=OuterRef("pk"),
+        correlation_type="protection.backup_config",
+        kind="repo.initialize",
+        status__in=[
+            NodeTask.Status.SUCCESS,
+            NodeTask.Status.FAILED,
+            NodeTask.Status.CANCELED,
+        ],
+        created_at__gte=OuterRef("started_at"),
+    )
     stale_tasks = (
         Task.objects.filter(task_type=Task.Type.BACKUP_CONFIG_PROVISION)
+        .annotate(
+            has_active_node_task=Exists(active_node_tasks),
+            has_resolved_node_task=Exists(resolved_node_tasks),
+        )
         .filter(
-            status__in=[Task.Status.PENDING, Task.Status.WAITING, Task.Status.RUNNING],
             updated_at__lt=cutoff,
         )
-        .annotate(has_active_node_task=Exists(active_node_tasks))
+        .filter(
+            Q(
+                status__in=[
+                    Task.Status.PENDING,
+                    Task.Status.WAITING,
+                    Task.Status.RUNNING,
+                ]
+            )
+            | Q(
+                status=Task.Status.BLOCKED,
+                has_resolved_node_task=True,
+            )
+        )
     )
     active_agent_tasks = stale_tasks.filter(has_active_node_task=True).count()
     candidates = stale_tasks.filter(has_active_node_task=False).order_by(
@@ -570,9 +641,27 @@ def _set_step(task: Task, step_name: str, *, progress: int) -> None:
 
 @transaction.atomic
 def _mark_waiting(
-    *, task: Task, config: BackupConfig, error_code: str, message: str
+    *,
+    task: Task,
+    config: BackupConfig,
+    error_code: str,
+    message: str,
+    state_unknown: bool = False,
+    reset_attempt: bool = False,
 ) -> bool:
     now = timezone.now()
+    # The Agent may finish between dispatch and this projection.  Serialize
+    # against the result callback before changing the parent state; otherwise
+    # a late worker delivery could move an already-successful task back to
+    # WAITING/BLOCKED.
+    task = Task.objects.select_for_update().get(id=task.id)
+    if task.status in {
+        Task.Status.SUCCESS,
+        Task.Status.FAILED,
+        Task.Status.CANCELLED,
+        Task.Status.TIMEOUT,
+    }:
+        return True
     config_updated = BackupConfig.objects.filter(
         id=config.id,
         status__in=[
@@ -593,13 +682,20 @@ def _mark_waiting(
             error_message="Backup configuration is no longer available for validation.",
         )
         return False
-    Task.objects.filter(id=task.id).update(
-        status=Task.Status.WAITING,
-        retry_count=int(task.retry_count) + 1,
-        error_code=error_code,
-        error_message=message,
-        updated_at=now,
-    )
+    task_updates = {
+        "status": Task.Status.BLOCKED if state_unknown else Task.Status.WAITING,
+        "retry_count": int(task.retry_count) + 1,
+        "error_code": error_code,
+        "error_message": message,
+        "updated_at": now,
+    }
+    if reset_attempt:
+        # A terminal Agent failure is known not to be executing anymore. Start
+        # a fresh product attempt on the next reconcile, while keeping the old
+        # NodeTask as an audit record. TIMEOUT/unknown never takes this path.
+        task_updates["started_at"] = None
+        task_updates["finished_at"] = None
+    Task.objects.filter(id=task.id).update(**task_updates)
     TaskStep.objects.filter(
         task_id=task.id,
         step_name=task.current_step,
@@ -608,8 +704,15 @@ def _mark_waiting(
     append_task_event(
         task=Task.objects.get(id=task.id),
         level=TaskEvent.Level.WARN,
-        message=_WAITING_EVENT_MESSAGE,
-        metadata={"error_code": error_code, "retry_count": int(task.retry_count) + 1},
+        message=(
+            "Storage validation entered an unknown remote state"
+            if state_unknown
+            else _WAITING_EVENT_MESSAGE
+        ),
+        metadata={
+            "error_code": error_code,
+            "retry_count": int(task.retry_count) + 1,
+        },
     )
     return True
 

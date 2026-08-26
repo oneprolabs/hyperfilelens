@@ -62,6 +62,8 @@ _ACK_DURABLE_TASKS = frozenset(
         ("protection.backup_config_reset", "snapshot.delete"),
         ("source.connection_probe", "nas.test"),
         ("storage.repository_health", "repo.status"),
+        ("repository_create", "repo.initialize"),
+        ("protection.backup_config", "repo.initialize"),
     }
 )
 _LIFECYCLE_PRE_DISPATCH_KINDS = frozenset({"agent.upgrade", "agent.uninstall"})
@@ -150,6 +152,13 @@ def _is_protection_backup_task(task: NodeTask) -> bool:
 
 def _is_source_nas_probe(*, correlation_type: str, kind: str) -> bool:
     return correlation_type == "source.connection_probe" and kind == "nas.test"
+
+
+def _is_repository_initialize_task(*, correlation_type: str, kind: str) -> bool:
+    return (
+        correlation_type in {"repository_create", "protection.backup_config"}
+        and kind == "repo.initialize"
+    )
 
 
 def _source_nas_probe_deadline(*, accepted_at: datetime) -> datetime:
@@ -271,6 +280,14 @@ def _initial_watchdog_deadline(
     from_time: datetime | None = None,
     kind: str = "",
 ) -> datetime:
+    if _is_repository_initialize_task(
+        correlation_type=correlation_type,
+        kind=kind,
+    ):
+        base = from_time or timezone.now()
+        return base + timezone.timedelta(
+            seconds=max(1, node_conf.REPOSITORY_INITIALIZE_WATCHDOG_SECONDS)
+        )
     if _is_source_nas_probe(correlation_type=correlation_type, kind=kind):
         return _source_nas_probe_deadline(accepted_at=from_time or timezone.now())
     if correlation_type in {
@@ -1116,6 +1133,18 @@ def record_task_progress(
             task=task,
             fallback=now,
         )
+    repository_initialize_started_at = None
+    if _is_repository_initialize_task(
+        correlation_type=task.correlation_type,
+        kind=task.kind,
+    ):
+        repository_initialize_started_at = (
+            task.accepted_at
+            or task.dispatched_at
+            or task.last_progress_at
+            or task.created_at
+            or now
+        )
     task.status = NodeTask.Status.RUNNING
     task.accepted_at = task.accepted_at or now
     task.last_progress_at = now
@@ -1139,6 +1168,27 @@ def record_task_progress(
     ):
         task.watchdog_deadline_at = _source_nas_probe_deadline(
             accepted_at=source_nas_probe_started_at or now
+        )
+        update_fields = [
+            "status",
+            "accepted_at",
+            "last_progress_at",
+            "watchdog_deadline_at",
+            "result",
+            "updated_at",
+        ]
+    elif _is_repository_initialize_task(
+        correlation_type=task.correlation_type,
+        kind=task.kind,
+    ):
+        # Agent task.alive is emitted by the task wrapper even when a mount or
+        # Kopia child is stuck. Repository initialization therefore uses an
+        # absolute execution deadline from durable acceptance rather than an
+        # activity lease renewed by generic liveness frames.
+        task.watchdog_deadline_at = _initial_watchdog_deadline(
+            correlation_type=task.correlation_type,
+            from_time=repository_initialize_started_at or now,
+            kind=task.kind,
         )
         update_fields = [
             "status",
@@ -1584,15 +1634,21 @@ def sweep_watchdog_timeouts(
                 if "result" in message_type.lower()
                 else node_conf.TASK_UPLINK_PROJECTION_GRACE_SECONDS
             )
-            bounded_source_probe = _is_source_nas_probe(
-                correlation_type=task.correlation_type,
-                kind=task.kind,
+            bounded_remote_execution = (
+                _is_source_nas_probe(
+                    correlation_type=task.correlation_type,
+                    kind=task.kind,
+                )
+                or _is_repository_initialize_task(
+                    correlation_type=task.correlation_type,
+                    kind=task.kind,
+                )
             )
             result_projection_pending = "result" in message_type.lower()
             if (
                 received_at > 0
                 and activity_age < projection_grace
-                and (not bounded_source_probe or result_projection_pending)
+                and (not bounded_remote_execution or result_projection_pending)
             ):
                 remaining_grace = max(
                     1,

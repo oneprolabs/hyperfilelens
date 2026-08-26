@@ -19,6 +19,10 @@ from apps.source.models import SourceResource
 from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
 )
+from apps.storage.services.internal.repository_agent_operation import (
+    RepositoryAgentOperationError,
+    RepositoryCreateAgentTaskResult,
+)
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_CODE,
     RepositoryAlreadyExistsError,
@@ -1518,7 +1522,7 @@ class StorageRepositoryApiTests(TestCase):
             ip_address="10.0.0.99",
         )
 
-        def _mark_real_mount(repository):
+        def _mark_real_mount(repository, **_kwargs):
             config = dict(repository.config or {})
             config["proxy_mount_path"] = (
                 f"/mnt/hfl/storage-repositories/repo-{repository.id}-node-{proxy.id}"
@@ -1664,6 +1668,58 @@ class StorageRepositoryApiTests(TestCase):
         self.assertFalse(Repository.objects.filter(name="root-local-disk").exists())
 
     @mock.patch(
+        "apps.storage.services.internal.proxy_fs_repository.resolve_or_dispatch_repository_create_agent_task"
+    )
+    def test_create_proxy_fs_waits_for_agent_result_without_blocking_worker(
+        self, resolve_repository_create
+    ):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="proxy-fs-async-create",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.104",
+            metadata={"inventory": {"capabilities": ["repository_ownership_v1"]}},
+        )
+        response = self._post_repository(
+            {
+                "name": "local-disk-async-create",
+                "repo_type": "proxy_fs",
+                "bind_node_type": "proxy",
+                "bind_node_id": proxy.id,
+                "config": {"proxy_node_dir": "/data/repository"},
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        repository = Repository.objects.get(name="local-disk-async-create")
+        resolve_repository_create.side_effect = [
+            RepositoryCreateAgentTaskResult(
+                waiting=True,
+                state_unknown=False,
+                node_task_id=None,
+                result={},
+            ),
+            RepositoryCreateAgentTaskResult(
+                waiting=False,
+                state_unknown=False,
+                node_task_id=None,
+                result={"ownership_verified": True},
+            ),
+        ]
+
+        first = self._run_create_task(repository)
+        self.assertEqual(first["status"], Task.Status.WAITING)
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.CREATING)
+
+        second = self._run_create_task(repository)
+        self.assertEqual(second["status"], "success")
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.CREATED)
+        self.assertEqual(resolve_repository_create.call_count, 2)
+
+    @mock.patch(
         "apps.storage.services.internal.repository_create.initialize_s3_repository"
     )
     def test_create_s3_repository_keeps_row_when_initializer_fails(self, initialize):
@@ -1783,10 +1839,10 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(repository.status, Repository.Status.CREATE_FAILED)
 
     @mock.patch(
-        "apps.storage.services.internal.proxy_fs_repository.run_agent_task_sync"
+        "apps.storage.services.internal.proxy_fs_repository.resolve_or_dispatch_repository_create_agent_task"
     )
     def test_create_proxy_fs_detects_nested_existing_data_error(
-        self, run_agent_task_sync
+        self, resolve_repository_create
     ):
         proxy = Node.objects.create(
             organization=self.org,
@@ -1797,12 +1853,8 @@ class StorageRepositoryApiTests(TestCase):
             ip_address="10.0.0.101",
             metadata={"inventory": {"capabilities": ["repository_ownership_v1"]}},
         )
-        run_agent_task_sync.return_value = SimpleNamespace(
-            task=SimpleNamespace(
-                id="nested-conflict-task",
-                status="failed",
-                last_error="exit 1: exit status 1",
-            ),
+        resolve_repository_create.side_effect = RepositoryAgentOperationError(
+            "exit 1: exit status 1",
             result={
                 "repository_create": {
                     "stderr": (
@@ -1811,8 +1863,6 @@ class StorageRepositoryApiTests(TestCase):
                     )
                 }
             },
-            timed_out=False,
-            ok=False,
         )
 
         response = self._post_repository(
@@ -1840,9 +1890,11 @@ class StorageRepositoryApiTests(TestCase):
         )
 
     @mock.patch(
-        "apps.storage.services.internal.proxy_fs_repository.run_agent_task_sync"
+        "apps.storage.services.internal.proxy_fs_repository.resolve_or_dispatch_repository_create_agent_task"
     )
-    def test_create_proxy_fs_surfaces_nested_failure_reason(self, run_agent_task_sync):
+    def test_create_proxy_fs_surfaces_nested_failure_reason(
+        self, resolve_repository_create
+    ):
         proxy = Node.objects.create(
             organization=self.org,
             name="proxy-fs-nested-failure",
@@ -1852,15 +1904,9 @@ class StorageRepositoryApiTests(TestCase):
             ip_address="10.0.0.102",
             metadata={"inventory": {"capabilities": ["repository_ownership_v1"]}},
         )
-        run_agent_task_sync.return_value = SimpleNamespace(
-            task=SimpleNamespace(
-                id="nested-failure-task",
-                status="failed",
-                last_error="exit 1: exit status 1",
-            ),
+        resolve_repository_create.side_effect = RepositoryAgentOperationError(
+            "exit 1: exit status 1",
             result={"repository_create": {"stderr": "permission denied"}},
-            timed_out=False,
-            ok=False,
         )
 
         response = self._post_repository(
