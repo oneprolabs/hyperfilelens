@@ -220,6 +220,47 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
         recovery.assert_called_once_with(node_task=task)
         followup.assert_not_called()
 
+    async def test_late_detached_result_is_acked_without_followup(self):
+        task = SimpleNamespace(
+            id="550e8400-e29b-41d4-a716-446655440000",
+            _late_result_ignored=True,
+        )
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.task_result_ack_enabled = True
+        consumer.send = AsyncMock()
+
+        with (
+            patch(
+                "apps.node.ws.node_agent.handle_uplink",
+                return_value=TaskResultHandling(
+                    task_id=task.id,
+                    disposition="accepted",
+                    node_task=task,
+                ),
+            ),
+            patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
+            ),
+            patch("apps.node.ws.node_agent.project_identical_task_result_recovery") as recovery,
+            patch("apps.node.ws.node_agent.trigger_task_result_followup") as followup,
+        ):
+            await consumer.receive(
+                text_data=json.dumps(
+                    {
+                        "type": "task.result",
+                        "task_id": task.id,
+                        "status": "success",
+                        "result": {},
+                    }
+                )
+            )
+
+        consumer.send.assert_awaited_once()
+        recovery.assert_not_called()
+        followup.assert_not_called()
+
     async def test_permanently_discarded_result_is_acked_without_followup(self):
         task_id = "550e8400-e29b-41d4-a716-446655440000"
         consumer = NodeAgentConsumer()
@@ -289,6 +330,40 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
             )
 
         consumer.send.assert_not_awaited()
+
+    async def test_live_task_frame_recreates_expired_route_before_handling(self):
+        task_id = "550e8400-e29b-41d4-a716-446655440000"
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.session_id = "live-session"
+        consumer.task_result_ack_enabled = False
+
+        with (
+            patch(
+                "apps.node.ws.node_agent.touch_agent_session_fast",
+                return_value=True,
+            ) as refresh,
+            patch(
+                "apps.node.ws.node_agent.handle_uplink",
+                return_value=None,
+            ) as handle,
+            patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
+            ),
+        ):
+            await consumer.receive(
+                text_data=json.dumps(
+                    {
+                        "type": "task.progress",
+                        "task_id": task_id,
+                        "progress": {"percent": 50},
+                    }
+                )
+            )
+
+        refresh.assert_called_once_with(node_id=7, session_id="live-session")
+        self.assertEqual(handle.call_args.kwargs["session_id"], "live-session")
 
 
 class NodeTaskResultDispositionTests(TestCase):

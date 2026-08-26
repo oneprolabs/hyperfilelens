@@ -164,6 +164,67 @@ class NodeNetworkInventoryHeartbeatTests(TestCase):
         self.node.refresh_from_db()
         self.assertEqual(str(self.node.ip_address), "10.20.1.10")
 
+    @patch(
+        "apps.node.ws.uplink.redis_store.is_agent_session_current",
+        return_value=False,
+    )
+    def test_superseded_session_inventory_is_ignored(self, _current_session):
+        original_version = self.node.version
+        apply_heartbeat_inventory_snapshot(
+            node_id=self.node.id,
+            session_id="old-session",
+            inventory={
+                "agent_version": "9.9.9",
+                "primary_ip_address": "10.20.1.99",
+            },
+        )
+
+        self.node.refresh_from_db()
+        self.assertEqual(str(self.node.ip_address), "10.20.1.10")
+        self.assertEqual(self.node.version, original_version)
+
+    @patch(
+        "apps.node.ws.uplink.redis_store.is_agent_session_current",
+        return_value=None,
+    )
+    def test_unknown_session_ownership_preserves_liveness_without_inventory(
+        self, _current_session
+    ):
+        original_version = self.node.version
+        apply_heartbeat_inventory_snapshot(
+            node_id=self.node.id,
+            session_id="session-live",
+            inventory={
+                "agent_version": "9.9.9",
+                "primary_ip_address": "10.20.1.99",
+            },
+        )
+
+        self.node.refresh_from_db()
+        self.assertEqual(str(self.node.ip_address), "10.20.1.10")
+        self.assertEqual(self.node.version, original_version)
+        self.assertIsNotNone(self.node.last_seen_at)
+
+    @patch(
+        "apps.monitor.services.internal.node_metrics.ingest_node_monitor_sample"
+    )
+    @patch("apps.node.ws.uplink.redis_store.touch_ws_instance_alive")
+    @patch("apps.node.ws.uplink.redis_store.get_redis", return_value=None)
+    @patch(
+        "apps.node.ws.uplink.redis_store.is_agent_session_current",
+        return_value=None,
+    )
+    def test_queued_unknown_session_does_not_ingest_metrics(
+        self, _current_session, _redis, _touch_alive, ingest_metrics
+    ):
+        _process_heartbeat_followup(
+            node_id=self.node.id,
+            session_id="session-live",
+            inventory={"metrics": {"cpu_percent": 12.0}},
+        )
+
+        ingest_metrics.assert_not_called()
+
     def test_structured_storage_snapshot_clears_legacy_capacity(self):
         self.node.metadata = {
             "inventory": {

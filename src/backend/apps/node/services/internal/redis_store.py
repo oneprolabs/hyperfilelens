@@ -120,7 +120,9 @@ def touch_agent_location(*, agent_id: int) -> None:
     r.expire(agent_loc_key(agent_id), node_conf.AGENT_LOC_TTL_SECONDS)
 
 
-def ensure_agent_location_on_heartbeat(*, agent_id: int, session_id: str) -> None:
+def ensure_agent_location_on_heartbeat(
+    *, agent_id: int, session_id: str
+) -> bool | None:
     """
     Refresh ``agent_loc`` during an open WSS session.
 
@@ -130,23 +132,94 @@ def ensure_agent_location_on_heartbeat(*, agent_id: int, session_id: str) -> Non
     """
     r = get_redis()
     if r is None:
-        return
+        return None
     key = agent_loc_key(agent_id)
-    if r.exists(key):
-        r.expire(key, node_conf.AGENT_LOC_TTL_SECONDS)
-    else:
-        set_agent_location(agent_id=agent_id, session_id=session_id)
+    value = _encode_agent_loc(
+        ws_instance_id=node_conf.WS_INSTANCE_ID,
+        session_id=session_id,
+    )
+    # WATCH makes the ownership check and lease renewal one optimistic
+    # transaction. A newly connected session changing the route between GET
+    # and EXPIRE causes EXEC to abort instead of allowing an old socket to
+    # renew the successor's lease.
+    for _attempt in range(2):
+        try:
+            with r.pipeline() as pipe:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                if raw:
+                    _ws_instance, current_session = _decode_agent_loc(str(raw))
+                    if current_session and current_session != session_id:
+                        pipe.reset()
+                        return False
+                pipe.multi()
+                if raw:
+                    pipe.expire(key, node_conf.AGENT_LOC_TTL_SECONDS)
+                else:
+                    pipe.set(key, value, ex=node_conf.AGENT_LOC_TTL_SECONDS)
+                pipe.execute()
+                return True
+        except redis.WatchError:
+            continue
+        except redis.RedisError as exc:
+            logger.warning(
+                "failed to refresh Agent route agent_id=%s: %s", agent_id, exc
+            )
+            return None
+    return None
+
+
+def is_agent_session_current(*, agent_id: int, session_id: str) -> bool | None:
+    """Return route ownership, or ``None`` when Redis cannot be checked."""
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return False
+    r = get_redis()
+    if r is None:
+        return None
+    try:
+        raw = r.get(agent_loc_key(agent_id))
+    except redis.RedisError:
+        return None
+    if not raw:
+        return False
+    _ws_instance, current_session = _decode_agent_loc(str(raw))
+    if current_session is None:
+        # Legacy routes stored only the WebSocket instance. They cannot prove
+        # ownership, but must not be treated as proof that this session is
+        # stale during a rolling upgrade of the control plane.
+        return None
+    return current_session == session_id
 
 
 def get_agent_location(*, agent_id: int) -> str | None:
     r = get_redis()
     if r is None:
         return None
-    value = r.get(agent_loc_key(agent_id))
+    try:
+        value = r.get(agent_loc_key(agent_id))
+    except redis.RedisError as exc:
+        logger.warning("failed to read Agent route agent_id=%s: %s", agent_id, exc)
+        return None
     if not value:
         return None
     ws_instance, _session = _decode_agent_loc(str(value))
     return ws_instance
+
+
+def get_agent_session(*, agent_id: int) -> str | None:
+    """Return the authenticated session currently owning an Agent route."""
+    r = get_redis()
+    if r is None:
+        return None
+    try:
+        value = r.get(agent_loc_key(agent_id))
+    except redis.RedisError:
+        return None
+    if not value:
+        return None
+    _ws_instance, session = _decode_agent_loc(str(value))
+    return session
 
 
 def clear_agent_location(*, agent_id: int) -> None:
@@ -252,7 +325,13 @@ def ws_recovery_hold_active() -> bool:
     r = get_redis()
     if r is None:
         return True
-    return bool(r.exists(ws_recovery_hold_key()))
+    try:
+        return bool(r.exists(ws_recovery_hold_key()))
+    except redis.RedisError as exc:
+        # Do not dispatch lifecycle commands while the control-plane route
+        # state cannot be read reliably.
+        logger.warning("failed to read WebSocket recovery hold: %s", exc)
+        return True
 
 
 def clear_ws_recovery_hold() -> bool:

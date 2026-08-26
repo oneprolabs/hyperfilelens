@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 
+import redis
 from django.db import transaction
 from django.utils import timezone
 
@@ -82,7 +83,15 @@ def _agent_loc_key_exists(*, agent_id: int) -> bool:
     r = redis_store.get_redis()
     if r is None:
         return True
-    return bool(r.exists(redis_store.agent_loc_key(agent_id)))
+    try:
+        return bool(r.exists(redis_store.agent_loc_key(agent_id)))
+    except redis.RedisError as exc:
+        # Redis availability is unknown; retain the normal reconnect grace
+        # instead of converting a transient read failure into an offline node.
+        logger.warning(
+            "failed to read Agent route lease agent_id=%s: %s", agent_id, exc
+        )
+        return True
 
 
 def agent_session_registered(*, agent_id: int) -> bool:
@@ -102,7 +111,13 @@ def _agent_routable(*, agent_id: int) -> bool:
     client = redis_store.get_redis()
     if client is None:
         return True
-    return bool(client.exists(redis_store.ws_alive_key(ws_instance)))
+    try:
+        return bool(client.exists(redis_store.ws_alive_key(ws_instance)))
+    except redis.RedisError as exc:
+        logger.warning(
+            "failed to read Agent WebSocket lease agent_id=%s: %s", agent_id, exc
+        )
+        return False
 
 
 def _project_bound_repository_availability(

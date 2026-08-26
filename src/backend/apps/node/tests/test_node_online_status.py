@@ -25,6 +25,45 @@ from apps.node.ws.uplink import on_agent_connected, on_agent_disconnected
 from apps.storage.repositories.models import Repository
 
 
+class _FakePipeline:
+    def __init__(self, redis_client):
+        self.redis = redis_client
+        self.commands = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.reset()
+
+    def watch(self, key):
+        del key
+
+    def get(self, key):
+        return self.redis.get(key)
+
+    def multi(self):
+        return None
+
+    def expire(self, key, seconds):
+        self.commands.append(("expire", key, seconds))
+
+    def set(self, key, value, ex=None):
+        self.commands.append(("set", key, value, ex))
+
+    def execute(self):
+        for command in self.commands:
+            if command[0] == "expire":
+                self.redis.expire(command[1], command[2])
+            else:
+                self.redis.set(command[1], command[2], ex=command[3])
+        self.commands.clear()
+        return []
+
+    def reset(self):
+        self.commands.clear()
+
+
 class _FakeRedis:
     def __init__(self) -> None:
         self.data: dict[str, str] = {}
@@ -61,6 +100,9 @@ class _FakeRedis:
 
     def expire(self, key: str, ex: int) -> None:
         return None
+
+    def pipeline(self):
+        return _FakePipeline(self)
 
     def scan_iter(self, match: str = "*", count: int = 10):
         prefix = match[:-1] if match.endswith("*") else match
@@ -665,3 +707,16 @@ class AgentNodeOnlineStatusTests(TestCase):
         payload = json.loads(raw)
         self.assertEqual(payload["session"], "session-live")
         self.assertEqual(agent_connection_status(self.node), Node.Availability.ONLINE)
+
+    def test_legacy_route_without_session_is_unknown_not_stale(self):
+        redis_store.set_agent_location(
+            agent_id=self.node.id,
+            ws_instance_id=node_conf.WS_INSTANCE_ID,
+        )
+
+        self.assertIsNone(
+            redis_store.is_agent_session_current(
+                agent_id=self.node.id,
+                session_id="session-live",
+            )
+        )
