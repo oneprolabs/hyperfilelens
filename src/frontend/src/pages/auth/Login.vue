@@ -9,7 +9,6 @@ import { useAuth, setStoredOrgKey, fetchCurrentUser } from '../../composables/us
 import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
 import {
   clearLoginLocaleSelection,
-  clearPendingLoginLocale,
   setAuthenticatedLocaleApplicationSuppressed,
   setLoginLocaleSelection,
   setPendingLoginLocale,
