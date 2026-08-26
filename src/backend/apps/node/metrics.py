@@ -20,6 +20,11 @@ TASK_RESULT_RETRANSMISSIONS = Counter(
     "hfl_agent_task_result_retransmissions_total",
     "Task results received after the NodeTask was already terminal.",
 )
+TASK_RESULT_DISPOSITIONS = Counter(
+    "hfl_agent_task_result_dispositions_total",
+    "Final control-plane disposition for Agent task results.",
+    ("disposition",),
+)
 AGENT_WS_DISCONNECTS = Counter(
     "hfl_agent_websocket_disconnects_total",
     "Agent WebSocket disconnects by normalized close code.",

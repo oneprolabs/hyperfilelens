@@ -1548,27 +1548,33 @@ nas_mount_helpers_ready() {
 	[[ $nfs_ok -eq 1 && $cifs_ok -eq 1 ]]
 }
 
-cifs_utf8_module_ready() {
+cifs_utf8_module_loaded() {
 	if [[ -d /sys/module/nls_utf8 ]]; then
 		return 0
 	fi
 	if [[ -r /proc/modules ]] && awk '$1 == "nls_utf8" { found = 1 } END { exit found ? 0 : 1 }' /proc/modules; then
 		return 0
 	fi
-	if command -v modprobe >/dev/null 2>&1 && modprobe -n nls_utf8 >/dev/null 2>&1; then
-		return 0
-	fi
 	return 1
 }
 
-warn_cifs_utf8_module_missing() {
-	if ! cifs_utf8_module_ready; then
-		log_warn 'SMB iocharset=utf8 support is not available (missing nls_utf8); install linux-modules-extra-$(uname -r), then run: modprobe nls_utf8'
+prepare_cifs_utf8_module() {
+	if cifs_utf8_module_loaded; then
+		return 0
 	fi
+	if command -v modprobe >/dev/null 2>&1 \
+		&& modprobe nls_utf8 >/dev/null 2>&1 \
+		&& cifs_utf8_module_loaded; then
+		log_ok "loaded host kernel module nls_utf8 for SMB UTF-8 filenames"
+		return 0
+	fi
+	log_warn "SMB iocharset=utf8 is unavailable because the running host kernel does not provide nls_utf8; the offline HyperFileLens package does not download or replace host kernel modules"
+	return 0
 }
 
 install_nas_deps() {
 	local role="${1:-}"
+	local package_root="${2:-${BUNDLE_ROOT}}"
 	local arch deps_dir ubuntu_release ubuntu_flavor
 
 	[[ "$(uname -s)" == "Linux" ]] || return 0
@@ -1578,7 +1584,7 @@ install_nas_deps() {
 	esac
 	if nas_mount_helpers_ready; then
 		log_skip "install NAS packages (mount.nfs / mount.cifs already present)"
-		warn_cifs_utf8_module_missing
+		prepare_cifs_utf8_module
 		return 0
 	fi
 
@@ -1607,7 +1613,7 @@ install_nas_deps() {
 		exit 2
 		;;
 	esac
-	deps_dir="${BUNDLE_ROOT}/deps/${ubuntu_flavor}/${arch}"
+	deps_dir="${package_root}/deps/${ubuntu_flavor}/${arch}"
 	if [[ ! -d "${deps_dir}" ]] || ! compgen -G "${deps_dir}/*.deb" >/dev/null; then
 		echo "ERROR: NAS mount helpers missing and bundle has no deps/${ubuntu_flavor}/${arch}/*.deb" >&2
 		echo "Use the hfl-agent archive matching Ubuntu ${ubuntu_release}, or install nfs-common and cifs-utils manually." >&2
@@ -1638,7 +1644,7 @@ install_nas_deps() {
 		log_fail "NAS mount helpers are still missing after installing the Ubuntu ${ubuntu_release} bundled packages (${arch})." 2
 	fi
 	log_ok "NAS mount helpers ready (mount.nfs / mount.cifs)"
-	warn_cifs_utf8_module_missing
+	prepare_cifs_utf8_module
 }
 
 deploy_admin_scripts() {
@@ -2211,9 +2217,9 @@ cmd_upgrade() {
 		log_fail "Downgrade is not supported (${new_ver} < ${prev_ver})." 2
 	fi
 
+	local installed_role gateway_scope
+	installed_role="$(read_env_value "${env_file}" "HFL_NODE_ROLE" || true)"
 	if [[ $QUIET_FOOTER -eq 0 ]]; then
-		local installed_role gateway_scope
-		installed_role="$(read_env_value "${env_file}" "HFL_NODE_ROLE" || true)"
 		gateway_scope="$(read_env_value "${env_file}" "HFL_GATEWAY_SCOPE" || true)"
 		hfl_print_banner "$(hfl_role_display_name "${installed_role}" "${gateway_scope}")" "Upgrade"
 		hfl_print_section "Target"
@@ -2226,6 +2232,7 @@ cmd_upgrade() {
 	fi
 
 	upgrade_preflight "${data_dir}"
+	install_nas_deps "${installed_role}" "${src_root}"
 	# Do not mutate or stop a running legacy service until the requested target
 	# version has passed confirmation and downgrade checks.
 	if [[ "${legacy_upgrade}" -eq 1 ]]; then

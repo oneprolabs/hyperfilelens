@@ -114,7 +114,7 @@ func checkNASMountHelpers(role string) (ok bool, warning bool, title, detail str
 		return false, true, "NAS mount helpers missing", "need mount.nfs and mount.cifs for role " + role + "; use the matching Ubuntu 20.04, 22.04, or 24.04 offline bundle"
 	}
 	if !kernelModuleAvailable("nls_utf8") {
-		return false, true, "NAS SMB UTF-8 kernel module missing", `install linux-modules-extra-$(uname -r), then run modprobe nls_utf8; SMB mounts can fall back without iocharset`
+		return false, true, "NAS SMB UTF-8 kernel module missing", "the running host kernel does not provide nls_utf8; the offline HyperFileLens package does not download or replace host kernel modules"
 	}
 	return true, false, "NAS mount helpers available", "mount.nfs, mount.cifs, nls_utf8"
 }
