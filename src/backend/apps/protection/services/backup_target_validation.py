@@ -517,6 +517,10 @@ def _validate_direct_nas_route(
                 repository=repository,
                 execution_node_name=assignment.target.node.name,
                 execution_node_address=assignment.target.node.ip_address,
+                execution_node_os_name=assignment.target.node.os_name,
+                execution_node_inventory=(
+                    assignment.target.node.metadata or {}
+                ).get("inventory"),
             )
         except Exception as exc:
             return _validation_exception_result(exc, repository=repository)
@@ -556,6 +560,10 @@ def _validate_direct_nas_route(
             repository=repository,
             execution_node_name=assignment.target.node.name,
             execution_node_address=assignment.target.node.ip_address,
+            execution_node_os_name=assignment.target.node.os_name,
+            execution_node_inventory=(
+                assignment.target.node.metadata or {}
+            ).get("inventory"),
         )
     except Exception as exc:
         validation_result = _validation_exception_result(exc, repository=repository)
@@ -1082,6 +1090,8 @@ def _nas_outcome_result(
     repository: Repository,
     execution_node_name: str,
     execution_node_address: str,
+    execution_node_os_name: str = "",
+    execution_node_inventory: dict[str, Any] | None = None,
 ) -> TargetValidationResult:
     result = _outcome_result(
         outcome,
@@ -1108,6 +1118,36 @@ def _nas_outcome_result(
         )
     if result.code != "NAS_MOUNT_FAILED":
         return result
+
+    if (
+        str(outcome.result.get("error_code") or "").strip()
+        == "SMB_CHARSET_UNAVAILABLE"
+    ):
+        inventory = (
+            execution_node_inventory
+            if isinstance(execution_node_inventory, dict)
+            else {}
+        )
+        return TargetValidationResult(
+            status="failed",
+            code="SMB_CHARSET_UNAVAILABLE",
+            message=result.message,
+            details={
+                "stage": "smb_charset",
+                "execution_node_name": str(execution_node_name or "").strip(),
+                "execution_node_address": str(execution_node_address or "").strip(),
+                "execution_node_os_name": str(
+                    inventory.get("os_name") or execution_node_os_name or ""
+                ).strip(),
+                "os_family": str(
+                    inventory.get("os_family") or inventory.get("os") or ""
+                ).strip(),
+                "os_version": str(inventory.get("os_version") or "").strip(),
+                "charset": str(outcome.result.get("charset") or "utf8").strip(),
+                "kernel": str(outcome.result.get("kernel") or "").strip(),
+                "module": "nls_utf8",
+            },
+        )
 
     helper_result = (
         str(outcome.result.get("error_code") or "").strip(),

@@ -36,7 +36,7 @@ func (e *MountHelperError) Error() string {
 	)
 }
 
-// SMBCharsetUnavailableError means the proxy kernel cannot provide the
+// SMBCharsetUnavailableError means the executing host kernel cannot provide the
 // configured CIFS filename charset. Continuing without it can corrupt paths.
 type SMBCharsetUnavailableError struct {
 	Charset string
@@ -50,10 +50,7 @@ func (e *SMBCharsetUnavailableError) Error() string {
 		kernel = "the running kernel"
 	}
 	return fmt.Sprintf(
-		"SMB filename charset %q is unavailable on this proxy (%s): %s. Install the kernel extra-modules package matching %s, then remount the share.",
-		e.Charset,
-		kernel,
-		e.Cause,
-		kernel,
+		"Host cannot mount the SMB share because filename charset %q requires the nls_utf8 kernel module, which is unavailable for %s.",
+		e.Charset, kernel,
 	)
 }

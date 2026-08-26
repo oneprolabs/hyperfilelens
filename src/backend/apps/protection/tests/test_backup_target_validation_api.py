@@ -170,6 +170,35 @@ class BackupTargetValidationApiTests(TransactionTestCase):
                 else:
                     self.assertEqual(result.details, {})
 
+    def test_nas_outcome_result_preserves_smb_charset_contract_for_host(self):
+        result = _nas_outcome_result(
+            _AgentOutcome(
+                ok=False,
+                status="failed",
+                message="Host cannot mount the SMB share because filename charset utf8 requires the nls_utf8 kernel module.",
+                result={
+                    "error_code": "SMB_CHARSET_UNAVAILABLE",
+                    "charset": "utf8",
+                    "kernel": "6.8.0-71-generic",
+                },
+            ),
+            repository=self.s3_repository,
+            execution_node_name="hfl-agent1",
+            execution_node_address="10.0.0.20",
+            execution_node_os_name="linux",
+            execution_node_inventory={
+                "os_family": "linux",
+                "os_name": "Ubuntu",
+                "os_version": "24.04",
+            },
+        )
+
+        self.assertEqual(result.code, "SMB_CHARSET_UNAVAILABLE")
+        self.assertEqual(result.details["execution_node_name"], "hfl-agent1")
+        self.assertEqual(result.details["execution_node_os_name"], "Ubuntu")
+        self.assertEqual(result.details["module"], "nls_utf8")
+        self.assertNotIn("proxy", result.message.lower())
+
     def test_nas_write_precheck_returns_actionable_error(self):
         result = _nas_outcome_result(
             _AgentOutcome(

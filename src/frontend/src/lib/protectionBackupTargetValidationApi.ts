@@ -32,6 +32,12 @@ export type BackupTargetValidationResult = {
     helper?: string
     execution_node_name?: string
     execution_node_address?: string
+    execution_node_os_name?: string
+    os_family?: string
+    os_version?: string
+    charset?: string
+    kernel?: string
+    module?: string
   }
 }
 
