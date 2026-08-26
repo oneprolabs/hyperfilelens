@@ -114,9 +114,12 @@ const help: DefaultTheme.SidebarItem[] = [
 ]
 
 export const zhThemeConfig: DefaultTheme.Config = {
-  logo: '/logo-mark.svg',
+  logo: {
+    light: '/brand/images/hyperfilelens-lockup-on-light.png',
+    dark: '/brand/images/hyperfilelens-lockup-on-dark.png',
+  },
   logoLink: '/zh/',
-  siteTitle: 'HyperFileLens',
+  siteTitle: false,
   i18nRouting: false,
   nav: [
     {

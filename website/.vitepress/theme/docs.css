@@ -331,6 +331,14 @@ html:has(.Layout)::-webkit-scrollbar-thumb:hover {
   white-space: nowrap;
 }
 
+.VPNavBarTitle .logo {
+  width: auto;
+  height: 44px;
+  max-width: 152px;
+  object-fit: contain;
+  transform: translateY(2px);
+}
+
 .VPNavBarTitle .title {
   font-weight: 780;
   letter-spacing: -.025em;

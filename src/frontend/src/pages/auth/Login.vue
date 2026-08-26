@@ -920,9 +920,9 @@ onMounted(async () => {
 }
 
 .left-logo {
-  width: 560px;
+  width: 680px;
   margin-right: clamp(64px, 7vw, 112px);
-  min-width: 560px;
+  min-width: 680px;
   z-index: 10;
   display: flex;
   align-items: center;

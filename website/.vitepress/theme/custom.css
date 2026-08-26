@@ -25,8 +25,8 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 
 .site-header-wrap { position: relative; z-index: 50; border-bottom: 1px solid rgba(220, 229, 240, .72); background: rgba(255, 255, 255, .86); backdrop-filter: blur(18px); }
 .site-header { height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 30px; }
-.brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 780; letter-spacing: -.025em; white-space: nowrap; }
-.brand img { flex: 0 0 auto; }
+.brand { display: inline-flex; align-items: center; white-space: nowrap; }
+.brand-lockup { display: block; width: 150px; height: auto; max-width: 100%; object-fit: contain; transform: translateY(2px); }
 .site-header nav { display: flex; align-items: center; gap: 31px; margin-left: auto; color: #4e6076; font-size: 14px; font-weight: 570; }
 .site-header nav a, .github-link, .hfl-site > footer a { transition: color .18s ease; }
 .site-header nav a:hover, .github-link:hover, .hfl-site > footer a:hover { color: var(--hfl-blue); }
@@ -62,7 +62,7 @@ h1 span { color: var(--hfl-blue); }
 .hero-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; }
 .button { position: relative; min-height: 52px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 0 24px; border: 1px solid transparent; border-radius: 12px; font-size: 14px; font-weight: 750; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease; }
 .button svg { width: 18px; height: 18px; }
-.button-logo { width: 18px; height: 18px; }
+.button-logo { width: 18px; height: 18px; object-fit: contain; }
 .button:hover { transform: translateY(-2px); }
 .button-primary { color: #fff; background: var(--hfl-blue); box-shadow: 0 14px 32px rgba(33, 104, 243, .24); }
 .button-primary:hover { background: var(--hfl-blue-dark); box-shadow: 0 17px 38px rgba(33, 104, 243, .29); }
@@ -155,6 +155,7 @@ h1 span { color: var(--hfl-blue); }
 
 .hfl-site > footer { padding: 70px 0 30px; display: grid; grid-template-columns: 1fr 1.2fr; gap: 60px; border-top: 1px solid var(--hfl-line); color: #53647a; }
 .footer-brand p { max-width: 330px; margin-top: 16px; font-size: 13px; line-height: 1.6; }
+.footer-brand .brand-lockup { width: 180px; }
 .footer-social { width: 34px; height: 34px; margin-top: 18px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--hfl-line); border-radius: 9px; color: #4e6076; }
 .footer-social svg { width: 17px; height: 17px; }
 .footer-social:hover { color: var(--hfl-blue); border-color: #9db6d8; }
@@ -184,8 +185,8 @@ a:focus-visible, button:focus-visible { outline: 3px solid rgba(33, 104, 243, .3
   .site-header, .hero-copy, .product-stage, .section-block, .open-source-grid, .hfl-site > footer { width: min(100% - 32px, var(--hfl-container)); }
   .site-header { height: 68px; gap: 10px; }
   .brand { min-height: 44px; }
-  .brand span { font-size: 15px; }
-  .brand img { width: 29px; height: 29px; }
+  .brand-lockup { width: 136px; }
+  .footer-brand .brand-lockup { width: 170px; }
   .github-link { display: none; }
   .header-cta { min-height: 44px; padding-inline: 14px; }
   .hero { padding: 70px 0 64px; }
