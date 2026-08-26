@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -11,8 +12,16 @@ from django.utils import timezone
 from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
 from apps.node.ws.node_agent import _MAX_AGENT_UPLINK_BYTES, NodeAgentConsumer
-from apps.node.ws.uplink import trigger_task_result_followup
-from apps.node.ws.wire import TASK_RESULT_ACK_SUBPROTOCOL
+from apps.node.ws.uplink import (
+    TaskResultHandling,
+    _handle_task_result_delivery,
+    trigger_task_result_followup,
+)
+from apps.node.ws.wire import (
+    TASK_RESULT_ACK_SUBPROTOCOL,
+    ParsedUplink,
+    WireType,
+)
 
 
 def _immediate_database_sync_to_async(func):
@@ -94,7 +103,11 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
         def commit(**kwargs):
             del kwargs
             events.append("commit")
-            return task
+            return TaskResultHandling(
+                task_id=task.id,
+                disposition="accepted",
+                node_task=task,
+            )
 
         def followup(**kwargs):
             del kwargs
@@ -175,7 +188,14 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
         consumer.send = AsyncMock()
 
         with (
-            patch("apps.node.ws.node_agent.handle_uplink", return_value=task),
+            patch(
+                "apps.node.ws.node_agent.handle_uplink",
+                return_value=TaskResultHandling(
+                    task_id=task.id,
+                    disposition="duplicate",
+                    node_task=task,
+                ),
+            ),
             patch(
                 "apps.node.ws.node_agent.database_sync_to_async",
                 side_effect=_immediate_database_sync_to_async,
@@ -199,6 +219,228 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
         consumer.send.assert_awaited_once()
         recovery.assert_called_once_with(node_task=task)
         followup.assert_not_called()
+
+    async def test_permanently_discarded_result_is_acked_without_followup(self):
+        task_id = "550e8400-e29b-41d4-a716-446655440000"
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.task_result_ack_enabled = True
+        consumer.send = AsyncMock()
+
+        with (
+            patch(
+                "apps.node.ws.node_agent.handle_uplink",
+                return_value=TaskResultHandling(
+                    task_id=task_id,
+                    disposition="discarded_stale_owner",
+                ),
+            ),
+            patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
+            ),
+            patch("apps.node.ws.node_agent.trigger_task_result_followup") as followup,
+        ):
+            await consumer.receive(
+                text_data=json.dumps(
+                    {
+                        "type": "task.result",
+                        "task_id": task_id,
+                        "status": "success",
+                        "result": {},
+                    }
+                )
+            )
+
+        body = json.loads(consumer.send.await_args.kwargs["text_data"])
+        self.assertEqual(body, {"type": "task.result.ack", "task_id": task_id})
+        followup.assert_not_called()
+
+    async def test_owner_mismatch_is_not_acked_to_agent(self):
+        task_id = "550e8400-e29b-41d4-a716-446655440000"
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.task_result_ack_enabled = True
+        consumer.send = AsyncMock()
+
+        with (
+            patch(
+                "apps.node.ws.node_agent.handle_uplink",
+                return_value=TaskResultHandling(
+                    task_id=task_id,
+                    disposition="discarded_owner_mismatch",
+                    acknowledge_agent=False,
+                ),
+            ),
+            patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
+            ),
+        ):
+            await consumer.receive(
+                text_data=json.dumps(
+                    {
+                        "type": "task.result",
+                        "task_id": task_id,
+                        "status": "success",
+                        "result": {},
+                    }
+                )
+            )
+
+        consumer.send.assert_not_awaited()
+
+
+class NodeTaskResultDispositionTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(
+            key="node-task-result-disposition-org",
+            name="Node Task Result Disposition Org",
+        )
+        self.current_node = Node.objects.create(
+            organization=self.organization,
+            name="current-result-agent",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        self.owner_node = Node.objects.create(
+            organization=self.organization,
+            name="original-result-agent",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+
+    def _task(self, *, node: Node) -> NodeTask:
+        return NodeTask.objects.create(
+            organization=self.organization,
+            node=node,
+            kind="explorer.list",
+            watchdog_deadline_at=timezone.now(),
+        )
+
+    @staticmethod
+    def _message(task_id: str) -> ParsedUplink:
+        return ParsedUplink(
+            msg_type=WireType.TASK_RESULT,
+            task_id=task_id,
+            status="success",
+            result={"entries": []},
+        )
+
+    @patch("apps.node.ws.uplink.TASK_RESULT_DISPOSITIONS")
+    def test_unknown_task_is_permanently_discarded(self, dispositions):
+        task_id = str(uuid.uuid4())
+
+        handled = _handle_task_result_delivery(
+            node_id=self.current_node.id,
+            message=self._message(task_id),
+        )
+
+        self.assertEqual(handled.task_id, task_id)
+        self.assertEqual(handled.disposition, "discarded_unknown")
+        self.assertIsNone(handled.node_task)
+        dispositions.labels.assert_called_once_with(
+            disposition="discarded_unknown"
+        )
+
+    @patch("apps.node.ws.uplink.TASK_RESULT_DISPOSITIONS")
+    def test_invalid_task_id_is_permanently_discarded(self, dispositions):
+        handled = _handle_task_result_delivery(
+            node_id=self.current_node.id,
+            message=self._message("not-a-uuid"),
+        )
+
+        self.assertEqual(handled.task_id, "not-a-uuid")
+        self.assertEqual(handled.disposition, "discarded_invalid")
+        self.assertIsNone(handled.node_task)
+        dispositions.labels.assert_called_once_with(
+            disposition="discarded_invalid"
+        )
+
+    @patch("apps.node.ws.uplink.TASK_RESULT_DISPOSITIONS")
+    def test_deleted_owner_result_is_permanently_discarded(self, dispositions):
+        task = self._task(node=self.owner_node)
+        self.owner_node.soft_delete()
+
+        handled = _handle_task_result_delivery(
+            node_id=self.current_node.id,
+            message=self._message(str(task.id)),
+        )
+
+        self.assertEqual(handled.disposition, "discarded_stale_owner")
+        task.refresh_from_db()
+        self.assertEqual(task.status, NodeTask.Status.PENDING)
+        dispositions.labels.assert_called_once_with(
+            disposition="discarded_stale_owner"
+        )
+
+    @patch("apps.node.ws.uplink.TASK_RESULT_DISPOSITIONS")
+    def test_deleted_connected_node_result_is_not_applied(self, dispositions):
+        task = self._task(node=self.current_node)
+        node_id = self.current_node.id
+        self.current_node.soft_delete()
+
+        handled = _handle_task_result_delivery(
+            node_id=node_id,
+            message=self._message(str(task.id)),
+        )
+
+        self.assertEqual(handled.disposition, "discarded_stale_owner")
+        task.refresh_from_db()
+        self.assertEqual(task.status, NodeTask.Status.PENDING)
+        dispositions.labels.assert_called_once_with(
+            disposition="discarded_stale_owner"
+        )
+
+    @patch("apps.node.ws.uplink.TASK_RESULT_DISPOSITIONS")
+    def test_active_owner_mismatch_is_not_applied(self, dispositions):
+        task = self._task(node=self.owner_node)
+
+        handled = _handle_task_result_delivery(
+            node_id=self.current_node.id,
+            message=self._message(str(task.id)),
+        )
+
+        self.assertEqual(handled.disposition, "discarded_owner_mismatch")
+        task.refresh_from_db()
+        self.assertEqual(task.status, NodeTask.Status.PENDING)
+        dispositions.labels.assert_called_once_with(
+            disposition="discarded_owner_mismatch"
+        )
+
+    @patch("apps.node.ws.uplink.TASK_RESULT_DISPOSITIONS")
+    def test_soft_deleted_task_is_not_applied(self, dispositions):
+        task = self._task(node=self.current_node)
+        task.soft_delete()
+
+        handled = _handle_task_result_delivery(
+            node_id=self.current_node.id,
+            message=self._message(str(task.id)),
+        )
+
+        self.assertEqual(handled.disposition, "discarded_deleted_task")
+        task.refresh_from_db()
+        self.assertEqual(task.status, NodeTask.Status.PENDING)
+        dispositions.labels.assert_called_once_with(
+            disposition="discarded_deleted_task"
+        )
+
+    @patch("apps.node.ws.uplink.TASK_RESULT_DISPOSITIONS")
+    def test_current_owner_result_is_applied(self, dispositions):
+        task = self._task(node=self.current_node)
+
+        handled = _handle_task_result_delivery(
+            node_id=self.current_node.id,
+            message=self._message(str(task.id)),
+        )
+
+        self.assertEqual(handled.disposition, "accepted")
+        self.assertEqual(handled.node_task.id, task.id)
+        task.refresh_from_db()
+        self.assertEqual(task.status, NodeTask.Status.SUCCESS)
+        dispositions.labels.assert_called_once_with(disposition="accepted")
 
 
 class NodeTaskResultFollowupTests(TestCase):

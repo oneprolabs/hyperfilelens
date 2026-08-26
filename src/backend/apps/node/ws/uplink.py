@@ -5,14 +5,16 @@ Agent WebSocket session and uplink for lifecycle and task frames.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+import uuid
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 from django.db import DatabaseError, transaction
 from django.utils import timezone
 
 from apps.node import conf as node_conf
 from apps.node.models import Node, NodeTask
-from apps.node.metrics import TASK_RESULT_RETRANSMISSIONS
+from apps.node.metrics import TASK_RESULT_DISPOSITIONS, TASK_RESULT_RETRANSMISSIONS
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.agent_log import task_log_context
 from apps.node.services.internal.node_naming import (
@@ -36,6 +38,29 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from redis import Redis
+
+
+TaskResultDisposition = Literal[
+    "accepted",
+    "duplicate",
+    "discarded_deleted_task",
+    "discarded_invalid",
+    "discarded_owner_mismatch",
+    "discarded_stale_owner",
+    "discarded_unknown",
+]
+
+
+@dataclass(frozen=True)
+class TaskResultHandling:
+    """Final handling decision for one durable Agent task result."""
+
+    task_id: str
+    disposition: TaskResultDisposition
+    node_task: NodeTask | None = None
+    # This is the Agent-facing protocol ACK.  Internal Redis stream entries
+    # are acknowledged separately by the stream consumer.
+    acknowledge_agent: bool = True
 
 
 def on_agent_connected(*, node_id: int, session_id: str, client_ip: str | None = None) -> None:
@@ -139,7 +164,11 @@ def _schedule_lifecycle_advance(
         )
 
 
-def handle_uplink(*, node_id: int, message: ParsedUplink) -> NodeTask | None:
+def handle_uplink(
+    *,
+    node_id: int,
+    message: ParsedUplink,
+) -> NodeTask | TaskResultHandling | None:
     if message.msg_type == WireType.HEARTBEAT:
         _process_heartbeat_followup(node_id=node_id, inventory=message.heartbeat_payload)
         return None
@@ -152,7 +181,7 @@ def handle_uplink(*, node_id: int, message: ParsedUplink) -> NodeTask | None:
         return accept_task(task_id=message.task_id or "", node_id=node_id)
 
     if message.msg_type == WireType.TASK_RESULT:
-        return _handle_task_result(node_id=node_id, message=message)
+        return _handle_task_result_delivery(node_id=node_id, message=message)
     return None
 
 
@@ -318,13 +347,20 @@ def _handle_task_progress(*, node_id: int, message: ParsedUplink) -> None:
         logger.debug("backup advance after progress failed task_id=%s", message.task_id, exc_info=True)
 
 
-def _handle_task_result(*, node_id: int, message: ParsedUplink) -> NodeTask:
+def _handle_task_result(
+    *,
+    node_id: int,
+    message: ParsedUplink,
+    previous_status: str | None = None,
+) -> NodeTask:
     if not message.task_id:
         raise LookupError("task_id is required")
-    previous_status = NodeTask.objects.filter(
-        pk=message.task_id,
-        node_id=node_id,
-    ).values_list("status", flat=True).first()
+    if previous_status is None:
+        previous_status = (
+            NodeTask.objects.filter(pk=message.task_id, node_id=node_id)
+            .values_list("status", flat=True)
+            .first()
+        )
     incoming_status = (message.status or "success").lower()
     is_retransmission = (
         previous_status == NodeTask.Status.SUCCESS
@@ -351,6 +387,114 @@ def _handle_task_result(*, node_id: int, message: ParsedUplink) -> NodeTask:
         task.status,
     )
     return task
+
+
+@transaction.atomic
+def _handle_task_result_delivery(
+    *,
+    node_id: int,
+    message: ParsedUplink,
+) -> TaskResultHandling:
+    """Apply or permanently discard a task result before acknowledging it."""
+
+    if not message.task_id:
+        raise LookupError("task_id is required")
+    try:
+        uuid.UUID(str(message.task_id))
+    except (AttributeError, TypeError, ValueError):
+        return _discard_task_result(
+            node_id=node_id,
+            task_id=str(message.task_id),
+            disposition="discarded_invalid",
+        )
+
+    task = (
+        # Lock only the task row.  Node lifecycle removal locks the Node row
+        # before touching its dependent records; locking both tables here
+        # would invert that order and create an avoidable deadlock.
+        NodeTask.all_objects.select_for_update(of=("self",))
+        .select_related("node")
+        .filter(pk=message.task_id)
+        .first()
+    )
+    if task is None:
+        return _discard_task_result(
+            node_id=node_id,
+            task_id=message.task_id,
+            disposition="discarded_unknown",
+        )
+
+    owner_node_id = int(task.node_id)
+    if task.is_deleted:
+        return _discard_task_result(
+            node_id=node_id,
+            task_id=message.task_id,
+            disposition="discarded_deleted_task",
+            owner_node_id=owner_node_id,
+        )
+
+    if task.node.is_deleted:
+        return _discard_task_result(
+            node_id=node_id,
+            task_id=message.task_id,
+            disposition="discarded_stale_owner",
+            owner_node_id=owner_node_id,
+        )
+
+    if owner_node_id != node_id:
+        # The WebSocket is authenticated for node_id, so this result can
+        # never be applied to the task's immutable owner.  Do not ACK it;
+        # retaining it exposes the routing fault to the Agent retry path.
+        return _discard_task_result(
+            node_id=node_id,
+            task_id=message.task_id,
+            disposition="discarded_owner_mismatch",
+            owner_node_id=owner_node_id,
+            acknowledge_agent=False,
+        )
+
+    task = _handle_task_result(
+        node_id=node_id,
+        message=message,
+        previous_status=task.status,
+    )
+    disposition = (
+        "duplicate"
+        if bool(getattr(task, "_result_retransmission_unchanged", False))
+        else "accepted"
+    )
+    TASK_RESULT_DISPOSITIONS.labels(disposition=disposition).inc()
+    return TaskResultHandling(
+        task_id=message.task_id,
+        disposition=disposition,
+        node_task=task,
+    )
+
+
+def _discard_task_result(
+    *,
+    node_id: int,
+    task_id: str,
+    disposition: TaskResultDisposition,
+    owner_node_id: int | None = None,
+    acknowledge_agent: bool = True,
+) -> TaskResultHandling:
+    """Record a permanent rejection without creating or updating a task."""
+
+    TASK_RESULT_DISPOSITIONS.labels(disposition=disposition).inc()
+    log = logger.warning if disposition == "discarded_owner_mismatch" else logger.info
+    log(
+        "agent task result discarded node_id=%s task_id=%s owner_node_id=%s disposition=%s",
+        node_id,
+        task_id,
+        owner_node_id if owner_node_id is not None else "-",
+        disposition,
+    )
+    return TaskResultHandling(
+        task_id=task_id,
+        disposition=disposition,
+        acknowledge_agent=acknowledge_agent,
+    )
 
 
 def project_identical_task_result_recovery(*, node_task: NodeTask) -> None:

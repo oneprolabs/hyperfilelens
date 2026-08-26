@@ -25,6 +25,7 @@ from apps.node.services.internal.agent_ws_auth import validate_agent_ws_credenti
 from apps.node.services.internal.client_ip import resolve_agent_client_ip_from_scope
 from apps.node.ws.groups import agent_group_name, ws_instance_group_name
 from apps.node.ws.uplink import (
+    TaskResultHandling,
     apply_heartbeat_inventory_snapshot,
     handle_uplink,
     on_agent_connected,
@@ -215,7 +216,7 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
 
         # Task frames drive watchdog + lifecycle; must persist synchronously.
         try:
-            task = await database_sync_to_async(handle_uplink)(
+            handled = await database_sync_to_async(handle_uplink)(
                 node_id=self.node_id,
                 message=message,
             )
@@ -230,21 +231,34 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
             )
             return
 
-        if message.msg_type != WireType.TASK_RESULT or task is None:
+        if message.msg_type != WireType.TASK_RESULT:
             return
-        if self.task_result_ack_enabled:
+        if not isinstance(handled, TaskResultHandling):
+            AGENT_UPLINK_REJECTED.labels(reason="invalid_result_handling").inc()
+            logger.error(
+                "agent task result handling missing node_id=%s task_id=%s",
+                self.node_id,
+                message.task_id,
+            )
+            return
+        if self.task_result_ack_enabled and handled.acknowledge_agent:
             try:
                 await self.send(
-                    text_data=dumps_wire(task_result_ack_wire(task_id=task.id))
+                    text_data=dumps_wire(
+                        task_result_ack_wire(task_id=handled.task_id)
+                    )
                 )
                 TASK_RESULT_ACK_LATENCY.observe(time.monotonic() - result_received_at)
             except Exception:
                 logger.warning(
                     "agent task result ACK send failed node_id=%s task_id=%s",
                     self.node_id,
-                    task.id,
+                    handled.task_id,
                     exc_info=True,
                 )
+        task = handled.node_task
+        if task is None:
+            return
         if bool(getattr(task, "_result_retransmission_unchanged", False)):
             try:
                 await database_sync_to_async(project_identical_task_result_recovery)(
