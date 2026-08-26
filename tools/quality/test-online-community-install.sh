@@ -30,6 +30,7 @@ grep -Fq 'gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page
 grep -Fq 'recent fallback tags:' "${online}/install.sh"
 grep -Fq 'prepared Community image revision does not match the published release' \
 	"${online}/install.sh"
+grep -Fq 'run this command through sudo' "${online}/install.sh"
 grep -Fq -- '--yes                   Non-interactive compatibility flag' \
 	"${ROOT}/deploy/installer/install.sh"
 
@@ -303,21 +304,48 @@ esac
 SH
 chmod 755 "${fake_bin}/curl" "${fake_bin}/docker"
 
+test_install_root="${tmp}/community-install"
+test_installer="${tmp}/online-install.sh"
+python3 - "${online}/install.sh" "${test_installer}" "${test_install_root}" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+replacements = {
+    'INSTALL_ROOT="/opt/hyperfilelens"': f'INSTALL_ROOT="{sys.argv[3]}"',
+    '[[ "${EUID}" -eq 0 ]] || fail "run this command through sudo"': ":",
+    "\ninstall_host_tools\ninspect_existing_installation\n": (
+        "\n:\ninspect_existing_installation\n"
+    ),
+}
+for old, new in replacements.items():
+    if source.count(old) != 1:
+        raise SystemExit(f"online installer test fixture replacement is ambiguous: {old}")
+    source = source.replace(old, new, 1)
+pathlib.Path(sys.argv[2]).write_text(source, encoding="utf-8")
+PY
+chmod 755 "${test_installer}"
+
 enterprise_root="${tmp}/enterprise-install"
 mkdir -p "${enterprise_root}"
 printf 'HFL_EDITION=enterprise\n' >"${enterprise_root}/.env"
 printf '{"edition":"enterprise"}\n' >"${enterprise_root}/MANIFEST.json"
 enterprise_installer="${tmp}/enterprise-rejection-install.sh"
-python3 - "${online}/install.sh" "${enterprise_installer}" "${enterprise_root}" <<'PY'
+python3 - "${test_installer}" "${enterprise_installer}" "${enterprise_root}" <<'PY'
 import pathlib
+import re
 import sys
 
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-source = source.replace(
-    'INSTALL_ROOT="/opt/hyperfilelens"',
+source, count = re.subn(
+    r'^INSTALL_ROOT="[^"]+"$',
     f'INSTALL_ROOT="{sys.argv[3]}"',
-    1,
+    source,
+    count=1,
+    flags=re.MULTILINE,
 )
+if count != 1:
+    raise SystemExit("could not replace the online installer test root")
 pathlib.Path(sys.argv[2]).write_text(source, encoding="utf-8")
 PY
 chmod 755 "${enterprise_installer}"
@@ -328,7 +356,10 @@ if PATH="${fake_bin}:${PATH}" HFL_TEST_CURL_MARKER="${curl_marker}" \
 	printf 'ERROR: Community installer accepted an Enterprise installation\n' >&2
 	exit 1
 fi
-grep -Fq 'this public installer upgrades Community only' "${enterprise_log}"
+grep -Fq 'this public installer upgrades Community only' "${enterprise_log}" || {
+	cat "${enterprise_log}" >&2
+	exit 1
+}
 [[ ! -e "${curl_marker}" ]] || {
 	printf 'ERROR: Community installer contacted the release source before rejecting Enterprise\n' >&2
 	exit 1
@@ -336,7 +367,7 @@ grep -Fq 'this public installer upgrades Community only' "${enterprise_log}"
 
 latest_log="${tmp}/latest-tag.log"
 if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
-	"${online}/install.sh" --mirror global --yes >"${latest_log}" 2>&1; then
+	"${test_installer}" --mirror global --yes >"${latest_log}" 2>&1; then
 	printf 'ERROR: fake online install unexpectedly succeeded\n' >&2
 	exit 1
 fi
@@ -350,7 +381,7 @@ grep -Fq 'recommended retry: --mirror global --tag v1.2.11' "${latest_log}"
 
 missing_log="${tmp}/missing-tag.log"
 if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
-	"${online}/install.sh" --mirror global --tag v9.9.9 --yes \
+	"${test_installer}" --mirror global --tag v9.9.9 --yes \
 	>"${missing_log}" 2>&1; then
 	printf 'ERROR: missing online tag unexpectedly succeeded\n' >&2
 	exit 1
@@ -364,7 +395,7 @@ pagination_log="${tmp}/pagination.log"
 if PATH="${fake_bin}:${PATH}" \
 	HFL_TEST_TAG_FIXTURE="${tag_page_one_fixture}" \
 	HFL_TEST_TAG_FIXTURE_PAGE_2="${tag_page_two_fixture}" \
-	"${online}/install.sh" --mirror global --yes >"${pagination_log}" 2>&1; then
+	"${test_installer}" --mirror global --yes >"${pagination_log}" 2>&1; then
 	printf 'ERROR: fake paginated online install unexpectedly succeeded\n' >&2
 	exit 1
 fi
@@ -377,7 +408,7 @@ repeated_page_log="${tmp}/repeated-page.log"
 if PATH="${fake_bin}:${PATH}" \
 	HFL_TEST_TAG_FIXTURE="${tag_page_one_fixture}" \
 	HFL_TEST_TAG_FIXTURE_PAGE_2="${tag_page_one_fixture}" \
-	"${online}/install.sh" --mirror global --yes >"${repeated_page_log}" 2>&1; then
+	"${test_installer}" --mirror global --yes >"${repeated_page_log}" 2>&1; then
 	printf 'ERROR: repeated tag page unexpectedly succeeded\n' >&2
 	exit 1
 fi
