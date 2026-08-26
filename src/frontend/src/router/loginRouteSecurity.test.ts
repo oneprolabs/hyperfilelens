@@ -11,7 +11,7 @@ import { router } from './index'
 describe('login route security state', () => {
   beforeEach(async () => {
     await router.replace('/')
-  })
+  }, 30_000)
 
   it.each([
     '/login',

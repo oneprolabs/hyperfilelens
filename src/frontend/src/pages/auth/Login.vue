@@ -3,9 +3,14 @@ import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Mail, Lock, Eye, EyeOff } from 'lucide-vue-next'
+import { CircleAlert, Eye, EyeOff, Lock, Mail } from 'lucide-vue-next'
 import { api } from '../../lib/api'
-import { useAuth, setStoredOrgKey, fetchCurrentUser } from '../../composables/useAuth'
+import {
+  confirmCurrentSession,
+  fetchCurrentUser,
+  setStoredOrgKey,
+  useAuth,
+} from '../../composables/useAuth'
 import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
 import {
   clearLoginLocaleSelection,
@@ -119,7 +124,21 @@ function dismissSessionNotice() {
 // Initialize placeholders from i18n
 formItems.email.placeholder = t('login.emailPh')
 formItems.password.placeholder = t('login.passwordPh')
-const submitLoading = ref(false)
+type LoginTransactionState =
+  | 'idle'
+  | 'submitting'
+  | 'recovering-navigation'
+  | 'session-unknown'
+
+const loginState = ref<LoginTransactionState>('idle')
+const loginProgress = ref<'authenticating' | 'navigating'>('authenticating')
+const recoveryBusy = ref(false)
+const recoveryTarget = ref('')
+const navigationFinished = ref(false)
+const submitLoading = computed(() => loginState.value === 'submitting')
+const isRecoveryState = computed(() => (
+  loginState.value === 'recovering-navigation' || loginState.value === 'session-unknown'
+))
 const showPassword = ref(false)
 const cardView = ref<'login' | 'reset'>('login')
 type AuthMode = 'password' | 'email-code'
@@ -153,6 +172,7 @@ function setAuthModeTabRef(mode: AuthMode, element: Element | null) {
 }
 
 async function selectAuthMode(mode: AuthMode, focusTab = false) {
+  if (loginState.value !== 'idle') return
   authMode.value = mode
   if (!focusTab) return
   await nextTick()
@@ -317,6 +337,67 @@ async function resolveLoginTargetPath(): Promise<string> {
   return resolvePostLoginPath()
 }
 
+async function ensureRecoveryTarget(): Promise<string> {
+  if (!recoveryTarget.value) recoveryTarget.value = await resolveLoginTargetPath()
+  return recoveryTarget.value
+}
+
+async function navigateAfterLogin() {
+  loginProgress.value = 'navigating'
+  try {
+    const target = await ensureRecoveryTarget()
+    const result = await router.push(target)
+    if (result === undefined) {
+      navigationFinished.value = true
+      return
+    }
+  } catch {
+    // The authenticated session remains authoritative; expose navigation retry.
+  }
+  loginState.value = 'recovering-navigation'
+}
+
+async function confirmSessionAndRecover() {
+  if (recoveryBusy.value) return
+  recoveryBusy.value = true
+  try {
+    const confirmation = await confirmCurrentSession()
+    if (confirmation.state === 'unknown') {
+      loginState.value = 'session-unknown'
+      return
+    }
+    if (confirmation.state === 'unauthenticated') {
+      loginState.value = 'idle'
+      recoveryTarget.value = ''
+      resetTurnstile()
+      ElMessage.error({ message: t('login.sessionExpired'), grouping: true })
+      return
+    }
+    loginState.value = 'submitting'
+    await navigateAfterLogin()
+  } finally {
+    recoveryBusy.value = false
+  }
+}
+
+async function recoverUnknownAuthenticationResult() {
+  loginState.value = 'session-unknown'
+  await confirmSessionAndRecover()
+}
+
+function isExplicitAuthenticationFailure(error: unknown): boolean {
+  const authError = error as {
+    status?: number
+    errorCode?: string
+    fields?: Record<string, string[]>
+  }
+  return Boolean(
+    authError.fields
+    || (authError.status && authError.status >= 400 && authError.status < 500)
+    || (authError.errorCode && SESSION_INVALID_CODES.includes(authError.errorCode)),
+  )
+}
+
 function syncExplicitLoginLocale() {
   const selectedLocale = explicitlySelectedLocale.value
   if (selectedLocale) {
@@ -326,11 +407,14 @@ function syncExplicitLoginLocale() {
 }
 
 async function handleSubmit() {
-  if (submitLoading.value) return
+  if (loginState.value !== 'idle') return
 
   if (!validateForm()) return
 
-  submitLoading.value = true
+  loginState.value = 'submitting'
+  loginProgress.value = 'authenticating'
+  recoveryTarget.value = ''
+  navigationFinished.value = false
   setStoredOrgKey('')
 
   formItems.email.errorMsg = ''
@@ -399,7 +483,7 @@ async function handleSubmit() {
     }
     syncExplicitLoginLocale()
     trackAppEvent('login', { method: 'email' })
-    router.push(await resolveLoginTargetPath())
+    await navigateAfterLogin()
   } catch (err: unknown) {
     const errObj = err as { status?: number; message?: string; errorCode?: string; code?: string; fields?: Record<string, string[]> }
 
@@ -409,15 +493,20 @@ async function handleSubmit() {
       return
     }
 
+    if (!isExplicitAuthenticationFailure(err)) {
+      await recoverUnknownAuthenticationResult()
+      return
+    }
     const fields = errObj.fields
-    if (fields && Object.keys(fields).length > 0) {
-      handleFieldsError(fields)
-    } else {
+    if (fields && Object.keys(fields).length > 0) handleFieldsError(fields)
+    else {
       resetTurnstile()
       ElMessage.error({ message: errObj.message || t('login.msgLoginFailed'), grouping: true })
     }
   } finally {
-    submitLoading.value = false
+    if (loginState.value === 'submitting' && !navigationFinished.value) {
+      loginState.value = 'idle'
+    }
   }
 }
 
@@ -460,10 +549,12 @@ async function completeLoginWithOrg(orgKey: string) {
     syncExplicitLoginLocale()
 
     trackAppEvent('login', { method: 'email' })
-    router.push(await resolveLoginTargetPath())
+    await navigateAfterLogin()
   } catch (err: unknown) {
-    const errObj = err as { message?: string; status?: number }
-    if (errObj.status === 401) {
+    const errObj = err as { message?: string; status?: number; errorCode?: string }
+    if (!isExplicitAuthenticationFailure(err)) {
+      await recoverUnknownAuthenticationResult()
+    } else if (errObj.status === 401) {
       ElMessage.error({ message: t('login.sessionExpired'), grouping: true })
       resetTurnstile()
     } else {
@@ -474,12 +565,30 @@ async function completeLoginWithOrg(orgKey: string) {
 }
 
 async function handleEmailCodeVerified(data: EmailCodeLoginData) {
+  if (loginState.value !== 'idle') return
+  loginState.value = 'submitting'
+  loginProgress.value = 'authenticating'
+  recoveryTarget.value = ''
+  navigationFinished.value = false
   const orgs = data.available_orgs || []
   if (orgs.length === 0) {
     ElMessage.error({ message: t('login.emailCodeNoOrganization'), grouping: true })
+    loginState.value = 'idle'
     return
   }
-  await completeLoginWithOrg(orgs[0].org_key)
+  try {
+    await completeLoginWithOrg(orgs[0].org_key)
+  } finally {
+    if (loginState.value === 'submitting' && !navigationFinished.value) {
+      loginState.value = 'idle'
+    }
+  }
+}
+
+async function handleEmailCodeVerificationUnknown() {
+  if (loginState.value !== 'idle') return
+  navigationFinished.value = false
+  await recoverUnknownAuthenticationResult()
 }
 
 function handleFieldsError(fields?: Record<string, string[]>) {
@@ -523,11 +632,12 @@ function handleFieldsError(fields?: Record<string, string[]>) {
 }
 
 function goRegister() {
+  if (loginState.value !== 'idle') return
   router.push('/register')
 }
 
 function goForgetPwd() {
-  if (!passwordResetAvailable.value) return
+  if (!passwordResetAvailable.value || loginState.value !== 'idle') return
   cardView.value = 'reset'
   resetStep.value = 'request'
 }
@@ -589,7 +699,7 @@ async function loadGoogleConfig() {
 }
 
 function startGoogleLogin() {
-  if (!googleEnabled.value || googleLoading.value) return
+  if (!googleEnabled.value || googleLoading.value || loginState.value !== 'idle') return
   googleLoading.value = true
   setStoredOrgKey('')
   setPendingLoginLocale(String(locale.value))
@@ -666,8 +776,42 @@ onMounted(async () => {
             @close="dismissSessionNotice"
           />
 
+          <section
+            v-if="isRecoveryState"
+            class="login-recovery"
+            role="status"
+            aria-live="polite"
+          >
+            <CircleAlert
+              class="login-recovery__icon"
+              :size="30"
+              aria-hidden="true"
+            />
+            <h2 class="login-recovery__title">
+              {{ loginState === 'recovering-navigation'
+                ? t('login.navigationRecoveryTitle')
+                : t('login.sessionUnknownTitle') }}
+            </h2>
+            <p class="login-recovery__message">
+              {{ loginState === 'recovering-navigation'
+                ? t('login.navigationRecoveryMessage')
+                : t('login.sessionUnknownMessage') }}
+            </p>
+            <ElButton
+              type="primary"
+              class="submit-btn"
+              :loading="recoveryBusy"
+              :disabled="recoveryBusy"
+              @click="confirmSessionAndRecover"
+            >
+              {{ loginState === 'recovering-navigation'
+                ? t('login.retryEnterApplication')
+                : t('login.retrySessionCheck') }}
+            </ElButton>
+          </section>
+
           <div
-            v-if="emailCodeLoginAvailable"
+            v-if="emailCodeLoginAvailable && !isRecoveryState"
             class="login-method-tabs"
             role="tablist"
             :aria-label="t('login.methodLabel')"
@@ -683,6 +827,7 @@ onMounted(async () => {
               :aria-selected="authMode === 'password'"
               aria-controls="login-method-panel"
               :tabindex="authMode === 'password' ? 0 : -1"
+              :disabled="submitLoading"
               @click="selectAuthMode('password')"
               @keydown="onAuthModeKeydown"
             >
@@ -698,6 +843,7 @@ onMounted(async () => {
               :aria-selected="authMode === 'email-code'"
               aria-controls="login-method-panel"
               :tabindex="authMode === 'email-code' ? 0 : -1"
+              :disabled="submitLoading"
               @click="selectAuthMode('email-code')"
               @keydown="onAuthModeKeydown"
             >
@@ -706,6 +852,7 @@ onMounted(async () => {
           </div>
 
           <div
+            v-if="!isRecoveryState"
             id="login-method-panel"
             class="login-method-panel"
             role="tabpanel"
@@ -822,14 +969,20 @@ onMounted(async () => {
                   :loading="submitLoading"
                   @click="handleSubmit"
                 >
-                  {{ submitLoading ? t('login.btnSubmitLoading') : t('login.btnSubmit') }}
+                  {{ submitLoading
+                    ? t(loginProgress === 'navigating'
+                      ? 'login.enteringApplication'
+                      : 'login.btnSubmitLoading')
+                    : t('login.btnSubmit') }}
                 </ElButton>
               </div>
 
               <EmailCodeLoginForm
                 v-if="authMode === 'email-code'"
                 v-model:email="formItems.email.value"
+                :disabled="submitLoading"
                 @verified="handleEmailCodeVerified"
+                @verification-unknown="handleEmailCodeVerificationUnknown"
               />
 
               <!-- Forgot Password -->
@@ -848,7 +1001,7 @@ onMounted(async () => {
 
           <!-- Divider -->
           <div
-            v-if="googleEnabled"
+            v-if="googleEnabled && !isRecoveryState"
             class="divider-row"
           >
             <div class="divider-line" />
@@ -858,13 +1011,13 @@ onMounted(async () => {
 
           <!-- Third Party -->
           <div
-            v-if="googleEnabled"
+            v-if="googleEnabled && !isRecoveryState"
             class="google-signin-block"
           >
             <button
               type="button"
               class="google-btn"
-              :disabled="googleLoading"
+              :disabled="googleLoading || submitLoading"
               @click="startGoogleLogin"
             >
               <svg
@@ -897,7 +1050,7 @@ onMounted(async () => {
 
           <!-- Footer: Register + EULA -->
           <div
-            v-if="emailSignupEnabled || showEula"
+            v-if="!isRecoveryState && (emailSignupEnabled || showEula)"
             class="login-footer"
           >
             <div
@@ -993,6 +1146,38 @@ onMounted(async () => {
 .login-actions {
   display: flex;
   flex-direction: column;
+}
+
+.login-recovery {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 4px;
+  color: #fff;
+  text-align: center;
+}
+
+.login-recovery__icon {
+  color: var(--color-brand-violet-soft);
+}
+
+.login-recovery__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.login-recovery__message {
+  margin: 0 0 8px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.login-recovery .submit-btn {
+  min-height: 44px;
 }
 
 .login-method-tabs {

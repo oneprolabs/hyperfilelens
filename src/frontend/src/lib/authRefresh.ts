@@ -4,6 +4,8 @@ import { getCorrelationHeaders } from './requestContext'
 export type RefreshTokenResult = {
   ok: boolean
   errorCode?: string
+  status?: number
+  networkError?: boolean
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
@@ -51,11 +53,11 @@ async function refreshToken(): Promise<RefreshTokenResult> {
       credentials: 'include',
       headers: getCorrelationHeaders(),
     })
-    if (res.ok) return { ok: true }
+    if (res.ok) return { ok: true, status: res.status }
     const data = await readBody(res)
-    return { ok: false, errorCode: extractRefreshErrorCode(data) }
+    return { ok: false, errorCode: extractRefreshErrorCode(data), status: res.status }
   } catch {
-    return { ok: false }
+    return { ok: false, networkError: true }
   }
 }
 

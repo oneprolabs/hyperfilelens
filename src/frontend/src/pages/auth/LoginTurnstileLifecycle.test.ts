@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   api: vi.fn(),
   blockTurnstile: vi.fn(),
   buildTurnstilePayload: vi.fn(),
+  confirmCurrentSession: vi.fn(),
   fetchCurrentUser: vi.fn(),
   fetchDeployProfile: vi.fn(),
   loadTurnstileConfig: vi.fn(),
@@ -30,6 +31,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../lib/api', () => ({ api: mocks.api }))
 
 vi.mock('../../composables/useAuth', () => ({
+  confirmCurrentSession: mocks.confirmCurrentSession,
   fetchCurrentUser: mocks.fetchCurrentUser,
   setStoredOrgKey: mocks.setStoredOrgKey,
   useAuth: () => ({ setUser: mocks.setUser }),
@@ -163,6 +165,16 @@ function submittedBody(call: unknown[]) {
   return JSON.parse(String(init.body)) as Record<string, string>
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 describe('Login Turnstile lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -181,6 +193,7 @@ describe('Login Turnstile lifecycle', () => {
     mocks.buildTurnstilePayload.mockImplementation((token: string) => (
       token ? { turnstile_token: token } : {}
     ))
+    mocks.confirmCurrentSession.mockResolvedValue({ state: 'unknown' })
     installDefaultApiMock()
   })
 
@@ -303,6 +316,109 @@ describe('Login Turnstile lifecycle', () => {
     expect(submit.attributes('disabled')).toBeUndefined()
     expect(emailLoginCalls()).toHaveLength(0)
 
+    wrapper.unmount()
+  })
+
+  it('keeps credential submission locked until route navigation completes', async () => {
+    const navigation = deferred<void>()
+    mocks.routerPush.mockReturnValueOnce(navigation.promise)
+    const wrapper = await mountLogin(1440)
+    await fillCredentials(wrapper)
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+    const submit = wrapper.get('button.submit-btn')
+
+    turnstile.vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    await submit.trigger('click')
+    await vi.waitFor(() => expect(mocks.routerPush).toHaveBeenCalledTimes(1))
+
+    expect(submit.attributes('disabled')).toBeDefined()
+    expect(submit.text()).toContain('Entering HyperFileLens')
+    await submit.trigger('click')
+    expect(emailLoginCalls()).toHaveLength(1)
+
+    navigation.resolve(undefined)
+    await flushPromises()
+    wrapper.unmount()
+  })
+
+  it('shows navigation recovery without reopening credential submission', async () => {
+    mocks.routerPush
+      .mockResolvedValueOnce(new Error('lazy route failed'))
+      .mockResolvedValueOnce(undefined)
+    mocks.confirmCurrentSession.mockResolvedValue({
+      state: 'authenticated',
+      user: successfulLoginResponse.data.user,
+    })
+    const wrapper = await mountLogin(1440)
+    await fillCredentials(wrapper)
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+    turnstile.vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.login-recovery__title').text()).toBe("You're signed in")
+    expect(wrapper.find('#login-method-panel').exists()).toBe(false)
+    expect(emailLoginCalls()).toHaveLength(1)
+
+    await wrapper.get('.login-recovery button').trigger('click')
+    await flushPromises()
+
+    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(1)
+    expect(mocks.routerPush).toHaveBeenCalledTimes(2)
+    expect(emailLoginCalls()).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('keeps an unknown session locked until it can be confirmed', async () => {
+    mocks.api.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/auth/google/config') {
+        return { code: '0000', data: { enabled: false } }
+      }
+      if (path === '/api/v1/auth/email-login') {
+        throw { status: 0, errorCode: 'NETWORK.UNAVAILABLE' }
+      }
+      throw new Error(`Unexpected API path: ${path}`)
+    })
+    const wrapper = await mountLogin(1440)
+    await fillCredentials(wrapper)
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+
+    turnstile.vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.login-recovery__title').text()).toBe('Sign-in status unavailable')
+    expect(wrapper.find('#login-method-panel').exists()).toBe(false)
+    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(1)
+    expect(emailLoginCalls()).toHaveLength(1)
+
+    await wrapper.get('.login-recovery button').trigger('click')
+    await flushPromises()
+    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(2)
+    expect(emailLoginCalls()).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('restores credential submission only after confirming no active session', async () => {
+    mocks.routerPush.mockResolvedValueOnce(new Error('navigation cancelled'))
+    mocks.confirmCurrentSession.mockResolvedValue({ state: 'unauthenticated' })
+    const wrapper = await mountLogin(1440)
+    await fillCredentials(wrapper)
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+
+    turnstile.vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+    await wrapper.get('.login-recovery button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.login-recovery').exists()).toBe(false)
+    expect(wrapper.get('#login-method-panel').exists()).toBe(true)
+    expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
 
