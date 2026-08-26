@@ -83,12 +83,13 @@ export async function showNasDraftPreflightGuidance(
   }
 
   const kernel = String(err.result.details?.kernel || '').trim()
-  const proxy = proxyName || 'Proxy Host'
-  const installCommands = [
-    'sudo apt-get update',
-    'sudo apt-get install linux-modules-extra-$(uname -r)',
-    'sudo modprobe nls_utf8',
-  ]
+  const host = proxyName || 'the host'
+  const osName = String(err.result.details?.os_name || '').toLowerCase()
+  const osFamily = String(err.result.details?.os_family || '').toLowerCase()
+  const rhel = osFamily === 'linux' && /(rhel|red hat|centos|rocky|alma|fedora)/.test(osName)
+  const installCommands = rhel
+    ? ['sudo dnf install kernel-modules-extra-$(uname -r)', 'sudo modprobe nls_utf8']
+    : ['sudo apt-get update', 'sudo apt-get install linux-modules-extra-$(uname -r)', 'sudo modprobe nls_utf8']
   const verifyCommands = [
     'modinfo nls_utf8',
     "lsmod | grep '^nls_utf8'",
@@ -113,7 +114,7 @@ export async function showNasDraftPreflightGuidance(
           h('li', { class: 'smb-utf8-preflight-dialog__alert-item' }, [
             h('span', { class: 'smb-utf8-preflight-dialog__alert-index' }, '1'),
             h('span', { class: 'smb-utf8-preflight-dialog__alert-text' }, [
-              t('protection.sourceResources.smbUtf8MissingIntro', { proxy }),
+              t('protection.sourceResources.smbUtf8MissingIntro', { proxy: host }),
               kernel
                 ? h('span', { class: 'smb-utf8-preflight-dialog__kernel' }, ` Kernel: ${kernel}.`)
                 : null,

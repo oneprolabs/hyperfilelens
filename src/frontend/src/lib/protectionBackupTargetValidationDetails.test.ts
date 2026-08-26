@@ -23,6 +23,15 @@ const messages: Record<string, string> = {
   'protection.backupsPage.targetValidationNasRetryRemount': 'Retry to refresh the mount.',
   'protection.backupsPage.targetValidationNasOwnershipSummary': 'The NAS repository location is not ready.',
   'protection.backupsPage.targetValidationNasOwnershipRepair': 'Complete or repair repository initialization.',
+  'protection.backupsPage.targetValidationSmbCharsetSummary': 'SMB UTF-8 support is unavailable on the host.',
+  'protection.backupsPage.targetValidationSmbCharsetIssue': '{node} cannot mount this SMB share because {charset} requires the {module} kernel module, which is unavailable for the running kernel {kernel}.',
+  'protection.backupsPage.targetValidationSmbCharsetReason': 'The host is missing the operating-system kernel module required to handle UTF-8 SMB filenames.',
+  'protection.backupsPage.targetValidationSmbCharsetInstallDebian': 'On {node}, install linux-modules-extra-$(uname -r) using apt-get.',
+  'protection.backupsPage.targetValidationSmbCharsetInstallRhel': 'On {node}, install kernel-modules-extra-$(uname -r) using dnf (or yum on older systems).',
+  'protection.backupsPage.targetValidationSmbCharsetInstallGeneric': 'On {node}, install the Linux package that provides the nls_utf8 module for the running kernel.',
+  'protection.backupsPage.targetValidationSmbCharsetLoad': 'On {node}, run: sudo modprobe nls_utf8.',
+  'protection.backupsPage.targetValidationSmbCharsetVerify': 'On {node}, verify the module with modinfo nls_utf8 and lsmod | grep nls_utf8.',
+  'protection.backupsPage.targetValidationSmbCharsetRunningKernel': 'the running kernel',
   'protection.backupsPage.targetValidationClockSkewSummary': 'Source host time is out of sync.',
   'protection.backupsPage.targetValidationClockSkewTitle': 'Source host time differs from S3.',
   'protection.backupsPage.targetValidationClockSkewIssue': '{source} differs too much from S3.',
@@ -170,6 +179,50 @@ describe('backup target validation failure details', () => {
     expect(details.issue).toBe(result.message)
     expect(details.reasons).toEqual([result.message])
     expect(details.resolutions).toContain('Check settings on host-a.')
+  })
+
+  it('explains SMB UTF-8 dependency failures for the executing Linux host', () => {
+    const details = backupTargetValidationFailureDetails({
+      result: {
+        key: 'host:agent:11',
+        status: 'failed',
+        code: 'SMB_CHARSET_UNAVAILABLE',
+        message: 'raw mount error(79)',
+        details: {
+          execution_node_name: 'hfl-agent1',
+          execution_node_os_name: 'Ubuntu 24.04',
+          os_family: 'linux',
+          charset: 'utf8',
+          module: 'nls_utf8',
+          kernel: '6.8.0-71-generic',
+        },
+      },
+      sourceName: 'source-a',
+      t,
+    })
+
+    expect(details.issue).toContain('hfl-agent1')
+    expect(details.issue).toContain('6.8.0-71-generic')
+    expect(details.resolutions).toContain('On hfl-agent1, install linux-modules-extra-$(uname -r) using apt-get.')
+    expect(details.resolutions).toContain('On hfl-agent1, run: sudo modprobe nls_utf8.')
+    expect(details.resolutions.join(' ')).not.toContain('Proxy')
+  })
+
+  it('uses RHEL-family package guidance without guessing for unknown Linux', () => {
+    const base = {
+      key: 'host:agent:11', status: 'failed' as const, code: 'SMB_CHARSET_UNAVAILABLE',
+      message: 'raw mount error(79)', details: {
+        execution_node_name: 'agent-a', execution_node_os_name: 'CentOS', os_family: 'linux',
+        charset: 'utf8', module: 'nls_utf8', kernel: '5.14.0',
+      },
+    }
+    const rhel = backupTargetValidationFailureDetails({ result: base, sourceName: 'source-a', t })
+    expect(rhel.resolutions[0]).toContain('kernel-modules-extra-$(uname -r)')
+    const generic = backupTargetValidationFailureDetails({
+      result: { ...base, details: { ...base.details, execution_node_os_name: 'Custom Linux' } },
+      sourceName: 'source-a', t,
+    })
+    expect(generic.resolutions[0]).toContain('package that provides the nls_utf8 module')
   })
 
   it('explains NAS write failures using the execution node and remount flow', () => {

@@ -180,6 +180,13 @@ def connection_test_result_from_agent_outcome(
             "storage_type": resource_type,
             "protocol": payload.get("protocol"),
         }
+        inventory = (
+            (node.metadata or {}).get("inventory") if node is not None else {}
+        )
+        if isinstance(inventory, dict):
+            for key in ("os_family", "os_name", "os_version"):
+                if inventory.get(key):
+                    details[key] = inventory[key]
         for key in ("charset", "kernel", "cleanup_status", "mount_status"):
             if key in result:
                 details[key] = result[key]

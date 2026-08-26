@@ -145,6 +145,39 @@ export function backupTargetValidationFailureDetails({
     }
   }
 
+  if (result.code === 'SMB_CHARSET_UNAVAILABLE') {
+    const node = mountHelperNodeLabel(mountDetails, t)
+    const osName = String(mountDetails.execution_node_os_name || '').trim()
+    const osFamily = String(mountDetails.os_family || '').trim().toLowerCase()
+    const distro = `${osName} ${String(mountDetails.os_version || '')}`.toLowerCase()
+    const debian = osFamily === 'linux' && /(ubuntu|debian)/.test(distro)
+    const rhel = osFamily === 'linux' && /(rhel|red hat|centos|rocky|alma|fedora)/.test(distro)
+    const install = debian
+      ? t('protection.backupsPage.targetValidationSmbCharsetInstallDebian', { node })
+      : rhel
+        ? t('protection.backupsPage.targetValidationSmbCharsetInstallRhel', { node })
+        : t('protection.backupsPage.targetValidationSmbCharsetInstallGeneric', { node })
+    return {
+      title: t('protection.backupsPage.targetValidationFailedTitle'),
+      summary: t('protection.backupsPage.targetValidationSmbCharsetSummary'),
+      errorCode: result.code,
+      issue: t('protection.backupsPage.targetValidationSmbCharsetIssue', {
+        node,
+        charset: String(mountDetails.charset || 'utf8'),
+        module: String(mountDetails.module || 'nls_utf8'),
+        kernel: String(mountDetails.kernel || t('protection.backupsPage.targetValidationSmbCharsetRunningKernel')),
+      }),
+      reasons: [t('protection.backupsPage.targetValidationSmbCharsetReason')],
+      resolutions: [
+        install,
+        t('protection.backupsPage.targetValidationSmbCharsetLoad', { node }),
+        t('protection.backupsPage.targetValidationSmbCharsetVerify', { node }),
+        t('protection.backupsPage.targetValidationRetryStep'),
+      ],
+      rawDetail: { source: sourceName, error_code: result.code, ...mountDetails, agent_message: message },
+    }
+  }
+
   if (result.code === nasOwnershipFailureCode) {
     return {
       title: t('protection.backupsPage.targetValidationFailedTitle'),
