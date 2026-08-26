@@ -7,7 +7,7 @@ export default defineConfig({
   description: 'Open source backup with agentic AI insight — protect your files without touching production, then ask deep questions, no pre-built index required.',
   cleanUrls: true,
   head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo-mark.svg' }],
+    ['link', { rel: 'icon', type: 'image/x-icon', href: '/brand/icons/favicon.ico' }],
     ['meta', { name: 'theme-color', content: '#07111f' }],
     ['meta', { name: 'viewport', content: 'width=device-width, initial-scale=1' }],
     ['meta', { property: 'og:type', content: 'website' }],
@@ -17,8 +17,11 @@ export default defineConfig({
     ['script', { src: '/website-runtime-config.js' }],
   ],
   themeConfig: {
-    logo: '/logo-mark.svg',
-    siteTitle: 'HyperFileLens',
+    logo: {
+      light: '/brand/images/hyperfilelens-lockup-on-light.png',
+      dark: '/brand/images/hyperfilelens-lockup-on-dark.png',
+    },
+    siteTitle: false,
     i18nRouting: false,
     nav: [
       {

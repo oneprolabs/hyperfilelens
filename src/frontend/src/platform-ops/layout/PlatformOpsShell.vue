@@ -4,7 +4,6 @@ import { useRoute, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Menu } from 'lucide-vue-next'
 import NavUserMenu from '../../components/NavUserMenu.vue'
-import AppLogoMark from '../../components/AppLogoMark.vue'
 import Sidebar from '../../components/Sidebar.vue'
 import { useTheme } from '../../composables/useTheme'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
@@ -97,8 +96,11 @@ watch(
         />
       </button>
       <div class="platform-ops-header__brand">
-        <AppLogoMark :size="18" />
-        <span class="platform-ops-header__brand-name"><span>Hyper</span><strong>FileLens</strong></span>
+        <img
+          class="platform-ops-header__lockup"
+          src="/brand/images/hyperfilelens-lockup-on-dark.png"
+          alt="HyperFileLens"
+        >
         <i aria-hidden="true" />
         <span class="platform-ops-header__product">{{ t('platformOps.nav.title') }}</span>
       </div>
@@ -253,22 +255,13 @@ watch(
   white-space: nowrap;
 }
 
-.platform-ops-header__brand-name {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 2px;
-  color: #f8fafc;
-  font-size: 14px;
-  font-weight: 850;
-  line-height: 1;
-}
-
-.platform-ops-header__brand-name > span {
-  color: var(--nav-active-accent, #f5a623);
-}
-
-.platform-ops-header__brand-name strong {
-  font-weight: 850;
+.platform-ops-header__lockup {
+  display: block;
+  width: 128px;
+  height: auto;
+  max-width: 100%;
+  object-fit: contain;
+  transform: translateY(2px);
 }
 
 .platform-ops-header__brand > i {
@@ -540,6 +533,10 @@ watch(
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .platform-ops-header__lockup {
+    width: 114px;
   }
 
   .platform-ops-header__actions {

@@ -40,11 +40,11 @@ watch(
               class="app-route-loading__panel"
               aria-hidden="true"
             >
-              <i class="app-route-loading__mark" />
-              <div class="app-route-loading__brand">
-                <span>Hyper</span>FileLens
-              </div>
-              <div class="app-route-loading__sub" />
+              <img
+                class="app-route-loading__lockup"
+                src="/brand/images/hyperfilelens-lockup-on-light.png"
+                alt="HyperFileLens"
+              >
               <div class="app-route-loading__bar" />
             </div>
           </div>
@@ -79,44 +79,21 @@ watch(
   text-align: center;
 }
 
-.app-route-loading__mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background:
-    linear-gradient(135deg, rgba(245, 166, 35, 0.95), transparent 46%),
-    linear-gradient(135deg, #a99bff, var(--color-primary, #6d5ef6));
-  box-shadow: 0 16px 34px rgba(109, 94, 246, 0.28);
-  transform: rotate(45deg);
-}
-
-.app-route-loading__brand {
-  margin: 4px 0 0;
-  color: #171721;
-  font-size: 20px;
-  font-weight: 750;
-  line-height: 1.2;
-  letter-spacing: 0;
-}
-
-.app-route-loading__brand span {
-  color: #f5a623;
-}
-
-.app-route-loading__sub {
-  width: 160px;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(119, 116, 134, 0.16);
+.app-route-loading__lockup {
+  display: block;
+  width: min(260px, 100%);
+  height: 48px;
+  object-fit: cover;
+  object-position: center 40%;
 }
 
 .app-route-loading__bar {
   position: relative;
-  width: 220px;
-  height: 3px;
+  width: min(243px, 100%);
+  height: 4px;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(109, 94, 246, 0.14);
+  background: rgba(109, 94, 246, 0.18);
 }
 
 .app-route-loading__bar::after {
@@ -126,6 +103,7 @@ watch(
   width: 42%;
   border-radius: inherit;
   background: linear-gradient(90deg, #f5a623, var(--color-primary, #6d5ef6));
+  box-shadow: 0 0 10px rgba(109, 94, 246, 0.24);
   animation: app-route-loading-progress 1s ease-in-out infinite;
 }
 

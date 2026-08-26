@@ -130,8 +130,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
     <header class="site-header-wrap">
       <div class="site-header">
         <a class="brand" href="/zh/" aria-label="HyperFileLens 首页">
-          <img src="/logo-mark.svg" alt="" width="34" height="34" />
-          <span>HyperFileLens</span>
+          <img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-on-light.png" alt="HyperFileLens" />
         </a>
         <nav aria-label="主导航">
           <a href="#use-cases">使用场景</a>
@@ -167,7 +166,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           </p>
           <div class="hero-actions">
             <a class="button button-primary" :href="loginUrl" @click="openApp($event, 'hero')">
-              <img src="/logo-mark-white.svg" alt="" class="button-logo" />
+              <img src="/brand/icons/hyperfilelens-mark-32.png" alt="" class="button-logo" />
               试用 HyperFileLens
               <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
               <span class="free-badge">免费</span>
@@ -293,7 +292,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
               <button
                 type="button"
                 class="copy-command"
-                :aria-label="copied ? '已复制安装命令' : '复制安装命令'"
+                :aria-label="copied ? '已复制' : '复制命令'"
                 @click="copyInstallCommand"
               >
                 <svg aria-hidden="true"><use :href="copied ? '#icon-check' : '#icon-copy'" /></svg>
@@ -342,7 +341,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
 
     <footer>
       <div class="footer-brand">
-        <a class="brand" href="/zh/"><img src="/logo-mark.svg" alt="" width="32" height="32" /><span>HyperFileLens</span></a>
+        <a class="brand" href="/zh/"><img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-on-light.png" alt="HyperFileLens" /></a>
         <p>开源备份工具，内置 Agentic AI 洞察能力，由 OneProLabs 出品。</p>
         <a class="footer-social" :href="githubUrl" aria-label="HyperFileLens GitHub 仓库"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
       </div>
