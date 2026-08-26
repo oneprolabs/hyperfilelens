@@ -116,6 +116,26 @@ describe('EmailCodeLoginForm', () => {
     wrapper.unmount()
   })
 
+  it('hands an unknown verification result to the parent without enabling another attempt', async () => {
+    const networkError = { status: 0, errorCode: 'NETWORK.UNAVAILABLE' }
+    mocks.verify.mockRejectedValueOnce(networkError)
+    const wrapper = mountForm('person@example.com')
+    await wrapper.get('.email-code-login-form__send').trigger('click')
+    await flushPromises()
+    const codeInput = wrapper.get<HTMLInputElement>('#email-code-login-code')
+    await codeInput.setValue('123456')
+
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('verification-unknown')).toEqual([[networkError]])
+    expect(codeInput.element.value).toBe('123456')
+
+    await wrapper.setProps({ disabled: true })
+    expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
   it('invalidates the issued code when the normalized email changes', async () => {
     const wrapper = mountForm('person@example.com')
     await wrapper.get('.email-code-login-form__send').trigger('click')

@@ -108,7 +108,14 @@ type CurrentUserFetchResult = {
   errorCode?: string
   refreshFailed?: boolean
   refreshAvailable?: boolean
+  refreshStatus?: number
+  refreshNetworkError?: boolean
 }
+
+export type CurrentSessionConfirmation =
+  | { state: 'authenticated'; user: User }
+  | { state: 'unauthenticated' }
+  | { state: 'unknown' }
 
 function extractSessionErrorCode(data: unknown): string | undefined {
   if (!data || typeof data !== 'object') return undefined
@@ -188,6 +195,8 @@ async function fetchCurrentUserWithRefresh(): Promise<CurrentUserFetchResult> {
       ...first,
       errorCode: refreshed.errorCode || first.errorCode,
       refreshFailed: true,
+      refreshStatus: refreshed.status,
+      refreshNetworkError: refreshed.networkError,
     }
   }
 
@@ -201,6 +210,37 @@ export async function fetchCurrentUser(): Promise<User | null> {
     return result.user
   } catch {
     return null
+  }
+}
+
+/** Distinguish an absent session from a session that could not be inspected. */
+export async function confirmCurrentSession(): Promise<CurrentSessionConfirmation> {
+  try {
+    const result = await fetchCurrentUserWithRefresh()
+    if (result.user) return { state: 'authenticated', user: result.user }
+    if (
+      result.status === 401
+      || result.status === 403
+      || result.refreshStatus === 401
+      || result.refreshStatus === 403
+      || isSessionInvalidReason(result.errorCode)
+    ) {
+      return { state: 'unauthenticated' }
+    }
+    if (
+      result.refreshNetworkError
+      || (result.status !== undefined && result.status >= 500)
+      || (result.refreshStatus !== undefined && result.refreshStatus >= 500)
+      || result.refreshFailed
+    ) {
+      return { state: 'unknown' }
+    }
+    if (result.status !== undefined && result.status >= 200 && result.status < 300) {
+      return { state: 'unauthenticated' }
+    }
+    return { state: 'unknown' }
+  } catch {
+    return { state: 'unknown' }
   }
 }
 

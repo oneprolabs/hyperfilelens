@@ -14,10 +14,12 @@ import {
 const props = defineProps<{
   email?: string
   initialEmail?: string
+  disabled?: boolean
 }>()
 
 const emit = defineEmits<{
   verified: [data: EmailCodeLoginData]
+  'verification-unknown': [error: unknown]
   'update:email': [value: string]
 }>()
 
@@ -57,6 +59,7 @@ const hasUsableCode = computed(() => (
 const sendDisabled = computed(() => (
   sending.value
   || verifying.value
+  || props.disabled
   || !emailValid.value
   || cooldownSeconds.value > 0
 ))
@@ -65,6 +68,7 @@ const canVerify = computed(() => (
   && code.value.length === 6
   && !sending.value
   && !verifying.value
+  && !props.disabled
 ))
 const sendLabel = computed(() => {
   if (sending.value) return t('login.emailCodeSending')
@@ -262,6 +266,11 @@ async function verifyCode() {
   } catch (error) {
     if (isAbortError(error)) return
     const apiCode = errorCode(error)
+    const status = Number((error as ApiError | undefined)?.status || 0)
+    if (apiCode === 'NETWORK.UNAVAILABLE' || status >= 500 || (!apiCode && status === 0)) {
+      emit('verification-unknown', error)
+      return
+    }
     if (apiCode === 'EMAIL_CODE_ATTEMPTS_EXCEEDED') {
       codeError.value = t('login.emailCodeAttemptsExceeded')
       codeIssued.value = false
@@ -336,7 +345,7 @@ onBeforeUnmount(() => {
           type="email"
           :placeholder="t('login.emailPh')"
           autocomplete="email"
-          :disabled="sending || verifying"
+          :disabled="disabled || sending || verifying"
           :aria-invalid="Boolean(emailError)"
           @input="validateEmail"
           @blur="validateEmail"
@@ -375,7 +384,7 @@ onBeforeUnmount(() => {
           autocomplete="one-time-code"
           maxlength="6"
           :placeholder="t('login.emailCodePlaceholder')"
-          :disabled="!hasUsableCode || sending || verifying"
+          :disabled="disabled || !hasUsableCode || sending || verifying"
           :aria-invalid="Boolean(codeError)"
           @input="sanitizeCode"
           @keyup.enter="verifyCode"
