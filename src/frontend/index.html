@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/x-icon" href="/brand/icons/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="preconnect" href="https://challenges.cloudflare.com" crossorigin />
     <link rel="dns-prefetch" href="https://challenges.cloudflare.com" />
@@ -43,42 +43,24 @@
         display: grid;
         justify-items: center;
         gap: 16px;
-        width: min(320px, 100%);
+        width: min(280px, 100%);
         color: var(--boot-ink);
         text-align: center;
       }
 
-      .hfl-boot__mark {
-        width: 40px;
-        height: 40px;
-        border-radius: 12px;
-        background:
-          linear-gradient(135deg, rgba(245, 166, 35, 0.95), transparent 46%),
-          linear-gradient(135deg, #a99bff, var(--boot-primary));
-        box-shadow: 0 16px 34px rgba(109, 94, 246, 0.28);
-        transform: rotate(45deg);
-      }
-
-      .hfl-boot__brand {
-        margin: 4px 0 0;
-        color: var(--boot-ink);
-        font-size: 20px;
-        font-weight: 750;
-        line-height: 1.2;
-        letter-spacing: 0;
-      }
-
-      .hfl-boot__brand span {
-        color: var(--boot-accent);
+      .hfl-boot__lockup {
+        display: block;
+        width: min(243px, 100%);
+        height: auto;
       }
 
       .hfl-boot__bar {
         position: relative;
-        width: 220px;
-        height: 7px;
+        width: min(243px, 100%);
+        height: 4px;
         overflow: hidden;
         border-radius: 999px;
-        background: rgba(109, 94, 246, 0.14);
+        background: rgba(109, 94, 246, 0.18);
       }
 
       .hfl-boot__bar::after {
@@ -88,6 +70,7 @@
         width: 42%;
         border-radius: inherit;
         background: linear-gradient(90deg, var(--boot-accent), var(--boot-primary));
+        box-shadow: 0 0 10px rgba(109, 94, 246, 0.24);
         animation: hfl-boot-progress 1.3s ease-in-out infinite;
       }
 
@@ -106,8 +89,14 @@
     <div id="app">
       <div class="hfl-boot" aria-hidden="true">
         <div class="hfl-boot__panel">
-          <i class="hfl-boot__mark"></i>
-          <div class="hfl-boot__brand"><span>Hyper</span>FileLens</div>
+          <img
+            class="hfl-boot__lockup"
+            src="/brand/images/hyperfilelens-lockup-loading.png"
+            srcset="/brand/images/hyperfilelens-lockup-loading@2x.png 2x"
+            width="243"
+            height="47"
+            alt="HyperFileLens"
+          />
           <div class="hfl-boot__bar"></div>
         </div>
       </div>

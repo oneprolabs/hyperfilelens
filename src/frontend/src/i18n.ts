@@ -2,7 +2,51 @@ import { createI18n } from 'vue-i18n'
 import { en } from './locales'
 
 export const LANG_STORAGE_KEY = 'hfl.lang'
+export const LOGIN_LOCALE_STORAGE_KEY = 'hfl.login.locale'
+export const LOGIN_LOCALE_PENDING_STORAGE_KEY = 'hfl.login.locale.pending'
 export const DEFAULT_LOCALE = 'en'
+
+let suppressAuthenticatedLocaleApplication = false
+
+export function setAuthenticatedLocaleApplicationSuppressed(suppressed: boolean): void {
+  suppressAuthenticatedLocaleApplication = suppressed
+}
+
+export function getLoginLocaleSelection(): string | null {
+  try {
+    return sessionStorage.getItem(LOGIN_LOCALE_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function setLoginLocaleSelection(code: string): void {
+  try {
+    sessionStorage.setItem(LOGIN_LOCALE_STORAGE_KEY, code)
+  } catch {
+    /* Storage may be unavailable in privacy-restricted browser contexts. */
+  }
+}
+
+export function clearLoginLocaleSelection(): void {
+  try {
+    sessionStorage.removeItem(LOGIN_LOCALE_STORAGE_KEY)
+  } catch {
+    /* Storage may be unavailable in privacy-restricted browser contexts. */
+  }
+}
+
+export function getPendingLoginLocale(): string | null {
+  try { return sessionStorage.getItem(LOGIN_LOCALE_PENDING_STORAGE_KEY) } catch { return null }
+}
+
+export function setPendingLoginLocale(code: string): void {
+  try { sessionStorage.setItem(LOGIN_LOCALE_PENDING_STORAGE_KEY, code) } catch { /* unavailable */ }
+}
+
+export function clearPendingLoginLocale(): void {
+  try { sessionStorage.removeItem(LOGIN_LOCALE_PENDING_STORAGE_KEY) } catch { /* unavailable */ }
+}
 
 let authenticatedLocale: string | null = null
 let languagePacksLoaded = false
@@ -79,7 +123,7 @@ export function selectLocale(code: string): string {
 /** Set the signed-in user's preference without resolving it before packs load. */
 export function setAuthenticatedLocalePreference(code: string | null | undefined): void {
   authenticatedLocale = code?.trim() || null
-  if (languagePacksLoaded) applyPreferredLocale()
+  if (languagePacksLoaded && !suppressAuthenticatedLocaleApplication) applyPreferredLocale()
 }
 
 /** Finish locale startup after all optional message catalogs have been registered. */

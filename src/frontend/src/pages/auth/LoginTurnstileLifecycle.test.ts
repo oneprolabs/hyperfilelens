@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
   setStoredOrgKey: vi.fn(),
   setUser: vi.fn(),
+  syncAuthenticatedLocale: vi.fn(),
   turnstileBlocked: false,
 }))
 
@@ -42,6 +43,7 @@ vi.mock('../../composables/useLocaleSwitch', () => ({
     currentLocaleLabel: ref('English'),
     localeOptions: ref([{ code: 'en', label: 'English' }]),
     selectLocale: vi.fn(),
+    syncAuthenticatedLocale: mocks.syncAuthenticatedLocale,
   }),
 }))
 
@@ -351,7 +353,6 @@ describe('Login Turnstile lifecycle', () => {
     const wrapper = await mountLogin(1440)
     await fillCredentials(wrapper)
     const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
-
     turnstile.vm.$emit('success', 'verified-token')
     await wrapper.vm.$nextTick()
     await wrapper.get('button.submit-btn').trigger('click')
@@ -418,6 +419,78 @@ describe('Login Turnstile lifecycle', () => {
     expect(wrapper.find('.login-recovery').exists()).toBe(false)
     expect(wrapper.get('#login-method-panel').exists()).toBe(true)
     expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('syncs a language explicitly selected during password sign-in', async () => {
+    const wrapper = await mountLogin(1440)
+    const languageSwitcher = wrapper.getComponent({ name: 'LanguageSwitcher' })
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+
+    languageSwitcher.vm.$emit('change', 'zh-hans')
+    await fillCredentials(wrapper)
+    turnstile.vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setUser).toHaveBeenCalledWith(successfulLoginResponse.data.user)
+    expect(mocks.syncAuthenticatedLocale).toHaveBeenCalledTimes(1)
+    expect(mocks.syncAuthenticatedLocale).toHaveBeenCalledWith('zh-hans')
+    wrapper.unmount()
+  })
+
+  it('does not override the profile language without an explicit login-page selection', async () => {
+    const wrapper = await mountLogin(1440)
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+
+    await fillCredentials(wrapper)
+    turnstile.vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+
+    expect(mocks.syncAuthenticatedLocale).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('syncs the explicit language after email-code authentication loads the user', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue({
+      email_signup_enabled: false,
+      email_code_login_available: true,
+      password_reset_available: false,
+    })
+    mocks.fetchCurrentUser.mockResolvedValue({
+      id: 1,
+      email: 'person@example.com',
+      username: 'person',
+      language: 'en',
+    })
+    mocks.api.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/auth/google/config') {
+        return { code: '0000', data: { enabled: false } }
+      }
+      if (path === '/api/v1/auth/org-select') {
+        return { code: '0000', data: {} }
+      }
+      throw new Error(`Unexpected API path: ${path}`)
+    })
+
+    const wrapper = await mountLogin(1440)
+    wrapper.getComponent({ name: 'LanguageSwitcher' }).vm.$emit('change', 'zh-hans')
+    await wrapper.findAll('.login-method-tabs__tab')[1].trigger('click')
+    const emailCodeForm = wrapper.getComponent({ name: 'EmailCodeLoginForm' })
+
+    emailCodeForm.vm.$emit('verified', {
+      available_orgs: [{ org_key: 'org-1', org_name: 'Organization', role: 'member' }],
+    })
+    await flushPromises()
+
+    expect(mocks.fetchCurrentUser).toHaveBeenCalledTimes(1)
+    expect(mocks.syncAuthenticatedLocale).toHaveBeenCalledWith('zh-hans')
+    expect(mocks.fetchCurrentUser.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.syncAuthenticatedLocale.mock.invocationCallOrder[0],
+    )
     wrapper.unmount()
   })
 

@@ -5,7 +5,6 @@ import { Menu, Shield } from 'lucide-vue-next'
 import NavNotificationPopover from '../../components/NavNotificationPopover.vue'
 import NavUserMenu from '../../components/NavUserMenu.vue'
 import OrgSwitcher from '../../components/OrgSwitcher.vue'
-import AppLogoMark from '../../components/AppLogoMark.vue'
 import { beginRouteRequestScope } from '../../lib/routeRequestAbort'
 import { beginRouteTransition } from '../../lib/routeTransition'
 import { useAppPrimaryNav } from '../../composables/useAppPrimaryNav'
@@ -70,8 +69,11 @@ function handleNavClick(event: MouseEvent, to: string) {
       :aria-label="t('nav.overview')"
       @click="navigateImmediately('/')"
     >
-      <AppLogoMark :size="18" />
-      <span class="logo-text"><span>Hyper</span><strong>FileLens</strong></span>
+      <img
+        class="logo-lockup"
+        src="/brand/images/hyperfilelens-lockup-on-dark.png"
+        alt="HyperFileLens"
+      >
     </button>
 
     <nav class="nav-menu">
@@ -162,13 +164,21 @@ function handleNavClick(event: MouseEvent, to: string) {
 .logo {
   display: flex;
   align-items: center;
-  gap: 9px;
-  width: 150px;
+  width: 142px;
   height: 100%;
   cursor: pointer;
   padding: 0;
   border: 0;
   background: transparent;
+}
+
+.logo-lockup {
+  display: block;
+  width: 128px;
+  height: auto;
+  max-width: 100%;
+  object-fit: contain;
+  transform: translateY(2px);
 }
 
 .mobile-menu-button {
@@ -191,27 +201,6 @@ function handleNavClick(event: MouseEvent, to: string) {
 .mobile-menu-button:focus-visible {
   background: var(--icon-btn-hover-bg, rgba(255, 255, 255, 0.08));
   color: var(--icon-btn-hover-color, #fff);
-}
-
-.logo-text {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 2px;
-  font-size: 14px;
-  font-weight: 850;
-  color: var(--tnav-text, #fff);
-  letter-spacing: 0;
-  line-height: 1;
-}
-
-.logo-text > span {
-  color: var(--nav-active-accent, #F5A623);
-  font-weight: 850;
-}
-
-.logo-text strong {
-  color: #f8fafc;
-  font-weight: 850;
 }
 
 .nav-menu {
@@ -434,8 +423,12 @@ function handleNavClick(event: MouseEvent, to: string) {
 }
 
 @media (max-width: 479.98px) {
-  .logo-text {
-    font-size: 13px;
+  .logo {
+    width: 124px;
+  }
+
+  .logo-lockup {
+    width: 114px;
   }
 }
 

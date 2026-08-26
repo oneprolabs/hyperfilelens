@@ -4230,8 +4230,8 @@ export const en = {
     },
   },
   login: {
-    brandDesc: 'AI-Powered File Backup Insights',
-    brandSlogan: 'BEYOND BACKUP: UNLOCK THE VALUE OF YOUR DATA',
+    brandDesc: 'Your backups know\nmore than you think.',
+    brandSlogan: 'Ask questions straight from your document backups — PDFs, Word, Excel, PowerPoint, images, Markdown, or any other text format — without touching production.',
     welcomeTitle: 'Welcome to HyperFileLens',
     emailPh: 'Email address',
     emailErrRequired: 'Please enter email address',

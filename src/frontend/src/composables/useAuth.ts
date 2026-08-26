@@ -15,6 +15,7 @@ import {
   sessionNoticeMessageKey,
   storeSessionNotice,
 } from '../lib/sessionNotice'
+import { clearLogoutBrowserStorage } from '../lib/logoutStorage'
 
 export interface User {
   id: number
@@ -251,6 +252,7 @@ function hasCompleteAccessProfile(user: User | null): boolean {
 
 // Module-level clearAuth for use by setupAuthGuard
 export function clearAuth() {
+  clearLogoutBrowserStorage()
   currentUser.value = null
   isLoggedIn.value = false
   isLoading.value = false

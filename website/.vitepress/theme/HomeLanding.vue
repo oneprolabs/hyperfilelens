@@ -131,8 +131,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
     <header class="site-header-wrap">
       <div class="site-header">
         <a class="brand" href="/en/" aria-label="HyperFileLens home">
-          <img src="/logo-mark.svg" alt="" width="34" height="34" />
-          <span>HyperFileLens</span>
+          <img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-on-light.png" alt="HyperFileLens" />
         </a>
         <nav aria-label="Main navigation">
           <a href="#use-cases">Use Cases</a>
@@ -168,7 +167,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           </p>
           <div class="hero-actions">
             <a class="button button-primary" :href="loginUrl" @click="openApp($event, 'hero')">
-              <img src="/logo-mark-white.svg" alt="" class="button-logo" />
+              <img src="/brand/icons/hyperfilelens-mark-32.png" alt="" class="button-logo" />
               Try HyperFileLens
               <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
               <span class="free-badge">Free</span>
@@ -294,7 +293,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
               <button
                 type="button"
                 class="copy-command"
-                :aria-label="copied ? 'Installation command copied' : 'Copy installation command'"
+                :aria-label="copied ? 'Copied' : 'Copy command'"
                 @click="copyInstallCommand"
               >
                 <svg aria-hidden="true"><use :href="copied ? '#icon-check' : '#icon-copy'" /></svg>
@@ -343,7 +342,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
 
     <footer>
       <div class="footer-brand">
-        <a class="brand" href="/en/"><img src="/logo-mark.svg" alt="" width="32" height="32" /><span>HyperFileLens</span></a>
+        <a class="brand" href="/en/"><img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-on-light.png" alt="HyperFileLens" /></a>
         <p>Open source backup with agentic AI insight, by OneProLabs.</p>
         <a class="footer-social" :href="githubUrl" aria-label="HyperFileLens on GitHub"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
       </div>

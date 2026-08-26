@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick, onMounted } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -11,6 +11,13 @@ import {
   setStoredOrgKey,
   useAuth,
 } from '../../composables/useAuth'
+import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
+import {
+  clearLoginLocaleSelection,
+  setAuthenticatedLocaleApplicationSuppressed,
+  setLoginLocaleSelection,
+  setPendingLoginLocale,
+} from '../../i18n'
 import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
 import AuthBackdrop from '../../components/auth/AuthBackdrop.vue'
 import AuthBrandPanel from '../../components/auth/AuthBrandPanel.vue'
@@ -32,7 +39,7 @@ const emailSignupEnabled = ref(false)
 const passwordResetAvailable = ref(false)
 const emailCodeLoginAvailable = ref(false)
 const showEula = appConfig.showEula
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const sessionNoticeDismissed = ref(false)
@@ -51,6 +58,9 @@ const {
 } = useTurnstileConfig()
 
 const { setUser } = useAuth()
+setAuthenticatedLocaleApplicationSuppressed(true)
+const { syncAuthenticatedLocale } = useLocaleSwitch()
+const explicitlySelectedLocale = ref<string | null>(null)
 const turnstileToken = ref('')
 const turnstileError = ref('')
 const turnstileErrorCode = ref('')
@@ -388,6 +398,14 @@ function isExplicitAuthenticationFailure(error: unknown): boolean {
   )
 }
 
+function syncExplicitLoginLocale() {
+  const selectedLocale = explicitlySelectedLocale.value
+  if (selectedLocale) {
+    syncAuthenticatedLocale(selectedLocale)
+    clearLoginLocaleSelection()
+  }
+}
+
 async function handleSubmit() {
   if (loginState.value !== 'idle') return
 
@@ -463,6 +481,7 @@ async function handleSubmit() {
     if (res.data.user) {
       setUser(res.data.user)
     }
+    syncExplicitLoginLocale()
     trackAppEvent('login', { method: 'email' })
     await navigateAfterLogin()
   } catch (err: unknown) {
@@ -527,6 +546,7 @@ async function completeLoginWithOrg(orgKey: string) {
 
     setStoredOrgKey(orgKey)
     await fetchCurrentUser()
+    syncExplicitLoginLocale()
 
     trackAppEvent('login', { method: 'email' })
     await navigateAfterLogin()
@@ -654,7 +674,9 @@ const canSubmitLogin = computed(() => {
   return true
 })
 
-function handleLocaleChange() {
+function handleLocaleChange(locale: string) {
+  explicitlySelectedLocale.value = locale
+  setLoginLocaleSelection(locale)
   formItems.email.placeholder = t('login.emailPh')
   formItems.password.placeholder = t('login.passwordPh')
 }
@@ -680,8 +702,13 @@ function startGoogleLogin() {
   if (!googleEnabled.value || googleLoading.value || loginState.value !== 'idle') return
   googleLoading.value = true
   setStoredOrgKey('')
+  setPendingLoginLocale(String(locale.value))
   window.location.assign(googleLoginUrl.value)
 }
+
+onUnmounted(() => {
+  setAuthenticatedLocaleApplicationSuppressed(false)
+})
 
 onMounted(async () => {
   turnstileToken.value = ''
@@ -1073,9 +1100,9 @@ onMounted(async () => {
 }
 
 .left-logo {
-  width: 560px;
+  width: 680px;
   margin-right: clamp(64px, 7vw, 112px);
-  min-width: 560px;
+  min-width: 680px;
   z-index: 10;
   display: flex;
   align-items: center;
