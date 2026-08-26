@@ -227,6 +227,7 @@ def _gateway_option_row(
         "online": runtime_state["hfl_usable"],
         "hfl_usable": runtime_state["hfl_usable"],
         "copilot_eligible": runtime_state["copilot_eligible"],
+        "analysis_types": provisioning.analysis_types_for_gateway(link),
     }
 
 

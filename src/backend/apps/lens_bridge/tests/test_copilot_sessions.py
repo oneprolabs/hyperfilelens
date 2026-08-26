@@ -102,6 +102,49 @@ class LensSessionCreateSerializerTests(SimpleTestCase):
         )
         self.assertEqual(serializer.validated_data["agent_model_ref"], model_ref)
 
+    def test_create_accepts_analysis_type(self):
+        serializer = LensSessionCreateSerializer(
+            data=self._payload(analysis_type=LensSessionLink.AnalysisType.CODE_ANALYSIS)
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data["analysis_type"],
+            LensSessionLink.AnalysisType.CODE_ANALYSIS,
+        )
+
+    def test_create_rejects_unknown_analysis_type(self):
+        serializer = LensSessionCreateSerializer(
+            data=self._payload(analysis_type="general_chat")
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("analysis_type", serializer.errors)
+
+    def test_gateway_options_expose_supported_analysis_types(self):
+        from apps.lens_bridge.api.serializers import LensCopilotGatewayOptionSerializer
+
+        serializer = LensCopilotGatewayOptionSerializer(
+            data={
+                "gateway_link_id": 1,
+                "gateway_id": 2,
+                "name": "gateway",
+                "scope": "platform",
+                "is_platform_default": True,
+                "sidecar_status": "online",
+                "online": True,
+                "hfl_usable": True,
+                "copilot_eligible": True,
+                "analysis_types": ["knowledge_qa", "code_analysis"],
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data["analysis_types"],
+            ["knowledge_qa", "code_analysis"],
+        )
+
     def test_create_rejects_unknown_analysis_mode(self):
         serializer = LensSessionCreateSerializer(
             data=self._payload(analysis_mode="max")

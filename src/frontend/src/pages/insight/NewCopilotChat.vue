@@ -4,14 +4,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ArrowLeft,
-  ChevronDown,
   CirclePlus,
   File,
   FolderOpen,
   MessageSquare,
   Plus,
   RefreshCw,
-  SlidersHorizontal,
   TextCursorInput,
   Trash2,
   TriangleAlert,
@@ -29,7 +27,7 @@ import {
   fetchCopilotReadiness,
   listCopilotGatewayOptions,
   type LensAdmissionPreview,
-  type LensAnalysisMode,
+  type LensAnalysisType,
   type LensCopilotGatewayOption,
   type LensCopilotReadiness,
 } from '../../lib/lensApi'
@@ -45,6 +43,7 @@ type SubmitBlockCode =
   | 'selection_preview'
   | 'public_gateway'
   | 'private_gateway'
+  | 'analysis_type'
 
 type SubmitBlocker = {
   code: SubmitBlockCode
@@ -58,10 +57,7 @@ const gatewayRefreshing = ref(false)
 const gatewayOptionsResolved = ref(false)
 const gatewayOptions = ref<LensCopilotGatewayOption[]>([])
 const readiness = ref<LensCopilotReadiness | null>(null)
-const advancedOptionsOpen = ref(false)
-const selectedAnalysisMode = ref<LensAnalysisMode>('standard')
-const selectedAgentModelRef = ref<string | null>(null)
-const analysisModes: LensAnalysisMode[] = ['fast', 'standard', 'deep']
+const selectedAnalysisType = ref<LensAnalysisType>('knowledge_qa')
 const gatewayMode = ref<'auto' | 'manual'>('auto')
 const gatewayLinkId = ref<number | null>(null)
 const backupScopePickerWidth = ref(460)
@@ -153,15 +149,6 @@ const {
 })
 const agentModelReady = computed(() => Boolean(readiness.value?.default_agent_model_ref))
 const visualModelReady = computed(() => Boolean(readiness.value?.default_multimodal_model_ref))
-const agentModels = computed(() => (readiness.value?.active_models || []).filter((row) => (
-  row.is_active !== false
-  && !row.is_deployment_history
-  && row.deployment_role !== 'multimodal'
-  && row.uuid !== readiness.value?.default_multimodal_model_ref
-)))
-const selectedAgentModel = computed(() => agentModels.value.find(
-  (row) => row.uuid === selectedAgentModelRef.value,
-) ?? null)
 const selectedGateway = computed(() => gatewayMode.value === 'auto'
   ? autoGateway.value
   : privateGateways.value.find((row) => row.gateway_link_id === gatewayLinkId.value) ?? null)
@@ -170,6 +157,20 @@ const publicGatewayUnavailable = computed(() => (
   && gatewayMode.value === 'auto'
   && !autoGateway.value
 ))
+const supportedAnalysisTypes = computed<LensAnalysisType[]>(() => {
+  if (!selectedGateway.value) return ['knowledge_qa']
+  const types = selectedGateway.value.analysis_types
+  return types === undefined ? ['knowledge_qa'] : types
+})
+const analysisTypeSupported = computed(() => supportedAnalysisTypes.value.includes(selectedAnalysisType.value))
+watch(
+  () => [selectedGateway.value?.gateway_link_id, selectedAnalysisType.value],
+  () => {
+    if (!analysisTypeSupported.value) {
+      selectedAnalysisType.value = supportedAnalysisTypes.value[0] || 'knowledge_qa'
+    }
+  },
+)
 const selectedBackupSource = computed(() => backupSourceOptions.value.find(
   (row) => row.backupConfigId === selectedBackupConfigId.value,
 ) ?? null)
@@ -186,7 +187,7 @@ const canCreate = computed(() => Boolean(
   && sourceScopes.value.length > 0
   && selectedGateway.value
   && agentModelReady.value
-  && selectedAgentModelRef.value
+  && analysisTypeSupported.value
   && selectionPreviewReady.value
   && !submitting.value,
 ))
@@ -227,6 +228,12 @@ const submitBlocker = computed<SubmitBlocker | null>(() => {
         code: 'public_gateway',
         message: t('insight.copilot.gatewayPublicUnavailable'),
       }
+    }
+  }
+  if (!analysisTypeSupported.value) {
+    return {
+      code: 'analysis_type',
+      message: t('insight.copilot.analysisTypeUnavailable'),
     }
   }
   if (selectionCalculationStatus.value === 'calculating') {
@@ -298,20 +305,6 @@ const footerSubmitBlockReason = computed(() => (
 function snapshotOptionLabel(row: { finished_at?: string | null; started_at?: string | null; created_at: string; total_size_bytes: number }) {
   const time = row.finished_at || row.started_at || row.created_at
   return `${time ? formatLocalDateTime(time) : '—'} · ${formatBytes(row.total_size_bytes)}`
-}
-
-function modelLabel(row: { name?: string; provider?: string; config?: { model?: string }; uuid: string }): string {
-  const configuredName = String(row.name || '').trim()
-  if (configuredName) return configuredName
-  const provider = String(row.provider || t('insight.copilot.modelLabel')).trim()
-  const model = String(row.config?.model || row.uuid).trim()
-  return `${provider} · ${model}`
-}
-
-function analysisModeLabel(mode: LensAnalysisMode): string {
-  if (mode === 'fast') return t('insight.copilot.analysisModeFast')
-  if (mode === 'deep') return t('insight.copilot.analysisModeDeep')
-  return t('insight.copilot.analysisModeStandard')
 }
 
 function pathCountLabel(count: number): string {
@@ -422,14 +415,6 @@ async function load() {
       refreshGatewayOptions(false),
       fetchCopilotReadiness().then((row) => {
         readiness.value = row
-        if (!selectedAgentModelRef.value || !agentModels.value.some((model) => model.uuid === selectedAgentModelRef.value)) {
-          selectedAgentModelRef.value = (
-            row.default_agent_model_ref
-            && agentModels.value.some((model) => model.uuid === row.default_agent_model_ref)
-          )
-            ? row.default_agent_model_ref
-            : agentModels.value[0]?.uuid ?? row.default_agent_model_ref
-        }
       }),
     ])
   } catch (error) {
@@ -449,8 +434,7 @@ async function createChat() {
     source_scopes: sourceScopes.value,
     gateway_mode: gatewayMode.value,
     gateway_link_id: gatewayMode.value === 'manual' ? gatewayLinkId.value : null,
-    analysis_mode: selectedAnalysisMode.value,
-    agent_model_ref: selectedAgentModelRef.value,
+    analysis_type: selectedAnalysisType.value,
   }
   const requestFingerprint = JSON.stringify(requestPayload)
   if (!createIdempotencyKey || createRequestFingerprint !== requestFingerprint) {
@@ -795,81 +779,60 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
               </section>
             </div>
 
-            <div class="fullscreen-form-card new-chat-advanced-card">
-              <button
-                type="button"
-                class="new-chat-advanced-toggle"
-                :aria-expanded="advancedOptionsOpen"
-                @click="advancedOptionsOpen = !advancedOptionsOpen"
-              >
-                <span class="new-chat-advanced-toggle__title">
-                  <SlidersHorizontal
-                    :size="16"
-                    aria-hidden="true"
-                  />
-                  <span>{{ t('insight.copilot.advancedOptions') }}</span>
-                </span>
-                <ChevronDown
-                  :size="17"
-                  class="new-chat-advanced-toggle__chevron"
-                  :class="{ 'is-open': advancedOptionsOpen }"
-                  aria-hidden="true"
-                />
-              </button>
-              <div
-                v-if="advancedOptionsOpen"
-                class="new-chat-advanced-content"
-              >
-                <div class="new-chat-grid">
-                  <div class="fullscreen-form-field">
-                    <label
-                      for="copilot-analysis-mode"
-                      class="fullscreen-form-field__label"
-                    >{{ t('insight.copilot.analysisModeLabel') }}</label>
-                    <ElSelect
-                      id="copilot-analysis-mode"
-                      v-model="selectedAnalysisMode"
-                      class="new-chat-advanced-select"
-                    >
-                      <ElOption
-                        v-for="mode in analysisModes"
-                        :key="mode"
-                        :label="analysisModeLabel(mode)"
-                        :value="mode"
-                      />
-                    </ElSelect>
-                    <p class="fullscreen-form-field__hint">
-                      {{ t('insight.copilot.analysisModeHint') }}
-                    </p>
-                  </div>
-                  <div class="fullscreen-form-field">
-                    <label
-                      for="copilot-agent-model"
-                      class="fullscreen-form-field__label"
-                    >{{ t('insight.copilot.conversationModelLabel') }}</label>
-                    <ElSelect
-                      id="copilot-agent-model"
-                      v-model="selectedAgentModelRef"
-                      class="new-chat-advanced-select"
-                      :disabled="!agentModels.length"
-                      :placeholder="t('insight.copilot.conversationModelPlaceholder')"
-                    >
-                      <ElOption
-                        v-for="row in agentModels"
-                        :key="row.uuid"
-                        :label="modelLabel(row)"
-                        :value="row.uuid"
-                      />
-                    </ElSelect>
-                    <p class="fullscreen-form-field__hint">
-                      {{ t('insight.copilot.conversationModelHint') }}
+            <div class="fullscreen-form-card">
+              <section class="fullscreen-form-section">
+                <div class="new-chat-section-head">
+                  <div class="new-chat-section-head__copy">
+                    <h2 class="fullscreen-form-section__title">
+                      <span class="fullscreen-form-section__indicator" />{{ t('insight.copilot.analysisTypeLabel') }}
+                    </h2>
+                    <p class="fullscreen-form-section__hint">
+                      {{ t('insight.copilot.analysisTypeHint') }}
                     </p>
                   </div>
                 </div>
-                <p class="new-chat-advanced-note">
-                  {{ t('insight.copilot.visualDocumentServicesHint') }}
-                </p>
-              </div>
+                <fieldset class="new-chat-analysis-options">
+                  <legend class="sr-only">
+                    {{ t('insight.copilot.analysisTypeLabel') }}
+                  </legend>
+                  <label
+                    class="new-chat-analysis-option"
+                    :class="{
+                      'new-chat-analysis-option--selected': selectedAnalysisType === 'knowledge_qa',
+                      'new-chat-analysis-option--disabled': !supportedAnalysisTypes.includes('knowledge_qa'),
+                    }"
+                  >
+                    <input
+                      v-model="selectedAnalysisType"
+                      type="radio"
+                      value="knowledge_qa"
+                      :disabled="!supportedAnalysisTypes.includes('knowledge_qa')"
+                    >
+                    <span>
+                      <strong>{{ t('insight.copilot.analysisTypeKnowledgeQa') }}</strong>
+                      <small>{{ t('insight.copilot.analysisTypeKnowledgeQaHint') }}</small>
+                    </span>
+                  </label>
+                  <label
+                    class="new-chat-analysis-option"
+                    :class="{
+                      'new-chat-analysis-option--selected': selectedAnalysisType === 'code_analysis',
+                      'new-chat-analysis-option--disabled': !supportedAnalysisTypes.includes('code_analysis'),
+                    }"
+                  >
+                    <input
+                      v-model="selectedAnalysisType"
+                      type="radio"
+                      value="code_analysis"
+                      :disabled="!supportedAnalysisTypes.includes('code_analysis')"
+                    >
+                    <span>
+                      <strong>{{ t('insight.copilot.analysisTypeCodeAnalysis') }}</strong>
+                      <small>{{ t('insight.copilot.analysisTypeCodeAnalysisHint') }}</small>
+                    </span>
+                  </label>
+                </fieldset>
+              </section>
             </div>
 
             <div class="fullscreen-form-card">
@@ -1021,13 +984,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                   {{ t('insight.copilot.execution') }}
                 </h3>
                 <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">{{ t('insight.copilot.analysisModeLabel') }}</span><span class="add-form-preview-row__value">{{ analysisModeLabel(selectedAnalysisMode) }}</span>
-                </div>
-                <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">{{ t('insight.copilot.conversationModelLabel') }}</span><span
-                    class="add-form-preview-row__value"
-                    :class="{ 'add-form-preview-row__value--empty': !selectedAgentModel }"
-                  >{{ selectedAgentModel ? modelLabel(selectedAgentModel) : t('insight.copilot.organizationDefault') }}</span>
+                  <span class="add-form-preview-row__label">{{ t('insight.copilot.analysisTypeLabel') }}</span><span class="add-form-preview-row__value">{{ selectedAnalysisType === 'code_analysis' ? t('insight.copilot.analysisTypeCodeAnalysis') : t('insight.copilot.analysisTypeKnowledgeQa') }}</span>
                 </div>
               </section>
               <section class="add-form-preview-section">
@@ -1086,16 +1043,15 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-grid :deep(.el-select), .new-chat-gateway-select { width: 100%; }
 .new-chat-section-head { margin-bottom: 24px; }
 .new-chat-section-head .fullscreen-form-section__title { display: flex; align-items: center; gap: 8px; margin: 0; }
-.new-chat-advanced-card { overflow: hidden; }
-.new-chat-advanced-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 20px; border: 0; background: transparent; color: #1d2129; cursor: pointer; text-align: left; }
-.new-chat-advanced-toggle__title { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; }
-.new-chat-advanced-toggle__title svg { color: #165dff; }
-.new-chat-advanced-toggle__chevron { color: #86909c; transition: transform .16s ease; }
-.new-chat-advanced-toggle__chevron.is-open { transform: rotate(180deg); }
-.new-chat-advanced-content { padding: 0 20px 20px; border-top: 1px solid #f2f3f5; }
-.new-chat-advanced-content .new-chat-grid { padding-top: 18px; }
-.new-chat-advanced-select { width: 100%; }
-.new-chat-advanced-note { margin: 14px 0 0; padding: 9px 10px; border: 1px solid #e5e6eb; border-radius: 8px; background: #f7f8fa; color: #86909c; font-size: 12px; line-height: 1.5; }
+.new-chat-analysis-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 0; padding: 0; border: 0; }
+.new-chat-analysis-option { display: flex; min-height: 88px; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid #e5e6eb; border-radius: 10px; background: #fff; cursor: pointer; transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }
+.new-chat-analysis-option:hover:not(.new-chat-analysis-option--disabled) { border-color: #8aaeff; background: #f7faff; }
+.new-chat-analysis-option--selected { border-color: #165dff; background: #f5f8ff; box-shadow: 0 0 0 1px rgba(22, 93, 255, .12); }
+.new-chat-analysis-option--disabled { cursor: not-allowed; opacity: .55; }
+.new-chat-analysis-option input { width: 16px; height: 16px; margin-top: 2px; accent-color: #165dff; }
+.new-chat-analysis-option span { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+.new-chat-analysis-option strong { color: #1d2129; font-size: 14px; }
+.new-chat-analysis-option small { color: #86909c; font-size: 12px; line-height: 1.5; }
 .new-chat-source-divider { height: 1px; margin: 26px 0 22px; background: #f2f3f5; }
 .new-chat-source-subsection__head { margin-bottom: 12px; }
 .new-chat-source-subsection__head h3 { margin: 0; }
@@ -1169,6 +1125,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 }
 @media (max-width: 900px) {
   .new-chat-grid { grid-template-columns: 1fr; }
+  .new-chat-analysis-options { grid-template-columns: 1fr; }
   .new-chat-scope-stack__header { display: none; }
   .new-chat-scope-row { grid-template-columns: 28px minmax(0, 1fr) 40px; }
   .new-chat-scope-row__summary { grid-row: 2; grid-column: 2 / 4; }

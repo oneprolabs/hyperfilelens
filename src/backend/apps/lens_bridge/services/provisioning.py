@@ -38,6 +38,75 @@ ANALYSIS_MODE_AGENT_ROUNDS = {
     "deep": "deep",
 }
 
+ANALYSIS_TYPE_TASKS = {
+    "knowledge_qa": "knowledge_qa",
+    "code_analysis": "code_analysis",
+}
+
+
+def normalize_analysis_type(value: str | None) -> str:
+    """Return the stable HFL analysis type used for new Chat requests."""
+
+    normalized = str(value or "knowledge_qa").strip().lower()
+    if normalized not in ANALYSIS_TYPE_TASKS:
+        raise ValidationError({"analysis_type": "Select a supported analysis approach."})
+    return normalized
+
+
+def analysis_types_for_tasks(tasks: list[dict[str, Any]] | None) -> list[str]:
+    """Map the SourceLens task snapshot to HFL's user-facing choices."""
+
+    supported: list[str] = []
+    for task in tasks or []:
+        if not isinstance(task, dict):
+            continue
+        name = str(task.get("name") or task.get("task") or "").strip()
+        for analysis_type, task_name in ANALYSIS_TYPE_TASKS.items():
+            if name == task_name:
+                if analysis_type not in supported:
+                    supported.append(analysis_type)
+    return supported
+
+
+def analysis_types_for_gateway(link: LensGatewayLink) -> list[str]:
+    """Return HFL analysis choices advertised by one Data Gateway."""
+
+    # Gateway links created before task snapshots were introduced do not have
+    # enough local information to advertise every task. Keep the historical
+    # Knowledge Q&A default available; the live SourceLens request remains the
+    # final capability check during Assistant provisioning.
+    if not has_gateway_task_snapshot(link):
+        return ["knowledge_qa"]
+    snapshot = sl_lensnode_snapshot_from_link(link)
+    return analysis_types_for_tasks(snapshot.get("sl_tasks") or [])
+
+
+def has_gateway_task_snapshot(link: LensGatewayLink) -> bool:
+    """Return whether this link has a SourceLens task snapshot to evaluate."""
+
+    config = link.config_json or {}
+    snapshot = config.get("sl_lensnode_snapshot")
+    return isinstance(snapshot, dict) and "sl_tasks" in snapshot
+
+
+def validate_analysis_type_for_gateway(
+    link: LensGatewayLink,
+    analysis_type: str | None,
+) -> str:
+    """Validate a Chat choice against the selected Gateway capability snapshot."""
+
+    normalized = normalize_analysis_type(analysis_type)
+    supported = analysis_types_for_gateway(link)
+    if normalized in supported:
+        return normalized
+    # Older Gateway records may not have a task snapshot yet. Preserve the
+    # long-standing Knowledge Q&A default; live Assistant creation validates it.
+    if not has_gateway_task_snapshot(link) and normalized == "knowledge_qa":
+        return normalized
+    raise ValidationError(
+        {"analysis_type": "The selected Data Gateway does not support this analysis approach."}
+    )
+
 
 def agent_rounds_for_analysis_mode(mode: str | None) -> str:
     """Map HFL's stable product choices to SourceLens execution values."""
@@ -410,15 +479,29 @@ def ensure_ks_workspace_on_gateway(
     )
 
 
-def pick_lensnode_task(lensnode_uuid: uuid.UUID) -> str:
+def pick_lensnode_task(
+    lensnode_uuid: uuid.UUID,
+    *,
+    analysis_type: str | None = None,
+) -> str:
+    """Resolve the requested HFL analysis approach to a SourceLens task."""
+
+    requested_type = normalize_analysis_type(analysis_type)
     data = sl_client.request_json("GET", f"/api/lens/admin/lensnodes/{lensnode_uuid}/")
     tasks = data.get("tasks") or []
     if not tasks:
         raise ValidationError({"lensnode": "LensNode has no available tasks."})
-    first = tasks[0]
-    if isinstance(first, dict):
-        return str(first.get("name") or first.get("task") or first)
-    return str(first)
+    selected_task = ANALYSIS_TYPE_TASKS[requested_type]
+    for task in tasks:
+        if isinstance(task, dict):
+            name = str(task.get("name") or task.get("task") or "").strip()
+        else:
+            name = str(task).strip()
+        if name == selected_task:
+            return name
+    raise ValidationError(
+        {"analysis_type": "The selected Data Gateway does not support this analysis approach."}
+    )
 
 
 def indexed_dirs_for_ks(ks: LensKnowledgeSource) -> list[dict[str, str]]:
@@ -518,6 +601,7 @@ def create_sl_assistant_for_ks(
     gateway_link: LensGatewayLink,
     model_ref: str | uuid.UUID | None = None,
     multimodal_model_ref: str | uuid.UUID | None = None,
+    analysis_type: str | None = None,
     analysis_mode: str | None = None,
     slug: str | None = None,
 ) -> uuid.UUID:
@@ -535,7 +619,10 @@ def create_sl_assistant_for_ks(
     workspace_path = (ks.workspace_path_on_lensnode or "").strip()
     if not workspace_path:
         raise ValidationError({"workspace": "Knowledge source workspace is not prepared."})
-    selected_task = pick_lensnode_task(lensnode_uuid)
+    selected_task = pick_lensnode_task(
+        lensnode_uuid,
+        analysis_type=analysis_type,
+    )
     resolved_slug = (slug or "").strip() or _slugify_assistant(ks.name, org)
 
     selected_dirs = indexed_dirs_for_ks(ks)
@@ -1236,7 +1323,7 @@ def _extract_sl_lensnode_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     for item in data.get("tasks") or []:
         if not isinstance(item, dict):
             continue
-        name = str(item.get("name") or "").strip()
+        name = str(item.get("name") or item.get("task") or "").strip()
         title = str(item.get("title") or name).strip()
         if name or title:
             tasks.append({"name": name, "title": title or name})

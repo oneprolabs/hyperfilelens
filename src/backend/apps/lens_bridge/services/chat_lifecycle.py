@@ -93,6 +93,7 @@ def _chat_create_request_identity(
     gateway_mode: str,
     gateway_link_id: int | None,
     title: str | None,
+    analysis_type: str | None = None,
     analysis_mode: str | None = None,
     agent_model_ref: str | uuid_lib.UUID | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
@@ -162,6 +163,8 @@ def _chat_create_request_identity(
     # advanced execution options were introduced.
     if analysis_mode is not None:
         canonical_request["analysis_mode"] = str(analysis_mode)
+    if analysis_type is not None:
+        canonical_request["analysis_type"] = str(analysis_type)
     if agent_model_ref is not None:
         canonical_request["agent_model_ref"] = str(agent_model_ref)
     request_hash = hashlib.sha256(
@@ -334,6 +337,7 @@ def create_copilot_chat(
     gateway_link_id: int | None,
     idempotency_key: str,
     title: str | None = None,
+    analysis_type: str | None = None,
     analysis_mode: str | None = None,
     agent_model_ref: str | uuid_lib.UUID | None = None,
 ) -> LensSessionLink:
@@ -348,6 +352,7 @@ def create_copilot_chat(
         gateway_mode=gateway_mode,
         gateway_link_id=gateway_link_id,
         title=title,
+        analysis_type=analysis_type,
         analysis_mode=analysis_mode,
         agent_model_ref=agent_model_ref,
     )
@@ -482,6 +487,10 @@ def create_copilot_chat(
             org,
             uuid_lib.UUID(str(agent_model_ref)),
         )
+    normalized_analysis_type = provisioning.validate_analysis_type_for_gateway(
+        gateway_link,
+        analysis_type,
+    )
     normalized_analysis_mode = str(
         analysis_mode or LensSessionLink.AnalysisMode.STANDARD
     )
@@ -515,6 +524,7 @@ def create_copilot_chat(
             gateway_selection_mode=gateway_mode,
             agent_model_ref=uuid_lib.UUID(model_ref),
             multimodal_model_ref=multimodal_model_ref,
+            analysis_type=normalized_analysis_type,
             analysis_mode=normalized_analysis_mode,
             scope_resolution_status=(
                 LensSessionLink.ScopeResolutionStatus.RESOLVED
@@ -1054,6 +1064,7 @@ def _run_copilot_chat_provision(
                 gateway_link=gateway_link,
                 model_ref=link.agent_model_ref,
                 multimodal_model_ref=link.multimodal_model_ref,
+                analysis_type=link.analysis_type,
                 analysis_mode=link.analysis_mode,
                 slug=assistant_slug,
             )
