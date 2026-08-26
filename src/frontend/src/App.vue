@@ -42,7 +42,10 @@ watch(
             >
               <img
                 class="app-route-loading__lockup"
-                src="/brand/images/hyperfilelens-lockup-on-light.png"
+                src="/brand/images/hyperfilelens-lockup-loading.png"
+                srcset="/brand/images/hyperfilelens-lockup-loading@2x.png 2x"
+                width="243"
+                height="47"
                 alt="HyperFileLens"
               >
               <div class="app-route-loading__bar" />
@@ -81,10 +84,8 @@ watch(
 
 .app-route-loading__lockup {
   display: block;
-  width: min(260px, 100%);
-  height: 48px;
-  object-fit: cover;
-  object-position: center 40%;
+  width: min(243px, 100%);
+  height: auto;
 }
 
 .app-route-loading__bar {
