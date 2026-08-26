@@ -96,6 +96,12 @@ const sessionNoticeMessage = computed(() => {
   return key ? t(key) : ''
 })
 
+const sessionNoticeTone = computed(() => (
+  sessionNoticeReason.value === 'TOKEN_EXPIRED' || sessionNoticeReason.value === 'REFRESH_EXPIRED'
+    ? 'info'
+    : 'warning'
+))
+
 function dismissSessionNotice() {
   sessionNoticeDismissed.value = true
 }
@@ -625,7 +631,8 @@ onMounted(async () => {
           <ElAlert
             v-if="sessionNoticeMessage"
             class="session-alert"
-            type="warning"
+            :class="`session-alert--${sessionNoticeTone}`"
+            :type="sessionNoticeTone"
             :title="sessionNoticeMessage"
             show-icon
             :closable="true"
@@ -1024,14 +1031,33 @@ onMounted(async () => {
 
 .session-alert {
   --el-alert-padding: 10px 12px;
+  --session-alert-accent: var(--color-brand-violet-soft);
+  --session-alert-background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  --session-alert-border: color-mix(in srgb, var(--color-brand-violet-soft) 34%, transparent);
+  --session-alert-text: color-mix(in srgb, var(--color-brand-violet-soft) 18%, white);
+  background-color: var(--session-alert-background);
+  border: 1px solid var(--session-alert-border);
   border-radius: var(--radius-card);
   line-height: 1.4;
   position: relative;
   padding-right: 42px;
 }
 
+.session-alert--warning {
+  --session-alert-accent: color-mix(in srgb, var(--color-warning) 68%, white);
+  --session-alert-background: color-mix(in srgb, var(--color-warning) 13%, transparent);
+  --session-alert-border: color-mix(in srgb, var(--color-warning) 36%, transparent);
+  --session-alert-text: color-mix(in srgb, var(--color-warning) 18%, white);
+}
+
 .session-alert :deep(.el-alert__title) {
+  color: var(--session-alert-text);
+  font-weight: 500;
   line-height: 20px;
+}
+
+.session-alert :deep(.el-alert__icon) {
+  color: var(--session-alert-accent);
 }
 
 .session-alert :deep(.el-alert__close-btn) {
@@ -1043,14 +1069,15 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
+  color: color-mix(in srgb, var(--session-alert-text) 72%, transparent);
   transform: translateY(-50%);
   transition: background-color 0.2s, color 0.2s;
 }
 
 .session-alert :deep(.el-alert__close-btn:hover),
 .session-alert :deep(.el-alert__close-btn:focus-visible) {
-  background: rgba(245, 158, 11, 0.16);
-  color: #d97706;
+  background-color: color-mix(in srgb, var(--session-alert-accent) 16%, transparent);
+  color: var(--session-alert-text);
 }
 
 /* Shared input styles */
