@@ -288,13 +288,44 @@ class TaskCommandAckTests(TestCase):
 
     @patch("apps.node.services.internal.task.redis_store.set_task_info")
     @patch("apps.node.services.internal.task.redis_store.push_task_stream")
-    def test_legacy_repository_initialize_uses_dispatch_start(
+    def test_repository_initialize_uses_dispatch_start(
         self, _push, _set_info
     ):
         dispatched_at = timezone.now() - timezone.timedelta(seconds=20)
         task = self.task(
             kind="repo.initialize",
             correlation_type="repository_create",
+            correlation_id="repository-task",
+            status=NodeTask.Status.RUNNING,
+            dispatched_at=dispatched_at,
+            accepted_at=None,
+            last_progress_at=dispatched_at,
+            watchdog_deadline_at=timezone.now() - timezone.timedelta(seconds=1),
+        )
+
+        renewed = record_task_progress(
+            task_id=task.id,
+            node_id=self.node.id,
+            progress={"phase": "running"},
+        )
+
+        self.assertEqual(
+            renewed.watchdog_deadline_at,
+            dispatched_at
+            + timezone.timedelta(
+                seconds=node_conf.REPOSITORY_INITIALIZE_WATCHDOG_SECONDS
+            ),
+        )
+
+    @patch("apps.node.services.internal.task.redis_store.set_task_info")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    def test_legacy_repository_initialize_uses_dispatch_start(
+        self, _push, _set_info
+    ):
+        dispatched_at = timezone.now() - timezone.timedelta(seconds=20)
+        task = self.task(
+            kind="repo.initialize",
+            correlation_type="storage_repository",
             correlation_id="legacy-repository-task",
             status=NodeTask.Status.RUNNING,
             dispatched_at=dispatched_at,

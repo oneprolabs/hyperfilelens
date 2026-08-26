@@ -155,10 +155,11 @@ def _is_source_nas_probe(*, correlation_type: str, kind: str) -> bool:
 
 
 def _is_repository_initialize_task(*, correlation_type: str, kind: str) -> bool:
-    return (
-        correlation_type in {"repository_create", "protection.backup_config"}
-        and kind == "repo.initialize"
-    )
+    return kind == "repo.initialize" and correlation_type in {
+        "repository_create",
+        "protection.backup_config",
+        "storage_repository",
+    }
 
 
 def _source_nas_probe_deadline(*, accepted_at: datetime) -> datetime:
