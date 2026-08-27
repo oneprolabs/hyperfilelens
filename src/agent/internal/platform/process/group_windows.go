@@ -3,6 +3,7 @@
 package process
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -59,9 +60,9 @@ func bindProcessLifetime(proc *os.Process) (func(), error) {
 	return release, nil
 }
 
-func killProcessGroup(proc *os.Process) {
+func killProcessGroup(ctx context.Context, proc *os.Process) error {
 	if proc == nil {
-		return
+		return nil
 	}
-	_ = exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(proc.Pid)).Run()
+	return exec.CommandContext(ctx, "taskkill", "/F", "/T", "/PID", strconv.Itoa(proc.Pid)).Run()
 }

@@ -3,6 +3,7 @@
 package process
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"syscall"
@@ -20,9 +21,13 @@ func bindProcessLifetime(_ *os.Process) (func(), error) {
 	return func() {}, nil
 }
 
-func killProcessGroup(proc *os.Process) {
+func killProcessGroup(_ context.Context, proc *os.Process) error {
 	if proc == nil {
-		return
+		return nil
 	}
-	_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
+	err := syscall.Kill(-proc.Pid, syscall.SIGKILL)
+	if err == syscall.ESRCH {
+		return nil
+	}
+	return err
 }

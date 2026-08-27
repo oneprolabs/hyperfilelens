@@ -147,7 +147,7 @@ func runStreaming(
 
 	stopKill, err := startContextProcessGroupKill(ctx, cmd)
 	if err != nil {
-		killProcessGroup(cmd.Process)
+		_ = killProcessGroup(context.Background(), cmd.Process)
 		_ = cmd.Wait()
 		_ = stdoutWriter.Close()
 		_ = stderrWriter.Close()

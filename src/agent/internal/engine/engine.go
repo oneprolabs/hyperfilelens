@@ -284,12 +284,26 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 		slog.WarnContext(ctx, "engine task canceled", "node_id", nodeID, "task_id", cmd.ID, "kind", kind)
 		return Result{Status: "failed", Result: result, Error: "canceled"}
 	}
+	if status != "success" && result != nil {
+		if code := repositoryServerErrorCode(errMsg); code != "" {
+			result["error_code"] = code
+		}
+	}
 	if status == "success" {
 		slog.InfoContext(ctx, "engine task finished", "node_id", nodeID, "task_id", cmd.ID, "kind", kind, "status", status)
 	} else {
 		slog.WarnContext(ctx, "engine task finished", "node_id", nodeID, "task_id", cmd.ID, "kind", kind, "status", status, "err", errMsg)
 	}
 	return Result{Status: status, Result: result, Error: errMsg}
+}
+
+func repositoryServerErrorCode(message string) string {
+	const prefix = "REPOSITORY_SERVER_"
+	first := strings.TrimSpace(strings.SplitN(message, ":", 2)[0])
+	if strings.HasPrefix(first, prefix) && first != prefix {
+		return first
+	}
+	return ""
 }
 
 func (e *Engine) applyUserInstallationScope(kind string, payload Payload) (Payload, error) {
