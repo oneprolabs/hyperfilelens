@@ -1034,7 +1034,6 @@ def start_backup_tasks(
                                 task.task_uuid
                             ): refresh_backup_config_directory_estimates_task.delay(
                                 config_id=config_id,
-                                force_refresh=True,
                                 task_uuid=task_uuid,
                             )
                         )

@@ -365,7 +365,6 @@ class ProtectionBackupTaskApiTests(TestCase):
         mock_queue.assert_called_once()
         mock_size_refresh.assert_called_once_with(
             config_id=self.config.id,
-            force_refresh=True,
             task_uuid=str(task.task_uuid),
         )
         self.assertTrue(task.request_payload["directory_size_refresh_required"])
@@ -511,7 +510,6 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(snapshot.error_code, "BACKUP.REPOSITORY_QUOTA_EXCEEDED")
         self.assertIn("configured Storage Quota", snapshot.error_message)
 
-    @patch("apps.protection.services.directory_size_estimate.run_agent_task_sync")
     @patch("apps.protection.services.backup_task._queue_backup_execution")
     @patch(
         "apps.protection.tasks.directory_size_estimate."
@@ -521,7 +519,6 @@ class ProtectionBackupTaskApiTests(TestCase):
         self,
         mock_size_refresh,
         mock_queue,
-        mock_path_size,
     ):
         queued_operations = []
         mock_queue.side_effect = lambda **_kwargs: queued_operations.append("backup")
@@ -546,7 +543,6 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(response.data["created_count"], 1)
         mock_queue.assert_called_once()
         mock_size_refresh.assert_called_once()
-        mock_path_size.assert_not_called()
         self.assertEqual(queued_operations, ["backup", "size_estimate"])
 
     @patch("apps.protection.services.backup_task._queue_backup_execution")

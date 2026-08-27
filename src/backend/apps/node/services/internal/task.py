@@ -289,6 +289,11 @@ def _initial_watchdog_deadline(
         return base + timezone.timedelta(
             seconds=max(1, node_conf.REPOSITORY_INITIALIZE_WATCHDOG_SECONDS)
         )
+    if correlation_type == node_conf.PATH_SIZE_CORRELATION_TYPE and kind == "path.size":
+        base = from_time or timezone.now()
+        return base + timezone.timedelta(
+            seconds=max(1, node_conf.PATH_SIZE_WATCHDOG_SECONDS)
+        )
     if _is_source_nas_probe(correlation_type=correlation_type, kind=kind):
         return _source_nas_probe_deadline(accepted_at=from_time or timezone.now())
     if correlation_type in {
@@ -1240,6 +1245,25 @@ def record_task_progress(
         task.watchdog_deadline_at = _initial_watchdog_deadline(
             correlation_type=task.correlation_type,
             from_time=repository_initialize_started_at or now,
+            kind=task.kind,
+        )
+        update_fields = [
+            "status",
+            "accepted_at",
+            "last_progress_at",
+            "watchdog_deadline_at",
+            "result",
+            "updated_at",
+        ]
+    elif (
+        task.correlation_type == node_conf.PATH_SIZE_CORRELATION_TYPE
+        and task.kind == "path.size"
+    ):
+        # path.size can legitimately run for a long time. Keep an absolute
+        # deadline from acceptance instead of renewing it on each heartbeat.
+        task.watchdog_deadline_at = _initial_watchdog_deadline(
+            correlation_type=task.correlation_type,
+            from_time=task.accepted_at or now,
             kind=task.kind,
         )
         update_fields = [

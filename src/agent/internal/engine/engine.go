@@ -701,7 +701,7 @@ func (e *Engine) runPathSize(ctx context.Context, p Payload) (string, map[string
 	if pathType == "" {
 		pathType = "directory"
 	}
-	sizeBytes, sizeErr := pathsize.EstimateWithExclusions(path, pathType, boundary.exclusions())
+	sizeBytes, sizeErr := pathsize.EstimateWithExclusionsContext(ctx, path, pathType, boundary.exclusions())
 	if sizeErr != nil {
 		if errors.Is(sizeErr, fs.ErrNotExist) {
 			return "failed", map[string]any{"path": path, "exists": false}, "path not found"

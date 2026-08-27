@@ -57,3 +57,49 @@ func TestPreparedSnapshotWaitsForSchedulerSlot(t *testing.T) {
 		t.Fatal("queued snapshot did not stop after cancellation")
 	}
 }
+
+func TestPathSizeReportsBusyWithoutWaitingForSchedulerSlot(t *testing.T) {
+	scheduler := controller.NewScheduler(1)
+	releaseOccupied, ok := scheduler.TryAcquire()
+	if !ok {
+		t.Fatal("failed to occupy path-size scheduler slot")
+	}
+	defer releaseOccupied()
+
+	handler := NewHandler(
+		nil,
+		controller.NewTracker(),
+		nil,
+		controller.NewScheduler(1),
+		scheduler,
+	)
+	sender := &channelSender{frames: make(chan any, 2)}
+	done := make(chan struct{})
+	go func() {
+		handler.runTask(context.Background(), sender, &TaskCommand{
+			TaskID: "busy-path-size",
+			Kind:   "path.size",
+			NodeID: 1,
+		})
+		close(done)
+	}()
+
+	select {
+	case raw := <-sender.frames:
+		result, ok := raw.(TaskResult)
+		if !ok {
+			t.Fatalf("result frame type = %T, want TaskResult", raw)
+		}
+		if result.Status != "failed" || result.Result["error_code"] != "PATH_SIZE_BUSY" {
+			t.Fatalf("unexpected busy result: %#v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("busy path.size result was not sent")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("busy path.size task waited for scheduler slot")
+	}
+}

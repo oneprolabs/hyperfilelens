@@ -21,6 +21,7 @@ type Handler struct {
 	tracker           *controller.Tracker
 	tasks             *database.TaskRepo
 	snapshotScheduler *controller.Scheduler
+	pathSizeScheduler *controller.Scheduler
 	nasLeases         *engine.NASLeaseCoordinator
 	resultAckEnabled  atomic.Bool
 	resultMu          sync.Mutex
@@ -156,14 +157,19 @@ func NewHandler(
 	schedulers ...*controller.Scheduler,
 ) *Handler {
 	snapshotScheduler := controller.NewScheduler(2)
+	pathSizeScheduler := controller.NewScheduler(1)
 	if len(schedulers) > 0 && schedulers[0] != nil {
 		snapshotScheduler = schedulers[0]
+	}
+	if len(schedulers) > 1 && schedulers[1] != nil {
+		pathSizeScheduler = schedulers[1]
 	}
 	return &Handler{
 		provider:          provider,
 		tracker:           tracker,
 		tasks:             tasks,
 		snapshotScheduler: snapshotScheduler,
+		pathSizeScheduler: pathSizeScheduler,
 		nasLeases:         engine.NewNASLeaseCoordinator(),
 		resultInFlight:    make(map[string]resultDelivery),
 		resultWake:        make(chan struct{}, 1),
@@ -394,6 +400,41 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 				"wait_ms",
 				time.Since(queuedAt).Milliseconds(),
 			)
+		}
+		defer releaseSlot()
+	}
+	if engine.NormalizeKind(cmd.Kind) == "path.size" {
+		releaseSlot, acquired := h.pathSizeScheduler.TryAcquire()
+		if !acquired {
+			persistCtx := context.WithoutCancel(ctx)
+			status := "failed"
+			busyResult := map[string]any{"error_code": "PATH_SIZE_BUSY"}
+			errMsg := "path size capacity is busy"
+			if h.tasks != nil {
+				stored, err := h.tasks.FinishIfActive(
+					persistCtx,
+					cmd.TaskID,
+					model.TaskStatusFailed,
+					busyResult,
+					errMsg,
+				)
+				if err != nil {
+					slog.Warn("persist path size busy result failed", "task_id", cmd.TaskID, "err", err)
+					return
+				}
+				if !stored {
+					persisted, getErr := h.tasks.Get(persistCtx, cmd.TaskID)
+					if getErr != nil {
+						slog.Warn("load competing path size result failed", "task_id", cmd.TaskID, "err", getErr)
+						return
+					}
+					status = database.WireStatus(persisted.Status)
+					busyResult = persisted.Result
+					errMsg = persisted.Error
+				}
+			}
+			_ = h.sendLiveTaskResult(persistCtx, sink, cmd.TaskID, status, busyResult, errMsg)
+			return
 		}
 		defer releaseSlot()
 	}
