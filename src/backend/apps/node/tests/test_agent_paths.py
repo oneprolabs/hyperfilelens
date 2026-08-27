@@ -4,6 +4,7 @@ from apps.node.agent_paths import (
     agent_mounts_dir,
     repository_mount_point,
     require_agent_mount_path,
+    restore_repository_mount_point,
     source_mount_point,
 )
 
@@ -19,6 +20,12 @@ class AgentPathsTests(SimpleTestCase):
         self.assertEqual(
             source_mount_point(12),
             "/opt/hyperfilelens-agent/mounts/sources/source-12",
+        )
+
+    def test_restore_repository_mount_point(self):
+        self.assertEqual(
+            restore_repository_mount_point(42, node_id=3),
+            "/opt/hyperfilelens-agent/mounts/restores/repo-42-node-3",
         )
 
     def test_require_agent_mount_path_accepts_canonical_path(self):

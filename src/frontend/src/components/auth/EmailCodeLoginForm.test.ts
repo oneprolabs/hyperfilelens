@@ -125,6 +125,9 @@ describe('EmailCodeLoginForm', () => {
     const codeInput = wrapper.get<HTMLInputElement>('#email-code-login-code')
     await codeInput.setValue('123456')
 
+    await vi.waitFor(() => {
+      expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeUndefined()
+    })
     await wrapper.get('button.submit-btn').trigger('click')
     await vi.waitFor(() => {
       expect(mocks.verify).toHaveBeenCalledWith(

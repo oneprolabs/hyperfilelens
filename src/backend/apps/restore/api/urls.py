@@ -6,6 +6,7 @@ from apps.restore.api.views import (
     RestoreRecordViewSet,
     RestoreSnapshotDirectoryBrowseView,
     RestoreSnapshotDirectoryPathInfoView,
+    RestoreTargetValidationView,
 )
 from apps.restore.api.views.restore_task import RestoreTaskCancelView
 
@@ -14,6 +15,11 @@ router.register(r"plans", RestorePlanViewSet, basename="restore-plan")
 router.register(r"records", RestoreRecordViewSet, basename="restore-record")
 
 urlpatterns = [
+    path(
+        "target-validations/",
+        RestoreTargetValidationView.as_view(),
+        name="restore-target-validation",
+    ),
     path(
         "tasks/<uuid:task_uuid>/cancel/",
         RestoreTaskCancelView.as_view(),

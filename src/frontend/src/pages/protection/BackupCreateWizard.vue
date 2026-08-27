@@ -105,6 +105,7 @@ import {
   shouldAutoExpandRefreshedDirectory,
 } from '../../lib/backupSourceDirectoryTree'
 import { restoreDirectoryBrowseSourceId } from '../../lib/restoreDirectoryTarget'
+import { resolveRestoreResultPaths, type RestoreResultPathInput } from '../../lib/restoreResultPath'
 import {
   createBackupPolicy,
   createFileFilterRule,
@@ -1848,8 +1849,26 @@ type CreateRecoveryTargetOption = {
   typeLabel: string
   isSource: boolean
   selectable: boolean
-  unavailableReason: 'offline' | 'busy' | null
+  unavailableReason: 'offline' | 'busy' | 'direct_nas_platform' | null
   summary: CreateRecoveryTargetSummary
+}
+
+function createRecoveryGroupUsesUnboundNasRepository(group: WizardSourceGroup) {
+  const target = getRealTarget(sourceTargetMap.value[group.key])
+  return target?.repoType === 'NAS' && !(target.bindNodeId && target.bindNodeType === 'proxy')
+}
+
+function createRecoveryTargetPlatform(source: RealSourceRow) {
+  const platform = String(source.platform || '').toLowerCase()
+  if (platform.includes('windows') || platform === 'win') return 'windows'
+  if (platform.includes('mac') || platform.includes('darwin')) return 'macos'
+  return platform
+}
+
+function createRecoveryTargetPlatformBlocked(source: RealSourceRow, group: WizardSourceGroup) {
+  return source.type !== 'nas'
+    && createRecoveryGroupUsesUnboundNasRepository(group)
+    && ['windows', 'macos'].includes(createRecoveryTargetPlatform(source))
 }
 
 function createRecoveryTargetSummary(source: RealSourceRow | null | undefined, fallback: Pick<WizardSourceGroup, 'sourceId' | 'sourceName' | 'sourceType' | 'platform'>): CreateRecoveryTargetSummary {
@@ -1870,20 +1889,27 @@ function createRecoveryTargetSummary(source: RealSourceRow | null | undefined, f
 
 function createRecoveryTargetOptionFromSource(source: RealSourceRow, group: WizardSourceGroup): CreateRecoveryTargetOption {
   const summary = createRecoveryTargetSummary(source, group)
+  const platformBlocked = createRecoveryTargetPlatformBlocked(source, group)
+  const catalogSelectable = restoreTargetCatalog.isSelectable(source.id)
   return {
     value: source.id,
     label: summary.displayName,
     ipLabel: summary.ipLine,
     typeLabel: summary.typeLabel,
     isSource: source.id === group.sourceId,
-    selectable: restoreTargetCatalog.isSelectable(source.id),
-    unavailableReason: source.availability !== 'online' ? 'offline' : restoreTargetCatalog.isSelectable(source.id) ? null : 'busy',
+    selectable: catalogSelectable && !platformBlocked,
+    unavailableReason: source.availability !== 'online'
+      ? 'offline'
+      : platformBlocked
+        ? 'direct_nas_platform'
+        : catalogSelectable ? null : 'busy',
     summary,
   }
 }
 
 function createRecoverySourceTargetAvailable(group: WizardSourceGroup) {
-  return restoreTargetCatalog.isSelectable(group.sourceId)
+  const source = realSourceById.value.get(group.sourceId)
+  return Boolean(source && restoreTargetCatalog.isSelectable(group.sourceId) && !createRecoveryTargetPlatformBlocked(source, group))
 }
 
 function createRecoverySourceTargetActionValue(group: WizardSourceGroup) {
@@ -1950,6 +1976,8 @@ function onCreateRecoveryTargetHostChange(group: WizardSourceGroup, dirPlan: Cre
     selectCreateRecoverySourceTarget(group, dirPlan)
     return
   }
+  const targetSource = realSourceById.value.get(targetHostId)
+  if (targetSource && createRecoveryTargetPlatformBlocked(targetSource, group)) return
   updateRecoveryDirPlan(group, dirPlan, {
     targetHostId,
     targetMode: targetHostId === group.sourceId ? 'original' : targetHostId ? 'new' : '',
@@ -2178,6 +2206,36 @@ function recoveryDirPlanTargetSummary(dirPlan: CreateRecoveryDirPlanConfig) {
   const targetIp = targetHost?.nodeIp || ''
   const targetLabel = targetIp ? `${targetName} ${targetIp}` : targetName
   return `${dirPlan.restoreDir || '—'} (${targetLabel})`
+}
+
+function recoveryDirPlanRestoredPaths(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig) {
+  if (!isRecoveryDirPlanComplete(group, dirPlan) || !dirPlan.restoreDir) return []
+  const sourceEntries = isWholeSnapshotRecoveryPath(dirPlan.sourcePath)
+    ? group.entries
+    : group.entries
+      .filter((entry) => isSameOrAncestorPath(entry.path, dirPlan.sourcePath))
+      .sort((a, b) => b.path.length - a.path.length)
+      .slice(0, 1)
+  const inputs = sourceEntries.map<RestoreResultPathInput>((entry, index) => {
+    const selectedPath = isWholeSnapshotRecoveryPath(dirPlan.sourcePath) || entry.path === dirPlan.sourcePath
+      ? []
+      : [dirPlan.sourcePath.slice(entry.path.length).replace(/^[\\/]+/, '')]
+    return {
+      key: dirPlan.id,
+      sourceDirectoryId: index + 1,
+      sourcePath: entry.path,
+      sourcePathType: entry.pathType,
+      selectedPaths: selectedPath,
+      restoreDirectory: dirPlan.restoreDir,
+    }
+  })
+  return [...new Set(resolveRestoreResultPaths(inputs).map((result) => result.path))]
+}
+
+function recoveryDirPlanRestoredPathLabel(count: number) {
+  return count === 1
+    ? t('protection.backupsPage.recoveryRestoredPathLabel')
+    : t('protection.backupsPage.recoveryRestoredPathsLabel')
 }
 
 function recoveryDirPlanSourceIconName(dirPlan: CreateRecoveryDirPlanConfig) {
@@ -8279,8 +8337,12 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 :label="option.label"
                                 :value="option.value"
                                 :disabled="!option.selectable"
+                                :class="{ 'create-recovery-target-node-option-item--restricted': option.unavailableReason === 'direct_nas_platform' }"
                               >
-                                <div class="create-recovery-target-node-option">
+                                <div
+                                  class="create-recovery-target-node-option"
+                                  :class="{ 'create-recovery-target-node-option--disabled': !option.selectable }"
+                                >
                                   <div class="create-recovery-target-node-option__main">
                                     <span
                                       class="create-recovery-target-node-option__label"
@@ -8303,6 +8365,18 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     >
                                       {{ option.summary.typeLabel }}
                                     </el-tag>
+                                    <ElTooltip
+                                      v-if="option.unavailableReason === 'direct_nas_platform'"
+                                      :content="t('protection.backupsPage.recoveryTargetDirectNasPlatformUnavailable')"
+                                      placement="top"
+                                    >
+                                      <span class="create-recovery-target-node-option__restriction">
+                                        <span class="create-recovery-target-node-option__restriction-label">
+                                          {{ t('protection.backupsPage.recoveryTargetUnsupported') }}
+                                        </span>
+                                        <ShieldAlert :size="14" />
+                                      </span>
+                                    </ElTooltip>
                                   </div>
                                   <div class="create-recovery-target-node-option__meta-row">
                                     <span
@@ -8481,6 +8555,26 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 </el-tree>
                               </div>
                             </HflPopover>
+                          </div>
+                          <div
+                            v-if="recoveryDirPlanRestoredPaths(group, dirPlan).length"
+                            class="create-recovery-result-path-hint"
+                          >
+                            <FolderOpen
+                              :size="14"
+                              class="create-recovery-result-path-hint__icon"
+                            />
+                            <span class="create-recovery-result-path-hint__label">
+                              {{ recoveryDirPlanRestoredPathLabel(recoveryDirPlanRestoredPaths(group, dirPlan).length) }}
+                            </span>
+                            <span class="create-recovery-result-path-hint__values">
+                              <code
+                                v-for="path in recoveryDirPlanRestoredPaths(group, dirPlan)"
+                                :key="path"
+                                :title="path"
+                                class="create-recovery-result-path-hint__path"
+                              >{{ path }}</code>
+                            </span>
                           </div>
                           <div
                             class="create-recovery-dir-plan-cell create-recovery-dir-plan-cell--actions"
@@ -8715,6 +8809,21 @@ function preserveShallowestPathOrder(paths: string[]) {
                                   class="create-recovery-plan-mapping__icon create-dir-row__icon--folder"
                                 />
                                 <span class="create-recovery-plan-mapping__text">{{ recoveryDirPlanTargetSummary(dirPlan) }}</span>
+                              </span>
+                              <span
+                                v-if="recoveryDirPlanRestoredPaths(group, dirPlan).length"
+                                class="create-recovery-result-path-hint create-recovery-result-path-hint--inline"
+                              >
+                                <FolderOpen
+                                  :size="12"
+                                  class="create-recovery-result-path-hint__icon"
+                                />
+                                <span class="create-recovery-result-path-hint__label">{{ recoveryDirPlanRestoredPathLabel(recoveryDirPlanRestoredPaths(group, dirPlan).length) }}:</span>
+                                <code
+                                  v-for="path in recoveryDirPlanRestoredPaths(group, dirPlan)"
+                                  :key="path"
+                                  class="create-recovery-result-path-hint__path"
+                                >{{ path }}</code>
                               </span>
                             </template>
                             <span
@@ -9300,6 +9409,21 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     class="create-recovery-plan-mapping__text"
                                     :title="recoveryDirPlanTargetSummary(dirPlan)"
                                   >{{ recoveryDirPlanTargetSummary(dirPlan) }}</span>
+                                </span>
+                                <span
+                                  v-if="recoveryDirPlanRestoredPaths(row.recoveryGroup.group, dirPlan).length"
+                                  class="create-recovery-result-path-hint create-recovery-result-path-hint--inline"
+                                >
+                                  <FolderOpen
+                                    :size="12"
+                                    class="create-recovery-result-path-hint__icon"
+                                  />
+                                  <span class="create-recovery-result-path-hint__label">{{ recoveryDirPlanRestoredPathLabel(recoveryDirPlanRestoredPaths(row.recoveryGroup.group, dirPlan).length) }}:</span>
+                                  <code
+                                    v-for="path in recoveryDirPlanRestoredPaths(row.recoveryGroup.group, dirPlan)"
+                                    :key="path"
+                                    class="create-recovery-result-path-hint__path"
+                                  >{{ path }}</code>
                                 </span>
                               </template>
                               <span
@@ -11290,6 +11414,62 @@ function preserveShallowestPathOrder(paths: string[]) {
   white-space: nowrap;
 }
 
+.create-recovery-result-path-hint {
+  display: grid;
+  min-width: 0;
+  grid-column: 2 / span 3;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  margin-top: -2px;
+  padding: 6px 9px;
+  border-left: 2px solid color-mix(in srgb, var(--color-primary) 58%, rgb(148 163 184));
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--color-primary) 5%, #ffffff);
+  color: rgb(71 85 105);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.create-recovery-result-path-hint--inline {
+  display: flex;
+  grid-column: auto;
+  margin: 0;
+  padding: 2px 5px;
+  border-left: 0;
+  border-radius: 4px;
+  background: rgba(239, 246, 255, 0.62);
+  flex-wrap: wrap;
+}
+
+.create-recovery-result-path-hint__icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: #d97706;
+}
+
+.create-recovery-result-path-hint__label {
+  color: rgb(100 116 139);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.create-recovery-result-path-hint__values {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.create-recovery-result-path-hint__path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: rgb(30 41 59);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: normal;
+}
+
 .create-recovery-plan-action {
   display: inline-flex;
   min-width: 0;
@@ -11527,6 +11707,37 @@ function preserveShallowestPathOrder(paths: string[]) {
   gap: 6px;
 }
 
+.create-recovery-target-node-option__restriction {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: rgb(180 83 9);
+  pointer-events: auto;
+}
+
+.create-recovery-target-node-option__restriction-label {
+  border: 1px solid rgb(245 158 11 / 36%);
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: rgb(255 251 235);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.create-recovery-target-node-option--disabled .create-recovery-target-node-option__label,
+.create-recovery-target-node-option--disabled .create-recovery-target-node-option__meta {
+  color: rgb(148 163 184);
+}
+
+.create-recovery-target-node-option--disabled .create-recovery-target-node-option__platform {
+  opacity: 0.48;
+  filter: grayscale(1);
+}
+
 .create-recovery-target-node-option__label {
   min-width: 0;
   overflow: hidden;
@@ -11675,6 +11886,21 @@ function preserveShallowestPathOrder(paths: string[]) {
   min-height: 52px;
   padding-top: 6px;
   padding-bottom: 6px;
+}
+
+:global(.create-recovery-target-node-select-popper .el-select-dropdown__item.create-recovery-target-node-option-item--restricted) {
+  border-color: rgb(226 232 240) !important;
+  background: rgb(248 250 252);
+  color: rgb(148 163 184) !important;
+  pointer-events: auto;
+  cursor: not-allowed;
+}
+
+:global(.create-recovery-target-node-select-popper .el-select-dropdown__item.create-recovery-target-node-option-item--restricted:hover),
+:global(.create-recovery-target-node-select-popper .el-select-dropdown__item.create-recovery-target-node-option-item--restricted.hover) {
+  border-color: rgb(226 232 240) !important;
+  background: rgb(248 250 252) !important;
+  color: rgb(148 163 184) !important;
 }
 
 .create-recovery-dir-plan-stack {

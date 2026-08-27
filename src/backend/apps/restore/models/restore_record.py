@@ -202,7 +202,7 @@ class DirectNASMount(models.Model):
 
 
 class DirectNASMountLease(models.Model):
-    """One Chat restore's use of a directly mounted NAS repository."""
+    """One restore record's use of a directly mounted NAS repository."""
 
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"

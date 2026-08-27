@@ -113,6 +113,16 @@ export type RepositoryRow = {
   bind_node_name?: string
   repo_scope?: RepoScope
   s3_platform?: string
+  quota_alert?: {
+    active: boolean
+    severity: string
+    title: string
+    message: string
+    current_value?: number | null
+    threshold_value?: number | null
+    triggered_at?: string | null
+    repeat_count?: number
+  } | null
 }
 
 export type S3UrlStyle = 'auto' | 'virtual_hosted' | 'path'
@@ -178,6 +188,7 @@ type ApiRepository = {
   physical_usage_bytes?: number | null
   storage_total_bytes?: number
   storage_used_bytes?: number
+  quota_alert?: RepositoryRow['quota_alert']
   storage_available_bytes?: number
   storage_pool_key?: string
   storage_mount_point?: string
@@ -466,6 +477,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       source_node_name: sourceNode.name,
       location: loc,
       s3_platform: r.s3_platform || configString(config, 's3_platform') || 'custom',
+      quota_alert: r.quota_alert ?? null,
       config: {
         bucket,
         region: configString(config, 'region') || r.region || '',
@@ -514,6 +526,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       created_at: r.created_at ?? null,
       source_node_id: sourceNode.id,
       source_node_name: proxyNodeName || sourceNode.name,
+      quota_alert: r.quota_alert ?? null,
       location: loc,
       config: {
         proxy_node_id: proxyNodeId,
@@ -534,6 +547,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
   const resolvedBindNodeName = bindNodeName || sourceNode.name
   return {
     id: r.id,
+    quota_alert: r.quota_alert ?? null,
     organization_id: organizationId,
     name: r.name,
     kind,
@@ -796,12 +810,29 @@ function repoLifecycleLabel(s: RepoLifecycleStatus | string) {
 }
 
 function repoHealthLabel(row: RepositoryRow) {
-  if (isRemovedRepositoryWithResidualLocation(row)) return t('repositoriesPage.connectivityNotApplicable')
-  if (row.initialization_state === 'not_initialized') return t('repositoriesPage.healthNotInitialized')
-  if (row.initialization_state === 'attention_required') return t('repositoriesPage.healthAttentionRequired')
-  const k = normalizeHealth(String(row.health))
-  if (k === 'unverified') return t('repositoriesPage.healthUnverified')
+  // Connectivity is independent from lifecycle and initialization state.
+  // Residual locations and uninitialized repositories are surfaced by their
+  // dedicated lifecycle/recovery indicators; they must not become a fourth
+  // connectivity value.
+  const k = normalizeHealth(String(row.health), row.status)
+  if (k === 'unverified') {
+    return t(isRepositoryBoundToProxy(row) ? 'repositoriesPage.healthBoundUnverified' : 'repositoriesPage.healthUnverified')
+  }
   return k === 'online' ? t('repositoriesPage.healthOnline') : t('repositoriesPage.healthOffline')
+}
+
+function isRepositoryBoundToProxy(row: RepositoryRow) {
+  return row.kind === 'nas' && row.bind_node_type === 'proxy' && row.bind_node_id != null
+}
+
+function isRepositoryConnectivityUnverified(row: RepositoryRow) {
+  return normalizeHealth(String(row.health), row.status) === 'unverified'
+}
+
+function repositoryConnectivityHelpKey(row: RepositoryRow) {
+  return isRepositoryBoundToProxy(row)
+    ? 'repositoriesPage.healthBoundUnverifiedHelp'
+    : 'repositoriesPage.healthUnverifiedHelp'
 }
 
 const deleteRepositoriesTitle = computed(() =>
@@ -2483,9 +2514,7 @@ function lifecycleTagType(s: RepoLifecycleStatus | string) {
 }
 
 function healthTagType(row: RepositoryRow) {
-  if (isRemovedRepositoryWithResidualLocation(row)) return 'info'
-  if (row.initialization_state === 'attention_required') return 'danger'
-  const k = normalizeHealth(String(row.health))
+  const k = normalizeHealth(String(row.health), row.status)
   if (k === 'online') return 'success'
   if (k === 'unverified') return 'warning'
   return 'danger'
@@ -2681,11 +2710,29 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 >
                   {{ row.name }}
                 </button>
+                <ElPopover
+                  v-if="row.quota_alert?.active"
+                  placement="top-start"
+                  trigger="hover"
+                  :width="280"
+                >
+                  <template #reference>
+                    <span class="repository-quota-alert-icon" aria-label="Quota warning">⚠</span>
+                  </template>
+                  <div>
+                    <strong>{{ row.quota_alert.title }}</strong>
+                    <div>{{ row.quota_alert.message }}</div>
+                    <div v-if="row.quota_alert.current_value != null">
+                      Usage: {{ row.quota_alert.current_value }}% / {{ row.quota_alert.threshold_value }}%
+                    </div>
+                    <div v-if="(row.quota_alert.repeat_count || 0) >= 5">Repeated notifications stopped after 5 reminders.</div>
+                  </div>
+                </ElPopover>
               </template>
             </el-table-column>
             <el-table-column
               :label="t('repositoriesPage.colStatus')"
-              min-width="190"
+              :min-width="activeTab === 'nas' ? 152 : activeTab === 's3' ? 137 : 190"
             >
               <template #default="{ row }">
                 <RepositoryLifecycleStatus
@@ -2751,7 +2798,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <el-table-column
               v-if="activeTab === 's3'"
               :label="t('repositoriesPage.colS3ObjectPrefix')"
-              min-width="126"
+              min-width="113"
             >
               <template #default="{ row }">
                 <span :class="{ 'hfl-empty-mark': s3ObjectPrefixCell(row) === DETAIL_EMPTY }">{{ s3ObjectPrefixCell(row) }}</span>
@@ -2760,7 +2807,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <el-table-column
               v-if="activeTab === 'nas'"
               :label="t('repositoriesPage.colProtocol')"
-              width="132"
+              width="119"
             >
               <template #default="{ row }">
                 <span
@@ -2790,7 +2837,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <el-table-column
               v-if="activeTab === 'nas'"
               :label="t('repositoriesPage.colLocation')"
-              min-width="260"
+              min-width="247"
             >
               <template #default="{ row }">
                 <span
@@ -2802,7 +2849,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <el-table-column
               v-if="activeTab === 'nas' || activeTab === 'proxy_fs'"
               :label="t('repositoriesPage.colSourceProxyIp')"
-              :min-width="activeTab === 'proxy_fs' ? 144 : 173"
+              :min-width="activeTab === 'proxy_fs' ? 144 : 158"
             >
               <template #header>
                 <span class="repo-table-header-with-tip">
@@ -2874,7 +2921,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               </template>
             </el-table-column>
             <el-table-column
-              :min-width="activeTab === 's3' ? 210 : activeTab === 'nas' ? 220 : 228"
+              :min-width="activeTab === 's3' ? 189 : activeTab === 'nas' ? 194 : 228"
             >
               <template #header>
                 <span class="repo-table-header-with-help">
@@ -2945,15 +2992,29 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             </el-table-column>
             <el-table-column
               :label="t('repositoriesPage.colAvailability')"
-              width="116"
+              :width="activeTab === 'nas' ? 142 : activeTab === 's3' ? 110 : 116"
             >
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip">
                   <ElTag
+                    class="repository-connectivity-tag"
                     :type="healthTagType(row)"
                     size="small"
                   >
-                    {{ repoHealthLabel(row) }}
+                    <span class="repository-connectivity-content">
+                      <span>{{ repoHealthLabel(row) }}</span>
+                      <ElTooltip
+                        v-if="isRepositoryConnectivityUnverified(row)"
+                        :content="t(repositoryConnectivityHelpKey(row))"
+                        placement="top"
+                      >
+                        <Info
+                          :size="13"
+                          aria-hidden="true"
+                          class="repository-connectivity-help"
+                        />
+                      </ElTooltip>
+                    </span>
                   </ElTag>
                 </div>
               </template>
@@ -2961,7 +3022,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <el-table-column
               prop="created_at"
               :label="activeTab === 's3' || activeTab === 'nas' || activeTab === 'proxy_fs' ? t('repositoriesPage.colRegistered') : t('repositoriesPage.colCreated')"
-              :min-width="activeTab === 'nas' ? 163 : activeTab === 's3' || activeTab === 'proxy_fs' ? 170 : createdAtColumnMinWidth"
+              :min-width="activeTab === 'nas' || activeTab === 's3' ? 154 : activeTab === 'proxy_fs' ? 170 : createdAtColumnMinWidth"
             >
               <template #default="{ row }">
                 <span
@@ -3096,6 +3157,17 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                         size="small"
                       >
                         {{ repoHealthLabel(detailRow) }}
+                        <ElTooltip
+                          v-if="isRepositoryConnectivityUnverified(detailRow)"
+                          :content="t(repositoryConnectivityHelpKey(detailRow))"
+                          placement="top"
+                        >
+                          <Info
+                            :size="13"
+                            aria-hidden="true"
+                            class="repository-connectivity-help"
+                          />
+                        </ElTooltip>
                       </ElTag>
                     </span>
                   </div>
@@ -3339,6 +3411,17 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                         size="small"
                       >
                         {{ repoHealthLabel(detailRow) }}
+                        <ElTooltip
+                          v-if="isRepositoryConnectivityUnverified(detailRow)"
+                          :content="t(repositoryConnectivityHelpKey(detailRow))"
+                          placement="top"
+                        >
+                          <Info
+                            :size="13"
+                            aria-hidden="true"
+                            class="repository-connectivity-help"
+                          />
+                        </ElTooltip>
                       </ElTag>
                     </span>
                   </div>
@@ -3599,6 +3682,17 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                         size="small"
                       >
                         {{ repoHealthLabel(detailRow) }}
+                        <ElTooltip
+                          v-if="isRepositoryConnectivityUnverified(detailRow)"
+                          :content="t(repositoryConnectivityHelpKey(detailRow))"
+                          placement="top"
+                        >
+                          <Info
+                            :size="13"
+                            aria-hidden="true"
+                            class="repository-connectivity-help"
+                          />
+                        </ElTooltip>
                       </ElTag>
                     </span>
                   </div>
@@ -4470,6 +4564,30 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
 </template>
 
 <style scoped>
+.repository-connectivity-help {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  vertical-align: -2px;
+  cursor: help;
+}
+
+.repository-connectivity-tag {
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.repository-connectivity-tag :deep(.el-tag__content) {
+  white-space: nowrap;
+}
+
+.repository-connectivity-content {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  white-space: nowrap;
+}
+
 .repo-residual-attention {
   --el-alert-padding: 20px 16px;
   margin-bottom: 16px;

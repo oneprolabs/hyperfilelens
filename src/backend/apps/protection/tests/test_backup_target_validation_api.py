@@ -52,7 +52,8 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             organization=self.org,
             name="validation-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.20",
             os_name="linux",
         )
@@ -168,7 +169,27 @@ class BackupTargetValidationApiTests(TransactionTestCase):
                     self.assertEqual(result.details["dependency"], dependency)
                     self.assertEqual(result.details["helper"], helper)
                 else:
-                    self.assertEqual(result.details, {})
+                    self.assertEqual(result.details["execution_node_name"], "agent-a")
+                    self.assertEqual(
+                        result.details["execution_node_address"], "10.0.0.20"
+                    )
+
+    def test_nas_outcome_result_attaches_execution_node_to_unknown_mount_failure(self):
+        result = _nas_outcome_result(
+            _AgentOutcome(
+                ok=False,
+                status="failed",
+                message="mount SMB share: unexpected operating system error",
+                result={},
+            ),
+            repository=self.s3_repository,
+            execution_node_name="restore-proxy-a",
+            execution_node_address="10.0.0.31",
+        )
+
+        self.assertEqual(result.code, "NAS_MOUNT_FAILED")
+        self.assertEqual(result.details["execution_node_name"], "restore-proxy-a")
+        self.assertEqual(result.details["execution_node_address"], "10.0.0.31")
 
     def test_nas_outcome_result_preserves_smb_charset_contract_for_host(self):
         result = _nas_outcome_result(
@@ -196,6 +217,33 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertEqual(result.code, "SMB_CHARSET_UNAVAILABLE")
         self.assertEqual(result.details["execution_node_name"], "hfl-agent1")
         self.assertEqual(result.details["execution_node_os_name"], "Ubuntu")
+        self.assertEqual(result.details["module"], "nls_utf8")
+
+    def test_nas_outcome_result_recognizes_legacy_smb_charset_message(self):
+        result = _nas_outcome_result(
+            _AgentOutcome(
+                ok=False,
+                status="failed",
+                message=(
+                    "mount SMB share failed: iocharset=utf8 requires nls_utf8 "
+                    "(mount error(79))"
+                ),
+                result={},
+            ),
+            repository=self.s3_repository,
+            execution_node_name="restore-agent-a",
+            execution_node_address="10.0.0.41",
+            execution_node_os_name="Ubuntu 24.04",
+            execution_node_inventory={
+                "os_family": "linux",
+                "os_name": "Ubuntu 24.04",
+                "os_version": "24.04",
+            },
+        )
+
+        self.assertEqual(result.code, "SMB_CHARSET_UNAVAILABLE")
+        self.assertEqual(result.details["execution_node_name"], "restore-agent-a")
+        self.assertEqual(result.details["execution_node_address"], "10.0.0.41")
         self.assertEqual(result.details["module"], "nls_utf8")
         self.assertNotIn("proxy", result.message.lower())
 
@@ -275,9 +323,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_s3_routes_are_deduplicated_and_use_selected_endpoint(self, execute):
         execute.return_value = _AgentOutcome(
             ok=True,
@@ -296,18 +342,22 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         )
 
         self.assertEqual(result["status"], "success", result)
-        self.assertEqual([item["key"] for item in result["results"]], ["row-one", "row-two"])
+        self.assertEqual(
+            [item["key"] for item in result["results"]], ["row-one", "row-two"]
+        )
         execute.assert_called_once()
         call = execute.call_args.kwargs
         self.assertEqual(call["kind"], "repo.status")
-        self.assertEqual(call["payload"]["repository"]["endpoint"], "s3.example.test:9000")
+        self.assertEqual(
+            call["payload"]["repository"]["endpoint"], "s3.example.test:9000"
+        )
         self.assertTrue(call["payload"]["health_only"])
         self.assertNotIn("backup_config_dir_id", call["payload"])
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
-    def test_s3_clock_skew_reports_actionable_error_before_generic_status(self, execute):
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
+    def test_s3_clock_skew_reports_actionable_error_before_generic_status(
+        self, execute
+    ):
         clock_skew_messages = (
             "The difference between the request time and the server's time is too large.",
             "RequestTimeTooSkewed",
@@ -349,9 +399,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
                 self.assertNotIn("test-secret-key", json.dumps(row))
                 self.assertNotIn("repository is not connected", row["message"])
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_s3_non_clock_failure_keeps_existing_connection_error(self, execute):
         execute.return_value = _AgentOutcome(
             ok=False,
@@ -371,11 +419,11 @@ class BackupTargetValidationApiTests(TransactionTestCase):
 
         row = result["results"][0]
         self.assertEqual(row["code"], "S3_CONNECTION_FAILED")
-        self.assertEqual(row["message"], "error connecting to repository: access denied")
+        self.assertEqual(
+            row["message"], "error connecting to repository: access denied"
+        )
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_direct_nas_only_tests_isolated_mount_and_unmounts(self, execute):
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -421,9 +469,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertIn("/mounts/validations/", test_payload["mount_point"])
         self.assertNotIn("repository", test_payload)
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_direct_nas_owned_location_repairs_persistent_mount(self, execute):
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -520,13 +566,9 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         )
 
         self.assertEqual(result["status"], "failed", result)
-        self.assertEqual(
-            result["results"][0]["code"], "REPOSITORY_OWNERSHIP_INVALID"
-        )
+        self.assertEqual(result["results"][0]["code"], "REPOSITORY_OWNERSHIP_INVALID")
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_direct_nas_reports_structured_mount_helper_guidance(self, execute):
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -562,13 +604,15 @@ class BackupTargetValidationApiTests(TransactionTestCase):
 
         result = validate_backup_targets(
             organization_id=self.org.id,
-            sources=[{
-                "key": "direct-row",
-                "source_type": "agent",
-                "source_ref_id": self.agent.id,
-                "repository_id": repository.id,
-                "repository_endpoint_type": "external",
-            }],
+            sources=[
+                {
+                    "key": "direct-row",
+                    "source_type": "agent",
+                    "source_ref_id": self.agent.id,
+                    "repository_id": repository.id,
+                    "repository_endpoint_type": "external",
+                }
+            ],
         )
 
         row = result["results"][0]
@@ -588,9 +632,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         )
         self.assertNotIn("ignored", row["details"])
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_direct_nas_keeps_old_agent_failure_generic(self, execute):
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -617,13 +659,15 @@ class BackupTargetValidationApiTests(TransactionTestCase):
 
         result = validate_backup_targets(
             organization_id=self.org.id,
-            sources=[{
-                "key": "direct-row",
-                "source_type": "agent",
-                "source_ref_id": self.agent.id,
-                "repository_id": repository.id,
-                "repository_endpoint_type": "external",
-            }],
+            sources=[
+                {
+                    "key": "direct-row",
+                    "source_type": "agent",
+                    "source_ref_id": self.agent.id,
+                    "repository_id": repository.id,
+                    "repository_endpoint_type": "external",
+                }
+            ],
         )
 
         row = result["results"][0]
@@ -631,9 +675,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertEqual(row["message"], "legacy mount failure")
         self.assertEqual(row["details"], {})
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_non_linux_agent_direct_nas_fails_before_task_dispatch(self, execute):
         windows_agent = Node.objects.create(
             organization=self.org,
@@ -663,13 +705,15 @@ class BackupTargetValidationApiTests(TransactionTestCase):
 
                 result = validate_backup_targets(
                     organization_id=self.org.id,
-                    sources=[{
-                        "key": f"direct-{protocol}-windows-row",
-                        "source_type": "agent",
-                        "source_ref_id": windows_agent.id,
-                        "repository_id": repository.id,
-                        "repository_endpoint_type": "external",
-                    }],
+                    sources=[
+                        {
+                            "key": f"direct-{protocol}-windows-row",
+                            "source_type": "agent",
+                            "source_ref_id": windows_agent.id,
+                            "repository_id": repository.id,
+                            "repository_endpoint_type": "external",
+                        }
+                    ],
                 )
 
                 self.assertEqual(result["status"], "failed", result)
@@ -679,9 +723,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
 
         execute.assert_not_called()
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_direct_nas_cleanup_failure_fails_the_row(self, execute):
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -723,15 +765,14 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertEqual(result["results"][0]["code"], "CLEANUP_FAILED")
         self.assertIn("device is busy", result["results"][0]["message"])
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_same_proxy_repository_is_probed_directly(self, execute):
         proxy = Node.objects.create(
             organization=self.org,
             name="shared-source-repository-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.41",
         )
         source = SourceResource.objects.create(
@@ -786,22 +827,22 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertEqual(call["kind"], "repo.status")
         self.assertTrue(call["payload"]["health_only"])
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_cross_node_proxy_repository_reuses_server_and_stops_it(self, execute):
         proxy = Node.objects.create(
             organization=self.org,
             name="repository-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.40",
         )
         agent_two = Node.objects.create(
             organization=self.org,
             name="validation-agent-two",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             ip_address="10.0.0.21",
         )
         repository = Repository.objects.create(
@@ -883,10 +924,10 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             all(call.kwargs["payload"]["health_only"] for call in probe_calls)
         )
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
-    def test_cross_node_proxy_repository_reports_actionable_failure_codes(self, execute):
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
+    def test_cross_node_proxy_repository_reports_actionable_failure_codes(
+        self, execute
+    ):
         proxy = Node.objects.create(
             organization=self.org,
             name="repository-proxy-errors",
@@ -992,10 +1033,10 @@ class BackupTargetValidationApiTests(TransactionTestCase):
                 self.assertEqual(row["details"]["port_range"], "51515-52014")
                 self.assertNotIn("proxy-kopia-password", json.dumps(row))
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
-    def test_cross_node_proxy_repository_reports_missing_address_without_dispatch(self, execute):
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
+    def test_cross_node_proxy_repository_reports_missing_address_without_dispatch(
+        self, execute
+    ):
         proxy = Node.objects.create(
             organization=self.org,
             name="repository-proxy-no-address",
@@ -1032,9 +1073,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertEqual(row["details"]["stage"], "address_resolution")
         execute.assert_not_called()
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_offline_source_returns_row_failure_without_dispatch(self, execute):
         self.agent.availability = Node.Availability.OFFLINE
         self.agent.save(update_fields=["availability"])
@@ -1048,9 +1087,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertEqual(result["results"][0]["code"], "SOURCE_NODE_OFFLINE")
         execute.assert_not_called()
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation._execute_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_cross_organization_sources_and_repositories_are_rejected(self, execute):
         other_org = Organization.objects.create(
             key="other-target-validation-org",
@@ -1060,7 +1097,8 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             organization=other_org,
             name="other-validation-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         other_repository = Repository.objects.create(
             organization_id=other_org.id,
@@ -1099,12 +1137,8 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         )
         execute.assert_not_called()
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation.cancel_agent_task"
-    )
-    @mock.patch(
-        "apps.protection.services.backup_target_validation.wait_for_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation.cancel_agent_task")
+    @mock.patch("apps.protection.services.backup_target_validation.wait_for_agent_task")
     @mock.patch(
         "apps.protection.services.backup_target_validation.run_agent_task_async"
     )
@@ -1139,12 +1173,8 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertNotIn(secret, json.dumps(persisted))
         self.assertEqual(persisted["repository"]["password"], "******")
 
-    @mock.patch(
-        "apps.protection.services.backup_target_validation.cancel_agent_task"
-    )
-    @mock.patch(
-        "apps.protection.services.backup_target_validation.wait_for_agent_task"
-    )
+    @mock.patch("apps.protection.services.backup_target_validation.cancel_agent_task")
+    @mock.patch("apps.protection.services.backup_target_validation.wait_for_agent_task")
     @mock.patch(
         "apps.protection.services.backup_target_validation.run_agent_task_async"
     )

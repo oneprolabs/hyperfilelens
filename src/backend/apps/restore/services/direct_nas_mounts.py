@@ -1,4 +1,4 @@
-"""Lifecycle for Chat restores that mount an unbound NAS on a Data Gateway."""
+"""Lifecycle for restores that temporarily mount an unbound NAS."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from apps.node.services.interface import run_agent_task_async
 from apps.restore import conf
 from apps.restore.models import DirectNASMount, DirectNASMountLease, RestoreRecord
 from apps.storage.repositories.models import Repository
+from apps.storage.services.internal.nas_repository import nas_restore_mount_point
 from apps.task.models import Task
 from apps.task.services.interface import TERMINAL_STATUSES
 
@@ -46,10 +47,10 @@ def acquire_for_restore(
     access_mode: str,
     repository_payload: dict[str, Any],
 ) -> DirectNASMountLease | None:
-    """Record one direct Data Gateway NAS read; Proxy reads are excluded.
+    """Record one direct NAS restore read; Proxy reads are excluded.
 
     The aggregate row is the database lock for the physical mount identity.
-    A lease belongs to one restore record, while multiple Chat restores on the
+    A lease belongs to one restore record, while multiple restores on the
     same Agent share the aggregate and therefore share one physical mount.
     """
 
@@ -137,15 +138,16 @@ def _direct_mount_point(
     repository_payload: dict[str, Any],
 ) -> str:
     if (
-        record.purpose != RestoreRecord.Purpose.LENS_WORKSPACE
-        or repository.repo_type != Repository.Type.NAS
+        repository.repo_type != Repository.Type.NAS
         or repository.bind_node_type == Repository.BindNodeType.PROXY
         or access_mode != "fallback_node"
         or int(reader_node_id) != int(record.target_execution_node_id)
     ):
         return ""
     nas = repository_payload.get("nas")
-    return str(nas.get("mount_point") if isinstance(nas, dict) else "").strip()
+    mount_point = str(nas.get("mount_point") if isinstance(nas, dict) else "").strip()
+    expected = nas_restore_mount_point(repository, node_id=reader_node_id)
+    return mount_point if mount_point == expected else ""
 
 
 def release_for_record(*, record: RestoreRecord) -> int:
@@ -185,9 +187,12 @@ def release_for_record(*, record: RestoreRecord) -> int:
                 continue
             if mount.cleanup_node_task_id is not None:
                 continue
-            mount.cleanup_after = now + timedelta(
-                seconds=conf.DIRECT_NAS_MOUNT_CLEANUP_GRACE_SECONDS
+            grace_seconds = (
+                conf.DIRECT_NAS_MOUNT_CLEANUP_GRACE_SECONDS
+                if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE
+                else conf.DIRECT_NAS_USER_DATA_MOUNT_CLEANUP_GRACE_SECONDS
             )
+            mount.cleanup_after = now + timedelta(seconds=grace_seconds)
             mount.last_error = ""
             mount.save(
                 update_fields=[
@@ -195,6 +200,13 @@ def release_for_record(*, record: RestoreRecord) -> int:
                     "last_error",
                     "updated_at",
                 ]
+            )
+        if released and any(
+            mount.cleanup_after is not None and mount.cleanup_after <= now
+            for mount in mounts.values()
+        ):
+            transaction.on_commit(
+                lambda: _dispatch_due_cleanups(limit=max(1, len(mounts)))
             )
     return released
 

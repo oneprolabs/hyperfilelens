@@ -12,6 +12,9 @@ from apps.restore.api.serializers.restore_record import (
     RestoreRecordItemSerializer,
     RestoreRecordSerializer,
 )
+from apps.restore.api.serializers.target_validation import (
+    RestoreTargetValidationSerializer,
+)
 
 __all__ = [
     "RestoreCreateResultSerializer",
@@ -24,4 +27,5 @@ __all__ = [
     "RestoreRecordCreateSerializer",
     "RestoreRecordItemSerializer",
     "RestoreRecordSerializer",
+    "RestoreTargetValidationSerializer",
 ]

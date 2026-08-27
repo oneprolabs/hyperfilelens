@@ -37,6 +37,7 @@ from apps.storage.services.internal.nas_repair import (
 )
 from apps.storage.services.internal.s3_bucket_name import s3_bucket_name_error
 from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
+from apps.alert.models import AlertRecord
 
 
 FORBIDDEN_CONFIG_FIELDS = {
@@ -123,6 +124,7 @@ class RepositorySerializer(serializers.ModelSerializer):
     active_create_task = serializers.SerializerMethodField()
     initialization_state = serializers.SerializerMethodField()
     initialized_target_count = serializers.SerializerMethodField()
+    quota_alert = serializers.SerializerMethodField()
 
     class Meta:
         model = Repository
@@ -170,8 +172,31 @@ class RepositorySerializer(serializers.ModelSerializer):
             "active_create_task",
             "initialization_state",
             "initialized_target_count",
+            "quota_alert",
         ]
         read_only_fields = fields
+
+    def get_quota_alert(self, obj):
+        alert = AlertRecord.objects.filter(
+            organization_id=obj.organization_id,
+            resource_type="backup_repository",
+            resource_id=str(obj.id),
+            status__in=["pending", "firing", "acknowledged"],
+            policy_id__isnull=False,
+        ).order_by("-last_triggered_at").first()
+        if not alert:
+            return None
+        metadata = alert.metadata or {}
+        return {
+            "active": True,
+            "severity": alert.severity,
+            "title": alert.title,
+            "message": alert.message,
+            "current_value": float(alert.current_value) if alert.current_value is not None else None,
+            "threshold_value": float(alert.threshold_value) if alert.threshold_value is not None else None,
+            "triggered_at": alert.first_triggered_at,
+            "repeat_count": int(metadata.get("repeat_count") or 0),
+        }
 
     def get_bind_node_display_name(self, obj: Repository) -> str | None:
         if not (obj.bind_node_id and obj.bind_node_type):

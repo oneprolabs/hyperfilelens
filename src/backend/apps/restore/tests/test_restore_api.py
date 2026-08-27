@@ -21,7 +21,12 @@ from apps.protection.models import (
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
 )
-from apps.restore.models import RestorePlan, RestoreRecord, RestoreRecordItem
+from apps.restore.models import (
+    DirectNASMountLease,
+    RestorePlan,
+    RestoreRecord,
+    RestoreRecordItem,
+)
 from apps.restore.services import interface as restore_service
 from apps.restore.services.reconciliation import reconcile_restore_node_task_projections
 from apps.restore.services.task_events import (
@@ -778,6 +783,16 @@ class RestoreApiTests(TestCase):
             node_task.payload["repository"]["subdir"],
             f"hp-repos/agent-{private_gateway.id}",
         )
+        self.assertEqual(
+            node_task.payload["repository"]["nas"]["mount_point"],
+            (
+                "/opt/hyperfilelens-agent/mounts/restores/"
+                f"repo-{self.repository.id}-node-{private_gateway.id}"
+            ),
+        )
+        self.assertTrue(
+            DirectNASMountLease.objects.filter(restore_record=record).exists()
+        )
 
     @patch(
         "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
@@ -1288,6 +1303,106 @@ class RestoreApiTests(TestCase):
         self.assertEqual(node_task.payload["target_path"], "/restore/data/data")
         self.assertEqual(node_task.payload["target_path_semantics"], "final")
 
+    def test_user_restore_from_unbound_nas_uses_temporary_mount_and_lease(self):
+        self.repository.repo_type = Repository.Type.NAS
+        self.repository.nas_protocol = Repository.NasProtocol.NFS
+        self.repository.s3_bucket = ""
+        self.repository.bind_node_type = None
+        self.repository.bind_node_id = None
+        self.repository.config = {
+            "server_address": "10.0.0.20",
+            "share_path": "/snapshots",
+            "kopia_password": "repo-pass",
+        }
+        self.repository.save()
+        self.snapshot_dir.repository_locator = {
+            "version": 1,
+            "repository_id": self.repository.id,
+            "repository_type": Repository.Type.NAS,
+            "repository_subdir": f"hp-repos/agent-{self.agent.id}",
+            "writer_node_id": self.agent.id,
+            "access_node_id": None,
+        }
+        self.snapshot_dir.save(update_fields=["repository_locator", "updated_at"])
+        plan = RestorePlan.objects.create(
+            organization_id=self.org.id,
+            **self._plan_payload(),
+        )
+
+        run = self.client.post(
+            f"/api/v1/restore/plans/{plan.id}/run/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(run.status_code, status.HTTP_201_CREATED, run.content)
+        record = RestoreRecord.objects.get(id=run.data["restore_record_id"])
+        node_task = NodeTask.objects.get(
+            kind="restore.run", correlation_id=str(record.task_uuid)
+        )
+        self.assertEqual(
+            node_task.payload["repository"]["nas"]["mount_point"],
+            (
+                "/opt/hyperfilelens-agent/mounts/restores/"
+                f"repo-{self.repository.id}-node-{self.target.id}"
+            ),
+        )
+        self.assertTrue(
+            DirectNASMountLease.objects.filter(
+                restore_record=record,
+                status=DirectNASMountLease.Status.ACTIVE,
+            ).exists()
+        )
+
+    def test_restore_to_snapshot_source_reuses_normal_repository_mount(self):
+        self.repository.repo_type = Repository.Type.NAS
+        self.repository.nas_protocol = Repository.NasProtocol.NFS
+        self.repository.s3_bucket = ""
+        self.repository.bind_node_type = None
+        self.repository.bind_node_id = None
+        self.repository.config = {
+            "server_address": "10.0.0.20",
+            "share_path": "/snapshots",
+            "kopia_password": "repo-pass",
+        }
+        self.repository.save()
+        self.snapshot_dir.repository_locator = {
+            "version": 1,
+            "repository_id": self.repository.id,
+            "repository_type": Repository.Type.NAS,
+            "repository_subdir": f"hp-repos/agent-{self.agent.id}",
+            "writer_node_id": self.agent.id,
+            "access_node_id": None,
+        }
+        self.snapshot_dir.save(update_fields=["repository_locator", "updated_at"])
+        payload = self._plan_payload()
+        payload["target_ref_id"] = self.agent.id
+        plan = RestorePlan.objects.create(organization_id=self.org.id, **payload)
+
+        run = self.client.post(
+            f"/api/v1/restore/plans/{plan.id}/run/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(run.status_code, status.HTTP_201_CREATED, run.content)
+        record = RestoreRecord.objects.get(id=run.data["restore_record_id"])
+        node_task = NodeTask.objects.get(
+            kind="restore.run", correlation_id=str(record.task_uuid)
+        )
+        self.assertEqual(
+            node_task.payload["repository"]["nas"]["mount_point"],
+            (
+                "/opt/hyperfilelens-agent/mounts/repositories/"
+                f"repo-{self.repository.id}-node-{self.agent.id}"
+            ),
+        )
+        self.assertFalse(
+            DirectNASMountLease.objects.filter(restore_record=record).exists()
+        )
+
     def test_create_whole_snapshot_restore_plan_and_run_source_expands_snapshot_directories(
         self,
     ):
@@ -1411,6 +1526,8 @@ class RestoreApiTests(TestCase):
         self.assertEqual(
             node_task.payload["restore_transfer_mode"], "direct_proxy_restore"
         )
+        self.assertEqual(node_task.payload["probe"], "restore_execution")
+        self.assertTrue(node_task.payload["skip_ownership_check"])
 
     def test_run_restore_plan_to_other_agent_uses_proxy_repository_server(self):
         proxy = Node.objects.create(

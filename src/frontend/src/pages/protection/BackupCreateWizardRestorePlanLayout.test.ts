@@ -63,4 +63,20 @@ describe('BackupCreateWizard restore plan layout', () => {
     expect(wizardSource).not.toContain('width: min(360px, calc(100vw - 48px)) !important;')
     expect(compactWizardSource).toContain('class="create-recovery-plan-action hfl-table-no-tooltip"')
   })
+
+  it('shows the final restored path for each configured mapping and in the confirmation summary', () => {
+    expect(wizardSource).toContain('function recoveryDirPlanRestoredPaths(')
+    expect(compactWizardSource).toContain('class="create-recovery-result-path-hint"')
+    expect(compactWizardSource).toContain('class="create-recovery-result-path-hint create-recovery-result-path-hint--inline"')
+    expect(compactWizardSource).toContain('recoveryDirPlanRestoredPaths(row.recoveryGroup.group, dirPlan)')
+  })
+
+  it('disables Windows and macOS restore targets for unbound NAS repositories', () => {
+    expect(wizardSource).toContain('createRecoveryTargetPlatformBlocked')
+    expect(wizardSource).toContain("unavailableReason === 'direct_nas_platform'")
+    expect(wizardSource).toContain('create-recovery-target-node-option-item--restricted')
+    expect(wizardSource).toContain('recoveryTargetDirectNasPlatformUnavailable')
+    expect(wizardSource).toContain('recoveryTargetUnsupported')
+    expect(wizardSource).toContain('create-recovery-target-node-option__restriction-label')
+  })
 })
