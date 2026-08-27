@@ -62,6 +62,15 @@ describe('primary navigation icons', () => {
     )
   })
 
+  it('keeps the timezone label and offset on a single line', () => {
+    expect(topNavSource).toMatch(
+      /\.timezone-display\s*\{[\s\S]*?white-space:\s*nowrap/,
+    )
+    expect(topNavSource).toMatch(
+      /\.timezone-display\s*\{[\s\S]*?gap:\s*4px/,
+    )
+  })
+
   it('uses a compact desktop layout before switching to the mobile drawer', () => {
     expect(topNavSource).toMatch(
       /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.nav-item\s*{[\s\S]*?min-width:\s*0[\s\S]*?padding-right:\s*8px/,
@@ -71,6 +80,9 @@ describe('primary navigation icons', () => {
     )
     expect(topNavSource).toMatch(
       /\.top-nav \.platform-ops-entry svg\s*{[\s\S]*?width:\s*18px[\s\S]*?height:\s*18px/,
+    )
+    expect(topNavSource).toMatch(
+      /\.top-nav \.platform-ops-entry:hover,[\s\S]*?background:\s*var\(--icon-btn-hover-bg,[\s\S]*?color:\s*var\(--icon-btn-hover-color/,
     )
     expect(topNavSource).toContain(':aria-label="t(\'nav.platformOps\')"')
   })

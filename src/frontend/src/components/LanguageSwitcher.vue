@@ -56,6 +56,7 @@ function handleVisibleChange(visible: boolean) {
     <button
       type="button"
       class="language-switcher__trigger"
+      :title="ariaLabel"
       :aria-label="ariaLabel"
       aria-haspopup="menu"
       :aria-expanded="dropdownOpen"
@@ -260,6 +261,42 @@ function handleVisibleChange(visible: boolean) {
 @media (max-width: 540px) {
   .language-switcher--auth .language-switcher__trigger {
     padding-inline: 7px;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1439.98px) {
+  .language-switcher--navigation .language-switcher__trigger {
+    width: 32px;
+    min-height: 32px;
+    justify-content: center;
+    padding: 0;
+    background: transparent;
+    border-color: transparent;
+    border-radius: 6px;
+    color: var(--icon-btn-color, #aeb2c5);
+  }
+
+  .language-switcher--navigation .language-switcher__trigger:hover,
+  .language-switcher--navigation .language-switcher__trigger:focus-visible {
+    background: var(--icon-btn-hover-bg, rgba(255, 255, 255, 0.08));
+    border-color: transparent;
+    color: var(--icon-btn-hover-color, #E2E2E2);
+  }
+
+  .language-switcher--navigation .language-switcher__trigger:focus-visible {
+    outline: 2px solid var(--color-primary, #6D5EF6);
+    outline-offset: 2px;
+  }
+
+  .language-switcher--navigation .language-switcher__globe {
+    width: 18px;
+    height: 18px;
+    opacity: 1;
+  }
+
+  .language-switcher--navigation .language-switcher__trigger .language-switcher__current,
+  .language-switcher--navigation .language-switcher__trigger .language-switcher__chevron {
+    display: none;
   }
 }
 </style>
