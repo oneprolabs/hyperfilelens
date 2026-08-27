@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/selfupdate"
 )
 
 type credentialRegistrar struct {
@@ -59,7 +60,12 @@ func TestHTTPRegisterNodeIncludesPlatformInventory(t *testing.T) {
 		NodeToken:  "test-token",
 		Role:       model.RoleAgent,
 	}
-	result, err := RegisterNodeHTTP(context.Background(), cfg, "1.2.3", "")
+	result, err := RegisterNodeHTTP(
+		context.Background(),
+		cfg,
+		selfupdate.BuildIdentity{Version: "1.2.3", Commit: "abc123"},
+		"",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,6 +100,12 @@ func TestHTTPRegisterNodeIncludesPlatformInventory(t *testing.T) {
 	}
 	if got := inventory["agent_version"]; got != "1.2.3" {
 		t.Errorf("agent_version=%v", got)
+	}
+	if got := inventory["agent_commit"]; got != "abc123" {
+		t.Errorf("agent_commit=%v", got)
+	}
+	if got := metadata["agent_commit"]; got != "abc123" {
+		t.Errorf("metadata agent_commit=%v", got)
 	}
 }
 
@@ -199,7 +211,7 @@ func TestRegisterNodeHTTPRequestsExistingCredentialReuse(t *testing.T) {
 	result, err := RegisterNodeHTTP(
 		context.Background(),
 		cfg,
-		"1.2.3",
+		selfupdate.BuildIdentity{Version: "1.2.3", Commit: "abc123"},
 		"hfln_existing",
 	)
 	if err != nil {
@@ -210,5 +222,43 @@ func TestRegisterNodeHTTPRequestsExistingCredentialReuse(t *testing.T) {
 	}
 	if payload["existing_node_credential"] != "hfln_existing" {
 		t.Fatalf("existing_node_credential=%v", payload["existing_node_credential"])
+	}
+}
+
+func TestRegisterNodeHTTPRejectsMissingExplicitBuildVersion(t *testing.T) {
+	cfg := &model.AgentConfig{
+		APIBaseURL: "https://console.example.test",
+		OrgKey:     "test-org",
+		NodeToken:  "test-token",
+		Role:       model.RoleAgent,
+	}
+
+	_, err := RegisterNodeHTTP(
+		context.Background(),
+		cfg,
+		selfupdate.BuildIdentity{Commit: "must-not-be-combined-with-helper-version"},
+		"",
+	)
+	if err == nil {
+		t.Fatal("expected a missing explicit build version to be rejected")
+	}
+}
+
+func TestRegisterNodeHTTPRejectsMissingExplicitBuildCommit(t *testing.T) {
+	cfg := &model.AgentConfig{
+		APIBaseURL: "https://console.example.test",
+		OrgKey:     "test-org",
+		NodeToken:  "test-token",
+		Role:       model.RoleAgent,
+	}
+
+	_, err := RegisterNodeHTTP(
+		context.Background(),
+		cfg,
+		selfupdate.BuildIdentity{Version: "1.2.3"},
+		"",
+	)
+	if err == nil {
+		t.Fatal("expected a missing explicit build commit to be rejected")
 	}
 }

@@ -175,7 +175,7 @@ def _record_upgrade_session(
     *,
     node_id: int,
     session_id: str,
-    inventory: bool = False,
+    inventory: dict | None = None,
     redis_client=None,
 ) -> None:
     if redis_client is None:
@@ -206,7 +206,7 @@ def _record_upgrade_session(
             session_id=session_id,
             inventory=inventory,
         )
-        if changed and inventory:
+        if changed and inventory is not None:
             logger.debug(
                 "post-upgrade inventory observed node_id=%s session=%s",
                 node_id,
@@ -398,7 +398,7 @@ def apply_heartbeat_inventory_snapshot(
         _record_upgrade_session(
             node_id=node_id,
             session_id=session_id,
-            inventory=True,
+            inventory=inventory,
         )
         _schedule_lifecycle_advance(
             node_id=node_id,

@@ -70,7 +70,15 @@ func EnsureNodeRegistered(ctx context.Context, provider config.Provider, reg Nod
 		return fmt.Errorf("node_id missing; set HFL_NODE_ID or configure HFL_API_BASE, HFL_ORG_KEY, HFL_NODE_TOKEN")
 	}
 
-	result, err := httpRegisterNode(ctx, cfg, base, org, token, selfupdate.Version, "")
+	result, err := httpRegisterNode(
+		ctx,
+		cfg,
+		base,
+		org,
+		token,
+		selfupdate.CurrentBuildIdentity(),
+		"",
+	)
 	if err != nil {
 		return err
 	}
@@ -96,7 +104,7 @@ func EnsureNodeRegistered(ctx context.Context, provider config.Provider, reg Nod
 func RegisterNodeHTTP(
 	ctx context.Context,
 	cfg *model.AgentConfig,
-	agentVersion string,
+	build selfupdate.BuildIdentity,
 	existingNodeCredential string,
 ) (RegistrationResult, error) {
 	base := strings.TrimRight(strings.TrimSpace(cfg.APIBaseURL), "/")
@@ -105,8 +113,10 @@ func RegisterNodeHTTP(
 	if base == "" || org == "" || token == "" {
 		return RegistrationResult{}, fmt.Errorf("HFL_API_BASE, HFL_ORG_KEY, and HFL_NODE_TOKEN required")
 	}
-	if strings.TrimSpace(agentVersion) == "" {
-		agentVersion = selfupdate.Version
+	build.Version = strings.TrimSpace(build.Version)
+	build.Commit = strings.TrimSpace(build.Commit)
+	if build.Version == "" || build.Commit == "" {
+		return RegistrationResult{}, fmt.Errorf("complete Agent build identity required")
 	}
 	return httpRegisterNode(
 		ctx,
@@ -114,7 +124,7 @@ func RegisterNodeHTTP(
 		base,
 		org,
 		token,
-		agentVersion,
+		build,
 		existingNodeCredential,
 	)
 }
@@ -122,13 +132,16 @@ func RegisterNodeHTTP(
 func httpRegisterNode(
 	ctx context.Context,
 	cfg *model.AgentConfig,
-	base, org, token, agentVersion, existingNodeCredential string,
+	base, org, token string,
+	build selfupdate.BuildIdentity,
+	existingNodeCredential string,
 ) (RegistrationResult, error) {
 	hostname, _ := os.Hostname()
 	platform := hostinfo.Collect(ctx)
 	inventory := platform.Inventory()
 	inventory["hostname"] = hostname
-	inventory["agent_version"] = agentVersion
+	inventory["agent_version"] = build.Version
+	inventory["agent_commit"] = build.Commit
 	networkSnapshot := networkinventory.Collect(ctx, base)
 	if addresses := networkSnapshot.IPAddresses(); len(addresses) > 0 {
 		inventory["primary_ip_address"] = networkSnapshot.PrimaryAddress()
@@ -144,10 +157,11 @@ func httpRegisterNode(
 		"hostname":      hostname,
 		"inventory":     inventory,
 		"install":       "hfl-enroll",
-		"agent_version": agentVersion,
+		"agent_version": build.Version,
 		"platform":      platform.OSFamily,
 		"arch":          platform.Arch,
 	}
+	metadata["agent_commit"] = build.Commit
 	if currentUser, userErr := user.Current(); userErr == nil {
 		metadata["runtime_principal"] = map[string]string{
 			"id":   strings.TrimSpace(currentUser.Uid),
@@ -157,7 +171,7 @@ func httpRegisterNode(
 	body := map[string]any{
 		"name":     hostname,
 		"role":     string(cfg.Role),
-		"version":  agentVersion,
+		"version":  build.Version,
 		"os_name":  platform.Description(),
 		"metadata": metadata,
 	}
