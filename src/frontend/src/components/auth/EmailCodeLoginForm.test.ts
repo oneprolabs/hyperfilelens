@@ -3,7 +3,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createI18n } from 'vue-i18n'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../../locales/en'
 import EmailCodeLoginForm from './EmailCodeLoginForm.vue'
@@ -41,6 +41,14 @@ function mountForm(initialEmail = '') {
 
 describe('EmailCodeLoginForm', () => {
   beforeEach(() => {
+    vi.spyOn(globalThis.crypto.subtle, 'digest').mockImplementation(async (_algorithm, data) => {
+      const input = new Uint8Array(data as ArrayBuffer)
+      const digest = new Uint8Array(32)
+      input.forEach((byte, index) => {
+        digest[index % digest.length] ^= byte
+      })
+      return digest.buffer
+    })
     sessionStorage.clear()
     mocks.send.mockReset().mockResolvedValue({
       code: '0000',
@@ -54,6 +62,10 @@ describe('EmailCodeLoginForm', () => {
     mocks.notifyError.mockReset()
     mocks.notifySuccess.mockReset()
     mocks.notifyWarning.mockReset()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it('keeps the requested email editable, shows a success toast, and starts the cooldown', async () => {
