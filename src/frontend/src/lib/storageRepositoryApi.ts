@@ -48,6 +48,7 @@ export type StorageRepository = {
   health_failures?: number
   initialization_state?: StorageRepositoryInitializationState | string
   initialized_target_count?: number
+  associated_source_count?: number
   config?: Record<string, unknown>
   credential_id?: number | null
   s3_platform?: StorageRepositoryS3Platform | string | null

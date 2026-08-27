@@ -3,7 +3,8 @@ from __future__ import annotations
 from uuid import UUID
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import JsonResponse
-from django.db.models import Q
+from django.db.models import Count, IntegerField, OuterRef, Q, Subquery, Value
+from django.db.models.functions import Coalesce
 from django.utils.dateparse import parse_datetime
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -482,6 +483,20 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             health=self.request.query_params.get("health") or None,
             search=self.request.query_params.get("search") or None,
             search_field=self.request.query_params.get("search_field") or None,
+        )
+        associated_sources = (
+            BackupConfig.objects.filter(
+                organization_id=organization_id,
+                repository_id=OuterRef("pk"),
+            )
+            .values("repository_id")
+            .annotate(total=Count("id"))
+            .values("total")
+        )
+        queryset = queryset.annotate(
+            associated_source_count=Coalesce(
+                Subquery(associated_sources, output_field=IntegerField()), Value(0)
+            )
         )
         if not self.request.query_params.get("status"):
             queryset = queryset.filter(

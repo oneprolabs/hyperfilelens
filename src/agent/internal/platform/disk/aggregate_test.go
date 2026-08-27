@@ -30,6 +30,14 @@ func TestNormalizeMountpoint(t *testing.T) {
 	if got := normalizeMountpoint("/"); got != "/" {
 		t.Fatalf("normalizeMountpoint(\"/\") = %q, want \"/\"", got)
 	}
+	if runtime.GOOS == "darwin" {
+		if !isSystemOnlyMount("/System/Volumes/Preboot") {
+			t.Fatal("Darwin Preboot volume must not count as host capacity")
+		}
+		if isSystemOnlyMount("/System/Volumes/Data") {
+			t.Fatal("Darwin Data volume must remain eligible for host capacity")
+		}
+	}
 }
 
 func TestHostStorageUsage(t *testing.T) {
@@ -111,6 +119,34 @@ func TestSummarizeStoragePartitionsDeduplicatesLocalBindMountsByDevice(t *testin
 	}
 	if len(inventory.LocalPools[0].MountPoints) != 2 {
 		t.Fatalf("local mount count = %d, want 2", len(inventory.LocalPools[0].MountPoints))
+	}
+}
+
+func TestSummarizeStoragePartitionsDeduplicatesDarwinAPFSVolumes(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("APFS device identity is Darwin-specific")
+	}
+	parts := []disk.PartitionStat{
+		{Device: "/dev/disk3s1s1", Mountpoint: "/", Fstype: "apfs"},
+		{Device: "/dev/disk3s2", Mountpoint: "/System/Volumes/Preboot", Fstype: "apfs"},
+		{Device: "/dev/disk3s5", Mountpoint: "/System/Volumes/Data", Fstype: "apfs"},
+		{Device: "/dev/disk3s6", Mountpoint: "/System/Volumes/VM", Fstype: "apfs"},
+	}
+	inventory := summarizeStoragePartitions(parts, func(string) (*disk.UsageStat, error) {
+		return &disk.UsageStat{Total: 245, Used: 212, Free: 33}, nil
+	})
+	if len(inventory.LocalPools) != 1 {
+		t.Fatalf("local pool count = %d, want 1: %#v", len(inventory.LocalPools), inventory.LocalPools)
+	}
+	pool := inventory.LocalPools[0]
+	if pool.Key != "local:device:/dev/disk3" {
+		t.Fatalf("APFS pool key = %q, want local:device:/dev/disk3", pool.Key)
+	}
+	if len(pool.MountPoints) != 2 {
+		t.Fatalf("APFS user-visible mount count = %d, want 2", len(pool.MountPoints))
+	}
+	if pool.TotalBytes != 245 || pool.UsedBytes != 212 || pool.FreeBytes != 33 {
+		t.Fatalf("APFS capacity must be counted once: %#v", pool)
 	}
 }
 

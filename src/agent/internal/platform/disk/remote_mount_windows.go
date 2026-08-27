@@ -184,7 +184,7 @@ func remoteStorageDevice(mountPoint string, device string) string {
 	return device
 }
 
-func localStorageIdentity(mountPoint string, device string) string {
+func localStorageIdentity(_ string, mountPoint string, device string) string {
 	clean := strings.TrimSpace(strings.ReplaceAll(mountPoint, "/", `\`))
 	if clean == "" {
 		return device

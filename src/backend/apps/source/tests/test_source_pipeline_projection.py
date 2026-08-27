@@ -104,6 +104,60 @@ class SourcePipelineProjectionTests(TestCase):
         self.assertEqual(entry.source_status, Node.Status.UPGRADE_FAILED)
         self.assertEqual(entry.source_availability, Node.Availability.ONLINE)
 
+    def test_upgrade_phases_refresh_backup_wizard_pipeline_status(self):
+        entry = ensure_pipeline_entry(
+            organization_id=self.org.id,
+            source_kind=SelectableSourceKind.AGENT,
+            ref_id=self.agent.id,
+        )
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="agent.upgrade",
+            status=NodeTask.Status.PENDING,
+            watchdog_deadline_at=self.agent.created_at,
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.agent.id}",
+        )
+        phases = (
+            (
+                {"mode": "local_detached", "detached_at": self.agent.created_at.isoformat()},
+                Node.Status.RESTARTING,
+            ),
+            (
+                {
+                    "mode": "local_detached",
+                    "detached_at": self.agent.created_at.isoformat(),
+                    "reconnect_session_id": "new",
+                    "inventory_session_id": "new",
+                },
+                Node.Status.VERIFICATION_PENDING,
+            ),
+            (
+                {
+                    "mode": "local_detached",
+                    "detached_at": self.agent.created_at.isoformat(),
+                    "reconnect_session_id": "new",
+                    "inventory_session_id": "new",
+                    "verify_started_at": self.agent.created_at.isoformat(),
+                },
+                Node.Status.VERIFYING,
+            ),
+        )
+        for result, expected in phases:
+            with self.subTest(expected=expected):
+                complete_node_task(
+                    task_id=task.id,
+                    node_id=self.agent.id,
+                    status=NodeTask.Status.RUNNING,
+                    result=result,
+                    replace_result=True,
+                )
+                self.agent.refresh_from_db()
+                entry.refresh_from_db()
+                self.assertEqual(self.agent.status, expected)
+                self.assertEqual(entry.source_status, expected)
+
     def test_nas_without_proxy_projects_empty_identity_and_offline(self):
         source = SourceResource.objects.create(
             organization=self.org,

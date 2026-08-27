@@ -313,8 +313,10 @@ report_uninstall_completion() {
     failure_items+=('{"code":"detached_uninstall_failed","detail":"Detached uninstall exited before all cleanup steps completed."}')
     retained_items+=('"agent_installation_or_managed_mounts"')
   fi
-  failures="[$(IFS=,; echo "${failure_items[*]}")]"
-  retained="[$(IFS=,; echo "${retained_items[*]}")]"
+  # Bash 3.2 with set -u treats expansion of an empty local array as an
+  # unbound variable. Preserve valid empty JSON arrays in that case.
+  failures="[$(IFS=,; echo "${failure_items[*]-}")]"
+  retained="[$(IFS=,; echo "${retained_items[*]-}")]"
   [[ "$rc" -eq 0 && "$CLEANUP_FAILED" -eq 0 ]] || {
     complete="false"
   }

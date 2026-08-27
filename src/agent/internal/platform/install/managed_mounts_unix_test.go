@@ -6,11 +6,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestUnixManagedMountCleanupUnmountsDeepestFirst(t *testing.T) {
+	if strings.Contains(unixManagedMountCleanupScript, "mapfile -t") ||
+		strings.Contains(unixManagedMountCleanupScript, "readarray -t") {
+		t.Fatal("managed mount cleanup must remain compatible with macOS Bash 3.2")
+	}
 	result := runUnixManagedMountCleanupTest(t, `
 last="${@: -1}"
 printf '%s\n' "$*" >>"$HFL_TEST_UMOUNT_LOG"
@@ -31,6 +36,9 @@ mv "$HFL_TEST_MOUNT_STATE.tmp" "$HFL_TEST_MOUNT_STATE"
 }
 
 func TestUnixManagedMountCleanupLazyUnmountsBusyMount(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("lazy unmount is a Linux-only fallback")
+	}
 	result := runUnixManagedMountCleanupTest(t, `
 last="${@: -1}"
 printf '%s\n' "$*" >>"$HFL_TEST_UMOUNT_LOG"

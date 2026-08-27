@@ -3,6 +3,8 @@
 package install
 
 import (
+	"encoding/xml"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +12,64 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestDarwinUserLaunchdJobPreservesUserDomainAndPermissions(t *testing.T) {
+	job := newDarwinLaunchdJob(true, 501, "/Users/ghw", 123)
+	if job.domain != "gui/501" {
+		t.Fatalf("domain = %q, want gui/501", job.domain)
+	}
+	wantPath := "/Users/ghw/Library/LaunchAgents/com.hyperfilelens.lifecycle-123.plist"
+	if job.plistPath != wantPath {
+		t.Fatalf("plistPath = %q, want %q", job.plistPath, wantPath)
+	}
+	if job.dirMode != 0o700 || job.fileMode != 0o600 {
+		t.Fatalf("user modes = %o/%o, want 700/600", job.dirMode, job.fileMode)
+	}
+	wantArgs := []string{"bootstrap", "gui/501", wantPath}
+	if args := darwinLaunchctlBootstrapArgs(job); !slices.Equal(args, wantArgs) {
+		t.Fatalf("launchctl args = %q, want %q", args, wantArgs)
+	}
+}
+
+func TestDarwinSystemLaunchdJobUsesSystemDomain(t *testing.T) {
+	job := newDarwinLaunchdJob(false, 501, "/Users/ignored", 456)
+	if job.domain != "system" {
+		t.Fatalf("domain = %q, want system", job.domain)
+	}
+	if job.plistPath != "/Library/LaunchDaemons/com.hyperfilelens.lifecycle-456.plist" {
+		t.Fatalf("unexpected plistPath: %q", job.plistPath)
+	}
+	if job.dirMode != 0o755 || job.fileMode != 0o644 {
+		t.Fatalf("system modes = %o/%o, want 755/644", job.dirMode, job.fileMode)
+	}
+}
+
+func TestDarwinLaunchdPlistIsValidAndDoesNotChangeUser(t *testing.T) {
+	job := newDarwinLaunchdJob(true, 501, "/Users/ghw", 123)
+	plist := darwinLaunchdPlist(job, "/tmp/upgrade & uninstall's runner.sh")
+	decoder := xml.NewDecoder(strings.NewReader(plist))
+	for {
+		if _, err := decoder.Token(); err != nil {
+			if err == io.EOF {
+				break
+			}
+			t.Fatalf("invalid plist XML: %v\n%s", err, plist)
+		}
+	}
+	for _, expected := range []string{
+		"<string>com.hyperfilelens.lifecycle-123</string>",
+		"launchctl bootout 'gui/501/com.hyperfilelens.lifecycle-123'",
+		"rm -f '/Users/ghw/Library/LaunchAgents/com.hyperfilelens.lifecycle-123.plist'",
+		"/tmp/upgrade &amp; uninstall'\\''s runner.sh",
+	} {
+		if !strings.Contains(plist, expected) {
+			t.Fatalf("launchd plist missing %q:\n%s", expected, plist)
+		}
+	}
+	if strings.Contains(plist, "<key>UserName</key>") {
+		t.Fatal("user lifecycle job must inherit its gui domain identity, not override UserName")
+	}
+}
 
 func TestShellSingleQuote(t *testing.T) {
 	got := shellSingleQuote("/var/lib/hyperfilelens-agent/lifecycle/upgrade/run-upgrade.sh")
