@@ -1984,6 +1984,7 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(kwargs["repo_type"], Repository.Type.NAS)
         self.assertEqual(kwargs["limit"], 200)
         self.assertEqual(kwargs["stale_after_seconds"], 900)
+        self.assertFalse(kwargs["background"])
 
     @mock.patch("apps.storage.tasks.reconcile_storage_repositories.apply_async")
     def test_sync_usage_detail_queues_single_repository_refresh(self, apply_async):
@@ -2010,6 +2011,7 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(kwargs["organization_id"], self.org.id)
         self.assertEqual(kwargs["repository_ids"], [repo.id])
         self.assertEqual(kwargs["force"], True)
+        self.assertFalse(kwargs["background"])
 
     @mock.patch("apps.storage.repositories.views.validate_s3_connection")
     def test_validate_s3_connection_returns_buckets(self, validate_s3_connection):

@@ -5,7 +5,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any
+from typing import Any, Callable
 
 from django.apps import apps
 from django.core.cache import cache
@@ -21,6 +21,7 @@ from apps.storage.repositories.models import (
 )
 from apps.storage.services.internal.kopia_cli import (
     KopiaCliError,
+    KopiaRepositoryBusyError,
     connect_s3_repository,
     content_stats as kopia_content_stats,
 )
@@ -252,6 +253,8 @@ def kopia_repository_estimated_usage_bytes(repository: Repository) -> int | None
         result = kopia_content_stats(repository)
         packed = parse_kopia_content_stats(result.stdout)
         return kopia_estimated_usage_from_packed(packed)
+    except KopiaRepositoryBusyError:
+        raise
     except KopiaCliError as exc:
         logger.info("kopia content stats unavailable for repository %s: %s", repository.id, exc)
         return None
@@ -1119,13 +1122,19 @@ def _sync_repository_usage_candidates(
     *,
     recorded_at=None,
     async_agent_probes: bool = False,
+    should_continue: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     attempted = 0
     synced = 0
     snapshots_upserted = 0
     observations_dispatched = 0
     failed_repository_ids: list[int] = []
+    deferred_repository_ids: list[int] = []
+    stopped_early = False
     for repository in repositories:
+        if should_continue is not None and not should_continue():
+            stopped_early = True
+            break
         attempted += 1
         try:
             if async_agent_probes and repository.repo_type in {
@@ -1144,6 +1153,13 @@ def _sync_repository_usage_candidates(
             else:
                 sync_repository_usage(repository, recorded_at=recorded_at)
                 snapshots_upserted += 1
+        except KopiaRepositoryBusyError:
+            deferred_repository_ids.append(repository.id)
+            logger.info(
+                "repository usage sync deferred; repository busy repository_id=%s",
+                repository.id,
+            )
+            continue
         except Exception:
             failed_repository_ids.append(repository.id)
             logger.exception(
@@ -1159,6 +1175,9 @@ def _sync_repository_usage_candidates(
         "repositories_synced": synced,
         "repositories_failed": len(failed_repository_ids),
         "failed_repository_ids": failed_repository_ids,
+        "repositories_deferred": len(deferred_repository_ids),
+        "deferred_repository_ids": deferred_repository_ids,
+        "stopped_early": stopped_early,
         "snapshots_upserted": snapshots_upserted,
         "observations_dispatched": observations_dispatched,
     }
@@ -1174,6 +1193,7 @@ def sync_organization_repositories(
     stale_after_seconds: int | None = None,
     recorded_at=None,
     async_agent_probes: bool = False,
+    should_continue: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     ids = _normalize_repository_ids(repository_ids)
     logger.info(
@@ -1197,6 +1217,7 @@ def sync_organization_repositories(
         qs,
         recorded_at=recorded_at,
         async_agent_probes=async_agent_probes,
+        should_continue=should_continue,
     )
     logger.info(
         "repository usage sync org finished org_id=%s repositories_attempted=%s "
@@ -1217,6 +1238,7 @@ def sync_all_repositories(
     stale_after_seconds: int | None = None,
     recorded_at=None,
     async_agent_probes: bool = False,
+    should_continue: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     logger.info(
         "repository usage sync all started limit=%s repo_type=%s force=%s stale_after_seconds=%s",
@@ -1235,6 +1257,7 @@ def sync_all_repositories(
         qs,
         recorded_at=recorded_at,
         async_agent_probes=async_agent_probes,
+        should_continue=should_continue,
     )
     logger.info(
         "repository usage sync all finished repositories_attempted=%s "
@@ -1310,6 +1333,7 @@ def enqueue_repository_usage_refresh(
                 "limit": max(1, int(limit or 1)),
                 "force": bool(force),
                 "stale_after_seconds": stale_after_seconds,
+                "background": False,
             }
         )
     except Exception as exc:

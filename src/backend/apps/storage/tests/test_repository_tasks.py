@@ -1,5 +1,5 @@
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -21,6 +21,7 @@ from apps.storage.services.internal.repository_operations import (
     schedule_due_maintenance,
     start_controller_repository_operation,
 )
+from apps.storage.services.internal.kopia_cli import KopiaExecutionLeaseLost
 from apps.storage.services.internal.nas_repository import nas_agent_repository_subdir
 from apps.storage.services.internal.repository_location import (
     mark_repository_location_owned,
@@ -480,6 +481,101 @@ class RepositoryTaskTests(TestCase):
         self.assertIsNone(target.active_task_id)
         self.assertIsNotNone(target.maintenance_state.last_quick_success_at)
         self.assertEqual(target.maintenance_state.consecutive_failures, 0)
+
+    @patch("apps.storage.tasks._execute_repository_operation")
+    @patch("apps.storage.tasks.try_acquire_background_storage_capacity")
+    def test_controller_maintenance_runs_with_background_capacity(
+        self,
+        acquire_capacity,
+        execute_operation,
+    ):
+        discover_repository_execution_targets()
+        repository_task = create_repository_operation_task(
+            target_id=self.repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
+        lease = MagicMock(valid=True)
+        lease.__enter__.return_value = lease
+        acquire_capacity.return_value = lease
+        execute_operation.return_value = {"status": Task.Status.SUCCESS}
+
+        result = execute_repository_operation.run(
+            repository_task_id=repository_task.id,
+        )
+
+        self.assertEqual(result["status"], Task.Status.SUCCESS)
+        execute_operation.assert_called_once_with(
+            repository_task_id=repository_task.id,
+            background_lease=lease,
+        )
+        lease.__enter__.assert_called_once()
+        lease.__exit__.assert_called_once()
+
+    @patch("apps.storage.tasks._execute_repository_operation")
+    @patch(
+        "apps.storage.tasks.try_acquire_background_storage_capacity",
+        return_value=None,
+    )
+    def test_controller_maintenance_stays_pending_without_background_capacity(
+        self,
+        _acquire_capacity,
+        execute_operation,
+    ):
+        discover_repository_execution_targets()
+        repository_task = create_repository_operation_task(
+            target_id=self.repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
+
+        result = execute_repository_operation.run(
+            repository_task_id=repository_task.id,
+        )
+
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], "deferred_background_capacity")
+        self.assertEqual(repository_task.task.status, Task.Status.PENDING)
+        execute_operation.assert_not_called()
+
+    @patch("apps.storage.tasks.run_maintenance")
+    @patch("apps.storage.tasks.try_acquire_background_storage_capacity")
+    def test_lost_background_capacity_fails_maintenance_for_normal_retry(
+        self,
+        acquire_capacity,
+        run_maintenance,
+    ):
+        discover_repository_execution_targets()
+        repository_task = create_repository_operation_task(
+            target_id=self.repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
+        lease = MagicMock(valid=True)
+        lease.__enter__.return_value = lease
+        acquire_capacity.return_value = lease
+
+        def lose_capacity(*_args, **_kwargs):
+            lease.valid = False
+            raise KopiaExecutionLeaseLost("capacity lease lost")
+
+        run_maintenance.side_effect = lose_capacity
+
+        result = execute_repository_operation.run(
+            repository_task_id=repository_task.id,
+        )
+
+        repository_task.refresh_from_db()
+        repository_task.task.refresh_from_db()
+        repository_task.execution_target.refresh_from_db()
+        self.assertEqual(result["status"], Task.Status.FAILED)
+        self.assertEqual(repository_task.task.status, Task.Status.FAILED)
+        self.assertEqual(
+            repository_task.task.error_code,
+            "BACKGROUND_STORAGE_CAPACITY_LOST",
+        )
+        self.assertIsNone(repository_task.execution_target.active_task_id)
+        self.assertIsNone(repository_task.execution_token)
+        self.assertIsNotNone(
+            repository_task.execution_target.maintenance_state.next_retry_at
+        )
 
     @patch.dict(
         "os.environ",

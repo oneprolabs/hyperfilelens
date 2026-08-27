@@ -23,6 +23,7 @@ from apps.storage.services.internal.repository_execution_lock import (
 from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
 )
+from apps.storage.services.internal.kopia_cli import KopiaRepositoryBusyError
 from apps.storage.services.internal.repository_location import (
     invalidate_repository_location_ownership,
 )
@@ -213,7 +214,11 @@ def _run_repository_check_task_locked(*, repository_task_id: int) -> dict[str, A
         )
         return {"status": "success", "repository_task_id": repository_task.id}
     except Exception as exc:
-        if not health_persisted:
+        repository_busy = _exception_chain_contains(
+            exc,
+            KopiaRepositoryBusyError,
+        )
+        if not health_persisted and not repository_busy:
             if is_repository_ownership_failure(exc):
                 invalidate_repository_location_ownership(repository)
             Repository.objects.filter(pk=repository.id).update(
@@ -224,7 +229,13 @@ def _run_repository_check_task_locked(*, repository_task_id: int) -> dict[str, A
         _set_step(task, current_step, TaskStep.Status.FAILED, int(task.progress or 0))
         error_code = "REPOSITORY_CHECK_FAILED"
         message = _safe_error_message(repository, exc)
-        if isinstance(exc, RepositoryInitializationError):
+        if repository_busy:
+            error_code = "STORAGE.REPOSITORY_BUSY"
+            message = (
+                "The repository is busy with another operation. "
+                "Try again after it finishes."
+            )
+        elif isinstance(exc, RepositoryInitializationError):
             failure = classify_s3_validation_error(exc, operation="bucket_access")
             error_code = failure.code
             message = failure.message
@@ -269,6 +280,20 @@ def _safe_error_message(repository: Repository, exc: Exception) -> str:
             extra_values=secret_values_for_scrub(repository, secrets_payload),
         )
     )
+
+
+def _exception_chain_contains(
+    exc: BaseException,
+    expected_type: type[BaseException],
+) -> bool:
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if isinstance(current, expected_type):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
 
 
 __all__ = [
