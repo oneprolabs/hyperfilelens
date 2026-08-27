@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"hyperfilelens/agent/internal/model"
+	nassvc "hyperfilelens/agent/internal/service/nas"
 )
 
 func TestDeleteManagedRepositoryPathRejectsTraversalAndRoot(t *testing.T) {
@@ -449,7 +450,20 @@ func TestManagedNASCleanupSkipsUnmountedRemoteAndRemovesLocalState(t *testing.T)
 	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	spec := repositorySpec{ID: 17, Type: "nas", Subdir: "hp-repos/storage-17"}
+	nas := &nassvc.Spec{
+		Protocol:   "smb",
+		Server:     "192.0.2.1",
+		Share:      "backup",
+		MountPoint: mountPoint,
+		Username:   "backup",
+		Password:   "secret",
+	}
+	spec := repositorySpec{
+		ID:        17,
+		Type:      "nas",
+		Subdir:    "hp-repos/storage-17",
+		TargetNAS: nas,
+	}
 	configFile := engine.repositoryConfigPath(spec)
 	if err := os.MkdirAll(filepath.Dir(configFile), 0o700); err != nil {
 		t.Fatal(err)

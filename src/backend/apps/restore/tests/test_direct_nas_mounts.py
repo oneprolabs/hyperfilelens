@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
+from apps.node.agent_paths import restore_repository_mount_point
 from apps.node.services.capabilities import NAS_MOUNT_LIFECYCLE_CAPABILITY
 from apps.restore import conf
 from apps.restore.models import DirectNASMount, DirectNASMountLease, RestoreRecord
@@ -85,7 +86,7 @@ class DirectNASMountLifecycleTests(TestCase):
         )
 
     @staticmethod
-    def _payload(mount_point: str = "/var/lib/hfl/repositories/1") -> dict:
+    def _payload(mount_point: str) -> dict:
         return {"nas": {"mount_point": mount_point}}
 
     def _acquire(
@@ -94,7 +95,7 @@ class DirectNASMountLifecycleTests(TestCase):
         *,
         repository: Repository | None = None,
         node_id: int | None = None,
-        mount_point: str = "/var/lib/hfl/repositories/1",
+        mount_point: str | None = None,
         access_mode: str = "fallback_node",
     ) -> DirectNASMountLease | None:
         return direct_nas_mounts.acquire_for_restore(
@@ -102,7 +103,13 @@ class DirectNASMountLifecycleTests(TestCase):
             repository=repository or self.repository,
             reader_node_id=node_id or record.target_execution_node_id,
             access_mode=access_mode,
-            repository_payload=self._payload(mount_point),
+            repository_payload=self._payload(
+                mount_point
+                or restore_repository_mount_point(
+                    (repository or self.repository).id,
+                    node_id=node_id or record.target_execution_node_id,
+                )
+            ),
         )
 
     def test_same_gateway_repository_and_mount_share_one_aggregate(self) -> None:
@@ -135,11 +142,15 @@ class DirectNASMountLifecycleTests(TestCase):
     def test_different_gateways_have_independent_mount_aggregates(self) -> None:
         first = self._acquire(
             self._record(node_id=self.gateway.id),
-            mount_point=f"/var/lib/hfl/node-{self.gateway.id}/repositories/1",
+            mount_point=restore_repository_mount_point(
+                self.repository.id, node_id=self.gateway.id
+            ),
         )
         second = self._acquire(
             self._record(node_id=self.other_gateway.id),
-            mount_point=f"/var/lib/hfl/node-{self.other_gateway.id}/repositories/1",
+            mount_point=restore_repository_mount_point(
+                self.repository.id, node_id=self.other_gateway.id
+            ),
         )
 
         self.assertIsNotNone(first)
@@ -147,7 +158,9 @@ class DirectNASMountLifecycleTests(TestCase):
         self.assertNotEqual(first.mount_id, second.mount_id)
         self.assertEqual(DirectNASMount.objects.count(), 2)
 
-    def test_non_chat_non_nas_and_proxy_access_are_excluded(self) -> None:
+    def test_user_data_restore_is_included_but_non_nas_and_proxy_are_excluded(
+        self,
+    ) -> None:
         user_record = self._record()
         user_record.purpose = RestoreRecord.Purpose.USER_DATA
         user_record.workspace_binding_id = None
@@ -160,7 +173,7 @@ class DirectNASMountLifecycleTests(TestCase):
                 "updated_at",
             ]
         )
-        self.assertIsNone(self._acquire(user_record))
+        self.assertIsNotNone(self._acquire(user_record))
 
         chat_record = self._record()
         s3 = Repository.objects.create(
@@ -183,7 +196,7 @@ class DirectNASMountLifecycleTests(TestCase):
                 access_mode="bound_proxy",
             )
         )
-        self.assertEqual(DirectNASMount.objects.count(), 0)
+        self.assertEqual(DirectNASMount.objects.count(), 1)
 
     @patch.object(conf, "DIRECT_NAS_MOUNT_CLEANUP_GRACE_SECONDS", 0)
     @patch("apps.restore.services.direct_nas_mounts.run_agent_task_async")
@@ -207,13 +220,44 @@ class DirectNASMountLifecycleTests(TestCase):
         self.assertEqual(dispatch.call_args.kwargs["kind"], "nas.unmount")
         self.assertEqual(
             dispatch.call_args.kwargs["payload"],
-            {"mount_point": "/var/lib/hfl/repositories/1"},
+            {
+                "mount_point": restore_repository_mount_point(
+                    self.repository.id, node_id=self.gateway.id
+                )
+            },
         )
         self.assertEqual(
             DirectNASMountLease.objects.filter(
                 status=DirectNASMountLease.Status.CLEANUP_PENDING
             ).count(),
             2,
+        )
+
+    @patch.object(conf, "DIRECT_NAS_USER_DATA_MOUNT_CLEANUP_GRACE_SECONDS", 0)
+    @patch("apps.restore.services.direct_nas_mounts.run_agent_task_async")
+    def test_user_data_restore_release_dispatches_unmount(self, dispatch) -> None:
+        dispatch.return_value = SimpleNamespace(task=SimpleNamespace(id=uuid.uuid4()))
+        record = self._record()
+        record.purpose = RestoreRecord.Purpose.USER_DATA
+        record.workspace_binding_id = None
+        record.idempotency_key = ""
+        record.save(
+            update_fields=[
+                "purpose",
+                "workspace_binding_id",
+                "idempotency_key",
+                "updated_at",
+            ]
+        )
+        self.assertIsNotNone(self._acquire(record))
+
+        direct_nas_mounts.release_for_record(record=record)
+
+        self.assertEqual(direct_nas_mounts._dispatch_due_cleanups(limit=10), 1)
+        self.assertEqual(dispatch.call_args.kwargs["kind"], "nas.unmount")
+        self.assertEqual(
+            dispatch.call_args.kwargs["payload"]["mount_point"],
+            restore_repository_mount_point(self.repository.id, node_id=self.gateway.id),
         )
 
         cleanup_task_id = dispatch.return_value.task.id
@@ -244,11 +288,15 @@ class DirectNASMountLifecycleTests(TestCase):
         second_record = self._record(node_id=self.other_gateway.id)
         self._acquire(
             first_record,
-            mount_point=f"/var/lib/hfl/node-{self.gateway.id}/repositories/1",
+            mount_point=restore_repository_mount_point(
+                self.repository.id, node_id=self.gateway.id
+            ),
         )
         self._acquire(
             second_record,
-            mount_point=f"/var/lib/hfl/node-{self.other_gateway.id}/repositories/1",
+            mount_point=restore_repository_mount_point(
+                self.repository.id, node_id=self.other_gateway.id
+            ),
         )
         direct_nas_mounts.release_for_record(record=first_record)
         direct_nas_mounts.release_for_record(record=second_record)
@@ -412,7 +460,11 @@ class DirectNASMountLifecycleTests(TestCase):
             organization_id=self.organization.id,
             node_id=self.gateway.id,
             kind="nas.unmount",
-            payload={"mount_point": "/var/lib/hfl/repositories/1"},
+            payload={
+                "mount_point": restore_repository_mount_point(
+                    self.repository.id, node_id=self.gateway.id
+                )
+            },
             correlation_type="restore.direct_nas_mount_cleanup",
             correlation_id=f"mount:{mount_id}",
             requesting_organization_id=self.organization.id,

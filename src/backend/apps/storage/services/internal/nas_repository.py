@@ -61,6 +61,39 @@ def nas_proxy_repository_subdir(repository: Repository) -> str:
 
 
 def nas_mount_point(repository: Repository, *, node_id: int | None = None) -> str:
+    data_dir = _node_data_dir(node_id)
+    return agent_paths.repository_mount_point(
+        repository.id, node_id=node_id, data_dir=data_dir
+    )
+
+
+def nas_restore_mount_point(repository: Repository, *, node_id: int) -> str:
+    """Return the node-local temporary mount used to read a NAS for restore."""
+
+    return agent_paths.restore_repository_mount_point(
+        repository.id,
+        node_id=node_id,
+        data_dir=_node_data_dir(node_id),
+    )
+
+
+def nas_validation_mount_point(
+    repository: Repository,
+    *,
+    validation_id: str,
+    node_id: int,
+) -> str:
+    """Return an isolated node-local mount for one repository validation."""
+
+    return agent_paths.validation_mount_point(
+        validation_id,
+        repository.id,
+        node_id,
+        data_dir=_node_data_dir(node_id),
+    )
+
+
+def _node_data_dir(node_id: int | None) -> str | None:
     data_dir = None
     if node_id:
         node = Node.objects.filter(pk=node_id).only("metadata").first()
@@ -68,9 +101,7 @@ def nas_mount_point(repository: Repository, *, node_id: int | None = None) -> st
         inventory = metadata.get("inventory") if isinstance(metadata, dict) else {}
         if isinstance(inventory, dict):
             data_dir = str(inventory.get("root_path") or "").strip() or None
-    return agent_paths.repository_mount_point(
-        repository.id, node_id=node_id, data_dir=data_dir
-    )
+    return data_dir
 
 
 def nas_repository_payload(
@@ -315,7 +346,9 @@ def _run_proxy_nas_repository_task(
             )
             raise NASRepositoryError(
                 message or "NAS repository initialization failed.",
-                error_code=str(exc.result.get("error_code") or "REPOSITORY_CREATE_FAILED"),
+                error_code=str(
+                    exc.result.get("error_code") or "REPOSITORY_CREATE_FAILED"
+                ),
             ) from exc
         if health_only:
             raise RepositoryHealthTransportUnconfirmed(str(exc)) from exc
@@ -344,7 +377,9 @@ def _run_proxy_nas_repository_task(
             raise RepositoryAlreadyExistsError(REPOSITORY_ALREADY_EXISTS_MESSAGE)
         message = agent_repository_failure_message(
             outcome_result,
-            last_error=str(getattr(getattr(outcome, "task", None), "last_error", "") or ""),
+            last_error=str(
+                getattr(getattr(outcome, "task", None), "last_error", "") or ""
+            ),
         )
         result = outcome_result
         error_code = str(result.get("error_code") or "").strip()

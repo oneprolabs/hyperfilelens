@@ -102,6 +102,7 @@ import {
   shouldAutoExpandRefreshedDirectory,
 } from '../../lib/backupSourceDirectoryTree'
 import { restoreDirectoryBrowseSourceId } from '../../lib/restoreDirectoryTarget'
+import { resolveRestoreResultPaths, type RestoreResultPathInput } from '../../lib/restoreResultPath'
 import { useBackupSourcePipeline } from '../../composables/useBackupSourcePipeline'
 import { isBackupSelectableId } from '../../composables/useDemoFlowStep2Sources'
 import { formatLocalDateTime } from '../../lib/dateTime'
@@ -153,7 +154,7 @@ import {
   sourceUnregisterTaskBindings,
   sourceUnregisterTaskOutcome,
 } from '../../lib/sourceUnregisterMonitor'
-import type { ErrorDetailsPayload } from '../../lib/errors/details'
+import { openErrorDetails, type ErrorDetailsPayload } from '../../lib/errors/details'
 import {
   notifyUnregisterCleanupWarning,
   notifyUnregisterCleanupWarningBatch,
@@ -170,12 +171,18 @@ import {
   getRestoreSnapshotPathInfo,
   listRestoreRecords,
   runRestorePlanBatch,
+  validateRestoreTargets,
   type RestoreRecord,
   type RestoreRecordCreatePayload,
   type RestoreEndpointType,
 } from '../../lib/restoreApi'
 import { apiErrorMessage, apiErrorMessageI18n } from '../../lib/api'
 import { toApiError } from '../../lib/errors/normalizer'
+import {
+  backupTargetValidationFailureDetails,
+  backupTargetValidationFailureSummary,
+} from '../../lib/protectionBackupTargetValidationDetails'
+import type { BackupTargetValidationResult } from '../../lib/protectionBackupTargetValidationApi'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
 import type { ApiNode } from '../../types/node'
 import Modal from '../../components/Modal.vue'
@@ -829,9 +836,12 @@ async function refreshStep3RuntimeRows(signal?: AbortSignal) {
   })
   const rows = step3SelectableRows.value
   backupSnapshotRows.value = expandedSnapshots(rows)
+  const activeRecoverySnapshotIds = recOpen.value
+    ? new Set(Object.values(recSnapshotMap.value).map(Number).filter((id) => Number.isFinite(id) && id > 0))
+    : new Set<number>()
   for (const row of rows) {
     const snapshot = recordValue(row.runtime).latest_snapshot as BackupSourceSnapshot | undefined
-    if (snapshot?.id) {
+    if (snapshot?.id && !activeRecoverySnapshotIds.has(Number(snapshot.id))) {
       recoverySnapshotDetails.value.delete(Number(snapshot.id))
     }
   }
@@ -1829,6 +1839,7 @@ function openRecoveryWithBackupIds(backupIds: string[]) {
   }
   void restoreTargetCatalog.ensureByIds(backupIds.map(backupSourceHostId).filter(Boolean))
   invalidateRecoverySnapshotLists(backupIds)
+  recTargetValidationResults.value = {}
   recOpen.value = true
   ensureRecoveryNodes()
   recEntryStage.value = 'chooser'
@@ -5686,6 +5697,9 @@ const recEntryStage = ref<'chooser' | 'wizard'>('chooser')
 const recEntryMode = ref<'plan' | 'manual'>('plan')
 const recStep = ref(0)
 const recSubmitting = ref(false)
+const recTargetValidating = ref(false)
+const recTargetValidationResults = ref<Record<string, BackupTargetValidationResult>>({})
+let recTargetValidationController: AbortController | null = null
 const recBackupIds = ref<string[]>([])
 const recSnapshotMap = ref<Record<string, string>>({})
 const recoverySnapshotDetails = ref(new Map<number, BackupSourceSnapshot>())
@@ -5829,6 +5843,9 @@ async function leaveFixedRestore() {
 }
 
 async function closeRecoveryWizard() {
+  recTargetValidationController?.abort()
+  recTargetValidationController = null
+  recTargetValidating.value = false
   if (!isFixedSnapshotRestore.value) {
     recOpen.value = false
     return
@@ -6847,7 +6864,30 @@ type RecoveryTargetNodeOption = {
   node?: ApiNode
   source?: FlowSourceRow
   selectable: boolean
-  unavailableReason: 'offline' | 'busy' | null
+  unavailableReason: 'offline' | 'busy' | 'direct_nas_platform' | null
+}
+
+function restoreSourceHasUnboundNasRepository(sourceHostId: string) {
+  return recBackupsForSource(sourceHostId).some((backup) => {
+    const configId = realConfigIdFromBackupId(backup.id)
+    const config = configId ? backupConfigDetailById.value.get(configId) : undefined
+    const repository = config ? repositoryById.value.get(config.repository_id) : undefined
+    return String(repository?.repo_type || '').toLowerCase() === 'nas'
+      && !(repository?.bind_node_type === 'proxy' && repository?.bind_node_id)
+  })
+}
+
+function recoveryTargetPlatform(source: FlowSourceRow) {
+  const platform = String(source.platform || '').toLowerCase()
+  if (platform.includes('windows') || platform === 'win') return 'windows'
+  if (platform.includes('mac') || platform.includes('darwin')) return 'macos'
+  return platform
+}
+
+function directNasTargetPlatformBlocked(source: FlowSourceRow, sourceHostId: string) {
+  return source.type !== 'nas'
+    && restoreSourceHasUnboundNasRepository(sourceHostId)
+    && ['windows', 'macos'].includes(recoveryTargetPlatform(source))
 }
 
 const recRecoveryDestStepReady = computed(() => {
@@ -6914,6 +6954,8 @@ function recoveryOriginalSourceRows(): FlowSourceRow[] {
 
 function recoverySourceTargetOption(source: FlowSourceRow, sourceHostId: string): RecoveryTargetNodeOption {
   const sourceSummary = recoverySourceSummaryFromRow(source, source.id, source.name)
+  const platformBlocked = directNasTargetPlatformBlocked(source, sourceHostId)
+  const catalogSelectable = restoreTargetCatalog.isSelectable(source.id)
   return {
     value: source.id,
     label: sourceSummary.displayName,
@@ -6924,8 +6966,12 @@ function recoverySourceTargetOption(source: FlowSourceRow, sourceHostId: string)
     sourceType: source.type,
     sourceSummary,
     source,
-    selectable: restoreTargetCatalog.isSelectable(source.id),
-    unavailableReason: source.availability !== 'online' ? 'offline' : restoreTargetCatalog.isSelectable(source.id) ? null : 'busy',
+    selectable: catalogSelectable && !platformBlocked,
+    unavailableReason: source.availability !== 'online'
+      ? 'offline'
+      : platformBlocked
+        ? 'direct_nas_platform'
+        : catalogSelectable ? null : 'busy',
   }
 }
 
@@ -6978,6 +7024,7 @@ function setRecoveryDirTargetPathForSource(hostId: string, targetPath: string) {
 }
 
 function setRecoveryTargetNodeForSource(hostId: string, optionValue: string | number) {
+  clearRestoreTargetValidationForSource(hostId)
   if (!optionValue) {
     setRecoveryDestEntriesForHost(hostId, [])
     setRecoveryDirTargetPathForSource(hostId, '')
@@ -6985,6 +7032,8 @@ function setRecoveryTargetNodeForSource(hostId: string, optionValue: string | nu
   }
   const value = String(optionValue)
   if (!restoreTargetCatalog.isSelectable(value)) return
+  const targetSource = backupSelectableById.value.get(value)
+  if (targetSource && directNasTargetPlatformBlocked(targetSource, hostId)) return
   const parsed = parseEndpointUiId(value)
   if (!parsed && !backupSelectableById.value.get(value)) return
   const entry: RecoveryDestinationEntry = {
@@ -7894,6 +7943,7 @@ function recGroupSnapshotDisplayLine(hostId: string) {
 }
 
 function setRecoverySnapshotForSource(hostId: string, snapshotId: string) {
+  clearRestoreTargetValidationForSource(hostId)
   for (const backup of recBackupsForSource(hostId)) {
     setRecoverySnapshot(backup.id, snapshotId)
   }
@@ -8159,6 +8209,51 @@ function recoveryMappingSourceLabel(entry: RecoveryDirSelectionEntry) {
 
 function recoveryMappingTargetLabel(entry: RecoveryDirSelectionEntry) {
   return entry.targetPath || '—'
+}
+
+function recoveryRestoredPathsForEntry(
+  hostId: string,
+  entry: RecoveryDirSelectionEntry,
+  entries: RecoveryDirSelectionEntry[],
+) {
+  const snapshotId = selectedSnapshotNumericIdForSource(hostId)
+  if (!snapshotId || !isRecoveryDirEntryConfigured(entry)) return []
+  const directories = availableDirectoriesForSnapshot(snapshotId)
+  const inputs = entries.filter(isRecoveryDirEntryConfigured).flatMap<RestoreResultPathInput>((item) => {
+    const restoreDirectory = String(item.targetPath || '').trim()
+    if (!restoreDirectory) return []
+    if (item.scope === 'snapshot') {
+      return directories.map((directory) => ({
+        key: item.id,
+        sourceDirectoryId: directory.id,
+        sourcePath: directory.source_path,
+        sourcePathType: directory.path_type,
+        selectedPaths: [],
+        restoreDirectory,
+      }))
+    }
+    const expanded = restoreSnapshotDirectoryForPath(snapshotId, item.path)
+    if (!expanded) return []
+    return [{
+      key: item.id,
+      sourceDirectoryId: expanded.directory.id,
+      sourcePath: expanded.directory.source_path,
+      sourcePathType: expanded.directory.path_type,
+      selectedPaths: expanded.selectedPaths,
+      restoreDirectory,
+    }]
+  })
+  return [...new Set(
+    resolveRestoreResultPaths(inputs)
+      .filter((result) => result.key === entry.id)
+      .map((result) => result.path),
+  )]
+}
+
+function recoveryRestoredPathLabel(count: number) {
+  return count === 1
+    ? t('protection.backupsPage.recoveryRestoredPathLabel')
+    : t('protection.backupsPage.recoveryRestoredPathsLabel')
 }
 
 function recoveryMappingTotalLabel(count: number) {
@@ -8842,8 +8937,131 @@ function confirmPartialRecoveryPlans() {
   runRecovery('plan')
 }
 
+async function validateCurrentRestoreTargets() {
+  const targets = recBackupSourceGroups.value.flatMap((group) => {
+    const targetHostId = recoveryDestConfiguredEntryForHost(group.hostId)?.hostId || ''
+    const endpoint = parseEndpointUiId(targetHostId)
+    if (!endpoint) return []
+    return recBackupsForSource(group.hostId).flatMap((backup) => {
+      const snapshotId = Number(recSnapshotMap.value[backup.id])
+      if (!Number.isFinite(snapshotId) || snapshotId <= 0) return []
+      return [{
+        key: `${group.hostId}:${backup.id}`,
+        source_snapshot_id: snapshotId,
+        target_type: endpoint.type,
+        target_ref_id: endpoint.refId,
+        targetLabel: recoveryTargetNodeLabel(targetHostId, group.hostId),
+      }]
+    })
+  })
+  if (!targets.length) return false
 
+  recTargetValidationController?.abort()
+  const controller = new AbortController()
+  recTargetValidationController = controller
+  recTargetValidationResults.value = {}
+  recTargetValidating.value = true
+  let timedOut = false
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, 125_000)
+  try {
+    const response = await validateRestoreTargets({
+      targets: targets.map(({ targetLabel: _targetLabel, ...target }) => target),
+    }, { signal: controller.signal })
+    const resultByKey = new Map(response.results.map((result) => [result.key, result]))
+    const displayResults: Record<string, BackupTargetValidationResult> = {}
+    for (const target of targets) {
+      const result = resultByKey.get(target.key)
+      displayResults[target.key] = result
+        ? {
+            ...result,
+            details: result.details as BackupTargetValidationResult['details'],
+          }
+        : {
+            key: target.key,
+            status: 'failed',
+            code: 'TARGET_CONNECTION_FAILED',
+            message: t('protection.backupsPage.restoreTargetValidationMissingResult'),
+          }
+    }
+    recTargetValidationResults.value = displayResults
+    return !Object.values(displayResults).some((result) => result.status === 'failed')
+  } catch (error) {
+    let message = ''
+    if (timedOut) {
+      message = t('protection.backupsPage.restoreTargetValidationTimedOut')
+    } else if (!pageRequests.isAbortError(error)) {
+      message = apiErrorMessageI18n(
+        error,
+        t,
+        t('protection.backupsPage.restoreTargetValidationRequestFailed'),
+      )
+    }
+    if (message) {
+      recTargetValidationResults.value = Object.fromEntries(targets.map((target) => [
+        target.key,
+        {
+          key: target.key,
+          status: 'failed',
+          code: 'TARGET_CONNECTION_FAILED',
+          message,
+        },
+      ]))
+    }
+    return false
+  } finally {
+    window.clearTimeout(timeoutId)
+    if (recTargetValidationController === controller) {
+      recTargetValidationController = null
+      recTargetValidating.value = false
+    }
+  }
+}
 
+function restoreTargetValidationKeysForSource(hostId: string) {
+  return recBackupsForSource(hostId)
+    .filter((backup) => Boolean(recSnapshotMap.value[backup.id]))
+    .map((backup) => `${hostId}:${backup.id}`)
+}
+
+function restoreTargetValidationResultForSource(hostId: string) {
+  const results = restoreTargetValidationKeysForSource(hostId)
+    .map((key) => recTargetValidationResults.value[key])
+    .filter((result): result is BackupTargetValidationResult => Boolean(result))
+  return results.find((result) => result.status === 'failed') || results[0]
+}
+
+function clearRestoreTargetValidationForSource(hostId: string) {
+  const keys = new Set(restoreTargetValidationKeysForSource(hostId))
+  if (![...keys].some((key) => recTargetValidationResults.value[key])) return
+  recTargetValidationResults.value = Object.fromEntries(
+    Object.entries(recTargetValidationResults.value).filter(([key]) => !keys.has(key)),
+  )
+}
+
+function restoreTargetValidationFailureSummary(hostId: string) {
+  const result = restoreTargetValidationResultForSource(hostId)
+  if (!result || result.status !== 'failed') return ''
+  return backupTargetValidationFailureSummary({
+    result,
+    sourceName: recoveryTargetNodeLabel(recoveryTargetNodeModelForSource(hostId), hostId),
+    t,
+  })
+}
+
+function showRestoreTargetValidationDetails(hostId: string) {
+  const result = restoreTargetValidationResultForSource(hostId)
+  if (!result || result.status !== 'failed') return
+  openErrorDetails(backupTargetValidationFailureDetails({
+    result,
+    sourceName: recoveryTargetNodeLabel(recoveryTargetNodeModelForSource(hostId), hostId),
+    t,
+    title: t('protection.backupsPage.restoreTargetValidationFailedTitle'),
+    validationKind: 'restore',
+  }))
+}
 
 async function nextRec() {
   if (recStep.value === 0) {
@@ -8867,6 +9085,7 @@ async function nextRec() {
       ElMessage.warning({ message: t('protection.backupsPage.msgConfigureRecoveryDest'), grouping: true })
       return
     }
+    if (!await validateCurrentRestoreTargets()) return
   }
   if (recStep.value === 2) {
     if (!recDirTreeData.value.length) {
@@ -12616,166 +12835,225 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           >
                             <template #default="{ row }">
                               <div class="recovery-target-host-control hfl-table-no-tooltip">
-                                <ElTooltip
-                                  :disabled="Boolean(recoverySourceHostButtonOption(row.hostId))"
-                                  :content="t('protection.backupsPage.recoverySourceHostUnavailable')"
-                                  placement="top"
-                                >
-                                  <span class="recovery-target-host-control__source-wrap">
-                                    <ElButton
-                                      class="hfl-btn-with-icon recovery-target-host-control__source"
-                                      :class="{ 'is-selected': isRecoverySourceHostSelected(row.hostId) }"
-                                      :disabled="!recoverySourceHostButtonOption(row.hostId)"
-                                      @click="toggleRecoverySourceTargetForSource(row.hostId)"
-                                    >
-                                      <Check
-                                        v-if="isRecoverySourceHostSelected(row.hostId)"
-                                        :size="14"
-                                      />
-                                      <component
-                                        :is="row.sourceSummary.sourceType === 'nas' ? sourceNasIcon : sourceHostIcon"
-                                        v-else
-                                        :size="14"
-                                      />
-                                      <span>{{ t('protection.backupsPage.recoveryUseSourceHost') }}</span>
-                                    </ElButton>
-                                  </span>
-                                </ElTooltip>
-                                <div
-                                  v-if="isRecoverySourceHostSelected(row.hostId)"
-                                  class="recovery-target-host-control__readonly"
-                                >
-                                  <div class="recovery-source-summary">
-                                    <div class="recovery-source-summary__head">
-                                      <span class="recovery-source-summary__name">
-                                        {{ row.sourceSummary.displayName }}
-                                      </span>
-                                      <el-tag
-                                        size="small"
-                                        effect="plain"
-                                        class="recovery-source-summary__type"
-                                        :type="row.sourceSummary.typeTagType"
+                                <div class="recovery-target-host-control__options">
+                                  <ElTooltip
+                                    :disabled="Boolean(recoverySourceHostButtonOption(row.hostId))"
+                                    :content="t('protection.backupsPage.recoverySourceHostUnavailable')"
+                                    placement="top"
+                                  >
+                                    <span class="recovery-target-host-control__source-wrap">
+                                      <ElButton
+                                        class="hfl-btn-with-icon recovery-target-host-control__source"
+                                        :class="{ 'is-selected': isRecoverySourceHostSelected(row.hostId) }"
+                                        :disabled="!recoverySourceHostButtonOption(row.hostId)"
+                                        @click="toggleRecoverySourceTargetForSource(row.hostId)"
                                       >
-                                        {{ row.sourceSummary.typeLabel }}
-                                      </el-tag>
-                                    </div>
-                                    <div class="recovery-source-summary__meta">
-                                      <span class="recovery-source-summary__ip">
-                                        {{ row.sourceSummary.ipLine }}
-                                      </span>
-                                      <span class="recovery-source-summary__platform">
-                                        <AgentPlatformBrandIcon
-                                          v-if="row.sourceSummary.platform"
-                                          :os="row.sourceSummary.platform"
+                                        <Check
+                                          v-if="isRecoverySourceHostSelected(row.hostId)"
+                                          :size="14"
                                         />
                                         <component
                                           :is="row.sourceSummary.sourceType === 'nas' ? sourceNasIcon : sourceHostIcon"
                                           v-else
-                                          :size="16"
+                                          :size="14"
                                         />
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                                <el-select
-                                  v-else
-                                  :model-value="recoveryTargetNodeSelectModelForSource(row.hostId)"
-                                  :placeholder="t('protection.backupsPage.phPickOtherRecoveryHost')"
-                                  class="recovery-target-host-control__select"
-                                  filterable
-                                  remote
-                                  reserve-keyword
-                                  clearable
-                                  :remote-method="searchRecoveryTargetHostOptions"
-                                  :loading="recoveryTargetHostLoading || recoveryTargetHostLoadingMore"
-                                  popper-class="recovery-target-node-select-popper"
-                                  @visible-change="onRecoveryTargetNodeSelectVisible"
-                                  @popup-scroll="onRecoveryTargetNodePopupScroll"
-                                  @update:model-value="(value) => setRecoveryTargetNodeForSource(row.hostId, value)"
-                                >
-                                  <el-option
-                                    v-for="option in recoveryTargetNodeOptionsForSource(row.hostId)"
-                                    :key="option.value"
-                                    :label="option.label"
-                                    :value="option.value"
-                                    :disabled="!option.selectable"
+                                        <span>{{ t('protection.backupsPage.recoveryUseSourceHost') }}</span>
+                                      </ElButton>
+                                    </span>
+                                  </ElTooltip>
+                                  <div
+                                    v-if="isRecoverySourceHostSelected(row.hostId)"
+                                    class="recovery-target-host-control__readonly"
                                   >
-                                    <div class="recovery-target-node-option">
-                                      <div class="recovery-target-node-option__main">
-                                        <span
-                                          class="recovery-target-node-option__label"
-                                          :title="option.sourceSummary.displayName"
-                                        >
-                                          {{ option.sourceSummary.displayName }}
+                                    <div class="recovery-source-summary">
+                                      <div class="recovery-source-summary__head">
+                                        <span class="recovery-source-summary__name">
+                                          {{ row.sourceSummary.displayName }}
                                         </span>
                                         <el-tag
                                           size="small"
                                           effect="plain"
                                           class="recovery-source-summary__type"
-                                          :type="option.sourceSummary.typeTagType"
+                                          :type="row.sourceSummary.typeTagType"
                                         >
-                                          {{ option.sourceSummary.typeLabel }}
+                                          {{ row.sourceSummary.typeLabel }}
                                         </el-tag>
                                       </div>
                                       <div class="recovery-source-summary__meta">
-                                        <span
-                                          class="recovery-target-node-option__meta"
-                                          :title="option.sourceSummary.ipLine"
-                                        >
-                                          {{ option.sourceSummary.ipLine }}
+                                        <span class="recovery-source-summary__ip">
+                                          {{ row.sourceSummary.ipLine }}
                                         </span>
                                         <span class="recovery-source-summary__platform">
                                           <AgentPlatformBrandIcon
-                                            v-if="option.sourceSummary.platform"
-                                            :os="option.sourceSummary.platform"
+                                            v-if="row.sourceSummary.platform"
+                                            :os="row.sourceSummary.platform"
                                           />
                                           <component
-                                            :is="option.sourceSummary.sourceType === 'nas' ? sourceNasIcon : sourceHostIcon"
+                                            :is="row.sourceSummary.sourceType === 'nas' ? sourceNasIcon : sourceHostIcon"
                                             v-else
                                             :size="16"
                                           />
                                         </span>
                                       </div>
                                     </div>
-                                  </el-option>
-                                  <el-option
-                                    v-if="recoveryTargetHostLoadingMore"
-                                    key="recovery-target-loading-more"
-                                    disabled
-                                    value="__loading_more__"
-                                    :label="t('common.loading')"
+                                  </div>
+                                  <el-select
+                                    v-else
+                                    :model-value="recoveryTargetNodeSelectModelForSource(row.hostId)"
+                                    :placeholder="t('protection.backupsPage.phPickOtherRecoveryHost')"
+                                    class="recovery-target-host-control__select"
+                                    filterable
+                                    remote
+                                    reserve-keyword
+                                    clearable
+                                    :remote-method="searchRecoveryTargetHostOptions"
+                                    :loading="recoveryTargetHostLoading || recoveryTargetHostLoadingMore"
+                                    popper-class="recovery-target-node-select-popper"
+                                    @visible-change="onRecoveryTargetNodeSelectVisible"
+                                    @popup-scroll="onRecoveryTargetNodePopupScroll"
+                                    @update:model-value="(value) => setRecoveryTargetNodeForSource(row.hostId, value)"
                                   >
-                                    <span class="recovery-target-node-option__loading">{{ t('common.loading') }}</span>
-                                  </el-option>
-                                  <el-option
-                                    v-else-if="recoveryTargetHostError"
-                                    key="recovery-target-load-more-error"
-                                    disabled
-                                    value="__load_more_error__"
-                                    :label="t('protection.backupsPage.recoveryTargetLoadFailed')"
-                                  >
-                                    <ElButton
-                                      link
-                                      type="primary"
-                                      @click.stop="restoreTargetCatalog.retry"
+                                    <el-option
+                                      v-for="option in recoveryTargetNodeOptionsForSource(row.hostId)"
+                                      :key="option.value"
+                                      :label="option.label"
+                                      :value="option.value"
+                                      :disabled="!option.selectable"
+                                      :class="{ 'recovery-target-node-option-item--restricted': option.unavailableReason === 'direct_nas_platform' }"
                                     >
-                                      {{ t('common.retry') }}
-                                    </ElButton>
-                                  </el-option>
-                                  <template #empty>
-                                    <div class="py-3 text-center text-xs text-slate-500">
-                                      <span>{{ recoveryTargetHostError ? t('protection.backupsPage.recoveryTargetLoadFailed') : t('protection.backupsPage.recoveryTargetEmpty') }}</span>
+                                      <div
+                                        class="recovery-target-node-option"
+                                        :class="{ 'recovery-target-node-option--disabled': !option.selectable }"
+                                      >
+                                        <div class="recovery-target-node-option__main">
+                                          <span
+                                            class="recovery-target-node-option__label"
+                                            :title="option.sourceSummary.displayName"
+                                          >
+                                            {{ option.sourceSummary.displayName }}
+                                          </span>
+                                          <el-tag
+                                            size="small"
+                                            effect="plain"
+                                            class="recovery-source-summary__type"
+                                            :type="option.sourceSummary.typeTagType"
+                                          >
+                                            {{ option.sourceSummary.typeLabel }}
+                                          </el-tag>
+                                          <ElTooltip
+                                            v-if="option.unavailableReason === 'direct_nas_platform'"
+                                            :content="t('protection.backupsPage.recoveryTargetDirectNasPlatformUnavailable')"
+                                            placement="top"
+                                          >
+                                            <span class="recovery-target-node-option__restriction">
+                                              <span class="recovery-target-node-option__restriction-label">
+                                                {{ t('protection.backupsPage.recoveryTargetUnsupported') }}
+                                              </span>
+                                              <ShieldAlert
+                                                :size="14"
+                                                class="recovery-target-node-option__warning"
+                                              />
+                                            </span>
+                                          </ElTooltip>
+                                        </div>
+                                        <div class="recovery-source-summary__meta">
+                                          <span
+                                            class="recovery-target-node-option__meta"
+                                            :title="option.sourceSummary.ipLine"
+                                          >
+                                            {{ option.sourceSummary.ipLine }}
+                                          </span>
+                                          <span class="recovery-source-summary__platform">
+                                            <AgentPlatformBrandIcon
+                                              v-if="option.sourceSummary.platform"
+                                              :os="option.sourceSummary.platform"
+                                            />
+                                            <component
+                                              :is="option.sourceSummary.sourceType === 'nas' ? sourceNasIcon : sourceHostIcon"
+                                              v-else
+                                              :size="16"
+                                            />
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </el-option>
+                                    <el-option
+                                      v-if="recoveryTargetHostLoadingMore"
+                                      key="recovery-target-loading-more"
+                                      disabled
+                                      value="__loading_more__"
+                                      :label="t('common.loading')"
+                                    >
+                                      <span class="recovery-target-node-option__loading">{{ t('common.loading') }}</span>
+                                    </el-option>
+                                    <el-option
+                                      v-else-if="recoveryTargetHostError"
+                                      key="recovery-target-load-more-error"
+                                      disabled
+                                      value="__load_more_error__"
+                                      :label="t('protection.backupsPage.recoveryTargetLoadFailed')"
+                                    >
                                       <ElButton
-                                        v-if="recoveryTargetHostError"
                                         link
                                         type="primary"
                                         @click.stop="restoreTargetCatalog.retry"
                                       >
                                         {{ t('common.retry') }}
                                       </ElButton>
-                                    </div>
-                                  </template>
-                                </el-select>
+                                    </el-option>
+                                    <template #empty>
+                                      <div class="py-3 text-center text-xs text-slate-500">
+                                        <span>{{ recoveryTargetHostError ? t('protection.backupsPage.recoveryTargetLoadFailed') : t('protection.backupsPage.recoveryTargetEmpty') }}</span>
+                                        <ElButton
+                                          v-if="recoveryTargetHostError"
+                                          link
+                                          type="primary"
+                                          @click.stop="restoreTargetCatalog.retry"
+                                        >
+                                          {{ t('common.retry') }}
+                                        </ElButton>
+                                      </div>
+                                    </template>
+                                  </el-select>
+                                </div>
+                                <div
+                                  v-if="recTargetValidating"
+                                  class="target-connection-result target-connection-result--pending"
+                                  aria-hidden="true"
+                                >
+                                  <RefreshCw
+                                    :size="14"
+                                    class="target-connection-result__icon target-connection-result__spinner"
+                                  />
+                                  <span class="target-connection-result__summary">
+                                    {{ t('protection.backupsPage.targetValidationRowInProgress') }}
+                                  </span>
+                                </div>
+                                <div
+                                  v-else-if="restoreTargetValidationResultForSource(row.hostId)"
+                                  class="target-connection-result"
+                                  :class="`target-connection-result--${restoreTargetValidationResultForSource(row.hostId)?.status}`"
+                                  role="status"
+                                >
+                                  <component
+                                    :is="restoreTargetValidationResultForSource(row.hostId)?.status === 'success' ? ShieldCheck : ShieldAlert"
+                                    :size="14"
+                                    class="target-connection-result__icon"
+                                  />
+                                  <span class="target-connection-result__summary">
+                                    {{ restoreTargetValidationResultForSource(row.hostId)?.status === 'success'
+                                      ? t('protection.backupsPage.targetValidationSucceeded')
+                                      : restoreTargetValidationFailureSummary(row.hostId) }}
+                                  </span>
+                                  <button
+                                    v-if="restoreTargetValidationResultForSource(row.hostId)?.status === 'failed'"
+                                    type="button"
+                                    class="target-connection-result__details"
+                                    @click.stop="showRestoreTargetValidationDetails(row.hostId)"
+                                  >
+                                    {{ t('feedback.toast.viewDetails') }}
+                                  </button>
+                                </div>
                               </div>
                             </template>
                           </el-table-column>
@@ -13105,6 +13383,26 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                       >
                                         <Trash2 :size="14" />
                                       </ElButton>
+                                    </div>
+                                    <div
+                                      v-if="recoveryRestoredPathsForEntry(sourceRow.hostId, entry, sourceRow.configuredEntries).length"
+                                      class="recovery-result-path-hint"
+                                    >
+                                      <FolderOpen
+                                        :size="14"
+                                        class="recovery-result-path-hint__icon"
+                                      />
+                                      <span class="recovery-result-path-hint__label">
+                                        {{ recoveryRestoredPathLabel(recoveryRestoredPathsForEntry(sourceRow.hostId, entry, sourceRow.configuredEntries).length) }}
+                                      </span>
+                                      <span class="recovery-result-path-hint__values">
+                                        <code
+                                          v-for="path in recoveryRestoredPathsForEntry(sourceRow.hostId, entry, sourceRow.configuredEntries)"
+                                          :key="path"
+                                          :title="path"
+                                          class="recovery-result-path-hint__path"
+                                        >{{ path }}</code>
+                                      </span>
                                     </div>
                                   </div>
                                   <div class="recovery-dir-selection-add-wrap">
@@ -13488,41 +13786,65 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                     <div
                                       v-for="entry in draft.dirs"
                                       :key="`${draft.backupId}-${entry.id}`"
-                                      class="recovery-mapping-line recovery-confirm-mapping-line"
-                                      :title="`${recoveryMappingSourceLabel(entry)} -> ${recoveryMappingTargetLabel(entry)}`"
+                                      class="recovery-confirm-mapping-item"
                                     >
-                                      <span
-                                        class="recovery-mapping-line__endpoint"
-                                        :class="`recovery-mapping-line__endpoint--${recoveryMappingSourceKind(entry)}`"
+                                      <div
+                                        class="recovery-mapping-line recovery-confirm-mapping-line"
+                                        :title="`${recoveryMappingSourceLabel(entry)} -> ${recoveryMappingTargetLabel(entry)}`"
                                       >
-                                        <Archive
-                                          v-if="recoveryMappingSourceKind(entry) === 'snapshot'"
-                                          :size="14"
-                                          class="recovery-mapping-line__icon"
-                                        />
-                                        <File
-                                          v-else-if="recoveryMappingSourceKind(entry) === 'file'"
-                                          :size="14"
-                                          class="recovery-mapping-line__icon"
-                                        />
-                                        <Folder
-                                          v-else
-                                          :size="14"
-                                          class="recovery-mapping-line__icon"
-                                        />
-                                        <span class="recovery-mapping-line__text">{{ recoveryMappingSourceLabel(entry) }}</span>
-                                      </span>
-                                      <span
-                                        class="recovery-mapping-line__arrow"
-                                        aria-hidden="true"
-                                      >-&gt;</span>
-                                      <span class="recovery-mapping-line__endpoint recovery-mapping-line__endpoint--target">
+                                        <span
+                                          class="recovery-mapping-line__endpoint"
+                                          :class="`recovery-mapping-line__endpoint--${recoveryMappingSourceKind(entry)}`"
+                                        >
+                                          <Archive
+                                            v-if="recoveryMappingSourceKind(entry) === 'snapshot'"
+                                            :size="14"
+                                            class="recovery-mapping-line__icon"
+                                          />
+                                          <File
+                                            v-else-if="recoveryMappingSourceKind(entry) === 'file'"
+                                            :size="14"
+                                            class="recovery-mapping-line__icon"
+                                          />
+                                          <Folder
+                                            v-else
+                                            :size="14"
+                                            class="recovery-mapping-line__icon"
+                                          />
+                                          <span class="recovery-mapping-line__text">{{ recoveryMappingSourceLabel(entry) }}</span>
+                                        </span>
+                                        <span
+                                          class="recovery-mapping-line__arrow"
+                                          aria-hidden="true"
+                                        >-&gt;</span>
+                                        <span class="recovery-mapping-line__endpoint recovery-mapping-line__endpoint--target">
+                                          <FolderOpen
+                                            :size="14"
+                                            class="recovery-mapping-line__icon"
+                                          />
+                                          <span class="recovery-mapping-line__text">{{ recoveryMappingTargetLabel(entry) }}</span>
+                                        </span>
+                                      </div>
+                                      <div
+                                        v-if="recoveryRestoredPathsForEntry(sourceRow.hostId, entry, draft.dirs).length"
+                                        class="recovery-result-path-hint recovery-result-path-hint--review"
+                                      >
                                         <FolderOpen
                                           :size="14"
-                                          class="recovery-mapping-line__icon"
+                                          class="recovery-result-path-hint__icon"
                                         />
-                                        <span class="recovery-mapping-line__text">{{ recoveryMappingTargetLabel(entry) }}</span>
-                                      </span>
+                                        <span class="recovery-result-path-hint__label">
+                                          {{ recoveryRestoredPathLabel(recoveryRestoredPathsForEntry(sourceRow.hostId, entry, draft.dirs).length) }}
+                                        </span>
+                                        <span class="recovery-result-path-hint__values">
+                                          <code
+                                            v-for="path in recoveryRestoredPathsForEntry(sourceRow.hostId, entry, draft.dirs)"
+                                            :key="path"
+                                            :title="path"
+                                            class="recovery-result-path-hint__path"
+                                          >{{ path }}</code>
+                                        </span>
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
@@ -13674,7 +13996,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               <template v-if="recEntryStage === 'chooser' && recEntryMode === 'plan'">
                 <ElButton
                   class="hfl-btn-with-icon"
-                  :disabled="recSubmitting"
+                  :disabled="recSubmitting || recTargetValidating"
                   @click="closeRecoveryWizard"
                 >
                   <X :size="14" />
@@ -13694,7 +14016,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               <template v-else>
                 <ElButton
                   class="hfl-btn-with-icon"
-                  :disabled="recSubmitting"
+                  :disabled="recSubmitting || recTargetValidating"
                   @click="closeRecoveryWizard"
                 >
                   <X :size="14" />
@@ -13703,7 +14025,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 <ElButton
                   v-if="recStep > (isFixedSnapshotRestore ? 1 : 0)"
                   class="hfl-btn-with-icon"
-                  :disabled="recSubmitting"
+                  :disabled="recSubmitting || recTargetValidating"
                   @click="prevRec"
                 >
                   <ArrowLeft :size="14" />
@@ -13712,7 +14034,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 <ElButton
                   v-else-if="recEntryStage === 'wizard' && !isFixedSnapshotRestore"
                   class="hfl-btn-with-icon"
-                  :disabled="recSubmitting"
+                  :disabled="recSubmitting || recTargetValidating"
                   @click="returnToRecoveryEntryChooser"
                 >
                   <ArrowLeft :size="14" />
@@ -13722,7 +14044,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   v-if="recStep < 3"
                   type="primary"
                   class="hfl-btn-with-icon"
-                  :disabled="(recStep === 1 && !recRecoveryDestStepReady) || (recStep === 2 && !recRecoveryDirStepReady)"
+                  :disabled="recTargetValidating || (recStep === 1 && !recRecoveryDestStepReady) || (recStep === 2 && !recRecoveryDirStepReady)"
+                  :loading="recStep === 1 && recTargetValidating"
                   @click="nextRec"
                 >
                   <span>{{ t('protection.backupsPage.btnNext') }}</span>
@@ -15597,6 +15920,51 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   align-items: center;
 }
 
+.recovery-result-path-hint {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / span 2;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  margin-top: -2px;
+  padding: 6px 9px;
+  border-left: 2px solid color-mix(in srgb, var(--color-primary) 58%, rgb(148 163 184));
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--color-primary) 5%, #ffffff);
+  color: rgb(71 85 105);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.recovery-result-path-hint__icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: #d97706;
+}
+
+.recovery-result-path-hint__label {
+  color: rgb(100 116 139);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.recovery-result-path-hint__values {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.recovery-result-path-hint__path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: rgb(30 41 59);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: normal;
+}
+
 .recovery-dir-selection-add-wrap {
   align-items: center;
   padding-top: 2px;
@@ -15630,8 +15998,21 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   display: flex;
   width: 100%;
   min-width: 0;
+  flex-direction: column;
   align-items: center;
   gap: 8px;
+}
+
+.recovery-target-host-control__options {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.recovery-target-host-control > .target-connection-result {
+  align-self: stretch;
 }
 
 .recovery-target-host-control__source-wrap {
@@ -15660,6 +16041,67 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   min-width: 0;
   flex: 1 1 auto;
   padding: 5px 0;
+}
+
+.target-connection-result__spinner {
+  animation: hfl-refresh-spin 0.85s linear infinite;
+}
+
+.target-connection-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.target-connection-result__icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.target-connection-result__summary {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-connection-result__details {
+  flex: 0 0 auto;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.target-connection-result__details:hover {
+  color: var(--color-error);
+}
+
+.target-connection-result__details:focus-visible {
+  outline: 2px solid currentcolor;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.target-connection-result--success {
+  color: rgb(21 128 61);
+}
+
+.target-connection-result--pending {
+  color: var(--color-primary);
+}
+
+.target-connection-result--failed {
+  color: var(--color-error-text);
 }
 
 .recovery-conflict-policy-select :deep(.el-select__wrapper) {
@@ -15741,6 +16183,46 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   gap: 6px;
 }
 
+.recovery-target-node-option__warning {
+  flex: 0 0 auto;
+  color: var(--color-warning);
+}
+
+.recovery-target-node-option__restriction {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: rgb(180 83 9);
+  pointer-events: auto;
+}
+
+.recovery-target-node-option__restriction-label {
+  border: 1px solid rgb(245 158 11 / 36%);
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: rgb(255 251 235);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.recovery-target-node-option--disabled .recovery-target-node-option__label,
+.recovery-target-node-option--disabled .recovery-target-node-option__meta {
+  color: var(--el-text-color-placeholder);
+}
+
+.recovery-target-node-option--disabled .recovery-source-summary__type {
+  opacity: 0.55;
+}
+
+.recovery-target-node-option--disabled .recovery-source-summary__platform {
+  opacity: 0.48;
+  filter: grayscale(1);
+}
+
 .recovery-target-node-option__label {
   min-width: 0;
   overflow: hidden;
@@ -15778,6 +16260,21 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   padding-top: 6px;
   padding-bottom: 6px;
   line-height: normal;
+}
+
+:global(.recovery-target-node-select-popper .el-select-dropdown__item.recovery-target-node-option-item--restricted) {
+  border-color: rgb(226 232 240) !important;
+  background: rgb(248 250 252);
+  color: rgb(148 163 184) !important;
+  pointer-events: auto;
+  cursor: not-allowed;
+}
+
+:global(.recovery-target-node-select-popper .el-select-dropdown__item.recovery-target-node-option-item--restricted:hover),
+:global(.recovery-target-node-select-popper .el-select-dropdown__item.recovery-target-node-option-item--restricted.hover) {
+  border-color: rgb(226 232 240) !important;
+  background: rgb(248 250 252) !important;
+  color: rgb(148 163 184) !important;
 }
 
 :global(.recovery-target-node-select-popper .el-select-dropdown__wrap) {
@@ -18140,16 +18637,38 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   min-width: 0;
 }
 
+.recovery-confirm-mapping-item {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 7px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
 .recovery-confirm-mapping-line {
   padding: 5px 8px;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  background: rgba(248, 250, 252, 0.72);
+}
+
+.recovery-result-path-hint--review {
+  grid-column: auto;
+  margin: 0 8px 6px;
+  padding: 5px 7px;
+  border-left-width: 2px;
+  background: rgba(255, 255, 255, 0.78);
 }
 
 @media (max-width: 767.98px) {
   .recovery-confirm-expand {
     margin-left: 10px;
     padding-left: 16px;
+  }
+
+  .recovery-result-path-hint {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .recovery-result-path-hint__values {
+    grid-column: 2;
   }
 }
 

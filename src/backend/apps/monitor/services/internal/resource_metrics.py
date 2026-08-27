@@ -76,10 +76,14 @@ def snapshot_repository_metrics() -> int:
     from apps.storage.repositories.models import Repository
 
     created = 0
-    for repo in Repository.objects.filter(capacity_bytes__gt=0).only(
+    for repo in Repository.objects.exclude(status=Repository.Status.REMOVED).only(
         "id", "organization_id", "name", "capacity_bytes", "estimated_usage_bytes", "status"
     ):
+        from apps.storage.services.internal.quota_monitoring import sync_repository_quota_policy
+        sync_repository_quota_policy(repo)
         capacity = int(repo.capacity_bytes or 0)
+        if capacity <= 0:
+            continue
         used = int(repo.estimated_usage_bytes or 0)
         usage = round(100.0 * used / capacity, 4) if capacity else 0.0
         payload = {

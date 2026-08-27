@@ -54,6 +54,10 @@ from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.repository_access import (
     explicit_repository_server_host,
 )
+from apps.storage.services.internal.nas_repository import (
+    nas_agent_repository_subdir,
+    nas_restore_mount_point,
+)
 from apps.storage.services.internal.repository_workload import (
     RepositoryWorkload,
     lock_repositories_for_workload,
@@ -1473,12 +1477,16 @@ def _lock_restore_source_endpoint(
 def _active_restore_task_for_source(
     *, organization_id: int, source_type: str, source_ref_id: int
 ) -> Task | None:
-    insight_restore_task_ids = RestoreRecord.objects.filter(
-        organization_id=organization_id,
-        purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
-        source_type=source_type,
-        source_ref_id=source_ref_id,
-    ).order_by().values("task_id")
+    insight_restore_task_ids = (
+        RestoreRecord.objects.filter(
+            organization_id=organization_id,
+            purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+            source_type=source_type,
+            source_ref_id=source_ref_id,
+        )
+        .order_by()
+        .values("task_id")
+    )
     return (
         Task.objects.filter(
             organization_id=organization_id,
@@ -1847,6 +1855,20 @@ def _dispatch_restore_items(
                 if repository_payload is None:
                     return
                 restore_transfer_mode = "proxy_repository_server_restore"
+            elif (
+                repository.repo_type == Repository.Type.NAS
+                and repository.bind_node_type != Repository.BindNodeType.PROXY
+                and repository_access.mode == "fallback_node"
+                and repository_payload.get("subdir")
+                != nas_agent_repository_subdir(node.id)
+            ):
+                repository_payload = dict(repository_payload)
+                nas_payload = dict(repository_payload.get("nas") or {})
+                nas_payload["mount_point"] = nas_restore_mount_point(
+                    repository,
+                    node_id=node.id,
+                )
+                repository_payload["nas"] = nas_payload
             payload = {
                 "restore_record_id": record.id,
                 "restore_record_item_id": item.id,
@@ -1864,6 +1886,10 @@ def _dispatch_restore_items(
                 "repository": repository_payload,
                 "repository_reader_node_id": repository_access.node.id,
                 "restore_transfer_mode": restore_transfer_mode,
+                # Restore only reads the snapshot repository. Do not apply
+                # the ownership gate used by repository initialization.
+                "probe": "restore_execution",
+                "skip_ownership_check": True,
                 **target_nas_payload,
                 **managed_workspace_payload,
             }
@@ -1890,7 +1916,7 @@ def _dispatch_restore_items(
                 repository=repository,
                 reader_node_id=repository_access.node.id,
                 access_mode=repository_access.mode,
-                repository_payload=repository_access.repository_payload,
+                repository_payload=repository_payload,
             )
             dispatch_scope = transaction.atomic() if lease_required else nullcontext()
             with dispatch_scope:
@@ -1912,7 +1938,7 @@ def _dispatch_restore_items(
                         repository=repository,
                         reader_node_id=repository_access.node.id,
                         access_mode=repository_access.mode,
-                        repository_payload=repository_access.repository_payload,
+                        repository_payload=repository_payload,
                     )
                 log_agent_dispatch(
                     "restore item",

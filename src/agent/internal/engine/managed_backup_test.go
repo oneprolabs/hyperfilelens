@@ -288,6 +288,64 @@ func TestManagedRepositoryStatusDoesNotConnectWithoutOwnership(t *testing.T) {
 	}
 }
 
+func TestManagedRepositoryStatusCanSkipForeignOwnershipForRestoreValidation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tempDir := t.TempDir()
+	kopiaPath := filepath.Join(tempDir, "kopia")
+	commandLog := filepath.Join(tempDir, "commands.log")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nexit 0\n", commandLog)
+	if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	basePath := filepath.Join(tempDir, "repositories")
+	repositoryPath := filepath.Join(basePath, "hfl-repo-42")
+	foreignSpec := repositorySpec{
+		ID: 42, Type: "proxy_fs", Path: repositoryPath, BasePath: basePath, Layout: "managed_subdir_v1",
+		Ownership: &repositoryOwnership{
+			DeploymentUUID: "deployment-1", RepositoryUUID: "repository-foreign",
+			LocationDigest: "location-42", FormatVersion: 1,
+			Signature: "signature-42", MarkerPath: repositoryOwnershipMarkerPath,
+		},
+	}
+	if err := claimFilesystemRepositoryOwnership(foreignSpec); err != nil {
+		t.Fatalf("create foreign ownership marker: %v", err)
+	}
+	repository := map[string]any{
+		"id": 42, "type": "proxy_fs", "path": repositoryPath,
+		"base_path": basePath, "layout": "managed_subdir_v1",
+		"kopia_password": "repo-pass",
+		"ownership": map[string]any{
+			"deployment_uuid": "deployment-1", "repository_uuid": "repository-current",
+			"location_digest": "location-42", "format_version": 1,
+			"signature": "signature-42", "marker_path": repositoryOwnershipMarkerPath,
+		},
+	}
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir: filepath.Join(tempDir, "data"), KopiaPath: kopiaPath,
+	}})
+
+	status, _, message := engine.runManagedRepositoryStatus(
+		context.Background(), ReporterSink{}, "task-default", ParsePayload(map[string]any{"repository": repository}),
+	)
+	if status != "failed" || !strings.Contains(message, "ownership") {
+		t.Fatalf("expected foreign ownership failure, status=%q message=%q", status, message)
+	}
+
+	status, result, message := engine.runManagedRepositoryStatus(
+		context.Background(), ReporterSink{}, "task-restore-validation", ParsePayload(map[string]any{
+			"probe": "restore_target_validation", "skip_ownership_check": true, "repository": repository,
+		}),
+	)
+	if status != "success" || message != "" {
+		t.Fatalf("skip ownership validation failed: status=%q message=%q result=%#v", status, message, result)
+	}
+	if result["ownership_verified"] == true {
+		t.Fatalf("restore validation must not report ownership as verified: %#v", result)
+	}
+}
+
 func TestRepositoryArgsDisableCredentialPersistence(t *testing.T) {
 	spec := repositorySpec{
 		Type:   "s3",
@@ -1074,6 +1132,18 @@ func TestRepositoryConfigPathSeparatesKopiaServerSessions(t *testing.T) {
 	otherShard := engine.repositoryConfigPath(repositorySpec{ID: 50, Type: "nas", Subdir: "hp-repos/agent-53"})
 	if otherShard == direct {
 		t.Fatalf("expected different NAS shards to use different config files: %q", direct)
+	}
+
+	backupMount := repositorySpec{
+		ID: 50, Type: "nas", Subdir: "hp-repos/agent-22",
+		TargetNAS: &nassvc.Spec{MountPoint: "/opt/hfl/mounts/repositories/repo-50-node-22"},
+	}
+	restoreMount := backupMount
+	restoreNAS := *backupMount.TargetNAS
+	restoreNAS.MountPoint = "/opt/hfl/mounts/restores/repo-50-node-22"
+	restoreMount.TargetNAS = &restoreNAS
+	if engine.repositoryConfigPath(backupMount) == engine.repositoryConfigPath(restoreMount) {
+		t.Fatal("backup and temporary restore mounts must use different Kopia configs")
 	}
 }
 

@@ -95,6 +95,28 @@ export type RestoreCreateResult = {
   item_count: number
 }
 
+export type RestoreTargetValidationPayload = {
+  targets: Array<{
+    key: string
+    source_snapshot_id: number
+    target_type: RestoreEndpointType
+    target_ref_id: number
+  }>
+}
+
+export type RestoreTargetValidationResult = {
+  key: string
+  status: 'success' | 'failed'
+  code: string | null
+  message: string
+  details?: Record<string, unknown>
+}
+
+export type RestoreTargetValidationResponse = {
+  status: 'success' | 'failed'
+  results: RestoreTargetValidationResult[]
+}
+
 export type RestoreSourceRunResult = {
   status: string
   record_count: number
@@ -285,6 +307,20 @@ export async function createRestoreRecord(payload: RestoreRecordCreatePayload) {
     await api<unknown>(`${restoreRecordBase}/`, {
       method: 'POST',
       body: JSON.stringify(payload),
+      headers: orgHeaders(),
+    }),
+  )
+}
+
+export async function validateRestoreTargets(
+  payload: RestoreTargetValidationPayload,
+  options: { signal?: AbortSignal } = {},
+) {
+  return unwrapApiPayload<RestoreTargetValidationResponse>(
+    await api<unknown>('/api/v1/restore/target-validations/', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal: options.signal,
       headers: orgHeaders(),
     }),
   )

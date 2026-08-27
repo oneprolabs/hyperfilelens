@@ -84,6 +84,16 @@ def _should_retry_firing_notification(alert: AlertRecord, policy: AlertPolicy | 
     return elapsed >= repeat_interval
 
 
+def _managed_repeat_exhausted(alert: AlertRecord, policy: AlertPolicy | None) -> bool:
+    rule = policy.trigger_rule if policy else {}
+    if rule.get("managed") != "repository_quota":
+        return False
+    try:
+        return int((alert.metadata or {}).get("repeat_count") or 0) >= int(rule.get("max_repeats") or 5)
+    except (TypeError, ValueError):
+        return False
+
+
 def fire_alert(
     policy: AlertPolicy,
     *,
@@ -132,7 +142,7 @@ def fire_alert(
         if message:
             alert.message = message
         if metadata:
-            alert.metadata = metadata
+            alert.metadata = {**(alert.metadata or {}), **metadata}
         alert.save(
             update_fields=[
                 "status",
@@ -146,9 +156,13 @@ def fire_alert(
                 "updated_at",
             ]
         )
-        if _notify_on_firing(policy) and (
+        if _notify_on_firing(policy) and not _managed_repeat_exhausted(alert, policy) and (
             previous_status != AlertStatus.FIRING or _should_retry_firing_notification(alert, policy)
         ):
+            merged = dict(alert.metadata or {})
+            merged["repeat_count"] = int(merged.get("repeat_count") or 0) + (1 if previous_status == AlertStatus.FIRING else 0)
+            alert.metadata = merged
+            alert.save(update_fields=["metadata", "updated_at"])
             send_notification(alert)
         if previous_status != AlertStatus.FIRING:
             _publish_in_app(alert, resolved=False)
@@ -169,7 +183,7 @@ def fire_alert(
         threshold_value=threshold,
         unit=unit,
         fingerprint=fingerprint,
-        metadata=metadata or {},
+        metadata={**(metadata or {}), "repeat_count": 0},
         first_triggered_at=now,
         last_triggered_at=now,
     )

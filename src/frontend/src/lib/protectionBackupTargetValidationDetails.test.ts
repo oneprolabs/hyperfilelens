@@ -12,11 +12,21 @@ const messages: Record<string, string> = {
   'protection.backupsPage.targetValidationFailedFallback': 'No diagnostic was returned.',
   'protection.backupsPage.targetValidationFailedTitle': 'Backup target validation failed',
   'protection.backupsPage.targetValidationGenericResolution': 'Check settings on {source}.',
+  'protection.backupsPage.targetValidationUnknownIssue': 'The Agent on {node} could not access the repository: {message}',
+  'protection.backupsPage.targetValidationUnknownReason': 'The Agent on {node} returned no specific category.',
+  'protection.backupsPage.targetValidationUnknownCheckAgent': 'Inspect Agent logs on {node}.',
+  'protection.backupsPage.targetValidationUnknownCheckRepository': 'Verify repository connectivity and credentials from {node}.',
+  'protection.backupsPage.targetValidationUnknownResolve': 'Correct the reported problem on {node}.',
   'protection.backupsPage.targetValidationMountHelperNodeFallback': 'the node running the Agent',
   'protection.backupsPage.targetValidationMountHelperInstall': "On {node}, install {dependency} using the operating system's package manager.",
   'protection.backupsPage.targetValidationMountHelperRepair': "On {node}, repair or reinstall {dependency} using the operating system's package manager.",
   'protection.backupsPage.targetValidationMountHelperVerifyAvailable': 'Verify that {helper} is available and executable.',
   'protection.backupsPage.targetValidationMountHelperVerifyUsable': 'Verify that {helper} starts successfully.',
+  'protection.backupsPage.targetValidationCifsMissingIssue': '{node} cannot mount the SMB repository because cifs-utils is not installed.',
+  'protection.backupsPage.targetValidationCifsMissingReason': 'The cifs-utils package on {node} provides the mount.cifs helper required to access SMB repositories.',
+  'protection.backupsPage.targetValidationCifsMissingInstall': 'On {node}, install cifs-utils. Ubuntu/Debian: sudo apt update && sudo apt install -y cifs-utils. RHEL/CentOS/Rocky/AlmaLinux: sudo dnf install -y cifs-utils.',
+  'protection.backupsPage.targetValidationCifsMissingVerify': 'On {node}, run command -v mount.cifs and confirm it returns an executable path.',
+  'protection.backupsPage.targetValidationRestoreRetryStep': 'After correcting the problem on the indicated execution node, return to Restore Targets and retry validation.',
   'protection.backupsPage.targetValidationNasWriteSummary': 'The NAS target is not writable.',
   'protection.backupsPage.targetValidationNasGrantWrite': 'Grant write access for {node}.',
   'protection.backupsPage.targetValidationNasVerifySource': 'Verify the NAS target on {node}.',
@@ -62,6 +72,51 @@ const t = ((key: string, params?: Record<string, unknown>) => {
 }) as ComposerTranslation
 
 describe('backup target validation failure details', () => {
+  it('identifies the execution node when cifs-utils is missing from an unstructured NAS error', () => {
+    const details = backupTargetValidationFailureDetails({
+      result: {
+        key: 'restore:agent:52', status: 'failed', code: 'NAS_MOUNT_FAILED',
+        message: 'mount SMB share: cifs-utils is not installed (missing mount.cifs helper)',
+      },
+      sourceName: 'hfl-agent3 (100.92.164.55)', title: 'Restore target validation failed',
+      validationKind: 'restore', t,
+    })
+    expect(details.issue).toContain('hfl-agent3 (100.92.164.55)')
+    expect(details.issue).toContain('cifs-utils is not installed')
+    expect(details.resolutions[0]).toContain('install cifs-utils')
+    expect(details.resolutions[1]).toContain('mount.cifs')
+    expect(details.resolutions[2]).toContain('Restore Targets')
+    expect(details.rawDetail).toMatchObject({
+      execution_node: 'hfl-agent3 (100.92.164.55)', dependency: 'cifs-utils', helper: 'mount.cifs',
+    })
+  })
+  it('allows restore validation to reuse the structured guidance with its own title', () => {
+    const details = backupTargetValidationFailureDetails({
+      result: {
+        key: 'restore:agent:52',
+        status: 'failed',
+        code: 'NAS_MOUNT_FAILED',
+        message: 'cifs-utils is not installed',
+        details: {
+          remediation: 'install_nas_mount_helper',
+          dependency: 'cifs-utils',
+          helper: 'mount.cifs',
+          execution_node_name: 'hfl-agent2',
+          execution_node_address: '100.95.174.36',
+        },
+      },
+      sourceName: 'hfl-agent2 (100.95.174.36)',
+      title: 'Restore target validation failed',
+      validationKind: 'restore',
+      t,
+    })
+
+    expect(details.title).toBe('Restore target validation failed')
+    expect(details.issue).toContain('hfl-agent2 (100.95.174.36)')
+    expect(details.resolutions[0]).toContain('install cifs-utils')
+    expect(details.resolutions[1]).toContain('mount.cifs')
+  })
+
   it('explains S3 clock skew and how to synchronize the source host', () => {
     const result: BackupTargetValidationResult = {
       key: 'host:agent:52',
@@ -166,7 +221,7 @@ describe('backup target validation failure details', () => {
     expect(connectionDetails.reasons).toEqual(['TLS certificate fingerprint mismatch'])
   })
 
-  it('keeps the Agent diagnostic for unrelated validation failures', () => {
+  it('identifies the execution node and actionable checks for an unknown failure', () => {
     const result: BackupTargetValidationResult = {
       key: 'host:agent:11',
       status: 'failed',
@@ -176,9 +231,11 @@ describe('backup target validation failure details', () => {
 
     const details = backupTargetValidationFailureDetails({ result, sourceName: 'host-a', t })
     expect(details.summary).toBe('Connection validation failed.')
-    expect(details.issue).toBe(result.message)
-    expect(details.reasons).toEqual([result.message])
-    expect(details.resolutions).toContain('Check settings on host-a.')
+    expect(details.issue).toContain('host-a')
+    expect(details.issue).toContain(result.message)
+    expect(details.reasons).toEqual(['The Agent on host-a returned no specific category.'])
+    expect(details.resolutions).toContain('Inspect Agent logs on host-a.')
+    expect(details.resolutions).toContain('Verify repository connectivity and credentials from host-a.')
   })
 
   it('explains SMB UTF-8 dependency failures for the executing Linux host', () => {
@@ -197,7 +254,7 @@ describe('backup target validation failure details', () => {
           kernel: '6.8.0-71-generic',
         },
       },
-      sourceName: 'source-a',
+      sourceName: 'source-a', validationKind: 'restore',
       t,
     })
 
@@ -205,6 +262,7 @@ describe('backup target validation failure details', () => {
     expect(details.issue).toContain('6.8.0-71-generic')
     expect(details.resolutions).toContain('On hfl-agent1, install linux-modules-extra-$(uname -r) using apt-get.')
     expect(details.resolutions).toContain('On hfl-agent1, run: sudo modprobe nls_utf8.')
+    expect(details.resolutions).toContain('After correcting the problem on the indicated execution node, return to Restore Targets and retry validation.')
     expect(details.resolutions.join(' ')).not.toContain('Proxy')
   })
 

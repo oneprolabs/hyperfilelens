@@ -7,6 +7,20 @@ type ValidationFailureDetailsInput = {
   result: BackupTargetValidationResult
   sourceName: string
   t: ComposerTranslation
+  title?: string
+  validationKind?: 'backup' | 'restore'
+}
+
+function validationFailureTitle(input: ValidationFailureDetailsInput): string {
+  return input.title || input.t('protection.backupsPage.targetValidationFailedTitle')
+}
+
+function validationRetryStep(input: ValidationFailureDetailsInput): string {
+  return input.t(
+    input.validationKind === 'restore'
+      ? 'protection.backupsPage.targetValidationRestoreRetryStep'
+      : 'protection.backupsPage.targetValidationRetryStep',
+  )
 }
 
 const proxyRepositoryCodes = new Set([
@@ -58,7 +72,10 @@ export function backupTargetValidationFailureDetails({
   result,
   sourceName,
   t,
+  title,
+  validationKind,
 }: ValidationFailureDetailsInput): ErrorDetailsPayload {
+  const input = { result, sourceName, t, title, validationKind }
   const message = String(result.message || '').trim()
     || t('protection.backupsPage.targetValidationFailedFallback')
 
@@ -74,7 +91,7 @@ export function backupTargetValidationFailureDetails({
       resolutions: [
         t('protection.backupsPage.targetValidationClockSkewCorrectTime', { source: sourceName }),
         t('protection.backupsPage.targetValidationClockSkewSynchronize', { source: sourceName }),
-        t('protection.backupsPage.targetValidationRetryStep'),
+        validationRetryStep(input),
       ],
       rawDetail: {
         source: sourceName,
@@ -88,6 +105,35 @@ export function backupTargetValidationFailureDetails({
   const mountRemediation = String(mountDetails.remediation || '')
   const dependency = String(mountDetails.dependency || '').trim()
   const helper = String(mountDetails.helper || '').trim()
+  const missingCifsUtils = result.code === 'NAS_MOUNT_FAILED'
+    && /cifs-utils.*(not installed|missing)|missing.*mount\.cifs/i.test(message)
+  if (missingCifsUtils) {
+    const fallbackNode = t('protection.backupsPage.targetValidationMountHelperNodeFallback')
+    const node = mountHelperNodeLabel(mountDetails, t) === fallbackNode
+      ? sourceName
+      : mountHelperNodeLabel(mountDetails, t)
+    return {
+      title: validationFailureTitle({ result, sourceName, t, title }),
+      summary: backupTargetValidationFailureSummary({ result, sourceName, t }),
+      errorCode: result.code,
+      issue: t('protection.backupsPage.targetValidationCifsMissingIssue', { node }),
+      reasons: [t('protection.backupsPage.targetValidationCifsMissingReason', { node })],
+      resolutions: [
+        t('protection.backupsPage.targetValidationCifsMissingInstall', { node }),
+        t('protection.backupsPage.targetValidationCifsMissingVerify', { node }),
+        validationRetryStep(input),
+      ],
+      rawDetail: {
+        source: sourceName,
+        error_code: result.code,
+        ...mountDetails,
+        execution_node: node,
+        dependency: 'cifs-utils',
+        helper: 'mount.cifs',
+        agent_message: message,
+      },
+    }
+  }
   if (
     result.code === 'NAS_MOUNT_FAILED'
     && mountHelperRemediations.has(mountRemediation)
@@ -97,7 +143,7 @@ export function backupTargetValidationFailureDetails({
     const node = mountHelperNodeLabel(mountDetails, t)
     const repair = mountRemediation === 'repair_nas_mount_helper'
     return {
-      title: t('protection.backupsPage.targetValidationFailedTitle'),
+      title: validationFailureTitle({ result, sourceName, t, title }),
       summary: backupTargetValidationFailureSummary({ result, sourceName, t }),
       errorCode: result.code,
       issue: message,
@@ -109,7 +155,7 @@ export function backupTargetValidationFailureDetails({
         repair
           ? t('protection.backupsPage.targetValidationMountHelperVerifyUsable', { helper })
           : t('protection.backupsPage.targetValidationMountHelperVerifyAvailable', { helper }),
-        t('protection.backupsPage.targetValidationRetryStep'),
+        validationRetryStep(input),
       ],
       rawDetail: {
         source: sourceName,
@@ -124,7 +170,7 @@ export function backupTargetValidationFailureDetails({
     const node = mountHelperNodeLabel(mountDetails, t)
     const sourceMismatch = result.code === 'NAS_MOUNT_SOURCE_MISMATCH'
     return {
-      title: t('protection.backupsPage.targetValidationFailedTitle'),
+      title: validationFailureTitle({ result, sourceName, t, title }),
       summary: t('protection.backupsPage.targetValidationNasWriteSummary'),
       errorCode: result.code || undefined,
       issue: message,
@@ -134,7 +180,7 @@ export function backupTargetValidationFailureDetails({
           ? t('protection.backupsPage.targetValidationNasVerifySource', { node })
           : t('protection.backupsPage.targetValidationNasGrantWrite', { node }),
         t('protection.backupsPage.targetValidationNasRetryRemount'),
-        t('protection.backupsPage.targetValidationRetryStep'),
+        validationRetryStep(input),
       ],
       rawDetail: {
         source: sourceName,
@@ -158,7 +204,7 @@ export function backupTargetValidationFailureDetails({
         ? t('protection.backupsPage.targetValidationSmbCharsetInstallRhel', { node })
         : t('protection.backupsPage.targetValidationSmbCharsetInstallGeneric', { node })
     return {
-      title: t('protection.backupsPage.targetValidationFailedTitle'),
+      title: validationFailureTitle({ result, sourceName, t, title }),
       summary: t('protection.backupsPage.targetValidationSmbCharsetSummary'),
       errorCode: result.code,
       issue: t('protection.backupsPage.targetValidationSmbCharsetIssue', {
@@ -172,7 +218,7 @@ export function backupTargetValidationFailureDetails({
         install,
         t('protection.backupsPage.targetValidationSmbCharsetLoad', { node }),
         t('protection.backupsPage.targetValidationSmbCharsetVerify', { node }),
-        t('protection.backupsPage.targetValidationRetryStep'),
+        validationRetryStep(input),
       ],
       rawDetail: { source: sourceName, error_code: result.code, ...mountDetails, agent_message: message },
     }
@@ -180,14 +226,14 @@ export function backupTargetValidationFailureDetails({
 
   if (result.code === nasOwnershipFailureCode) {
     return {
-      title: t('protection.backupsPage.targetValidationFailedTitle'),
+      title: validationFailureTitle({ result, sourceName, t, title }),
       summary: t('protection.backupsPage.targetValidationNasOwnershipSummary'),
       errorCode: result.code,
       issue: message,
       reasons: [message],
       resolutions: [
         t('protection.backupsPage.targetValidationNasOwnershipRepair'),
-        t('protection.backupsPage.targetValidationRetryStep'),
+        validationRetryStep(input),
       ],
       rawDetail: {
         source: sourceName,
@@ -230,7 +276,7 @@ export function backupTargetValidationFailureDetails({
         t('protection.backupsPage.targetValidationProxyEditAddress', { proxy }),
         t('protection.backupsPage.targetValidationProxyCheckNetwork', { source: sourceName, endpoint }),
         t('protection.backupsPage.targetValidationProxyAllowPorts', { portRange }),
-        t('protection.backupsPage.targetValidationRetryStep'),
+        validationRetryStep(input),
       ],
       rawDetail: {
         source: sourceName,
@@ -241,19 +287,26 @@ export function backupTargetValidationFailureDetails({
     }
   }
 
+  const node = mountHelperNodeLabel(result.details || {}, t) === t('protection.backupsPage.targetValidationMountHelperNodeFallback')
+    ? sourceName
+    : mountHelperNodeLabel(result.details || {}, t)
   return {
-    title: t('protection.backupsPage.targetValidationFailedTitle'),
+    title: validationFailureTitle({ result, sourceName, t, title }),
     summary: backupTargetValidationFailureSummary({ result, sourceName, t }),
     errorCode: result.code || undefined,
-    issue: message,
-    reasons: [message],
+    issue: t('protection.backupsPage.targetValidationUnknownIssue', { node, message }),
+    reasons: [t('protection.backupsPage.targetValidationUnknownReason', { node })],
     resolutions: [
-      t('protection.backupsPage.targetValidationGenericResolution', { source: sourceName }),
-      t('protection.backupsPage.targetValidationRetryStep'),
+      t('protection.backupsPage.targetValidationUnknownCheckAgent', { node }),
+      t('protection.backupsPage.targetValidationUnknownCheckRepository', { node }),
+      t('protection.backupsPage.targetValidationUnknownResolve', { node }),
+      validationRetryStep(input),
     ],
     rawDetail: {
       source: sourceName,
       error_code: result.code,
+      ...result.details,
+      execution_node: node,
       agent_message: message,
     },
   }
