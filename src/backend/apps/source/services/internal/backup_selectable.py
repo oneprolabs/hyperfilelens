@@ -814,7 +814,14 @@ def _attach_runtime_expansion(
         )
         .filter(_task_resource_filters_for_items(items))
         .filter(
-            Q(status__in=[Task.Status.PENDING, Task.Status.RUNNING])
+            Q(
+                status__in=[
+                    Task.Status.PENDING,
+                    Task.Status.WAITING,
+                    Task.Status.BLOCKED,
+                    Task.Status.RUNNING,
+                ]
+            )
             | Q(created_at__gte=timezone.now() - timedelta(days=30))
         )
         .prefetch_related("resources")
@@ -857,18 +864,27 @@ def _attach_runtime_expansion(
         key = _item_key(item)
         runtime = _empty_runtime()
         backup_tasks_for_source = backup_tasks_by_source.get(key, [])
-        running_backup = [
+        active_backup = [
             task
             for task in backup_tasks_for_source
-            if task.status in (Task.Status.PENDING, Task.Status.RUNNING)
+            if task.status
+            in (
+                Task.Status.PENDING,
+                Task.Status.WAITING,
+                Task.Status.BLOCKED,
+                Task.Status.RUNNING,
+            )
         ]
         from apps.node.services.internal.task_offline_reconcile import (
             product_task_blocks_cleanup,
             task_execution_state,
         )
 
-        running_backup = [
-            task for task in running_backup if product_task_blocks_cleanup(task=task)
+        active_backup = [
+            task
+            for task in active_backup
+            if task.status in (Task.Status.WAITING, Task.Status.BLOCKED)
+            or product_task_blocks_cleanup(task=task)
         ]
         latest_backup_task = (
             backup_tasks_for_source[0] if backup_tasks_for_source else None
@@ -881,12 +897,12 @@ def _attach_runtime_expansion(
                 pk=int(item.get("ref_id") or 0),
                 organization_id=organization_id,
             ).first()
-        if running_backup:
+        if active_backup:
             runtime["backup"]["running"] = True
-            runtime["backup"]["running_count"] = len(running_backup)
-            primary_task = running_backup[0]
+            runtime["backup"]["running_count"] = len(active_backup)
+            primary_task = active_backup[0]
             runtime["backup"]["progress"] = max(
-                _number(task.progress) for task in running_backup
+                _number(task.progress) for task in active_backup
             )
             runtime["backup"]["execution_state"] = task_execution_state(
                 node=execution_node,
@@ -915,7 +931,7 @@ def _attach_runtime_expansion(
                 pass
         runtime["backup"]["total"] = len(backup_tasks_for_source)
         backup_stopping = (
-            not running_backup
+            not active_backup
             and latest_backup_task is not None
             and product_task_is_stopping(
                 organization_id=organization_id, task=latest_backup_task
@@ -923,13 +939,13 @@ def _attach_runtime_expansion(
         )
         runtime["backup"]["stopping"] = backup_stopping
         runtime["backup"]["cancelled"] = (
-            not running_backup
+            not active_backup
             and not backup_stopping
             and latest_backup_task is not None
             and latest_backup_task.status == Task.Status.CANCELLED
         )
         runtime["backup"]["failed"] = (
-            not running_backup
+            not active_backup
             and not backup_stopping
             and latest_backup_task is not None
             and latest_backup_task.status in (Task.Status.FAILED, Task.Status.TIMEOUT)
@@ -1014,9 +1030,7 @@ def _attach_runtime_expansion(
             not running_restore
             and latest_restore_pair is not None
             and latest_restore_pair[1] is not None
-            and product_task_is_stopping(
-                organization_id=organization_id, task=latest_restore_pair[1]
-            )
+            and _restore_task_is_stopping(latest_restore_pair[1])
         )
         runtime["restore"]["stopping"] = restore_stopping
         runtime["restore"]["cancelled"] = (
@@ -1039,6 +1053,14 @@ def _attach_runtime_expansion(
                 or record.created_at
             )
         item["runtime"] = runtime
+
+
+def _restore_task_is_stopping(task: Task) -> bool:
+    # Import lazily to keep the source catalog independent from restore service
+    # initialization while using the restore-specific NodeTask correlation.
+    from apps.restore.services.interface import restore_task_is_stopping
+
+    return restore_task_is_stopping(task=task)
 
 
 def _attach_expansions(

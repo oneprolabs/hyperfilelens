@@ -727,6 +727,9 @@ export const enProtectionPages = {
     msgPickRecoveryDir: 'Select a restore directory.',
     msgRecoverySubmitted: 'Restore task submitted.',
     msgRecoveryPlanSubmitted: 'Restore task submitted from the restore plan.',
+    msgRecoveryPartialSubmitted: '{done} restore task(s) submitted; {failed} failed to submit.',
+    msgRestoreAcceptedRefreshFailed:
+      'The restore request was accepted, but its latest status could not be refreshed. Conflicting restore actions remain disabled while status is reconciled.',
     msgRecoveryPlanUnavailable: 'No runnable restore plan is available right now.',
     recoveryPlanMissingTitle: 'No Restore Plan Configured',
     recoveryPlanMissingDesc: 'No restore plan is configured for this host. This host will be skipped when running restore plans.',

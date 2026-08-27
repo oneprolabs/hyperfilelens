@@ -73,6 +73,12 @@ import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeig
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { useRestoreTargetCatalog } from '../../composables/useRestoreTargetCatalog'
 import {
+  isExplicitRestoreCancelRejection,
+  runRestoreJobsSequentially,
+  useRestoreTaskLifecycle,
+  type RestoreSubmissionJob,
+} from '../../composables/useRestoreTaskLifecycle'
+import {
   useProtectionDemoStore,
   type DemoBackup,
   type DemoPathType,
@@ -142,7 +148,11 @@ import {
   type StorageRepository,
 } from '../../lib/storageRepositoryApi'
 import { storageRepositoryLocation } from '../../lib/storageRepositoryDisplay'
-import { startProtectionBackupTasks, cancelProtectionBackupTask } from '../../lib/protectionBackupTaskApi'
+import {
+  startProtectionBackupTasks,
+  cancelProtectionBackupTask,
+  type StartBackupTaskResultItem,
+} from '../../lib/protectionBackupTaskApi'
 import { backupStartResultMessage } from '../../lib/protectionBackupTaskPresentation'
 import { cancelProtectionRestoreTask } from '../../lib/protectionRestoreTaskApi'
 import {
@@ -183,6 +193,7 @@ import {
   backupTargetValidationFailureSummary,
 } from '../../lib/protectionBackupTargetValidationDetails'
 import type { BackupTargetValidationResult } from '../../lib/protectionBackupTargetValidationApi'
+import { notifySuccess, notifyWarning } from '../../lib/notify'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
 import type { ApiNode } from '../../types/node'
 import Modal from '../../components/Modal.vue'
@@ -326,6 +337,7 @@ function reconcileWizardPendingOps() {
 
 const store = useProtectionDemoStore()
 const pageRequests = usePageRequestScope()
+const restoreTaskLifecycle = useRestoreTaskLifecycle()
 
 function showApiError(err: unknown, fallback?: string) {
   const message = apiErrorMessage(err, fallback)
@@ -419,12 +431,6 @@ async function handleRestoreAlreadyRunning(err: unknown): Promise<boolean> {
     return true
   }
   return true
-}
-
-async function runRestoreJobsSequentially(jobs: Array<() => Promise<unknown>>) {
-  for (const job of jobs) {
-    await job()
-  }
 }
 
 const {
@@ -549,6 +555,7 @@ async function refreshBackupConfigs(
     restoreRecordRows.value = restoreRecords.results
     syncRealBackupConfigsToDemoStore(details, snapshots.results)
     syncRestoreRecordsToFlowTasks(restoreRecords.results, restoreTasks.results)
+    reconcileRestoreTaskLifecycle()
     return true
   } catch (e) {
     if (pageRequests.isAbortError(e)) throw e
@@ -802,6 +809,21 @@ function restoreRecordIsRunning(record: RestoreRecord) {
   return restoreRecordFlowStatus(record, restoreRecordTaskRow(record, restoreTaskRows.value)) === 'running'
 }
 
+function reconcileRestoreTaskLifecycle() {
+  const observations = new Map<string, string>()
+  for (const task of restoreTaskRows.value) {
+    if (task.task_uuid) observations.set(task.task_uuid, task.status)
+  }
+  for (const record of restoreRecordRows.value) {
+    const status = String(record.task_summary?.status || '')
+    if (record.task_uuid && status) observations.set(record.task_uuid, status)
+  }
+  restoreTaskLifecycle.reconcile(
+    [...observations].map(([taskUuid, status]) => ({ taskUuid, status })),
+  )
+  clearFinishedRestoreReconcileTimers()
+}
+
 async function refreshRestoreRecords(sourceId: string, signal?: AbortSignal) {
   const endpoint = parseEndpointUiId(sourceId)
   if (!endpoint || endpoint.type === 'proxy') return
@@ -820,6 +842,7 @@ async function refreshRestoreRecords(sourceId: string, signal?: AbortSignal) {
     ...records.results,
   ]
   syncRestoreRecordsToFlowTasks(restoreRecordRows.value, restoreTaskRows.value)
+  reconcileRestoreTaskLifecycle()
 }
 
 async function refreshStep3RuntimeRows(signal?: AbortSignal) {
@@ -850,6 +873,7 @@ async function refreshStep3RuntimeRows(signal?: AbortSignal) {
   restoreTaskRows.value = expandedTasks(rows, 'restore')
   restoreRecordRows.value = expandedRestoreRecords(rows)
   syncRestoreRecordsToFlowTasks(restoreRecordRows.value, restoreTaskRows.value)
+  reconcileRestoreTaskLifecycle()
 }
 
 function normalizeSourceIdList(ids: string[]) {
@@ -1409,6 +1433,7 @@ function syncExpandedStep3Rows(rows: FlowSourceRow[]) {
   restoreTaskRows.value = expandedTasks(rows, 'restore')
   restoreRecordRows.value = expandedRestoreRecords(rows)
   syncRestoreRecordsToFlowTasks(restoreRecordRows.value, restoreTaskRows.value)
+  reconcileRestoreTaskLifecycle()
   if (configs.length) syncRealBackupConfigsToDemoStore(configs, backupSnapshotRows.value)
   return configs
 }
@@ -1835,9 +1860,15 @@ function startBackupForSource(sourceId: string) {
 function openRecoveryWithBackupIds(backupIds: string[]) {
   if (!backupIds.length) {
     ElMessage.warning({ message: t('protection.backupsPage.msgPickBackupForRecovery'), grouping: true })
-    return
+    return false
   }
-  void restoreTargetCatalog.ensureByIds(backupIds.map(backupSourceHostId).filter(Boolean))
+  const sourceIds = normalizeSourceIdList(backupIds.map(backupSourceHostId).filter(Boolean))
+  if (sourceIds.some((sourceId) => sourceRestoreRuntime(sourceId).running || runtimeStopping(sourceId, 'restore'))) {
+    ElMessage.warning({ message: t('protection.backupsPage.msgRestoreAlreadyRunning'), grouping: true })
+    return false
+  }
+  beginRecoverySubmissionSession()
+  void restoreTargetCatalog.ensureByIds(sourceIds)
   invalidateRecoverySnapshotLists(backupIds)
   recTargetValidationResults.value = {}
   recOpen.value = true
@@ -1867,6 +1898,7 @@ function openRecoveryWithBackupIds(backupIds: string[]) {
   recDirStepInitialized.value = false
   recExpandedRecConfirmHostIds.value = []
   recBatchHostDirPrefix.value = ''
+  return true
 }
 
 function openRecoveryForSource(sourceId: string) {
@@ -1876,19 +1908,10 @@ function openRecoveryForSource(sourceId: string) {
       ? activeFlowSource.value
       : flowSourceRowById(sourceId) ?? flowRowFromSourceId(sourceId)
   if (row) step3SourceSelection.value = [row]
-  if (sourceHasActiveBackup(sourceId)) {
-    ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
-    return
-  }
   openRecoveryWithBackupIds(backupIds)
 }
 
 async function openSnapshotRestore(payload: { snapshotId: number }) {
-  const sourceId = activeFlowSource.value?.id || ''
-  if (sourceId && sourceHasActiveBackup(sourceId)) {
-    ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
-    return
-  }
   await router.push({
     name: 'protection-snapshot-restore',
     params: { snapshotId: String(payload.snapshotId) },
@@ -2724,6 +2747,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopStep3AutoRefresh()
+  stopRestoreTaskReconcileTimers()
   stopUnregisterTaskPolls()
   cancelFlowStepRequests(0)
   cancelFlowStepRequests(1)
@@ -2869,10 +2893,6 @@ function openBackupConfigEditFromStep3(section: BackupConfigEditSection) {
     ElMessage.warning({ message: t('protection.backupsPage.msgSelectConfiguredSourceForStep3'), grouping: true })
     return
   }
-  if (sources.some((source) => sourceHasActiveBackup(source.id))) {
-    ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
-    return
-  }
   if (sources.some((source) => sourceResetRunning(source.id))) {
     ElMessage.warning({ message: t('protection.backupsPage.msgResetBackupConfigRunning'), grouping: true })
     return
@@ -2998,7 +3018,12 @@ function sourceBackupRuntime(sourceId: string) {
     }
   }
   const tasks = tasksForBackupConfigIds(sourceBackupConfigIds(sourceId))
-  const running = tasks.filter((task) => task.status === 'running' || task.status === 'pending')
+  const running = tasks.filter((task) => (
+    task.status === 'running'
+    || task.status === 'pending'
+    || task.status === 'waiting'
+    || task.status === 'blocked'
+  ))
   if (running.length) {
     const progress = Math.max(...running.map((task) => Number(task.progress || 0)))
     const primary = running[0]
@@ -3172,6 +3197,7 @@ function latestRestoreTaskForSource(sourceId: string) {
 
 function sourceRestoreRuntime(sourceId: string) {
   const runtime = runtimeSection(sourceId, 'restore')
+  const trackedTask = restoreTaskLifecycle.get(sourceId)
   const executionState = String(runtime.execution_state || '').trim() || null
   const transferProgress = withExecutionState(
     isTransferProgress(runtime.transfer_progress)
@@ -3202,16 +3228,80 @@ function sourceRestoreRuntime(sourceId: string) {
   }
   if (Object.keys(runtime).length) {
     return {
-      running: runtimeBool(runtime.running),
+      running: runtimeBool(runtime.running) || Boolean(trackedTask),
       failed: runtimeFailed(runtime),
       progress: runtimeNumber(runtime.progress),
-      transferProgress,
+      transferProgress: transferProgress || (trackedTask ? {
+        label_key: 'protection.taskProgress.restore.estimating',
+        phase: 'estimating',
+        show_metrics: false,
+      } : null),
       executionState,
     }
   }
   const latest = latestRestoreRecordForSource(sourceId)
   const failed = latest ? restoreRecordFlowStatus(latest, restoreRecordTaskRow(latest, restoreTaskRows.value)) === 'failed' : false
-  return { running: false, failed, progress: 0, transferProgress: null }
+  return {
+    running: Boolean(trackedTask),
+    failed,
+    progress: 0,
+    transferProgress: trackedTask ? {
+      label_key: 'protection.taskProgress.restore.estimating',
+      phase: 'estimating',
+      show_metrics: false,
+    } : null,
+  }
+}
+
+const RESTORE_TASK_RECONCILE_MS = 15000
+const restoreTaskReconcileTimers = new Map<string, number>()
+
+function clearFinishedRestoreReconcileTimers() {
+  for (const [taskUuid, timer] of restoreTaskReconcileTimers) {
+    const stillTracked = Object.values(restoreTaskLifecycle.entries.value)
+      .some((entry) => entry.taskUuid === taskUuid)
+    if (stillTracked) continue
+    window.clearTimeout(timer)
+    restoreTaskReconcileTimers.delete(taskUuid)
+  }
+}
+
+function stopRestoreTaskReconcileTimers() {
+  for (const timer of restoreTaskReconcileTimers.values()) window.clearTimeout(timer)
+  restoreTaskReconcileTimers.clear()
+}
+
+function scheduleRestoreTaskReconciliation(sourceId: string, taskUuid: string) {
+  const previous = restoreTaskReconcileTimers.get(taskUuid)
+  if (previous) window.clearTimeout(previous)
+  const timer = window.setTimeout(async () => {
+    restoreTaskReconcileTimers.delete(taskUuid)
+    try {
+      const task = await getTask(taskUuid)
+      restoreTaskLifecycle.reconcile([{ taskUuid, status: task.status }])
+      if (task.status === 'cancelled') await refreshRecoverySourceRuntime([sourceId])
+    } catch (error) {
+      // A timeout or network failure is an unknown outcome. Keep the local
+      // fence and retry targeted reconciliation instead of allowing a duplicate.
+      if (toApiError(error).status === 404) {
+        try {
+          const records = await listRestoreRecords({
+            page: 1,
+            page_size: 1,
+            task_uuid: taskUuid,
+          })
+          if (!records.results.length) restoreTaskLifecycle.clear(sourceId, taskUuid)
+          else await refreshRecoverySourceRuntime([sourceId])
+        } catch {
+          // Keep the fence when the fallback authority is also unavailable.
+        }
+      }
+    } finally {
+      const current = restoreTaskLifecycle.get(sourceId)
+      if (current?.taskUuid === taskUuid) scheduleRestoreTaskReconciliation(sourceId, taskUuid)
+    }
+  }, RESTORE_TASK_RECONCILE_MS)
+  restoreTaskReconcileTimers.set(taskUuid, timer)
 }
 
 type SourceStopKind = 'backup' | 'restore'
@@ -3236,7 +3326,12 @@ function readSourceStopOptimistic(sourceId: string, kind: SourceStopKind) {
   return row
 }
 
-function markSourceStopPhase(sourceId: string, kind: SourceStopKind) {
+function markSourceStopPhase(sourceId: string, kind: SourceStopKind, taskUuid = '') {
+  if (kind === 'restore' && taskUuid) {
+    restoreTaskLifecycle.markStopping(sourceId, taskUuid)
+    scheduleRestoreTaskReconciliation(sourceId, taskUuid)
+    return
+  }
   sourceStopOptimistic.value = {
     ...sourceStopOptimistic.value,
     [sourceStopKey(sourceId, kind)]: {
@@ -3248,6 +3343,11 @@ function markSourceStopPhase(sourceId: string, kind: SourceStopKind) {
 }
 
 function clearSourceStopPhase(sourceId: string, kind: SourceStopKind) {
+  if (kind === 'restore') {
+    const current = restoreTaskLifecycle.get(sourceId)
+    if (current) restoreTaskLifecycle.rejectStopping(sourceId, current.taskUuid)
+    return
+  }
   const key = sourceStopKey(sourceId, kind)
   if (!sourceStopOptimistic.value[key]) return
   const next = { ...sourceStopOptimistic.value }
@@ -3258,11 +3358,29 @@ function clearSourceStopPhase(sourceId: string, kind: SourceStopKind) {
 function runtimeStopping(sourceId: string, kind: SourceStopKind) {
   const runtime = runtimeSection(sourceId, kind)
   if (runtimeBool(runtime.stopping)) return true
+  if (kind === 'restore' && restoreTaskLifecycle.isStopping(sourceId)) return true
   return readSourceStopOptimistic(sourceId, kind)?.phase === 'stopping'
 }
 
 function syncSourceStopOptimisticFromRuntime(sourceId: string, kind: SourceStopKind) {
   const runtime = runtimeSection(sourceId, kind)
+  if (kind === 'restore') {
+    const latestTask = recordValue(runtime.latest_task)
+    const taskUuid = String(latestTask.task_uuid || '')
+    const status = String(latestTask.status || '')
+    if (taskUuid && status) {
+      restoreTaskLifecycle.reconcile([{
+        taskUuid,
+        status,
+        stopping: runtimeBool(runtime.stopping),
+      }])
+    }
+    const current = restoreTaskLifecycle.get(sourceId)
+    if (runtimeBool(runtime.stopping) && current && (!taskUuid || taskUuid === current.taskUuid)) {
+      restoreTaskLifecycle.markStopping(sourceId, current.taskUuid)
+    }
+    return
+  }
   if (runtimeBool(runtime.running) || runtimeBool(runtime.cancelled)) {
     clearSourceStopPhase(sourceId, kind)
     return
@@ -3278,6 +3396,8 @@ function runningBackupTaskForSource(sourceId: string) {
 }
 
 function runningRestoreTaskForSource(sourceId: string) {
+  const tracked = restoreTaskLifecycle.get(sourceId)
+  if (tracked?.taskUuid) return { task_uuid: tracked.taskUuid } as TaskRow
   for (const record of restoreRecordsForSource(sourceId)) {
     if (!restoreRecordIsRunning(record)) continue
     const task = restoreRecordTaskRow(record, restoreTaskRows.value)
@@ -3294,8 +3414,8 @@ function sourceBackupCellPhase(sourceId: string): 'running' | 'stopping' | 'term
 }
 
 function sourceRestoreCellPhase(sourceId: string): 'running' | 'stopping' | 'terminal' {
-  if (sourceRestoreRuntime(sourceId).running) return 'running'
   if (runtimeStopping(sourceId, 'restore')) return 'stopping'
+  if (sourceRestoreRuntime(sourceId).running) return 'running'
   return 'terminal'
 }
 
@@ -4522,21 +4642,38 @@ async function submitDisplayNameEdit() {
 }
 
 const startBackupSubmitting = ref(false)
-const backupStartAwaitingRuntimeSourceIds = ref(new Set<string>())
+const backupStartAwaitingRuntimeTasks = ref(new Map<string, Set<string>>())
 
-function markBackupStartAwaitingRuntime(sourceIds: string[]) {
-  if (!sourceIds.length) return
-  backupStartAwaitingRuntimeSourceIds.value = new Set([
-    ...backupStartAwaitingRuntimeSourceIds.value,
-    ...sourceIds,
-  ])
+function markBackupStartAwaitingRuntime(results: StartBackupTaskResultItem[]) {
+  const created = results.filter((item) => item.status === 'created' && item.task_uuid)
+  if (!created.length) return
+  const next = new Map(backupStartAwaitingRuntimeTasks.value)
+  created.forEach((item) => {
+    const sourceId = endpointUiId(item.source_type, item.source_ref_id)
+    const taskUuids = new Set(next.get(sourceId) || [])
+    taskUuids.add(String(item.task_uuid))
+    next.set(sourceId, taskUuids)
+  })
+  backupStartAwaitingRuntimeTasks.value = next
 }
 
 function reconcileBackupStartAwaitingRuntime(refreshedSourceIds: string[]) {
-  if (!refreshedSourceIds.length || backupStartAwaitingRuntimeSourceIds.value.size === 0) return
-  const next = new Set(backupStartAwaitingRuntimeSourceIds.value)
-  refreshedSourceIds.forEach((sourceId) => next.delete(sourceId))
-  backupStartAwaitingRuntimeSourceIds.value = next
+  if (!refreshedSourceIds.length || backupStartAwaitingRuntimeTasks.value.size === 0) return
+  const next = new Map(backupStartAwaitingRuntimeTasks.value)
+  refreshedSourceIds.forEach((sourceId) => {
+    const acceptedTaskUuids = next.get(sourceId)
+    if (!acceptedTaskUuids) return
+    const runtime = runtimeSection(sourceId, 'backup')
+    if (runtimeBool(runtime.running) || runtimeBool(runtime.stopping)) {
+      next.delete(sourceId)
+      return
+    }
+    const latestTaskUuid = String(recordValue(runtime.latest_task).task_uuid || '')
+    if (latestTaskUuid && acceptedTaskUuids.has(latestTaskUuid)) {
+      next.delete(sourceId)
+    }
+  })
+  backupStartAwaitingRuntimeTasks.value = next
 }
 
 function sourceRuntimeHasActiveBackup(sourceId: string) {
@@ -4545,7 +4682,7 @@ function sourceRuntimeHasActiveBackup(sourceId: string) {
 
 function sourceHasActiveBackup(sourceId: string) {
   return startBackupSubmitting.value
-    || backupStartAwaitingRuntimeSourceIds.value.has(sourceId)
+    || backupStartAwaitingRuntimeTasks.value.has(sourceId)
     || sourceRuntimeHasActiveBackup(sourceId)
 }
 
@@ -4574,7 +4711,7 @@ const step3LifecycleActionsEnabled = computed(() => {
   return true
 })
 const step3SelectionEditable = computed(() =>
-  step3LifecycleActionsEnabled.value && !step3SelectionHasActiveBackup.value,
+  step3LifecycleActionsEnabled.value,
 )
 function sourceHasRunningBackupOrRestore(sourceId: string) {
   return sourceHasActiveBackup(sourceId)
@@ -4585,6 +4722,11 @@ function sourceHasRunningBackupOrRestore(sourceId: string) {
 function selectionHasRunningBackupOrRestore(sourceIds: string[]) {
   return sourceIds.some(sourceHasRunningBackupOrRestore)
 }
+
+const step3ResetEnabled = computed(() =>
+  step3SelectionEditable.value
+  && !step3SourceSelection.value.some((row) => sourceHasRunningBackupOrRestore(row.id)),
+)
 
 const step1UnregisterEnabled = computed(() => {
   if (selectedSourceIds.value.length === 0) return false
@@ -4604,7 +4746,9 @@ const step3CanStopBackup = computed(() =>
   step3SourceSelection.value.some((row) => sourceBackupRuntime(row.id).running),
 )
 const step3CanStopRestore = computed(() =>
-  step3SourceSelection.value.some((row) => sourceRestoreRuntime(row.id).running),
+  step3SourceSelection.value.some((row) =>
+    sourceRestoreRuntime(row.id).running && !runtimeStopping(row.id, 'restore'),
+  ),
 )
 const step3StopActionBusy = ref(false)
 const selectedRecoverableSourceRows = computed(() =>
@@ -4612,7 +4756,6 @@ const selectedRecoverableSourceRows = computed(() =>
 )
 const recoveryToolbarEnabled = computed(() => {
   if (selectedRecoverableSourceRows.value.length === 0) return false
-  if (step3SelectionHasActiveBackup.value) return false
   return !selectedRecoverableSourceRows.value.some((row) =>
     sourceRestoreRuntime(row.id).running || runtimeStopping(row.id, 'restore'),
   )
@@ -4634,7 +4777,7 @@ function step3StopBackupConfirmItems(): ProtectionStopConfirmItem[] {
 
 function step3StopRestoreConfirmItems(): ProtectionStopConfirmItem[] {
   return step3SourceSelection.value
-    .filter((row) => sourceRestoreRuntime(row.id).running)
+    .filter((row) => sourceRestoreRuntime(row.id).running && !runtimeStopping(row.id, 'restore'))
     .map((row) => {
       const record = restoreRecordsForSource(row.id).find(restoreRecordIsRunning)
       return {
@@ -4717,22 +4860,44 @@ async function stopSelectedRestoreTasks() {
   }
   step3StopActionBusy.value = true
   let stopped = 0
+  const errors: unknown[] = []
+  const stoppedSourceIds: string[] = []
   try {
-    const targets = step3SourceSelection.value.filter((row) => sourceRestoreRuntime(row.id).running)
+    const targets = step3SourceSelection.value.filter((row) => (
+      sourceRestoreRuntime(row.id).running && !runtimeStopping(row.id, 'restore')
+    ))
     for (const row of targets) {
       const task = runningRestoreTaskForSource(row.id)
       if (!task?.task_uuid) continue
-      markSourceStopPhase(row.id, 'restore')
-      await cancelProtectionRestoreTask(task.task_uuid)
-      stopped += 1
+      markSourceStopPhase(row.id, 'restore', task.task_uuid)
+      try {
+        await cancelProtectionRestoreTask(task.task_uuid)
+        stopped += 1
+        stoppedSourceIds.push(row.id)
+      } catch (error) {
+        errors.push(error)
+        if (isExplicitRestoreCancelRejection(toApiError(error))) {
+          restoreTaskLifecycle.rejectStopping(row.id, task.task_uuid)
+        }
+      }
     }
-    await refreshStep3AfterMoreAction()
-    for (const row of targets) syncSourceStopOptimisticFromRuntime(row.id, 'restore')
     if (stopped > 0) {
-      ElMessage.success({ message: t('protection.backupsPage.msgStopRestoreRequested', { n: stopped }), grouping: true })
+      notifySuccess({
+        message: t('protection.backupsPage.msgStopRestoreRequested', { n: stopped }),
+        dedupeKey: `restore-stop-requested:${stoppedSourceIds.sort().join(',')}`,
+      })
     }
-  } catch (err) {
-    showApiError(err, 'Failed to stop restore task')
+    if (errors.length) showApiError(errors[0], 'Failed to stop restore task')
+    void refreshRecoverySourceRuntime(targets.map((row) => row.id))
+      .then(() => {
+        for (const row of targets) syncSourceStopOptimisticFromRuntime(row.id, 'restore')
+      })
+      .catch(() => {
+        notifyWarning({
+          message: t('protection.backupsPage.msgRestoreAcceptedRefreshFailed'),
+          dedupeKey: 'restore-stop-refresh-failed',
+        })
+      })
   } finally {
     step3StopActionBusy.value = false
   }
@@ -4796,11 +4961,7 @@ async function startSelectedBackupTasks() {
       return
     }
     const result = await startProtectionBackupTasks(startBackupTaskPayloadForSources(runnableSources))
-    markBackupStartAwaitingRuntime(
-      result.results
-        .filter((item) => item.status === 'created')
-        .map((item) => endpointUiId(item.source_type, item.source_ref_id)),
-    )
+    markBackupStartAwaitingRuntime(result.results)
     try {
       await refreshStep3State()
     } catch {
@@ -5700,6 +5861,26 @@ const recSubmitting = ref(false)
 const recTargetValidating = ref(false)
 const recTargetValidationResults = ref<Record<string, BackupTargetValidationResult>>({})
 let recTargetValidationController: AbortController | null = null
+const recoverySubmissionSessionId = ref('')
+
+function beginRecoverySubmissionSession() {
+  recoverySubmissionSessionId.value = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function restorePayloadHash(value: unknown) {
+  const text = JSON.stringify(value)
+  let hash = 2166136261
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+function restoreIdempotencyKey(mode: 'plan' | 'manual', payload: unknown) {
+  if (!recoverySubmissionSessionId.value) beginRecoverySubmissionSession()
+  return `restore-${mode}-${recoverySubmissionSessionId.value}-${restorePayloadHash(payload)}`
+}
 const recBackupIds = ref<string[]>([])
 const recSnapshotMap = ref<Record<string, string>>({})
 const recoverySnapshotDetails = ref(new Map<number, BackupSourceSnapshot>())
@@ -5878,6 +6059,10 @@ async function initializeFixedSnapshotRestore() {
     }
     fixedRestoreSnapshot.value = detail
     const sourceId = endpointUiId(detail.source_type, Number(detail.source_ref_id))
+    await refreshRecoverySourceRuntime([sourceId])
+    if (sourceRestoreRuntime(sourceId).running || runtimeStopping(sourceId, 'restore')) {
+      throw new Error(t('protection.backupsPage.msgRestoreAlreadyRunning'))
+    }
     await restoreTargetCatalog.ensureByIds([sourceId])
     rememberSelectableRows(restoreTargetCatalog.allRecords.value.map(mapBackupSelectableToFlowRow))
 
@@ -5891,7 +6076,9 @@ async function initializeFixedSnapshotRestore() {
     backupSnapshotRows.value = mergeSnapshotListItems(backupSnapshotRows.value, [detail])
     syncRealBackupConfigsToDemoStore([...backupConfigDetailById.value.values()], backupSnapshotRows.value)
     const backupId = realBackupId(config.id)
-    openRecoveryWithBackupIds([backupId])
+    if (!openRecoveryWithBackupIds([backupId])) {
+      throw new Error(t('protection.backupsPage.msgRestoreAlreadyRunning'))
+    }
     mergeRecoverySnapshotDetail(detail)
     const snapshotState = recoverySnapshotListState(`${detail.source_type}:${detail.source_ref_id}`)
     snapshotState.items = mergeSnapshotListItems(snapshotState.items, [detail])
@@ -6192,10 +6379,6 @@ async function openRecovery() {
   if (recoveryOpening.value) return
   if (!step3SourceSelection.value.length) {
     ElMessage.warning({ message: t('protection.backupsPage.msgSelectSourcesToRecover'), grouping: true })
-    return
-  }
-  if (step3SelectionHasActiveBackup.value) {
-    ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
     return
   }
   if (step3SourceSelection.value.some((row) => sourceRestoreRuntime(row.id).running || runtimeStopping(row.id, 'restore'))) {
@@ -9350,7 +9533,7 @@ function buildManualRestorePayload(draft: RecoveryTaskDraft): RestoreRecordCreat
   const firstTargetPath = (items[0] as NonNullable<(typeof items)[number]> | undefined)?.target_path || draft.destPath || ''
   if (!firstTargetPath) return null
   const wholeSnapshot = draft.dirs.every((dir) => dir.scope === 'snapshot')
-  return {
+  const payload: RestoreRecordCreatePayload = {
     source_snapshot_id: snapshotId,
     source_type: sourceEndpoint.type as 'agent' | 'nas',
     source_ref_id: sourceEndpoint.refId,
@@ -9360,8 +9543,9 @@ function buildManualRestorePayload(draft: RecoveryTaskDraft): RestoreRecordCreat
     scope: wholeSnapshot ? 'snapshot' : 'paths',
     conflict_mode: draft.conflictPolicy,
     items: items as RestoreRecordCreatePayload['items'],
-    idempotency_key: `restore-${draft.backupId}-${Date.now()}`,
   }
+  payload.idempotency_key = restoreIdempotencyKey('manual', payload)
+  return payload
 }
 
 function manualRecoveryDraftProblemNames(drafts: RecoveryTaskDraft[]) {
@@ -9379,12 +9563,6 @@ function manualRecoveryDraftProblemNames(drafts: RecoveryTaskDraft[]) {
   return [...names.values()].slice(0, 5).join(', ') + (names.size > 5 ? `, +${names.size - 5}` : '')
 }
 
-function recoverySourceIds() {
-  return [...new Set(recBackupIds.value.map(backupSourceHostId).filter(Boolean))]
-}
-
-const recoveryHasActiveBackup = computed(() => recoverySourceIds().some(sourceHasActiveBackup))
-
 async function refreshRecoverySourceRuntime(sourceIds: string[]) {
   if (!sourceIds.length) return
   const list = await listBackupSelectableSources({
@@ -9394,25 +9572,49 @@ async function refreshRecoverySourceRuntime(sourceIds: string[]) {
     expand: STEP3_EXPAND,
   })
   const rows = list.results.map(mapBackupSelectableToFlowRow)
+  const refreshedById = new Map(rows.map((row) => [row.id, row]))
+  const mergeRows = (current: FlowSourceRow[]) => current.map((row) => refreshedById.get(row.id) || row)
+  backupSelectableRows.value = mergeRows(backupSelectableRows.value)
+  step2SelectableRows.value = mergeRows(step2SelectableRows.value)
+  step3SelectableRows.value = mergeRows(step3SelectableRows.value)
   rememberSelectableRows(rows)
   reconcileBackupStartAwaitingRuntime(rows.map((row) => row.id))
-}
-
-async function recoveryBlockedByActiveBackup() {
-  const sourceIds = recoverySourceIds()
-  if (sourceIds.some(sourceHasActiveBackup)) return true
-  await refreshRecoverySourceRuntime(sourceIds)
-  return sourceIds.some(sourceRuntimeHasActiveBackup)
+  const refreshedSourceIds = new Set(rows.map((row) => row.id))
+  const refreshedTasks = expandedTasks(rows, 'restore')
+  const refreshedTaskUuids = new Set(refreshedTasks.map((task) => task.task_uuid))
+  restoreTaskRows.value = [
+    ...restoreTaskRows.value.filter((task) => !refreshedTaskUuids.has(task.task_uuid)),
+    ...refreshedTasks,
+  ]
+  restoreRecordRows.value = [
+    ...restoreRecordRows.value.filter((record) => (
+      !refreshedSourceIds.has(endpointUiId(record.source_type, record.source_ref_id))
+    )),
+    ...expandedRestoreRecords(rows),
+  ]
+  syncRestoreRecordsToFlowTasks(restoreRecordRows.value, restoreTaskRows.value)
+  const observations = rows.flatMap((row) => {
+    const restoreRuntime = recordValue(recordValue(row.runtime).restore)
+    const task = restoreRuntime.latest_task
+    if (!task || typeof task !== 'object') return []
+    const taskRow = task as TaskRow
+    return taskRow.task_uuid && taskRow.status
+      ? [{
+          taskUuid: taskRow.task_uuid,
+          status: taskRow.status,
+          stopping: runtimeBool(restoreRuntime.stopping),
+        }]
+      : []
+  })
+  restoreTaskLifecycle.reconcile(observations)
+  clearFinishedRestoreReconcileTimers()
 }
 
 async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
   if (recSubmitting.value) return
   recSubmitting.value = true
   try {
-    if (await recoveryBlockedByActiveBackup()) {
-      ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
-      return
-    }
+    let jobs: RestoreSubmissionJob[] = []
     if (mode === 'plan') {
       try {
         await ensureRecoveryPlanSnapshotDefaults()
@@ -9441,17 +9643,23 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
         ElMessage.warning({ message: t('protection.backupsPage.msgPickSnapshotForRecovery'), grouping: true })
         return
       }
-      await runRestoreJobsSequentially(
-        runnablePlans.map((plan) => () => runRestorePlanBatch({
-          backup_config_id: Number(plan.backupConfigId),
-          target_type: (plan.targetType || 'agent') as RestoreEndpointType,
-          target_ref_id: Number(plan.targetRefId),
-          restore_dir: plan.restoreDir || plan.customSubdir,
-          conflict_mode: plan.conflictPolicy,
-          source_snapshot_id: Number(plan.snapshotId),
-          idempotency_key: `restore-plan-${plan.backupConfigId}-${plan.snapshotId}-${Date.now()}`,
-        })),
-      )
+      jobs = runnablePlans.map((plan) => ({
+        sourceId: backupSourceHostId(plan.backupId),
+        run: () => {
+          const payload = {
+            backup_config_id: Number(plan.backupConfigId),
+            target_type: (plan.targetType || 'agent') as RestoreEndpointType,
+            target_ref_id: Number(plan.targetRefId),
+            restore_dir: plan.restoreDir || plan.customSubdir,
+            conflict_mode: plan.conflictPolicy,
+            source_snapshot_id: Number(plan.snapshotId),
+          }
+          return runRestorePlanBatch({
+            ...payload,
+            idempotency_key: restoreIdempotencyKey('plan', payload),
+          })
+        },
+      }))
     } else {
       const drafts = recoveryTaskDrafts(mode)
       if (!drafts.length) {
@@ -9479,30 +9687,73 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
         ElMessage.warning({ message: t('protection.backupsPage.msgSnapshotNoDirsAvailable'), grouping: true })
         return
       }
-      await runRestoreJobsSequentially(
-        (payloads as RestoreRecordCreatePayload[]).map((payload) => () => createRestoreRecord(payload)),
-      )
+      jobs = (payloads as RestoreRecordCreatePayload[]).map((payload) => ({
+        sourceId: endpointUiId(payload.source_type, payload.source_ref_id),
+        run: () => createRestoreRecord(payload),
+      }))
     }
+
+    const sourceIds = normalizeSourceIdList(jobs.map((job) => job.sourceId))
+    if (sourceIds.some((sourceId) => sourceRestoreRuntime(sourceId).running || runtimeStopping(sourceId, 'restore'))) {
+      ElMessage.warning({ message: t('protection.backupsPage.msgRestoreAlreadyRunning'), grouping: true })
+      return
+    }
+
+    const outcome = await runRestoreJobsSequentially(jobs, ({ sourceId, result }) => {
+      restoreTaskLifecycle.accept(sourceId, result)
+      scheduleRestoreTaskReconciliation(sourceId, result.task_uuid)
+    })
+
+    if (!outcome.succeeded.length) {
+      const errors = outcome.failed.map((item) => item.error)
+      const error = errors.find((item) => restoreAlreadyRunningMeta(item))
+        || errors.find((item) => toApiError(item).errorCode === BACKUP_ALREADY_RUNNING_CODE)
+        || errors[0]
+      if (!error) return
+      if (await handleRestoreAlreadyRunning(error)) return
+      if (await handleBackupAlreadyRunning(
+        error,
+        () => refreshRecoverySourceRuntime(sourceIds),
+      )) return
+      showApiErrorI18n(error, t('errors.generic.requestFailed'))
+      return
+    }
+
+    const submittedSourceIds = normalizeSourceIdList(outcome.succeeded.map((item) => item.sourceId))
     if (isFixedSnapshotRestore.value) {
       fixedRestoreDirty.value = false
-      ElMessage.success({ message: t('protection.backupsPage.msgRecoverySubmitted'), grouping: true })
-      await leaveFixedRestore()
+      notifySuccess({
+        message: t('protection.backupsPage.msgRecoverySubmitted'),
+        dedupeKey: `restore-submitted:${submittedSourceIds.join(',')}`,
+      })
+      void leaveFixedRestore()
       return
     }
     recOpen.value = false
-    await refreshBackupConfigs()
-    ElMessage.success(
-      mode === 'plan'
-        ? t('protection.backupsPage.msgRecoveryPlanSubmitted')
-        : t('protection.backupsPage.msgRecoverySubmitted'),
-    )
-  } catch (e) {
-    if (await handleRestoreAlreadyRunning(e)) return
-    if (await handleBackupAlreadyRunning(
-      e,
-      () => refreshRecoverySourceRuntime(recoverySourceIds()),
-    )) return
-    showApiErrorI18n(e, t('errors.generic.requestFailed'))
+    if (outcome.failed.length) {
+      notifyWarning({
+        message: t('protection.backupsPage.msgRecoveryPartialSubmitted', {
+          done: outcome.succeeded.length,
+          failed: outcome.failed.length,
+        }),
+        dedupeKey: `restore-partial:${submittedSourceIds.join(',')}`,
+      })
+    } else {
+      notifySuccess({
+        message: mode === 'plan'
+          ? t('protection.backupsPage.msgRecoveryPlanSubmitted')
+          : t('protection.backupsPage.msgRecoverySubmitted'),
+        dedupeKey: `restore-submitted:${submittedSourceIds.join(',')}`,
+      })
+    }
+    void refreshRecoverySourceRuntime(submittedSourceIds).catch(() => {
+      notifyWarning({
+        message: t('protection.backupsPage.msgRestoreAcceptedRefreshFailed'),
+        dedupeKey: `restore-refresh-failed:${submittedSourceIds.join(',')}`,
+      })
+    })
+  } catch (error) {
+    showApiErrorI18n(error, t('errors.generic.requestFailed'))
   } finally {
     recSubmitting.value = false
   }
@@ -9836,9 +10087,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 </template>
                 <template v-else>
                   <ElTooltip
-                    :content="step3SelectionHasActiveBackup
-                      ? t('protection.backupsPage.msgBackupActiveBlocksActions')
-                      : t('protection.backupsPage.btnStartBackupCloudHint')"
+                    :content="t('protection.backupsPage.btnStartBackupCloudHint')"
                     placement="bottom"
                     :show-after="300"
                     :hide-after="0"
@@ -9861,9 +10110,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     </span>
                   </ElTooltip>
                   <ElTooltip
-                    :content="step3SelectionHasActiveBackup
-                      ? t('protection.backupsPage.msgBackupActiveBlocksActions')
-                      : t('protection.backupsPage.btnRecover')"
+                    :content="t('protection.backupsPage.btnRecover')"
                     placement="bottom"
                     :show-after="300"
                     :hide-after="0"
@@ -9913,9 +10160,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </ElDropdownItem>
                         <ElDropdownItem
                           divided
-                          :title="step3SelectionHasActiveBackup
-                            ? t('protection.backupsPage.msgBackupActiveBlocksActions')
-                            : undefined"
                           :disabled="!step3SelectionEditable"
                           @click="openBackupConfigEditFromStep3('paths')"
                         >
@@ -9928,9 +10172,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           </span>
                         </ElDropdownItem>
                         <ElDropdownItem
-                          :title="step3SelectionHasActiveBackup
-                            ? t('protection.backupsPage.msgBackupActiveBlocksActions')
-                            : undefined"
                           :disabled="!step3SelectionEditable"
                           @click="openBackupConfigEditFromStep3('policy')"
                         >
@@ -9943,9 +10184,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           </span>
                         </ElDropdownItem>
                         <ElDropdownItem
-                          :title="step3SelectionHasActiveBackup
-                            ? t('protection.backupsPage.msgBackupActiveBlocksActions')
-                            : undefined"
                           :disabled="!step3SelectionEditable"
                           @click="openBackupConfigEditFromStep3('recovery')"
                         >
@@ -9984,10 +10222,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </ElDropdownItem>
                         <ElDropdownItem
                           divided
-                          :title="step3SelectionHasActiveBackup
-                            ? t('protection.backupsPage.msgBackupActiveBlocksActions')
-                            : undefined"
-                          :disabled="!step3SelectionEditable"
+                          :disabled="!step3ResetEnabled"
                           @click="revertSelectedSourcesFromStep3"
                         >
                           <span class="el-dropdown-menu__item-content">
@@ -10000,9 +10235,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </ElDropdownItem>
                         <ElDropdownItem
                           class="el-dropdown-menu__item--danger"
-                          :title="step3SelectionHasActiveBackup
-                            ? t('protection.backupsPage.msgBackupActiveBlocksActions')
-                            : undefined"
                           :disabled="!step3UnregisterEnabled"
                           @click="deleteSelectedSourcesFromStep3"
                         >
@@ -11887,7 +12119,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           :file-filters="fileFilterById"
           :backup-snapshots="backupSnapshotRows"
           :backup-tasks="flowSourceDetailOpen ? sourceRelatedTaskRows : EMPTY_TASK_ROWS"
-          :restore-blocked-by-backup="activeFlowSource ? sourceHasActiveBackup(activeFlowSource.id) : false"
+          :restore-blocked-by-restore="activeFlowSource
+            ? sourceRestoreRuntime(activeFlowSource.id).running || runtimeStopping(activeFlowSource.id, 'restore')
+            : false"
           @closed="onFlowSourceDetailClosed"
           @start-backup="startBackupForSource"
           @recover="openRecoveryForSource"
@@ -14005,7 +14239,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 <ElButton
                   type="primary"
                   class="hfl-btn-with-icon"
-                  :disabled="!selectedRecoveryPlans.length || recoveryHasActiveBackup"
+                  :disabled="!selectedRecoveryPlans.length"
                   :loading="recSubmitting"
                   @click="confirmRecoveryEntry"
                 >
@@ -14055,7 +14289,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   v-else
                   type="primary"
                   class="hfl-btn-with-icon"
-                  :disabled="recoveryHasActiveBackup"
                   :loading="recSubmitting"
                   @click="runRecovery"
                 >

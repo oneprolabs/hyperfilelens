@@ -844,6 +844,115 @@ class ProtectionBackupConfigApiTests(TestCase):
         self.assertEqual(allowed.status_code, status.HTTP_200_OK, allowed.content)
         self.assertEqual(allowed.data["repository_endpoint_type"], "external")
 
+    def test_backup_paths_can_change_while_backup_is_active(self):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Active backup editable config"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        config_id = create.data["id"]
+        Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            status=Task.Status.RUNNING,
+            display_name="Active editable backup",
+            request_payload={
+                "source_type": "agent",
+                "source_ref_id": self.agent.id,
+                "backup_config_id": config_id,
+            },
+        )
+
+        response = self.client.patch(
+            f"/api/v1/protection/backup-configs/{config_id}/",
+            {
+                "name": "Updated during backup",
+                "directories": [{"path": "/data/next-backup"}],
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(response.data["name"], "Updated during backup")
+        self.assertEqual(response.data["directories"][0]["path"], "/data/next-backup")
+
+    def test_backup_paths_can_change_while_restore_is_active(self):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Active restore editable config"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        config_id = create.data["id"]
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            status=Task.Status.RUNNING,
+            display_name="Active restore during config edit",
+        )
+        TaskResource.objects.create(
+            task=task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/protection/backup-configs/{config_id}/",
+            {"directories": [{"path": "/data/after-restore"}]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(
+            response.data["directories"][0]["path"], "/data/after-restore"
+        )
+
+    def test_backup_source_identity_cannot_change_while_restore_is_active(self):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Restore identity fenced config"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        other_agent = Node.objects.create(
+            organization=self.org,
+            name="restore-identity-target",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            status=Task.Status.RUNNING,
+            display_name="Restore blocks source identity edit",
+        )
+        TaskResource.objects.create(
+            task=task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/protection/backup-configs/{create.data['id']}/",
+            {"source_ref_id": other_agent.id},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT, response.content)
+        problem = response.data["data"]
+        self.assertEqual(problem["code"], "RESTORE.ALREADY_RUNNING")
+        self.assertEqual(problem["meta"]["task_uuid"], str(task.task_uuid))
+
     def test_backup_config_compression_defaults_and_updates_strictly(self):
         payload = self._payload(name="Default compression config")
         payload.pop("compression_level")

@@ -1864,22 +1864,38 @@ def update_backup_config(
         sorted(data.keys()),
     )
     preflight_payload = _config_payload(data, current=config)
-    source_identities = [
-        (config.source_type, int(config.source_ref_id)),
+    identity_or_endpoint_changed = any(
         (
-            str(preflight_payload["source_type"]),
-            int(preflight_payload["source_ref_id"]),
-        ),
-    ]
-    from apps.source.services.internal.source_operation_fence import (
-        assert_no_active_backup_for_sources,
-    )
-
-    with transaction.atomic():
-        assert_no_active_backup_for_sources(
-            organization_id=config.organization_id,
-            sources=source_identities,
+            str(preflight_payload["source_type"]) != str(config.source_type),
+            int(preflight_payload["source_ref_id"]) != int(config.source_ref_id),
+            str(preflight_payload["repository_endpoint_type"])
+            != str(config.repository_endpoint_type),
         )
+    )
+    if identity_or_endpoint_changed:
+        from apps.source.services.internal.source_operation_fence import (
+            assert_no_active_backup_for_sources,
+            assert_no_active_restore_for_source,
+        )
+
+        with transaction.atomic():
+            identity_sources = [
+                (config.source_type, int(config.source_ref_id)),
+                (
+                    str(preflight_payload["source_type"]),
+                    int(preflight_payload["source_ref_id"]),
+                ),
+            ]
+            assert_no_active_backup_for_sources(
+                organization_id=config.organization_id,
+                sources=identity_sources,
+            )
+            for source_type, source_ref_id in sorted(set(identity_sources)):
+                assert_no_active_restore_for_source(
+                    organization_id=config.organization_id,
+                    source_type=source_type,
+                    source_ref_id=source_ref_id,
+                )
     if _should_initialize_direct_nas_repository(
         current=config, payload=preflight_payload
     ):
@@ -1891,10 +1907,24 @@ def update_backup_config(
         )
 
     with transaction.atomic():
-        assert_no_active_backup_for_sources(
-            organization_id=config.organization_id,
-            sources=source_identities,
-        )
+        if identity_or_endpoint_changed:
+            identity_sources = [
+                (config.source_type, int(config.source_ref_id)),
+                (
+                    str(preflight_payload["source_type"]),
+                    int(preflight_payload["source_ref_id"]),
+                ),
+            ]
+            assert_no_active_backup_for_sources(
+                organization_id=config.organization_id,
+                sources=identity_sources,
+            )
+            for source_type, source_ref_id in sorted(set(identity_sources)):
+                assert_no_active_restore_for_source(
+                    organization_id=config.organization_id,
+                    source_type=source_type,
+                    source_ref_id=source_ref_id,
+                )
         config = BackupConfig.objects.select_for_update().get(pk=config.pk)
         requested_repository_id = int(data.get("repository_id") or config.repository_id)
         if requested_repository_id != config.repository_id:

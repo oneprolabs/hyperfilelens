@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from django.core.exceptions import ValidationError
@@ -23,6 +24,14 @@ _TERMINAL_DIRECTORY_STATUSES = {
     BackupSourceSnapshotDirectory.Status.CANCELLED,
     BackupSourceSnapshotDirectory.Status.DELETED,
 }
+
+
+@dataclass(frozen=True)
+class SnapshotDirectoryConfig:
+    id: int
+    path: str
+    path_type: str
+    display_name: str
 
 
 def _snapshot_uid() -> str:
@@ -108,6 +117,17 @@ def create_source_snapshot(
     ).first()
     if repository is None:
         raise ValidationError({"repository_id": "Repository not found."})
+    config_directories = list(config.directories.order_by("sort_order", "id"))
+    snapshot_metadata = dict(metadata or {})
+    snapshot_metadata["config_directories"] = [
+        {
+            "id": directory.id,
+            "path": directory.path,
+            "path_type": directory.path_type,
+            "display_name": directory.display_name,
+        }
+        for directory in config_directories
+    ]
     return BackupSourceSnapshot.objects.create(
         organization_id=organization_id,
         snapshot_uid=str(snapshot_uid or _snapshot_uid()).strip(),
@@ -123,7 +143,7 @@ def create_source_snapshot(
         started_at=started_at,
         finished_at=finished_at,
         directory_count=max(0, int(directory_count)),
-        metadata=metadata or {},
+        metadata=snapshot_metadata,
         policy_snapshot=policy_snapshot,
     )
 
@@ -323,6 +343,35 @@ def backup_config_directories(*, backup_config_id: int, organization_id: int) ->
             backup_config_id=backup_config_id,
         ).order_by("sort_order", "id")
     )
+
+
+def snapshot_config_directories(
+    *, source_snapshot: BackupSourceSnapshot
+) -> list[SnapshotDirectoryConfig]:
+    metadata = source_snapshot.metadata if isinstance(source_snapshot.metadata, dict) else {}
+    values = metadata.get("config_directories")
+    if not isinstance(values, list):
+        return []
+    directories: list[SnapshotDirectoryConfig] = []
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        try:
+            directory_id = int(value.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        path = str(value.get("path") or "").strip()
+        if directory_id <= 0 or not path:
+            continue
+        directories.append(
+            SnapshotDirectoryConfig(
+                id=directory_id,
+                path=path,
+                path_type=str(value.get("path_type") or "unknown"),
+                display_name=str(value.get("display_name") or ""),
+            )
+        )
+    return directories
 
 
 def get_backup_config_for_snapshot(*, source_snapshot: BackupSourceSnapshot) -> BackupConfig:

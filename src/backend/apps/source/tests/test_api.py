@@ -1167,6 +1167,46 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(runtime["progress"], 35)
         self.assertEqual(runtime["latest_task"]["id"], running_task.id)
 
+    def test_backup_selectable_runtime_treats_waiting_and_blocked_backup_as_active(
+        self,
+    ):
+        for index, task_status in enumerate(
+            (Task.Status.WAITING, Task.Status.BLOCKED), start=1
+        ):
+            with self.subTest(task_status=task_status):
+                agent = Node.objects.create(
+                    organization=self.org,
+                    name=f"agent-runtime-{task_status}",
+                    role=Node.Role.AGENT,
+                    status=Node.Status.ACTIVE,
+                    availability=Node.Availability.ONLINE,
+                    ip_address=f"10.0.1.{index}",
+                )
+                task = Task.objects.create(
+                    organization_id=self.org.id,
+                    task_type=Task.Type.BACKUP,
+                    display_name=f"Backup {task_status} source",
+                    status=task_status,
+                    trigger_type=Task.TriggerType.MANUAL,
+                )
+                TaskResource.objects.create(
+                    task=task,
+                    resource_type=TaskResource.Type.BACKUP_SOURCE,
+                    resource_subtype="agent",
+                    resource_id=agent.id,
+                )
+
+                response = self.client.get(
+                    f"/api/v1/source/backup-selectable/?ids=agent:{agent.id}&expand=runtime",
+                    **self._headers(),
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                runtime = response.data["results"][0]["runtime"]["backup"]
+                self.assertTrue(runtime["running"])
+                self.assertEqual(runtime["running_count"], 1)
+                self.assertEqual(runtime["latest_task"]["id"], task.id)
+
     def test_backup_selectable_runtime_excludes_insight_workspace_restore(self):
         agent = Node.objects.create(
             organization=self.org,

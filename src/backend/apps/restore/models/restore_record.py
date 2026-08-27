@@ -79,10 +79,7 @@ class RestoreRecord(models.Model):
             ),
             models.UniqueConstraint(
                 fields=["organization_id", "purpose", "idempotency_key"],
-                condition=(
-                    models.Q(purpose="lens_workspace")
-                    & ~models.Q(idempotency_key="")
-                ),
+                condition=~models.Q(idempotency_key=""),
                 name="uniq_restore_org_purpose_idem",
             ),
             models.CheckConstraint(
