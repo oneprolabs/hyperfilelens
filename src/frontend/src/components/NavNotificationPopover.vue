@@ -300,9 +300,26 @@ onUnmounted(() => {
     color 0.15s ease;
 }
 
-.nav-notification-trigger:hover {
+.nav-notification-trigger:hover,
+.nav-notification-trigger:focus-visible {
   background: var(--icon-btn-hover-bg, rgba(255, 255, 255, 0.08));
   color: var(--nav-notification-hover-color, #fff);
+}
+
+.nav-notification-trigger:focus-visible {
+  outline: 2px solid var(--color-primary, #6D5EF6);
+  outline-offset: 2px;
+}
+
+@media (min-width: 1024px) and (max-width: 1439.98px) {
+  .nav-notification-trigger {
+    color: var(--icon-btn-color, #aeb2c5);
+  }
+
+  .nav-notification-trigger:hover,
+  .nav-notification-trigger:focus-visible {
+    color: var(--icon-btn-hover-color, #E2E2E2);
+  }
 }
 
 @media (max-width: 1023.98px) {

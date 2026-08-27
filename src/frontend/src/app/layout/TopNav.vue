@@ -123,7 +123,7 @@ function handleNavClick(event: MouseEvent, to: string) {
         <span>{{ t('nav.platformOps') }}</span>
       </a>
 
-      <div class="icon-btn alerts-btn">
+      <div class="alerts-btn">
         <NavNotificationPopover />
       </div>
 
@@ -278,25 +278,6 @@ function handleNavClick(event: MouseEvent, to: string) {
   gap: 4px;
 }
 
-.icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 32px;
-  width: 32px;
-  padding: 0;
-  color: var(--icon-btn-color, #aeb2c5);
-  border-radius: 6px;
-  cursor: pointer;
-  text-decoration: none;
-  border: none;
-  background: transparent;
-  font-size: 13px;
-  transition: all 150ms ease;
-  margin: 0;
-}
-
 .timezone-display {
   height: 32px;
   padding: 0 10px;
@@ -304,17 +285,14 @@ function handleNavClick(event: MouseEvent, to: string) {
   font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
+  white-space: nowrap;
   color: var(--tz-color, #c9cdd4);
   display: flex;
   align-items: center;
+  gap: 4px;
   border-radius: 10px;
   background: var(--tz-bg, rgba(255, 255, 255, 0.06));
   border: 1px solid var(--tz-border, rgba(255, 255, 255, 0.12));
-}
-
-.icon-btn:hover {
-  background: var(--icon-btn-hover-bg, rgba(255, 255, 255, 0.08)) !important;
-  color: var(--icon-btn-hover-color, #E2E2E2) !important;
 }
 
 .alerts-btn {
@@ -415,7 +393,6 @@ function handleNavClick(event: MouseEvent, to: string) {
     min-width: 0;
   }
 
-  .icon-btn,
   .alerts-btn {
     width: 44px;
     height: 44px;
