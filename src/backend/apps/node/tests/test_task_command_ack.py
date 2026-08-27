@@ -227,6 +227,31 @@ class TaskCommandAckTests(TestCase):
 
     @patch("apps.node.services.internal.task.redis_store.set_task_info")
     @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    def test_path_size_progress_does_not_extend_absolute_deadline(
+        self, _push, _set_info
+    ):
+        accepted_at = timezone.now() - timezone.timedelta(minutes=10)
+        task = self.task(
+            kind="path.size",
+            correlation_type=node_conf.PATH_SIZE_CORRELATION_TYPE,
+            status=NodeTask.Status.RUNNING,
+            accepted_at=accepted_at,
+        )
+
+        renewed = record_task_progress(
+            task_id=task.id,
+            node_id=self.node.id,
+            progress={"phase": "running"},
+        )
+
+        self.assertEqual(
+            renewed.watchdog_deadline_at,
+            accepted_at
+            + timezone.timedelta(seconds=node_conf.PATH_SIZE_WATCHDOG_SECONDS),
+        )
+
+    @patch("apps.node.services.internal.task.redis_store.set_task_info")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
     def test_legacy_source_nas_probe_progress_uses_dispatch_start(
         self, _push, _set_info
     ):

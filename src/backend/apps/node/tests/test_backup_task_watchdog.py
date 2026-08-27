@@ -132,3 +132,18 @@ class BackupTaskWatchdogTests(SimpleTestCase):
                 seconds=node_conf.SNAPSHOT_DELETE_WATCHDOG_SECONDS
             ),
         )
+
+    def test_path_size_uses_bounded_background_watchdog(self):
+        started_at = timezone.now()
+
+        deadline = _initial_watchdog_deadline(
+            correlation_type=node_conf.PATH_SIZE_CORRELATION_TYPE,
+            kind="path.size",
+            from_time=started_at,
+        )
+
+        self.assertEqual(
+            deadline,
+            started_at
+            + timezone.timedelta(seconds=node_conf.PATH_SIZE_WATCHDOG_SECONDS),
+        )

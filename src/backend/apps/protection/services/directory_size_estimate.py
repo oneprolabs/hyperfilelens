@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from celery.exceptions import SoftTimeLimitExceeded
-from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.utils import timezone
 
-from apps.node.services.interface import run_agent_task_sync
+from apps.node import conf as node_conf
+from apps.node.models import Node, NodeTask
+from apps.node.services.interface import cancel_agent_task, run_agent_task_async
 from apps.protection.models import BackupConfig, BackupConfigDirectory, BackupSourceSnapshot
 from apps.protection.services.backup_task import ExecutionTarget, _resolve_execution_target
 from apps.source.services.internal.nas_share_path import to_mount_path
@@ -17,30 +18,33 @@ from apps.source.services.internal.nas_share_path import to_mount_path
 logger = logging.getLogger(__name__)
 
 _PATH_SIZE_KIND = "path.size"
-# Legacy sync callers (if any) may still use a long wait; async precache uses a
-# shorter per-path budget so multiple directories fit under the Celery soft limit.
-_PATH_SIZE_TIMEOUT_SECONDS = 300
-_PRECACHE_PATH_TIMEOUT_SECONDS = 60
-_PRECACHE_MAX_ATTEMPTS = 5
+_PATH_SIZE_CORRELATION_TYPE = node_conf.PATH_SIZE_CORRELATION_TYPE
+_PATH_SIZE_MONITOR_SECONDS = 30
+_PATH_SIZE_RETRY_SECONDS = 30
 # Stored when path.size was attempted but failed. Progress treats as 0;
 # gating skips re-queue until the cache is invalidated back to 0.
 _ESTIMATE_UNAVAILABLE = -1
 
 
-class DirectorySizeEstimateError(ValidationError):
-    """Raised when directory size cannot be estimated.
-
-    permanent=True means the path should not be retried until cache invalidation.
-    Timeouts and transient agent errors stay retryable.
-    """
-
-    def __init__(self, message, *, permanent: bool = False, code=None, params=None):
-        super().__init__(message, code=code, params=params)
-        self.permanent = bool(permanent)
+def _path_size_concurrency(execution_target: ExecutionTarget) -> int:
+    role = str(execution_target.node.role or "").strip().lower()
+    return 2 if role in {"proxy", "gateway"} else 1
 
 
-class DirectorySizeEstimateResolveError(Exception):
-    """Raised when the backup execution target cannot be resolved for du precache."""
+def _schedule_directory_estimate_refresh(
+    *,
+    config_id: int,
+    task_uuid: str | None,
+    countdown: int = 0,
+) -> None:
+    from apps.protection.tasks.directory_size_estimate import (
+        refresh_backup_config_directory_estimates_task,
+    )
+
+    refresh_backup_config_directory_estimates_task.apply_async(
+        kwargs={"config_id": int(config_id), "task_uuid": task_uuid},
+        countdown=max(0, int(countdown)),
+    )
 
 
 def _agent_path_for_directory(
@@ -54,63 +58,396 @@ def _agent_path_for_directory(
     return path
 
 
-def estimate_directory_size_bytes(
+def directory_size_correlation_id(
     *,
-    node_id: int,
-    path: str,
-    path_type: str = "directory",
-    organization_id: int,
-    execution_target: ExecutionTarget,
-    wait_timeout_seconds: int | None = None,
-) -> int:
-    timeout = (
-        _PATH_SIZE_TIMEOUT_SECONDS
-        if wait_timeout_seconds is None
-        else max(1, int(wait_timeout_seconds))
-    )
-    payload: dict[str, Any] = {
-        "path": path,
-        "path_type": path_type,
-    }
-    if execution_target.nas_payload:
-        payload["nas"] = execution_target.nas_payload
-    outcome = run_agent_task_sync(
-        organization_id=organization_id,
-        node_id=node_id,
-        kind=_PATH_SIZE_KIND,
-        payload=payload,
-        wait_timeout_seconds=timeout,
-    )
-    if outcome.timed_out:
-        raise DirectorySizeEstimateError(
-            f"Path size estimation timed out for {path}",
-            permanent=False,
+    config: BackupConfig,
+    directory: BackupConfigDirectory,
+) -> str:
+    """Return the stable identity for one configuration generation."""
+    return f"{config.id}:{directory.id}:{directory.updated_at.isoformat()}"
+
+
+def _mark_estimate_unavailable_if_current(
+    *,
+    config: BackupConfig,
+    directory_id: int,
+    correlation_id: str,
+) -> bool:
+    with transaction.atomic():
+        directory = (
+            BackupConfigDirectory.objects.select_for_update()
+            .filter(id=directory_id, backup_config_id=config.id)
+            .first()
         )
-    if not outcome.ok:
-        error = str(outcome.task.last_error or "").strip()
-        if not error and isinstance(outcome.stream_message, dict):
-            error = str(
-                outcome.stream_message.get("error")
-                or outcome.stream_message.get("message")
-                or ""
-            )
-        if not error:
-            error = "path size estimation failed"
-        # Agent/host blips are retryable; leave estimate pending for requeue.
-        raise DirectorySizeEstimateError(error, permanent=False)
-    result = outcome.result
-    if not isinstance(result, dict) or "size_bytes" not in result:
-        raise DirectorySizeEstimateError("Agent returned an invalid path size response.")
-    raw_size_bytes = result["size_bytes"]
-    if isinstance(raw_size_bytes, bool):
-        raise DirectorySizeEstimateError("Agent returned an invalid path size response.")
+        if directory is None or directory_size_correlation_id(
+            config=config,
+            directory=directory,
+        ) != correlation_id:
+            return False
+        directory.estimated_size_bytes = _ESTIMATE_UNAVAILABLE
+        directory.save(update_fields=["estimated_size_bytes", "updated_at"])
+        return True
+
+
+def _path_size_failure_is_retryable(node_task: NodeTask) -> bool:
+    result = node_task.result if isinstance(node_task.result, dict) else {}
+    code = str(
+        result.get("diagnostic_error_code") or result.get("error_code") or ""
+    ).strip().upper()
+    error = str(node_task.last_error or "").strip().lower()
+    return code in {
+        "AGENT_UNAVAILABLE",
+        "AGENT_CONNECTION_UNSTABLE",
+        "AGENT_ACK_TIMEOUT",
+        "AGENT_WEBSOCKET_UNAVAILABLE",
+    } or any(
+        marker in error
+        for marker in (
+            "websocket is not routable",
+            "websocket is reconnecting",
+            "agent is offline",
+            "agent source is offline",
+        )
+    )
+
+
+def _path_size_retry_exhausted(*, correlation_id: str) -> bool:
+    retry_count = NodeTask.objects.filter(
+        kind=_PATH_SIZE_KIND,
+        correlation_type=_PATH_SIZE_CORRELATION_TYPE,
+        correlation_id=correlation_id,
+        status=NodeTask.Status.FAILED,
+    ).count()
+    return retry_count >= node_conf.PATH_SIZE_MAX_RETRIES
+
+
+def enqueue_backup_config_directory_estimates(
+    *,
+    config_id: int,
+    task_uuid: str | None = None,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """Dispatch missing directory estimates without waiting for the Agent."""
+    config = BackupConfig.objects.filter(id=int(config_id)).first()
+    if config is None:
+        return {"config_id": int(config_id), "status": "missing", "queued": 0}
+    if force_refresh:
+        # Keep compatibility for explicit refresh callers, but do not make
+        # ordinary backup execution invalidate a usable cached estimate.
+        invalidate_backup_config_directory_estimates(config=config)
+        config.refresh_from_db()
+    directories = list(config.directories.all())
+    if not any(_directory_estimate_pending(item) for item in directories):
+        return {"config_id": int(config.id), "status": "ok", "queued": 0}
+
+    snapshot_stub = BackupSourceSnapshot(
+        organization_id=config.organization_id,
+        source_type=config.source_type,
+        source_ref_id=config.source_ref_id,
+        backup_config_id=config.id,
+    )
     try:
-        size_bytes = int(raw_size_bytes)
-    except (TypeError, ValueError):
-        raise DirectorySizeEstimateError("Agent returned an invalid path size response.") from None
-    if size_bytes < 0:
-        raise DirectorySizeEstimateError("Agent returned an invalid path size response.")
-    return size_bytes
+        execution_target = _resolve_execution_target(source_snapshot=snapshot_stub)
+    except Exception as exc:
+        logger.warning(
+            "directory_size_estimate_resolve_failed config_id=%s error=%s",
+            config.id,
+            exc,
+        )
+        return {
+            "config_id": int(config.id),
+            "status": "resolve_failed",
+            "queued": 0,
+        }
+
+    queued = 0
+    dispatch_attempts = 0
+    dispatch_capacity = _path_size_concurrency(execution_target)
+    dispatch_failed = False
+    for directory in directories:
+        if not _directory_estimate_pending(directory):
+            continue
+        node_task_id = ""
+        correlation_id = ""
+        with transaction.atomic():
+            locked_node = (
+                Node.objects.select_for_update()
+                .filter(pk=execution_target.node.id)
+                .first()
+            )
+            if locked_node is None:
+                continue
+            locked = (
+                BackupConfigDirectory.objects.select_for_update()
+                .filter(id=directory.id, backup_config_id=config.id)
+                .first()
+            )
+            if locked is None or not _directory_estimate_pending(locked):
+                continue
+            correlation_id = directory_size_correlation_id(
+                config=config,
+                directory=locked,
+            )
+            active = (
+                NodeTask.objects.filter(
+                    organization_id=config.organization_id,
+                    node_id=execution_target.node.id,
+                    kind=_PATH_SIZE_KIND,
+                    correlation_type=_PATH_SIZE_CORRELATION_TYPE,
+                    correlation_id=correlation_id,
+                    status__in=(NodeTask.Status.PENDING, NodeTask.Status.RUNNING),
+                )
+                .order_by("created_at", "id")
+                .first()
+            )
+            if active is not None:
+                node_task_id = str(active.id)
+            else:
+                active_count = NodeTask.objects.filter(
+                    organization_id=config.organization_id,
+                    node_id=locked_node.id,
+                    kind=_PATH_SIZE_KIND,
+                    correlation_type=_PATH_SIZE_CORRELATION_TYPE,
+                    status__in=(
+                        NodeTask.Status.PENDING,
+                        NodeTask.Status.RUNNING,
+                    ),
+                ).count()
+                if (
+                    dispatch_attempts >= dispatch_capacity
+                    or active_count >= dispatch_capacity
+                ):
+                    continue
+                agent_path = _agent_path_for_directory(
+                    directory=locked,
+                    execution_target=execution_target,
+                )
+                path_type = (
+                    str(locked.path_type or "directory").strip().lower() or "directory"
+                )
+                payload: dict[str, Any] = {
+                    "path": agent_path,
+                    "path_type": path_type,
+                }
+                if execution_target.nas_payload:
+                    payload["nas"] = execution_target.nas_payload
+                try:
+                    dispatch_attempts += 1
+                    handle = run_agent_task_async(
+                        organization_id=int(config.organization_id),
+                        node_id=int(execution_target.node.id),
+                        kind=_PATH_SIZE_KIND,
+                        payload=payload,
+                        correlation_type=_PATH_SIZE_CORRELATION_TYPE,
+                        correlation_id=correlation_id,
+                    )
+                except Exception:
+                    dispatch_failed = True
+                    logger.exception(
+                        "directory_size_estimate_dispatch_failed config_id=%s "
+                        "directory_id=%s",
+                        config.id,
+                        locked.id,
+                    )
+                    continue
+                node_task_id = str(handle.task_id)
+                queued += 1
+            directory_id = locked.id
+
+        if not node_task_id:
+            continue
+        from apps.protection.tasks.directory_size_estimate import (
+            reconcile_directory_size_estimate_task,
+        )
+
+        reconcile_directory_size_estimate_task.apply_async(
+            kwargs={
+                "config_id": int(config.id),
+                "directory_id": int(directory_id),
+                "node_task_id": node_task_id,
+                "correlation_id": correlation_id,
+                "task_uuid": task_uuid,
+            },
+            countdown=_PATH_SIZE_MONITOR_SECONDS,
+        )
+    status = "pending"
+    if queued:
+        status = "queued"
+    elif dispatch_failed:
+        status = "dispatch_failed"
+    return {"config_id": int(config.id), "status": status, "queued": queued}
+
+
+def reconcile_directory_size_estimate(
+    *,
+    config_id: int,
+    directory_id: int,
+    node_task_id: str,
+    correlation_id: str,
+    task_uuid: str | None = None,
+) -> dict[str, Any]:
+    """Apply one asynchronous estimate or schedule its next observation."""
+    node_task = NodeTask.objects.filter(id=node_task_id).first()
+    config = BackupConfig.objects.filter(id=int(config_id)).first()
+    directory = BackupConfigDirectory.objects.filter(
+        id=int(directory_id),
+        backup_config_id=int(config_id),
+    ).first()
+    if node_task is None or config is None or directory is None:
+        return {"status": "missing"}
+    if node_task.correlation_id != correlation_id:
+        return {"status": "stale"}
+    current_correlation = directory_size_correlation_id(
+        config=config,
+        directory=directory,
+    )
+    if current_correlation != correlation_id:
+        return {"status": "stale"}
+    if node_task.status in (NodeTask.Status.PENDING, NodeTask.Status.RUNNING):
+        from apps.protection.tasks.directory_size_estimate import (
+            reconcile_directory_size_estimate_task,
+        )
+
+        if node_task.watchdog_deadline_at <= timezone.now():
+            if node_task.cancel_requested_at is None:
+                cancel_agent_task(task_id=str(node_task.id), reason="path size timeout")
+            reconcile_directory_size_estimate_task.apply_async(
+                kwargs={
+                    "config_id": int(config_id),
+                    "directory_id": int(directory_id),
+                    "node_task_id": str(node_task.id),
+                    "correlation_id": correlation_id,
+                    "task_uuid": task_uuid,
+                },
+                countdown=_PATH_SIZE_MONITOR_SECONDS,
+            )
+            return {"status": "canceling"}
+        reconcile_directory_size_estimate_task.apply_async(
+            kwargs={
+                "config_id": int(config_id),
+                "directory_id": int(directory_id),
+                "node_task_id": str(node_task.id),
+                "correlation_id": correlation_id,
+                "task_uuid": task_uuid,
+            },
+            countdown=_PATH_SIZE_MONITOR_SECONDS,
+        )
+        return {"status": "pending"}
+    if node_task.status == NodeTask.Status.SUCCESS:
+        result = node_task.result if isinstance(node_task.result, dict) else {}
+        raw_size = result.get("size_bytes")
+        if isinstance(raw_size, bool):
+            raw_size = None
+        try:
+            size_bytes = int(raw_size)
+        except (TypeError, ValueError):
+            size_bytes = -1
+        if size_bytes >= 0:
+            with transaction.atomic():
+                locked_directory = (
+                    BackupConfigDirectory.objects.select_for_update()
+                    .filter(
+                        id=directory.id,
+                        backup_config_id=config.id,
+                    )
+                    .first()
+                )
+                if locked_directory is None:
+                    return {"status": "missing"}
+                if (
+                    directory_size_correlation_id(
+                        config=config,
+                        directory=locked_directory,
+                    )
+                    != correlation_id
+                ):
+                    return {"status": "stale"}
+                locked_directory.estimated_size_bytes = size_bytes
+                locked_directory.size_estimated_at = timezone.now()
+                locked_directory.save(
+                    update_fields=[
+                        "estimated_size_bytes",
+                        "size_estimated_at",
+                        "updated_at",
+                    ]
+                )
+                directory = locked_directory
+            if task_uuid and _all_directory_estimates_verified(config):
+                from apps.protection.tasks.directory_size_estimate import (
+                    _freeze_task_directory_size,
+                )
+
+                _freeze_task_directory_size(
+                    task_uuid=task_uuid,
+                    du_total=_du_total(config),
+                )
+            _schedule_directory_estimate_refresh(
+                config_id=config.id,
+                task_uuid=task_uuid,
+            )
+            return {"status": "success", "size_bytes": size_bytes}
+    result = node_task.result if isinstance(node_task.result, dict) else {}
+    error_code = str(result.get("error_code") or "").strip().upper()
+    if error_code == "PATH_SIZE_BUSY":
+        if _path_size_retry_exhausted(correlation_id=correlation_id):
+            _mark_estimate_unavailable_if_current(
+                config=config,
+                directory_id=directory.id,
+                correlation_id=correlation_id,
+            )
+            _schedule_directory_estimate_refresh(
+                config_id=config.id,
+                task_uuid=task_uuid,
+            )
+            return {"status": "unavailable"}
+        _schedule_directory_estimate_refresh(
+            config_id=config_id,
+            task_uuid=task_uuid,
+            countdown=_PATH_SIZE_RETRY_SECONDS,
+        )
+        return {"status": "busy"}
+    if (
+        error_code == "PATH_PERMISSION_DENIED"
+        or "path not found" in str(node_task.last_error or "").lower()
+    ):
+        _mark_estimate_unavailable_if_current(
+            config=config,
+            directory_id=directory.id,
+            correlation_id=correlation_id,
+        )
+        _schedule_directory_estimate_refresh(
+            config_id=config.id,
+            task_uuid=task_uuid,
+        )
+        return {"status": "unavailable"}
+    if _path_size_failure_is_retryable(node_task):
+        if _path_size_retry_exhausted(correlation_id=correlation_id):
+            _mark_estimate_unavailable_if_current(
+                config=config,
+                directory_id=directory.id,
+                correlation_id=correlation_id,
+            )
+            _schedule_directory_estimate_refresh(
+                config_id=config.id,
+                task_uuid=task_uuid,
+            )
+            return {"status": "unavailable"}
+        _schedule_directory_estimate_refresh(
+            config_id=config.id,
+            task_uuid=task_uuid,
+            countdown=_PATH_SIZE_RETRY_SECONDS,
+        )
+        return {"status": "retryable"}
+    _mark_estimate_unavailable_if_current(
+        config=config,
+        directory_id=directory.id,
+        correlation_id=correlation_id,
+    )
+    _schedule_directory_estimate_refresh(
+        config_id=config.id,
+        task_uuid=task_uuid,
+    )
+    return {"status": "failed"}
 
 
 def _raw_estimate(directory: BackupConfigDirectory) -> int:
@@ -154,198 +491,20 @@ def invalidate_backup_config_directory_estimates(*, config: BackupConfig) -> int
         config.directories.exclude(
             estimated_size_bytes=0,
             size_estimated_at__isnull=True,
-        ).update(estimated_size_bytes=0, size_estimated_at=None)
+        ).update(
+            estimated_size_bytes=0,
+            size_estimated_at=None,
+            updated_at=timezone.now(),
+        )
     )
 
 
-def _mark_pending_directory_estimates_unavailable(*, config: BackupConfig) -> int:
-    """Stop retrying pending paths until an explicit cache invalidation."""
+def mark_backup_config_pending_estimates_unavailable(*, config_id: int) -> int:
+    """Stop retrying unresolved estimates after the bounded retry budget."""
     return int(
-        config.directories.filter(
+        BackupConfigDirectory.objects.filter(
+            backup_config_id=int(config_id),
             estimated_size_bytes=0,
             size_estimated_at__isnull=True,
-        ).update(
-            estimated_size_bytes=_ESTIMATE_UNAVAILABLE
-        )
+        ).update(estimated_size_bytes=_ESTIMATE_UNAVAILABLE)
     )
-
-
-def refresh_missing_backup_config_directory_estimates(
-    *,
-    organization_id: int,
-    config: BackupConfig,
-    source_type: str,
-    source_ref_id: int,
-    wait_timeout_seconds: int | None = None,
-) -> int:
-    """Best-effort refresh of missing directory estimates.
-
-    Failures are logged and skipped. Returns the sum of known estimates (may be 0).
-    Progress UI degrades when the total is 0; backup must not fail because of this.
-
-    Raises DirectorySizeEstimateResolveError when the execution target cannot be
-    resolved (caller may requeue within the attempt budget).
-    """
-    directories = list(config.directories.all())
-    if not any(_directory_estimate_pending(directory) for directory in directories):
-        return _du_total_from_directories(directories)
-
-    snapshot_stub = BackupSourceSnapshot(
-        organization_id=organization_id,
-        source_type=source_type,
-        source_ref_id=source_ref_id,
-        backup_config_id=config.id,
-    )
-    try:
-        execution_target = _resolve_execution_target(source_snapshot=snapshot_stub)
-    except Exception as exc:
-        logger.exception(
-            "directory_size_estimate_resolve_failed config_id=%s source=%s:%s",
-            config.id,
-            source_type,
-            source_ref_id,
-        )
-        raise DirectorySizeEstimateResolveError(str(exc) or "resolve failed") from exc
-
-    node_id = int(execution_target.node.id)
-    du_total = 0
-    for directory in directories:
-        current = max(0, _raw_estimate(directory))
-        if _directory_estimate_pending(directory):
-            agent_path = _agent_path_for_directory(
-                directory=directory,
-                execution_target=execution_target,
-            )
-            path_type = (
-                str(directory.path_type or "directory").strip().lower() or "directory"
-            )
-            try:
-                estimated = estimate_directory_size_bytes(
-                    node_id=node_id,
-                    path=agent_path,
-                    path_type=path_type,
-                    organization_id=organization_id,
-                    execution_target=execution_target,
-                    wait_timeout_seconds=wait_timeout_seconds,
-                )
-            except SoftTimeLimitExceeded:
-                raise
-            except DirectorySizeEstimateError as exc:
-                logger.warning(
-                    "directory_size_estimate_failed config_id=%s directory_id=%s "
-                    "path=%s permanent=%s error=%s",
-                    config.id,
-                    directory.id,
-                    agent_path,
-                    exc.permanent,
-                    exc,
-                )
-                if exc.permanent:
-                    directory.estimated_size_bytes = _ESTIMATE_UNAVAILABLE
-                    directory.save(update_fields=["estimated_size_bytes", "updated_at"])
-                continue
-            except Exception as exc:
-                # Unexpected errors stay retryable (estimate remains 0).
-                logger.warning(
-                    "directory_size_estimate_failed config_id=%s directory_id=%s "
-                    "path=%s error=%s",
-                    config.id,
-                    directory.id,
-                    agent_path,
-                    exc,
-                )
-                continue
-            directory.estimated_size_bytes = estimated
-            directory.size_estimated_at = timezone.now()
-            directory.save(
-                update_fields=["estimated_size_bytes", "size_estimated_at", "updated_at"]
-            )
-            current = estimated
-            logger.info(
-                "directory_size_estimated config_id=%s directory_id=%s path=%s "
-                "size_bytes=%s",
-                config.id,
-                directory.id,
-                agent_path,
-                estimated,
-            )
-        du_total += current
-    return du_total
-
-
-def refresh_backup_config_directory_estimates_by_id(
-    *,
-    config_id: int,
-    attempt: int = 1,
-    force_refresh: bool = False,
-) -> dict[str, Any]:
-    """Celery entry: pre-cache missing estimates for one backup config."""
-    attempt_n = max(1, int(attempt or 1))
-    config = BackupConfig.objects.filter(id=int(config_id)).first()
-    if config is None:
-        return {
-            "config_id": int(config_id),
-            "status": "missing",
-            "du_total": 0,
-            "attempt": attempt_n,
-            "should_requeue": False,
-        }
-
-    # A newly created backup must not reuse a size cached when the configured
-    # path contained different files. Invalidate once, then let the existing
-    # bounded retry flow handle every directory as a normal pending estimate.
-    if force_refresh and attempt_n == 1:
-        invalidate_backup_config_directory_estimates(config=config)
-
-    timed_out = False
-    resolve_failed = False
-    try:
-        du_total = refresh_missing_backup_config_directory_estimates(
-            organization_id=int(config.organization_id),
-            config=config,
-            source_type=str(config.source_type),
-            source_ref_id=int(config.source_ref_id),
-            wait_timeout_seconds=_PRECACHE_PATH_TIMEOUT_SECONDS,
-        )
-    except SoftTimeLimitExceeded:
-        timed_out = True
-        logger.warning(
-            "directory_size_estimate_soft_time_limit config_id=%s attempt=%s",
-            config.id,
-            attempt_n,
-        )
-        du_total = _du_total(config)
-    except DirectorySizeEstimateResolveError:
-        resolve_failed = True
-        du_total = _du_total(config)
-
-    still_pending = backup_config_needs_directory_estimate_refresh(config)
-    should_requeue = bool(still_pending and attempt_n < _PRECACHE_MAX_ATTEMPTS)
-    # Only freeze when the source/target cannot be resolved: retryable path.size
-    # timeouts stay at 0 so a later directories/source save can precache again.
-    # Name-only updates do not enqueue (see backup_config views).
-    if resolve_failed and still_pending and not should_requeue:
-        _mark_pending_directory_estimates_unavailable(config=config)
-
-    if timed_out and should_requeue:
-        status = "soft_time_limit"
-    elif timed_out and still_pending:
-        status = "soft_time_limit_exhausted"
-    elif resolve_failed and should_requeue:
-        status = "resolve_failed"
-    elif resolve_failed:
-        status = "resolve_exhausted"
-    elif should_requeue:
-        status = "partial"
-    elif still_pending:
-        status = "exhausted"
-    else:
-        status = "ok"
-    return {
-        "config_id": int(config.id),
-        "status": status,
-        "du_total": int(du_total),
-        "du_total_known": _all_directory_estimates_verified(config),
-        "attempt": attempt_n,
-        "should_requeue": should_requeue,
-    }

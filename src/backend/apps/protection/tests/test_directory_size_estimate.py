@@ -3,29 +3,25 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
 from apps.iam.models import Organization
-from apps.node.models import Node
+from apps.node import conf as node_conf
+from apps.node.models import Node, NodeTask
 from apps.protection.models import BackupConfig, BackupConfigDirectory
 from apps.protection.services.backup_config import (
     _sync_backup_config_directories,
     update_backup_config,
 )
 from apps.protection.services.directory_size_estimate import (
-    DirectorySizeEstimateError,
-    DirectorySizeEstimateResolveError,
     _ESTIMATE_UNAVAILABLE,
     backup_config_needs_directory_estimate_refresh,
-    estimate_directory_size_bytes,
-    refresh_backup_config_directory_estimates_by_id,
-    refresh_missing_backup_config_directory_estimates,
+    directory_size_correlation_id,
+    enqueue_backup_config_directory_estimates,
+    reconcile_directory_size_estimate,
 )
 from apps.storage.repositories.models import Repository
-from apps.task.models import Task
-from apps.task.services.interface import create_task
 
 
 class DirectorySizeEstimateTests(TestCase):
@@ -89,192 +85,6 @@ class DirectorySizeEstimateTests(TestCase):
             nas_payload=None,
             node=self.agent,
         )
-
-    def _agent_outcome(self, result):
-        return SimpleNamespace(
-            timed_out=False,
-            ok=True,
-            result=result,
-            task=SimpleNamespace(last_error=""),
-            stream_message=None,
-        )
-
-    @patch("apps.protection.services.directory_size_estimate.run_agent_task_sync")
-    def test_zero_size_is_a_valid_agent_estimate(self, run_agent_task_sync):
-        run_agent_task_sync.return_value = self._agent_outcome({"size_bytes": 0})
-
-        self.assertEqual(
-            estimate_directory_size_bytes(
-                node_id=self.agent.id,
-                path="/empty",
-                path_type="file",
-                organization_id=self.org.id,
-                execution_target=self._target(),
-            ),
-            0,
-        )
-
-    @patch("apps.protection.services.directory_size_estimate.run_agent_task_sync")
-    def test_missing_size_is_not_treated_as_an_empty_path(self, run_agent_task_sync):
-        run_agent_task_sync.return_value = self._agent_outcome({})
-
-        with self.assertRaisesMessage(ValidationError, "invalid path size response"):
-            estimate_directory_size_bytes(
-                node_id=self.agent.id,
-                path="/empty",
-                organization_id=self.org.id,
-                execution_target=self._target(),
-            )
-
-    @patch(
-        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes",
-        return_value=4096,
-    )
-    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
-    def test_refresh_missing_persists_estimate(self, mock_resolve, mock_estimate):
-        mock_resolve.return_value = self._target()
-        total = refresh_missing_backup_config_directory_estimates(
-            organization_id=self.org.id,
-            config=self.config,
-            source_type="agent",
-            source_ref_id=self.agent.id,
-        )
-        self.directory.refresh_from_db()
-        self.assertEqual(total, 4096)
-        self.assertEqual(self.directory.estimated_size_bytes, 4096)
-        self.assertIsNotNone(self.directory.size_estimated_at)
-        mock_estimate.assert_called_once()
-
-    @patch(
-        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes",
-        return_value=0,
-    )
-    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
-    def test_verified_zero_size_is_not_reestimated(self, mock_resolve, mock_estimate):
-        mock_resolve.return_value = self._target()
-
-        self.assertEqual(
-            refresh_missing_backup_config_directory_estimates(
-                organization_id=self.org.id,
-                config=self.config,
-                source_type="agent",
-                source_ref_id=self.agent.id,
-            ),
-            0,
-        )
-        self.directory.refresh_from_db()
-        self.assertEqual(self.directory.estimated_size_bytes, 0)
-        self.assertIsNotNone(self.directory.size_estimated_at)
-        self.assertFalse(backup_config_needs_directory_estimate_refresh(self.config))
-
-        self.assertEqual(
-            refresh_missing_backup_config_directory_estimates(
-                organization_id=self.org.id,
-                config=self.config,
-                source_type="agent",
-                source_ref_id=self.agent.id,
-            ),
-            0,
-        )
-        self.assertEqual(mock_estimate.call_count, 1)
-
-    @patch(
-        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes",
-        side_effect=DirectorySizeEstimateError("timed out", permanent=False),
-    )
-    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
-    def test_refresh_timeout_stays_retryable(self, mock_resolve, _mock_estimate):
-        mock_resolve.return_value = self._target()
-        total = refresh_missing_backup_config_directory_estimates(
-            organization_id=self.org.id,
-            config=self.config,
-            source_type="agent",
-            source_ref_id=self.agent.id,
-        )
-        self.directory.refresh_from_db()
-        self.assertEqual(total, 0)
-        self.assertEqual(self.directory.estimated_size_bytes, 0)
-        self.assertIsNone(self.directory.size_estimated_at)
-        self.assertTrue(backup_config_needs_directory_estimate_refresh(self.config))
-
-    @patch(
-        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes",
-        side_effect=DirectorySizeEstimateError("permanent", permanent=True),
-    )
-    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
-    def test_refresh_permanent_failure_marks_unavailable(
-        self, mock_resolve, _mock_estimate
-    ):
-        mock_resolve.return_value = self._target()
-        total = refresh_missing_backup_config_directory_estimates(
-            organization_id=self.org.id,
-            config=self.config,
-            source_type="agent",
-            source_ref_id=self.agent.id,
-        )
-        self.directory.refresh_from_db()
-        self.assertEqual(total, 0)
-        self.assertEqual(self.directory.estimated_size_bytes, _ESTIMATE_UNAVAILABLE)
-        self.assertFalse(backup_config_needs_directory_estimate_refresh(self.config))
-
-    @patch(
-        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes"
-    )
-    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
-    def test_refresh_skips_cached_estimates(self, mock_resolve, mock_estimate):
-        self.directory.estimated_size_bytes = 2048
-        self.directory.save(update_fields=["estimated_size_bytes", "updated_at"])
-        mock_resolve.return_value = self._target()
-        total = refresh_missing_backup_config_directory_estimates(
-            organization_id=self.org.id,
-            config=self.config,
-            source_type="agent",
-            source_ref_id=self.agent.id,
-        )
-        self.assertEqual(total, 2048)
-        mock_estimate.assert_not_called()
-
-    @patch(
-        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes",
-        return_value=2_000_000_000,
-    )
-    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
-    def test_forced_refresh_replaces_cached_estimate(self, mock_resolve, mock_estimate):
-        self.directory.estimated_size_bytes = 12_500_000
-        self.directory.size_estimated_at = timezone.now()
-        self.directory.save(
-            update_fields=["estimated_size_bytes", "size_estimated_at", "updated_at"]
-        )
-        mock_resolve.return_value = self._target()
-
-        result = refresh_backup_config_directory_estimates_by_id(
-            config_id=self.config.id,
-            force_refresh=True,
-        )
-
-        self.directory.refresh_from_db()
-        self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["du_total"], 2_000_000_000)
-        self.assertTrue(result["du_total_known"])
-        self.assertEqual(self.directory.estimated_size_bytes, 2_000_000_000)
-        mock_estimate.assert_called_once()
-
-    @patch(
-        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes"
-    )
-    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
-    def test_refresh_skips_unavailable_marker(self, mock_resolve, mock_estimate):
-        self.directory.estimated_size_bytes = _ESTIMATE_UNAVAILABLE
-        self.directory.save(update_fields=["estimated_size_bytes", "updated_at"])
-        total = refresh_missing_backup_config_directory_estimates(
-            organization_id=self.org.id,
-            config=self.config,
-            source_type="agent",
-            source_ref_id=self.agent.id,
-        )
-        self.assertEqual(total, 0)
-        mock_resolve.assert_not_called()
-        mock_estimate.assert_not_called()
 
     def test_path_type_change_invalidates_cached_estimate(self):
         self.directory.path_type = BackupConfigDirectory.PathType.DIRECTORY
@@ -397,91 +207,6 @@ class DirectorySizeEstimateTests(TestCase):
         self.assertEqual(self.directory.estimated_size_bytes, 0)
         self.assertTrue(backup_config_needs_directory_estimate_refresh(self.config))
 
-    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
-    def test_refresh_skips_resolve_when_estimates_cached(self, mock_resolve):
-        self.directory.estimated_size_bytes = 2048
-        self.directory.save(update_fields=["estimated_size_bytes", "updated_at"])
-        self.assertFalse(backup_config_needs_directory_estimate_refresh(self.config))
-        total = refresh_missing_backup_config_directory_estimates(
-            organization_id=self.org.id,
-            config=self.config,
-            source_type="agent",
-            source_ref_id=self.agent.id,
-        )
-        self.assertEqual(total, 2048)
-        mock_resolve.assert_not_called()
-
-    @patch(
-        "apps.protection.services.directory_size_estimate."
-        "refresh_missing_backup_config_directory_estimates",
-        return_value=1024,
-    )
-    def test_by_id_requeues_when_still_pending(self, mock_refresh):
-        BackupConfigDirectory.objects.create(
-            organization_id=self.org.id,
-            backup_config=self.config,
-            path="/data/other",
-            estimated_size_bytes=0,
-            sort_order=1,
-        )
-        self.directory.estimated_size_bytes = 1024
-        self.directory.save(update_fields=["estimated_size_bytes", "updated_at"])
-
-        result = refresh_backup_config_directory_estimates_by_id(
-            config_id=self.config.id,
-            attempt=1,
-        )
-        self.assertEqual(result["status"], "partial")
-        self.assertTrue(result["should_requeue"])
-        self.assertEqual(result["attempt"], 1)
-        mock_refresh.assert_called_once()
-
-    @patch(
-        "apps.protection.services.directory_size_estimate."
-        "refresh_missing_backup_config_directory_estimates",
-        return_value=0,
-    )
-    def test_by_id_stops_requeue_at_max_attempts(self, _mock_refresh):
-        result = refresh_backup_config_directory_estimates_by_id(
-            config_id=self.config.id,
-            attempt=5,
-        )
-        self.assertEqual(result["status"], "exhausted")
-        self.assertFalse(result["should_requeue"])
-        self.directory.refresh_from_db()
-        self.assertEqual(self.directory.estimated_size_bytes, 0)
-        self.assertTrue(backup_config_needs_directory_estimate_refresh(self.config))
-
-    @patch(
-        "apps.protection.services.directory_size_estimate."
-        "refresh_missing_backup_config_directory_estimates",
-        side_effect=DirectorySizeEstimateResolveError("source offline"),
-    )
-    def test_by_id_requeues_resolve_failures(self, _mock_refresh):
-        result = refresh_backup_config_directory_estimates_by_id(
-            config_id=self.config.id,
-            attempt=1,
-        )
-        self.assertEqual(result["status"], "resolve_failed")
-        self.assertTrue(result["should_requeue"])
-        self.directory.refresh_from_db()
-        self.assertEqual(self.directory.estimated_size_bytes, 0)
-
-    @patch(
-        "apps.protection.services.directory_size_estimate."
-        "refresh_missing_backup_config_directory_estimates",
-        side_effect=DirectorySizeEstimateResolveError("source offline"),
-    )
-    def test_by_id_freezes_pending_after_resolve_exhausted(self, _mock_refresh):
-        result = refresh_backup_config_directory_estimates_by_id(
-            config_id=self.config.id,
-            attempt=5,
-        )
-        self.assertEqual(result["status"], "resolve_exhausted")
-        self.assertFalse(result["should_requeue"])
-        self.directory.refresh_from_db()
-        self.assertEqual(self.directory.estimated_size_bytes, _ESTIMATE_UNAVAILABLE)
-
     def test_source_change_invalidates_cached_estimates(self):
         self.directory.estimated_size_bytes = 4096
         self.directory.size_estimated_at = timezone.now()
@@ -506,105 +231,423 @@ class DirectorySizeEstimateTests(TestCase):
 
     @patch(
         "apps.protection.tasks.directory_size_estimate."
-        "refresh_backup_config_directory_estimates_by_id"
+        "enqueue_backup_config_directory_estimates"
     )
-    def test_task_requeues_when_service_requests(self, mock_by_id):
+    def test_task_dispatches_estimates_without_waiting(self, mock_enqueue):
         from apps.protection.tasks.directory_size_estimate import (
             refresh_backup_config_directory_estimates_task,
         )
 
-        mock_by_id.return_value = {
+        mock_enqueue.return_value = {
             "config_id": self.config.id,
-            "status": "partial",
-            "du_total": 0,
-            "attempt": 2,
-            "should_requeue": True,
+            "status": "queued",
+            "queued": 1,
         }
-        with patch.object(
+        result = refresh_backup_config_directory_estimates_task.run(
+            config_id=self.config.id,
+            task_uuid="backup-task",
+        )
+        self.assertEqual(result["status"], "queued")
+        mock_enqueue.assert_called_once_with(
+            config_id=self.config.id,
+            force_refresh=False,
+            task_uuid="backup-task",
+        )
+
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "enqueue_backup_config_directory_estimates"
+    )
+    def test_task_preserves_explicit_force_refresh(self, mock_enqueue):
+        from apps.protection.tasks.directory_size_estimate import (
             refresh_backup_config_directory_estimates_task,
-            "apply_async",
-        ) as mock_async:
-            result = refresh_backup_config_directory_estimates_task.run(
-                config_id=self.config.id,
-                attempt=2,
-            )
-        self.assertTrue(result["should_requeue"])
-        mock_async.assert_called_once_with(
+        )
+
+        refresh_backup_config_directory_estimates_task.run(
+            config_id=self.config.id,
+            force_refresh=True,
+            task_uuid="backup-task",
+        )
+        mock_enqueue.assert_called_once_with(
+            config_id=self.config.id,
+            force_refresh=True,
+            task_uuid="backup-task",
+        )
+
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "enqueue_backup_config_directory_estimates"
+    )
+    def test_task_does_not_wait_for_estimate_result(self, mock_enqueue):
+        from apps.protection.tasks.directory_size_estimate import (
+            refresh_backup_config_directory_estimates_task,
+        )
+
+        mock_enqueue.return_value = {"config_id": self.config.id, "queued": 0}
+
+        result = refresh_backup_config_directory_estimates_task.run(
+            config_id=self.config.id,
+            task_uuid="backup-task",
+        )
+        self.assertEqual(result["queued"], 0)
+        mock_enqueue.assert_called_once_with(
+            config_id=self.config.id,
+            force_refresh=False,
+            task_uuid="backup-task",
+        )
+
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "refresh_backup_config_directory_estimates_task.apply_async"
+    )
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "enqueue_backup_config_directory_estimates"
+    )
+    def test_task_retries_target_resolution_with_a_finite_budget(
+        self, mock_enqueue, mock_apply
+    ):
+        from apps.protection.tasks.directory_size_estimate import (
+            refresh_backup_config_directory_estimates_task,
+        )
+
+        mock_enqueue.return_value = {
+            "config_id": self.config.id,
+            "status": "resolve_failed",
+            "queued": 0,
+        }
+
+        refresh_backup_config_directory_estimates_task.run(
+            config_id=self.config.id,
+            attempt=1,
+            task_uuid="backup-task",
+        )
+
+        mock_apply.assert_called_once_with(
             kwargs={
                 "config_id": self.config.id,
-                "attempt": 3,
+                "attempt": 2,
                 "force_refresh": False,
-                "task_uuid": None,
+                "task_uuid": "backup-task",
             },
-            countdown=5,
+            countdown=30,
         )
+
+        mock_apply.reset_mock()
+        refresh_backup_config_directory_estimates_task.run(
+            config_id=self.config.id,
+            attempt=node_conf.PATH_SIZE_MAX_RETRIES,
+            task_uuid="backup-task",
+        )
+        mock_apply.assert_not_called()
 
     @patch(
         "apps.protection.tasks.directory_size_estimate."
-        "refresh_backup_config_directory_estimates_by_id"
+        "reconcile_directory_size_estimate_task.apply_async"
     )
-    def test_task_freezes_refreshed_total_on_backup_task(self, mock_by_id):
-        from apps.protection.tasks.directory_size_estimate import (
-            refresh_backup_config_directory_estimates_task,
-        )
+    @patch("apps.protection.services.directory_size_estimate.run_agent_task_async")
+    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
+    def test_enqueue_dispatches_without_sync_wait(
+        self,
+        mock_resolve,
+        mock_dispatch,
+        mock_reconcile,
+    ):
+        mock_resolve.return_value = self._target()
+        mock_dispatch.return_value = SimpleNamespace(task_id="node-task")
 
-        task = create_task(
-            organization_id=self.org.id,
-            task_type=Task.Type.BACKUP,
-            display_name="Backup directory size",
-            request_payload={"backup_config_id": self.config.id},
-        )
-        mock_by_id.return_value = {
-            "config_id": self.config.id,
-            "status": "ok",
-            "du_total": 2_000_000_000,
-            "du_total_known": True,
-            "attempt": 1,
-            "should_requeue": False,
-        }
-
-        refresh_backup_config_directory_estimates_task.run(
+        result = enqueue_backup_config_directory_estimates(
             config_id=self.config.id,
-            force_refresh=True,
-            task_uuid=str(task.task_uuid),
+            task_uuid="backup-task",
         )
 
-        task.refresh_from_db()
-        self.assertEqual(task.request_payload["du_total"], 2_000_000_000)
-        self.assertTrue(task.request_payload["du_total_known"])
-        self.assertEqual(task.result_payload["du_total"], 2_000_000_000)
-        self.assertTrue(task.result_payload["du_total_known"])
+        self.assertEqual(result["status"], "queued")
+        self.assertEqual(result["queued"], 1)
+        mock_dispatch.assert_called_once()
+        mock_reconcile.assert_called_once()
 
     @patch(
         "apps.protection.tasks.directory_size_estimate."
-        "refresh_backup_config_directory_estimates_by_id"
+        "reconcile_directory_size_estimate_task.apply_async"
     )
-    def test_task_does_not_freeze_unverified_total(self, mock_by_id):
-        from apps.protection.tasks.directory_size_estimate import (
-            refresh_backup_config_directory_estimates_task,
-        )
-
-        task = create_task(
+    @patch("apps.protection.services.directory_size_estimate.run_agent_task_async")
+    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
+    def test_enqueue_respects_agent_path_size_capacity(
+        self,
+        mock_resolve,
+        mock_dispatch,
+        mock_reconcile,
+    ):
+        BackupConfigDirectory.objects.create(
             organization_id=self.org.id,
-            task_type=Task.Type.BACKUP,
-            display_name="Backup directory size unavailable",
-            request_payload={"backup_config_id": self.config.id},
+            backup_config=self.config,
+            path="/home/other",
+            estimated_size_bytes=0,
+            sort_order=1,
         )
-        mock_by_id.return_value = {
-            "config_id": self.config.id,
-            "status": "ok",
-            "du_total": 0,
-            "du_total_known": False,
-            "attempt": 1,
-            "should_requeue": False,
-        }
+        mock_resolve.return_value = self._target()
 
-        refresh_backup_config_directory_estimates_task.run(
+        def dispatch(**kwargs):
+            node_task = NodeTask.objects.create(
+                organization=self.org,
+                requesting_organization_id=self.org.id,
+                node=self.agent,
+                kind=kwargs["kind"],
+                correlation_type=kwargs["correlation_type"],
+                correlation_id=kwargs["correlation_id"],
+                status=NodeTask.Status.PENDING,
+                watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            )
+            return SimpleNamespace(task_id=node_task.id)
+
+        mock_dispatch.side_effect = dispatch
+
+        result = enqueue_backup_config_directory_estimates(config_id=self.config.id)
+
+        self.assertEqual(result["queued"], 1)
+        mock_dispatch.assert_called_once()
+        mock_reconcile.assert_called_once()
+
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "reconcile_directory_size_estimate_task.apply_async"
+    )
+    @patch(
+        "apps.protection.services.directory_size_estimate.run_agent_task_async",
+        side_effect=RuntimeError("route unavailable"),
+    )
+    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
+    def test_enqueue_does_not_fan_out_after_dispatch_failure(
+        self,
+        mock_resolve,
+        mock_dispatch,
+        mock_reconcile,
+    ):
+        BackupConfigDirectory.objects.create(
+            organization_id=self.org.id,
+            backup_config=self.config,
+            path="/home/other",
+            estimated_size_bytes=0,
+            sort_order=1,
+        )
+        mock_resolve.return_value = self._target()
+
+        result = enqueue_backup_config_directory_estimates(config_id=self.config.id)
+
+        self.assertEqual(result["status"], "dispatch_failed")
+        self.assertEqual(result["queued"], 0)
+        mock_dispatch.assert_called_once()
+        mock_reconcile.assert_not_called()
+
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "reconcile_directory_size_estimate_task.apply_async"
+    )
+    def test_reconcile_active_estimate_reschedules_short_monitor(self, mock_apply):
+        correlation_id = directory_size_correlation_id(
+            config=self.config,
+            directory=self.directory,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.agent,
+            kind="path.size",
+            correlation_type=node_conf.PATH_SIZE_CORRELATION_TYPE,
+            correlation_id=correlation_id,
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+        )
+
+        result = reconcile_directory_size_estimate(
             config_id=self.config.id,
-            force_refresh=True,
-            task_uuid=str(task.task_uuid),
+            directory_id=self.directory.id,
+            node_task_id=str(node_task.id),
+            correlation_id=correlation_id,
         )
 
-        task.refresh_from_db()
-        self.assertNotIn("du_total", task.request_payload)
-        self.assertNotIn("du_total", task.result_payload or {})
+        self.assertEqual(result["status"], "pending")
+        mock_apply.assert_called_once()
+
+    @patch("apps.protection.services.directory_size_estimate.cancel_agent_task")
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "reconcile_directory_size_estimate_task.apply_async"
+    )
+    def test_reconcile_expired_estimate_tracks_cancellation_to_terminal(
+        self, mock_apply, mock_cancel
+    ):
+        correlation_id = directory_size_correlation_id(
+            config=self.config,
+            directory=self.directory,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.agent,
+            kind="path.size",
+            correlation_type=node_conf.PATH_SIZE_CORRELATION_TYPE,
+            correlation_id=correlation_id,
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() - timezone.timedelta(seconds=1),
+        )
+
+        result = reconcile_directory_size_estimate(
+            config_id=self.config.id,
+            directory_id=self.directory.id,
+            node_task_id=str(node_task.id),
+            correlation_id=correlation_id,
+        )
+
+        self.directory.refresh_from_db()
+        self.assertEqual(result["status"], "canceling")
+        self.assertEqual(self.directory.estimated_size_bytes, 0)
+        mock_cancel.assert_called_once_with(
+            task_id=str(node_task.id),
+            reason="path size timeout",
+        )
+        mock_apply.assert_called_once()
+
+    @patch(
+        "apps.protection.services.directory_size_estimate."
+        "_schedule_directory_estimate_refresh"
+    )
+    def test_reconcile_success_persists_matching_generation_only(self, mock_refresh):
+        correlation_id = directory_size_correlation_id(
+            config=self.config,
+            directory=self.directory,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.agent,
+            kind="path.size",
+            correlation_type=node_conf.PATH_SIZE_CORRELATION_TYPE,
+            correlation_id=correlation_id,
+            status=NodeTask.Status.SUCCESS,
+            result={"size_bytes": 4096},
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        result = reconcile_directory_size_estimate(
+            config_id=self.config.id,
+            directory_id=self.directory.id,
+            node_task_id=str(node_task.id),
+            correlation_id=correlation_id,
+        )
+
+        self.directory.refresh_from_db()
+        self.assertEqual(result, {"status": "success", "size_bytes": 4096})
+        self.assertEqual(self.directory.estimated_size_bytes, 4096)
+        self.assertIsNotNone(self.directory.size_estimated_at)
+        mock_refresh.assert_called_once()
+
+    @patch(
+        "apps.protection.services.directory_size_estimate."
+        "_schedule_directory_estimate_refresh"
+    )
+    def test_reconcile_agent_unavailable_stays_retryable(self, mock_refresh):
+        correlation_id = directory_size_correlation_id(
+            config=self.config,
+            directory=self.directory,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.agent,
+            kind="path.size",
+            correlation_type=node_conf.PATH_SIZE_CORRELATION_TYPE,
+            correlation_id=correlation_id,
+            status=NodeTask.Status.FAILED,
+            result={"diagnostic_error_code": "AGENT_UNAVAILABLE"},
+            last_error="agent websocket is not routable",
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        result = reconcile_directory_size_estimate(
+            config_id=self.config.id,
+            directory_id=self.directory.id,
+            node_task_id=str(node_task.id),
+            correlation_id=correlation_id,
+        )
+
+        self.directory.refresh_from_db()
+        self.assertEqual(result["status"], "retryable")
+        self.assertEqual(self.directory.estimated_size_bytes, 0)
+        self.assertIsNone(self.directory.size_estimated_at)
+        mock_refresh.assert_called_once_with(
+            config_id=self.config.id,
+            task_uuid=None,
+            countdown=30,
+        )
+
+    @patch(
+        "apps.protection.services.directory_size_estimate."
+        "_schedule_directory_estimate_refresh"
+    )
+    @patch(
+        "apps.protection.services.directory_size_estimate."
+        "_path_size_retry_exhausted",
+        return_value=True,
+    )
+    def test_reconcile_retry_exhaustion_marks_estimate_unavailable(
+        self, _retry_exhausted, mock_refresh
+    ):
+        correlation_id = directory_size_correlation_id(
+            config=self.config,
+            directory=self.directory,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.agent,
+            kind="path.size",
+            correlation_type=node_conf.PATH_SIZE_CORRELATION_TYPE,
+            correlation_id=correlation_id,
+            status=NodeTask.Status.FAILED,
+            result={"diagnostic_error_code": "AGENT_UNAVAILABLE"},
+            last_error="agent websocket is not routable",
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        result = reconcile_directory_size_estimate(
+            config_id=self.config.id,
+            directory_id=self.directory.id,
+            node_task_id=str(node_task.id),
+            correlation_id=correlation_id,
+        )
+
+        self.directory.refresh_from_db()
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(self.directory.estimated_size_bytes, _ESTIMATE_UNAVAILABLE)
+        mock_refresh.assert_called_once_with(config_id=self.config.id, task_uuid=None)
+
+    def test_reconcile_does_not_apply_stale_generation(self):
+        correlation_id = directory_size_correlation_id(
+            config=self.config,
+            directory=self.directory,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            requesting_organization_id=self.org.id,
+            node=self.agent,
+            kind="path.size",
+            correlation_type=node_conf.PATH_SIZE_CORRELATION_TYPE,
+            correlation_id=correlation_id,
+            status=NodeTask.Status.SUCCESS,
+            result={"size_bytes": 4096},
+            watchdog_deadline_at=timezone.now(),
+        )
+        self.directory.path = "/home/changed"
+        self.directory.save(update_fields=["path", "updated_at"])
+
+        result = reconcile_directory_size_estimate(
+            config_id=self.config.id,
+            directory_id=self.directory.id,
+            node_task_id=str(node_task.id),
+            correlation_id=correlation_id,
+        )
+
+        self.directory.refresh_from_db()
+        self.assertEqual(result["status"], "stale")
+        self.assertEqual(self.directory.estimated_size_bytes, 0)

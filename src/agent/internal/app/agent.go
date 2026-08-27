@@ -83,7 +83,17 @@ func (a *Agent) Startup(ctx context.Context) error {
 	slog.Info("task database ready", "path", db.Path())
 
 	repo := database.NewTaskRepo(db)
-	a.wire = wire.NewHandler(a.store, a.tracker, repo, a.scheduler)
+	pathSizeConcurrency := 1
+	if cfg.Role == model.RoleProxy || cfg.Role == model.RoleGateway {
+		pathSizeConcurrency = 2
+	}
+	a.wire = wire.NewHandler(
+		a.store,
+		a.tracker,
+		repo,
+		a.scheduler,
+		controller.NewScheduler(pathSizeConcurrency),
+	)
 	a.taskFixer = controller.NewTaskFixer(repo, a.tracker, dataRoot, logDir)
 
 	if _, err := a.taskFixer.RepairRunning(ctx); err != nil {
