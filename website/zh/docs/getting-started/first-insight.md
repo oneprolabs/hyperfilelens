@@ -17,7 +17,7 @@ description: 基于首次备份快照创建洞察会话并核对回答依据。
 
 ## 创建会话
 
-1. 打开<span class="hfl-path">洞察 → AI Copilot</span>并选择“新建对话”。
+1. 打开<span class="hfl-path">洞察 → AI Copilot</span>并选择<span class="hfl-ui">新建对话</span>。
 2. 选择刚创建的备份配置和快照。
 3. 从快照中选择一个测试文件或边界明确的小目录。
 4. 选择当前可用的 Data Gateway。

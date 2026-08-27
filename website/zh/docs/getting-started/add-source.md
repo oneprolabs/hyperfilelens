@@ -10,8 +10,8 @@ description: 将本次示例使用的 Windows 主机接入 HyperFileLens。
 ## 接入 Windows 主机
 
 1. 打开<span class="hfl-path">数据保护 → 源端资源</span>。
-2. 选择添加源端主机并进入部署向导。
-3. 选择 Windows。
+2. 选择<span class="hfl-ui">添加源端主机</span>并进入部署向导。
+3. 选择<span class="hfl-ui">Windows</span>。
 4. 复制页面生成的当前部署命令，在需要保护的主机上运行。
 5. 返回控制台，等待节点显示在线。
 6. 确认主机状态为在线。
@@ -23,5 +23,3 @@ description: 将本次示例使用的 Windows 主机接入 HyperFileLens。
 - 备份源状态在线。
 - 控制台显示的主机名称和系统信息正确。
 - Agent 没有待处理的安装或注册错误。
-
-下一步：[配置备份源](/zh/docs/getting-started/configure-source)。

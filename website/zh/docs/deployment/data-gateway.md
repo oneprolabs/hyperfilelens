@@ -5,31 +5,35 @@ description: 部署用于 HyperFileLens 智能洞察的 Data Gateway。
 
 # 部署 Private Data Gateway
 
-Data Gateway 连接 HyperFileLens 备份仓库与 AI 引擎，用于准备用户在 Copilot 会话中明确选择的数据。它不直接读取生产主机目录。
+Data Gateway 从备份仓库读取用户选择的快照文件，并为智能洞察准备数据。它不会直接读取备份主机上的实时文件。
 
 ## 公共与私有 Data Gateway
 
-- **公共 Data Gateway**由平台提供并作为默认选择，适合平台统一维护的运行环境。
-- **私有 Data Gateway**由用户或组织部署，适合备份仓库只能从私有网络访问的场景。
+- **公共 Data Gateway**是默认使用方式。官方 SaaS 由平台提供；Community 在安装时默认部署。
+- **私有 Data Gateway**部署在用户管理的网络中，适合备份仓库无法由公共网关访问，或数据处理需要保留在自有网络中的场景。
 
-Community 环境是否提供可用公共 Data Gateway，取决于实际部署配置。界面没有可用默认网关时，应部署私有 Data Gateway，而不是假设产品会自动访问私有仓库。
+如果公共 Data Gateway 能够访问备份仓库，通常无需额外部署私有网关。
 
-## 部署前检查
+## 部署前准备
 
-- Linux/Ubuntu amd64 主机。
-- Docker Engine 和 Compose V2 可用，或者允许受支持的离线安装程序安装捆绑版本。
-- 能够访问 HyperFileLens 控制平面和所需备份仓库。
-- 有足够磁盘空间保存会话工作区和临时数据。
-- 时间、DNS 和 TLS 信任正确。
+- 准备一台 Ubuntu 20.04、22.04 或 24.04 amd64 主机，至少配备 2 核 CPU、4 GiB 内存和 50 GiB 可用空间。
+- 确认主机能够连接 HyperFileLens 控制平面和需要访问的备份仓库，具体请查看[网络与端口](/zh/docs/deployment/network)。
+- 主机未安装 Docker 时，安装程序会安装随版本提供的运行环境；已经安装 Docker 时，需要 Docker Engine 24.0.0 及以上版本和 Compose V2 2.20.0 及以上版本。
 
 ## 部署步骤
 
 1. 打开<span class="hfl-path">洞察 → 数据网关</span>。
-2. 选择部署私有 Data Gateway。
-3. 在向导中核对系统与资源要求。
-4. 复制当前生成的命令，在目标 Linux 主机上运行。
-5. 等待 Agent 注册、Docker 检查和 AI 引擎安装完成。
-6. 返回控制台，确认网关在线且状态可用。
-7. 创建测试 Copilot 会话，验证网关能浏览所选快照目录并完成数据准备。
+2. 选择<span class="hfl-ui">添加</span>，进入私有数据网关部署向导。
+3. 核对系统要求，生成安装命令。
+4. 按照向导提示，在目标主机上使用管理员权限运行安装命令。
+5. 等待安装完成，返回数据网关页面确认网关已经注册。
 
-Data Gateway 的工作区应使用产品管理的专用路径。卸载和清理时只操作界面与安装程序声明的产品目录，不要手工使用宽泛的递归删除命令。
+## 验证部署
+
+在控制台确认：
+
+- 私有数据网关状态为在线，AI 引擎状态正常。
+- 网关可以访问计划用于智能洞察的备份仓库。
+- 创建测试洞察会话时，可以选择该网关并完成所选快照的数据准备。
+
+安装失败、网关离线或 AI 引擎状态异常时，进入[安装与节点](/zh/docs/troubleshooting/installation-nodes)。

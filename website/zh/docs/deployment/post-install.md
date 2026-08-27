@@ -1,36 +1,36 @@
 ---
 title: 安装后检查
-description: 检查 HyperFileLens Community 服务、控制台和基础配置。
+description: 确认 HyperFileLens Community 安装完成并可以开始使用。
 ---
 
 # 安装后检查
 
-安装结束后，先确认控制平面可以稳定运行，再添加正式备份源。
+安装完成后，先确认服务正常，再登录控制台检查主要页面。
 
-## 检查服务
+## 1. 确认服务状态
 
-在控制平面主机运行：
+在安装 Community 的主机上运行：
 
 ```bash
 sudo /opt/hyperfilelens/install.sh status
 ```
 
-确认安装程序报告的核心服务正常，并记录当前版本。服务异常时不要反复重新安装，应先保留错误信息并进入[安装与节点](/zh/docs/troubleshooting/installation-nodes)。
+确认输出中的服务状态正常，并记录版本信息。服务异常时，请进入[安装与节点](/zh/docs/troubleshooting/installation-nodes)排查。
 
-## 检查控制台
+## 2. 登录控制台
 
-1. 使用安装程序输出的地址打开控制台。
-2. 使用初始账户登录并立即修改密码。
-3. 核对浏览器地址、证书、系统时间和时区。
-4. 确认数据保护、智能洞察和租户运维页面可以打开。
+1. 在安装完成时显示的访问地址中，打开标记为 `Tenant` 的完整地址。
+2. 使用安装结果中列出的初始账户登录。
+3. 首次登录后修改密码。
 
-## 启用简体中文
+## 3. 确认产品页面
 
-如果当前 Release 已包含简体中文语言包，可执行：
+登录后确认顶部导航栏显示以下入口，并依次打开检查：
 
-```bash
-sudo /opt/hyperfilelens/install.sh lang-pack install --id zh-hans
-sudo /opt/hyperfilelens/install.sh lang-pack list
-```
+- **概览**：查看备份源、目标存储、恢复演练、运行任务和待处理异常等运行概况。
+- **数据保护**：进入备份源、目标存储、备份配置和恢复页面。
+- **洞察**：打开智能洞察页面。
+- **配置管理**：进入组织信息、成员角色和系统设置页面。
+- **运维监控**：进入运行状态、告警和任务页面。
 
-安装后刷新浏览器并选择简体中文。语言包必须与当前产品版本兼容。
+如果服务或页面无法打开，请记录页面提示和版本信息，并进入[安装与节点](/zh/docs/troubleshooting/installation-nodes)排查。

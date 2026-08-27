@@ -17,6 +17,6 @@ description: 使用备份向导创建配置并运行第一次 HyperFileLens 备�
 
 ## 运行备份
 
-进入开始备份阶段，选择刚创建的配置并执行“立即备份”。运行期间不要关闭 Windows Agent，也不要修改对象存储凭据。
+进入<span class="hfl-path">开始备份</span>阶段，选择刚创建的配置并执行<span class="hfl-ui">立即备份</span>。运行期间不要关闭 Windows Agent，也不要修改对象存储凭据。
 
 等待任务结束后，继续[检查任务与快照](/zh/docs/getting-started/verify-backup)。

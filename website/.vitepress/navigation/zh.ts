@@ -7,12 +7,12 @@ const quickStart: DefaultTheme.SidebarItem[] = [
       { text: '选择使用方式', link: '/zh/docs/' },
       { text: '使用官方 SaaS', link: '/zh/docs/getting-started/saas' },
       { text: '安装 Community', link: '/zh/docs/getting-started/install' },
-      { text: '登录控制台', link: '/zh/docs/getting-started/sign-in' },
     ],
   },
   {
     text: '首次使用',
     items: [
+      { text: '登录控制台', link: '/zh/docs/getting-started/sign-in' },
       { text: '添加备份源', link: '/zh/docs/getting-started/add-source' },
       { text: '配置备份源', link: '/zh/docs/getting-started/configure-source' },
       { text: '添加目标存储', link: '/zh/docs/getting-started/add-target' },
@@ -61,11 +61,11 @@ const operations: DefaultTheme.SidebarItem[] = [
   {
     text: '部署运维',
     items: [
-      { text: '部署方式', link: '/zh/docs/deployment/' },
+      { text: '部署指南', link: '/zh/docs/deployment/' },
     ],
   },
   {
-    text: 'Community 部署',
+    text: '部署 Community',
     items: [
       { text: '系统要求', link: '/zh/docs/deployment/requirements' },
       { text: '网络与端口', link: '/zh/docs/deployment/network' },
@@ -75,15 +75,16 @@ const operations: DefaultTheme.SidebarItem[] = [
   {
     text: '组件部署',
     items: [
-      { text: '部署 Agent 与 Proxy', link: '/zh/docs/deployment/nodes' },
+      { text: '部署 Agent', link: '/zh/docs/deployment/agent' },
+      { text: '部署 Proxy', link: '/zh/docs/deployment/proxy' },
       { text: '部署 Private Data Gateway', link: '/zh/docs/deployment/data-gateway' },
     ],
   },
   {
     text: '运行维护',
     items: [
-      { text: '升级与回退', link: '/zh/docs/deployment/lifecycle' },
-      { text: '任务、告警与日志', link: '/zh/docs/deployment/operations' },
+      { text: '升级与恢复', link: '/zh/docs/deployment/lifecycle' },
+      { text: '任务、告警与审计', link: '/zh/docs/deployment/operations' },
     ],
   },
 ]
@@ -105,10 +106,10 @@ const help: DefaultTheme.SidebarItem[] = [
     text: '问题排查',
     items: [
       { text: '排查方法', link: '/zh/docs/troubleshooting/' },
+      { text: '账户与登录', link: '/zh/docs/troubleshooting/account-sign-in' },
       { text: '安装与节点', link: '/zh/docs/troubleshooting/installation-nodes' },
       { text: '备份、存储与恢复', link: '/zh/docs/troubleshooting/protection' },
       { text: '智能洞察与 Data Gateway', link: '/zh/docs/troubleshooting/insights' },
-      { text: '账户与登录', link: '/zh/docs/troubleshooting/account-sign-in' },
     ],
   },
 ]
