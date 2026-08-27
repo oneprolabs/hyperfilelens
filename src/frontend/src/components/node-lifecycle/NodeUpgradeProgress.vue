@@ -8,7 +8,7 @@ const props = defineProps<{
   lifecycle: NodeLifecycleInfo | null
 }>()
 
-const { t } = useI18n()
+const { locale, t } = useI18n()
 
 const hasLifecycle = computed(() => {
   return (
@@ -38,7 +38,7 @@ function formatPhaseTime(at: string | null) {
   if (!at) return '—'
   const date = new Date(at)
   if (Number.isNaN(date.getTime())) return at
-  return date.toLocaleString()
+  return date.toLocaleString(locale.value)
 }
 </script>
 

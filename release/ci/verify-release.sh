@@ -133,8 +133,13 @@ for language_pack in language_packs:
         or pack_manifest.get("compatible_app") != f"=={release_id}"
     ):
         raise SystemExit(f"bundled language-pack identity mismatch: {expected_file}")
-if "zh-hans" not in seen_pack_ids:
-    raise SystemExit("required bundled language pack is missing: zh-hans")
+required_pack_ids = {"zh-hans", "es"}
+missing_pack_ids = sorted(required_pack_ids - seen_pack_ids)
+if missing_pack_ids:
+    raise SystemExit(
+        "required bundled language pack(s) are missing: "
+        + ", ".join(missing_pack_ids)
+    )
 
 installer_root = root / "payload" / "media" / "enroll-bootstrap"
 installer_manifest_path = installer_root / "INSTALLER_MANIFEST.json"
@@ -280,20 +285,31 @@ if index.get("app_version") != version:
 packs = index.get("packs")
 if not isinstance(packs, list):
     raise SystemExit("installed language-pack index has no pack list")
-zh_hans = [pack for pack in packs if isinstance(pack, dict) and pack.get("id") == "zh-hans"]
-if len(zh_hans) != 1 or zh_hans[0].get("version") != version:
-    raise SystemExit("Simplified Chinese language pack is not installed for this product version")
+required_pack_ids = {"zh-hans", "es"}
+for pack_id in sorted(required_pack_ids):
+    matching = [
+        pack for pack in packs
+        if isinstance(pack, dict) and pack.get("id") == pack_id
+    ]
+    if len(matching) != 1 or matching[0].get("version") != version:
+        raise SystemExit(
+            f"required language pack {pack_id} is not installed for this product version"
+        )
 PY
 	sudo bash /opt/hyperfilelens/install.sh lang-pack list \
 		| grep -Eq '^zh-hans[[:space:]]'
+	sudo bash /opt/hyperfilelens/install.sh lang-pack list \
+		| grep -Eq '^es[[:space:]]'
 	for catalog_path in \
 		/locales/installed.json \
 		/locales/zh-hans/frontend/messages.json \
-		/locales/zh-hans/frontend/element-plus.json; do
+		/locales/zh-hans/frontend/element-plus.json \
+		/locales/es/frontend/messages.json \
+		/locales/es/frontend/element-plus.json; do
 		curl -kfsS "https://127.0.0.1:11443${catalog_path}" \
 			| python3 -c 'import json, sys; value = json.load(sys.stdin); assert isinstance(value, dict)'
 	done
-	printf 'Installed Simplified Chinese language pack verified for %s\n' "${installed_version}"
+	printf 'Installed bundled language packs (zh-hans, es) verified for %s\n' "${installed_version}"
 }
 
 install_args=(install)

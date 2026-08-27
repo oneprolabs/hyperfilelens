@@ -50,6 +50,25 @@ describe('Copilot Data Gateway product terminology', () => {
     expect(contextBar).not.toContain('v-if="session.gateway_selection_mode === \'manual\'"')
   })
 
+  it('localizes every Chat context status and fallback label', () => {
+    for (const key of [
+      'sessionRecovering',
+      'sessionRecoveryAttention',
+      'sessionPreparationFailed',
+      'sessionPreparing',
+      'sessionDeleting',
+      'sessionAnswering',
+      'sessionReady',
+      'backupSourceFallback',
+      'contextNoFilesSelected',
+      'contextCreatedAt',
+      'visualUnderstandingUnavailable',
+    ]) {
+      expect(contextBar).toContain(`t('insight.copilot.${key}'`)
+    }
+    expect(contextBar).toContain('new Intl.DateTimeFormat(locale.value')
+  })
+
   it('uses Public terminology for Platform Ops service actions', () => {
     const copy = en.insight.dataGateway
 

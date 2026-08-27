@@ -15,6 +15,26 @@ class ChatUserProvisioningTests(SimpleTestCase):
         chat_user_provisioning.invalidate_user_token(7)
         self.user = SimpleNamespace(pk=7, username="alice")
 
+    def test_maps_hfl_language_variants_to_source_lens(self):
+        expected = {
+            "en": "en-US",
+            "en-gb": "en-US",
+            "zh-hans": "zh-CN",
+            "zh-CN": "zh-CN",
+            "es": "es",
+            "es-ES": "es",
+            "es-MX": "es",
+            "fr": "en-US",
+            None: "en-US",
+        }
+
+        for language, source_lens_language in expected.items():
+            with self.subTest(language=language):
+                self.assertEqual(
+                    chat_user_provisioning._sl_answer_language(language),
+                    source_lens_language,
+                )
+
     @patch("apps.lens_bridge.services.chat_user_provisioning.sl_client.request_json")
     def test_provisions_chat_user_through_management_api(self, request_json):
         request_json.side_effect = [
@@ -253,6 +273,19 @@ class SyncSlUserLanguageTests(TestCase):
             json_body={"language": "zh-CN"},
         )
         self.assertNotIn(self.user.pk, chat_user_provisioning._USER_TOKENS)
+
+    @patch("apps.lens_bridge.services.chat_user_provisioning.sl_client.request_json")
+    def test_pushes_spanish_language_to_source_lens(self, request_json):
+        request_json.return_value = {"id": 99, "language": "es"}
+
+        result = chat_user_provisioning.sync_sl_user_language(self.user, "es")
+
+        self.assertTrue(result)
+        request_json.assert_called_once_with(
+            "PATCH",
+            "/api/v1/management/users/99/",
+            json_body={"language": "es"},
+        )
 
     def test_returns_false_without_ready_link(self):
         self.link.delete()

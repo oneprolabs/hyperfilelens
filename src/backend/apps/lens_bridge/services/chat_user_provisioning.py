@@ -43,13 +43,15 @@ def _sl_password_for_hfl_user(user: AbstractBaseUser) -> str:
 def _sl_answer_language(language: str | None) -> str:
     """Map an HFL language code to the SourceLens answer language value.
 
-    SourceLens resolves the answer language from ``profile.language`` and only
-    honors explicit ``zh`` / ``en`` values (``normalize_answer_language``);
-    everything else falls back to ``en-US``.
+    SourceLens resolves the answer language from ``profile.language``. Keep
+    HFL language-pack variants aligned with SourceLens' canonical values while
+    preserving English as the safe fallback for unsupported languages.
     """
     code = (language or "").strip().lower()
     if code.startswith("zh"):
         return "zh-CN"
+    if code == "es" or code.startswith("es-"):
+        return "es"
     return "en-US"
 
 

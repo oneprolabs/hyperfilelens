@@ -75,6 +75,27 @@ class VerificationEmailTests(TestCase):
         self.assertTrue(any(ord(character) > 127 for character in message.body))
 
     @skipUnless(
+        any(code == "es" for code, _name in settings.LANGUAGES),
+        "bundled Spanish runtime catalog is not loaded",
+    )
+    def test_spanish_catalog_translates_verification_email(self):
+        with override("es"):
+            send_verification_code_email(
+                recipient="user@example.com",
+                code="123456",
+                minutes=10,
+                kind=VerificationEmailKind.LOGIN,
+            )
+
+        message = mail.outbox[0]
+        self.assertEqual(
+            message.subject,
+            "123456 es su código de inicio de sesión de HyperFileLens",
+        )
+        self.assertIn("iniciar sesión", message.body)
+        self.assertIn("caducará en 10 minutos", message.body)
+
+    @skipUnless(
         any(code == "zh-hans" for code, _name in settings.LANGUAGES),
         "bundled Simplified Chinese runtime catalog is not loaded",
     )
@@ -108,3 +129,41 @@ class VerificationEmailTests(TestCase):
         self.assertNotEqual(translated_message, "Invalid email format")
         self.assertTrue(any(ord(character) > 127 for character in translated_message))
         self.assertEqual(translated_error["fields"]["email"], [translated_message])
+
+    @skipUnless(
+        any(code == "es" for code, _name in settings.LANGUAGES),
+        "bundled Spanish runtime catalog is not loaded",
+    )
+    @patch(
+        "apps.iam.auth.views.email_code_login.email_delivery_configured",
+        return_value=True,
+    )
+    @patch(
+        "apps.iam.auth.views.email_code_login.email_code_login_enabled",
+        return_value=True,
+    )
+    def test_spanish_accept_language_alias_translates_api_error(
+        self,
+        _email_code_login_enabled,
+        _email_delivery_configured,
+    ):
+        response = self.client.post(
+            reverse("email_code_login_send"),
+            {"email": "not-an-email"},
+            content_type="application/json",
+            HTTP_ACCEPT_LANGUAGE="es-MX",
+            HTTP_X_HFL_SITE_ROLE="tenant",
+            HTTP_X_FORWARDED_PROTO="https",
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        translated_error = response.json()["data"]["error"]
+        self.assertEqual(
+            translated_error["message"],
+            "Formato de correo electrónico inválido",
+        )
+        self.assertEqual(
+            translated_error["fields"]["email"],
+            [translated_error["message"]],
+        )

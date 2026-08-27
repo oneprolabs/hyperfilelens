@@ -1,0 +1,667 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: hyperfilelens\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-08-14 13:12+0800\n"
+"PO-Revision-Date: 2026-08-27 00:00+0800\n"
+"Last-Translator: HyperFileLens\n"
+"Language-Team: Spanish\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: src/backend/apps/iam/services/verification_email.py:54
+#, python-format
+msgid "%(code)s is your HyperFileLens password reset code"
+msgstr ""
+"%(code)s es su código de restablecimiento de contraseña de HyperFileLens"
+
+#: src/backend/apps/iam/services/verification_email.py:72
+#, python-format
+msgid "%(code)s is your HyperFileLens sign-in code"
+msgstr "%(code)s es su código de inicio de sesión de HyperFileLens"
+
+#: src/backend/apps/iam/services/verification_email.py:36
+#, python-format
+msgid "%(code)s is your HyperFileLens verification code"
+msgstr "%(code)s es su código de verificación de HyperFileLens"
+
+#: src/backend/apps/iam/auth/views/login.py:299
+#: src/backend/apps/iam/auth/views/login.py:600
+msgid "Account has been disabled"
+msgstr "La cuenta ha sido desactivada"
+
+#: src/backend/apps/iam/auth/views/login.py:300
+msgid "Account has been disabled. Please contact support."
+msgstr "La cuenta ha sido desactivada. Por favor, contacte con soporte."
+
+#: src/backend/apps/iam/auth/views/registration.py:495
+#: src/backend/apps/iam/auth/views/registration.py:505
+msgid "Account is already active"
+msgstr "La cuenta ya está activa"
+
+#: src/backend/apps/iam/auth/views/login.py:286
+msgid "Account is temporarily locked"
+msgstr "Cuenta bloqueada temporalmente"
+
+#: src/backend/apps/iam/auth/views/login.py:269
+msgid "Account is temporarily locked due to multiple failed login attempts"
+msgstr ""
+"La cuenta está bloqueada temporalmente debido a múltiples intentos fallidos "
+"de inicio de sesión"
+
+#: src/backend/apps/iam/auth/views/login.py:270
+#: src/backend/apps/iam/auth/views/login.py:287
+msgid ""
+"Account is temporarily locked due to multiple failed login attempts. Please "
+"try again in 3 minutes."
+msgstr ""
+"La cuenta está bloqueada temporalmente debido a múltiples intentos fallidos "
+"de inicio de sesión. Por favor inténtelo de nuevo en 3 minutos."
+
+#: src/backend/apps/iam/services/token_service.py:212
+msgid "Authentication failed"
+msgstr "Falló la autenticación"
+
+#: src/backend/apps/iam/services/membership_service.py:195
+msgid ""
+"Cannot activate membership without a role. Set role explicitly or recreate "
+"the member."
+msgstr ""
+"No se puede activar una membresía sin un rol. Asigne el rol explícitamente o"
+" vuelva a crear el miembro."
+
+#: src/backend/apps/iam/services/membership_service.py:104
+msgid "Cannot deactivate the organization owner."
+msgstr "No se puede desactivar al propietario de la organización."
+
+#: src/backend/apps/iam/services/membership_service.py:113
+msgid "Cannot remove the last organization membership."
+msgstr "No se puede eliminar la última membresía de la organización."
+
+#: src/backend/apps/iam/services/membership_service.py:117
+msgid "Cannot remove the organization owner membership."
+msgstr "No se puede eliminar la membresía del propietario de la organización."
+
+#: src/backend/apps/iam/auth/views/registration.py:823
+#: src/backend/apps/iam/auth/views/registration.py:826
+msgid "Current password is incorrect"
+msgstr "La contraseña actual es incorrecta"
+
+#: src/backend/apps/iam/auth/views/email_code_login.py:75
+#: src/backend/apps/iam/auth/views/email_code_login.py:169
+#: src/backend/apps/iam/auth/views/registration.py:95
+msgid "Email service is temporarily unavailable"
+msgstr "El servicio de correo electrónico no está disponible temporalmente"
+
+#: src/backend/apps/iam/auth/views/registration.py:78
+msgid "Email sign-up is disabled"
+msgstr "El registro por correo electrónico está desactivado"
+
+#: src/backend/apps/iam/auth/views/email_code_login.py:69
+msgid "Email verification-code sign-in is not enabled"
+msgstr ""
+"El inicio de sesión con código de verificación por correo electrónico no "
+"está activado"
+
+#: src/backend/apps/iam/auth/views/email_code_login.py:217
+msgid "Enter a 6-digit verification code"
+msgstr "Introduzca un código de verificación de 6 dígitos"
+
+#: src/backend/apps/iam/auth/views/email_code_login.py:214
+msgid "Enter a valid email address and 6-digit verification code"
+msgstr ""
+"Introduzca una dirección de correo electrónico válida y un código de "
+"verificación de 6 dígitos"
+
+#: src/backend/common/http/error_codes.py:43
+msgid "Error"
+msgstr "Error"
+
+#: src/backend/apps/iam/auth/views/scenes.py:56
+msgid "Failed to retrieve scenes"
+msgstr "No se pudieron obtener los escenarios"
+
+#: src/backend/common/http/error_codes.py:38
+msgid "Forbidden"
+msgstr "Prohibido"
+
+#: src/backend/apps/iam/auth/views/scenes.py:31
+msgid "Get available scenes"
+msgstr "Obtener los escenarios disponibles"
+
+#: src/backend/apps/iam/services/verification_email.py:98
+msgid "Hello,"
+msgstr "Hola:"
+
+#: src/backend/apps/iam/auth/views/login.py:254
+#: src/backend/apps/iam/auth/views/registration.py:106
+msgid "Human verification is temporarily unavailable"
+msgstr "La verificación humana no está disponible temporalmente"
+
+#: src/backend/apps/iam/auth/views/registration.py:143
+msgid "If an account exists, a reset code has been sent"
+msgstr "Si la cuenta existe, se ha enviado un código de restablecimiento"
+
+#: src/backend/apps/iam/services/verification_email.py:46
+#: src/backend/apps/iam/services/verification_email.py:49
+msgid ""
+"If you did not create a HyperFileLens account, please ignore this email."
+msgstr ""
+"Si no creó una cuenta de HyperFileLens, por favor ignore este correo "
+"electrónico."
+
+#: src/backend/apps/iam/services/verification_email.py:64
+#: src/backend/apps/iam/services/verification_email.py:67
+msgid "If you did not request a password reset, please ignore this email."
+msgstr ""
+"Si no solicitó restablecer la contraseña, ignore este correo electrónico."
+
+#: src/backend/apps/iam/services/verification_email.py:81
+#: src/backend/apps/iam/services/verification_email.py:84
+msgid "If you did not request this sign-in code, please ignore this email."
+msgstr ""
+"Si no solicitó este código de inicio de sesión, ignore este correo "
+"electrónico."
+
+#: src/backend/apps/iam/auth/views/login.py:291
+#: src/backend/apps/iam/auth/views/login.py:292
+msgid "Incorrect password"
+msgstr "Contraseña incorrecta"
+
+#: src/backend/apps/iam/auth/views/email_code_login.py:145
+#: src/backend/apps/iam/auth/views/email_code_login.py:146
+#: src/backend/apps/iam/auth/views/email_code_login.py:216
+#: src/backend/apps/iam/auth/views/registration.py:240
+#: src/backend/apps/iam/auth/views/registration.py:241
+#: src/backend/apps/iam/auth/views/registration.py:356
+#: src/backend/apps/iam/auth/views/registration.py:357
+msgid "Invalid email format"
+msgstr "Formato de correo electrónico inválido"
+
+#: src/backend/apps/iam/auth/views/login.py:276
+#: src/backend/apps/iam/auth/views/registration.py:115
+#: src/backend/apps/iam/services/turnstile_verification.py:96
+msgid "Invalid or expired human verification"
+msgstr "Verificación humana inválida o caducada"
+
+#: src/backend/apps/iam/auth/views/registration.py:747
+msgid "Invalid or expired reset code"
+msgstr "El código de restablecimiento no es válido o ha caducado"
+
+#: src/backend/apps/iam/auth/views/email_code_login.py:234
+#: src/backend/apps/iam/auth/views/email_code_login.py:235
+#: src/backend/apps/iam/auth/views/email_code_login.py:248
+#: src/backend/apps/iam/auth/views/registration.py:511
+msgid "Invalid or expired verification code"
+msgstr "Código de verificación inválido o expirado"
+
+#: src/backend/apps/iam/auth/views/registration.py:833
+msgid "Invalid password"
+msgstr "Contraseña inválida"
+
+#: src/backend/apps/iam/services/token_service.py:210
+msgid "Invalid token"
+msgstr "Token inválido"
+
+#: src/backend/apps/iam/auth/views/scenes.py:37
+msgid "Language code"
+msgstr "Código de idioma"
+
+#: src/backend/apps/iam/auth/views/login.py:727
+msgid "Logged out successfully"
+msgstr "Sesión cerrada correctamente"
+
+#: src/backend/apps/iam/services/token_service.py:204
+msgid "Login session expired, please login again"
+msgstr "La sesión ha caducado. Inicie sesión de nuevo"
+
+#: src/backend/apps/iam/auth/views/login.py:351
+#: src/backend/apps/iam/auth/views/login.py:459
+msgid "Login successful"
+msgstr "Inicio de sesión correcto"
+
+#: src/backend/apps/iam/auth/views/login.py:243
+#: src/backend/apps/iam/auth/views/registration.py:217
+#: src/backend/apps/iam/auth/views/registration.py:335
+#: src/backend/apps/iam/auth/views/registration.py:459
+#: src/backend/apps/iam/auth/views/registration.py:581
+#: src/backend/apps/iam/auth/views/registration.py:695
+msgid "Missing required fields"
+msgstr "Faltan campos obligatorios"
+
+#: src/backend/apps/iam/auth/views/registration.py:843
+#: src/backend/apps/iam/auth/views/registration.py:846
+msgid "New passwords do not match"
+msgstr "Las nuevas contraseñas no coinciden"
+
+#: src/backend/apps/iam/auth/views/registration.py:486
+msgid "No account found with this email"
+msgstr "No se encontró ninguna cuenta con este correo electrónico"
+
+#: src/backend/apps/iam/auth/views/registration.py:727
+msgid "No active account found with this email"
+msgstr "No se encontró ninguna cuenta activa con este correo electrónico"
+
+#: src/backend/apps/iam/auth/views/email_code_login.py:266
+msgid "No active organization is available for this account"
+msgstr "No hay organización activa disponible para esta cuenta"
+
+#: src/backend/common/http/error_codes.py:42
+msgid "Not acceptable"
+msgstr "No es aceptable"
+
+#: src/backend/common/http/error_codes.py:40
+msgid "Not found"
+msgstr "No se encontró"
+
+#: src/backend/apps/iam/auth/views/login.py:416
+msgid "Organization key is required"
+msgstr "Se requiere la clave de la organización"
+
+#: src/backend/apps/iam/services/membership_service.py:94
+msgid "Owner role cannot be assigned via membership API."
+msgstr ""
+"El rol de propietario no se puede asignar mediante la API de membresías."
+
+#: src/backend/apps/iam/auth/views/registration.py:860
+msgid "Password changed. Please sign in again."
+msgstr "La contraseña se ha cambiado. Inicie sesión de nuevo."
+
+#: src/backend/apps/iam/services/registration_service.py:290
+msgid "Password contains unsupported characters"
+msgstr "La contraseña contiene caracteres no admitidos"
+
+#: src/backend/apps/iam/auth/views/registration.py:761
+msgid "Password has been reset successfully"
+msgstr "La contraseña se ha restaurado con éxito"
+
+#: src/backend/apps/iam/services/registration_service.py:288
+msgid "Password must be 8-20 characters"
+msgstr "La contraseña debe tener entre 8 y 20 caracteres"
+
+#: src/backend/apps/iam/services/registration_service.py:296
+msgid "Password must contain at least one digit"
+msgstr "La contraseña debe contener al menos un dígito"
+
+#: src/backend/apps/iam/services/registration_service.py:292
+msgid "Password must contain at least one lowercase letter"
+msgstr "La contraseña debe contener al menos una letra minúscula"
+
+#: src/backend/apps/iam/services/registration_service.py:294
+msgid "Password must contain at least one uppercase letter"
+msgstr "La contraseña debe contener al menos una letra mayúscula"
+
+#: src/backend/apps/iam/auth/views/registration.py:87
+msgid "Password reset is disabled"
+msgstr "El restablecimiento de contraseña está desactivado"
+
+#: src/backend/apps/iam/auth/views/registration.py:816
+msgid "Password validation failed"
+msgstr "Falló la validación de contraseñas"
+
+#: src/backend/apps/iam/auth/views/registration.py:812
+msgid "Please confirm new password"
+msgstr "Confirme la nueva contraseña"
+
+#: src/backend/apps/iam/auth/views/registration.py:808
+msgid "Please enter current password"
+msgstr "Introduzca la contraseña actual"
+
+#: src/backend/apps/iam/auth/views/registration.py:810
+msgid "Please enter new password"
+msgstr "Introduzca la nueva contraseña"
+
+#: src/backend/apps/iam/auth/views/login.py:559
+msgid "Refresh token not found, please login again"
+msgstr "No se encontró el token de actualización. Inicie sesión de nuevo"
+
+#: src/backend/apps/iam/auth/views/registration.py:522
+msgid "Registration completed successfully"
+msgstr "Inscripción completada con éxito"
+
+#: src/backend/apps/iam/auth/views/email_code_login.py:38
+msgid ""
+"Request received. Please check your email for the verification code. If it "
+"doesn't arrive, confirm that the email address is correct."
+msgstr ""
+"Solicitud recibida. Por favor, compruebe su email para el código de "
+"verificación. Si no llega, confirme que la dirección de correo electrónico "
+"es correcta."
+
+#: src/backend/apps/iam/auth/views/login.py:246
+#: src/backend/apps/iam/auth/views/login.py:247
+#: src/backend/apps/iam/auth/views/registration.py:220
+#: src/backend/apps/iam/auth/views/registration.py:338
+#: src/backend/apps/iam/auth/views/registration.py:339
+#: src/backend/apps/iam/auth/views/registration.py:340
+#: src/backend/apps/iam/auth/views/registration.py:461
+#: src/backend/apps/iam/auth/views/registration.py:462
+#: src/backend/apps/iam/auth/views/registration.py:463
+#: src/backend/apps/iam/auth/views/registration.py:583
+#: src/backend/apps/iam/auth/views/registration.py:697
+#: src/backend/apps/iam/auth/views/registration.py:698
+#: src/backend/apps/iam/auth/views/registration.py:699
+#: src/backend/apps/iam/services/turnstile_verification.py:49
+msgid "Required"
+msgstr "Obligatorio"
+
+#: src/backend/apps/iam/auth/views/registration.py:646
+msgid "Reset code sent to your email"
+msgstr "Se ha enviado el código de restablecimiento a su correo electrónico"
+
+#: src/backend/apps/iam/auth/views/email_code_login.py:294
+#: src/backend/apps/iam/auth/views/login.py:345
+msgid "Select organization to continue"
+msgstr "Seleccionar organización para continuar"
+
+#: src/backend/common/http/error_codes.py:41
+msgid "Server error"
+msgstr "Error del servidor"
+
+#: src/backend/apps/iam/auth/views/login.py:394
+#: src/backend/apps/iam/auth/views/login.py:405
+msgid "Session expired. Please login again."
+msgstr "La sesión ha caducado. Inicie sesión de nuevo."
+
+#: src/backend/apps/iam/services/token_service.py:209
+msgid "Suspicious login activity detected"
+msgstr "Actividad de acceso sospechosa detectada"
+
+#: src/backend/apps/iam/services/verification_email.py:38
+msgid ""
+"Thank you for choosing <strong>HyperFileLens</strong>. Please use the "
+"following verification code to complete your registration:"
+msgstr ""
+"Gracias por elegir <strong>HyperFileLens</strong>. Utilice el siguiente "
+"código de verificación para completar el registro:"
+
+#: src/backend/apps/iam/services/verification_email.py:42
+msgid ""
+"Thank you for choosing HyperFileLens. Please use the following verification "
+"code to complete your registration:"
+msgstr ""
+"Gracias por elegir HyperFileLens. Utilice el siguiente código de "
+"verificación para completar el registro:"
+
+#: src/backend/apps/iam/auth/views/registration.py:625
+msgid ""
+"This account has not completed registration. A verification code has been "
+"sent to your email."
+msgstr ""
+"Esta cuenta no ha completado el registro. Se ha enviado un código de "
+"verificación a su correo electrónico."
+
+#: src/backend/apps/iam/services/verification_email.py:91
+#, python-format
+msgid "This code will expire in %(minutes)s minutes."
+msgstr "Este código caducará en %(minutes)s minutos."
+
+#: src/backend/apps/iam/services/verification_email.py:114
+#, python-format
+msgid "This code will expire in <strong>%(minutes)s minutes</strong>."
+msgstr "Este código caducará en <strong>%(minutes)s minutos</strong>."
+
+#: src/backend/apps/iam/auth/views/registration.py:254
+#: src/backend/apps/iam/auth/views/registration.py:255
+#: src/backend/apps/iam/auth/views/registration.py:369
+#: src/backend/apps/iam/auth/views/registration.py:370
+msgid "This email is already registered"
+msgstr "Este correo electrónico ya está registrado"
+
+#: src/backend/apps/iam/auth/views/login.py:262
+#: src/backend/apps/iam/auth/views/login.py:263
+#: src/backend/apps/iam/auth/views/registration.py:603
+msgid "This email is not registered"
+msgstr "Este correo electrónico no está registrado"
+
+#: src/backend/apps/iam/services/token_service.py:205
+msgid "Token has been invalidated"
+msgstr "El token se ha invalidado"
+
+#: src/backend/apps/iam/services/token_service.py:203
+msgid "Token has expired, please refresh"
+msgstr "El token ha caducado. Actualícelo"
+
+#: src/backend/apps/iam/auth/views/login.py:616
+msgid "Token refreshed successfully"
+msgstr "Token actualizado correctamente"
+
+#: src/backend/apps/iam/auth/views/email_code_login.py:246
+msgid "Too many incorrect attempts. Request a new verification code."
+msgstr ""
+"Demasiados intentos incorrectos. Solicite un nuevo código de verificación."
+
+#: src/backend/apps/iam/auth/views/email_code_login.py:115
+msgid "Too many verification-code requests. Please try again later."
+msgstr ""
+"Se han solicitado demasiados códigos de verificación. Vuelva a intentarlo "
+"más tarde."
+
+#: src/backend/common/http/error_codes.py:37
+msgid "Unauthorized"
+msgstr "No autorizado"
+
+#: src/backend/apps/iam/services/verification_email.py:74
+msgid ""
+"Use the verification code below to sign in to "
+"<strong>HyperFileLens</strong>:"
+msgstr ""
+"Utilice el siguiente código de verificación para iniciar sesión en "
+"<strong>HyperFileLens</strong>:"
+
+#: src/backend/apps/iam/services/verification_email.py:78
+msgid "Use the verification code below to sign in to HyperFileLens:"
+msgstr ""
+"Utilice el siguiente código de verificación para iniciar sesión en "
+"HyperFileLens:"
+
+#: src/backend/apps/iam/services/membership_service.py:132
+msgid "User is already a member of this organization."
+msgstr "El usuario ya es miembro de esta organización."
+
+#: src/backend/apps/iam/auth/views/login.py:593
+msgid "User not found"
+msgstr "Usuario no encontrado"
+
+#: src/backend/common/http/error_codes.py:39
+msgid "Validation failed"
+msgstr "Validación fallida"
+
+#: src/backend/apps/iam/auth/views/registration.py:270
+#: src/backend/apps/iam/auth/views/registration.py:410
+msgid "Verification code sent to your email"
+msgstr "Código de verificación enviado a su correo electrónico"
+
+#: src/backend/apps/iam/services/verification_email.py:56
+msgid ""
+"We received a request to reset your <strong>HyperFileLens</strong> password."
+" Use the verification code below to continue:"
+msgstr ""
+"Hemos recibido una solicitud para restablecer su contraseña de "
+"<strong>HyperFileLens</strong>. Utilice el siguiente código de verificación "
+"para continuar:"
+
+#: src/backend/apps/iam/services/verification_email.py:60
+msgid ""
+"We received a request to reset your HyperFileLens password. Use the "
+"verification code below to continue:"
+msgstr ""
+"Hemos recibido una solicitud para restablecer su contraseña de "
+"HyperFileLens. Utilice el siguiente código de verificación para continuar:"
+
+#: src/backend/apps/iam/auth/views/login.py:432
+msgid "You are not a member of this organization"
+msgstr "Usted no es miembro de esta organización"
+
+#: src/backend/apps/iam/services/token_service.py:208
+msgid "Your account has been disabled"
+msgstr "Su cuenta ha sido desactivada"
+
+#: src/backend/apps/iam/auth/views/login.py:226
+#: src/backend/apps/iam/auth/views/login.py:546
+#: src/backend/apps/iam/auth/views/registration.py:796
+#: src/backend/apps/iam/auth/views/user.py:25
+#: src/backend/apps/iam/services/token_service.py:206
+msgid "Your account was logged in from another device"
+msgstr "Se ha iniciado sesión en su cuenta desde otro dispositivo"
+
+#: src/backend/apps/iam/services/token_service.py:207
+msgid "Your password has been changed"
+msgstr "Su contraseña ha cambiado"
+
+#: src/backend/apps/iam/services/verification_email.py:93
+#: src/backend/apps/iam/services/verification_email.py:118
+#, python-format
+msgid "© %(year)s HyperFileLens. %(tagline)s"
+msgstr "© %(year)s HyperFileLens. %(tagline)s"
+
+#~ msgid "All fields are required"
+#~ msgstr "Todos los campos son necesarios"
+
+#~ msgid "Authentication method and related information"
+#~ msgstr "Método de autenticación e información relacionada"
+
+#~ msgid "Check username availability"
+#~ msgstr "Consultar disponibilidad de nombre de usuario"
+
+#~ msgid "Complete OAuth user setup"
+#~ msgstr "Configuración completa del usuario OAuth"
+
+#~ msgid "Complete Your Registration"
+#~ msgstr "Complete su registro"
+
+#~ msgid "Complete registration"
+#~ msgstr "Registro completo"
+
+#~ msgid "Failed to complete registration"
+#~ msgstr "No se pudo completar el registro"
+
+#~ msgid "Failed to complete setup"
+#~ msgstr "No se pudo completar la configuración"
+
+#~ msgid "Failed to process password reset request"
+#~ msgstr "No se pudo procesar la solicitud de restablecimiento de contraseña"
+
+#~ msgid "Failed to process registration request"
+#~ msgstr "No se pudo procesar la solicitud de registro"
+
+#~ msgid "Failed to send password reset email"
+#~ msgstr "No se pudo enviar el correo de restablecimiento de contraseña"
+
+#~ msgid "Failed to send registration email"
+#~ msgstr "No se pudo enviar el correo de registro"
+
+#~ msgid "Invalid registration token"
+#~ msgstr "Token de registro inválido"
+
+#~ msgid "Invalid reset link"
+#~ msgstr "Enlace de reajuste inválido"
+
+#~ msgid "JWT access token"
+#~ msgstr "Token de acceso JWT"
+
+#~ msgid "JWT refresh token"
+#~ msgstr "Token de actualización JWT"
+
+#~ msgid "Language code (e.g., 'en', 'fr-CA', 'es')"
+#~ msgstr "Código de idioma (por ejemplo, 'en', 'fr-CA', 'es')"
+
+#~ msgid "Password must be at least 8 characters long"
+#~ msgstr "La contraseña debe tener al menos 8 caracteres"
+
+#~ msgid "Password must contain both letters and numbers"
+#~ msgstr "La contraseña debe contener letras y números"
+
+#~ msgid "Password reset email sent successfully"
+#~ msgstr ""
+#~ "Correo electrónico de restablecimiento de contraseña enviado con éxito"
+
+#~ msgid "Please complete registration first"
+#~ msgstr "Por favor complete el registro primero"
+
+#, python-format
+#~ msgid "Please complete your registration by visiting: %(url)s"
+#~ msgstr "Por favor complete su registro visitando: %(url)s"
+
+#, python-format
+#~ msgid "Please reset your password by visiting: %(url)s"
+#~ msgstr "Restablezca su contraseña visitando: %(url)s"
+
+#~ msgid "Primary virtual email address for receiving emails"
+#~ msgstr ""
+#~ "Dirección de correo electrónico virtual primaria para recibir correos "
+#~ "electrónicos"
+
+#~ msgid "Registration has already been completed"
+#~ msgstr "Ya se ha completado el registro"
+
+#~ msgid "Reset Your Password"
+#~ msgstr "Restablecer su contraseña"
+
+#~ msgid "Scene description in requested language"
+#~ msgstr "Descripción de escena en el idioma solicitado"
+
+#~ msgid "Scene display name in requested language"
+#~ msgstr "Nombre de la pantalla de escena en el idioma solicitado"
+
+#~ msgid "Scene key (e.g., 'chat', 'product_issue')"
+#~ msgstr "Clave de escena (por ejemplo, 'chat', 'product issue')"
+
+#~ msgid "Send registration email"
+#~ msgstr "Enviar email de registro"
+
+#~ msgid "This email address is already registered. Please login instead."
+#~ msgstr ""
+#~ "Esta dirección de correo electrónico ya está registrada. Inicie sesión."
+
+#~ msgid "This username is reserved and cannot be used"
+#~ msgstr "Este nombre de usuario está reservado y no se puede utilizar"
+
+#~ msgid "User basic info"
+#~ msgstr "Información básica del usuario"
+
+#~ msgid "User password (8-32 characters, must contain letters and numbers)"
+#~ msgstr ""
+#~ "contraseña de usuario (8-32 caracteres, debe contener letras y números)"
+
+#~ msgid "User profile information"
+#~ msgstr "Información del perfil de usuario"
+
+#~ msgid "User's email address"
+#~ msgstr "Dirección de correo electrónico del usuario"
+
+#~ msgid "User's selected scene"
+#~ msgstr "La escena seleccionada del usuario"
+
+#~ msgid "User's selected scene (e.g., 'chat', 'product_issue')"
+#~ msgstr ""
+#~ "La escena seleccionada del usuario (por ejemplo, 'chat', 'product issue')"
+
+#~ msgid "User's timezone"
+#~ msgstr "Zona horaria del usuario"
+
+#~ msgid "User's timezone (e.g., 'UTC', 'Asia/Shanghai')"
+#~ msgstr "Zona horaria del usuario (por ejemplo, 'UTC', 'Asia/Shanghai')"
+
+#~ msgid "Username cannot start or end with a dot"
+#~ msgstr "El nombre de usuario no puede comenzar o terminar con un punto"
+
+#~ msgid "Username is available"
+#~ msgstr "Nombre de usuario está disponible"
+
+#~ msgid "Username to check"
+#~ msgstr "Nombre de usuario para comprobar"
+
+#~ msgid "Verify registration token"
+#~ msgstr "Verificar el token de registro"
+
+#~ msgid "Virtual email username"
+#~ msgstr "Nombre de usuario de correo electrónico virtual"
+
+#~ msgid "Virtual email username (will become username@domain)"
+#~ msgstr ""
+#~ "Nombre de usuario virtual de correo electrónico (se convertirá en "
+#~ "usuario@domain)"

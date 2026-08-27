@@ -24,7 +24,7 @@ const emit = defineEmits<{
   (event: 'edit-execution'): void
 }>()
 
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const router = useRouter()
 const detailsOpen = ref(false)
 const activeRunStatuses = new Set(['queued', 'running', 'streaming'])
@@ -40,13 +40,15 @@ const isCleanupBlocked = computed(() => (
 ))
 
 const statusLabel = computed(() => {
-  if (isRecoveryCleanup.value) return 'Recovering…'
-  if (isCleanupBlocked.value) return 'Recovery Blocked'
-  if (props.session.lifecycle_status === 'failed') return 'Failed'
-  if (props.session.lifecycle_status === 'provisioning') return 'Preparing…'
-  if (props.session.lifecycle_status === 'deleting') return 'Deleting…'
-  if (activeRunStatuses.has(props.session.active_run_status || '')) return 'Answering…'
-  return 'Ready'
+  if (isRecoveryCleanup.value) return t('insight.copilot.sessionRecovering')
+  if (isCleanupBlocked.value) return t('insight.copilot.sessionRecoveryAttention')
+  if (props.session.lifecycle_status === 'failed') return t('insight.copilot.sessionPreparationFailed')
+  if (props.session.lifecycle_status === 'provisioning') return t('insight.copilot.sessionPreparing')
+  if (props.session.lifecycle_status === 'deleting') return t('insight.copilot.sessionDeleting')
+  if (activeRunStatuses.has(props.session.active_run_status || '')) {
+    return t('insight.copilot.sessionAnswering')
+  }
+  return t('insight.copilot.sessionReady')
 })
 
 const statusClass = computed(() => ({
@@ -56,15 +58,19 @@ const statusClass = computed(() => ({
   'is-answering': activeRunStatuses.has(props.session.active_run_status || ''),
 }))
 
-const sourceName = computed(() => props.session.backup_source_name?.trim() || 'Backup Source')
+const sourceName = computed(() => (
+  props.session.backup_source_name?.trim() || t('insight.copilot.backupSourceFallback')
+))
 const scopes = computed(() => props.session.source_scopes_json || [])
-const firstPath = computed(() => scopes.value[0]?.source_path?.trim() || 'No files selected')
+const firstPath = computed(() => (
+  scopes.value[0]?.source_path?.trim() || t('insight.copilot.contextNoFilesSelected')
+))
 const additionalPathCount = computed(() => Math.max(0, scopes.value.length - 1))
 const createdShort = computed(() => {
-  if (!props.session.created_at) return 'Unavailable'
+  if (!props.session.created_at) return t('insight.copilot.unavailable')
   const value = new Date(props.session.created_at)
-  if (Number.isNaN(value.getTime())) return 'Unavailable'
-  return new Intl.DateTimeFormat('en-US', {
+  if (Number.isNaN(value.getTime())) return t('insight.copilot.unavailable')
+  return new Intl.DateTimeFormat(locale.value, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -148,7 +154,7 @@ function openBackupDetail() {
 
     <div
       class="copilot-context-bar__summary"
-      :title="`${originLabel} · ${sourceName} · ${firstPath} · ${processingLabel} · Created ${createdShort}`"
+      :title="`${originLabel} · ${sourceName} · ${firstPath} · ${processingLabel} · ${t('insight.copilot.contextCreatedAt', { time: createdShort })}`"
     >
       <span class="copilot-context-bar__origin">{{ originLabel }}</span><em>·</em>
       <span class="copilot-context-bar__source">{{ sourceName }}</span><em>·</em>
@@ -160,7 +166,7 @@ function openBackupDetail() {
         {{ firstPath }}<b v-if="additionalPathCount"> +{{ additionalPathCount }}</b>
       </button><em>·</em>
       <span class="copilot-context-bar__gateway">{{ processingLabel }}</span><em>·</em>
-      <span class="copilot-context-bar__created">Created {{ createdShort }}</span>
+      <span class="copilot-context-bar__created">{{ t('insight.copilot.contextCreatedAt', { time: createdShort }) }}</span>
     </div>
     <div
       v-if="session.lifecycle_status === 'ready' && !session.multimodal_model_ref"
@@ -172,7 +178,7 @@ function openBackupDetail() {
         :size="13"
         aria-hidden="true"
       />
-      <span>Visual understanding is unavailable. Images and scanned PDFs may not be searchable.</span>
+      <span>{{ t('insight.copilot.visualUnderstandingUnavailable') }}</span>
     </div>
   </header>
 

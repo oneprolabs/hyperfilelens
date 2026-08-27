@@ -271,9 +271,9 @@ grep -F 'no_cache=1' <<<"${config}" >/dev/null
 grep -F -- '--prebuilt' "${ROOT}/release/build-sourcelens.sh" >/dev/null
 grep -F 'ln "${source_archive}" "${temporary}"' \
 	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
-grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.47.6}"' \
+grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.47.9}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
-grep -F 'SOURCELENS_GIT_REF=v0.47.6' \
+grep -F 'SOURCELENS_GIT_REF=v0.47.9' \
 	"${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
@@ -284,8 +284,7 @@ grep -F 'set_key("DJANGO_DEBUG", "true")' \
 for setting in \
 	'LENSNODE_PLANNING_REASONING_EFFORT: "medium"' \
 	'LENSNODE_EXECUTION_BACKEND: "trusted_container"' \
-	'LENSNODE_MAX_CONCURRENT_RUNS: "1"' \
-	'LENSNODE_HEAVY_WORK_CONCURRENCY: "1"'; do
+	'LENSNODE_MAX_CONCURRENT_RUNS: "1"'; do
 	grep -F "${setting}" \
 		"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
 done
@@ -428,7 +427,7 @@ grep -F 'NPM_REGISTRY: ${NPM_REGISTRY:-}' \
 grep -F 'CODEGRAPH_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}' \
 	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 
-grep -F '# SourceLens v0.47.6 requires no HFL functional patches.' \
+grep -F '# SourceLens v0.47.9 requires no HFL functional patches.' \
 	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
 [[ -x "${ROOT}/tools/sourcelens/update-runtime-contract.sh" ]]
 [[ -x "${ROOT}/tools/quality/test-sourcelens-runtime-contract.sh" ]]
@@ -498,8 +497,7 @@ grep -F 'LENSNODE_DRAIN_TIMEOUT_S: "240"' \
 for setting in \
 	'LENSNODE_PLANNING_REASONING_EFFORT: "medium"' \
 	'LENSNODE_EXECUTION_BACKEND: "trusted_container"' \
-	'LENSNODE_MAX_CONCURRENT_RUNS: "1"' \
-	'LENSNODE_HEAVY_WORK_CONCURRENCY: "1"'; do
+	'LENSNODE_MAX_CONCURRENT_RUNS: "1"'; do
 	grep -F "${setting}" \
 		"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 done

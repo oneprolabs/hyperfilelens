@@ -35,7 +35,6 @@ def apply_runtime_env(text: str) -> str:
     set_key("LENSNODE_PLANNING_REASONING_EFFORT", "medium")
     set_key("LENSNODE_EXECUTION_BACKEND", "trusted_container")
     set_key("LENSNODE_MAX_CONCURRENT_RUNS", "1")
-    set_key("LENSNODE_HEAVY_WORK_CONCURRENCY", "1")
     allowed_hosts_match = re.search(r"^ALLOWED_HOSTS=(.*)$", text, flags=re.M)
     allowed_hosts = []
     if allowed_hosts_match:
@@ -47,7 +46,11 @@ def apply_runtime_env(text: str) -> str:
     if "sourcelens-nginx" not in allowed_hosts:
         allowed_hosts.append("sourcelens-nginx")
     set_key("ALLOWED_HOSTS", ",".join(allowed_hosts))
-    for name in ("NGINX_HTTP_PORT", "NGINX_HTTPS_PORT"):
+    for name in (
+        "NGINX_HTTP_PORT",
+        "NGINX_HTTPS_PORT",
+        "LENSNODE_HEAVY_WORK_CONCURRENCY",
+    ):
         text = re.sub(
             rf"^{name}=.*\n?",
             "",

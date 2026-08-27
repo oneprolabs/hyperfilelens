@@ -19,6 +19,23 @@ class LanguageCodeMappingMiddleware:
         self.language_mapping = getattr(settings, "LANGUAGE_CODE_MAPPING", {})
         self._supported_languages = dict(settings.LANGUAGES)
 
+    def _resolve_language(self, language_tag: str) -> str | None:
+        """Resolve an exact or regional browser tag to an installed language."""
+        candidates = [language_tag]
+        language_parts = language_tag.split("-")
+        if len(language_parts) > 1:
+            region = language_parts[1]
+            is_region = (len(region) == 2 and region.isalpha()) or (
+                len(region) == 3 and region.isdigit()
+            )
+            if is_region:
+                candidates.append(language_parts[0])
+        for candidate in candidates:
+            mapped_language = self.language_mapping.get(candidate, candidate)
+            if mapped_language in self._supported_languages:
+                return mapped_language
+        return None
+
     def __call__(self, request: HttpRequest) -> HttpResponse:
         accept_language = request.META.get("HTTP_ACCEPT_LANGUAGE", "")
         activated = False
@@ -27,8 +44,8 @@ class LanguageCodeMappingMiddleware:
             first_part = parts[0].strip()
             first_lang = first_part.split(";")[0].strip().lower()
 
-            mapped_lang = self.language_mapping.get(first_lang)
-            if mapped_lang and mapped_lang in self._supported_languages:
+            mapped_lang = self._resolve_language(first_lang)
+            if mapped_lang:
                 quality_part = first_part.split(";", 1)
                 if len(quality_part) > 1:
                     new_first_part = f"{mapped_lang};{quality_part[1]}"
@@ -40,10 +57,6 @@ class LanguageCodeMappingMiddleware:
                 request.META["HTTP_ACCEPT_LANGUAGE"] = new_accept_language
                 translation.activate(mapped_lang)
                 activated = True
-            elif first_lang in self._supported_languages:
-                translation.activate(first_lang)
-                activated = True
-
         if not activated:
             translation.activate(settings.LANGUAGE_CODE)
 
